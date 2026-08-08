@@ -44,6 +44,10 @@ Telora 代码将合法意图逐步 lowering 为 SQLite SQL。
   restriction 方法，RFC 0205 已将本目录明确拆为共享 ontology 方法与具体 B2B
   模型，既有 SQL、诊断和 wire plan 保持不变；RFC 0206 已由独立十二表 B2C
   模型验证同一方法层，RFC 0202 全部完成。
+- RFC 0207：高阶 ontology 规则抽象已完成。RFC 0208 让 B2B/B2C 共同使用
+  Measure、Dimension、Relation 与 Compilation 类型族；RFC 0209 共享完整路径
+  分类和诊断规则；RFC 0210 共享 capability 编译协议；RFC 0211 对实际复用范围
+  做了逐项审计，没有把单方或 fixture-only API 算作已证明能力。
 
 ## 文件
 

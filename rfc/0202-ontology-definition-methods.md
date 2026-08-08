@@ -249,3 +249,17 @@ The central hypothesis is therefore supported within a clear boundary: Telora's
 “types are metadata” model and ordinary higher-order functions can define a
 reusable, strongly checked ontology construction and lowering method without a
 trait system, higher-kinded types, or ontology-specific runtime machinery.
+
+## Amendment after RFC 0207
+
+The comparison above overstated one fact at the time RFC 0202 completed: only
+B2C instantiated the shared Capability TypeMetadata constructor; B2B still
+declared its capability records by hand. Shared generic functions were real,
+but shared definition construction had not yet been proved by both enterprise
+models.
+
+RFC 0208 subsequently makes the stronger statement true by migrating both
+models to shared MeasureDefinition, DimensionDefinition, RelationDefinition,
+and Compilation families. That later evidence must not be read retroactively
+as part of RFC 0202's original implementation result. RFC 0211 provides the
+current evidence audit.
