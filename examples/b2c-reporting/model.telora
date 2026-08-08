@@ -1,6 +1,6 @@
 import "std/array" as array;
+import "analytics-ontology/compiler.telora" as analytics;
 import "ontology-method/types.telora" as types;
-import "ontology-method/ontology.telora" as ontology;
 
 @enum type Entity = {
     Consumer: 'None,
@@ -65,12 +65,6 @@ import "ontology-method/ontology.telora" as ontology;
     expression: String,
 };
 
-@struct type PathPlan = {
-    joins: Array(Relation),
-    fanout: Array(Entity),
-    missing: Array(Entity),
-};
-
 @struct type ExecutionPlan = {
     revision: String,
     base_entity: Entity,
@@ -78,6 +72,12 @@ import "ontology-method/ontology.telora" as ontology;
     dimensions: Array(DimensionPlan),
     joins: Array(Relation),
     read_only: Bool,
+};
+
+@struct type CombinedMeasure = {
+    base_entity: Entity,
+    measures: Array(MeasurePlan),
+    required_entities: Array(Entity),
 };
 
 type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
@@ -96,9 +96,6 @@ type DimensionCapability = types.DimensionDefinition(
     Array(Measure),
     DimensionPlan,
 );
-
-type MeasureCompilation = types.Compilation(MeasurePlan);
-type DimensionCompilation = types.Compilation(DimensionPlan);
 
 def purchase_revenue: MeasureCapability = {
     id: 'PurchaseRevenue,
@@ -172,81 +169,68 @@ def fanout_relations: Array(Relation) = [
 def relation_from: Fn(Relation) -> Entity = fn(relation) { relation.from };
 def relation_to: Fn(Relation) -> Entity = fn(relation) { relation.to };
 
-def plan_paths: Fn(Entity, Array(Entity)) -> PathPlan = fn(base, targets) {
-    ontology.classify_paths(
-        safe_relations,
-        fanout_relations,
-        base,
-        targets,
-        relation_from,
-        relation_to,
-        fn(joins, fanout, missing) { {joins, fanout, missing} },
-    )
+def measure_required_entities: Fn(Array(MeasurePlan)) -> Array(Entity) = fn(measures) {
+    array.flat_map(measures, fn(item) { item.required_entities })
 };
 
-def verify_paths: Fn(PathPlan, Array(DimensionPlan)) -> Bool = fn(paths, dimensions) {
-    ontology.verify_path_requirements(
-        paths.fanout,
-        paths.missing,
-        dimensions,
-        fn(item) { item.required_entity },
-        fn(item) { item.source },
-    )
+def combine_measures: Fn(Array(MeasurePlan)) -> Option(CombinedMeasure) = fn(measures) {
+    match array.find(measures, fn(ignored) { 'True }) {
+        'None => {
+            let ignored = emit_error!("a B2C report requires a supported measure", measures);
+            'None
+        },
+        'Some(first) => {
+            if array.all(measures, fn(item) { item.base_entity == first.base_entity }) {
+                'Some({
+                    base_entity: first.base_entity,
+                    measures,
+                    required_entities: measure_required_entities(measures),
+                })
+            } else {
+                let ignored = emit_error!(
+                    "B2C measures at different grains require an explicit alignment policy",
+                    measures,
+                );
+                'None
+            }
+        },
+    }
 };
 
 export def compile:
     Fn(Array(Measure), Array(Dimension)) -> Option(ExecutionPlan) =
     fn(requested_measures, requested_dimensions) {
-        let measure_compilation: MeasureCompilation = ontology.compile_requested(
+        analytics.compile_with(
             requested_measures,
             measure_capabilities,
             fn(capability) { capability.id },
             fn(capability, requested, alignment) { capability.lower(requested, alignment) },
             'Natural,
-            fn(results, values, complete) { {results, values, complete} },
-        );
-        let measures = measure_compilation.values;
-        let dimension_compilation: DimensionCompilation = ontology.compile_requested(
             requested_dimensions,
             dimension_capabilities,
             fn(capability) { capability.id },
             fn(capability, requested, selected) { capability.lower(requested, selected) },
             requested_measures,
-            fn(results, values, complete) { {results, values, complete} },
-        );
-        let dimensions = dimension_compilation.values;
-        match array.find(measures, fn(ignored) { 'True }) {
-            'None => {
-                let ignored = emit_error!("a B2C report requires a supported measure", requested_measures);
-                'None
-            },
-            'Some(first) => {
-                let same_grain = array.all(measures, fn(item) {
-                    item.base_entity == first.base_entity
-                });
-                let required = array.concat([
-                    ontology.collect_required_nodes(measures, fn(item) { item.required_entities }),
-                    ontology.collect_required_nodes(dimensions, fn(item) { [item.required_entity] }),
-                ]);
-                let paths = plan_paths(first.base_entity, required);
-                let paths_valid = verify_paths(paths, dimensions);
-                if ontology.compilation_complete(measure_compilation.complete)
-                    && ontology.compilation_complete(dimension_compilation.complete)
-                    && same_grain
-                    && paths_valid {
-                    'Some({
+            combine_measures,
+            fn(combined) { combined.base_entity },
+            fn(combined) { combined.required_entities },
+            fn(dimension) { dimension.required_entity },
+            fn(dimension) { dimension.source },
+            safe_relations,
+            fanout_relations,
+            relation_from,
+            relation_to,
+            fn(combined, dimensions, joins) {
+                'Some({
                         revision: "b2c-model-v1",
-                        base_entity: first.base_entity,
-                        measures,
+                        base_entity: combined.base_entity,
+                        measures: combined.measures,
                         dimensions,
-                        joins: paths.joins,
+                        joins,
                         read_only: 'True,
                     })
-                } else {
-                    'None
-                }
             },
-        }
+        )
     };
 
 export { Entity, Measure, Dimension, ExecutionPlan };
