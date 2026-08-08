@@ -11,7 +11,7 @@ knowledge can pass through four independently isolated AI roles:
 ```text
 human language design
 -> AI-1 implements Telora and writes its tutorial
--> AI-2 learns Telora and creates an ontology eDSL plus tutorial
+-> AI-2 learns Telora and implements a supplied ontology eDSL design
 -> AI-3 learns both and models a new private enterprise
 -> AI-4 expresses queries inside that enterprise's published boundary
 -> Telora rejects invalid intent or lowers valid intent to an execution plan
@@ -20,6 +20,8 @@ human language design
 The repository contains only stable experiment inputs and this protocol:
 
 - `/tutorial.md`, representing AI-1's public language tutorial;
+- `/experiments/four-ai-ontology/edsl-design.md`, the eDSL surface design
+  implemented by AI-2;
 - `/experiments/four-ai-ontology/domain.md`, the private enterprise brief
   revealed only at the AI-3 stage; and
 - RFC 0217, defining roles, isolation, observations, and acceptance criteria.
@@ -29,8 +31,8 @@ silently become inputs to later repetitions through the repository.
 
 ## Research questions
 
-1. Can AI-2 learn enough Telora from its tutorial to design and implement a
-   reusable ontology eDSL without seeing an enterprise model?
+1. Can AI-2 learn enough Telora from its tutorial to implement the supplied
+   ontology eDSL design without seeing an enterprise model or implementation?
 2. Can AI-2 teach that eDSL to AI-3 through a bounded public tutorial?
 3. Can AI-3 model a previously unseen private domain without reading another
    enterprise implementation?
@@ -49,6 +51,19 @@ silently become inputs to later repetitions through the repository.
 must be usable without README, RFC history, examples, source code, tests, or
 prior conversation. Corrections to the tutorial are versioned repository
 changes and recorded in the run manifest.
+
+### Ontology eDSL design
+
+`/experiments/four-ai-ontology/edsl-design.md` specifies the method boundary,
+definition roles, capability compilation, path semantics, diagnostic behavior,
+analytics pipeline, enterprise extension points, and atomic publication
+contract. It deliberately omits Telora source, concrete function signatures,
+module layout, path algorithm, and teaching structure.
+
+AI-2 must implement this design and choose its surface API. The first run tests
+design transmission and implementation quality, not independent invention of
+the ontology methodology. Later experiments may progressively remove parts of
+the design document.
 
 ### Enterprise domain
 
@@ -90,7 +105,8 @@ not create the run inside the repository or reuse a previous run directory.
 The run manifest records:
 
 - Git commit and dirty-worktree status;
-- hashes of `tutorial.md`, `domain.md`, prompts, and every staged input;
+- hashes of `tutorial.md`, `edsl-design.md`, `domain.md`, prompts, and every
+  staged input;
 - model identity and role prompt for each AI;
 - wall-clock start/end for every delivery and feedback round;
 - commands executed only by the Host;
@@ -155,15 +171,15 @@ language and a tutorial sufficient for a new AI to use its documented public
 surface. RFC history remains evidence of implementation provenance, not an
 input to later roles.
 
-## Stage 2: AI-2 creates the ontology eDSL
+## Stage 2: AI-2 implements the ontology eDSL
 
 ### Inputs
 
 AI-2 receives only:
 
 - `tutorial.md`;
-- a role brief requiring a reusable ontology eDSL for typed capability
-  lowering, relationship safety, diagnostics, and atomic plan publication;
+- `edsl-design.md`;
+- a role brief requiring a faithful, reusable implementation of that design;
 - required package/file naming conventions; and
 - output and documentation acceptance shapes.
 
@@ -178,12 +194,15 @@ ontology-edsl/
   src/...
 EDSL_TUTORIAL.md
 AI3_CONTRACT.md
+STAGE2_DESIGN.md
 STAGE2_NOTES.md
 ```
 
 The eDSL tutorial must explain extension points without using facts from the
 hidden enterprise. `AI3_CONTRACT.md` lists exactly what an enterprise model
-must define and what the shared eDSL guarantees.
+must define and what the shared eDSL guarantees. `STAGE2_DESIGN.md` records the
+surface API and implementation choices AI-2 made where the supplied design
+intentionally left freedom.
 
 ### Host validation
 
@@ -330,8 +349,8 @@ eDSL reuse, enterprise modeling, and intent convergence are different claims.
 
 One run supports the complete story only when:
 
-1. Stage 2 is filesystem-isolated and AI-2 creates a reusable eDSL without the
-   enterprise domain;
+1. Stage 2 is filesystem-isolated and AI-2 faithfully implements the supplied
+   reusable eDSL design without the enterprise domain or an existing eDSL;
 2. the neutral model passes both valid lowering and independent-error recovery;
 3. Stage 3 is filesystem-isolated and AI-3 passes visible plus novel hidden
    enterprise tests without reading another model;
@@ -349,9 +368,11 @@ One run supports the complete story only when:
 
 ## Honest claims
 
-A successful run demonstrates that this particular language tutorial, eDSL,
-enterprise domain, and query corpus support the four-stage transfer. It does
-not prove arbitrary AI models, arbitrary ontologies, production database
+A successful first run demonstrates that this particular language tutorial
+and eDSL design can be transmitted to an isolated implementer, then used with
+the enterprise domain and query corpus through the remaining stages. It does
+not demonstrate that AI-2 independently invented the eDSL methodology, nor
+does it prove arbitrary AI models, arbitrary ontologies, production database
 safety, semantic correctness of all private facts, or universal convergence.
 
 AI-4's output is an execution plan, not an authorization to execute it. A Host
@@ -362,6 +383,8 @@ may affect enterprise data.
 
 - committing generated eDSLs or enterprise implementations as canonical
   source;
+- requiring AI-2 to independently invent the ontology method in the first
+  clean-room run;
 - letting AI-2 tailor the eDSL to the hidden enterprise;
 - comparing model vendors in the first reproducibility pass;
 - giving agents shell access to improve benchmark scores;
