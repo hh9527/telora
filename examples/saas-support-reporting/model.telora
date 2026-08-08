@@ -1,0 +1,258 @@
+import "std/array" as array;
+import "ontology-method/types.telora" as types;
+import "analytics-ontology/compiler.telora" as analytics;
+
+@enum type Entity = {
+    Workspace: 'None,
+    Subscription: 'None,
+    Plan: 'None,
+    User: 'None,
+    Ticket: 'None,
+    Message: 'None,
+    Agent: 'None,
+    Team: 'None,
+    SlaPolicy: 'None,
+    TicketTag: 'None,
+    Tag: 'None,
+};
+
+@enum type Measure = {
+    ResolvedTickets: 'None,
+    AgentReplies: 'None,
+};
+
+@enum type Dimension = {
+    OpenedMonth: 'None,
+    WorkspacePlan: 'None,
+    AssignedTeam: 'None,
+    SlaPolicy: 'None,
+    TicketTag: 'None,
+    CustomerSegment: 'None,
+};
+
+@enum type SemanticValueType = { Count: 'None };
+@enum type Aggregation = { Additive: 'None };
+@enum type Alignment = { Direct: 'None };
+@enum type Cardinality = { ManyToOne: 'None, OneToMany: 'None };
+
+@struct type RelationMapping = {
+    target_table: String,
+    join_condition: String,
+};
+
+type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
+
+@struct type MeasurePlan = {
+    source: Measure,
+    value_type: SemanticValueType,
+    aggregation: Aggregation,
+    base_entity: Entity,
+    required_entities: Array(Entity),
+    expression: String,
+};
+
+@struct type DimensionPlan = {
+    source: Dimension,
+    required_entity: Entity,
+    expression: String,
+};
+
+type MeasureCapability = types.MeasureDefinition(
+    Measure,
+    Entity,
+    SemanticValueType,
+    Aggregation,
+    Alignment,
+    MeasurePlan,
+);
+
+type DimensionCapability = types.DimensionDefinition(
+    Dimension,
+    Array(Measure),
+    DimensionPlan,
+);
+
+@struct type CombinedMeasure = {
+    base_entity: Entity,
+    plans: Array(MeasurePlan),
+    required_entities: Array(Entity),
+};
+
+@struct type ExecutionPlan = {
+    revision: String,
+    base_entity: Entity,
+    measures: Array(MeasurePlan),
+    dimensions: Array(DimensionPlan),
+    joins: Array(Relation),
+    read_only: Bool,
+};
+
+def resolved_tickets: MeasureCapability = {
+    id: 'ResolvedTickets,
+    value_type: 'Count,
+    natural_grain: 'Ticket,
+    aggregation: 'Additive,
+    lower: fn(requested, alignment) {
+        'Some({
+            source: requested,
+            value_type: 'Count,
+            aggregation: 'Additive,
+            base_entity: 'Ticket,
+            required_entities: [],
+            expression: "COUNT(tickets.id) FILTER (WHERE tickets.status = 'resolved')",
+        })
+    },
+};
+
+def agent_replies: MeasureCapability = {
+    id: 'AgentReplies,
+    value_type: 'Count,
+    natural_grain: 'Message,
+    aggregation: 'Additive,
+    lower: fn(requested, alignment) {
+        'Some({
+            source: requested,
+            value_type: 'Count,
+            aggregation: 'Additive,
+            base_entity: 'Message,
+            required_entities: ['Agent],
+            expression: "COUNT(messages.id) FILTER (WHERE messages.author_agent_id IS NOT NULL)",
+        })
+    },
+};
+
+def opened_month: DimensionCapability = {
+    id: 'OpenedMonth,
+    lower: fn(requested, measures) {
+        'Some({
+            source: requested,
+            required_entity: 'Ticket,
+            expression: "substr(tickets.opened_at, 1, 7)",
+        })
+    },
+};
+
+def workspace_plan: DimensionCapability = {
+    id: 'WorkspacePlan,
+    lower: fn(requested, measures) {
+        'Some({source: requested, required_entity: 'Plan, expression: "plans.name"})
+    },
+};
+
+def assigned_team: DimensionCapability = {
+    id: 'AssignedTeam,
+    lower: fn(requested, measures) {
+        'Some({source: requested, required_entity: 'Team, expression: "teams.name"})
+    },
+};
+
+def sla_policy: DimensionCapability = {
+    id: 'SlaPolicy,
+    lower: fn(requested, measures) {
+        'Some({source: requested, required_entity: 'SlaPolicy, expression: "sla_policies.name"})
+    },
+};
+
+def ticket_tag: DimensionCapability = {
+    id: 'TicketTag,
+    lower: fn(requested, measures) {
+        'Some({source: requested, required_entity: 'Tag, expression: "tags.name"})
+    },
+};
+
+def relation: Fn(Entity, Entity, Cardinality, String, String) -> Relation =
+    fn(from, to, cardinality, target_table, join_condition) {
+        {from, to, cardinality, mapping: {target_table, join_condition}}
+    };
+
+def safe_relations: Array(Relation) = [
+    relation('Ticket, 'Workspace, 'ManyToOne, "workspaces", "tickets.workspace_id = workspaces.id"),
+    relation('Workspace, 'Subscription, 'ManyToOne, "subscriptions", "workspaces.id = subscriptions.workspace_id"),
+    relation('Subscription, 'Plan, 'ManyToOne, "plans", "subscriptions.plan_id = plans.id"),
+    relation('Ticket, 'User, 'ManyToOne, "users", "tickets.requester_id = users.id"),
+    relation('Ticket, 'Agent, 'ManyToOne, "agents", "tickets.assignee_id = agents.id"),
+    relation('Agent, 'Team, 'ManyToOne, "teams", "agents.team_id = teams.id"),
+    relation('Ticket, 'SlaPolicy, 'ManyToOne, "sla_policies", "tickets.sla_policy_id = sla_policies.id"),
+    relation('Message, 'Ticket, 'ManyToOne, "tickets", "messages.ticket_id = tickets.id"),
+    relation('Message, 'Agent, 'ManyToOne, "agents", "messages.author_agent_id = agents.id"),
+    relation('TicketTag, 'Ticket, 'ManyToOne, "tickets", "ticket_tags.ticket_id = tickets.id"),
+    relation('TicketTag, 'Tag, 'ManyToOne, "tags", "ticket_tags.tag_id = tags.id"),
+];
+
+def fanout_relations: Array(Relation) = [
+    relation('Ticket, 'Message, 'OneToMany, "messages", "tickets.id = messages.ticket_id"),
+    relation('Ticket, 'TicketTag, 'OneToMany, "ticket_tags", "tickets.id = ticket_tags.ticket_id"),
+];
+
+def measure_required_entities: Fn(MeasurePlan) -> Array(Entity) =
+    fn(plan) { plan.required_entities };
+
+def combine_measures: Fn(Array(MeasurePlan)) -> Option(CombinedMeasure) = fn(plans) {
+    match array.find(plans, fn(plan) { 'True }) {
+        'None => {
+            let ignored = emit_error!("at least one measure is required", plans);
+            'None
+        },
+        'Some(first) => {
+            if array.all(plans, fn(plan) { plan.base_entity == first.base_entity }) {
+                'Some({
+                    base_entity: first.base_entity,
+                    plans,
+                    required_entities: array.flat_map(
+                        plans,
+                        measure_required_entities,
+                    ),
+                })
+            } else {
+                let ignored = emit_error!(
+                    "measures with different natural grains cannot be combined",
+                    plans,
+                );
+                'None
+            }
+        },
+    }
+};
+
+def build_plan:
+    Fn(CombinedMeasure, Array(DimensionPlan), Array(Relation)) -> Option(ExecutionPlan) =
+    fn(combined, dimensions, joins) {
+        'Some({
+            revision: "saas-support-v1",
+            base_entity: combined.base_entity,
+            measures: combined.plans,
+            dimensions,
+            joins,
+            read_only: 'True,
+        })
+    };
+
+def compile:
+    Fn(Array(Measure), Array(Dimension)) -> Option(ExecutionPlan) =
+    fn(requested_measures, requested_dimensions) {
+        analytics.compile_with(
+            requested_measures,
+            [resolved_tickets, agent_replies],
+            fn(capability) { capability.id },
+            fn(capability, requested, input) { capability.lower(requested, input) },
+            'Direct,
+            requested_dimensions,
+            [opened_month, workspace_plan, assigned_team, sla_policy, ticket_tag],
+            fn(capability) { capability.id },
+            fn(capability, requested, input) { capability.lower(requested, input) },
+            requested_measures,
+            combine_measures,
+            fn(combined) { combined.base_entity },
+            fn(combined) { combined.required_entities },
+            fn(dimension) { dimension.required_entity },
+            fn(dimension) { dimension.source },
+            [],
+            safe_relations,
+            fanout_relations,
+            fn(edge) { edge.from },
+            fn(edge) { edge.to },
+            build_plan,
+        )
+    };
+
+export { Entity, Measure, Dimension, Relation, MeasurePlan, DimensionPlan, ExecutionPlan, compile };

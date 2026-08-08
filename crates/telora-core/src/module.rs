@@ -9280,4 +9280,38 @@ export let output: String = error.message;"#,
             "{messages:#?}"
         );
     }
+
+    #[test]
+    fn third_enterprise_builds_a_model_from_the_ontology_dsl_tutorial() {
+        let examples = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/saas-support-reporting");
+        let valid = load_module(examples.join("valid.telora"), BTreeMap::new(), 300_000).unwrap();
+        let output = valid.execute(300_000).unwrap().to_string();
+        assert!(output.contains("saas-support-v1"), "{output}");
+        assert!(output.contains("ResolvedTickets"), "{output}");
+        assert!(output.contains("plans"), "{output}");
+        assert!(output.contains("teams"), "{output}");
+        assert!(output.contains("sla_policies"), "{output}");
+
+        let invalid = recovery_engine()
+            .recover_workspace(examples.join("invalid.telora"))
+            .unwrap();
+        let messages = invalid
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| {
+                message.contains("no ontology capability is defined for CustomerSegment")
+            }),
+            "{messages:#?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("expands the measure grain")),
+            "{messages:#?}"
+        );
+    }
 }
