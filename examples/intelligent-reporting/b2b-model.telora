@@ -1,5 +1,6 @@
 import "std/array" as array;
 import "std/codec" as codec;
+import "analytics-ontology/compiler.telora" as ontology_compiler;
 import "ontology-method/ontology.telora" as ontology;
 import "ontology-method/types.telora" as types;
 import "analytics-method/analytics.telora" as analytics;
@@ -17,7 +18,16 @@ import "./sql.telora" {
     Select,
     render_select,
 };
-import "./relations.telora" { Entity, Relation, PathPlan, plan };
+import "./relations.telora" {
+    Entity,
+    Relation,
+    PathPlan,
+    catalog,
+    fanout_catalog,
+    relation_from,
+    relation_to,
+    plan,
+};
 import "./execution.telora" {
     OutputMode, QueryParameter, ResultType, ResultField, RenderPlan, ExecutionPlan,
 };
@@ -130,9 +140,6 @@ type DimensionCapability = types.DimensionDefinition(
     Array(Measure),
     GroupRequirement,
 );
-
-type QueryCompilation = types.Compilation(QueryPlan);
-type RequirementCompilation = types.Compilation(GroupRequirement);
 
 def complete_requirement: Fn(Dimension, Projection, Expr, Entity, ResultField) -> Option(GroupRequirement) = fn(dimension, projected, group_expression, required_entity, result_field) {
     'Some({dimension, projection: projected, group_expression, required_entity, result_field})
@@ -427,28 +434,6 @@ def selected_measures: Fn(ReportIntent) -> Option(Array(Measure)) = fn(intent) {
     }
 };
 
-def compile_requirements: Fn(Array(Measure), Array(Dimension)) -> RequirementCompilation = fn(measures, dimensions) {
-    ontology.compile_requested(
-        dimensions,
-        dimension_capabilities,
-        fn(capability) { capability.id },
-        fn(capability, dimension, selected) { capability.lower(dimension, selected) },
-        measures,
-        fn(results, values, complete) { {results, values, complete} },
-    )
-};
-
-def compile_measure_fragments: Fn(Array(Measure), Alignment) -> QueryCompilation = fn(measures, alignment) {
-    ontology.compile_requested(
-        measures,
-        measure_capabilities,
-        fn(capability) { capability.id },
-        fn(capability, measure, selected_alignment) { capability.lower(measure, selected_alignment) },
-        alignment,
-        fn(results, values, complete) { {results, values, complete} },
-    )
-};
-
 def combine_query_plans: Fn(Array(QueryPlan), Alignment) -> Option(QueryPlan) = fn(plans, alignment) {
     match array.find(plans, fn(ignored) { 'True }) {
     'None => 'None,
@@ -643,41 +628,67 @@ def compile_render: Fn(RenderIntent, Array(ResultField)) -> Option(RenderPlan) =
 export def compile: Fn(Any, ReportIntent) -> Option(ExecutionPlan) = fn(raw_restriction, intent) {
     let restriction = decode_restriction(raw_restriction);
     let order_valid = verify_order(intent);
+    let filter_requirements = compile_filters(intent.filters);
     match selected_measures(intent) {
         'None => 'None,
         'Some(measures) => {
-            let fragment_compilation = compile_measure_fragments(measures, intent.alignment);
-            let fragments = fragment_compilation.values;
-            let requirement_compilation = compile_requirements(measures, intent.dimensions);
-            let requirements = requirement_compilation.values;
-            let filter_requirements = compile_filters(intent.filters);
-            match combine_query_plans(fragments, intent.alignment) {
-            'None => 'None,
-            'Some(query_plan) => {
-            let semantic = lower_semantics(intent, query_plan, requirements, filter_requirements);
-            let relational = lower_relationships(semantic);
-            let relationships_valid = verify_relationships(relational.paths, requirements);
-            let restriction_valid = verify_restriction(restriction, requirements, filter_requirements);
-            let sql_plan = lower_sql(relational);
-            match compile_render(intent.render, sql_plan.result_schema) {
-            'None => 'None,
-            'Some(render) => if ontology.compilation_complete(fragment_compilation.complete) && ontology.compilation_complete(requirement_compilation.complete) && relationships_valid && restriction_valid && order_valid {
-                'Some({
-                version: 1,
-                restriction_revision: restriction.revision,
-                dialect: 'Sqlite,
-                statement: render_select(sql_plan.query),
-                parameters: sql_plan.parameters,
-                result_schema: sql_plan.result_schema,
-                render,
-                read_only: 'True,
-                })
-            } else {
-                'None
-            },
-            }
-            },
-            }
+            ontology_compiler.compile_with(
+                measures,
+                measure_capabilities,
+                fn(capability) { capability.id },
+                fn(capability, measure, alignment) { capability.lower(measure, alignment) },
+                intent.alignment,
+                intent.dimensions,
+                dimension_capabilities,
+                fn(capability) { capability.id },
+                fn(capability, dimension, selected) { capability.lower(dimension, selected) },
+                measures,
+                fn(fragments) { combine_query_plans(fragments, intent.alignment) },
+                fn(query_plan) { query_plan.base_entity },
+                fn(query_plan) { query_plan.required_entities },
+                fn(requirement) { requirement.required_entity },
+                fn(requirement) { requirement.dimension },
+                array.map(filter_requirements, fn(filter) { filter.required_entity }),
+                catalog,
+                fanout_catalog,
+                relation_from,
+                relation_to,
+                fn(query_plan, requirements, relations) {
+                    let semantic = lower_semantics(
+                        intent,
+                        query_plan,
+                        requirements,
+                        filter_requirements,
+                    );
+                    let relational: RelationalPlan = {
+                        semantic,
+                        paths: {relations, fanout: [], missing: []},
+                    };
+                    let restriction_valid = verify_restriction(
+                        restriction,
+                        requirements,
+                        filter_requirements,
+                    );
+                    let sql_plan = lower_sql(relational);
+                    match compile_render(intent.render, sql_plan.result_schema) {
+                        'None => 'None,
+                        'Some(render) => if restriction_valid && order_valid {
+                            'Some({
+                                version: 1,
+                                restriction_revision: restriction.revision,
+                                dialect: 'Sqlite,
+                                statement: render_select(sql_plan.query),
+                                parameters: sql_plan.parameters,
+                                result_schema: sql_plan.result_schema,
+                                render,
+                                read_only: 'True,
+                            })
+                        } else {
+                            'None
+                        },
+                    }
+                },
+            )
         }
     }
 };

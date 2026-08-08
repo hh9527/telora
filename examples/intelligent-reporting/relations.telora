@@ -61,4 +61,14 @@ def plan: Fn(Entity, Array(Entity)) -> PathPlan = fn(base, targets) {
     )
 };
 
-export { Entity, Cardinality, Relation, PathPlan, plan };
+export {
+    Entity,
+    Cardinality,
+    Relation,
+    PathPlan,
+    catalog,
+    fanout_catalog,
+    relation_from,
+    relation_to,
+    plan,
+};

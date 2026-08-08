@@ -216,6 +216,7 @@ export def compile:
             fn(combined) { combined.required_entities },
             fn(dimension) { dimension.required_entity },
             fn(dimension) { dimension.source },
+            [],
             safe_relations,
             fanout_relations,
             relation_from,

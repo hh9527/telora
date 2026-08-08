@@ -1,1 +1,1 @@
-{"dependencies":{"analytics-method":{"path":"../analytics-method"},"ontology-method":{"path":"../ontology-method"}}}
+{"dependencies":{"analytics-method":{"path":"../analytics-method"},"analytics-ontology":{"path":"../analytics-ontology"},"ontology-method":{"path":"../ontology-method"}}}

@@ -17,6 +17,7 @@ The caller supplies:
 - typed capability catalogs, identity selectors, lowerers, and inputs;
 - a measure-combination policy;
 - required-node and diagnostic-subject selectors;
+- additional required nodes from model stages such as filters;
 - safe and fan-out relation catalogs plus endpoint selectors; and
 - a final typed plan builder.
 
@@ -37,8 +38,10 @@ selectors that are only mechanical adapters.
 
 The function does not short-circuit the dimension compilation after a measure
 failure. It operates on completed partial values for downstream independent
-checks, while `Option(Plan)` remains gated by both complete compilations,
-measure combination, path validity, and the enterprise builder.
+checks. Once measure combination exists, it also invokes the enterprise
+builder before applying the publication gate so restriction, render, and other
+independent diagnostics remain observable. The candidate plan is discarded
+unless both compilations, path validity, and the builder succeed.
 
 ## Implementation result
 

@@ -48,6 +48,10 @@ Telora 代码将合法意图逐步 lowering 为 SQLite SQL。
   Measure、Dimension、Relation 与 Compilation 类型族；RFC 0209 共享完整路径
   分类和诊断规则；RFC 0210 共享 capability 编译协议；RFC 0211 对实际复用范围
   做了逐项审计，没有把单方或 fixture-only API 算作已证明能力。
+- RFC 0212：把当前方向明确为以 Telora 为宿主的 ontology embedded DSL；
+  RFC 0213 提供 typed `analytics.compile_with`，RFC 0214/0215 分别迁移 B2C 与
+  B2B。企业层保留领域事实、策略和物理 builder，共享层维护 capability、关系
+  与原子发布的 lowering 顺序；typed selector 样板被明确记录而非隐藏。
 
 ## 文件
 
@@ -59,6 +63,8 @@ Telora 代码将合法意图逐步 lowering 为 SQLite SQL。
 - `b2b-model.telora`：B2B 领域类型、指标、维度、物理映射、校验和 lowering；
 - `../ontology-method/src/types.telora`：可复用的 TypeMetadata 类型构造器；
 - `../ontology-method/src/ontology.telora`：typed capability、关系与授权组合方法；
+- `../analytics-ontology/src/compiler.telora`：analytics 行业 DSL 的通用 lowering
+  编排；
 - `restriction.json`：允许全部报表 entity 的普通外部 restriction；
 - `restricted.json`：只允许 Order entity，用于跨来源诊断回归；
 - `valid.telora`：按月份、客户区域统计净收入；
