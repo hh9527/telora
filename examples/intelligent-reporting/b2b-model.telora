@@ -1,6 +1,7 @@
 import "std/array" as array;
 import "std/codec" as codec;
 import "ontology-method/ontology.telora" as ontology;
+import "ontology-method/types.telora" as types;
 import "analytics-method/analytics.telora" as analytics;
 import "./sql.telora" {
     Function,
@@ -115,21 +116,20 @@ import "./execution.telora" {
     result_schema: Array(ResultField),
 };
 
-type MeasureLowerer = Fn(Measure, Alignment) -> Option(QueryPlan);
-type DimensionLowerer = Fn(Dimension, Array(Measure)) -> Option(GroupRequirement);
+type MeasureCapability = types.MeasureDefinition(
+    Measure,
+    Entity,
+    SemanticValueType,
+    Aggregation,
+    Alignment,
+    QueryPlan,
+);
 
-@struct type MeasureCapability = {
-    id: Measure,
-    value_type: SemanticValueType,
-    natural_grain: Entity,
-    aggregation: Aggregation,
-    lower: MeasureLowerer,
-};
-
-@struct type DimensionCapability = {
-    id: Dimension,
-    lower: DimensionLowerer,
-};
+type DimensionCapability = types.DimensionDefinition(
+    Dimension,
+    Array(Measure),
+    GroupRequirement,
+);
 
 def complete_requirement: Fn(Dimension, Projection, Expr, Entity, ResultField) -> Option(GroupRequirement) = fn(dimension, projected, group_expression, required_entity, result_field) {
     'Some({dimension, projection: projected, group_expression, required_entity, result_field})
@@ -205,12 +205,13 @@ def join: Fn(JoinKind, Source, Expr) -> Join = fn(kind, joined_source, on) {
 };
 
 def relation_join: Fn(Relation) -> Join = fn(relation) {
+    let mapping = relation.mapping;
     join(
         'Inner,
-        source(relation.table, relation.alias),
+        source(mapping.table, mapping.alias),
         equals(
-            column(relation.left_alias, relation.left_column),
-            column(relation.right_alias, relation.right_column),
+            column(mapping.left_alias, mapping.left_column),
+            column(mapping.right_alias, mapping.right_column),
         ),
     )
 };

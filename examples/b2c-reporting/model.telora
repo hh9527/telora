@@ -32,17 +32,24 @@ import "ontology-method/ontology.telora" as ontology;
 
 @enum type Alignment = { Natural: 'None };
 
+@enum type SemanticValueType = {
+    MoneyCents: 'None,
+    Count: 'None,
+};
+
+@enum type Aggregation = {
+    Additive: 'None,
+    NonAdditive: 'None,
+};
+
 @enum type Cardinality = {
     ManyToOne: 'None,
     OneToMany: 'None,
 };
 
-@struct type Relation = {
-    from: Entity,
-    to: Entity,
+@struct type RelationMapping = {
     table: String,
     on: String,
-    cardinality: Cardinality,
 };
 
 @struct type MeasurePlan = {
@@ -73,11 +80,28 @@ import "ontology-method/ontology.telora" as ontology;
     read_only: Bool,
 };
 
-type MeasureCapability = types.Capability(Measure, Alignment, MeasurePlan);
-type DimensionCapability = types.Capability(Dimension, Array(Measure), DimensionPlan);
+type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
+
+type MeasureCapability = types.MeasureDefinition(
+    Measure,
+    Entity,
+    SemanticValueType,
+    Aggregation,
+    Alignment,
+    MeasurePlan,
+);
+
+type DimensionCapability = types.DimensionDefinition(
+    Dimension,
+    Array(Measure),
+    DimensionPlan,
+);
 
 def purchase_revenue: MeasureCapability = {
     id: 'PurchaseRevenue,
+    value_type: 'MoneyCents,
+    natural_grain: 'Order,
+    aggregation: 'Additive,
     lower: fn(requested, alignment) {
         'Some({
             source: requested,
@@ -90,6 +114,9 @@ def purchase_revenue: MeasureCapability = {
 
 def session_conversions: MeasureCapability = {
     id: 'SessionConversions,
+    value_type: 'Count,
+    natural_grain: 'Session,
+    aggregation: 'NonAdditive,
     lower: fn(requested, alignment) {
         'Some({
             source: requested,
@@ -121,22 +148,22 @@ def dimension_capabilities: Array(DimensionCapability) = [
 ];
 
 def safe_relations: Array(Relation) = [
-    {from: 'Order, to: 'Consumer, table: "consumers", on: "consumers.id = orders.consumer_id", cardinality: 'ManyToOne},
-    {from: 'Consumer, to: 'Household, table: "households", on: "households.id = consumers.household_id", cardinality: 'ManyToOne},
-    {from: 'Household, to: 'Address, table: "addresses", on: "addresses.id = households.address_id", cardinality: 'ManyToOne},
-    {from: 'Address, to: 'Region, table: "regions", on: "regions.id = addresses.region_id", cardinality: 'ManyToOne},
-    {from: 'Order, to: 'Session, table: "sessions", on: "sessions.id = orders.session_id", cardinality: 'ManyToOne},
-    {from: 'Session, to: 'Campaign, table: "campaigns", on: "campaigns.id = sessions.campaign_id", cardinality: 'ManyToOne},
-    {from: 'CartItem, to: 'Cart, table: "carts", on: "carts.id = cart_items.cart_id", cardinality: 'ManyToOne},
-    {from: 'Cart, to: 'Consumer, table: "consumers", on: "consumers.id = carts.consumer_id", cardinality: 'ManyToOne},
-    {from: 'CartItem, to: 'Product, table: "products", on: "products.id = cart_items.product_id", cardinality: 'ManyToOne},
-    {from: 'OrderItem, to: 'Order, table: "orders", on: "orders.id = order_items.order_id", cardinality: 'ManyToOne},
-    {from: 'OrderItem, to: 'Product, table: "products", on: "products.id = order_items.product_id", cardinality: 'ManyToOne},
-    {from: 'Product, to: 'Category, table: "categories", on: "categories.id = products.category_id", cardinality: 'ManyToOne},
+    {from: 'Order, to: 'Consumer, cardinality: 'ManyToOne, mapping: {table: "consumers", on: "consumers.id = orders.consumer_id"}},
+    {from: 'Consumer, to: 'Household, cardinality: 'ManyToOne, mapping: {table: "households", on: "households.id = consumers.household_id"}},
+    {from: 'Household, to: 'Address, cardinality: 'ManyToOne, mapping: {table: "addresses", on: "addresses.id = households.address_id"}},
+    {from: 'Address, to: 'Region, cardinality: 'ManyToOne, mapping: {table: "regions", on: "regions.id = addresses.region_id"}},
+    {from: 'Order, to: 'Session, cardinality: 'ManyToOne, mapping: {table: "sessions", on: "sessions.id = orders.session_id"}},
+    {from: 'Session, to: 'Campaign, cardinality: 'ManyToOne, mapping: {table: "campaigns", on: "campaigns.id = sessions.campaign_id"}},
+    {from: 'CartItem, to: 'Cart, cardinality: 'ManyToOne, mapping: {table: "carts", on: "carts.id = cart_items.cart_id"}},
+    {from: 'Cart, to: 'Consumer, cardinality: 'ManyToOne, mapping: {table: "consumers", on: "consumers.id = carts.consumer_id"}},
+    {from: 'CartItem, to: 'Product, cardinality: 'ManyToOne, mapping: {table: "products", on: "products.id = cart_items.product_id"}},
+    {from: 'OrderItem, to: 'Order, cardinality: 'ManyToOne, mapping: {table: "orders", on: "orders.id = order_items.order_id"}},
+    {from: 'OrderItem, to: 'Product, cardinality: 'ManyToOne, mapping: {table: "products", on: "products.id = order_items.product_id"}},
+    {from: 'Product, to: 'Category, cardinality: 'ManyToOne, mapping: {table: "categories", on: "categories.id = products.category_id"}},
 ];
 
 def fanout_relations: Array(Relation) = [
-    {from: 'Order, to: 'OrderItem, table: "order_items", on: "order_items.order_id = orders.id", cardinality: 'OneToMany},
+    {from: 'Order, to: 'OrderItem, cardinality: 'OneToMany, mapping: {table: "order_items", on: "order_items.order_id = orders.id"}},
 ];
 
 def relation_from: Fn(Relation) -> Entity = fn(relation) { relation.from };

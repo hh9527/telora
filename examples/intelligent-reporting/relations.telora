@@ -1,5 +1,6 @@
 import "std/array" as array;
 import "ontology-method/ontology.telora" as ontology;
+import "ontology-method/types.telora" as types;
 
 @enum type Entity = {
     Region: 'None,
@@ -11,22 +12,21 @@ import "ontology-method/ontology.telora" as ontology;
     Category: 'None,
 };
 
-@struct type Relation = {
-    from: Entity,
-    to: Entity,
+@struct type RelationMapping = {
     table: String,
     alias: String,
     left_alias: String,
     left_column: String,
     right_alias: String,
     right_column: String,
-    cardinality: Cardinality,
 };
 
 @enum type Cardinality = {
     ManyToOne: 'None,
     OneToMany: 'None,
 };
+
+type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
 
 @struct type PathPlan = {
     relations: Array(Relation),
@@ -35,16 +35,16 @@ import "ontology-method/ontology.telora" as ontology;
 };
 
 def catalog: Array(Relation) = [
-    {from: 'OrderItem, to: 'Order, table: "orders", alias: "o", left_alias: "o", left_column: "id", right_alias: "oi", right_column: "order_id", cardinality: 'ManyToOne},
-    {from: 'Order, to: 'Customer, table: "customers", alias: "c", left_alias: "c", left_column: "id", right_alias: "o", right_column: "customer_id", cardinality: 'ManyToOne},
-    {from: 'Customer, to: 'Organization, table: "organizations", alias: "org", left_alias: "org", left_column: "id", right_alias: "c", right_column: "org_id", cardinality: 'ManyToOne},
-    {from: 'Organization, to: 'Region, table: "regions", alias: "r", left_alias: "r", left_column: "id", right_alias: "org", right_column: "region_id", cardinality: 'ManyToOne},
-    {from: 'OrderItem, to: 'Product, table: "products", alias: "product", left_alias: "product", left_column: "id", right_alias: "oi", right_column: "product_id", cardinality: 'ManyToOne},
-    {from: 'Product, to: 'Category, table: "categories", alias: "cat", left_alias: "cat", left_column: "id", right_alias: "product", right_column: "category_id", cardinality: 'ManyToOne},
+    {from: 'OrderItem, to: 'Order, cardinality: 'ManyToOne, mapping: {table: "orders", alias: "o", left_alias: "o", left_column: "id", right_alias: "oi", right_column: "order_id"}},
+    {from: 'Order, to: 'Customer, cardinality: 'ManyToOne, mapping: {table: "customers", alias: "c", left_alias: "c", left_column: "id", right_alias: "o", right_column: "customer_id"}},
+    {from: 'Customer, to: 'Organization, cardinality: 'ManyToOne, mapping: {table: "organizations", alias: "org", left_alias: "org", left_column: "id", right_alias: "c", right_column: "org_id"}},
+    {from: 'Organization, to: 'Region, cardinality: 'ManyToOne, mapping: {table: "regions", alias: "r", left_alias: "r", left_column: "id", right_alias: "org", right_column: "region_id"}},
+    {from: 'OrderItem, to: 'Product, cardinality: 'ManyToOne, mapping: {table: "products", alias: "product", left_alias: "product", left_column: "id", right_alias: "oi", right_column: "product_id"}},
+    {from: 'Product, to: 'Category, cardinality: 'ManyToOne, mapping: {table: "categories", alias: "cat", left_alias: "cat", left_column: "id", right_alias: "product", right_column: "category_id"}},
 ];
 
 def fanout_catalog: Array(Relation) = [
-    {from: 'Order, to: 'OrderItem, table: "order_items", alias: "oi", left_alias: "oi", left_column: "order_id", right_alias: "o", right_column: "id", cardinality: 'OneToMany},
+    {from: 'Order, to: 'OrderItem, cardinality: 'OneToMany, mapping: {table: "order_items", alias: "oi", left_alias: "oi", left_column: "order_id", right_alias: "o", right_column: "id"}},
 ];
 
 def contains: Fn(Array(Entity), Entity) -> Bool = fn(values, expected) {

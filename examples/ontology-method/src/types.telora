@@ -29,4 +29,54 @@ def Capability:
     })
     };
 
-export { Maybe, Many, Requirement, Capability };
+def MeasureDefinition:
+    for(Id, Entity, SemanticType, Aggregation, Input, Output)
+    Fn(
+        TypeOf(Id),
+        TypeOf(Entity),
+        TypeOf(SemanticType),
+        TypeOf(Aggregation),
+        TypeOf(Input),
+        TypeOf(Output),
+    ) -> Type =
+    fn(Id, Entity, SemanticType, Aggregation, Input, Output) {
+        struct('None, {
+            id: Id,
+            value_type: SemanticType,
+            natural_grain: Entity,
+            aggregation: Aggregation,
+            lower: Fn(Id, Input) -> Option(Output),
+        })
+    };
+
+def DimensionDefinition:
+    for(Id, Input, Output)
+    Fn(TypeOf(Id), TypeOf(Input), TypeOf(Output)) -> Type =
+    fn(Id, Input, Output) {
+        struct('None, {
+            id: Id,
+            lower: Fn(Id, Input) -> Option(Output),
+        })
+    };
+
+def RelationDefinition:
+    for(Entity, Cardinality, Mapping)
+    Fn(TypeOf(Entity), TypeOf(Cardinality), TypeOf(Mapping)) -> Type =
+    fn(Entity, Cardinality, Mapping) {
+        struct('None, {
+            from: Entity,
+            to: Entity,
+            cardinality: Cardinality,
+            mapping: Mapping,
+        })
+    };
+
+export {
+    Maybe,
+    Many,
+    Requirement,
+    Capability,
+    MeasureDefinition,
+    DimensionDefinition,
+    RelationDefinition,
+};
