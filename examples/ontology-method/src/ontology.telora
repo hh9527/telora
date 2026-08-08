@@ -98,6 +98,83 @@ def select_connecting_edges:
         })
     };
 
+def classify_paths:
+    for(Node, Edge, Result)
+    Fn(
+        Array(Edge),
+        Array(Edge),
+        Node,
+        Array(Node),
+        Fn(Edge) -> Node,
+        Fn(Edge) -> Node,
+        Fn(Array(Edge), Array(Node), Array(Node)) -> Result,
+    ) -> Result =
+    fn(safe_edges, fanout_edges, base, targets, from, to, build) {
+        let needed = close_six(safe_edges, targets, to, from);
+        let safe_reachable = close_six(safe_edges, [base], from, to);
+        let all_reachable = close_six(
+            array.concat([safe_edges, fanout_edges]),
+            [base],
+            from,
+            to,
+        );
+        build(
+            select_connecting_edges(
+                safe_edges,
+                safe_reachable,
+                needed,
+                from,
+                to,
+            ),
+            array.filter(targets, fn(target) {
+                contains(safe_reachable, target) == 'False
+                    && contains(all_reachable, target)
+            }),
+            array.filter(targets, fn(target) {
+                contains(all_reachable, target) == 'False
+            }),
+        )
+    };
+
+def verify_path_requirements:
+    for(Node, Requirement, Subject)
+    Fn(
+        Array(Node),
+        Array(Node),
+        Array(Requirement),
+        Fn(Requirement) -> Node,
+        Fn(Requirement) -> Subject,
+    ) -> Bool =
+    fn(fanout, missing, requirements, required_node, subject_of) {
+        let fanout_errors = array.flat_map(fanout, fn(target) {
+            array.map(
+                array.filter(requirements, fn(requirement) {
+                    required_node(requirement) == target
+                }),
+                fn(requirement) {
+                    emit_error!(
+                        `reaching \{target} expands the measure grain; define pre-aggregation or an allocation policy`,
+                        subject_of(requirement),
+                    )
+                },
+            )
+        });
+        let missing_errors = array.flat_map(missing, fn(target) {
+            array.map(
+                array.filter(requirements, fn(requirement) {
+                    required_node(requirement) == target
+                }),
+                fn(requirement) {
+                    emit_error!(
+                        `no verified relationship path reaches \{target}`,
+                        subject_of(requirement),
+                    )
+                },
+            )
+        });
+        array.length(fanout_errors) == 0 && array.length(missing_errors) == 0
+    };
+
 def verify_allowed:
     for(Node, Requirement)
     Fn(Array(Requirement), Array(Node), Fn(Requirement) -> Node) -> Bool =
@@ -122,5 +199,7 @@ export {
     expand_once,
     close_six,
     select_connecting_edges,
+    classify_paths,
+    verify_path_requirements,
     verify_allowed,
 };

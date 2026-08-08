@@ -170,47 +170,25 @@ def relation_from: Fn(Relation) -> Entity = fn(relation) { relation.from };
 def relation_to: Fn(Relation) -> Entity = fn(relation) { relation.to };
 
 def plan_paths: Fn(Entity, Array(Entity)) -> PathPlan = fn(base, targets) {
-    let needed = ontology.close_six(safe_relations, targets, relation_to, relation_from);
-    let safe_reachable = ontology.close_six(safe_relations, [base], relation_from, relation_to);
-    let all = array.concat([safe_relations, fanout_relations]);
-    let all_reachable = ontology.close_six(all, [base], relation_from, relation_to);
-    {
-        joins: ontology.select_connecting_edges(
-            safe_relations,
-            safe_reachable,
-            needed,
-            relation_from,
-            relation_to,
-        ),
-        fanout: array.filter(targets, fn(target) {
-            ontology.contains(safe_reachable, target) == 'False
-                && ontology.contains(all_reachable, target)
-        }),
-        missing: array.filter(targets, fn(target) {
-            ontology.contains(all_reachable, target) == 'False
-        }),
-    }
+    ontology.classify_paths(
+        safe_relations,
+        fanout_relations,
+        base,
+        targets,
+        relation_from,
+        relation_to,
+        fn(joins, fanout, missing) { {joins, fanout, missing} },
+    )
 };
 
 def verify_paths: Fn(PathPlan, Array(DimensionPlan)) -> Bool = fn(paths, dimensions) {
-    let fanout_errors = array.flat_map(paths.fanout, fn(target) {
-        array.map(
-            array.filter(dimensions, fn(item) { item.required_entity == target }),
-            fn(item) {
-                emit_error!(
-                    `dimension \{item.source} crosses an unapproved one-to-many edge`,
-                    item.source,
-                )
-            },
-        )
-    });
-    let missing_errors = array.flat_map(paths.missing, fn(target) {
-        array.map(
-            array.filter(dimensions, fn(item) { item.required_entity == target }),
-            fn(item) { emit_error!(`no B2C relation reaches \{target}`, item.source) },
-        )
-    });
-    array.length(fanout_errors) == 0 && array.length(missing_errors) == 0
+    ontology.verify_path_requirements(
+        paths.fanout,
+        paths.missing,
+        dimensions,
+        fn(item) { item.required_entity },
+        fn(item) { item.source },
+    )
 };
 
 export def compile:

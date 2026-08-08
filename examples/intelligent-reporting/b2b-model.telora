@@ -527,23 +527,13 @@ def required_targets: Fn(QueryPlan, Array(GroupRequirement), Array(FilterRequire
 };
 
 def verify_relationships: Fn(PathPlan, Array(GroupRequirement)) -> Bool = fn(paths, requirements) {
-    let failures = array.concat([
-        array.flat_map(paths.fanout, fn(target) {
-            array.map(
-                array.filter(requirements, fn(requirement) { requirement.required_entity == target }),
-                fn(requirement) {
-                    emit_error!(`reaching \{target} expands the measure grain; define pre-aggregation or an allocation policy`, requirement.dimension)
-                },
-            )
-        }),
-        array.flat_map(paths.missing, fn(target) {
-            array.map(
-                array.filter(requirements, fn(requirement) { requirement.required_entity == target }),
-                fn(requirement) { emit_error!(`no verified relationship path reaches \{target}`, requirement.dimension) },
-            )
-        }),
-    ]);
-    array.length(failures) == 0
+    ontology.verify_path_requirements(
+        paths.fanout,
+        paths.missing,
+        requirements,
+        fn(requirement) { requirement.required_entity },
+        fn(requirement) { requirement.dimension },
+    )
 };
 
 def decode_restriction: Fn(Any) -> Restriction = fn(raw) {

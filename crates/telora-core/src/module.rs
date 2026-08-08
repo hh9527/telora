@@ -9276,7 +9276,7 @@ export let output: String = error.message;"#,
         assert!(
             messages
                 .iter()
-                .any(|message| message.contains("crosses an unapproved one-to-many edge")),
+                .any(|message| message.contains("expands the measure grain")),
             "{messages:#?}"
         );
     }

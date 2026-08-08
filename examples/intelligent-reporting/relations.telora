@@ -1,4 +1,3 @@
-import "std/array" as array;
 import "ontology-method/ontology.telora" as ontology;
 import "ontology-method/types.telora" as types;
 
@@ -47,27 +46,19 @@ def fanout_catalog: Array(Relation) = [
     {from: 'Order, to: 'OrderItem, cardinality: 'OneToMany, mapping: {table: "order_items", alias: "oi", left_alias: "oi", left_column: "order_id", right_alias: "o", right_column: "id"}},
 ];
 
-def contains: Fn(Array(Entity), Entity) -> Bool = fn(values, expected) {
-    ontology.contains(values, expected)
-};
-
 def relation_from: Fn(Relation) -> Entity = fn(relation) { relation.from };
 def relation_to: Fn(Relation) -> Entity = fn(relation) { relation.to };
 
 def plan: Fn(Entity, Array(Entity)) -> PathPlan = fn(base, targets) {
-    let needed = ontology.close_six(catalog, targets, relation_to, relation_from);
-    let safe_reachable = ontology.close_six(catalog, [base], relation_from, relation_to);
-    let all = array.concat([catalog, fanout_catalog]);
-    let all_reachable = ontology.close_six(all, [base], relation_from, relation_to);
-    {
-        relations: ontology.select_connecting_edges(
-            catalog, safe_reachable, needed, relation_from, relation_to,
-        ),
-        fanout: array.filter(targets, fn(target) {
-            contains(safe_reachable, target) == 'False && contains(all_reachable, target)
-        }),
-        missing: array.filter(targets, fn(target) { contains(all_reachable, target) == 'False }),
-    }
+    ontology.classify_paths(
+        catalog,
+        fanout_catalog,
+        base,
+        targets,
+        relation_from,
+        relation_to,
+        fn(relations, fanout, missing) { {relations, fanout, missing} },
+    )
 };
 
 export { Entity, Cardinality, Relation, PathPlan, plan };

@@ -63,7 +63,7 @@ not a B2C concept added to the shared layer.
 3. valid PurchaseRevenue with month, region, and campaign lowers to a complete
    read-only plan;
 4. the plan includes both geography and attribution relation paths;
-5. invalid ProductCategory reports an unapproved one-to-many edge;
+5. invalid ProductCategory reports that the path expands measure grain;
 6. invalid LoyaltyTier reports a missing shared capability;
 7. both independent errors are available in one recovery snapshot;
 8. model and intent code contain no `Any` fallback; and
