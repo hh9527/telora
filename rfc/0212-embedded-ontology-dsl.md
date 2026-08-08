@@ -1,6 +1,6 @@
 # RFC 0212: Embedded ontology DSL
 
-- Status: Accepted
+- Status: Implemented
 - Depends on: RFC 0207
 
 ## Summary
@@ -132,3 +132,15 @@ Stop or narrow the shared compiler if:
 - unbounded graph search;
 - a universal SQL compiler; or
 - claiming that every domain ontology follows the analytics method.
+
+## Implementation result
+
+RFCs 0213 through 0216 implement and audit the first analytics ontology DSL.
+Both enterprise models now execute one typed `compile_with` pipeline while
+retaining their closed vocabularies, mappings, combination policy, and final
+physical builders. Existing valid plans and best-effort diagnostic sets remain
+covered by the workspace regressions.
+
+The result validates the embedded-DSL architecture, not a claim of universal
+ontology abstraction. RFC 0216 records the enterprise authoring contract and
+the still-visible selector and positional-call costs.

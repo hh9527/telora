@@ -51,7 +51,8 @@ Telora 代码将合法意图逐步 lowering 为 SQLite SQL。
 - RFC 0212：把当前方向明确为以 Telora 为宿主的 ontology embedded DSL；
   RFC 0213 提供 typed `analytics.compile_with`，RFC 0214/0215 分别迁移 B2C 与
   B2B。企业层保留领域事实、策略和物理 builder，共享层维护 capability、关系
-  与原子发布的 lowering 顺序；typed selector 样板被明确记录而非隐藏。
+  与原子发布的 lowering 顺序；RFC 0216 已完成诚实审计，typed selector 样板
+  和方法边界被明确记录而非隐藏。
 
 ## 文件
 
