@@ -1,6 +1,6 @@
 # RFC 0207: Higher-order ontology rule abstraction
 
-- Status: Accepted
+- Status: Implemented
 - Depends on: RFC 0202
 
 ## Summary
@@ -148,3 +148,16 @@ Stop an extraction when:
 The expected outcome may remain a medium-sized analytics method rather than a
 general ontology framework. The purpose of this phase is to locate that
 boundary precisely.
+
+## Implementation result
+
+RFCs 0208 through 0211 complete this phase. Both models now instantiate shared
+definition and compilation families, execute one capability-compilation
+protocol, and execute one complete path classification and verification rule.
+RFC 0211 records exact direct and indirect use and separates shared method from
+model-owned semantics.
+
+No child added an ontology-specific language feature or weakened a closed
+model type. Continuation-style result construction handled model-specific
+PathPlan and Compilation types where a user-generated family could not be
+named directly in a generic return annotation.
