@@ -1,0 +1,123 @@
+import "ontology-method/ontology.telora" as ontology;
+import "std/array" as array;
+
+# The analytics embedded DSL owns phase ordering. Every value crossing this
+# boundary retains the enterprise model's closed type.
+def compile_with:
+    for(
+        MeasureId,
+        MeasureCapability,
+        MeasureInput,
+        MeasureOutput,
+        DimensionId,
+        DimensionCapability,
+        DimensionInput,
+        DimensionOutput,
+        CombinedMeasure,
+        Node,
+        Edge,
+        Subject,
+        Plan,
+    )
+    Fn(
+        Array(MeasureId),
+        Array(MeasureCapability),
+        Fn(MeasureCapability) -> MeasureId,
+        Fn(MeasureCapability, MeasureId, MeasureInput) -> Option(MeasureOutput),
+        MeasureInput,
+        Array(DimensionId),
+        Array(DimensionCapability),
+        Fn(DimensionCapability) -> DimensionId,
+        Fn(DimensionCapability, DimensionId, DimensionInput) -> Option(DimensionOutput),
+        DimensionInput,
+        Fn(Array(MeasureOutput)) -> Option(CombinedMeasure),
+        Fn(CombinedMeasure) -> Node,
+        Fn(CombinedMeasure) -> Array(Node),
+        Fn(DimensionOutput) -> Node,
+        Fn(DimensionOutput) -> Subject,
+        Array(Edge),
+        Array(Edge),
+        Fn(Edge) -> Node,
+        Fn(Edge) -> Node,
+        Fn(CombinedMeasure, Array(DimensionOutput), Array(Edge)) -> Option(Plan),
+    ) -> Option(Plan) =
+    fn(
+        requested_measures,
+        measure_capabilities,
+        measure_id,
+        lower_measure,
+        measure_input,
+        requested_dimensions,
+        dimension_capabilities,
+        dimension_id,
+        lower_dimension,
+        dimension_input,
+        combine_measures,
+        base_of,
+        measure_nodes,
+        dimension_node,
+        dimension_subject,
+        safe_edges,
+        fanout_edges,
+        edge_from,
+        edge_to,
+        build_plan,
+    ) {
+        ontology.compile_requested(
+            requested_measures,
+            measure_capabilities,
+            measure_id,
+            lower_measure,
+            measure_input,
+            fn(measure_results, measures, complete_measures) {
+                ontology.compile_requested(
+                    requested_dimensions,
+                    dimension_capabilities,
+                    dimension_id,
+                    lower_dimension,
+                    dimension_input,
+                    fn(dimension_results, dimensions, complete_dimensions) {
+                        match combine_measures(measures) {
+                            'None => 'None,
+                            'Some(combined) => {
+                                let required = ontology.collect_required_nodes(
+                                    dimensions,
+                                    fn(dimension) { [dimension_node(dimension)] },
+                                );
+                                let targets = array.concat([
+                                    measure_nodes(combined),
+                                    required,
+                                ]);
+                                ontology.classify_paths(
+                                    safe_edges,
+                                    fanout_edges,
+                                    base_of(combined),
+                                    targets,
+                                    edge_from,
+                                    edge_to,
+                                    fn(joins, fanout, missing) {
+                                        let paths_valid = ontology.verify_path_requirements(
+                                            fanout,
+                                            missing,
+                                            dimensions,
+                                            dimension_node,
+                                            dimension_subject,
+                                        );
+                                        if ontology.compilation_complete(complete_measures)
+                                            && ontology.compilation_complete(complete_dimensions)
+                                            && paths_valid {
+                                            build_plan(combined, dimensions, joins)
+                                        } else {
+                                            'None
+                                        }
+                                    },
+                                )
+                            },
+                        }
+                    },
+                )
+            },
+        )
+    };
+
+export { compile_with };
