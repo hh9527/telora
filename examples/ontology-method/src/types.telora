@@ -71,6 +71,16 @@ def RelationDefinition:
         })
     };
 
+def Compilation:
+    for(Output) Fn(TypeOf(Output)) -> Type =
+    fn(Output) {
+        struct('None, {
+            results: Array(Option(Output)),
+            values: Array(Output),
+            complete: Option(Array(Output)),
+        })
+    };
+
 export {
     Maybe,
     Many,
@@ -79,4 +89,5 @@ export {
     MeasureDefinition,
     DimensionDefinition,
     RelationDefinition,
+    Compilation,
 };

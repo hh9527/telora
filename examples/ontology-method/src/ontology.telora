@@ -54,6 +54,49 @@ def all_complete:
         array.length(completed(results)) == array.length(results)
     };
 
+def compile_requested:
+    for(Id, Capability, Input, Output, Result)
+    Fn(
+        Array(Id),
+        Array(Capability),
+        Fn(Capability) -> Id,
+        Fn(Capability, Id, Input) -> Option(Output),
+        Input,
+        Fn(Array(Option(Output)), Array(Output), Option(Array(Output))) -> Result,
+    ) -> Result =
+    fn(requested, capabilities, id_of, lower, input, build) {
+        let results = lower_requested(
+            requested,
+            capabilities,
+            id_of,
+            lower,
+            input,
+        );
+        let values = completed(results);
+        let complete = if array.length(values) == array.length(requested) {
+            'Some(values)
+        } else {
+            'None
+        };
+        build(results, values, complete)
+    };
+
+def compilation_complete:
+    for(A) Fn(Option(Array(A))) -> Bool =
+    fn(complete) {
+        match complete {
+            'Some(values) => 'True,
+            'None => 'False,
+        }
+    };
+
+def collect_required_nodes:
+    for(Output, Node)
+    Fn(Array(Output), Fn(Output) -> Array(Node)) -> Array(Node) =
+    fn(outputs, required_nodes) {
+        array.flat_map(outputs, required_nodes)
+    };
+
 def expand_once:
     for(Node, Edge)
     Fn(Array(Edge), Array(Node), Fn(Edge) -> Node, Fn(Edge) -> Node)
@@ -196,6 +239,9 @@ export {
     lower_requested,
     completed,
     all_complete,
+    compile_requested,
+    compilation_complete,
+    collect_required_nodes,
     expand_once,
     close_six,
     select_connecting_edges,

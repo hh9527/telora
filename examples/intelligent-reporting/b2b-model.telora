@@ -131,6 +131,9 @@ type DimensionCapability = types.DimensionDefinition(
     GroupRequirement,
 );
 
+type QueryCompilation = types.Compilation(QueryPlan);
+type RequirementCompilation = types.Compilation(GroupRequirement);
+
 def complete_requirement: Fn(Dimension, Projection, Expr, Entity, ResultField) -> Option(GroupRequirement) = fn(dimension, projected, group_expression, required_entity, result_field) {
     'Some({dimension, projection: projected, group_expression, required_entity, result_field})
 };
@@ -424,28 +427,26 @@ def selected_measures: Fn(ReportIntent) -> Option(Array(Measure)) = fn(intent) {
     }
 };
 
-def compile_requirements: Fn(Array(Measure), Array(Dimension)) -> Array(Option(GroupRequirement)) = fn(measures, dimensions) {
-    ontology.lower_requested(
+def compile_requirements: Fn(Array(Measure), Array(Dimension)) -> RequirementCompilation = fn(measures, dimensions) {
+    ontology.compile_requested(
         dimensions,
         dimension_capabilities,
         fn(capability) { capability.id },
         fn(capability, dimension, selected) { capability.lower(dimension, selected) },
         measures,
+        fn(results, values, complete) { {results, values, complete} },
     )
 };
 
-def compile_measure_fragments: Fn(Array(Measure), Alignment) -> Array(Option(QueryPlan)) = fn(measures, alignment) {
-    ontology.lower_requested(
+def compile_measure_fragments: Fn(Array(Measure), Alignment) -> QueryCompilation = fn(measures, alignment) {
+    ontology.compile_requested(
         measures,
         measure_capabilities,
         fn(capability) { capability.id },
         fn(capability, measure, selected_alignment) { capability.lower(measure, selected_alignment) },
         alignment,
+        fn(results, values, complete) { {results, values, complete} },
     )
-};
-
-def successful_query_plans: Fn(Array(Option(QueryPlan))) -> Array(QueryPlan) = fn(compilations) {
-    ontology.completed(compilations)
 };
 
 def combine_query_plans: Fn(Array(QueryPlan), Alignment) -> Option(QueryPlan) = fn(plans, alignment) {
@@ -478,10 +479,6 @@ def combine_query_plans: Fn(Array(QueryPlan), Alignment) -> Option(QueryPlan) = 
         'None
     },
     }
-};
-
-def successful_requirements: Fn(Array(Option(GroupRequirement))) -> Array(GroupRequirement) = fn(compilations) {
-    ontology.completed(compilations)
 };
 
 def compile_filters: Fn(Array(Filter)) -> Array(FilterRequirement) = fn(filters) {
@@ -520,9 +517,9 @@ def ordered_expressions: Fn(Array(Dimension), Array(GroupRequirement)) -> Array(
 
 def required_targets: Fn(QueryPlan, Array(GroupRequirement), Array(FilterRequirement)) -> Array(Entity) = fn(query_plan, requirements, filters) {
     array.concat([
-        query_plan.required_entities,
-        array.map(requirements, fn(requirement) { requirement.required_entity }),
-        array.map(filters, fn(filter) { filter.required_entity }),
+        ontology.collect_required_nodes([query_plan], fn(plan) { plan.required_entities }),
+        ontology.collect_required_nodes(requirements, fn(requirement) { [requirement.required_entity] }),
+        ontology.collect_required_nodes(filters, fn(filter) { [filter.required_entity] }),
     ])
 };
 
@@ -649,12 +646,10 @@ export def compile: Fn(Any, ReportIntent) -> Option(ExecutionPlan) = fn(raw_rest
     match selected_measures(intent) {
         'None => 'None,
         'Some(measures) => {
-            let fragment_compilations = compile_measure_fragments(measures, intent.alignment);
-            let fragments = successful_query_plans(fragment_compilations);
-            let fragments_complete = array.length(fragments) == array.length(measures);
-            let requirement_compilations = compile_requirements(measures, intent.dimensions);
-            let requirements = successful_requirements(requirement_compilations);
-            let requirements_complete = array.length(requirements) == array.length(intent.dimensions);
+            let fragment_compilation = compile_measure_fragments(measures, intent.alignment);
+            let fragments = fragment_compilation.values;
+            let requirement_compilation = compile_requirements(measures, intent.dimensions);
+            let requirements = requirement_compilation.values;
             let filter_requirements = compile_filters(intent.filters);
             match combine_query_plans(fragments, intent.alignment) {
             'None => 'None,
@@ -666,7 +661,7 @@ export def compile: Fn(Any, ReportIntent) -> Option(ExecutionPlan) = fn(raw_rest
             let sql_plan = lower_sql(relational);
             match compile_render(intent.render, sql_plan.result_schema) {
             'None => 'None,
-            'Some(render) => if fragments_complete && requirements_complete && relationships_valid && restriction_valid && order_valid {
+            'Some(render) => if ontology.compilation_complete(fragment_compilation.complete) && ontology.compilation_complete(requirement_compilation.complete) && relationships_valid && restriction_valid && order_valid {
                 'Some({
                 version: 1,
                 restriction_revision: restriction.revision,

@@ -97,6 +97,9 @@ type DimensionCapability = types.DimensionDefinition(
     DimensionPlan,
 );
 
+type MeasureCompilation = types.Compilation(MeasurePlan);
+type DimensionCompilation = types.Compilation(DimensionPlan);
+
 def purchase_revenue: MeasureCapability = {
     id: 'PurchaseRevenue,
     value_type: 'MoneyCents,
@@ -194,22 +197,24 @@ def verify_paths: Fn(PathPlan, Array(DimensionPlan)) -> Bool = fn(paths, dimensi
 export def compile:
     Fn(Array(Measure), Array(Dimension)) -> Option(ExecutionPlan) =
     fn(requested_measures, requested_dimensions) {
-        let measure_results: Array(Option(MeasurePlan)) = ontology.lower_requested(
+        let measure_compilation: MeasureCompilation = ontology.compile_requested(
             requested_measures,
             measure_capabilities,
             fn(capability) { capability.id },
             fn(capability, requested, alignment) { capability.lower(requested, alignment) },
             'Natural,
+            fn(results, values, complete) { {results, values, complete} },
         );
-        let measures = ontology.completed(measure_results);
-        let dimension_results: Array(Option(DimensionPlan)) = ontology.lower_requested(
+        let measures = measure_compilation.values;
+        let dimension_compilation: DimensionCompilation = ontology.compile_requested(
             requested_dimensions,
             dimension_capabilities,
             fn(capability) { capability.id },
             fn(capability, requested, selected) { capability.lower(requested, selected) },
             requested_measures,
+            fn(results, values, complete) { {results, values, complete} },
         );
-        let dimensions = ontology.completed(dimension_results);
+        let dimensions = dimension_compilation.values;
         match array.find(measures, fn(ignored) { 'True }) {
             'None => {
                 let ignored = emit_error!("a B2C report requires a supported measure", requested_measures);
@@ -220,13 +225,13 @@ export def compile:
                     item.base_entity == first.base_entity
                 });
                 let required = array.concat([
-                    array.flat_map(measures, fn(item) { item.required_entities }),
-                    array.map(dimensions, fn(item) { item.required_entity }),
+                    ontology.collect_required_nodes(measures, fn(item) { item.required_entities }),
+                    ontology.collect_required_nodes(dimensions, fn(item) { [item.required_entity] }),
                 ]);
                 let paths = plan_paths(first.base_entity, required);
                 let paths_valid = verify_paths(paths, dimensions);
-                if ontology.all_complete(measure_results)
-                    && ontology.all_complete(dimension_results)
+                if ontology.compilation_complete(measure_compilation.complete)
+                    && ontology.compilation_complete(dimension_compilation.complete)
                     && same_grain
                     && paths_valid {
                     'Some({
