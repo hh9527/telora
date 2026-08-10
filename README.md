@@ -330,9 +330,18 @@ cargo run -p telora -- lsp
 
 ## Documentation
 
+- [docs/README.md](docs/README.md): the current design SSOT, document map, and
+  update rules (Chinese)
+- [docs/MOTIVATION.md](docs/MOTIVATION.md): the MRT problem domain and why
+  Telora is a language for lowering intent and harnessing agents (Chinese)
+- [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md): the current whole-language
+  design baseline (Chinese)
+- [docs/design/CONCEPT.md](docs/design/CONCEPT.md): the authoritative core
+  concepts, ownership boundaries, and dependency direction (Chinese)
 - [INTRO.md](INTRO.md): the problem domain, prior art, and the GCC wrapper case
 - [VISION.md](VISION.md): the design thesis and feature admission rule
-- [rfc/](rfc/): numbered design documents with acceptance evidence
+- [tutorial.md](tutorial.md): the current public language tutorial (Chinese)
+- [rfc/](rfc/): decision history and implementation acceptance evidence
 - [README.zh.md](README.zh.md): Chinese introduction
 
 ## Verification

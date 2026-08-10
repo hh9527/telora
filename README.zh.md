@@ -220,9 +220,16 @@ cargo run -p telora -- lsp
 
 ## 文档
 
+- [docs/README.md](docs/README.md)：当前设计 SSOT 的入口、文档地图与维护规则
+- [docs/MOTIVATION.md](docs/MOTIVATION.md)：MRT 问题域，以及 Telora 为什么是
+  lowering intent 和 harness agent 的语言
+- [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md)：当前完整语言设计的 SSOT
+- [docs/design/CONCEPT.md](docs/design/CONCEPT.md)：权威的核心概念、所有权边界与
+  依赖方向
 - [INTRO.zh.md](INTRO.zh.md)：从问题域、既有方案和 GCC wrapper 案例介绍 Telora
 - [VISION.md](VISION.md)：设计命题与功能准入原则
-- [rfc/](rfc/)：带有验收证据的编号设计文档
+- [tutorial.md](tutorial.md)：当前公开语言表面的实用教程
+- [rfc/](rfc/)：单项决策的历史与实现验收证据
 - [README.md](README.md)：English
 
 ## 验证
