@@ -1,0 +1,3 @@
+[submodule "tree-sitter-telora"]
+	path = tree-sitter-telora
+	url = ../tree-sitter-telora.git
