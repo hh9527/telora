@@ -1,0 +1,158 @@
+version: soft-reproducible-v1
+isolation: instruction-isolated
+
+runner:
+  kind: builtin-sub-agent
+  control: collaboration-tools
+  topology: main-star
+  history: none
+  configuration: inherit
+  model_override: forbidden
+  external_exec_fallback: forbidden
+  creation_phase: agent-pool-preflight-only
+  creation_during_run: forbidden
+  bootstrap_role: roles/bootstrap.md
+  assignment: roles/assignment.md
+  registry_template: agent-registry.template.yaml
+  required_pool:
+    - ai2
+    - ai3
+    - ai4
+  registration_requires:
+    - canonical agent name
+    - isolated workspace
+    - exact READY response
+  run_operations:
+    assignment: followup_task on registered canonical agent name
+    observation: list_agents and agent messages
+    continuation: followup_task on the same canonical agent name
+    feedback: Main reads source output and relays a versioned feedback file
+    interruption: explicit interrupt_agent only
+  invariants:
+    - A2 A3 and A4 never message each other directly
+    - Main is the only feedback relay
+    - ending or escaping the human Main chat never implies interrupt_agent
+
+workspace:
+  layout:
+    binary: bin/telora
+    requirements: requirement
+    crates: crates
+  git:
+    independent_repository: true
+    clean_baseline_required: true
+    freeze_delivery_before_host_validation: true
+
+roles:
+  ai2:
+    role_file: roles/ai2.md
+    may_read:
+      - bin/telora
+      - requirement/ROLE.md
+      - requirement/tutorial.md
+      - requirement/edsl-design.md
+      - requirement/FEEDBACK.md
+      - crates/ontology-edsl/**
+    may_write:
+      - crates/ontology-edsl/**
+    commands:
+      - ls
+      - rg
+      - read
+      - edit
+      - bin/telora check
+      - bin/telora run
+
+  ai3:
+    role_file: roles/ai3.md
+    may_read:
+      - bin/telora
+      - requirement/ROLE.md
+      - requirement/tutorial.md
+      - requirement/EDSL_TUTORIAL.md
+      - requirement/AI3_CONTRACT.md
+      - requirement/domain.md
+      - crates/ontology-edsl/**
+      - crates/enterprise-model/**
+    may_write:
+      - crates/enterprise-model/**
+    commands:
+      - ls
+      - rg
+      - read
+      - edit
+      - bin/telora check
+      - bin/telora run
+
+  ai4:
+    role_file: roles/ai4.md
+    may_read:
+      - requirement/ROLE.md
+      - requirement/INTENT_TUTORIAL.md
+      - requirement/PUBLIC_INTENT.md
+      - requirement/PUBLIC_API.md
+      - requirement/REQUEST.md
+      - crates/intent/**
+    may_write:
+      - crates/intent/**
+    commands:
+      - ls
+      - rg
+      - read
+      - edit
+
+host:
+  owns:
+    - workspace preparation
+    - staged input hashing
+    - runner launch and monitoring
+    - candidate freezing
+    - visible and hidden validation
+    - bounded diagnostic feedback
+    - experiment records
+    - GitHub issue updates
+  commands:
+    - git
+    - telora
+    - gh
+
+launch_commit:
+  requires:
+    - runner identifier
+    - resolved working directory
+    - observed running state
+
+method_repair:
+  ad_hoc_instruction_change: forbidden
+  permission_change_in_active_run: forbidden
+  runner_change_in_active_run: forbidden
+  requires:
+    - stop active role runners
+    - classify protocol or controller defect
+    - patch versioned method files
+    - validate the patched method
+    - close the current run as superseded
+    - start a new run id from preflight
+
+controller_preflight:
+  required: true
+  operation: register complete persistent built-in star topology
+  success_requires:
+    - exactly three fresh no-history agents
+    - all required canonical agent names
+    - all exact READY responses
+    - persisted registry
+    - correction workspace smoke test
+  failure_class: controller-defect
+
+progress:
+  language: zh-CN
+  update_issue_on:
+    - runner_started
+    - first_output
+    - delivery
+    - blocker
+    - validation_result
+    - correction_started
+    - stage_accepted
+    - experiment_completed

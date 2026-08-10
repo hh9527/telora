@@ -5,8 +5,8 @@
 
 ## Summary
 
-Define a repeatable clean-room experiment that tests whether executable
-knowledge can pass through four independently isolated AI roles:
+Define a repeatable, instruction-isolated experiment that tests whether executable
+knowledge can pass through four independently staged AI roles:
 
 ```text
 human language design
@@ -17,13 +17,21 @@ human language design
 -> Telora rejects invalid intent or lowers valid intent to an execution plan
 ```
 
-The repository contains only stable experiment inputs and this protocol:
+The repository contains stable experiment inputs and a versioned execution protocol:
 
 - `/tutorial.md`, representing AI-1's public language tutorial;
 - `/experiments/four-ai-ontology/edsl-design.md`, the eDSL surface design
   implemented by AI-2;
 - `/experiments/four-ai-ontology/domain.md`, the private enterprise brief
-  revealed only at the AI-3 stage; and
+  revealed only at the AI-3 stage;
+- `/experiments/four-ai-ontology/execution-profile.yaml`, the fixed workspace,
+  capability, and progress contract;
+- `/experiments/four-ai-ontology/roles/`, the role instructions staged verbatim;
+- `/experiments/four-ai-ontology/intent-tutorial.md` and
+  `stage4-trials.yaml`, the fixed AI-4 authoring subset and trial corpus;
+- `/experiments/four-ai-ontology/RUNBOOK.md`, the normative controller procedure;
+- `/experiments/four-ai-ontology/prepare-workspace.sh`, the deterministic role
+  workspace preparer; and
 - RFC 0217, defining roles, isolation, observations, and acceptance criteria.
 
 AI-2, AI-3, and AI-4 outputs are per-run temporary artifacts. They must not
@@ -38,8 +46,8 @@ silently become inputs to later repetitions through the repository.
    enterprise implementation?
 4. Can AI-4 use only AI-3's public intent vocabulary, while remaining unable
    to bypass private physical mappings and policies?
-5. Do Telora diagnostics help each role converge without granting it direct
-   execution access?
+5. Do staged Telora diagnostics help implementation roles converge without
+   exposing Host validation internals or hidden fixtures?
 6. When a request is valid, does successful lowering produce a typed,
    executable plan rather than merely a Boolean acceptance result?
 
@@ -72,6 +80,44 @@ enterprise. AI-2 must not see it. AI-3 receives it together with AI-2's public
 eDSL package and tutorial. AI-4 does not receive it directly; it sees only the
 intent-facing reference AI-3 deliberately publishes.
 
+## Fixed execution profile
+
+The default profile is `soft-reproducible-v1`. All roles use the same installed
+Codex binary and inherit the same existing Codex configuration, model, provider,
+authentication source, and network environment. A controller must not create a
+per-run `CODEX_HOME` or override provider settings for a role.
+
+Only three launch inputs vary by role: the resolved working directory, the
+read/write contract, and the allowed command list. These values come from
+`execution-profile.yaml`; role instructions come verbatim from `roles/`. The
+controller stages and resolves versioned inputs but does not compose new role
+prompts during a run.
+
+Before a formal run id is created, Main uses built-in `spawn_agent` exactly
+three times to register fresh, history-free AI-2, AI-3, and AI-4 identities.
+Each identity first receives only the fixed bootstrap and returns `READY`; its
+canonical agent name and isolated workspace are persisted in the registry.
+The registered built-in identities are the exclusive role runners for the
+formal run. External, CLI, service-based, or newly substituted runners are
+forbidden, including as fallbacks after a launch or monitoring failure.
+
+The topology is a star: Main communicates independently with AI-2, AI-3, and
+AI-4. Roles never message one another directly. Main reads role output and
+relays only versioned feedback artifacts. Each role retains its own correction
+history; the single AI-4 executes the fixed trials sequentially. Ending or
+escaping the human-to-Main chat does not authorize `interrupt_agent`; a role is
+interrupted only by an explicit human instruction.
+
+Environment capabilities are part of the experiment plan. Preflight verifies
+them before AI-2 starts. If the plan omitted a required capability, the defect
+ends the run; the controller must version a corrected plan and start a new run
+rather than expanding permissions in place.
+
+The same rule applies to any method defect. The controller first patches and
+validates the versioned execution profile, role files, preparer, corpus, or
+runbook. It then preserves the failed run as superseded and starts a new run id
+from preflight. Ad hoc instructions and in-place runner changes are forbidden.
+
 ## Per-run filesystem
 
 The experiment controller creates one explicit run root:
@@ -81,26 +127,22 @@ RUN_ROOT=$(mktemp -d)
 
 $RUN_ROOT/
   manifest.json
-  stage-2/
-    input/
-    output/
-    feedback/
-  stage-3/
-    input/
-    output/
-    feedback/
-  stage-4/
-    input/
-    output/
-    feedback/
+  agents/
+    stage-2-r0/
+    stage-3-r0/
+    stage-4-<trial>/
+  accepted/
   host/
     validation/
     logs/
 ```
 
-The resolved absolute path is recorded in `manifest.json`; agents are never
-given `$RUN_ROOT` as an unresolved environment variable. The controller does
-not create the run inside the repository or reuse a previous run directory.
+Every role and correction round is an independent local Git repository with a
+clean baseline. Its fixed shape is `bin/`, `requirement/`, and `crates/`.
+Frozen upstream artifacts and role-owned output are staged before launch. The
+resolved absolute path is recorded in `manifest.json`; agents are never given
+`$RUN_ROOT` as an unresolved environment variable. The controller does not
+create the run inside the repository or reuse a previous run directory.
 
 The run manifest records:
 
@@ -109,40 +151,45 @@ The run manifest records:
   staged input;
 - model identity and role prompt for each AI;
 - wall-clock start/end for every delivery and feedback round;
-- commands executed only by the Host;
+- commands executed by roles and the Host, classified by owner;
 - raw Host diagnostics before filtering;
 - exact diagnostics returned to the agent; and
 - hashes of final temporary outputs.
 
 ## Isolation mechanism
 
-Prompt instructions alone are insufficient. Each role receives a physical
-staging directory containing only its allowlisted inputs. The role's working
-directory is that stage, not the repository.
+This experiment tests reproducible context separation, not adversarial sandbox
+security. It uses soft isolation: each role receives an independent workspace
+containing only its staged inputs, a fixed role instruction, and its owned
+output crate. The role's working directory is that workspace, not the source
+repository.
 
 An agent must not receive:
 
-- the repository path;
-- Git metadata or history;
+- the source repository path;
+- source repository Git metadata or history (the private workspace baseline
+  repository is allowed);
 - RFCs, README files, examples, compiler source, or tests;
 - another stage's private prompt, logs, or unreviewed output;
-- shell, Telora, Cargo, network, or arbitrary filesystem discovery; or
+- commands outside the role's fixed command list, Cargo, ordinary network use,
+  or arbitrary filesystem discovery; or
 - Host validation code and hidden acceptance queries.
 
-The preferred runner enforces a filesystem allowlist. If the available agent
-runner cannot prevent reads outside the stage, the run is marked
-`instruction-isolated`, not `filesystem-isolated`, and cannot be used for the
-strong clean-room claim.
+The read/write and command lists are role contracts and audit criteria, not an
+operating-system security boundary. Git diff and staged-input hashes verify
+that agents changed only owned paths. Any forbidden read reported by an agent,
+or any modification to a frozen path, contaminates that role delivery.
 
-Agents may create and edit files only in their own `output/`. They cannot
-execute or inspect results. The Host copies a delivery into `host/validation`,
-resolves temporary dependency paths there, and executes it using the pinned
-repository revision.
+AI-2 and AI-3 may run the staged `bin/telora` against their owned crates because
+that capability is fixed in the execution profile. AI-4 does not run Telora;
+the Host evaluates intent artifacts. The Host separately freezes every
+delivery, resolves explicit dependency paths in `host/validation`, and executes
+visible and hidden validation using the pinned Telora binary.
 
 ## Diagnostic relay
 
-The Host never gives an agent shell access as a convenience after failure.
-Instead it returns a bounded diagnostic packet:
+The command capabilities fixed at launch do not change after failure. The Host
+returns a bounded diagnostic packet:
 
 ```text
 round
@@ -156,8 +203,8 @@ Absolute Host paths, hidden test source, unrelated compiler output, and other
 agents' files are removed. Message text, severity, source-relative location,
 primary/secondary labels, and provenance chains are preserved.
 
-The agent may edit its output and resubmit. Every round is retained. The Host
-must not patch generated code on the agent's behalf.
+The agent may edit its output and resubmit using the same command list. Every
+round is retained. The Host must not patch generated code on the agent's behalf.
 
 ## Stage 1: AI-1 language implementation
 
@@ -179,7 +226,7 @@ AI-2 receives only:
 
 - `tutorial.md`;
 - `edsl-design.md`;
-- a role brief requiring a faithful, reusable implementation of that design;
+- the verbatim versioned `roles/ai2.md` instruction;
 - required package/file naming conventions; and
 - output and documentation acceptance shapes.
 
@@ -226,7 +273,8 @@ AI-3 receives only:
 - `tutorial.md`;
 - AI-2's eDSL package;
 - `EDSL_TUTORIAL.md` and `AI3_CONTRACT.md`; and
-- the staged copy of `domain.md`.
+- the staged copy of `domain.md`; and
+- the verbatim versioned `roles/ai3.md` instruction.
 
 It cannot read Stage 2 prompts/notes, neutral fixtures, prior enterprise
 models, or repository examples.
@@ -264,17 +312,18 @@ way hidden by the current algorithm.
 
 AI-4 receives only:
 
-- the intent-authoring subset of `tutorial.md` selected before the run;
+- the fixed `intent-tutorial.md` authoring subset;
 - `PUBLIC_INTENT.md`;
 - the enterprise model's public type/interface stubs, excluding bodies; and
-- one natural-language business request per trial.
+- one natural-language business request from `stage4-trials.yaml`; and
+- the verbatim versioned `roles/ai4.md` instruction.
 
 It cannot read `domain.md`, enterprise implementation, eDSL implementation,
 physical mappings, SQL, Host plan builder, or acceptance classification.
 
 ### Trial classes
 
-The hidden corpus includes:
+The Host-only corpus is versioned before the run and includes:
 
 - legal requests directly suggested by the public vocabulary;
 - legal but novel combinations absent from all tutorials;
@@ -320,8 +369,13 @@ Default limits per role:
 - no human code edits before classification.
 
 A run stops and is marked contaminated when an agent reads a forbidden input,
-executes code, receives hidden acceptance source, or inherits another role's
-conversation context.
+executes a command outside its fixed list, receives hidden acceptance source,
+modifies a frozen path, or inherits another role's conversation context.
+
+A runner or environment failure does not consume a model feedback round. A
+launch is real only after the controller records a runner/session id, resolved
+workspace, observed running state, and timestamp. A tool attempt without an id
+is a controller no-op, not a blocked model.
 
 Human semantic review may report a model-quality defect after executable
 validation. The agent may repair it in a separately counted review round, as
@@ -347,12 +401,12 @@ eDSL reuse, enterprise modeling, and intent convergence are different claims.
 
 ## Acceptance criteria
 
-One run supports the complete story only when:
+One `soft-reproducible-v1` run supports the staged transfer story only when:
 
-1. Stage 2 is filesystem-isolated and AI-2 faithfully implements the supplied
+1. Stage 2 is instruction-isolated and AI-2 faithfully implements the supplied
    reusable eDSL design without the enterprise domain or an existing eDSL;
 2. the neutral model passes both valid lowering and independent-error recovery;
-3. Stage 3 is filesystem-isolated and AI-3 passes visible plus novel hidden
+3. Stage 3 is instruction-isolated and AI-3 passes visible plus novel hidden
    enterprise tests without reading another model;
 4. enterprise types remain closed and no interface uses `Any`, `Dyn`, or
    String identity to manufacture reuse;
@@ -364,15 +418,19 @@ One run supports the complete story only when:
 10. impossible requests are correctly refused rather than forced through a
     fallback; and
 11. the complete manifest permits another controller to reproduce the staged
-    inputs, prompts, validation classes, and timing calculation.
+    inputs, fixed role instructions, validation classes, and timing calculation;
+12. the same inherited Codex configuration is used for every role, with no
+    per-role provider, credential, model, or `CODEX_HOME` override;
+13. the formal run uses only the complete method-versioned agent registry and
+    creates or replaces no agents after the run id exists.
 
 ## Honest claims
 
-A successful first run demonstrates that this particular language tutorial
-and eDSL design can be transmitted to an isolated implementer, then used with
-the enterprise domain and query corpus through the remaining stages. It does
-not demonstrate that AI-2 independently invented the eDSL methodology, nor
-does it prove arbitrary AI models, arbitrary ontologies, production database
+A successful run demonstrates that this particular language tutorial and eDSL
+design can be transmitted through independently staged, instruction-isolated
+roles, then used with the enterprise domain and query corpus. It does not prove
+adversarial filesystem isolation, that AI-2 independently invented the eDSL
+methodology, arbitrary model or ontology generalization, production database
 safety, semantic correctness of all private facts, or universal convergence.
 
 AI-4's output is an execution plan, not an authorization to execute it. A Host
@@ -387,8 +445,8 @@ may affect enterprise data.
   clean-room run;
 - letting AI-2 tailor the eDSL to the hidden enterprise;
 - comparing model vendors in the first reproducibility pass;
-- giving agents shell access to improve benchmark scores;
-- treating prompt obedience as filesystem isolation;
+- adding commands or filesystem capabilities during a run to improve scores;
+- treating instruction isolation as adversarial filesystem isolation;
 - executing real enterprise queries; or
 - claiming that refusal is a failure when the requested capability is outside
   the published model.
