@@ -5068,6 +5068,110 @@ unchanged", "|"),
     }
 
     #[test]
+    fn generic_import_forms_do_not_leak_bound_identities_into_definition_checks() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("pipeline.telora"),
+            r#"import "std/array" as array;
+               export def relay:
+                   for(Item, Context, Output, Result)
+                   Fn(
+                       Array(Item),
+                       Context,
+                       Fn(Item, Context) -> Output,
+                       Fn(Array(Output)) -> Result
+                   ) -> Result =
+                   fn(items, context, transform, finish) {
+                       finish(array.map(items, fn(item) {
+                           transform(item, context)
+                       }))
+                   };"#,
+        )
+        .unwrap();
+
+        for (name, import, relay) in [
+            (
+                "namespace.telora",
+                r#"import "./pipeline.telora" as pipeline;"#,
+                "pipeline.relay",
+            ),
+            (
+                "selective.telora",
+                r#"import "./pipeline.telora" {relay};"#,
+                "relay",
+            ),
+            (
+                "aliased.telora",
+                r#"import "./pipeline.telora" {relay as forward};"#,
+                "forward",
+            ),
+            ("open.telora", r#"import "./pipeline.telora" *;"#, "relay"),
+        ] {
+            fs::write(
+                directory.join(name),
+                format!(
+                    r#"{import}
+                       import "std/array" as array;
+                       export def execute:
+                           for(Prefix, Item, Context, Output, Result)
+                           Fn(
+                               Prefix,
+                               Array(Item),
+                               Context,
+                               Fn(Prefix, Item, Context) -> Output,
+                               Fn(Array(Output)) -> Result
+                           ) -> Result =
+                           fn(prefix, items, context, transform, finish) {{
+                               {relay}(
+                                   items,
+                                   context,
+                                   fn(item, current) {{
+                                       transform(prefix, item, current)
+                                   }},
+                                   finish
+                               )
+                           }};
+                       export let output = execute(
+                           1,
+                           [2, 3],
+                           4,
+                           fn(prefix, item, context) {{ prefix + item + context }},
+                           fn(values) {{ array.length(values) }}
+                       );"#,
+                ),
+            )
+            .unwrap();
+
+            let module = load_module(directory.join(name), BTreeMap::new(), 100_000).unwrap();
+            let execute = module
+                .analysis
+                .hir
+                .definitions()
+                .iter()
+                .find(|definition| definition.name == "execute")
+                .expect("execute definition");
+            assert_eq!(
+                module.analysis.definition_schemes[&execute.id].display_name(),
+                "for(Prefix, Item, Context, Output, Result) Fn(Prefix, Array<Item>, Context, Fn(Prefix, Item, Context) -> Output, Fn(Array<Output>) -> Result) -> Result",
+                "{name}"
+            );
+            let Value::Dict(result) = module.execute(100_000).unwrap() else {
+                panic!("{name}: expected exported module Dict")
+            };
+            assert!(
+                matches!(result.get("execute"), Some(Value::Func(_))),
+                "{name}"
+            );
+            assert!(
+                matches!(result.get("output"), Some(Value::Int(2))),
+                "{name}"
+            );
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn inferred_generic_let_exports_instantiate_per_member_access() {
         let directory = fixture_dir();
         fs::write(

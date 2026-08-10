@@ -1638,9 +1638,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .get(name)
             .and_then(|interface| interface.exports.get(name))
             .cloned();
-        let inferred = scheme
-            .as_ref()
-            .map_or_else(|| infer_value(value), |scheme| scheme.body.clone());
+        let inferred = scheme.as_ref().map_or_else(
+            || infer_value(value),
+            |scheme| erase_type_variables(&scheme.body),
+        );
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
         if let Some(scheme) = scheme {
@@ -2210,9 +2211,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .get(&binding.value.name.value)
                     .and_then(|interface| interface.exports.get(&binding.value.name.value))
                     .cloned();
-                let inferred = scheme
-                    .as_ref()
-                    .map_or_else(|| infer_value(&value), |scheme| scheme.body.clone());
+                let inferred = scheme.as_ref().map_or_else(
+                    || infer_value(&value),
+                    |scheme| erase_type_variables(&scheme.body),
+                );
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {

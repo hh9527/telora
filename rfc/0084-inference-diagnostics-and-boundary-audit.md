@@ -250,6 +250,14 @@ library module. Nested schemes may likewise reference an outer rigid `Bound`;
 self-containment is required at the top-level publication boundary, not inside
 an enclosing generic checking context.
 
+A corrective import audit applies the same distinction to imported bindings.
+The legacy shallow precheck receives an erased descriptor, while the complete
+inference engine retains and freshly instantiates the authoritative imported
+scheme. Raw `Bound` identities from one scheme therefore cannot be compared by
+private numeric ID with an unrelated enclosing scheme. This removes a
+shape-sensitive selective-import rejection without changing intentional
+`Any` boundaries for Host or dynamic values that have no interface scheme.
+
 Existing dedicated diagnostics remain authoritative: placeholder errors point
 to `_`, generic calls distinguish missing evidence from unification conflicts,
 numeric obligations cannot generalize, and recursive components publish no

@@ -69,3 +69,13 @@ Type analysis installs the projected export scheme as the local import scheme,
 preserving generic instantiation. Tests cover aliases, generic validation,
 model construction, identity equality with qualified access, lossless CST,
 missing exports, duplicate local aliases, and shared target caching.
+
+A later corrective audit found that the legacy shallow definition precheck also
+installed the raw imported scheme body as a monomorphic descriptor. Because
+that pass does not instantiate schemes, unrelated imported and enclosing
+`Bound` identities could collide by their private numeric IDs. Namespace
+imports happened to avoid the false rejection through their erased module
+record shape. The correction keeps the exact scheme only in the authoritative
+scheme table and installs an erased descriptor in shallow binding facts.
+Namespace, selective, aliased selective, and open imports now pass the same
+higher-order generic wrapper regression and publish the same exact scheme.

@@ -178,6 +178,9 @@ elaboration 可以把便利语法降低到较小核心，但必须保留来源�
 
 模块组成静态可解析的不可变图。模块显式导出命名 binding，没有隐式最终结果。
 Import 可以绑定完整模块，也可以从已声明接口选择名称。
+完整模块、选择性、alias 和 open import 必须保留同一个权威 Type Scheme。Scheme
+与供浅层观察使用的擦除后函数形状分别存储；导入方的单态事实不得包含被导出
+scheme 私有的 Bound 身份。
 
 Crate 依赖在求值前声明，并解析为规范模块身份。物理路径是解析输入，不是程序所
 观察的语义身份。Dynamic import 和由程序自行选择的 package acquisition 不属于

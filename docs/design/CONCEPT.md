@@ -222,6 +222,9 @@ capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
 
 **Type scheme** 是 `for(A) Fn(A) -> A` 这样的 rank-1 contract。**Bound type** 是
 检查该 contract 时 `A` 的刚性含义。Scheme 不是普通 `Type` 值。
+Bound 身份只在所属 scheme 内有意义，不能按内部编号跨 scheme 比较。模块接口独立
+保留权威 scheme；普通 binding fact 可以呈现擦除后的 `Any` 形状，但调用时必须从
+scheme 新鲜实例化，而不是复用其中的 Bound。
 
 ### TypeMetadata Family
 
