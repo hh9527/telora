@@ -1,281 +1,696 @@
 # Telora 语言设计
 
-本文档是 Telora 当前完整语言设计的稳定基线。它描述整体架构与语义边界，不要求
-读者重放 RFC 历史。[`CONCEPT.md`](CONCEPT.md) 定义本文使用的术语，
-[`../MOTIVATION.md`](../MOTIVATION.md) 定义问题和目标。
-文档的权威关系与维护规则见 [`../README.md`](../README.md)。
+本文档是 Telora 当前语言设计的单一事实来源。它从语言使用者、库作者、工具和
+Host 能够观察到的语义出发，定义语言表面、静态语义、求值模型、模块边界、诊断、
+资源限制和 Host 协议边界。
 
-本文不是语法参考或教程。具体写法与编程指导属于
-[`../../tutorial.md`](../../tutorial.md)；单项决策的动机、备选方案、验收条件与
-实现证据仍由 RFC 保存。
+核心概念与术语见 [`CONCEPT.md`](CONCEPT.md)，问题与动机见
+[`../MOTIVATION.md`](../MOTIVATION.md)，文档的权威关系与维护规则见
+[`../README.md`](../README.md)。具体写法与编程指导属于
+[`../../tutorial.md`](../../tutorial.md)。
 
-## 设计不变量
+本文描述当前成立的语言，不记录设计演进过程，也不讨论备选方案。它不是完整的
+形式化语法、标准库 API 索引或版本兼容性承诺；这些内容分别属于语法定义、标准库
+文档和版本政策。其他文档与本文冲突时，冲突本身需要通过同步设计或实现来消除。
 
-Telora 面向 MRT（Modelling、Representation、Transformation），并坚持以下
-不变量：
+## 1. 语言定位
 
-1. **封闭。** 影响一次计算的代码、静态数据、依赖和显式输入，在程序阶段求值前
-   可以枚举。
-2. **纯粹。** 普通 Telora 代码不能执行外部效果，值不可变。
-3. **确定。** 相同源码、依赖图、Host 输入和预算产生相同的值或结构化失败。
-4. **有界。** 允许递归，但每次求值都有有限资源配额与协作式取消点。
-5. **来源可追踪。** 来源能够穿过解析、导入、转换、校验、元数据解释和诊断。
-6. **由 Host 授权。** 只有 Host 可以观察开放世界或赋予输出外部意义。
-7. **机制优先。** 领域政策应写成库；只有一般语言模型无法忠实表达的能力，才是
-   核心机制候选。
+Telora 是一门在封闭世界中进行不可变数据计算的静态类型语言，并可作为领域 eDSL
+的承载语言。一次执行发生在由 Host 预先封闭的世界中：可执行代码、静态数据模块、
+依赖以及显式运行时输入都在执行前确定。程序计算普通值；只有 Host 能把某个结果
+解释为进程计划、构建产物、查询计划或其他具有外部意义的对象。
 
-这些是不允许功能提案绕过的约束，不只是实现偏好。
-
-## 作为 eDSL 承载语言
-
-任何 DSL 最终都需要一门 GPL 或等价的通用实现机制。Telora 选择成为一门范围
-明确的 GPL：它提供封闭、纯粹的数据计算能力，并把领域特征留给普通库表达。
-
-一个 Telora eDSL 由以下普通构件组成：
-
-- 类型化的领域数据与 intent vocabulary；
-- 模块和显式依赖；
-- 实现领域不变量、组合和 lowering 的函数；
-- 由 TypeMetadata 承载的结构、属性和可解释能力；
-- 保留 authored subject 与规则位置的诊断；
-- 由应用或 Host 定义的最终 artifact 协议。
-
-eDSL 没有特殊执行模式。它复用语言的检查器、VM、模块系统、来源模型和工具链。
-领域抽象的成功标准不是“像新语法”，而是领域知识能否集中在库中、调用者能否只
-提供自己拥有的事实，并且错误仍能指向领域输入和规则。
-
-## 程序和值
-
-Telora 程序使用 expression、词法绑定、函数、闭包、调用、条件、模式匹配、递归
-和模块计算不可变值。合并、校验、规范化、codec 派生、plan 构造和图遍历等领域
-操作都是函数与数据，不是特殊求值模式。
-
-紧凑的运行时值模型由以下类别组成：
+语言的主要用途不是一般应用编程，而是把高层表示验证并 lowering 为更具体的制品：
 
 ```text
-Int, Float, String, Bytes, Atom, Tuple, Array, Dict, Func
+静态模块 + 显式输入
+  -> 类型检查和元数据计算
+  -> 有界的纯数据计算
+  -> 值、结构化失败或来源化诊断
+  -> Host 决定是否发布或解释结果
 ```
 
-Record 与同质 `Dict` 共用运行时 `Dict` 表示，但保留不同的静态元数据。Tagged
-tuple 表达 sum 和协议值：
+当前语言具有以下基础性质：
+
+1. 模块依赖静态解析，不支持运行时选择的 import 或 `eval`。
+2. 普通值不可变，程序不能直接访问文件、网络、时钟、进程或环境。
+3. 相同的封闭输入和资源预算应得到相同的值、失败及规范顺序的观察。
+4. 递归被允许，但求值受 fuel、栈、调用深度、分配和取消限制。
+5. 值和类型元数据可以保留来源，诊断可以关联输入与规则位置。
+6. 严格执行只发布完整结果；失败、Error 诊断和过期分析不能发布部分状态。
+7. 机制优先：领域政策应写成库；只有一般语言模型无法忠实表达的能力，才是
+   核心机制候选。
+
+这里的“纯”需要精确定义：普通值计算没有外部效果；调试输出和诊断报告是由 Host
+观察的两个受控通道。特别是 `report`/`emit_*` 会产生诊断事件，并可能使最终结果
+不可发布。它们不修改 Telora 值，但属于求值的可观察行为。
+
+## 2. 源文件和词法表面
+
+Telora 源文件通常以 `.telora` 结尾。`#` 引入行注释；文件开头可以包含 shebang。
+空白和注释不影响求值，但 lossless parser 会保留它们以供工具使用。
+
+基础字面量包括：
+
+```telora
+42                         # Int
+0.75                       # Float
+"text"                     # String
+b"bytes"                   # Bytes
+r"raw text"                # raw String
+r#"a "quoted" value"#      # 带 delimiter 的 raw String
+'Ready                     # Atom
+```
+
+普通字符串支持转义和显式续行。反引号字符串是结构化连接表达式，使用 `\{...}`
+嵌入表达式：
+
+```telora
+let greeting = `hello \{name}`;
+```
+
+插值当前支持具有稳定文本表示的标量类别，不是隐式调用任意用户 `Display`。
+
+Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
+条件位置只接受 Bool，不进行 truthiness 转换。
+
+## 3. 运行时值
+
+用户可观察的普通运行时值由较小的集合构成：
+
+```text
+Int, Float, String, Bytes,
+Atom, Tagged,
+Tuple, Array, Dict,
+Function,
+Type metadata, native opaque value, Dyn
+```
+
+### 3.1 集合和积
+
+Array 是有序同质序列：
+
+```telora
+let ids: Array(Int) = [1, 2, 3];
+```
+
+Tuple 是固定长度的异质积：
+
+```telora
+let entry: Tuple([String, Int]) = ("port", 8080);
+```
+
+Record 字面量与 `Dict(T)` 在运行时都使用 String key 的 Dict 表示，但静态意义不同：
+
+```telora
+let user = {name: "Ada", active: 'True};
+let labels: Dict(String) = {region: "east", tier: "gold"};
+```
+
+Record 的字段集合属于静态结构；`Dict(T)` 的 key 集合可以动态变化，所有 value 具有
+同一静态类型。Dict 的无领域顺序观察和序列化采用规范顺序。
+
+Array 和 Dict 支持 spread：
+
+```telora
+[0, ...items, 9]
+{...defaults, mode: "strict", ...overrides}
+```
+
+Dict spread 按源码顺序合并，后出现的 spread 值覆盖先出现的值；同一字面量中重复
+声明的具名字段是错误。Record 没有独立的可变 update 操作。
+
+### 3.2 Sum 值
+
+Atom 是无 payload 的符号。调用 Atom 构造带 payload 的 Tagged 值：
 
 ```telora
 'None
-'Some(value)
+'Some(1)
 'Ok(value)
 'Err(error)
 ```
 
-条件只接受 `'True` 和 `'False`，不存在通用 truthiness 转换。语言使用者观察到的
-集合是持久且不可变的。实现可以在分配、intern 和发布结构内部使用不可观察的
-mutation，但失败工作不能泄漏到持久世界。
+Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。类型元数据决定
+合法 tag、payload 形状及静态穷尽性。
 
-## 函数与多态
+### 3.3 相等性
 
-函数是一等值。公共契约可以声明单态或显式 rank-1 多态：
+普通标量和结构值支持 `==`。复合值按结构比较；函数按不透明函数身份比较，而不是
+比较代码或闭包捕获内容。该运算不执行用户定义的 trait 查找，因为当前语言没有
+trait 系统。
+
+## 4. 表达式和控制流
+
+Telora 是 expression-oriented 的。Block 中的最后一个表达式是 block 的值：
+
+```telora
+let result = {
+    let adjusted = value + 1;
+    adjusted * 2
+};
+```
+
+当前表面包括算术、比较、短路布尔运算、field selection、调用、pipeline、条件、
+模式匹配、传播和显式返回。主要运算符包括：
+
+```text
+-x
+*  /  +  -
+<  ==
+&&  ||
+|>
+```
+
+`&&` 和 `||` 只接受 Bool 并短路。`left |> right` 统一降低为 `right(left)`。
+
+`if` 必须有 `else`，两个分支产生可合并的类型：
+
+```telora
+if enabled { "on" } else { "off" }
+```
+
+`return expression;` 从最近的函数返回。它不是模块导出机制。
+
+### 4.1 模式匹配
+
+Pattern 可以匹配字面量、Atom、Tagged payload、Tuple 和 Struct 字段：
+
+```telora
+match result {
+    'Ok(value) => value,
+    'Err(error) => raise!(error),
+}
+```
+
+Match arm 可以带 Bool guard。只有无 guard 且覆盖确定的 arm 才参与穷尽性和冗余性
+证明。对闭合 enum 的匹配执行保守穷尽性检查。
+
+局部绑定还支持：
+
+```telora
+if let 'Some(value) = candidate { value } else { fallback }
+
+let 'Some(value) = candidate else {
+    return fallback;
+};
+```
+
+普通解构 `let` 要求 pattern 对已知输入形状不可失败；`let ... else` 的 else 分支必须
+发散，成功路径才会获得 pattern binding。
+
+### 4.2 Option/Result 传播
+
+后缀 `?` 对 Option 或 Result 做同家族的提前传播，传播边界是最近的函数或模块
+block。不同家族不能混合传播：
+
+```telora
+def parse_pair: Fn(String, String) -> Result(Tuple([Int, Int]), BlameError) =
+    fn(left, right) {
+        let a = parse_int(left)?;
+        let b = parse_int(right)?;
+        'Ok((a, b))
+    };
+```
+
+`?` 是 surface elaboration，最终执行普通 match 和 return 控制流。
+
+## 5. 绑定、函数和递归
+
+`let` 定义词法局部值；`def` 定义具名模块 binding；`decl` 可以先声明契约；`native`
+只允许在受信 native module 中声明 Host 实现：
+
+```telora
+let local = 1;
+
+def add: Fn(Int, Int) -> Int = fn(left, right) {
+    left + right
+};
+```
+
+函数是一等不可变值，可以捕获词法环境。参数和返回值可以显式标注；调用 arity 是
+静态和运行时契约的一部分。尾位置的 bytecode 函数调用支持 proper tail call。
+
+模块级 `def` 按依赖 component 分析。无环 definition 可以按依赖顺序推断和泛化；
+递归及相互递归 definition 在没有显式泛型契约时保持单态，并通过固定点约束获得
+可证明的函数形状。
+
+单个 binding 的 alias 只实例化其右侧泛型一次。它不会自动获得任意 let-polymorphism。
+
+Call section 使用占位符构造 closure，是普通函数的便利表面；显式 `fn` 始终可以表达
+同一计算。
+
+## 6. 静态类型
+
+Telora 使用结构化静态类型和双向检查。当前公开类型类别包括：
+
+```text
+Int, Float, String, Bytes
+Atom 与 Tagged
+Array(A), Dict(A), Tuple([...])
+Struct, Enum, Union
+Fn(...) -> ...
+Type, TypeOf(A), Dyn, opaque native type
+Any, Never
+```
+
+Record/Struct 类型按字段结构检查；type alias 不创建新的名义身份。Native opaque type
+具有由注册模块和 slot 决定的名义身份，普通用户代码不能伪造其值。
+
+`Any` 表示程序显式放弃静态精度。它不是 editor 因源码损坏而暂时不知道类型的状态。
+`Never` 表示不产生值的路径，例如 `return`、`raise!` 和 `panic!`；它作为 bottom
+参与方向性检查，避免根失败制造级联类型错误。
+
+### 6.1 函数契约和 rank-1 多态
+
+显式多态写为：
 
 ```telora
 def identity: for(A) Fn(A) -> A = fn(value) { value };
 ```
 
-显式泛型定义的 body 必须对每一个 bound type parameter 刚性成立。调用可以依赖
-推断，也可以使用完整或部分显式类型应用；部分应用留下的参数必须能够从上下文
-推断。
-
-局部闭包 generalization 是保守且有界的。它只适用于合格的无环绑定，保留未解决
-obligation，也不会把递归组或不稳定的数值、callable 约束随意泛化。Alias 不会
-产生无限制的 let-polymorphism。公共 API 应优先写出完整契约。
-
-Telora 当前提供 rank-1 多态，而不是 higher-rank type、trait、subtyping 或通用
-constraint solver。新增抽象前，必须证明现有普通函数和显式 typed callback 无法
-清楚表达某个一般性的类型关系。
-
-## 类型即数据
-
-类型声明会求值一个 expression，得到规范的 TypeMetadata。TypeMetadata 是普通、
-不可变的 Telora 数据，由程序代码所使用的同一套 VM 语义求值。编译器解释求值
-结果，而不会在隐藏的类型语言中重新实现用户的元数据函数。
-
-以下三个概念必须严格区分：
-
-```text
-Type             有效 TypeMetadata 值的静态类型
-TypeOf(A)        描述 A 类型值的元数据见证
-TypeDesc         元数据解释器使用的擦除后公开视图
-```
-
-`TypeOf(A)` 可以赋给 `Type`，并在运行时擦除。它保留了校验、codec 和类型化
-interpreter 边界所需的静态关系：
+定义 body 必须对刚性的每一个 A 成立。调用时可以推断类型参数，或者使用方括号
+显式应用：
 
 ```telora
-validate: for(A) Fn(TypeOf(A), Any) -> Result(A, BlameError)
+identity[Int](1)
+pair[Int, _](1, "text")
 ```
 
-Primitive 和内建元数据构造器具有精确的 witness type。用户函数也可以在工具阶段
-构造并返回元数据。Decorator 是普通的 metadata-to-metadata 函数；attribute 是
-附着在规范 descriptor 上的数据。
+`_` 留下一个必须由完整调用上下文解决的参数。无法解决或证据冲突都会产生诊断。
 
-参数化 `type` 声明定义可命名的 TypeMetadata family：
+未标注、由 closure 字面量初始化的合格局部 binding 可以得到保守 rank-1 scheme。
+Generalization 保留尚未解决的 callable 和数值 obligation；递归组、不稳定约束以及
+普通 alias 不会被无条件泛化。跨模块导出的 scheme 会在每个合法使用点重新实例化，
+且其私有 bound identity 不泄漏到导入方。
+
+当前不存在 higher-rank type、subtyping、trait、interface、associated type、
+higher-kinded type 或通用 constraint resolution。
+
+## 7. 类型元数据
+
+Telora 的类型不是仅存在于编译器中的标签。类型声明求值一个表达式，结果必须是
+规范 TypeMetadata。理解该模型需要区分：
+
+```text
+Type       任意有效 TypeMetadata 值的静态类型
+TypeOf(A)  精确证明某个元数据描述 A
+TypeDesc   用户态解释器观察的擦除后 descriptor 视图
+```
+
+`TypeDesc` 在这里表示公开观察模型，不是与 `Type` 并列的可构造静态类型。当前
+`std/type-desc` observer 接受 `Type` 值，并通过 kind、children 和 resolve 等操作
+暴露该擦除视图。
+
+内建元数据构造器也是普通 callable 值：
+
+```telora
+Array(String)
+Fn([Int, Int], Int)
+Option(String)
+```
+
+类型 annotation、decorator 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
+阶段与程序阶段共享函数语义、值模型、fuel 和失败规则；区别在于 Host 调用它们的
+目的和允许发布的结果，而不是存在第二门类型级语言。
+
+### 7.1 Struct、Enum 和 decorator
+
+常见声明使用普通 metadata decorator：
 
 ```telora
 @struct
-type Box(A) = {value: A};
+type User = {
+    id: Int,
+    name: String,
+};
 
-def wrap: for(A) Fn(A) -> Box(A) = fn(value) { {value} };
+@enum
+type Status = {
+    Pending: 'None,
+    Failed: String,
+};
 ```
 
-声明时，每个参数被绑定为刚性的 Bound TypeMetadata，decorated body 只求值一次，
-结果形成规范的符号模板。`Box` 同时具有以下两个一致表面：
+`@struct` 和 `@enum` 不是独立的 class/ADT 编译通道；它们调用 metadata-to-metadata
+函数，将普通字面结构规范化为相应 descriptor。其他 decorator 可以添加 attribute，
+供 codec、schema、文本表示或用户态解释器消费。
+
+Decorator 应保持确定和纯粹。失败的 metadata 构造不能发布部分类型图。
+
+### 7.2 参数化 TypeMetadata family
+
+参数化 `type` 声明创建可命名的元数据 family：
+
+```telora
+@struct
+type Box(Item) = {value: Item};
+
+def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
+    {value}
+};
+```
+
+`Box` 同时具有两个表面：
 
 ```text
-类型位置    Box(A)
-值位置      Box: for(A) Fn(TypeOf(A)) -> TypeOf(Box(A))
+类型位置  Box(A)
+值位置    for(A) Fn(TypeOf(A)) -> TypeOf(Box(A))
 ```
 
-应用 family 时只对模板做避免捕获的参数替换，不会针对 concrete type 重新执行 body。
-因此通过 `TypeDesc` 观察参数所得的分支在声明时已经固定。Family 可以无环地组合
-其他本地 family，并通过完整模块、选择性、open 或 alias import 保留精确 scheme；
-参数个数、TypeMetadata 有效性、重复参数与递归 component 都有明确诊断。
-替换以规范 TypeMetadata 值为模板，保留 `WithAttributes`、codec 规则和 application
-来源。严格分析因其他错误失败时，partial recovery 仍为独立有效的 family 发布精确
-scheme，不得退化为 `Any` 或不可计算事实。
+声明 body 使用刚性符号参数求值一次，产生规范模板；`Box(String)` 对模板做避免捕获
+的替换，不用 String 重新执行 body。因此 family 不是任意 type-level function，也
+不是 higher-kinded nominal constructor。
 
-TypeMetadata family 是 rank-1 witness 关系，不是任意函数调用进入类型位置，也不是
-trait、associated type、higher-kinded parameter 或名义类型构造器。它不支持 partial
-application 和参数化递归。当前实现也拒绝依赖本模块的非参数化 `type` 或普通 helper，
-避免尚未完成调度的 concrete/recursive placeholder 污染符号模板；imported metadata
-能力和内建构造器不受此限制。
+Family 必须一次提供全部参数，不支持 partial application 或参数化递归。无环 family
+可以组合本模块中的其他 family，也可以跨完整、选择性、alias 和 open import 保留
+精确 scheme。
 
-递归 TypeMetadata 在内部使用有限图身份，并提供安全的公开 reference traversal。
-构造成功后，元数据只发布一次到持久世界；失败或部分构造的值不能成为权威类型。
+当前 family 声明不能依赖同模块的普通 helper 或非参数化 `type` binding；
+可以依赖内建 metadata 构造器、imported metadata 能力及其他无环本地 family。该限制
+防止尚未完成调度的 concrete/recursive placeholder 进入符号模板。
 
-`Dyn` 是狭窄的 existential 边界，携带值、权威的运行时类型关系和来源；它不是
-unchecked cast。`interpreter!(...)` 在静态 witness API 与擦除后的用户态
-`TypeDesc` interpreter 之间建立受控桥梁，不能凭空制造任意 bound type 的值。
+### 7.3 递归元数据
 
-`Any` 表示显式丢失静态精度，与源码不完整造成的 unknown fact 不同。内部
-`Never` 表示根错误之后无法返回值的路径，避免一个根问题产生误导性的连锁类型
-错误。
+递归类型使用有限图和受控 reference 表示，而不是无限展开的树。成功初始化的递归
+root 在冻结后发布；未初始化 reference 不能进入 persistent world。
 
-## 一个求值器，两个阶段
+用户态 descriptor observer 可以识别 Ref 并显式解析。遍历不伴随具体值时，解释器
+必须自行处理循环；遍历有限、无环的运行时数据时，可以让普通值递归提供终止进度。
 
-Telora 区分**工具阶段**和**程序阶段**，但不定义两门求值语言：
+### 7.4 Dyn 和 `interpreter!`
 
-- 工具阶段计算分析所需的闭合元数据、契约、模块接口、decorator 和派生计划；
-- 程序阶段根据显式输入计算应用值；
-- 两个阶段共用值模型、函数行为、bytecode VM、配额和失败语义；
-- 静态 witness 与 annotation 默认擦除，除非程序显式把元数据当作值使用。
+`Dyn` 是 existential package：它把一个值、权威 descriptor 和来源绑定在一起。
+普通代码可以用匹配的 `TypeOf(A)` 与 A 安全打包，但不能从 Dyn 未经检查地恢复任意 A。
+结构 observer 同时派生子 descriptor 和子值，避免把不相关的类型和值拼在一起。
 
-工作区分析中的工具阶段求值按依赖范围执行，并允许 best-effort recovery。一个损坏
-组件不应抹去仍然可以独立确定的事实；但任何严格发布仍要求对应结果的全部强制
-证据完整。
+`interpreter!` 将擦除的消费型函数提升为带静态 witness 的 API：
 
-Telora 不提供无限制 macro expansion、runtime `eval` 或任意代码生成。Surface
-elaboration 可以把便利语法降低到较小核心，但必须保留来源位置，也不能引入第二套
-领域语义。
+```telora
+def show_dyn: Fn(Dyn) -> Result(String, BlameError) = ...;
 
-## 模块与封闭世界
+def show:
+    for(A) Fn(TypeOf(A)) -> Fn(A) -> Result(String, BlameError) =
+    interpreter!(show_dyn);
+```
 
-模块组成静态可解析的不可变图。模块显式导出命名 binding，没有隐式最终结果。
-Import 可以绑定完整模块，也可以从已声明接口选择名称。
-完整模块、选择性、alias 和 open import 必须保留同一个权威 Type Scheme。Scheme
-与供浅层观察使用的擦除后函数形状分别存储；导入方的单态事实不得包含被导出
-scheme 私有的 Bound 身份。
+提升要求显式的 `for` 契约和每个类型参数的 `TypeOf` witness。只有直接出现为内层
+参数的 A 会被打包成 Dyn；包含 A 的 `Array(A)`、`Fn(A) -> B` 等位置不会被递归适配。
+结果不得包含被解释的 A，因此该机制不能制造 `A`、`Option(A)` 或类似值。
 
-Crate 依赖在求值前声明，并解析为规范模块身份。物理路径是解析输入，不是程序所
-观察的语义身份。Dynamic import 和由程序自行选择的 package acquisition 不属于
-语言模型。
+该 lifting 的可观察语义等价于构造普通 closure，并使用相应 witness 将直接 A 参数
+安全打包为 Dyn。它不是 macro system、代码生成器、trait derivation 或动态 cast。
 
-Telora、JSON、TOML 和 YAML 文件都可以成为同一图中的 source module。静态数据
-模块拥有各自格式的解析规则，但在后续分析中表现为不可变、带位置的值。字段级
-来源继续参与校验和诊断。
+## 8. 模块和封闭世界
 
-模块加载器区分临时工作与持久发布。权威 export 和递归 TypeMetadata root 只有在
-初始化成功后才进入持久 main heap。失败、取消、过期或超配额的工作被原子丢弃。
+模块通过静态路径组成不可变有向图。Import 必须在初始化前解析，程序不能根据运行
+时值决定依赖。
 
-## 来源、诊断与失败
+公开 import 表面包括：
 
-来源是语义数据流的一部分。值可以携带源码 expression 或静态数据字段的 origin，
-并使其穿过 import、转换、元数据、codec 规范化和 Host 边界。
+```telora
+import "std/array" as array;
+import "./model.telora" { User, make_user };
+import "package/path.telora";
+import "package/path.telora" as model, { User };
+```
 
-一个诊断可以关联多个位置：
+支持 namespace、选择性、alias 和 open import。所有形式必须观察同一个 export
+scheme，不能因导入写法不同而丢失泛型关系。
+
+模块 import graph 不允许初始化 cycle。递归函数和递归 TypeMetadata 在单个模块及
+已建立的模块接口内由各自机制处理，不把 module cycle 当作递归定义机制。
+
+Production module 使用显式命名导出：
+
+```telora
+export let version = 1;
+export def compile: Fn(Input) -> Option(Output) = fn(input) { ... };
+export { User, compile };
+```
+
+模块没有由“最后一个表达式”定义的公共默认结果。Source module 的公共接口由
+export record 定义，Host adapter 再从该 record 选择协议规定的 entry。
+
+### 8.1 模块身份和依赖
+
+模块的语义身份由 authority、crate 和逻辑路径决定，不等于偶然的物理绝对路径。
+相同模块经不同相对边解析时应复用同一身份；resolver 拒绝词法或 symlink 越界。
+
+Path crate 的依赖由根目录 `telora-deps.json` 固定。依赖名是 package import 的首段。
+当前没有通用 registry 获取、版本求解或运行时 package acquisition。
+
+根模块可以使用静态 `option` 声明 Host/resolver 配置。Option 必须位于 import 解析
+之前的有效位置，嵌套依赖不能借此修改根 Host 的策略。
+
+普通 `.telora` 模块可以公开导入；`.priv.telora` 受 crate 可见性限制；
+`.native.telora` 只承载由 Host 注册、slot 明确的 native 声明。源文件声明 native
+函数并不赋予自己实现外部能力的权限。
+
+### 8.2 静态数据模块
+
+JSON、TOML 和 YAML 与 Telora 文件共同进入模块图。它们不是运行时文件读取：Host
+在封闭世界建立时加载并注册源码，解析结果是带字段来源的不可变值。
+
+当前格式行为包括：
+
+- JSON 严格解析数字、字符串和重复 key，并保留字段路径来源；
+- TOML 支持 1.0 的核心值与表结构，日期和时间保留为不同 tagged representation；
+- YAML 采用保守的 1.2 Core Schema，mapping key 必须是 String，拒绝 custom tag、
+  merge key 及会引入歧义的行为；旧式隐式 bool 和时间戳按 String 处理。
+
+解析失败的静态数据模块不能供严格执行使用，但 workspace recovery 仍保留其 source、
+syntax diagnostic 和不依赖成功值的事实。
+
+### 8.3 初始化和发布
+
+模块求值区分 persistent main world 与每次操作的 temporary/work world。Import export、
+closure capture、递归 metadata root 和 Host virtual module 只有在完整初始化后才能被
+promotion 到持久世界。
+
+Promotion 保留共享结构、递归引用和来源，并保证目标 heap 自包含。失败、取消、配额
+耗尽或过期 revision 的 work world 被整体丢弃，不得留下半初始化 export。
+
+## 9. 来源、失败和诊断
+
+来源是值流的一部分。Telora expression、JSON/TOML/YAML 字段、imported value、
+metadata application 和 codec normalization 都可以贡献 origin。来源影响诊断，
+但不改变普通值的逻辑相等性。
+
+### 9.1 Value-level outcome
+
+Option 和 Result 是普通数据协议：
 
 ```text
-subject source     被拒绝的数据或 intent
-rule source        施加要求的 contract 或 authored rule
-transformation     相关中间过程的 provenance
+Option(A)     预期缺失或可选证据
+Result(A, E) 调用者必须显式处理的边界结果
 ```
 
-不同通道表达不同含义：
+它们不会自动产生 Host diagnostic，也不会自动使模块失败。
 
-- `Option(T)` 表达预期内的缺失或可选证据；
-- `Result(T, E)` 表达必须由调用者处理的 value-level boundary outcome；
-- `raise!` 使用结构化 blame 终止当前计算；
-- `emit_error!` 报告 Host 可观察的错误，同时允许无关普通控制流继续；fatal
-  diagnostic 仍然使发布无效。
+### 9.2 Blame 和立即终止
 
-诊断积累不是通用 effect，也不是隐藏的 value-level array。普通函数、`Option` 和
-Host-observed event 支持 best-effort checking，Host 则拥有最终发布策略。
+`BlameError` 当前是结构类型：
 
-编译器和工作区 recovery 区分 known fact、显式 `Any`、unknown、conflict、
-dependency blocking 与 tool-stage incomputability。Recovery 必须保留仍有依据的
-独立事实，但不能虚构值、字段或类型。
+```telora
+{data: Any, message: String, rule: Any}
+```
 
-## 确定的资源边界
+`blame!(message, subjects...)` 构造该值，并用调用位置及 subject origin 建立诊断所需的
+关系。`raise!(error)` 要求一个 BlameError，以 `Never` 终止当前计算并将控制权交还
+VM/Host：
 
-Telora 允许递归，不要求程序必然规范化。每次求值 session 都有独立的 fuel、栈、
-调用深度和分配限制，并支持协作式取消。
+```telora
+match validate(User, raw) {
+    'Ok(user) => user,
+    'Err(error) => raise!(error),
+}
+```
 
-Fuel 在 call 和实际执行的 control-flow back edge 等语义扩展点扣减。它是确定的
-终止边界，不是 CPU 时间模拟；无害的 straight-line compiler layout 改动不应
-意外改变程序能否落在预算内。
+`fail!(message, subjects...)` 是 `raise!(blame!(...))` 的便利形式。`panic!(message)`
+产生无结构的程序失败，应表示实现错误或无法恢复的不变量破坏，而不是可预期的领域
+拒绝。
 
-配额耗尽是结构化、来源可追踪的失败，不能发布部分 module、部分 metadata graph
-或过期 workspace snapshot。在遍历顺序没有领域意义时，表示、输出、推断和诊断
-都必须使用规范顺序。
+### 9.3 Host-observed diagnostic
 
-## Host 边界与 Entry
+Prelude 提供：
 
-普通 Telora 代码没有外部权限。Host 拥有 IO、环境观察、时间、持久化、权限、
-重试、事务和真实效果。
+```telora
+report: Fn(Severity, BlameError) -> BlameError
+```
 
-边界如下：
+它记录 Info、Warn 或 Error 事件并返回原 BlameError。便利形式：
+
+```telora
+emit_info!(message, subjects...)
+emit_warn!(message, subjects...)
+emit_error!(message, subjects...)
+```
+
+分别降低为 `report(severity, blame!(...))`。Info/Warn 不阻止成功；Error 允许当前普通
+控制流继续，使独立检查能够报告更多根因，但 session 在发布前会失败：
+
+```telora
+def reject: Fn(Intent) -> Option(Plan) = fn(intent) {
+    let ignored = emit_error!("intent cannot be lowered", intent);
+    'None
+};
+```
+
+诊断集合属于 evaluation account，而不是隐含的普通 Array 返回值。调用次数和顺序
+可被 Host 观察，因此 `report` 是一项窄的诊断 effect；实现和优化必须保留它。
+
+当前 BlameError 没有稳定 category、stage、expected/actual、cause 或 repair 字段。
+多个 subject 可以贡献 primary 和 related location；其载体表示不构成公开的诊断
+序列化协议。
+
+### 9.4 失败类别
+
+VM 区分可恢复的程序失败与终止整个 evaluation session 的资源/一致性失败。前者包括
+类型不匹配、missing field、non-exhaustive dynamic match、panic、raised blame 和
+reported Error；后者包括取消、fuel/分配/栈/调用深度耗尽以及无效 bytecode。
+
+Workspace recovery 可以在一个 binding 或模块失败后继续独立工作，但严格 Host
+执行不会把 recoverable failure 当作成功值。
+
+## 10. 求值和资源语义
+
+当前工具链使用 lossless CST、AST/HIR、类型分析、LIR、bytecode 和寄存器 VM 实现
+语言。各层共同服从本文定义的可观察语义和来源映射，不建立彼此竞争的语言模型。
+
+### 10.1 两个阶段，一个求值器
+
+Tool stage 执行 annotation、type initializer、decorator、module interface 和其他分析
+所需的闭合计算。Program stage 使用显式 Host 输入执行普通应用函数。两者共用：
+
+- bytecode 与函数调用规则；
+- 不可变值和 heap 表示；
+- fuel、stack、call-depth 和 allocation account；
+- runtime failure 与来源规则。
+
+静态 annotation 和 witness 默认从程序执行中擦除；当程序显式把 TypeMetadata 当作
+普通值使用时，该值会保留到运行时。
+
+### 10.2 Fuel 和配额
+
+Fuel 在函数调用及实际执行的 control-flow back edge 等动态扩展点扣减。直线指令和
+未采取的 back edge 不消耗同类进度 fuel。Fuel 是确定的终止边界，不代表 CPU 时间。
+
+独立配额限制：
+
+- 逻辑分配量；
+- VM stack slot；
+- 调用深度；
+- 输出和递归格式化深度；
+- module 与整个 session 的工作量。
+
+Native function 和 Telora callback 共享调用 session 的 account，不能通过跨 native
+边界绕过预算。配额耗尽产生带来源的结构化失败。
+
+### 10.3 确定性
+
+在相同源码、解析依赖、显式 Host 输入、native module 实现和预算下，执行结果应可
+重放。无领域顺序的 Dict、模块身份、诊断、类型合并和输出使用稳定顺序。
+
+确定性不意味着所有程序终止，也不保证不同编译器版本产生字节级相同的内部表示。
+它要求当前语义版本内，内部 cache 命中、heap 地址、物理路径别名和无意义遍历顺序
+不能改变可观察结果。
+
+## 11. Host 边界
+
+Host 负责所有开放世界行为：文件和 package 解析、环境捕获、外部输入、权限、时钟、
+持久化、重试、事务以及真实效果。典型调用顺序为：
 
 ```text
-开放的 Host 世界
-  -> 选择 trusted entry 与显式 input snapshot
-  -> 准备 pending module handle 和 typed virtual module
-  -> 初始化并冻结封闭的 Main 世界
-  -> 获取并校验命名 export
-  -> 授权、解释或拒绝该值
-  -> 可选的外部效果
+Host 选择根模块和 entry 协议
+  -> 固定依赖与 source snapshot
+  -> 注册 typed native/virtual module 和显式输入
+  -> 初始化并冻结 Main world
+  -> 取得命名 export
+  -> 用协议 TypeMetadata 校验、调用或投影
+  -> 检查诊断和结果
+  -> 授权、解释或拒绝普通值
 ```
 
-Main 不能 import entry runtime。Host 提供的值和 virtual module 属于一次调用，
-并在 Main 求值前冻结。Host 先通过 existential boundary 观察 export，再使用
-权威的 `TypeOf(A)` 协议投影，之后才能调用或发布。
+Host virtual input 属于一次调用，在 Main 执行前冻结。Main 不能反向 import Host entry
+runtime，也不能请求 Host 在执行途中打开新的观察窗口。
 
-`telora run`、`telora exec` 和 `telora build` 是具体 Host adapter。它们的 entry
-名称和 plan type 不构成通用语言 effect ABI。Plan 是普通数据；构造 plan 不会
-执行它。
+Plan 没有语言级权限。一个值即使静态类型为应用定义的 `ExecPlan`，也只是一段数据；
+只有相应 Host adapter 可以解释它。
 
-## 标准库边界
+### 11.1 当前 CLI Host
 
-依赖方向固定为：
+当前 `telora` 二进制提供：
 
 ```text
-语言与 VM 机制
-  -> 通用标准库
-  -> 可复用领域库或方法库
-  -> 应用模型与 intent
+telora check <module>
+telora run <module> [--input <json|->]
+telora types <module>
+telora show <module> [at <source> <line> <column>]
+telora exec --dry-run <module> [-- <arguments>...]
+telora build --dry-run <module>
+telora lsp
 ```
 
-Host adapter 从纯计算世界之外依赖语言与应用协议。实验可以观察和检验每一层，
-但不能反转上述依赖方向。
+`run` 从显式 export record 选择 `output`。外部 JSON 输入以显式 `input` binding 进入。
+`exec` 和 `build` 是具体协议，不是通用 action ABI：前者通过受信 entry module 调用
+应用 `exec`，后者调用 `build`，随后校验并输出规范 JSON。
 
-通用标准库可以包含数据结构、combinator、元数据观察、codec、format、path、hash
-等具有广泛意义的确定操作。没有独立的一般性证据和中性契约，它不能引入 ontology、
-analytics model、build system、Agent workflow 或其他实验中的概念。
+当前 `exec` 和 `build` 强制 `--dry-run`。它们不会下载、启动进程或写出构建文件；
+现实效果执行尚未由这个 CLI 实现。
+
+## 12. Workspace 和语言工具
+
+严格检查与编辑器分析共享 parser、HIR、类型图、工具阶段计算和 semantic snapshot，
+但发布策略不同：严格模式要求完整证据，workspace recovery 保留错误周围仍可证明的
+事实。
+
+语义事实不仅是 `known/unknown` 二值。当前状态包括：
+
+```text
+Known
+Unknown(MissingSyntax | InvalidSyntax | UnresolvedName |
+        BlockedBy | UnavailableDependency)
+Conflicted(DuplicateDefinition | IncompatibleContract)
+Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
+             CyclicEvaluation | Cancelled)
+```
+
+显式 `Any` 是一个已知类型，不等于 Unknown。
+
+Workspace 使用 copy-on-write document snapshot 和单调 revision。每次 rebuild 绑定到
+一个 revision 和 cancellation token；被取消或因新编辑而过期的工作不得覆盖较新的
+published snapshot。Snapshot 的发布是原子的。
+
+当前 LSP 实现支持增量文档同步、diagnostic、hover、definition、references 和
+completion，并协商 UTF-8/UTF-16 等位置编码。Completion 只使用恢复后确有证据的模块
+export 和 Struct field，不在 unknown/Any 上虚构结构。
+
+CLI `show` 和 LSP 可以展示 recovery fact；`check`、`run` 和 Host entry 仍采用严格
+成功边界。两者共同展示的事实必须具有同一含义。
+
+## 13. 标准库和 native 边界
+
+标准库由普通 Telora module 与受信 native module 共同组成。普通模块实现 Option、
+Result、argv 等组合政策；native 模块提供需要高效 heap 观察或受控 runtime identity
+的确定操作。
+
+当前通用能力包括 Array/Dict 组合、String、lexical path、SHA-256、regex、JSON codec
+与 schema、TypeMetadata attribute、Dyn observer、文本 parse/display、debug 等。
+这些 API 不授予环境或文件系统访问权限。例如 path 操作是词法操作，hash 操作只
+处理显式输入。
+
+Native 声明的可用性由 Host 注册表和精确 module identity 决定。未知 native module
+不可用；用户不能仅通过书写 `.native.telora` 获得 native implementation。
+
+语言核心、标准库、领域库和应用应保持以下依赖方向：
+
+```text
+language/VM
+  -> generic standard library
+  -> domain or method library
+  -> application model and authored intent
+```
 
 放置新行为时依次询问：
 
@@ -284,29 +699,46 @@ analytics model、build system、Agent workflow 或其他实验中的概念。
 3. 它是否是通用、确定的 standard-library operation？
 4. 只有前三层都无法忠实表达时，才讨论缺少哪项最小语言或 Host 机制。
 
-## 工具模型
+Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语言内建概念。
 
-Parser、HIR、类型分析、工具阶段求值、workspace snapshot、CLI query 和 LSP 共享
-权威语义事实。工具不能各自从文本反向猜测运行时行为。
+## 14. 当前边界和非保证
 
-不完整源码是正常工具状态。Syntax recovery 保留稳定位置；semantic recovery 只
-发布当前 revision 能证明的事实；异步工作不能覆盖更新的 snapshot。取消与配额
-贯穿整个分析过程。
+当前语言设计不包含：
 
-Strict command 与 editor query 可以展示不同的事实子集，但对双方共同展示的事实，
-其意义和确定程度必须一致。
+- ambient IO、文件访问、网络、时钟或环境读取；
+- 通用 effect handler 或语言级 action protocol；
+- runtime code generation、`eval`、动态 import 或通用 macro system；
+- trait、interface、subtyping、associated type、higher-rank/HKT；
+- 任意 binding 的无限制 polymorphic generalization；
+- 全局 termination proof；
+- 通用 package registry、获取和版本求解；
+- 生产级 exec/build effect executor；
+- 对外部生态或未来版本的长期兼容性保证。
 
-## 当前设计边界
+此外，下列能力具有明确的当前限制：
 
-当前设计有意不包含：
+- 参数化 TypeMetadata family 不能参数化递归，也不能调用同模块普通 helper；
+- `interpreter!` 只提升直接 A 参数的消费型解释器，不能适配高阶或返回 A 的位置；
+- Function 在公开 Type descriptor 解释中是受限的 opaque leaf；
+- 普通 CLI 严格失败输出不保证一次展示 recovery 已收集的全部独立诊断；
+- Host-observed diagnostic 具有 severity/message/location/labels，但还没有稳定的领域
+  category、cause graph 或 repair schema；
+- 工具可以保守丢失精度，不能以猜测填补缺失语法或失败依赖。
 
-- 语言级 effect 或 ambient IO；
-- runtime code generation、dynamic import 或通用 macro system；
-- trait、interface、associated type、subtyping 或 higher-kinded type；
-- 无限制 polymorphism 或所有 binding 的自动 generalization；
-- 通用 package acquisition 或 action protocol；
-- 领域专用的 ontology、analytics、deployment 或 Agent 语义；
-- 脱离 Host 配额的全局终止保证。
+这些限制是当前规范的一部分。应用不能依赖规范之外的推断、反射或 Host fallback。
 
-未来 RFC 只有在陈述一般问题、保持设计不变量，并在语言变化被接受后同步更新本文档
-时，才可以改变这份基线。
+## 15. 规范性总结
+
+一个符合当前 Telora 模型的程序，应能被理解为以下组合：
+
+1. 静态解析的 source/module graph；
+2. 对不可变小型值模型的普通函数计算；
+3. 由同一 VM 求值并由类型检查器解释的 TypeMetadata；
+4. 明确受限的 `Dyn`、诊断和 Host bridge；
+5. 由资源 account 包围、成功后原子发布的一次执行；
+6. 最终仍需 Host 赋予意义的普通输出值。
+
+Telora 的核心承诺不是“所有错误都能静态发现”，也不是“所有程序都会终止”。它的
+承诺是：可影响一次执行的世界是明确的；执行在有限边界内产生值或结构化失败；类型、
+来源和诊断尽量共享一个权威语义模型；任何现实效果都位于普通程序之外的 Host 授权
+边界。
