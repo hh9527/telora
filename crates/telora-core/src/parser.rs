@@ -835,6 +835,17 @@ impl<'a> Lowerer<'a> {
             }
             Rule::TypeBinding => {
                 let decorators = self.decorators(node)?;
+                let type_parameters = self
+                    .rule_children(node)
+                    .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
+                    .map(|parameters| {
+                        self.token_children(parameters, Token::Identifier)
+                            .map(|parameter| {
+                                located(self.text(parameter).into_owned(), self.location(parameter))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let equal = self.first_token(node, Token::Equal)?;
                 let start = self.cst.span(equal).start;
                 let value = self.expression(
@@ -852,7 +863,7 @@ impl<'a> Lowerer<'a> {
                         kind: BindingKind::Type,
                         imported_name: None,
                         name,
-                        type_parameters: Vec::new(),
+                        type_parameters,
                         annotation: None,
                         value,
                     },
@@ -3046,6 +3057,30 @@ export { private as visible, identity as map };"#,
         };
         assert_eq!(fields[0].value.decorators.len(), 1);
         assert!(matches!(fields[0].value.value.value, ExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn lowers_parameterized_type_declarations_with_located_parameters() {
+        let program = parse(
+            "family.telora",
+            "@struct type Pair(Left, Right) = {left: Left, right: Right}; Pair",
+        )
+        .unwrap();
+        let binding = &program.value.body.value.bindings[0];
+        assert_eq!(binding.value.kind, BindingKind::Type);
+        assert_eq!(binding.value.name.value, "Pair");
+        assert_eq!(
+            binding
+                .value
+                .type_parameters
+                .iter()
+                .map(|parameter| parameter.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Left", "Right"]
+        );
+        assert_eq!(binding.value.type_parameters[0].location.range(), 18..22);
+        assert_eq!(binding.value.type_parameters[1].location.range(), 24..29);
+        assert!(matches!(binding.value.value.value, ExprKind::Call { .. }));
     }
 
     #[test]

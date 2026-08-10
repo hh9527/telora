@@ -1,6 +1,6 @@
 # RFC 0218: Nameable parameterized TypeMetadata families
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0051, RFC 0055, RFC 0192, RFC 0203
 
 ## Summary
@@ -401,12 +401,36 @@ declared parameters are ordinary TypeMetadata witnesses and their application
 produces ordinary TypeMetadata. A separate `Type -> Type` kind hierarchy would
 add machinery without serving the bounded surface.
 
-## SSOT delta after implementation
+## Implementation result
 
-This Proposed RFC does not change the current design SSOT.
+Implemented in `telora-core` with the existing parser, analyzer, compiler, VM,
+module publication, and semantic snapshot paths. A family is represented by an
+ordinary native closure whose upvalues contain the canonical symbolic template.
+Application decodes TypeMetadata arguments and reuses capture-avoiding Bound
+substitution. No public Value variant, bytecode instruction, ABI, evaluator, or
+standard-library registry was added.
 
-After implementation and acceptance evidence are complete, the implementation
-change must update these documents in the same work:
+Local families are evaluated in deterministic dependency order. The first
+implementation accepts acyclic composition between local families and imported
+metadata capabilities. It deliberately rejects dependency on an
+unparameterized `type` declared in the same module: those declarations still
+participate in the older recursive predeclaration path, whose temporary `Any`
+placeholder must not enter a family template. Local ordinary helpers are not
+yet available during this early family-evaluation step. Supporting either case
+requires a later dependency-scheduling change; it is not approximated here.
+
+Tests cover located and duplicate parameters, exact schemes, decorated and
+nested composition, forward acyclic dependencies, concrete validation, all
+four static import forms, wrong arity, invalid metadata, local concrete-type
+rejection, direct and mutual recursion rejection, and precise recovered
+semantic facts. Full core and workspace test suites pass. On Rust 1.97, strict
+workspace Clippy also passes; its two newly surfaced baseline lints were resolved
+by boxing a private recovery error payload and removing a redundant single-
+variant diagnostic-dispatch argument.
+
+## SSOT delta
+
+The implementation updates these documents in the same work:
 
 - `docs/design/LANGUAGE.md`: add parameterized type declarations, symbolic
   template evaluation, precise constructor schemes, module behavior, and the
@@ -415,8 +439,7 @@ change must update these documents in the same work:
   arbitrary metadata function, associated type, and higher-kinded parameter;
 - `tutorial.md`: teach the declaration, contract, import, and diagnostic
   surface with neutral examples; and
-- this RFC: change status to Implemented and record the exact implementation,
-  tests, and any narrowed boundary.
+- this RFC: records the exact implementation, tests, and narrowed boundary.
 
 `docs/MOTIVATION.md` does not change. The feature follows its existing claims:
 simple explicit declarations, types as data, diagnostics as a first-class

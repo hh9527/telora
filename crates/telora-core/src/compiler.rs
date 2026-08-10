@@ -120,7 +120,9 @@ pub(crate) fn compile_metadata_initializer(
         .value
         .bindings
         .iter()
-        .filter(|binding| binding.value.kind == BindingKind::Type)
+        .filter(|binding| {
+            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+        })
         .map(|binding| binding.value.name.value.clone())
         .collect::<Vec<_>>();
     if type_names.is_empty() {
@@ -276,6 +278,7 @@ pub(crate) fn compile_expression_with_bindings(
         retained_names: HashSet::new(),
         promoted_types: HashSet::new(),
         external_values: BTreeMap::new(),
+        type_family_values: BTreeMap::new(),
         source_file: Some(source_file),
     };
     for (name, value) in bindings {
@@ -324,6 +327,7 @@ struct Compiler<'a> {
     retained_names: HashSet<String>,
     promoted_types: HashSet<String>,
     external_values: BTreeMap<String, Value>,
+    type_family_values: BTreeMap<String, Value>,
     source_file: Option<&'a SourceFile>,
 }
 
@@ -390,6 +394,7 @@ impl<'a> Compiler<'a> {
             retained_names,
             promoted_types,
             external_values: analysis.external_values.clone(),
+            type_family_values: analysis.type_family_values.clone(),
             source_file,
         };
         for (name, value) in &analysis.prelude {
@@ -509,6 +514,7 @@ impl<'a> Compiler<'a> {
             retained_names: HashSet::new(),
             promoted_types: HashSet::new(),
             external_values: BTreeMap::new(),
+            type_family_values: BTreeMap::new(),
             source_file,
         })
     }
@@ -697,6 +703,21 @@ impl<'a> Compiler<'a> {
                                 binding.location,
                             );
                             self.environment.insert(name, register);
+                        } else if !binding.value.type_parameters.is_empty() {
+                            let value = self
+                                .type_family_values
+                                .get(&name)
+                                .expect("analyzed type family has a callable value")
+                                .clone();
+                            let register = self.load_constant(value, binding.location);
+                            let (link, _) = type_links[&binding.value.name.value];
+                            self.emit(
+                                Operation::InitializeUpLink {
+                                    link,
+                                    src: register,
+                                },
+                                binding.location,
+                            );
                         } else {
                             self.preserved_up_link_reads = type_links.keys().cloned().collect();
                             let register = self.compile_expr(&binding.value.value)?;

@@ -2,7 +2,7 @@ use crate::ast::{
     BinaryOperator, BindingKind, Block, Expr, ExprKind, Pattern, Program, StringPartKind,
     TypeArgumentKind, located,
 };
-use crate::compiler::compile_expression_with_bindings;
+use crate::compiler::{collect_runtime_names, compile_expression_with_bindings};
 use crate::heap::{Handle, Heap, PersistentValue};
 use crate::hir::{HirDefinitionId, HirDefinitionKind, HirExpressionId, HirProgram, HirResolution};
 use crate::json::{Provenance, ValuePath, ValuePathSegment};
@@ -653,6 +653,12 @@ pub struct ModuleInterface {
     pub exports: BTreeMap<String, TypeScheme>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct TypeFamilyTemplate {
+    parameters: Vec<TypeParameter>,
+    descriptor: TypeDescriptor,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TypeDescriptor {
     Bound(TypeParameterId),
@@ -953,6 +959,7 @@ pub struct Analysis {
     pub(crate) prelude: BTreeMap<String, Value>,
     pub(crate) external_values: BTreeMap<String, Value>,
     pub(crate) dynamic_bindings: HashSet<String>,
+    pub(crate) type_family_values: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1591,6 +1598,182 @@ pub(crate) fn analyze_program_with_bindings_observed(
         tool_values.insert(name.clone(), value);
     }
 
+    let family_bindings = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| {
+            binding.value.kind == BindingKind::Type && !binding.value.type_parameters.is_empty()
+        })
+        .collect::<Vec<_>>();
+    let family_names = family_bindings
+        .iter()
+        .map(|binding| binding.value.name.value.clone())
+        .collect::<HashSet<_>>();
+    let local_concrete_type_names = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| {
+            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+        })
+        .map(|binding| binding.value.name.value.clone())
+        .collect::<HashSet<_>>();
+    let mut pending_families = (0..family_bindings.len()).collect::<BTreeSet<_>>();
+    let mut type_family_values = BTreeMap::new();
+    while !pending_families.is_empty() {
+        let mut progressed = false;
+        for index in pending_families.iter().copied().collect::<Vec<_>>() {
+            let binding = family_bindings[index];
+            let parameter_names = binding
+                .value
+                .type_parameters
+                .iter()
+                .map(|parameter| parameter.value.as_str())
+                .collect::<HashSet<_>>();
+            let mut referenced = HashSet::new();
+            collect_runtime_names(&binding.value.value, &mut referenced);
+            if let Some(dependency) = referenced.iter().find(|name| {
+                local_concrete_type_names.contains(*name)
+                    && !parameter_names.contains(name.as_str())
+            }) {
+                return Err(FrontendError::from_diagnostic(
+                    sources,
+                    Diagnostic::error(
+                        format!(
+                            "type family {} cannot depend on local concrete type {:?}",
+                            binding.value.name.value, dependency
+                        ),
+                        binding.value.value.location,
+                    ),
+                ));
+            }
+            let dependencies = referenced
+                .iter()
+                .filter(|name| {
+                    family_names.contains(*name) && !parameter_names.contains(name.as_str())
+                })
+                .collect::<Vec<_>>();
+            if dependencies
+                .iter()
+                .any(|dependency| !type_family_values.contains_key(*dependency))
+            {
+                continue;
+            }
+
+            let mut names = HashSet::new();
+            let mut parameters = Vec::new();
+            let mut bindings = tool_values.clone();
+            for (parameter_index, parameter) in binding.value.type_parameters.iter().enumerate() {
+                if !names.insert(parameter.value.as_str()) {
+                    return Err(FrontendError::from_diagnostic(
+                        sources,
+                        Diagnostic::error(
+                            format!("duplicate type parameter {:?}", parameter.value),
+                            parameter.location,
+                        ),
+                    ));
+                }
+                let parameter_id =
+                    TypeParameterId(u32::try_from(parameter_index).map_err(|_| {
+                        frontend_error(source_name, "type family has too many parameters")
+                    })?);
+                parameters.push(TypeParameter {
+                    id: parameter_id,
+                    name: parameter.value.clone(),
+                    location: parameter.location,
+                });
+                bindings.insert(
+                    parameter.value.clone(),
+                    TypeDescriptor::Bound(parameter_id).to_value(&mut tool_vm),
+                );
+            }
+            let value = evaluate_tool_expression(
+                source_name,
+                &binding.value.value,
+                &bindings,
+                account,
+                sources,
+                debug_sink,
+            )?;
+            let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                FrontendError::from_diagnostic(
+                    sources,
+                    Diagnostic::error(
+                        format!(
+                            "type family {} produced invalid metadata: {message}",
+                            binding.value.name.value
+                        ),
+                        binding.value.value.location,
+                    ),
+                )
+            })?;
+            let mut bounds = Vec::new();
+            collect_bound_parameters(&descriptor, &mut bounds);
+            if let Some(foreign) = bounds
+                .iter()
+                .find(|bound| !parameters.iter().any(|parameter| parameter.id == **bound))
+            {
+                return Err(FrontendError::from_diagnostic(
+                    sources,
+                    Diagnostic::error(
+                        format!(
+                            "type family {} produced foreign bound parameter T{}",
+                            binding.value.name.value, foreign.0
+                        ),
+                        binding.value.value.location,
+                    ),
+                ));
+            }
+            let family = TypeFamilyTemplate {
+                parameters: parameters.clone(),
+                descriptor: descriptor.clone(),
+            };
+            let family_value = type_family_value(&family);
+            let scheme = TypeScheme {
+                parameters,
+                body: TypeDescriptor::Function {
+                    parameters: family
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(parameter.id)))
+                        })
+                        .collect(),
+                    result: Box::new(TypeDescriptor::TypeOf(Box::new(descriptor))),
+                },
+            };
+            let erased = erase_type_variables(&scheme.body);
+            tool_values.insert(binding.value.name.value.clone(), family_value.clone());
+            static_environment.insert(binding.value.name.value.clone(), erased.clone());
+            binding_types.insert(binding.value.name.value.clone(), erased);
+            binding_schemes.insert(binding.value.name.value.clone(), scheme);
+            type_family_values.insert(binding.value.name.value.clone(), family_value);
+            pending_families.remove(&index);
+            progressed = true;
+        }
+        if !progressed {
+            let binding = family_bindings[*pending_families
+                .iter()
+                .next()
+                .expect("non-empty pending family set")];
+            return Err(FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error(
+                    format!(
+                        "recursive type family component containing {:?} is not supported",
+                        binding.value.name.value
+                    ),
+                    binding.location,
+                ),
+            ));
+        }
+    }
+
     let mut definition_contracts = HashMap::new();
     let mut declaration_locations = HashMap::new();
     let mut definition_counts = HashMap::<String, usize>::new();
@@ -1764,6 +1947,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 }
             }
             BindingKind::Type => {
+                if !binding.value.type_parameters.is_empty() {
+                    continue;
+                }
                 let value = evaluate_tool_expression(
                     source_name,
                     &binding.value.value,
@@ -2524,6 +2710,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         prelude: prelude_values,
         external_values: external_values.clone(),
         dynamic_bindings: dynamic_bindings.clone(),
+        type_family_values,
     })
 }
 
@@ -2698,6 +2885,49 @@ fn evaluate_tool_expression(
                 ),
             )
         })
+}
+
+pub(crate) fn type_family_value(family: &TypeFamilyTemplate) -> Value {
+    let mut vm = Vm::new();
+    let template = family.descriptor.to_value(&mut vm);
+    let arity = family.parameters.len();
+    let arity_value = i64::try_from(arity).expect("type-family arity was already bounded by u32");
+    Value::Func(Arc::new(Closure::native_with_upvalues(
+        NativeFunction::new("type-family.apply", arity, native_apply_type_family),
+        vec![template, Value::Int(arity_value)],
+    )))
+}
+
+fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let template = context.export_value(context.upvalue(0)?)?;
+    let template = TypeDescriptor::from_value(&template)
+        .map_err(|message| NativeError::new(format!("invalid type-family template: {message}")))?;
+    let arity = context
+        .value(context.upvalue(1)?)?
+        .as_int()
+        .and_then(|arity| usize::try_from(arity).ok())
+        .ok_or_else(|| NativeError::new("invalid type-family arity"))?;
+    let mut replacements = HashMap::with_capacity(arity);
+    for index in 0..arity {
+        let argument = context.export_value(context.argument(index)?)?;
+        let descriptor = TypeDescriptor::from_value(&argument).map_err(|message| {
+            NativeError::new(format!(
+                "type-family argument {} is not valid TypeMetadata: {message}",
+                index + 1
+            ))
+        })?;
+        replacements.insert(
+            TypeParameterId(
+                u32::try_from(index)
+                    .map_err(|_| NativeError::new("type-family argument index exceeds u32"))?,
+            ),
+            descriptor,
+        );
+    }
+    let descriptor = substitute_bound_parameters(&template, &replacements);
+    let mut vm = Vm::new();
+    let value = descriptor.to_value(&mut vm);
+    context.set_value(context.result(), &value)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9490,6 +9720,114 @@ mod tests {
     }
 
     #[test]
+    fn parameterized_type_family_publishes_a_precise_constructor_scheme() {
+        let analysis = analyze_source(
+            "family.telora",
+            "@struct type Box(A) = {value: A};\
+             type IntBox = Box(Int);\
+             def wrap: for(A) Fn(A) -> Box(A) = fn(value) { {value} };\
+             wrap(1)",
+        )
+        .unwrap();
+        let box_definition = analysis
+            .hir
+            .definitions()
+            .iter()
+            .find(|definition| definition.name == "Box")
+            .expect("Box definition");
+        assert_eq!(
+            analysis.definition_schemes[&box_definition.id].display_name(),
+            "for(A) Fn(TypeOf(A)) -> TypeOf({value: A})"
+        );
+        assert_eq!(
+            analysis.display(analysis.declared_types["IntBox"]),
+            "{value: Int}"
+        );
+        assert_eq!(analysis.display(analysis.result_type), "{value: Int}");
+    }
+
+    #[test]
+    fn parameterized_type_families_compose_symbolic_templates() {
+        let analysis = analyze_source(
+            "families.telora",
+            "@struct type Box(A) = {value: A};\
+             @struct type Envelope(Payload, Error) = {\
+                 payload: Option(Box(Payload)),\
+                 error: Option(Error),\
+             };\
+             type Response = Envelope(String, Int);\
+             Response",
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.display(analysis.declared_types["Response"]),
+            "{error: enum {None, Some(Int)}, payload: enum {None, Some({value: String})}}"
+        );
+    }
+
+    #[test]
+    fn parameterized_type_families_evaluate_in_dependency_order() {
+        let analysis = analyze_source(
+            "forward-family.telora",
+            "type Outer(A) = Inner(A);\
+             type Inner(A) = Array(A);\
+             type Output = Outer(String);\
+             Output",
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.display(analysis.declared_types["Output"]),
+            "Array<String>"
+        );
+    }
+
+    #[test]
+    fn parameterized_type_family_diagnostics_preserve_bounded_failures() {
+        let duplicate = analyze_source(
+            "duplicate-family.telora",
+            "type Pair(A, A) = Tuple([A, A]); 0",
+        )
+        .unwrap_err();
+        assert!(duplicate.message.contains("duplicate type parameter \"A\""));
+
+        let arity = analyze_source(
+            "arity-family.telora",
+            "type Box(A) = Array(A); type Broken = Box(Int, String); 0",
+        )
+        .unwrap_err();
+        assert!(
+            arity.message.contains("expected 1 arguments, got 2"),
+            "{}",
+            arity.message
+        );
+
+        let invalid = analyze_source("invalid-family.telora", "type Broken(A) = 1; 0").unwrap_err();
+        assert!(invalid.message.contains("produced invalid metadata"));
+
+        let local_concrete = analyze_source(
+            "concrete-family.telora",
+            "type Id = Int; type Box(A) = Tuple([Id, A]); 0",
+        )
+        .unwrap_err();
+        assert!(
+            local_concrete
+                .message
+                .contains("cannot depend on local concrete type \"Id\"")
+        );
+
+        let direct =
+            analyze_source("recursive-family.telora", "type Loop(A) = Loop(A); 0").unwrap_err();
+        assert!(direct.message.contains("recursive type family component"));
+
+        let mutual = analyze_source(
+            "mutual-family.telora",
+            "type Left(A) = Right(A); type Right(A) = Left(A); 0",
+        )
+        .unwrap_err();
+        assert!(mutual.message.contains("recursive type family component"));
+    }
+
+    #[test]
     fn type_validation_uses_the_authoritative_metadata_decoder() {
         let valid =
             crate::compile_source("valid-type.telora", "validate(Type, Array(Int))").unwrap();
@@ -9986,6 +10324,18 @@ mod tests {
         assert!(matches!(
             rejected,
             Value::Tagged { tag, .. } if tag.name() == "Err"
+        ));
+
+        let family = crate::run_source(
+            "test",
+            "@struct type Box(A) = {value: A};\
+             validate(Box(Int), {value: 42})",
+            100_000,
+        )
+        .unwrap();
+        assert!(matches!(
+            family,
+            Value::Tagged { tag, .. } if tag.name() == "Ok"
         ));
     }
 

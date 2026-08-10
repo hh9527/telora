@@ -1938,7 +1938,7 @@ impl RecoverableWorkspaceBuilder<'_> {
             Ok(arena) => arena,
             Err(error) => {
                 return Err(RecoveryEvaluationError::Runtime(
-                    error,
+                    Box::new(error),
                     account.take_diagnostics(),
                 ));
             }
@@ -2074,7 +2074,7 @@ fn same_runtime_diagnostic(left: &Diagnostic, right: &Diagnostic) -> bool {
 
 enum RecoveryEvaluationError {
     Module,
-    Runtime(crate::RuntimeError, Vec<Diagnostic>),
+    Runtime(Box<crate::RuntimeError>, Vec<Diagnostic>),
 }
 
 fn block_on_recovery<F: std::future::Future>(future: F) -> F::Output {
@@ -5145,6 +5145,60 @@ unchanged", "|"),
     }
 
     #[test]
+    fn parameterized_type_families_preserve_schemes_across_import_forms() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("families.telora"),
+            r#"@struct type Box(A) = {value: A};
+               {Box: Box}"#,
+        )
+        .unwrap();
+
+        for (name, import, family) in [
+            (
+                "whole.telora",
+                r#"import "./families.telora" as families;"#,
+                "families.Box",
+            ),
+            (
+                "selective.telora",
+                r#"import "./families.telora" {Box};"#,
+                "Box",
+            ),
+            ("open.telora", r#"import "./families.telora" *;"#, "Box"),
+            (
+                "aliased.telora",
+                r#"import "./families.telora" {Box as Container};"#,
+                "Container",
+            ),
+        ] {
+            fs::write(
+                directory.join(name),
+                format!(
+                    r#"{import}
+                       type IntBox = {family}(Int);
+                       let value: IntBox = {{value: 42}};
+                       value"#
+                ),
+            )
+            .unwrap();
+            let module = load_module(directory.join(name), BTreeMap::new(), 100_000).unwrap();
+            assert_eq!(
+                module.analysis.display(module.analysis.result_type),
+                "{value: Int}",
+                "{name}"
+            );
+            assert_eq!(
+                module.execute(100_000).unwrap().to_string(),
+                "{value: 42}",
+                "{name}"
+            );
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_callbacks_share_fuel_allocation_and_tool_stage_execution() {
         let directory = fixture_dir();
         let item_count = 1_500usize;
@@ -8166,6 +8220,29 @@ unchanged", "|"),
     }
 
     #[test]
+    fn recoverable_workspace_publishes_precise_type_family_schemes() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(&main, "@struct type Box(A) = {value: A}; export { Box };").unwrap();
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        assert_eq!(root.state, WorkspaceModuleState::Known);
+        let family = snapshot
+            .definitions()
+            .iter()
+            .find(|definition| definition.module == root.id && definition.name == "Box")
+            .unwrap();
+        assert_eq!(
+            family.scheme.as_deref(),
+            Some("for(A) Fn(TypeOf(A)) -> TypeOf({value: A})")
+        );
+        assert!(!family.scheme.as_deref().unwrap().contains("Any"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn recoverable_workspace_publishes_runtime_blame_with_data_and_rule_sources() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
@@ -9283,8 +9360,8 @@ export let output: String = error.message;"#,
 
     #[test]
     fn third_enterprise_builds_a_model_from_the_ontology_dsl_tutorial() {
-        let examples = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/saas-support-reporting");
+        let examples =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/saas-support-reporting");
         let valid = load_module(examples.join("valid.telora"), BTreeMap::new(), 300_000).unwrap();
         let output = valid.execute(300_000).unwrap().to_string();
         assert!(output.contains("saas-support-v1"), "{output}");

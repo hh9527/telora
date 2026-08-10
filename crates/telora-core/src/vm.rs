@@ -2732,16 +2732,17 @@ fn drive_vm_action(
                                 background,
                                 debug_sink,
                             )?,
-                            NativeKind::CoreDiagnostic(function) => run_core_diagnostic(
-                                function,
-                                &arguments,
-                                return_target,
-                                &call_function,
-                                call_pc,
-                                current,
-                                background,
-                                account,
-                            )?,
+                            NativeKind::CoreDiagnostic(CoreDiagnosticFunction::Report) => {
+                                run_core_diagnostic(
+                                    &arguments,
+                                    return_target,
+                                    &call_function,
+                                    call_pc,
+                                    current,
+                                    background,
+                                    account,
+                                )?
+                            }
                             NativeKind::CoreHash(function) => run_core_hash(
                                 function,
                                 &arguments,
@@ -9551,7 +9552,6 @@ fn run_core_debug(
 }
 
 fn run_core_diagnostic(
-    operation: CoreDiagnosticFunction,
     arguments: &[RichValue],
     return_target: ReturnTarget,
     function: &Arc<BytecodeFunction>,
@@ -9560,7 +9560,6 @@ fn run_core_diagnostic(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    let CoreDiagnosticFunction::Report = operation;
     let severity = match arguments[0].value {
         RuntimeValue::BuiltinAtom(atom) => atom.name(),
         RuntimeValue::Atom(id) => HeapView {

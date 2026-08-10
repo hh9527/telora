@@ -305,6 +305,10 @@ impl<'tree> TypeBinding<'tree> {
         })
     }
 
+    pub fn type_parameters(self) -> Option<SyntaxNode<'tree>> {
+        child_node(self.syntax, Rule::TypeParameters)
+    }
+
     pub fn value(self) -> Option<Expr<'tree>> {
         expression_slots(self.syntax).first().copied().flatten()
     }

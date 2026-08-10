@@ -31,7 +31,7 @@ native_binding: 'native' Identifier ':' type_scheme ';';
 native_type_binding: 'native' 'type' Identifier '@' Int ';';
 type_scheme: ['for' type_parameters] contract;
 type_parameters: '(' Identifier (?1 ',' Identifier)* [','] ')';
-type_binding: decorator* 'type' Identifier '=' expression ';';
+type_binding: decorator* 'type' Identifier [type_parameters] '=' expression ';';
 import_binding: 'import' string_literal import_selector ';';
 import_selector: 'as' Identifier [',' ('*' | import_items)] | '*' | import_items;
 import_items: '{' import_item (?1 ',' import_item)* [','] '}';

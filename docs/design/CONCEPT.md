@@ -223,6 +223,21 @@ capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
 **Type scheme** 是 `for(A) Fn(A) -> A` 这样的 rank-1 contract。**Bound type** 是
 检查该 contract 时 `A` 的刚性含义。Scheme 不是普通 `Type` 值。
 
+### TypeMetadata Family
+
+**TypeMetadata family（类型元数据族）**是由参数化 `type` 声明建立的、可命名的
+rank-1 metadata witness 关系。例如 `type Box(A) = ...` 使 `Box(A)` 可以出现在
+contract 中，并使值 `Box` 具有
+`for(A) Fn(TypeOf(A)) -> TypeOf(Box(A))` 的精确 scheme。
+
+Family 声明以刚性 Bound 参数求值一次并发布符号模板；application 只替换模板中的
+Bound，不按 concrete 参数重跑声明 body。这个限制使泛型 contract 与值级结果保持
+一致，也让工具能够发布完整、可诊断的 scheme。
+
+Family 不是任意 metadata function、associated type、trait、higher-kinded type
+parameter 或 nominal constructor。它不参与实例搜索，不能作为 type parameter 传递，
+也不引入新的 runtime kind 或求值语言。
+
 ### `Any`
 
 `Any` 是显式的静态精度逃生口，允许值在缺少精确静态类型时跨越边界。API 如果

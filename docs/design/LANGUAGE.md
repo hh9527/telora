@@ -115,6 +115,34 @@ Primitive 和内建元数据构造器具有精确的 witness type。用户函数
 构造并返回元数据。Decorator 是普通的 metadata-to-metadata 函数；attribute 是
 附着在规范 descriptor 上的数据。
 
+参数化 `type` 声明定义可命名的 TypeMetadata family：
+
+```telora
+@struct
+type Box(A) = {value: A};
+
+def wrap: for(A) Fn(A) -> Box(A) = fn(value) { {value} };
+```
+
+声明时，每个参数被绑定为刚性的 Bound TypeMetadata，decorated body 只求值一次，
+结果形成规范的符号模板。`Box` 同时具有以下两个一致表面：
+
+```text
+类型位置    Box(A)
+值位置      Box: for(A) Fn(TypeOf(A)) -> TypeOf(Box(A))
+```
+
+应用 family 时只对模板做避免捕获的参数替换，不会针对 concrete type 重新执行 body。
+因此通过 `TypeDesc` 观察参数所得的分支在声明时已经固定。Family 可以无环地组合
+其他本地 family，并通过完整模块、选择性、open 或 alias import 保留精确 scheme；
+参数个数、TypeMetadata 有效性、重复参数与递归 component 都有明确诊断。
+
+TypeMetadata family 是 rank-1 witness 关系，不是任意函数调用进入类型位置，也不是
+trait、associated type、higher-kinded parameter 或名义类型构造器。它不支持 partial
+application 和参数化递归。当前实现也拒绝依赖本模块的非参数化 `type` 或普通 helper，
+避免尚未完成调度的 concrete/recursive placeholder 污染符号模板；imported metadata
+能力和内建构造器不受此限制。
+
 递归 TypeMetadata 在内部使用有限图身份，并提供安全的公开 reference traversal。
 构造成功后，元数据只发布一次到持久世界；失败或部分构造的值不能成为权威类型。
 
