@@ -136,6 +136,9 @@ def wrap: for(A) Fn(A) -> Box(A) = fn(value) { {value} };
 因此通过 `TypeDesc` 观察参数所得的分支在声明时已经固定。Family 可以无环地组合
 其他本地 family，并通过完整模块、选择性、open 或 alias import 保留精确 scheme；
 参数个数、TypeMetadata 有效性、重复参数与递归 component 都有明确诊断。
+替换以规范 TypeMetadata 值为模板，保留 `WithAttributes`、codec 规则和 application
+来源。严格分析因其他错误失败时，partial recovery 仍为独立有效的 family 发布精确
+scheme，不得退化为 `Any` 或不可计算事实。
 
 TypeMetadata family 是 rank-1 witness 关系，不是任意函数调用进入类型位置，也不是
 trait、associated type、higher-kinded parameter 或名义类型构造器。它不支持 partial

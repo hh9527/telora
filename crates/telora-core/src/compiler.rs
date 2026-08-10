@@ -719,7 +719,11 @@ impl<'a> Compiler<'a> {
                                 binding.location,
                             );
                         } else {
-                            self.preserved_up_link_reads = type_links.keys().cloned().collect();
+                            self.preserved_up_link_reads = type_links
+                                .keys()
+                                .filter(|name| !self.type_family_values.contains_key(*name))
+                                .cloned()
+                                .collect();
                             let register = self.compile_expr(&binding.value.value)?;
                             self.preserved_up_link_reads.clear();
                             let (link, _) = type_links[&binding.value.name.value];

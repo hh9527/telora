@@ -369,6 +369,7 @@ pub struct CallContext<'vm, 'stack> {
     upvalue_base: usize,
     upvalue_count: usize,
     result: RegisterId,
+    call_site: Option<crate::Loc>,
 }
 
 impl<'vm, 'stack> CallContext<'vm, 'stack> {
@@ -379,6 +380,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         account: &'stack mut QuotaAccount,
         arguments: Vec<RichValue>,
         upvalues: &[RichValue],
+        call_site: Option<crate::Loc>,
     ) -> Result<Self, NativeError> {
         let base = stack.len();
         let argument_count = arguments.len();
@@ -413,6 +415,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
                 u32::try_from(result_index)
                     .map_err(|_| NativeError::stack_limit("native register count exceeds u32"))?,
             ),
+            call_site,
         })
     }
 
@@ -559,6 +562,26 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .import_value(self.background, value)
             .map_err(|error| NativeError::new(error.to_string()))?;
         self.set(destination, value)
+    }
+
+    pub(crate) fn set_value_at_call_site(
+        &mut self,
+        destination: RegisterId,
+        value: &crate::Value,
+    ) -> Result<(), NativeError> {
+        let bytes = usize::try_from(legacy_value_bytes(value)?)
+            .map_err(|_| NativeError::allocation_limit("native value is too large"))?;
+        self.charge_allocation(bytes)?;
+        let value = self
+            .current
+            .import_value_at(self.background, value, self.call_site)
+            .map_err(|error| NativeError::new(error.to_string()))?;
+        self.set(destination, value)
+    }
+
+    pub(crate) fn mark_at_call_site(&mut self, register: RegisterId) -> Result<(), NativeError> {
+        let value = self.owned(register)?.with_loc(self.call_site);
+        self.set(register, value)
     }
 
     pub fn export_value(&self, source: RegisterId) -> Result<crate::Value, NativeError> {
@@ -2598,6 +2621,7 @@ fn drive_vm_action(
                                     account,
                                     arguments,
                                     &upvalues,
+                                    instruction_location(&call_function, call_pc),
                                 )
                                 .map_err(|native_error| {
                                     native_runtime_error(

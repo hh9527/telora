@@ -5199,6 +5199,139 @@ unchanged", "|"),
     }
 
     #[test]
+    fn parameterized_type_families_construct_local_concrete_types() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"@struct type Box(A) = {value: A};
+               type StringBox = Box(String);
+               let value: StringBox = {value: "ready"};
+               value"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "{value: String}"
+        );
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{value: \"ready\"}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn parameterized_type_families_preserve_attributes_and_codec_rules() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/attributes" as attributes;
+               type Box(Item) = attributes.add(
+                   struct('None, {
+                       value: attributes.add(
+                           Item,
+                           { "std/json.rename": "payload" },
+                       ),
+                   }),
+                   { "std/json.rename_all": 'CamelCase },
+               );
+               {
+                   metadata: Box(String),
+                   decoded: codec.decode(Box(String), {payload: "ready"}),
+               }"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let Value::Dict(result) = module.execute(100_000).unwrap() else {
+            panic!("expected Dict result")
+        };
+        assert!(
+            result
+                .get("decoded")
+                .unwrap()
+                .to_string()
+                .starts_with("'Ok("),
+            "{}",
+            result.get("decoded").unwrap()
+        );
+        let Value::Dict(metadata) = result.get("metadata").unwrap() else {
+            panic!("expected attributed family metadata")
+        };
+        assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
+        let Value::Dict(model_attributes) = metadata.get("attributes").unwrap() else {
+            panic!("expected family model attributes")
+        };
+        assert_eq!(
+            model_attributes
+                .get("std/json.rename_all")
+                .unwrap()
+                .to_string(),
+            "'CamelCase"
+        );
+        let Value::Dict(struct_metadata) = metadata.get("inner").unwrap() else {
+            panic!("expected family Struct metadata")
+        };
+        let Value::Dict(fields) = struct_metadata.get("fields").unwrap() else {
+            panic!("expected family Struct fields")
+        };
+        let Value::Dict(field) = fields.get("value").unwrap() else {
+            panic!("expected attributed family field")
+        };
+        let Value::Dict(field_attributes) = field.get("attributes").unwrap() else {
+            panic!("expected family field attributes")
+        };
+        assert_eq!(
+            field_attributes.get("std/json.rename").unwrap().to_string(),
+            "\"payload\""
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn parameterized_type_family_applications_preserve_authored_rule_provenance() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        let data = directory.join("data.json");
+        fs::write(&data, r#"{"value":42}"#).unwrap();
+        fs::write(
+            &main,
+            r#"import "./data.json" as data;
+               import "std/codec" as codec;
+               import "std/result" as result;
+               @struct type Box(Item) = {value: Item};
+               codec.decode(Box(String), data) |> result.unwrap"#,
+        )
+        .unwrap();
+
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let failure = module.execute(100_000).unwrap_err();
+        assert!(failure.message.contains("$.value"), "{}", failure.message);
+        let data_location = failure.data_location().expect("codec data location");
+        assert_eq!(
+            module.sources.get(data_location.source).name.as_ref(),
+            data.display().to_string()
+        );
+        let rule_location = failure.rule_location().expect("codec rule location");
+        assert_eq!(
+            module.sources.get(rule_location.source).name.as_ref(),
+            main.display().to_string()
+        );
+        assert!(
+            module
+                .sources
+                .get(rule_location.source)
+                .slice(rule_location)
+                .is_some_and(|rule| rule.contains("String")),
+            "rule location: {rule_location:?}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_callbacks_share_fuel_allocation_and_tool_stage_execution() {
         let directory = fixture_dir();
         let item_count = 1_500usize;
@@ -8234,6 +8367,34 @@ unchanged", "|"),
             .iter()
             .find(|definition| definition.module == root.id && definition.name == "Box")
             .unwrap();
+        assert_eq!(
+            family.scheme.as_deref(),
+            Some("for(A) Fn(TypeOf(A)) -> TypeOf({value: A})")
+        );
+        assert!(!family.scheme.as_deref().unwrap().contains("Any"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_workspace_keeps_an_independent_type_family_scheme() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            "@struct type Box(A) = {value: A}; let broken = missing; export { Box };",
+        )
+        .unwrap();
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        let family = snapshot
+            .definitions()
+            .iter()
+            .find(|definition| definition.module == root.id && definition.name == "Box")
+            .unwrap();
+        assert_eq!(family.ty.state, crate::FactState::Known);
         assert_eq!(
             family.scheme.as_deref(),
             Some("for(A) Fn(TypeOf(A)) -> TypeOf({value: A})")

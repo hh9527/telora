@@ -1114,12 +1114,17 @@ impl WorkspaceSnapshot {
                     location: definition.location,
                     additional_locations: definition.additional_locations.clone(),
                     ty,
-                    scheme: input.analysis.as_ref().and_then(|analysis| {
-                        analysis
-                            .definition_schemes
-                            .get(&definition.id)
-                            .map(crate::types::TypeScheme::display_name)
-                    }),
+                    scheme: input
+                        .analysis
+                        .as_ref()
+                        .and_then(|analysis| analysis.definition_schemes.get(&definition.id))
+                        .or_else(|| {
+                            input
+                                .partial
+                                .as_ref()
+                                .and_then(|partial| partial.definition_schemes.get(&definition.id))
+                        })
+                        .map(crate::types::TypeScheme::display_name),
                     import_target: (definition.kind == DefinitionKind::Import)
                         .then(|| import_targets.get(definition.name.as_str()).copied())
                         .flatten(),

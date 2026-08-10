@@ -530,7 +530,23 @@ impl Heap {
         value: &Value,
     ) -> Result<RichValue, HeapError> {
         let mut prototypes = HashMap::new();
-        self.import_value_with(background, value, &HashMap::new(), &mut prototypes)
+        self.import_value_with(background, value, &HashMap::new(), &mut prototypes, None)
+    }
+
+    pub(crate) fn import_value_at(
+        &mut self,
+        background: Option<&Heap>,
+        value: &Value,
+        location: Option<crate::Loc>,
+    ) -> Result<RichValue, HeapError> {
+        let mut prototypes = HashMap::new();
+        self.import_value_with(
+            background,
+            value,
+            &HashMap::new(),
+            &mut prototypes,
+            location,
+        )
     }
 
     pub(crate) fn import_sourced_value(
@@ -635,102 +651,129 @@ impl Heap {
         value: &Value,
         externals: &HashMap<String, PersistentValue>,
         prototypes: &mut HashMap<*const BytecodeFunction, Handle>,
+        location: Option<crate::Loc>,
     ) -> Result<RichValue, HeapError> {
-        Ok(RichValue::unknown(match value {
-            Value::Int(value) => RuntimeValue::Int(*value),
-            Value::Float(value) => RuntimeValue::Float(*value),
-            Value::String(value) => self.string(background, value),
-            Value::Bytes(value) => {
-                RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
-            }
-            Value::NativeType(value) => {
-                RuntimeValue::NativeType(self.allocate(Object::NativeType(value.clone())))
-            }
-            Value::Opaque(value) => {
-                RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
-            }
-            Value::Atom(Atom::Builtin(atom)) => RuntimeValue::BuiltinAtom(*atom),
-            Value::Atom(Atom::Named(name)) => self.atom(background, name),
-            Value::Tagged { tag, payload } => {
-                let tag = match tag {
-                    Atom::Builtin(atom) => RuntimeValue::BuiltinAtom(*atom),
-                    Atom::Named(name) => self.atom(background, name),
-                };
-                let payload = self.import_value_with(background, payload, externals, prototypes)?;
-                RuntimeValue::Tagged(self.allocate(Object::Tagged {
-                    tag: RichValue::unknown(tag),
-                    payload,
-                }))
-            }
-            Value::Array(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| self.import_value_with(background, value, externals, prototypes))
-                    .collect::<Result<Box<[_]>, _>>()?;
-                RuntimeValue::Array(self.allocate(Object::Array(values)))
-            }
-            Value::Tuple(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| self.import_value_with(background, value, externals, prototypes))
-                    .collect::<Result<Box<[_]>, _>>()?;
-                RuntimeValue::Tuple(self.allocate(Object::Tuple(values)))
-            }
-            Value::Dict(dict) => {
-                let fields = dict
-                    .shape()
-                    .fields()
-                    .iter()
-                    .map(|field| {
-                        Ok(background
-                            .and_then(|heap| heap.find_text(field))
-                            .unwrap_or_else(|| self.intern(field)))
-                    })
-                    .collect::<Result<Vec<_>, HeapError>>()?;
-                let shape = self.intern_shape(fields);
-                let values = dict
-                    .values()
-                    .iter()
-                    .map(|value| self.import_value_with(background, value, externals, prototypes))
-                    .collect::<Result<Box<[_]>, _>>()?;
-                RuntimeValue::Dict(self.allocate(Object::Dict { shape, values }))
-            }
-            Value::Func(closure) => {
-                let prototype = match closure.prototype() {
-                    Prototype::Bytecode(function) => RuntimePrototype::Bytecode(
-                        self.link_bytecode_with(background, function, externals, prototypes)?,
-                    ),
-                    Prototype::Native(function) => RuntimePrototype::Native(*function),
-                };
-                let upvalues = closure
-                    .upvalues()
-                    .iter()
-                    .map(|value| self.import_value_with(background, value, externals, prototypes))
-                    .collect::<Result<Box<[_]>, _>>()?;
-                RuntimeValue::Func(self.allocate(Object::Closure {
-                    identity: Arc::clone(closure.identity()),
-                    prototype,
-                    upvalues,
-                }))
-            }
-            Value::Dyn(dyn_value) => {
-                let descriptor = self.import_value_with(
-                    background,
-                    dyn_value.descriptor(),
-                    externals,
-                    prototypes,
-                )?;
-                let value =
-                    self.import_value_with(background, dyn_value.value(), externals, prototypes)?;
-                RuntimeValue::Dyn(self.allocate(Object::Dyn {
-                    identity: Arc::clone(dyn_value.identity()),
-                    descriptor,
-                    value,
-                    scheme: dyn_value.scheme().cloned(),
-                    origin: dyn_value.origin().map(Arc::from),
-                }))
-            }
-        }))
+        Ok(RichValue::new(
+            match value {
+                Value::Int(value) => RuntimeValue::Int(*value),
+                Value::Float(value) => RuntimeValue::Float(*value),
+                Value::String(value) => self.string(background, value),
+                Value::Bytes(value) => {
+                    RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
+                }
+                Value::NativeType(value) => {
+                    RuntimeValue::NativeType(self.allocate(Object::NativeType(value.clone())))
+                }
+                Value::Opaque(value) => {
+                    RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
+                }
+                Value::Atom(Atom::Builtin(atom)) => RuntimeValue::BuiltinAtom(*atom),
+                Value::Atom(Atom::Named(name)) => self.atom(background, name),
+                Value::Tagged { tag, payload } => {
+                    let tag = match tag {
+                        Atom::Builtin(atom) => RuntimeValue::BuiltinAtom(*atom),
+                        Atom::Named(name) => self.atom(background, name),
+                    };
+                    let payload = self
+                        .import_value_with(background, payload, externals, prototypes, location)?;
+                    RuntimeValue::Tagged(self.allocate(Object::Tagged {
+                        tag: RichValue::new(tag, location),
+                        payload,
+                    }))
+                }
+                Value::Array(values) => {
+                    let values = values
+                        .iter()
+                        .map(|value| {
+                            self.import_value_with(
+                                background, value, externals, prototypes, location,
+                            )
+                        })
+                        .collect::<Result<Box<[_]>, _>>()?;
+                    RuntimeValue::Array(self.allocate(Object::Array(values)))
+                }
+                Value::Tuple(values) => {
+                    let values = values
+                        .iter()
+                        .map(|value| {
+                            self.import_value_with(
+                                background, value, externals, prototypes, location,
+                            )
+                        })
+                        .collect::<Result<Box<[_]>, _>>()?;
+                    RuntimeValue::Tuple(self.allocate(Object::Tuple(values)))
+                }
+                Value::Dict(dict) => {
+                    let fields = dict
+                        .shape()
+                        .fields()
+                        .iter()
+                        .map(|field| {
+                            Ok(background
+                                .and_then(|heap| heap.find_text(field))
+                                .unwrap_or_else(|| self.intern(field)))
+                        })
+                        .collect::<Result<Vec<_>, HeapError>>()?;
+                    let shape = self.intern_shape(fields);
+                    let values = dict
+                        .values()
+                        .iter()
+                        .map(|value| {
+                            self.import_value_with(
+                                background, value, externals, prototypes, location,
+                            )
+                        })
+                        .collect::<Result<Box<[_]>, _>>()?;
+                    RuntimeValue::Dict(self.allocate(Object::Dict { shape, values }))
+                }
+                Value::Func(closure) => {
+                    let prototype = match closure.prototype() {
+                        Prototype::Bytecode(function) => RuntimePrototype::Bytecode(
+                            self.link_bytecode_with(background, function, externals, prototypes)?,
+                        ),
+                        Prototype::Native(function) => RuntimePrototype::Native(*function),
+                    };
+                    let upvalues = closure
+                        .upvalues()
+                        .iter()
+                        .map(|value| {
+                            self.import_value_with(
+                                background, value, externals, prototypes, location,
+                            )
+                        })
+                        .collect::<Result<Box<[_]>, _>>()?;
+                    RuntimeValue::Func(self.allocate(Object::Closure {
+                        identity: Arc::clone(closure.identity()),
+                        prototype,
+                        upvalues,
+                    }))
+                }
+                Value::Dyn(dyn_value) => {
+                    let descriptor = self.import_value_with(
+                        background,
+                        dyn_value.descriptor(),
+                        externals,
+                        prototypes,
+                        location,
+                    )?;
+                    let value = self.import_value_with(
+                        background,
+                        dyn_value.value(),
+                        externals,
+                        prototypes,
+                        location,
+                    )?;
+                    RuntimeValue::Dyn(self.allocate(Object::Dyn {
+                        identity: Arc::clone(dyn_value.identity()),
+                        descriptor,
+                        value,
+                        scheme: dyn_value.scheme().cloned(),
+                        origin: dyn_value.origin().map(Arc::from),
+                    }))
+                }
+            },
+            location,
+        ))
     }
 
     pub(crate) fn link_bytecode_resolved(
@@ -768,7 +811,7 @@ impl Heap {
                         .map(PersistentValue::runtime)
                         .ok_or(HeapError("external value link is unresolved"));
                 }
-                self.import_value_with(background, value, externals, forwarded)
+                self.import_value_with(background, value, externals, forwarded, None)
             })
             .collect::<Result<Box<[_]>, _>>()?;
         let text = function

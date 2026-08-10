@@ -656,7 +656,7 @@ pub struct ModuleInterface {
 #[derive(Clone, Debug)]
 pub(crate) struct TypeFamilyTemplate {
     parameters: Vec<TypeParameter>,
-    descriptor: TypeDescriptor,
+    metadata: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -984,6 +984,7 @@ pub struct PartialAnalysis {
     pub hir: HirProgram,
     pub dependencies: SemanticDependencyGraph,
     pub definition_facts: BTreeMap<HirDefinitionId, SemanticFact<TypeId>>,
+    pub definition_schemes: BTreeMap<HirDefinitionId, TypeScheme>,
     pub diagnostics: Vec<Diagnostic>,
     pub types: TypeGraph,
 }
@@ -1224,6 +1225,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
 
     let mut diagnostics = initial_diagnostics;
     let mut facts: BTreeMap<HirDefinitionId, SemanticFact<TypeId>> = BTreeMap::new();
+    let mut definition_schemes = BTreeMap::new();
     for (definition, import) in unavailable_dependencies {
         let cause = FactIdentity::HirDefinition(import);
         let mut fact = SemanticFact::unknown(UnknownReason::BlockedBy(cause));
@@ -1274,10 +1276,52 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             }
 
             let binding = bindings[&node.definition];
+            let mut evaluation_bindings = tool_values.clone();
+            let mut parameters = Vec::new();
+            let mut parameter_names = HashSet::new();
+            for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
+                if !parameter_names.insert(parameter.value.as_str()) {
+                    let diagnostic = DiagnosticId::from_index(diagnostics.len());
+                    diagnostics.push(Diagnostic::error(
+                        format!("duplicate type parameter {:?}", parameter.value),
+                        parameter.location,
+                    ));
+                    let mut fact = SemanticFact::conflicted(None, Conflict::IncompatibleContract);
+                    fact.diagnostics.push(diagnostic);
+                    facts.insert(node.definition, fact);
+                    break;
+                }
+                let Ok(index) = u32::try_from(index) else {
+                    let diagnostic = DiagnosticId::from_index(diagnostics.len());
+                    diagnostics.push(Diagnostic::error(
+                        "type family has too many parameters",
+                        parameter.location,
+                    ));
+                    let mut fact =
+                        SemanticFact::incomputable(None, IncomputableReason::UnsupportedOperation);
+                    fact.diagnostics.push(diagnostic);
+                    facts.insert(node.definition, fact);
+                    break;
+                };
+                let id = TypeParameterId(index);
+                parameters.push(TypeParameter {
+                    id,
+                    name: parameter.value.clone(),
+                    location: parameter.location,
+                });
+                evaluation_bindings.insert(
+                    parameter.value.clone(),
+                    TypeDescriptor::Bound(id).to_value(&mut vm),
+                );
+            }
+            if facts.contains_key(&node.definition) {
+                progressed = true;
+                continue;
+            }
             let outcome = evaluate_tool_expression(
                 &source_name,
                 &binding.value.value,
-                &tool_values,
+                &evaluation_bindings,
                 &mut account,
                 sources,
                 &debug_sink,
@@ -1300,9 +1344,58 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             });
             match outcome {
                 Ok((value, descriptor)) => {
-                    let id = types.intern_descriptor(&descriptor);
-                    types.names.insert(binding.value.name.value.clone(), id);
-                    tool_values.insert(binding.value.name.value.clone(), value);
+                    let (definition_descriptor, published_value) = if parameters.is_empty() {
+                        let declared = types.intern_descriptor(&descriptor);
+                        types
+                            .names
+                            .insert(binding.value.name.value.clone(), declared);
+                        (descriptor, value)
+                    } else {
+                        let mut bounds = Vec::new();
+                        collect_bound_parameters(&descriptor, &mut bounds);
+                        if let Some(foreign) = bounds.iter().find(|bound| {
+                            !parameters.iter().any(|parameter| parameter.id == **bound)
+                        }) {
+                            let diagnostic = DiagnosticId::from_index(diagnostics.len());
+                            diagnostics.push(Diagnostic::error(
+                                format!(
+                                    "type family {} produced foreign bound parameter T{}",
+                                    binding.value.name.value, foreign.0
+                                ),
+                                binding.value.value.location,
+                            ));
+                            let mut fact =
+                                SemanticFact::conflicted(None, Conflict::IncompatibleContract);
+                            fact.diagnostics.push(diagnostic);
+                            facts.insert(node.definition, fact);
+                            progressed = true;
+                            continue;
+                        }
+                        let family = TypeFamilyTemplate {
+                            parameters: parameters.clone(),
+                            metadata: value,
+                        };
+                        let scheme = TypeScheme {
+                            parameters,
+                            body: TypeDescriptor::Function {
+                                parameters: family
+                                    .parameters
+                                    .iter()
+                                    .map(|parameter| {
+                                        TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(
+                                            parameter.id,
+                                        )))
+                                    })
+                                    .collect(),
+                                result: Box::new(TypeDescriptor::TypeOf(Box::new(descriptor))),
+                            },
+                        };
+                        let erased = erase_type_variables(&scheme.body);
+                        definition_schemes.insert(node.definition, scheme);
+                        (erased, type_family_value(&family))
+                    };
+                    let id = types.intern_descriptor(&definition_descriptor);
+                    tool_values.insert(binding.value.name.value.clone(), published_value);
                     facts.insert(node.definition, SemanticFact::known(id));
                 }
                 Err(error) => {
@@ -1379,6 +1472,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         hir,
         dependencies,
         definition_facts: facts,
+        definition_schemes,
         diagnostics,
         types,
     }
@@ -1731,7 +1825,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             }
             let family = TypeFamilyTemplate {
                 parameters: parameters.clone(),
-                descriptor: descriptor.clone(),
+                metadata: value,
             };
             let family_value = type_family_value(&family);
             let scheme = TypeScheme {
@@ -2888,19 +2982,17 @@ fn evaluate_tool_expression(
 }
 
 pub(crate) fn type_family_value(family: &TypeFamilyTemplate) -> Value {
-    let mut vm = Vm::new();
-    let template = family.descriptor.to_value(&mut vm);
     let arity = family.parameters.len();
     let arity_value = i64::try_from(arity).expect("type-family arity was already bounded by u32");
     Value::Func(Arc::new(Closure::native_with_upvalues(
         NativeFunction::new("type-family.apply", arity, native_apply_type_family),
-        vec![template, Value::Int(arity_value)],
+        vec![family.metadata.clone(), Value::Int(arity_value)],
     )))
 }
 
 fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let template = context.export_value(context.upvalue(0)?)?;
-    let template = TypeDescriptor::from_value(&template)
+    TypeDescriptor::from_value(&template)
         .map_err(|message| NativeError::new(format!("invalid type-family template: {message}")))?;
     let arity = context
         .value(context.upvalue(1)?)?
@@ -2909,8 +3001,9 @@ fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), Nat
         .ok_or_else(|| NativeError::new("invalid type-family arity"))?;
     let mut replacements = HashMap::with_capacity(arity);
     for index in 0..arity {
-        let argument = context.export_value(context.argument(index)?)?;
-        let descriptor = TypeDescriptor::from_value(&argument).map_err(|message| {
+        let register = context.argument(index)?;
+        let argument = context.export_value(register)?;
+        TypeDescriptor::from_value(&argument).map_err(|message| {
             NativeError::new(format!(
                 "type-family argument {} is not valid TypeMetadata: {message}",
                 index + 1
@@ -2921,13 +3014,129 @@ fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), Nat
                 u32::try_from(index)
                     .map_err(|_| NativeError::new("type-family argument index exceeds u32"))?,
             ),
-            descriptor,
+            register,
         );
     }
-    let descriptor = substitute_bound_parameters(&template, &replacements);
-    let mut vm = Vm::new();
-    let value = descriptor.to_value(&mut vm);
-    context.set_value(context.result(), &value)
+    let result = context.result();
+    substitute_type_metadata_rich(&template, &replacements, context, result)
+}
+
+fn substitute_type_metadata_rich(
+    metadata: &Value,
+    replacements: &HashMap<TypeParameterId, RegisterId>,
+    context: &mut CallContext<'_, '_>,
+    destination: RegisterId,
+) -> Result<(), NativeError> {
+    let Value::Dict(fields) = metadata else {
+        return context.set_value(destination, metadata);
+    };
+    let Some(Value::Atom(kind)) = fields.get("kind") else {
+        return Err(NativeError::new(
+            "type-family template kind must be an Atom",
+        ));
+    };
+
+    if matches!(kind.name(), "Bound" | "'Bound") {
+        let Some(Value::Int(parameter)) = fields.get("parameter") else {
+            return Err(NativeError::new(
+                "type-family Bound parameter must be an Int",
+            ));
+        };
+        let parameter = u32::try_from(*parameter)
+            .map(TypeParameterId)
+            .map_err(|_| NativeError::new("type-family Bound parameter must be non-negative"))?;
+        let replacement = replacements.get(&parameter).copied().ok_or_else(|| {
+            NativeError::new(format!("type-family template has unbound T{}", parameter.0))
+        })?;
+        let value = context.export_value(replacement)?;
+        return context.set_value_at_call_site(destination, &value);
+    }
+
+    let mut output_fields = Vec::with_capacity(fields.values().len());
+    for (field, value) in fields.shape().fields().iter().zip(fields.values()) {
+        let register = context.scratch()?;
+        match (kind.name(), field.as_str()) {
+            ("WithAttributes", "inner")
+            | ("TypeOf", "instance")
+            | ("Array" | "Dict", "item")
+            | ("Tagged", "payload")
+            | ("Function", "result") => {
+                substitute_type_metadata_rich(value, replacements, context, register)?;
+            }
+            ("Tuple", "items") | ("Union", "variants") | ("Function", "parameters") => {
+                substitute_type_metadata_array(value, replacements, context, register)?;
+            }
+            ("Struct", "fields") => {
+                substitute_type_metadata_dict(value, false, replacements, context, register)?;
+            }
+            ("Enum", "variants") => {
+                substitute_type_metadata_dict(value, true, replacements, context, register)?;
+            }
+            _ => context.set_value(register, value)?,
+        }
+        output_fields.push((field.clone(), register));
+    }
+    context.make_dict(destination, &output_fields)?;
+    context.mark_at_call_site(destination)
+}
+
+fn substitute_type_metadata_array(
+    metadata: &Value,
+    replacements: &HashMap<TypeParameterId, RegisterId>,
+    context: &mut CallContext<'_, '_>,
+    destination: RegisterId,
+) -> Result<(), NativeError> {
+    let Value::Array(values) = metadata else {
+        return Err(NativeError::new(
+            "type-family template field must be an Array",
+        ));
+    };
+    let mut output = Vec::with_capacity(values.len());
+    for value in values.iter() {
+        let register = context.scratch()?;
+        substitute_type_metadata_rich(value, replacements, context, register)?;
+        output.push(register);
+    }
+    context.make_array(destination, &output)?;
+    context.mark_at_call_site(destination)
+}
+
+fn substitute_type_metadata_dict(
+    metadata: &Value,
+    optional: bool,
+    replacements: &HashMap<TypeParameterId, RegisterId>,
+    context: &mut CallContext<'_, '_>,
+    destination: RegisterId,
+) -> Result<(), NativeError> {
+    let Value::Dict(values) = metadata else {
+        return Err(NativeError::new(
+            "type-family template field must be a Dict",
+        ));
+    };
+    let mut output = Vec::with_capacity(values.values().len());
+    for (field, value) in values.shape().fields().iter().zip(values.values()) {
+        let register = context.scratch()?;
+        if optional && optional_type_metadata_is_none(value) {
+            context.set_value(register, value)?;
+        } else {
+            substitute_type_metadata_rich(value, replacements, context, register)?;
+        }
+        output.push((field.clone(), register));
+    }
+    context.make_dict(destination, &output)?;
+    context.mark_at_call_site(destination)
+}
+
+fn optional_type_metadata_is_none(metadata: &Value) -> bool {
+    if matches!(metadata, Value::Atom(atom) if atom.name() == "None") {
+        return true;
+    }
+    matches!(
+        metadata,
+        Value::Dict(fields)
+            if matches!(fields.get("kind"), Some(Value::Atom(kind)) if kind.name() == "WithAttributes")
+                && matches!(fields.get("inner"), Some(Value::Atom(inner)) if inner.name() == "None")
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

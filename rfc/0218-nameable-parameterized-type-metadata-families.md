@@ -405,10 +405,12 @@ add machinery without serving the bounded surface.
 
 Implemented in `telora-core` with the existing parser, analyzer, compiler, VM,
 module publication, and semantic snapshot paths. A family is represented by an
-ordinary native closure whose upvalues contain the canonical symbolic template.
-Application decodes TypeMetadata arguments and reuses capture-avoiding Bound
-substitution. No public Value variant, bytecode instruction, ABI, evaluator, or
-standard-library registry was added.
+ordinary native closure whose upvalues contain the canonical symbolic
+TypeMetadata value, including attribute wrappers. Application validates
+TypeMetadata arguments and performs schema-aware, capture-avoiding Bound
+substitution while retaining the authored application location on the produced
+rich metadata graph. No public Value variant, bytecode instruction, ABI,
+evaluator, or standard-library registry was added.
 
 Local families are evaluated in deterministic dependency order. The first
 implementation accepts acyclic composition between local families and imported
@@ -419,14 +421,23 @@ placeholder must not enter a family template. Local ordinary helpers are not
 yet available during this early family-evaluation step. Supporting either case
 requires a later dependency-scheduling change; it is not approximated here.
 
+A post-implementation correction preserves top-level and member attributes,
+codec policy, and rule provenance through application. Concrete type
+declarations in the same module dereference a family as a callable rather than
+passing its metadata up-link to the call. Partial workspace analysis binds rigid
+family parameters, publishes the exact constructor scheme and callable, and
+projects that scheme when strict analysis is unavailable because of an
+independent error.
+
 Tests cover located and duplicate parameters, exact schemes, decorated and
 nested composition, forward acyclic dependencies, concrete validation, all
-four static import forms, wrong arity, invalid metadata, local concrete-type
-rejection, direct and mutual recursion rejection, and precise recovered
-semantic facts. Full core and workspace test suites pass. On Rust 1.97, strict
-workspace Clippy also passes; its two newly surfaced baseline lints were resolved
-by boxing a private recovery error payload and removing a redundant single-
-variant diagnostic-dispatch argument.
+four static import forms, attribute and codec preservation, authored rule
+provenance, same-module concrete application, wrong arity, invalid metadata,
+local concrete-type rejection, direct and mutual recursion rejection, and
+precise complete and partial recovered semantic facts. Full core and workspace
+test suites pass. On Rust 1.97, strict workspace Clippy also passes; its two
+newly surfaced baseline lints were resolved by boxing a private recovery error
+payload and removing a redundant single-variant diagnostic-dispatch argument.
 
 ## SSOT delta
 
