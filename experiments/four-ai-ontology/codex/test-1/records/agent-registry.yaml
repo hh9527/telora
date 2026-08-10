@@ -1,0 +1,18 @@
+version: builtin-star-topology-v1
+status: ready
+topology: main-star
+feedback_relay: main-only
+implicit_interrupt: forbidden
+agents:
+  ai2:
+    canonical_name: /root/stable_a2
+    workspace_root: /tmp/telora-builtin-star-20260810/a2
+    bootstrap: ready
+  ai3:
+    canonical_name: /root/stable_a3
+    workspace_root: /tmp/telora-builtin-star-20260810/a3
+    bootstrap: ready
+  ai4:
+    canonical_name: /root/stable_a4
+    workspace_root: /tmp/telora-builtin-star-20260810/a4
+    bootstrap: ready

@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "enterprise-model": {"path": "../enterprise-model"},
+    "ontology-edsl": {"path": "../ontology-edsl"}
+  }
+}

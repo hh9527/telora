@@ -1,0 +1,305 @@
+import "std/array" as array;
+
+def isSome: for(A) Fn(Option(A)) -> Bool = fn(value) {
+    match value {
+        'Some(_) => 'True,
+        'None => 'False,
+    }
+};
+
+def optionToList: for(A) Fn(Option(A)) -> Array(A) = fn(value) {
+    match value {
+        'Some(item) => [item],
+        'None => [],
+    }
+};
+
+export def completeFlags: for(A) Fn(Array(Option(A))) -> Array(Bool) = fn(results) {
+    array.map(results, isSome)
+};
+
+export def completedValues: for(A) Fn(Array(Option(A))) -> Array(A) = fn(results) {
+    array.flat_map(results, optionToList)
+};
+
+export def collectRequirements:
+    for(A, Requirement)
+    Fn(Array(A), Fn(A) -> Array(Requirement)) -> Array(Requirement) =
+    fn(values, requirementsOf) {
+        array.flat_map(values, requirementsOf)
+    };
+
+def lowerOne:
+    for(ReqId, Cap, Output)
+    Fn(
+        ReqId,
+        Array(Cap),
+        Fn(Cap, ReqId) -> Bool,
+        Fn(Cap, ReqId) -> Option(Output)
+    ) -> Option(Output) =
+    fn(request, catalog, matchCap, lowerCap) {
+        match array.find(catalog, fn(cap) { matchCap(cap, request) }) {
+            'Some(cap) => match lowerCap(cap, request) {
+                'Some(value) => 'Some(value),
+                'None => {
+                    let _diag = emit_error!("capability produced no value for the requested identity", cap, request);
+                    'None
+                },
+            },
+            'None => {
+                let _diag = emit_error!("no capability serves the requested identity", request);
+                'None
+            },
+        }
+    };
+
+export def compileCapabilities:
+    for(ReqId, Cap, Output)
+    Fn(
+        Array(ReqId),
+        Array(Cap),
+        Fn(Cap, ReqId) -> Bool,
+        Fn(Cap, ReqId) -> Option(Output)
+    ) -> Array(Option(Output)) =
+    fn(requests, catalog, matchCap, lowerCap) {
+        array.map(requests, fn(request) {
+            lowerOne(request, catalog, matchCap, lowerCap)
+        })
+    };
+
+def contains:
+    for(Entity)
+    Fn(Entity, Array(Entity), Fn(Entity, Entity) -> Bool) -> Bool =
+    fn(item, set, eq) {
+        match array.find(set, fn(candidate) { eq(item, candidate) }) {
+            'Some(_) => 'True,
+            'None => 'False,
+        }
+    };
+
+def unionSets:
+    for(Entity)
+    Fn(Array(Entity), Array(Entity), Fn(Entity, Entity) -> Bool) -> Array(Entity) =
+    fn(left, right, eq) {
+        array.fold(right, left, fn(acc, item) {
+            match contains(item, acc, eq) {
+                'True => acc,
+                'False => array.push(acc, item),
+            }
+        })
+    };
+
+def expandReach:
+    for(Entity, Relation)
+    Fn(
+        Array(Entity),
+        Array(Relation),
+        Fn(Relation) -> Entity,
+        Fn(Relation) -> Entity,
+        Fn(Entity, Entity) -> Bool
+    ) -> Array(Entity) =
+    fn(reached, edges, fromOf, toOf, eq) {
+        let next = array.flat_map(edges, fn(edge) {
+            match contains(fromOf(edge), reached, eq) {
+                'True => [toOf(edge)],
+                'False => [],
+            }
+        });
+        unionSets(reached, next, eq)
+    };
+
+def countOf: for(A) Fn(Array(A)) -> Int = fn(values) {
+    array.fold(values, 0, fn(acc, _item) { acc + 1 })
+};
+
+@struct type PathReport = {
+    safeEdgeCount: Int,
+    fanOutOnlyCount: Int,
+    unreachableCount: Int,
+    allTargetsReachable: Bool,
+};
+
+def closeReach:
+    for(Entity, Relation)
+    Fn(
+        Array(Entity),
+        Array(Relation),
+        Fn(Relation) -> Entity,
+        Fn(Relation) -> Entity,
+        Fn(Entity, Entity) -> Bool
+    ) -> Array(Entity) =
+    fn(seed, edges, fromOf, toOf, eq) {
+        array.fold(
+            ['r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r,'r],
+            seed,
+            fn(reached, _round) {
+                expandReach(reached, edges, fromOf, toOf, eq)
+            }
+        )
+    };
+
+export def classifyPaths:
+    for(Entity, Relation, R)
+    Fn(
+        Entity,
+        Array(Entity),
+        Array(Relation),
+        Array(Relation),
+        Fn(Relation) -> Entity,
+        Fn(Relation) -> Entity,
+        Fn(Entity, Entity) -> Bool,
+        Fn(Array(Relation), Array(Entity), Array(Entity)) -> R
+    ) -> R =
+    fn(base, targets, safeEdges, fanOutEdges, fromOf, toOf, eq, onClassified) {
+        let safeReached = closeReach([base], safeEdges, fromOf, toOf, eq);
+        let anyReached = closeReach([base], array.concat([safeEdges, fanOutEdges]), fromOf, toOf, eq);
+        let fanOutOnly = array.filter(targets, fn(target) {
+            match contains(target, safeReached, eq) {
+                'True => 'False,
+                'False => contains(target, anyReached, eq),
+            }
+        });
+        let unreachable = array.filter(targets, fn(target) {
+            match contains(target, anyReached, eq) {
+                'True => 'False,
+                'False => 'True,
+            }
+        });
+        onClassified(safeEdges, fanOutOnly, unreachable)
+    };
+
+export def computePathReport:
+    for(Entity, Relation)
+    Fn(Array(Relation), Array(Entity), Array(Entity)) -> PathReport =
+    fn(safeEdges, fanOutOnly, unreachable) {
+        {
+            safeEdgeCount: countOf(safeEdges),
+            fanOutOnlyCount: countOf(fanOutOnly),
+            unreachableCount: countOf(unreachable),
+            allTargetsReachable: array.all(unreachable, fn(_item) { 'False }),
+        }
+    };
+
+export def diagnoseTargets:
+    for(Requirement, Entity)
+    Fn(
+        Array(Requirement),
+        Fn(Requirement) -> Entity,
+        Array(Entity),
+        Array(Entity),
+        Fn(Entity, Entity) -> Bool
+    ) -> Int =
+    fn(requirements, targetOf, fanOutOnly, unreachable, eq) {
+        array.fold(requirements, 0, fn(acc, requirement) {
+            let target = targetOf(requirement);
+            match contains(target, fanOutOnly, eq) {
+                'True => {
+                    let _diag = emit_error!("requirement target is reachable only through fan-out relations (granularity expansion)", requirement, target);
+                    acc + 1
+                },
+                'False => match contains(target, unreachable, eq) {
+                    'True => {
+                        let _diag = emit_error!("requirement target is unreachable from the base granularity through either relation catalog", requirement, target);
+                        acc + 1
+                    },
+                    'False => acc,
+                },
+            }
+        })
+    };
+
+export def validateAllowlist:
+    for(Requirement, Entity)
+    Fn(
+        Array(Requirement),
+        Fn(Requirement) -> Entity,
+        Array(Entity),
+        Fn(Entity, Entity) -> Bool
+    ) -> Array(Requirement) =
+    fn(requirements, targetOf, allowedEntities, eq) {
+        array.filter(requirements, fn(requirement) {
+            match contains(targetOf(requirement), allowedEntities, eq) {
+                'True => 'False,
+                'False => {
+                    let _diag = emit_error!("requirement target is not an authorized entity", requirement, targetOf(requirement));
+                    'True
+                },
+            }
+        })
+    };
+
+export { PathReport };
+
+# === 参考形状（主 Agent 补，供 compiler 使用）===
+
+def containsEq: for(A) Fn(Array(A), A) -> Bool = fn(values, expected) {
+    array.any(values, fn(value) { value == expected })
+};
+
+def lowerRequested:
+    for(Id, Cap, Input, Output)
+    Fn(Array(Id), Array(Cap), Fn(Cap) -> Id, Fn(Cap, Id, Input) -> Option(Output), Input) -> Array(Option(Output)) =
+    fn(requests, capabilities, idOf, lower, input) {
+        array.map(requests, fn(request) {
+            match array.find(capabilities, fn(cap) { idOf(cap) == request }) {
+                'Some(cap) => lower(cap, request, input),
+                'None => {
+                    let ignored = emit_error!(`no capability \{request}`, request);
+                    'None
+                },
+            }
+        })
+    };
+
+export def compileRequested:
+    for(Id, Cap, Input, Output, Result)
+    Fn(Array(Id), Array(Cap), Fn(Cap) -> Id, Fn(Cap, Id, Input) -> Option(Output), Input, Fn(Array(Option(Output)), Array(Output), Option(Array(Output))) -> Result) -> Result =
+    fn(requests, capabilities, idOf, lower, input, build) {
+        let results = lowerRequested(requests, capabilities, idOf, lower, input);
+        let values = completedValues(results);
+        let complete = if array.length(values) == array.length(requests) { 'Some(values) } else { 'None };
+        build(results, values, complete)
+    };
+
+def expandOnceNoEq:
+    for(Node, Edge)
+    Fn(Array(Edge), Array(Node), Fn(Edge) -> Node, Fn(Edge) -> Node) -> Array(Node) =
+    fn(edges, reachable, fromOf, toOf) {
+        array.fold(edges, reachable, fn(next, edge) {
+            if containsEq(next, fromOf(edge)) { array.push(next, toOf(edge)) } else { next }
+        })
+    };
+
+def closeSixNoEq:
+    for(Node, Edge)
+    Fn(Array(Edge), Array(Node), Fn(Edge) -> Node, Fn(Edge) -> Node) -> Array(Node) =
+    fn(edges, seeds, fromOf, toOf) {
+        let once = expandOnceNoEq(edges, seeds, fromOf, toOf);
+        let twice = expandOnceNoEq(edges, once, fromOf, toOf);
+        let three = expandOnceNoEq(edges, twice, fromOf, toOf);
+        let four = expandOnceNoEq(edges, three, fromOf, toOf);
+        let five = expandOnceNoEq(edges, four, fromOf, toOf);
+        expandOnceNoEq(edges, five, fromOf, toOf)
+    };
+
+export def classifyPathsNoEq:
+    for(Entity, Relation, R)
+    Fn(Entity, Array(Entity), Array(Relation), Array(Relation), Fn(Relation) -> Entity, Fn(Relation) -> Entity, Fn(Array(Relation), Array(Entity), Array(Entity)) -> R) -> R =
+    fn(base, targets, safeEdges, fanOutEdges, fromOf, toOf, onClassified) {
+        let safeReached = closeSixNoEq(safeEdges, [base], fromOf, toOf);
+        let anyReached = closeSixNoEq(array.concat([safeEdges, fanOutEdges]), [base], fromOf, toOf);
+        let fanOutOnly = array.filter(targets, fn(target) {
+            match containsEq(safeReached, target) {
+                'True => 'False,
+                'False => containsEq(anyReached, target),
+            }
+        });
+        let unreachable = array.filter(targets, fn(target) {
+            containsEq(anyReached, target) == 'False
+        });
+        onClassified(safeEdges, fanOutOnly, unreachable)
+    };
+
+export def compilationComplete: for(A) Fn(Option(Array(A))) -> Bool = fn(complete) {
+    match complete { 'Some(values) => 'True, 'None => 'False }
+};

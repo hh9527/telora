@@ -1,0 +1,18 @@
+# Trial 1 — 合法直接
+# 目的：验证 PUBLIC_INTENT 直接列出的典型业务问题都能降级成计划。
+# 预期：全部 lowered（返回 'Some(plan)）。
+import "flight-model/model.telora" as model;
+
+export let output = [
+    # 航班量总体 —— 只请求 FlightCount
+    # 需求粒度：At(Flight)；Flight 安全可达且在授权列表内。预期：lowered
+    model.compile(['FlightCount]),
+
+    # 航班量按航线起点分组 —— FlightCount + RouteOrigin
+    # 需求粒度：At(Flight), At(Route), At(Airport)；均安全可达（Flight->Route->Airport）、已授权。预期：lowered
+    model.compile(['FlightCount, 'RouteOrigin]),
+
+    # 航班量按机型分组 —— FlightCount + AircraftType
+    # 需求粒度：At(Flight), At(Aircraft)；安全可达（Flight->Aircraft）、已授权。预期：lowered
+    model.compile(['FlightCount, 'AircraftType]),
+];

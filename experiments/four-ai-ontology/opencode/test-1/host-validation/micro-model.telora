@@ -1,0 +1,81 @@
+import "std/array" as array;
+import "edsl/types.telora" as types;
+import "edsl/compiler.telora" { compile_with };
+
+@enum type Entity = { Item: 'None, Shelf: 'None, Warehouse: 'None, Region: 'None, Part: 'None };
+@enum type Measure = { TotalUnits: 'None, TotalWeight: 'None, TotalParts: 'None };
+@enum type Cardinality = { ManyToOne: 'None, OneToMany: 'None };
+@enum type Alignment = { Natural: 'None };
+
+@struct type RelationMapping = { table: String, on: String };
+
+type Relation = types.RelationDefinition(Entity, Entity, Cardinality, RelationMapping);
+
+@struct type MeasurePlan = { measure: Measure, entity: Entity, expression: String };
+@struct type Requirement = { entity: Entity, measure: Measure };
+@struct type ExecutionPlan = { measures: Array(MeasurePlan), joins: Array(Relation) };
+
+type MeasureCapability = types.MeasureDefinition(Measure, Entity, Entity, Cardinality, Alignment, MeasurePlan);
+
+def total_units: MeasureCapability = {
+    id: 'TotalUnits,
+    valueType: 'Item,
+    granularity: 'Item,
+    aggregation: 'ManyToOne,
+    lower: fn(requested, alignment) {
+        'Some({measure: requested, entity: 'Item, expression: "SUM(units)"})
+    },
+};
+
+def total_parts: MeasureCapability = {
+    id: 'TotalParts,
+    valueType: 'Part,
+    granularity: 'Part,
+    aggregation: 'ManyToOne,
+    lower: fn(requested, alignment) {
+        'Some({measure: requested, entity: 'Part, expression: "COUNT(parts)"})
+    },
+};
+
+def measure_caps: Array(MeasureCapability) = [total_units, total_parts];
+
+def requirementsOf: Fn(Array(MeasurePlan)) -> Array(Requirement) = fn(plans) {
+    array.map(plans, fn(p) { {entity: p.entity, measure: p.measure} })
+};
+
+def targetOf: Fn(Requirement) -> Entity = fn(r) { r.entity };
+def subjectOf: Fn(Requirement) -> Entity = fn(r) { r.entity };
+
+def safe_rels: Array(Relation) = [
+    {from: 'Item, to: 'Shelf, cardinality: 'ManyToOne, mapping: {table: "items", on: "items.shelf_id"}},
+    {from: 'Shelf, to: 'Warehouse, cardinality: 'ManyToOne, mapping: {table: "shelves", on: "shelves.warehouse_id"}},
+    {from: 'Warehouse, to: 'Region, cardinality: 'ManyToOne, mapping: {table: "warehouses", on: "warehouses.region_id"}},
+];
+def fanout_rels: Array(Relation) = [
+    {from: 'Item, to: 'Part, cardinality: 'OneToMany, mapping: {table: "parts", on: "parts.item_id"}},
+];
+
+def buildPlan: Fn(Array(MeasurePlan), Array(Requirement), Array(Relation)) -> Option(ExecutionPlan) = fn(plans, reqs, joins) {
+    'Some({measures: plans, joins: joins})
+};
+
+export def compile: Fn(Array(Measure)) -> Option(ExecutionPlan) = fn(measures) {
+    compile_with(
+        measures,
+        measure_caps,
+        fn(cap) { cap.id },
+        fn(cap, requested, alignment) { cap.lower(requested, alignment) },
+        'Natural,
+        requirementsOf,
+        targetOf,
+        'Item,
+        subjectOf,
+        ['Item, 'Shelf, 'Warehouse, 'Region],
+        safe_rels,
+        fanout_rels,
+        fn(r) { r.from },
+        fn(r) { r.to },
+        fn(a, b) { a == b },
+        buildPlan
+    )
+};

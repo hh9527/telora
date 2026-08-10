@@ -1,0 +1,19 @@
+# Trial 5 — 未授权实体
+# 目的：AirlineName 需要粒度 At(Airline)，而 Airline 不在 allowed 授权列表里
+#       （外部航空公司数据）。请求应被拒绝并产出"未授权"诊断。
+# 预期：全部 refused。
+import "flight-model/model.telora" as model;
+
+export let output = [
+    # 单独请求 AirlineName —— 需求粒度 At(Airline)，未授权。预期：refused（未授权）
+    model.compile(['AirlineName]),
+
+    # FlightCount + AirlineName —— 合法度量混入未授权实体。预期：refused（未授权）
+    model.compile(['FlightCount, 'AirlineName]),
+
+    # AircraftType + AirlineName —— 授权维度混入未授权实体。预期：refused（未授权）
+    model.compile(['AircraftType, 'AirlineName]),
+
+    # RouteOrigin + AirlineName —— 同上。预期：refused（未授权）
+    model.compile(['RouteOrigin, 'AirlineName]),
+];

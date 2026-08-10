@@ -1,0 +1,17 @@
+# Trial 3 — 未知能力
+# 目的：请求平台不存在的度量/维度，应被拒绝并产出"缺失能力"诊断。
+# 预期：全部 refused。
+import "flight-model/model.telora" as model;
+
+export let output = [
+    # 请求不存在的度量 Revenue —— 能力目录中没有对应 Cap，complete 失败。预期：refused（缺失能力）
+    model.compile(['Revenue]),
+
+    # 未知能力与合法能力混搭：FlightCount（合法）+ Revenue（未知）
+    # 原子发布：任一请求缺失能力，整次编译不发布。预期：refused（缺失能力）
+    model.compile(['FlightCount, 'Revenue]),
+
+    # 未知能力与维度混搭：RouteOrigin（合法）+ Revenue（未知）
+    # 预期：refused（缺失能力）
+    model.compile(['RouteOrigin, 'Revenue]),
+];

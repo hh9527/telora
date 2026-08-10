@@ -1,0 +1,125 @@
+import "std/array" as array;
+
+def yes: Bool = 'True;
+def no: Bool = 'False;
+
+def contains: for(A) Fn(Array(A), A) -> Bool = fn(values, wanted) {
+    array.any(values, fn(value) { value == wanted })
+};
+
+def unique: for(A) Fn(Array(A)) -> Array(A) = fn(values) {
+    array.fold(values, [], fn(found, value) {
+        if contains(found, value) { found } else { array.push(found, value) }
+    })
+};
+
+def expand_forward:
+    for(Node, Edge)
+    Fn(Array(Node), Array(Edge), Fn(Edge) -> Node, Fn(Edge) -> Node) -> Array(Node) =
+    fn(reached, edges, edge_from, edge_to) {
+        unique(array.concat([
+            reached,
+            array.flat_map(edges, fn(edge) {
+                if contains(reached, edge_from(edge)) { [edge_to(edge)] } else { [] }
+            }),
+        ]))
+    };
+
+def expand_reverse:
+    for(Node, Edge)
+    Fn(Array(Node), Array(Edge), Fn(Edge) -> Node, Fn(Edge) -> Node) -> Array(Node) =
+    fn(reached, edges, edge_from, edge_to) {
+        unique(array.concat([
+            reached,
+            array.flat_map(edges, fn(edge) {
+                if contains(reached, edge_to(edge)) { [edge_from(edge)] } else { [] }
+            }),
+        ]))
+    };
+
+def forward_8:
+    for(Node, Edge)
+    Fn(Node, Array(Edge), Fn(Edge) -> Node, Fn(Edge) -> Node) -> Array(Node) =
+    fn(base, edges, edge_from, edge_to) {
+        let r0 = [base];
+        let r1 = expand_forward(r0, edges, edge_from, edge_to);
+        let r2 = expand_forward(r1, edges, edge_from, edge_to);
+        let r3 = expand_forward(r2, edges, edge_from, edge_to);
+        let r4 = expand_forward(r3, edges, edge_from, edge_to);
+        let r5 = expand_forward(r4, edges, edge_from, edge_to);
+        let r6 = expand_forward(r5, edges, edge_from, edge_to);
+        let r7 = expand_forward(r6, edges, edge_from, edge_to);
+        expand_forward(r7, edges, edge_from, edge_to)
+    };
+
+def reverse_8:
+    for(Node, Edge)
+    Fn(Array(Node), Array(Edge), Fn(Edge) -> Node, Fn(Edge) -> Node) -> Array(Node) =
+    fn(targets, edges, edge_from, edge_to) {
+        let r1 = expand_reverse(targets, edges, edge_from, edge_to);
+        let r2 = expand_reverse(r1, edges, edge_from, edge_to);
+        let r3 = expand_reverse(r2, edges, edge_from, edge_to);
+        let r4 = expand_reverse(r3, edges, edge_from, edge_to);
+        let r5 = expand_reverse(r4, edges, edge_from, edge_to);
+        let r6 = expand_reverse(r5, edges, edge_from, edge_to);
+        let r7 = expand_reverse(r6, edges, edge_from, edge_to);
+        expand_reverse(r7, edges, edge_from, edge_to)
+    };
+
+def classify_paths:
+    for(Node, Edge, Classification)
+    Fn(
+        Node,
+        Array(Node),
+        Array(Edge),
+        Array(Edge),
+        Fn(Edge) -> Node,
+        Fn(Edge) -> Node,
+        Fn(Array(Edge), Array(Node), Array(Node)) -> Classification,
+    ) -> Classification =
+    fn(base, required, safe_edges, fanout_edges, edge_from, edge_to, build) {
+        let safe_reached = forward_8(base, safe_edges, edge_from, edge_to);
+        let all_edges = array.concat([safe_edges, fanout_edges]);
+        let all_reached = forward_8(base, all_edges, edge_from, edge_to);
+        let useful_nodes = reverse_8(required, safe_edges, edge_from, edge_to);
+        let selected_safe = array.filter(safe_edges, fn(edge) {
+            contains(safe_reached, edge_from(edge)) && contains(useful_nodes, edge_to(edge))
+        });
+        let fanout_only = array.filter(required, fn(node) {
+            contains(safe_reached, node) == no && contains(all_reached, node)
+        });
+        let missing = array.filter(required, fn(node) {
+            contains(all_reached, node) == no
+        });
+        build(selected_safe, fanout_only, missing)
+    };
+
+def report_relationship_errors:
+    for(Node, Requirement, Subject)
+    Fn(
+        Array(Node), Array(Node), Array(Requirement),
+        Fn(Requirement) -> Node, Fn(Requirement) -> Subject,
+    ) -> Bool =
+    fn(fanout_only, missing, requirements, required_node, subject) {
+        let fanout_reports = array.map(requirements, fn(requirement) {
+            if contains(fanout_only, required_node(requirement)) {
+                let ignored = emit_error!(
+                    "relationship expands the measure grain; define explicit pre-aggregation or allocation policy",
+                    subject(requirement),
+                );
+                no
+            } else { yes }
+        });
+        let missing_reports = array.map(requirements, fn(requirement) {
+            if contains(missing, required_node(requirement)) {
+                let ignored = emit_error!(
+                    "no validated relationship path exists for this requirement",
+                    subject(requirement),
+                );
+                no
+            } else { yes }
+        });
+        array.all(array.concat([fanout_reports, missing_reports]), fn(valid) { valid })
+    };
+
+export { classify_paths, report_relationship_errors };

@@ -1,0 +1,52 @@
+import "std/array" as array;
+import "./ontology.telora" as ontology;
+
+export def compile_with:
+    for(ReqId, Cap, Input, Output, Requirement, Entity, Relation, Plan)
+    Fn(
+        Array(ReqId),
+        Array(Cap),
+        Fn(Cap) -> ReqId,
+        Fn(Cap, ReqId, Input) -> Option(Output),
+        Input,
+        Fn(Array(Output)) -> Array(Requirement),
+        Fn(Requirement) -> Entity,
+        Entity,
+        Fn(Requirement) -> Entity,
+        Array(Entity),
+        Array(Relation),
+        Array(Relation),
+        Fn(Relation) -> Entity,
+        Fn(Relation) -> Entity,
+        Fn(Entity, Entity) -> Bool,
+        Fn(Array(Output), Array(Requirement), Array(Relation)) -> Option(Plan)
+    ) -> Option(Plan) =
+    fn(requests, capabilities, idOf, lower, input, requirementsOf, targetOf, base, subjectOf, allowed, safeEdges, fanOutEdges, fromOf, toOf, eq, buildPlan) {
+        ontology.compileRequested(
+            requests, capabilities, idOf, lower, input,
+            fn(results, values, complete) {
+                let requirements = requirementsOf(values);
+                let targets = array.map(requirements, targetOf);
+                ontology.classifyPathsNoEq(
+                    base,
+                    targets,
+                    safeEdges, fanOutEdges, fromOf, toOf,
+                    fn(joins, fanOutOnly, unreachable) {
+                        let _d = ontology.diagnoseTargets(requirements, targetOf, fanOutOnly, unreachable, eq);
+                        let unauthorized = ontology.validateAllowlist(requirements, targetOf, allowed, eq);
+                        if ontology.compilationComplete(complete) && array.length(unauthorized) == 0 && array.length(unreachable) == 0 && array.length(fanOutOnly) == 0 {
+                            buildPlan(values, requirements, joins)
+                        } else {
+                            let _g = if array.length(fanOutOnly) == 0 {
+                                'None
+                            } else {
+                                let _e = emit_error!("publish gate blocked: fan-out targets require granularity expansion pre-aggregation", fanOutOnly);
+                                'None
+                            };
+                            'None
+                        }
+                    }
+                )
+            }
+        )
+    };

@@ -1,0 +1,227 @@
+import "std/array" as array;
+import "ontology-edsl/lib.telora" { CompilationEvidence, compile_analytics };
+
+@enum type MeasureId = {
+    OrdersCreated: 'None,
+    DeliveredPackages: 'None,
+    UnitsShipped: 'None,
+};
+
+@enum type DimensionId = {
+    OrderMonth: 'None,
+    CustomerTier: 'None,
+    OriginRegion: 'None,
+    CarrierName: 'None,
+    ServiceName: 'None,
+    ProductCategory: 'None,
+    ProductSku: 'None,
+    DeliveryException: 'None,
+};
+
+@enum type Entity = {
+    Customer: 'None, Order: 'None, Warehouse: 'None, Region: 'None,
+    Carrier: 'None, ServiceLevel: 'None, Package: 'None,
+    PackageItem: 'None, Product: 'None, Category: 'None,
+    DeliveryEvent: 'None,
+};
+
+@enum type SemanticType = { Count: 'None };
+@enum type Aggregation = { Additive: 'None };
+
+@struct type Intent = {
+    measures: Array(MeasureId),
+    dimensions: Array(DimensionId),
+};
+
+@struct type LoweringInput = { revision: String };
+@struct type MeasureOutput = {
+    id: MeasureId,
+    semantic_type: SemanticType,
+    aggregation: Aggregation,
+    natural_grain: Entity,
+    expression: String,
+    required_entities: Array(Entity),
+};
+@struct type DimensionOutput = {
+    id: DimensionId,
+    required_entity: Entity,
+    expression: String,
+};
+@struct type MeasureCapability = {
+    id: MeasureId,
+    output: MeasureOutput,
+};
+@struct type DimensionCapability = {
+    id: DimensionId,
+    output: DimensionOutput,
+};
+@struct type CombinedMeasure = {
+    base: Entity,
+    measures: Array(MeasureOutput),
+    required_entities: Array(Entity),
+};
+@struct type PhysicalMapping = {
+    target_table: String,
+    join_predicate: String,
+};
+@struct type Relationship = {
+    from: Entity,
+    to: Entity,
+    mapping: PhysicalMapping,
+};
+@struct type RelationshipRequirement = {
+    node: Entity,
+    authored_dimension: DimensionId,
+};
+@struct type PathEvidence = {
+    selected_safe: Array(Relationship),
+    fanout_only: Array(Entity),
+    missing: Array(Entity),
+};
+@struct type ExecutionPlan = {
+    revision: String,
+    base_entity: Entity,
+    measure_plans: Array(MeasureOutput),
+    dimension_plans: Array(DimensionOutput),
+    selected_safe_relations: Array(Relationship),
+    read_only: Bool,
+};
+
+type MeasureEvidence = CompilationEvidence(MeasureOutput);
+type DimensionEvidence = CompilationEvidence(DimensionOutput);
+
+def measure_capability_id: Fn(MeasureCapability) -> MeasureId = fn(value) { value.id };
+def dimension_capability_id: Fn(DimensionCapability) -> DimensionId = fn(value) { value.id };
+def lower_measure: Fn(MeasureCapability, MeasureId, LoweringInput) -> Option(MeasureOutput) =
+    fn(capability, requested, input) { 'Some(capability.output) };
+def lower_dimension: Fn(DimensionCapability, DimensionId, LoweringInput) -> Option(DimensionOutput) =
+    fn(capability, requested, input) { 'Some(capability.output) };
+
+def build_measure_evidence:
+    Fn(Array(Option(MeasureOutput)), Array(MeasureOutput), Option(Array(MeasureOutput))) -> MeasureEvidence =
+    fn(results, values, complete) { {results, values, complete} };
+def build_dimension_evidence:
+    Fn(Array(Option(DimensionOutput)), Array(DimensionOutput), Option(Array(DimensionOutput))) -> DimensionEvidence =
+    fn(results, values, complete) { {results, values, complete} };
+def measure_values: Fn(MeasureEvidence) -> Array(MeasureOutput) = fn(value) { value.values };
+def complete_measures: Fn(MeasureEvidence) -> Option(Array(MeasureOutput)) = fn(value) { value.complete };
+def dimension_values: Fn(DimensionEvidence) -> Array(DimensionOutput) = fn(value) { value.values };
+def complete_dimensions: Fn(DimensionEvidence) -> Option(Array(DimensionOutput)) = fn(value) { value.complete };
+
+def measure_required_entities: Fn(MeasureOutput) -> Array(Entity) = fn(value) { value.required_entities };
+def combine_measures: Fn(Array(MeasureOutput)) -> Option(CombinedMeasure) = fn(measures) {
+    match array.find(measures, fn(value) { 'True }) {
+        'None => {
+            let ignored = emit_error!("at least one measure must be selected", measures);
+            'None
+        },
+        'Some(first) => {
+            if array.all(measures, fn(value) { value.natural_grain == first.natural_grain }) {
+                'Some({
+                    base: first.natural_grain,
+                    measures,
+                    required_entities: array.flat_map(measures, measure_required_entities),
+                })
+            } else {
+                let ignored = emit_error!(
+                    "measures at different natural grains require an explicit pre-aggregation policy",
+                    measures,
+                );
+                'None
+            }
+        },
+    }
+};
+
+def combined_base: Fn(CombinedMeasure) -> Entity = fn(value) { value.base };
+def combined_required: Fn(CombinedMeasure) -> Array(Entity) = fn(value) { value.required_entities };
+def dimension_node: Fn(DimensionOutput) -> Entity = fn(value) { value.required_entity };
+def edge_from: Fn(Relationship) -> Entity = fn(value) { value.from };
+def edge_to: Fn(Relationship) -> Entity = fn(value) { value.to };
+def requirement_node: Fn(RelationshipRequirement) -> Entity = fn(value) { value.node };
+def requirement_subject: Fn(RelationshipRequirement) -> DimensionId = fn(value) { value.authored_dimension };
+def build_path_evidence: Fn(Array(Relationship), Array(Entity), Array(Entity)) -> PathEvidence =
+    fn(selected_safe, fanout_only, missing) { {selected_safe, fanout_only, missing} };
+def selected_edges: Fn(PathEvidence) -> Array(Relationship) = fn(value) { value.selected_safe };
+def fanout_nodes: Fn(PathEvidence) -> Array(Entity) = fn(value) { value.fanout_only };
+def missing_nodes: Fn(PathEvidence) -> Array(Entity) = fn(value) { value.missing };
+
+def build_plan: Fn(CombinedMeasure, Array(DimensionOutput), Array(Relationship)) -> Option(ExecutionPlan) =
+    fn(combined, dimensions, relations) {
+        'Some({
+            revision: "logistics-ontology-v1",
+            base_entity: combined.base,
+            measure_plans: combined.measures,
+            dimension_plans: dimensions,
+            selected_safe_relations: relations,
+            read_only: 'True,
+        })
+    };
+
+def measure_catalog: Array(MeasureCapability) = [
+    {id: 'OrdersCreated, output: {id: 'OrdersCreated, semantic_type: 'Count, aggregation: 'Additive, natural_grain: 'Order, expression: "COUNT(orders.id)", required_entities: []}},
+    {id: 'DeliveredPackages, output: {id: 'DeliveredPackages, semantic_type: 'Count, aggregation: 'Additive, natural_grain: 'Package, expression: "COUNT(packages.id) FILTER (WHERE packages.delivered_at IS NOT NULL)", required_entities: ['Order]}},
+    {id: 'UnitsShipped, output: {id: 'UnitsShipped, semantic_type: 'Count, aggregation: 'Additive, natural_grain: 'PackageItem, expression: "SUM(package_items.quantity)", required_entities: ['Package, 'Order]}},
+];
+
+def dimension_catalog: Array(DimensionCapability) = [
+    {id: 'OrderMonth, output: {id: 'OrderMonth, required_entity: 'Order, expression: "substr(orders.created_at, 1, 7)"}},
+    {id: 'CustomerTier, output: {id: 'CustomerTier, required_entity: 'Customer, expression: "customers.tier"}},
+    {id: 'OriginRegion, output: {id: 'OriginRegion, required_entity: 'Region, expression: "regions.name"}},
+    {id: 'CarrierName, output: {id: 'CarrierName, required_entity: 'Carrier, expression: "carriers.name"}},
+    {id: 'ServiceName, output: {id: 'ServiceName, required_entity: 'ServiceLevel, expression: "service_levels.name"}},
+    {id: 'ProductCategory, output: {id: 'ProductCategory, required_entity: 'Category, expression: "categories.name"}},
+    {id: 'ProductSku, output: {id: 'ProductSku, required_entity: 'Product, expression: "products.sku"}},
+];
+
+def safe_edges: Array(Relationship) = [
+    {from: 'Order, to: 'Customer, mapping: {target_table: "customers", join_predicate: "orders.customer_id = customers.id"}},
+    {from: 'Order, to: 'Warehouse, mapping: {target_table: "warehouses", join_predicate: "orders.warehouse_id = warehouses.id"}},
+    {from: 'Warehouse, to: 'Region, mapping: {target_table: "regions", join_predicate: "warehouses.region_id = regions.id"}},
+    {from: 'Order, to: 'Carrier, mapping: {target_table: "carriers", join_predicate: "orders.carrier_id = carriers.id"}},
+    {from: 'Order, to: 'ServiceLevel, mapping: {target_table: "service_levels", join_predicate: "orders.service_level_id = service_levels.id"}},
+    {from: 'Package, to: 'Order, mapping: {target_table: "orders", join_predicate: "packages.order_id = orders.id"}},
+    {from: 'PackageItem, to: 'Package, mapping: {target_table: "packages", join_predicate: "package_items.package_id = packages.id"}},
+    {from: 'PackageItem, to: 'Product, mapping: {target_table: "products", join_predicate: "package_items.product_id = products.id"}},
+    {from: 'Product, to: 'Category, mapping: {target_table: "categories", join_predicate: "products.category_id = categories.id"}},
+    {from: 'DeliveryEvent, to: 'Package, mapping: {target_table: "packages", join_predicate: "delivery_events.package_id = packages.id"}},
+];
+
+def fanout_edges: Array(Relationship) = [
+    {from: 'Order, to: 'Package, mapping: {target_table: "packages", join_predicate: "orders.id = packages.order_id"}},
+    {from: 'Package, to: 'PackageItem, mapping: {target_table: "package_items", join_predicate: "packages.id = package_items.package_id"}},
+    {from: 'Package, to: 'DeliveryEvent, mapping: {target_table: "delivery_events", join_predicate: "packages.id = delivery_events.package_id"}},
+];
+
+def requested_entity: Fn(DimensionId) -> Entity = fn(id) {
+    match id {
+        'OrderMonth => 'Order,
+        'CustomerTier => 'Customer,
+        'OriginRegion => 'Region,
+        'CarrierName => 'Carrier,
+        'ServiceName => 'ServiceLevel,
+        'ProductCategory => 'Category,
+        'ProductSku => 'Product,
+        'DeliveryException => 'DeliveryEvent,
+    }
+};
+def to_requirement: Fn(DimensionId) -> RelationshipRequirement = fn(id) {
+    {node: requested_entity(id), authored_dimension: id}
+};
+
+export def compile: Fn(Intent) -> Option(ExecutionPlan) = fn(intent) {
+    let requirements: Array(RelationshipRequirement) = array.map(intent.dimensions, to_requirement);
+    compile_analytics(
+        intent.measures, measure_catalog, measure_capability_id, lower_measure,
+        {revision: "logistics-ontology-v1"}, build_measure_evidence, measure_values, complete_measures,
+        intent.dimensions, dimension_catalog, dimension_capability_id, lower_dimension,
+        {revision: "logistics-ontology-v1"}, build_dimension_evidence, dimension_values, complete_dimensions,
+        combine_measures, combined_base, combined_required, dimension_node, [],
+        safe_edges, fanout_edges, edge_from, edge_to,
+        requirements, requirement_node, requirement_subject,
+        build_path_evidence, selected_edges, fanout_nodes, missing_nodes,
+        build_plan,
+    )
+};
+
+export { MeasureId, DimensionId, Intent };

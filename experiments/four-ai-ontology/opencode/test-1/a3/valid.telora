@@ -1,0 +1,3 @@
+import "./enterprise-model/model.telora" { compile };
+
+export let output = compile(['FlightCount, 'RouteOrigin]);

@@ -1,0 +1,6 @@
+import "./lib.telora" { compile };
+
+export let output = compile({
+    measures: ['OrdersCreated],
+    dimensions: ['OrderMonth, 'CustomerTier, 'OriginRegion, 'CarrierName, 'ServiceName],
+});

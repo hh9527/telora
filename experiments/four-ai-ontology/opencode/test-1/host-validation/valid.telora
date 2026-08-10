@@ -1,0 +1,2 @@
+import "./micro-model.telora" { compile };
+export let output = compile(['TotalUnits]);

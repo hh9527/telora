@@ -1,0 +1,50 @@
+import "std/array" as array;
+
+def none: for(A) Fn() -> Option(A) = fn() { 'None };
+def some: for(A) Fn(A) -> Option(A) = fn(value) { 'Some(value) };
+
+def compile_capabilities:
+    for(Id, Capability, Input, Output, Evidence)
+    Fn(
+        Array(Id),
+        Array(Capability),
+        Fn(Capability) -> Id,
+        Fn(Capability, Id, Input) -> Option(Output),
+        Input,
+        Fn(Array(Option(Output)), Array(Output), Option(Array(Output))) -> Evidence,
+    ) -> Evidence =
+    fn(requested, catalog, capability_id, lower, input, build) {
+        let results = array.map(requested, fn(id) {
+            match array.find(catalog, fn(capability) { capability_id(capability) == id }) {
+                'Some(capability) => lower(capability, id, input),
+                'None => {
+                    let ignored = emit_error!("no capability is defined for the requested id", id);
+                    none()
+                },
+            }
+        });
+
+        let values = array.flat_map(results, fn(result) {
+            match result {
+                'Some(value) => [value],
+                'None => [],
+            }
+        });
+
+        let complete = array.fold(
+            results,
+            some([]),
+            fn(state, result) {
+                match state {
+                    'None => none(),
+                    'Some(completed) => match result {
+                        'None => none(),
+                        'Some(value) => some(array.push(completed, value)),
+                    },
+                }
+            },
+        );
+        build(results, values, complete)
+    };
+
+export { compile_capabilities };

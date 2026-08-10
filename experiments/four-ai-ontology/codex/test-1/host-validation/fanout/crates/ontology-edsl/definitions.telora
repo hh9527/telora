@@ -1,0 +1,66 @@
+def CapabilityDefinition:
+    for(Id, Input, Output)
+    Fn(TypeOf(Id), TypeOf(Input), TypeOf(Output)) -> Type =
+    fn(Id, Input, Output) {
+        struct('None, {
+            id: Id,
+            lower: Fn(Id, Input) -> Option(Output),
+        })
+    };
+
+def RelationshipDefinition:
+    for(Node, Classification, Mapping)
+    Fn(TypeOf(Node), TypeOf(Classification), TypeOf(Mapping)) -> Type =
+    fn(Node, Classification, Mapping) {
+        struct('None, {
+            from: Node,
+            to: Node,
+            classification: Classification,
+            mapping: Mapping,
+        })
+    };
+
+def CompilationEvidence:
+    for(Output)
+    Fn(TypeOf(Output)) -> Type =
+    fn(Output) {
+        struct('None, {
+            results: Array(Option(Output)),
+            values: Array(Output),
+            complete: Option(Array(Output)),
+        })
+    };
+
+def MeasureDefinition:
+    for(Id, SemanticValue, Node, Aggregation, Input, Output)
+    Fn(
+        TypeOf(Id), TypeOf(SemanticValue), TypeOf(Node),
+        TypeOf(Aggregation), TypeOf(Input), TypeOf(Output),
+    ) -> Type =
+    fn(Id, SemanticValue, Node, Aggregation, Input, Output) {
+        struct('None, {
+            id: Id,
+            semantic_value: TypeOf(SemanticValue),
+            natural_grain: Node,
+            aggregation: Aggregation,
+            lower: Fn(Id, Input) -> Option(Output),
+        })
+    };
+
+def DimensionDefinition:
+    for(Id, Input, Output)
+    Fn(TypeOf(Id), TypeOf(Input), TypeOf(Output)) -> Type =
+    fn(Id, Input, Output) {
+        struct('None, {
+            id: Id,
+            lower: Fn(Id, Input) -> Option(Output),
+        })
+    };
+
+export {
+    CapabilityDefinition,
+    RelationshipDefinition,
+    CompilationEvidence,
+    MeasureDefinition,
+    DimensionDefinition,
+};

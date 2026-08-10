@@ -1,0 +1,188 @@
+import "edsl/compiler.telora" as compiler;
+import "std/array" as array;
+
+@enum type Entity = {
+    Flight: 'None,
+    Aircraft: 'None,
+    Route: 'None,
+    Airport: 'None,
+    Airline: 'None,
+    Seat: 'None,
+};
+
+@enum type Measure = {
+    FlightCount: 'None,
+    RouteOrigin: 'None,
+    AircraftType: 'None,
+    AirlineName: 'None,
+    Boardings: 'None,
+    Revenue: 'None,
+};
+
+@enum type Cardinality = {
+    Safe: 'None,
+    FanOut: 'None,
+};
+
+@enum type Input = {
+    NoInput: 'None,
+};
+
+@enum type Output = {
+    Value: Measure,
+};
+
+@struct type Cap = {
+    id: Measure,
+    lower: Fn(Measure, Input) -> Option(Output),
+};
+
+@enum type Requirement = {
+    At: Entity,
+};
+
+@struct type Relation = {
+    from: Entity,
+    to: Entity,
+    cardinality: Cardinality,
+    mapping: String,
+};
+
+@struct type Plan = {
+    report: String,
+    granularities: Array(Entity),
+};
+
+def flightCountCap: Cap = {
+    id: 'FlightCount,
+    lower: fn(_request, _input) { 'Some('Value('FlightCount)) },
+};
+
+def routeOriginCap: Cap = {
+    id: 'RouteOrigin,
+    lower: fn(_request, _input) { 'Some('Value('RouteOrigin)) },
+};
+
+def aircraftTypeCap: Cap = {
+    id: 'AircraftType,
+    lower: fn(_request, _input) { 'Some('Value('AircraftType)) },
+};
+
+def airlineNameCap: Cap = {
+    id: 'AirlineName,
+    lower: fn(_request, _input) { 'Some('Value('AirlineName)) },
+};
+
+def boardingsCap: Cap = {
+    id: 'Boardings,
+    lower: fn(_request, _input) { 'Some('Value('Boardings)) },
+};
+
+def capabilities: Array(Cap) = [
+    flightCountCap,
+    routeOriginCap,
+    aircraftTypeCap,
+    airlineNameCap,
+    boardingsCap,
+];
+
+def idOf: Fn(Cap) -> Measure = fn(cap) { cap.id };
+
+def lower: Fn(Cap, Measure, Input) -> Option(Output) = fn(cap, request, input) {
+    cap.lower(request, input)
+};
+
+def requirementsOf: Fn(Array(Output)) -> Array(Requirement) = fn(values) {
+    array.flat_map(values, fn(value) {
+        match value {
+            'Value(measure) => match measure {
+                'FlightCount => ['At('Flight)],
+                'RouteOrigin => ['At('Route), 'At('Airport)],
+                'AircraftType => ['At('Aircraft)],
+                'AirlineName => ['At('Airline)],
+                'Boardings => ['At('Seat)],
+                'Revenue => [],
+            },
+        }
+    })
+};
+
+def targetOf: Fn(Requirement) -> Entity = fn(req) {
+    match req { 'At(entity) => entity }
+};
+
+def subjectOf: Fn(Requirement) -> Entity = targetOf;
+
+def fromOf: Fn(Relation) -> Entity = fn(rel) { rel.from };
+
+def toOf: Fn(Relation) -> Entity = fn(rel) { rel.to };
+
+def entityEq: Fn(Entity, Entity) -> Bool = fn(a, b) { a == b };
+
+def safeRelations: Array(Relation) = [
+    { from: 'Flight, to: 'Route, cardinality: 'Safe, mapping: "flights.route_id = routes.id" },
+    { from: 'Route, to: 'Airport, cardinality: 'Safe, mapping: "routes.origin_airport_id = airports.id" },
+    { from: 'Flight, to: 'Aircraft, cardinality: 'Safe, mapping: "flights.aircraft_id = aircraft.id" },
+    { from: 'Aircraft, to: 'Airline, cardinality: 'Safe, mapping: "aircraft.airline_id = airlines.id" },
+];
+
+def fanOutRelations: Array(Relation) = [
+    { from: 'Flight, to: 'Seat, cardinality: 'FanOut, mapping: "seats.flight_id = flights.id" },
+];
+
+def allowed: Array(Entity) = ['Flight, 'Aircraft, 'Route, 'Airport, 'Seat];
+
+def isFanOutGranularity: Fn(Entity) -> Bool = fn(entity) {
+    array.any(fanOutRelations, fn(rel) { rel.to == entity })
+};
+
+def isGranularityViolation: Fn(Requirement) -> Bool = fn(req) {
+    match req { 'At(entity) => isFanOutGranularity(entity) }
+};
+
+def buildPlan: Fn(Array(Output), Array(Requirement), Array(Relation)) -> Option(Plan) = fn(_values, requirements, _joins) {
+    match array.find(requirements, isGranularityViolation) {
+        'Some(violation) => {
+            let _diag = emit_error!("report requests a fan-out granularity (Seat) without pre-aggregation; granularity expansion is rejected", violation);
+            'None
+        },
+        'None => 'Some({
+            report: "flight-operations-plan",
+            granularities: array.map(requirements, targetOf),
+        }),
+    }
+};
+
+def containsMeasure: Fn(Array(Measure), Measure) -> Bool = fn(values, item) {
+    array.any(values, fn(candidate) { candidate == item })
+};
+
+def dedupeMeasures: Fn(Array(Measure)) -> Array(Measure) = fn(values) {
+    array.fold(values, [], fn(acc, item) {
+        match containsMeasure(acc, item) {
+            'True => acc,
+            'False => array.push(acc, item),
+        }
+    })
+};
+
+def compile: Fn(Array(Measure)) -> Option(Plan) = fn(requests) {
+    let cleaned = dedupeMeasures(requests);
+    if array.length(cleaned) == 0 {
+        let _diag = emit_error!("report requires at least one capability intent; empty request list is rejected", requests);
+        'None
+    } else {
+        compiler.compile_with(
+            cleaned,
+            capabilities,
+            idOf, lower, 'NoInput,
+            requirementsOf, targetOf, 'Flight, subjectOf,
+            allowed,
+            safeRelations, fanOutRelations,
+            fromOf, toOf, entityEq,
+            buildPlan
+        )
+    }
+};
+
+export { compile };

@@ -1,0 +1,97 @@
+import "./lib.telora" { compile_analytics };
+import "std/array" as array;
+
+@enum type MeasureId = { Revenue: 'None };
+@struct type MeasureCapability = { id: MeasureId, amount: Int };
+@struct type MeasureEvidence = {
+    results: Array(Option(Int)),
+    values: Array(Int),
+    complete: Option(Array(Int)),
+};
+
+def measure_id: Fn(MeasureCapability) -> MeasureId = fn(capability) { capability.id };
+def lower_measure: Fn(MeasureCapability, MeasureId, Int) -> Option(Int) =
+    fn(capability, requested, input) { 'Some(capability.amount + input) };
+def build_measure_evidence:
+    Fn(Array(Option(Int)), Array(Int), Option(Array(Int))) -> MeasureEvidence =
+    fn(results, values, complete) { {results, values, complete} };
+def measure_values: Fn(MeasureEvidence) -> Array(Int) = fn(evidence) { evidence.values };
+def measure_complete: Fn(MeasureEvidence) -> Option(Array(Int)) =
+    fn(evidence) { evidence.complete };
+
+@enum type DimensionId = { Region: 'None };
+@struct type DimensionCapability = { id: DimensionId, label: String };
+@struct type DimensionEvidence = {
+    results: Array(Option(String)),
+    values: Array(String),
+    complete: Option(Array(String)),
+};
+
+def dimension_id: Fn(DimensionCapability) -> DimensionId = fn(capability) { capability.id };
+def lower_dimension:
+    Fn(DimensionCapability, DimensionId, Int) -> Option(String) =
+    fn(capability, requested, input) { 'Some(capability.label) };
+def build_dimension_evidence:
+    Fn(Array(Option(String)), Array(String), Option(Array(String))) -> DimensionEvidence =
+    fn(results, values, complete) { {results, values, complete} };
+def dimension_values: Fn(DimensionEvidence) -> Array(String) = fn(evidence) { evidence.values };
+def dimension_complete: Fn(DimensionEvidence) -> Option(Array(String)) =
+    fn(evidence) { evidence.complete };
+
+@enum type Node = { Orders: 'None, Regions: 'None };
+@struct type CombinedMeasure = { total: Int, base: Node, required: Array(Node) };
+def combine_measures: Fn(Array(Int)) -> Option(CombinedMeasure) = fn(values) {
+    'Some({total: array.fold(values, 0, fn(total, value) { total + value }), base: 'Orders, required: []})
+};
+def base_node: Fn(CombinedMeasure) -> Node = fn(combined) { combined.base };
+def measure_nodes: Fn(CombinedMeasure) -> Array(Node) = fn(combined) { combined.required };
+def dimension_node: Fn(String) -> Node = fn(dimension) { 'Regions };
+
+@struct type Edge = { from: Node, to: Node, mapping: String };
+def edge_from: Fn(Edge) -> Node = fn(edge) { edge.from };
+def edge_to: Fn(Edge) -> Node = fn(edge) { edge.to };
+
+@struct type PathEvidence = {
+    selected: Array(Edge),
+    fanout_only: Array(Node),
+    missing: Array(Node),
+};
+def build_paths: Fn(Array(Edge), Array(Node), Array(Node)) -> PathEvidence =
+    fn(selected, fanout_only, missing) { {selected, fanout_only, missing} };
+def selected_edges: Fn(PathEvidence) -> Array(Edge) = fn(paths) { paths.selected };
+def fanout_nodes: Fn(PathEvidence) -> Array(Node) = fn(paths) { paths.fanout_only };
+def missing_nodes: Fn(PathEvidence) -> Array(Node) = fn(paths) { paths.missing };
+
+def requirement_node: Fn(DimensionId) -> Node = fn(requirement) { 'Regions };
+def requirement_subject: Fn(DimensionId) -> DimensionId = fn(requirement) { requirement };
+
+@struct type Plan = { total: Int, dimensions: Int, relationships: Int };
+def build_plan: Fn(CombinedMeasure, Array(String), Array(Edge)) -> Option(Plan) =
+    fn(combined, dimensions, selected) {
+        'Some({
+            total: combined.total,
+            dimensions: array.length(dimensions),
+            relationships: array.length(selected),
+        })
+    };
+
+def requested_measures: Array(MeasureId) = ['Revenue];
+def measure_catalog: Array(MeasureCapability) = [{id: 'Revenue, amount: 100}];
+def requested_dimensions: Array(DimensionId) = ['Region];
+def dimension_catalog: Array(DimensionCapability) = [{id: 'Region, label: "region"}];
+def extra_nodes: Array(Node) = [];
+def safe_edges: Array(Edge) = [{from: 'Orders, to: 'Regions, mapping: "region-key"}];
+def fanout_edges: Array(Edge) = [];
+def requirements: Array(DimensionId) = ['Region];
+
+export let output = compile_analytics(
+    requested_measures, measure_catalog, measure_id, lower_measure, 1,
+    build_measure_evidence, measure_values, measure_complete,
+    requested_dimensions, dimension_catalog, dimension_id, lower_dimension, 0,
+    build_dimension_evidence, dimension_values, dimension_complete,
+    combine_measures, base_node, measure_nodes, dimension_node, extra_nodes,
+    safe_edges, fanout_edges, edge_from, edge_to,
+    requirements, requirement_node, requirement_subject,
+    build_paths, selected_edges, fanout_nodes, missing_nodes,
+    build_plan,
+);

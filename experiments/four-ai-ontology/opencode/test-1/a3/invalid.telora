@@ -1,0 +1,7 @@
+import "./enterprise-model/model.telora" { compile };
+
+export let output = [
+    compile(['Revenue]),
+    compile(['Boardings]),
+    compile(['FlightCount, 'AirlineName]),
+];

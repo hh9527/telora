@@ -1,0 +1,19 @@
+# Trial 4 — 粒度不匹配（fan-out）
+# 目的：Boardings 的自然粒度在 Seat，从基准 Flight 到 Seat 是扩张关系（fan-out），
+#       未提供预聚合时直接请求应被拒绝（粒度扩张诊断）。
+# 预期：全部 refused。
+import "flight-model/model.telora" as model;
+
+export let output = [
+    # 直接请求 Boardings —— 需求粒度 At(Seat)，Seat 只能经 fan-out 到达。预期：refused（粒度扩张）
+    model.compile(['Boardings]),
+
+    # FlightCount + Boardings —— Seat 粒度混入。预期：refused（粒度扩张）
+    model.compile(['FlightCount, 'Boardings]),
+
+    # Boardings + RouteOrigin —— 即使有安全维度，Seat 仍是扩张粒度。预期：refused（粒度扩张）
+    model.compile(['Boardings, 'RouteOrigin]),
+
+    # Boardings + AircraftType —— 同上。预期：refused（粒度扩张）
+    model.compile(['Boardings, 'AircraftType]),
+];
