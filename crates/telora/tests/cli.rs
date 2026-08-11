@@ -99,6 +99,30 @@ fn run_accepts_external_json_and_failures_are_nonzero() {
 }
 
 #[test]
+fn run_reports_blame_without_subject_locations_instead_of_panicking() {
+    let directory = fixture_dir();
+    let main = directory.join("main.telora");
+    fs::write(
+        &main,
+        r#"let error = blame!("missing capability", "subject");
+let reported = report('Error, error);
+export let output = reported;"#,
+    )
+    .unwrap();
+
+    let output = telora()
+        .args(["run", main.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("missing capability"), "{stderr}");
+    assert!(stderr.contains("main.telora:1:"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn run_selects_output_from_explicit_main_exports() {
     let directory = fixture_dir();
     let main = directory.join("explicit.telora");

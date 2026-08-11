@@ -9868,7 +9868,7 @@ fn diagnostic_from_blame(
             )
         })?
         .ok_or_else(|| runtime_type_error("String", &message, view, function, pc))?;
-    let mut subjects = match data.value {
+    let subjects = match data.value {
         RuntimeValue::Tuple(handle) => view
             .sequence(handle, true)
             .map_err(|heap_error| {
@@ -9894,7 +9894,7 @@ fn diagnostic_from_blame(
         });
     };
     let mut diagnostic = Diagnostic::new(severity, message, primary);
-    for related in subjects.drain(1..) {
+    for related in subjects.into_iter().skip(1) {
         if related != primary {
             diagnostic = diagnostic.with_secondary("related value", related);
         }

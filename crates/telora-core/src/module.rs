@@ -9799,7 +9799,7 @@ result.unwrap(failure)"#;
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"let warning = report('Warn, blame!("deprecated", "old", 42));
+            r#"let warning = report('Warn, blame!("deprecated", "old"));
 export let output: String = warning.message;"#,
         )
         .unwrap();
