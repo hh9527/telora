@@ -1575,22 +1575,47 @@ impl Vm {
                             pc,
                         )?;
                     }
+                    Opcode::NotEqual { dst, left, right } => {
+                        let left = *read_register(&registers, *left, function, pc)?;
+                        let right = *read_register(&registers, *right, function, pc)?;
+                        let not_equal = !view.values_equal(left, right).map_err(|heap_error| {
+                            error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                heap_error.to_string(),
+                                function,
+                                pc,
+                            )
+                        })?;
+                        write_register(
+                            &mut registers,
+                            *dst,
+                            runtime_bool(not_equal).with_loc(instruction_location(function, pc)),
+                            function,
+                            pc,
+                        )?;
+                    }
                     Opcode::LessThan { dst, left, right } => {
                         let left = read_register(&registers, *left, function, pc)?;
                         let right = read_register(&registers, *right, function, pc)?;
-                        let less = match (left.value, right.value) {
-                            (RuntimeValue::Int(left), RuntimeValue::Int(right)) => left < right,
-                            (RuntimeValue::Float(left), RuntimeValue::Float(right)) => left < right,
-                            _ => {
-                                return Err(runtime_numeric_type_error(
-                                    left, right, &view, function, pc,
-                                ));
-                            }
-                        };
+                        let less = ordered_comparison(left, right, false, &view, function, pc)?;
                         write_register(
                             &mut registers,
                             *dst,
                             runtime_bool(less).with_loc(instruction_location(function, pc)),
+                            function,
+                            pc,
+                        )?;
+                    }
+                    Opcode::LessThanOrEqual { dst, left, right } => {
+                        let left = read_register(&registers, *left, function, pc)?;
+                        let right = read_register(&registers, *right, function, pc)?;
+                        let less_or_equal =
+                            ordered_comparison(left, right, true, &view, function, pc)?;
+                        write_register(
+                            &mut registers,
+                            *dst,
+                            runtime_bool(less_or_equal)
+                                .with_loc(instruction_location(function, pc)),
                             function,
                             pc,
                         )?;
@@ -10257,6 +10282,58 @@ fn numeric_binary(
     }
 }
 
+fn ordered_comparison(
+    left: &RichValue,
+    right: &RichValue,
+    inclusive: bool,
+    view: &HeapView<'_>,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<bool, RuntimeError> {
+    match (left.value, right.value) {
+        (RuntimeValue::Int(left), RuntimeValue::Int(right)) => Ok(if inclusive {
+            left <= right
+        } else {
+            left < right
+        }),
+        (RuntimeValue::Float(left), RuntimeValue::Float(right)) => Ok(if inclusive {
+            left <= right
+        } else {
+            left < right
+        }),
+        (
+            RuntimeValue::ShortString(_) | RuntimeValue::String(_),
+            RuntimeValue::ShortString(_) | RuntimeValue::String(_),
+        ) => {
+            let left = view.string_text(*left).map_err(|heap_error| {
+                error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    heap_error.to_string(),
+                    function,
+                    pc,
+                )
+            })?;
+            let right = view.string_text(*right).map_err(|heap_error| {
+                error(
+                    RuntimeErrorKind::InvalidBytecode,
+                    heap_error.to_string(),
+                    function,
+                    pc,
+                )
+            })?;
+            let (Some(left), Some(right)) = (left, right) else {
+                unreachable!("String runtime values have text")
+            };
+            Ok(if inclusive {
+                left.as_bytes() <= right.as_bytes()
+            } else {
+                left.as_bytes() < right.as_bytes()
+            })
+        }
+        _ => Err(runtime_ordered_type_error(left, right, view, function, pc)),
+    }
+}
+
 fn runtime_bool(value: bool) -> RichValue {
     RuntimeValue::BuiltinAtom(if value {
         BuiltinAtom::True
@@ -10336,6 +10413,35 @@ fn runtime_numeric_type_error(
 ) -> RuntimeError {
     let mut runtime_error = match (view.export_value(*left), view.export_value(*right)) {
         (Ok(left), Ok(right)) => numeric_type_error(&left, &right, function, pc),
+        (Err(heap_error), _) | (_, Err(heap_error)) => error(
+            RuntimeErrorKind::InvalidBytecode,
+            heap_error.to_string(),
+            function,
+            pc,
+        ),
+    };
+    runtime_error.set_data_location(left.loc().or(right.loc()));
+    runtime_error
+}
+
+fn runtime_ordered_type_error(
+    left: &RichValue,
+    right: &RichValue,
+    view: &HeapView<'_>,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> RuntimeError {
+    let mut runtime_error = match (view.export_value(*left), view.export_value(*right)) {
+        (Ok(left), Ok(right)) => error(
+            RuntimeErrorKind::TypeMismatch,
+            format!(
+                "ordered operands must be matching Int, Float, or String values, got {} and {}",
+                left.type_name(),
+                right.type_name()
+            ),
+            function,
+            pc,
+        ),
         (Err(heap_error), _) | (_, Err(heap_error)) => error(
             RuntimeErrorKind::InvalidBytecode,
             heap_error.to_string(),

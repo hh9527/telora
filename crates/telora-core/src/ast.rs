@@ -173,7 +173,11 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
     Equal,
+    NotEqual,
     And,
     Or,
 }

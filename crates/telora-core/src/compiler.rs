@@ -950,7 +950,21 @@ impl<'a> Compiler<'a> {
                     BinaryOperator::Multiply => Operation::Multiply { dst, left, right },
                     BinaryOperator::Divide => Operation::Divide { dst, left, right },
                     BinaryOperator::LessThan => Operation::LessThan { dst, left, right },
+                    BinaryOperator::LessThanOrEqual => {
+                        Operation::LessThanOrEqual { dst, left, right }
+                    }
+                    BinaryOperator::GreaterThan => Operation::LessThan {
+                        dst,
+                        left: right,
+                        right: left,
+                    },
+                    BinaryOperator::GreaterThanOrEqual => Operation::LessThanOrEqual {
+                        dst,
+                        left: right,
+                        right: left,
+                    },
                     BinaryOperator::Equal => Operation::Equal { dst, left, right },
+                    BinaryOperator::NotEqual => Operation::NotEqual { dst, left, right },
                     BinaryOperator::And | BinaryOperator::Or => {
                         return Err(self.error_at(
                             expression.location,
@@ -2052,6 +2066,52 @@ let decorators = {
                 Value::Atom(Atom::Builtin(BuiltinAtom::False))
             ]
         ));
+    }
+
+    #[test]
+    fn executes_complete_numeric_comparison_semantics() {
+        let integers = run("(1 == 1, 1 != 2, 1 < 2, 2 > 1, 1 <= 1, 2 >= 2)").unwrap();
+        assert_eq!(
+            integers.to_string(),
+            "('True, 'True, 'True, 'True, 'True, 'True)"
+        );
+
+        let floats = run("let nan = 0.0 / 0.0; let infinity = 1.0 / 0.0;\
+             (1.0 < 2.0, -0.0 == 0.0, infinity > 1.0,\
+              nan == nan, nan != nan, nan < 0.0, nan <= 0.0, nan > 0.0, nan >= 0.0)")
+        .unwrap();
+        assert_eq!(
+            floats.to_string(),
+            "('True, 'True, 'True, 'False, 'True, 'False, 'False, 'False, 'False)"
+        );
+    }
+
+    #[test]
+    fn compares_strings_by_internal_utf8_byte_sequence() {
+        let value = run(r#"("app" < "apple", "10" < "2", "Z" < "a", "é" < "中",
+                "same" <= "same", "z" > "a", "z" >= "z",
+                "a deliberately heap-backed string" > "a")"#)
+        .unwrap();
+        assert_eq!(
+            value.to_string(),
+            "('True, 'True, 'True, 'True, 'True, 'True, 'True, 'True)"
+        );
+    }
+
+    #[test]
+    fn inequality_preserves_structural_equality_semantics() {
+        let value = run("(('Ok, [1, 2]) != ('Ok, [1, 2]), ('Ok, [1]) != ('Err, [1]))").unwrap();
+        assert_eq!(value.to_string(), "('False, 'True)");
+    }
+
+    #[test]
+    fn dynamic_ordered_comparison_rejects_mismatched_domains() {
+        let error = run("let left: Any = \"a\"; let right: Any = 1; left < right").unwrap_err();
+        let ExecutionError::Runtime(error) = error else {
+            panic!("expected runtime error")
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
+        assert!(error.message.contains("matching Int, Float, or String"));
     }
 
     #[test]

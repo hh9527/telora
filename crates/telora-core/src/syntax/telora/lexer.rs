@@ -59,7 +59,11 @@ pub enum Token {
     Star,
     Slash,
     Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
     EqualEqual,
+    BangEqual,
     Equal,
     AndAnd,
     OrOr,
@@ -163,8 +167,16 @@ enum NormalToken {
     Slash,
     #[token("<")]
     Less,
+    #[token("<=")]
+    LessEqual,
+    #[token(">")]
+    Greater,
+    #[token(">=")]
+    GreaterEqual,
     #[token("==")]
     EqualEqual,
+    #[token("!=")]
+    BangEqual,
     #[token("->")]
     Arrow,
     #[token("=")]
@@ -606,7 +618,11 @@ impl From<NormalToken> for Token {
             NormalToken::Star => Self::Star,
             NormalToken::Slash => Self::Slash,
             NormalToken::Less => Self::Less,
+            NormalToken::LessEqual => Self::LessEqual,
+            NormalToken::Greater => Self::Greater,
+            NormalToken::GreaterEqual => Self::GreaterEqual,
             NormalToken::EqualEqual => Self::EqualEqual,
+            NormalToken::BangEqual => Self::BangEqual,
             NormalToken::Arrow => Self::Arrow,
             NormalToken::Equal => Self::Equal,
             NormalToken::AndAnd => Self::AndAnd,
@@ -664,6 +680,27 @@ fn token_is_invalid_escape(token: Token) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_the_complete_comparison_operator_family() {
+        let mut diagnostics = Vec::new();
+        let (tokens, _) = tokenize("< <= > >= == !=", &mut diagnostics);
+        assert_eq!(
+            tokens
+                .into_iter()
+                .filter(|token| *token != Token::Whitespace)
+                .collect::<Vec<_>>(),
+            vec![
+                Token::Less,
+                Token::LessEqual,
+                Token::Greater,
+                Token::GreaterEqual,
+                Token::EqualEqual,
+                Token::BangEqual,
+            ]
+        );
+        assert!(diagnostics.is_empty());
+    }
 
     #[test]
     fn hash_is_the_only_line_comment_marker() {

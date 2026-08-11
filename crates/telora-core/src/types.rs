@@ -4744,6 +4744,7 @@ struct GenericInference<'a> {
     delayed_initializer_depth: usize,
     recursive_body_inference_depth: usize,
     numeric_variables: HashSet<InferenceVariableId>,
+    ordered_variables: HashSet<InferenceVariableId>,
     field_requirements: HashMap<InferenceVariableId, BTreeMap<String, TypeDescriptor>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     substitutions: HashMap<InferenceVariableId, TypeDescriptor>,
@@ -4942,6 +4943,7 @@ impl<'a> GenericInference<'a> {
             delayed_initializer_depth: 0,
             recursive_body_inference_depth: 0,
             numeric_variables: HashSet::new(),
+            ordered_variables: HashSet::new(),
             field_requirements: HashMap::new(),
             recursive_equations: HashMap::new(),
             substitutions: HashMap::new(),
@@ -5137,6 +5139,9 @@ impl<'a> GenericInference<'a> {
                 if self.numeric_variables.contains(&variable) {
                     self.numeric_variables.insert(fresh);
                 }
+                if self.ordered_variables.contains(&variable) {
+                    self.ordered_variables.insert(fresh);
+                }
                 (variable, fresh)
             })
             .collect::<HashMap<_, _>>();
@@ -5207,9 +5212,10 @@ impl<'a> GenericInference<'a> {
             return Ok(None);
         }
         if variables.is_empty()
-            || variables
-                .iter()
-                .any(|variable| self.numeric_variables.contains(variable))
+            || variables.iter().any(|variable| {
+                self.numeric_variables.contains(variable)
+                    || self.ordered_variables.contains(variable)
+            })
         {
             return Ok(None);
         }
@@ -5527,6 +5533,24 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn require_ordered(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
+        match self.resolve(ty) {
+            TypeDescriptor::Inference(variable) => {
+                self.ordered_variables.insert(variable);
+                Ok(())
+            }
+            TypeDescriptor::Int
+            | TypeDescriptor::Float
+            | TypeDescriptor::String
+            | TypeDescriptor::Any
+            | TypeDescriptor::Never => Ok(()),
+            ty => Err(format!(
+                "ordered comparison requires Int, Float, or String, found {}",
+                ty.display_name()
+            )),
+        }
+    }
+
     fn bind_inference_variable(
         &mut self,
         variable: InferenceVariableId,
@@ -5557,6 +5581,29 @@ impl<'a> GenericInference<'a> {
             && self.numeric_variables.contains(&target)
         {
             self.numeric_variables.insert(variable);
+        }
+        if self.ordered_variables.contains(&variable) {
+            match &ty {
+                TypeDescriptor::Inference(target) => {
+                    self.ordered_variables.insert(*target);
+                }
+                TypeDescriptor::Int
+                | TypeDescriptor::Float
+                | TypeDescriptor::String
+                | TypeDescriptor::Any
+                | TypeDescriptor::Never => {}
+                _ => {
+                    return Err(format!(
+                        "ordered comparison requires Int, Float, or String, found {}",
+                        ty.display_name()
+                    ));
+                }
+            }
+        }
+        if let TypeDescriptor::Inference(target) = ty
+            && self.ordered_variables.contains(&target)
+        {
+            self.ordered_variables.insert(variable);
         }
         if let Some(requirements) = self.field_requirements.remove(&variable) {
             if let TypeDescriptor::Inference(target) = &ty {
@@ -6183,18 +6230,21 @@ impl<'a> GenericInference<'a> {
                     self.infer(right, environment, Some(&bool_type))?;
                     bool_type
                 }
-                BinaryOperator::Equal => {
+                BinaryOperator::Equal | BinaryOperator::NotEqual => {
                     self.infer(left, environment, None)?;
                     self.infer(right, environment, None)?;
                     normalized_bool_descriptor()
                 }
-                BinaryOperator::LessThan => {
-                    let numeric = self.fresh_variable();
-                    self.require_numeric(&numeric)?;
-                    let left = self.infer(left, environment, Some(&numeric))?;
-                    let right = self.infer(right, environment, Some(&numeric))?;
-                    self.require_numeric(&left)?;
-                    self.require_numeric(&right)?;
+                BinaryOperator::LessThan
+                | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan
+                | BinaryOperator::GreaterThanOrEqual => {
+                    let ordered = self.fresh_variable();
+                    self.require_ordered(&ordered)?;
+                    let left = self.infer(left, environment, Some(&ordered))?;
+                    let right = self.infer(right, environment, Some(&ordered))?;
+                    self.require_ordered(&left)?;
+                    self.require_ordered(&right)?;
                     normalized_bool_descriptor()
                 }
                 _ => {
@@ -7707,7 +7757,12 @@ fn infer_expr_with(
             left,
             right,
         } => match operator.value {
-            BinaryOperator::LessThan | BinaryOperator::Equal => TypeDescriptor::Union(vec![
+            BinaryOperator::LessThan
+            | BinaryOperator::LessThanOrEqual
+            | BinaryOperator::GreaterThan
+            | BinaryOperator::GreaterThanOrEqual
+            | BinaryOperator::Equal
+            | BinaryOperator::NotEqual => TypeDescriptor::Union(vec![
                 TypeDescriptor::Atom(Atom::builtin(BuiltinAtom::True)),
                 TypeDescriptor::Atom(Atom::builtin(BuiltinAtom::False)),
             ]),
@@ -9577,6 +9632,10 @@ mod tests {
                 "let before = fn(value) { value < 1 }; before",
                 "Fn(Int) -> enum {False, True}",
             ),
+            (
+                "let before = fn(value) { value < \"z\" }; before",
+                "Fn(String) -> enum {False, True}",
+            ),
         ] {
             let analysis = analyze_with_natives(source, &[]).unwrap();
             assert_eq!(analysis.display(analysis.result_type), expected);
@@ -9588,7 +9647,7 @@ mod tests {
 
     #[test]
     fn intrinsic_expression_constraints_reject_invalid_or_ambiguous_numerics() {
-        for source in ["-\"text\"", "1 + 1.5", "\"a\" < \"b\""] {
+        for source in ["-\"text\"", "1 + 1.5"] {
             let error = analyze_with_natives(source, &[]).unwrap_err();
             assert!(
                 error.message.contains("Int or Float") || error.message.contains("cannot unify"),
@@ -9611,6 +9670,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(dynamic.display(dynamic.result_type), "Fn(Any) -> Any");
+    }
+
+    #[test]
+    fn ordered_comparisons_reject_mixed_unsupported_and_ambiguous_operands() {
+        for source in ["1 < 1.0", "\"a\" < 1", "[1] < [2]"] {
+            let error = analyze_with_natives(source, &[]).unwrap_err();
+            assert!(
+                error.message.contains("cannot unify")
+                    || error.message.contains("ordered comparison"),
+                "{source}: {}",
+                error.message
+            );
+        }
+
+        let ambiguous =
+            analyze_with_natives("let before = fn(left, right) { left < right }; before", &[])
+                .unwrap_err();
+        assert!(
+            ambiguous
+                .message
+                .contains("cannot infer monomorphic binding"),
+            "{}",
+            ambiguous.message
+        );
     }
 
     #[test]

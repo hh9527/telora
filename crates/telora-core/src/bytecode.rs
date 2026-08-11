@@ -70,7 +70,17 @@ pub enum Instruction {
         left: Register,
         right: Register,
     },
+    NotEqual {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
     LessThan {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    LessThanOrEqual {
         dst: Register,
         left: Register,
         right: Register,
@@ -223,7 +233,17 @@ pub enum Opcode {
         left: Register,
         right: Register,
     },
+    NotEqual {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
     LessThan {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    LessThanOrEqual {
         dst: Register,
         left: Register,
         right: Register,
@@ -579,7 +599,11 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Divide { dst, left, right } => Opcode::Divide { dst, left, right },
         Instruction::Negate { dst, src } => Opcode::Negate { dst, src },
         Instruction::Equal { dst, left, right } => Opcode::Equal { dst, left, right },
+        Instruction::NotEqual { dst, left, right } => Opcode::NotEqual { dst, left, right },
         Instruction::LessThan { dst, left, right } => Opcode::LessThan { dst, left, right },
+        Instruction::LessThanOrEqual { dst, left, right } => {
+            Opcode::LessThanOrEqual { dst, left, right }
+        }
         Instruction::MakeArray { dst, items } => Opcode::MakeArray { dst, items },
         Instruction::ConcatArrays { dst, arrays } => Opcode::ConcatArrays { dst, arrays },
         Instruction::MakeTuple { dst, items } => Opcode::MakeTuple { dst, items },

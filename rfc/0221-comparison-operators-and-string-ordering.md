@@ -1,6 +1,6 @@
 # RFC 0221: Comparison Operators and String Ordering
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0003, RFC 0007, RFC 0010, RFC 0021, RFC 0052, RFC 0074,
   RFC 0075, RFC 0127
 - Tracking issue: #19
@@ -271,6 +271,26 @@ unchanged.
 9. Left and right operands evaluate once in source order.
 10. Existing workspace behavior passes formatting, strict Clippy, and the full
     test suite.
+
+## Implementation result
+
+Implemented in the lexer, lossless grammar, AST, parser, inference engine,
+LIR, bytecode, compiler, and VM. The internal instruction set adds direct
+operations for `!=` and `<=`; after evaluating both source operands in order,
+the compiler lowers `>` to swapped `<` registers and `>=` to swapped `<=`
+registers.
+
+Ordered inference uses a dedicated constraint rather than widening numeric
+operators: matching Int, Float, and String operands are accepted, while mixed,
+unsupported, and unresolved monomorphic operands remain diagnostics. Dynamic
+`Any` boundaries enforce the same domain in the VM.
+
+String comparison reads either inline or heap-backed String contents and
+compares their exact UTF-8 bytes lexicographically. Tests cover all six
+operators, shared non-associativity, structural inequality, numeric and String
+domains, UTF-8 and storage boundaries, Float NaN/infinity/signed-zero behavior,
+inference failures, and dynamic type errors. The workspace test suite and
+strict Clippy pass.
 
 ## Non-goals
 

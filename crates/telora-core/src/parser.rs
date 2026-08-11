@@ -1252,19 +1252,22 @@ impl<'a> Lowerer<'a> {
                 ),
             },
             Rule::BinaryExpr => {
-                let comparison = self.token_children(node, Token::Less).next().is_some()
-                    || self
-                        .token_children(node, Token::EqualEqual)
-                        .next()
-                        .is_some();
+                let is_comparison = |node| {
+                    [
+                        Token::Less,
+                        Token::LessEqual,
+                        Token::Greater,
+                        Token::GreaterEqual,
+                        Token::EqualEqual,
+                        Token::BangEqual,
+                    ]
+                    .into_iter()
+                    .any(|token| self.token_children(node, token).next().is_some())
+                };
+                let comparison = is_comparison(node);
                 if comparison
                     && self.children(node).any(|child| {
-                        self.rule(child) == Some(Rule::BinaryExpr)
-                            && (self.token_children(child, Token::Less).next().is_some()
-                                || self
-                                    .token_children(child, Token::EqualEqual)
-                                    .next()
-                                    .is_some())
+                        self.rule(child) == Some(Rule::BinaryExpr) && is_comparison(child)
                     })
                 {
                     return Err(self.error(
@@ -1273,27 +1276,37 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
                 let values = self.expression_children(node)?;
-                let (operator, operator_node) =
-                    if let Some(operator) = self.token_children(node, Token::Plus).next() {
-                        (BinaryOperator::Add, operator)
-                    } else if let Some(operator) = self.token_children(node, Token::Minus).next() {
-                        (BinaryOperator::Subtract, operator)
-                    } else if let Some(operator) = self.token_children(node, Token::Star).next() {
-                        (BinaryOperator::Multiply, operator)
-                    } else if let Some(operator) = self.token_children(node, Token::Slash).next() {
-                        (BinaryOperator::Divide, operator)
-                    } else if let Some(operator) = self.token_children(node, Token::Less).next() {
-                        (BinaryOperator::LessThan, operator)
-                    } else if let Some(operator) = self.token_children(node, Token::AndAnd).next() {
-                        (BinaryOperator::And, operator)
-                    } else if let Some(operator) = self.token_children(node, Token::OrOr).next() {
-                        (BinaryOperator::Or, operator)
-                    } else {
-                        (
-                            BinaryOperator::Equal,
-                            self.first_token(node, Token::EqualEqual)?,
-                        )
-                    };
+                let (operator, operator_node) = if let Some(operator) =
+                    self.token_children(node, Token::Plus).next()
+                {
+                    (BinaryOperator::Add, operator)
+                } else if let Some(operator) = self.token_children(node, Token::Minus).next() {
+                    (BinaryOperator::Subtract, operator)
+                } else if let Some(operator) = self.token_children(node, Token::Star).next() {
+                    (BinaryOperator::Multiply, operator)
+                } else if let Some(operator) = self.token_children(node, Token::Slash).next() {
+                    (BinaryOperator::Divide, operator)
+                } else if let Some(operator) = self.token_children(node, Token::Less).next() {
+                    (BinaryOperator::LessThan, operator)
+                } else if let Some(operator) = self.token_children(node, Token::LessEqual).next() {
+                    (BinaryOperator::LessThanOrEqual, operator)
+                } else if let Some(operator) = self.token_children(node, Token::Greater).next() {
+                    (BinaryOperator::GreaterThan, operator)
+                } else if let Some(operator) = self.token_children(node, Token::GreaterEqual).next()
+                {
+                    (BinaryOperator::GreaterThanOrEqual, operator)
+                } else if let Some(operator) = self.token_children(node, Token::BangEqual).next() {
+                    (BinaryOperator::NotEqual, operator)
+                } else if let Some(operator) = self.token_children(node, Token::AndAnd).next() {
+                    (BinaryOperator::And, operator)
+                } else if let Some(operator) = self.token_children(node, Token::OrOr).next() {
+                    (BinaryOperator::Or, operator)
+                } else {
+                    (
+                        BinaryOperator::Equal,
+                        self.first_token(node, Token::EqualEqual)?,
+                    )
+                };
                 ExprKind::Binary {
                     operator: located(operator, self.location(operator_node)),
                     left: Box::new(values[0].clone()),
@@ -2974,8 +2987,10 @@ export { private as visible, identity as map };"#,
 
     #[test]
     fn comparisons_share_a_non_associative_precedence_level() {
-        let chained = parse("test", "1 < 2 == 3").unwrap_err();
-        assert!(chained.message.contains("do not associate"));
+        for source in ["1 < 2 == 3", "1 < 2 <= 3", "1 == 2 != 3", "1 >= 2 > 3"] {
+            let chained = parse("test", source).unwrap_err();
+            assert!(chained.message.contains("do not associate"), "{source}");
+        }
         assert!(parse("test", "(1 < 2) == 3").is_ok());
         assert!(parse("test", "1 < (2 == 3)").is_ok());
     }

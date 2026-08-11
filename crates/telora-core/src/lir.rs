@@ -70,7 +70,17 @@ pub enum Operation {
         left: RegisterId,
         right: RegisterId,
     },
+    NotEqual {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
     LessThan {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
+    LessThanOrEqual {
         dst: RegisterId,
         left: RegisterId,
         right: RegisterId,
@@ -343,7 +353,17 @@ fn lower_operation(
             left: register(left)?,
             right: register(right)?,
         },
+        Operation::NotEqual { dst, left, right } => Instruction::NotEqual {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
+        },
         Operation::LessThan { dst, left, right } => Instruction::LessThan {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
+        },
+        Operation::LessThanOrEqual { dst, left, right } => Instruction::LessThanOrEqual {
             dst: register(dst)?,
             left: register(left)?,
             right: register(right)?,
