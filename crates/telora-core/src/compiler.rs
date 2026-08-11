@@ -915,6 +915,12 @@ impl<'a> Compiler<'a> {
                     UnaryOperator::Negate => {
                         self.emit(Operation::Negate { dst, src }, expression.location);
                     }
+                    UnaryOperator::Not => {
+                        return Err(self.error_at(
+                            expression.location,
+                            "unelaborated logical negation expression",
+                        ));
+                    }
                 }
                 Ok(dst)
             }
@@ -2885,6 +2891,25 @@ let decorators = {
 
         let error = compile_source("test", "'True && 1").unwrap_err();
         assert!(error.message.contains("Int"), "{}", error.message);
+    }
+
+    #[test]
+    fn logical_negation_executes_with_unary_precedence_and_dynamic_checks() {
+        let value =
+            run("(!'True, !'False, !!'True, !('True && 'False), !'False == 'True)").unwrap();
+        assert_eq!(value.to_string(), "('False, 'True, 'True, 'True, 'True)");
+
+        let dynamic = run("let invert: Fn(Any) -> Bool = fn(value) { !value };\
+             (invert('True), invert('False))")
+        .unwrap();
+        assert_eq!(dynamic.to_string(), "('False, 'True)");
+
+        let ExecutionError::Runtime(error) =
+            run("let invert: Fn(Any) -> Bool = fn(value) { !value }; invert(1)").unwrap_err()
+        else {
+            panic!("expected runtime Bool check");
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
     }
 
     #[test]

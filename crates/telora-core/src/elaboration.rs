@@ -48,7 +48,28 @@ impl Elaborator<'_> {
                 }
             }
             ExprKind::Block(block) => self.block(block),
-            ExprKind::Unary { operand, .. } => self.expression(operand),
+            ExprKind::Unary { operator, operand } => {
+                self.expression(operand);
+                if operator.value == UnaryOperator::Not {
+                    let condition = operand.clone();
+                    let atom =
+                        |name: &str| located(ExprKind::Atom(name.into()), expression.location);
+                    let block = |result: Expr| {
+                        located(
+                            BlockKind {
+                                bindings: Vec::new(),
+                                result: Box::new(result),
+                            },
+                            expression.location,
+                        )
+                    };
+                    expression.value = ExprKind::If {
+                        condition,
+                        then_branch: block(atom("False")),
+                        else_branch: block(atom("True")),
+                    };
+                }
+            }
             ExprKind::Propagate { operand } => {
                 self.expression(operand);
                 let family = self.families[&expression.location];

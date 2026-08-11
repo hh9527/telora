@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOperator, BindingKind, Block, Expr, ExprKind, Pattern, Program, StringPartKind,
-    TypeArgumentKind, located,
+    TypeArgumentKind, UnaryOperator, located,
 };
 use crate::compiler::{collect_runtime_names, compile_expression_with_bindings};
 use crate::heap::{Handle, Heap, PersistentValue};
@@ -6196,16 +6196,26 @@ impl<'a> GenericInference<'a> {
                     }
                 }
             }
-            ExprKind::Unary { operand, .. } => {
-                let numeric = self.fresh_variable();
-                self.require_numeric(&numeric)?;
-                if let Some(expected) = expected {
-                    self.check(&numeric, expected)?;
+            ExprKind::Unary { operator, operand } => match operator.value {
+                UnaryOperator::Negate => {
+                    let numeric = self.fresh_variable();
+                    self.require_numeric(&numeric)?;
+                    if let Some(expected) = expected {
+                        self.check(&numeric, expected)?;
+                    }
+                    let operand = self.infer(operand, environment, Some(&numeric))?;
+                    self.require_numeric(&operand)?;
+                    self.resolve(&numeric)
                 }
-                let operand = self.infer(operand, environment, Some(&numeric))?;
-                self.require_numeric(&operand)?;
-                self.resolve(&numeric)
-            }
+                UnaryOperator::Not => {
+                    let bool_type = normalized_bool_descriptor();
+                    if let Some(expected) = expected {
+                        self.check(&bool_type, expected)?;
+                    }
+                    self.infer(operand, environment, Some(&bool_type))?;
+                    bool_type
+                }
+            },
             ExprKind::Propagate { operand } => {
                 let operand = self.infer(operand, environment, None)?;
                 match self.resolve(&operand) {
@@ -9772,11 +9782,18 @@ mod tests {
 
         let equality = analyze_with_natives("1 == \"1\"", &[]).unwrap();
         assert_eq!(equality.display(equality.result_type), "enum {False, True}");
+
+        let logical_not =
+            analyze_with_natives("let invert = fn(value) { !value }; invert", &[]).unwrap();
+        assert_eq!(
+            logical_not.display(logical_not.result_type),
+            "Fn(enum {False, True}) -> enum {False, True}"
+        );
     }
 
     #[test]
-    fn intrinsic_expression_constraints_reject_invalid_or_ambiguous_numerics() {
-        for source in ["-\"text\"", "1 + 1.5"] {
+    fn intrinsic_expression_constraints_reject_invalid_or_ambiguous_operators() {
+        for source in ["-\"text\"", "!1", "!\"text\"", "1 + 1.5"] {
             let error = analyze_with_natives(source, &[]).unwrap_err();
             assert!(
                 error.message.contains("Int or Float") || error.message.contains("cannot unify"),

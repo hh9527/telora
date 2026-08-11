@@ -44,7 +44,7 @@ expression:
 | expression '[' expression ']' @index_expr
 | expression section_arguments @section_expr
 | expression '.' (Identifier | Int) @projection_expr
-| '-' expression @unary_expr
+| ('-' | '!') expression @unary_expr
 | expression ('*' | '/') expression @binary_expr
 | expression ('+' | '-') expression @binary_expr
 | expression ('<' | '<=' | '>' | '>=' | '==' | '!=') expression @binary_expr

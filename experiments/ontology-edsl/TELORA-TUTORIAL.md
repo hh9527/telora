@@ -55,8 +55,10 @@ case folding, or natural-number sorting.
 
 All six comparisons share one non-associative precedence level. Write
 parentheses when comparing a comparison result; `a < b <= c` is not a chained
-comparison. `&&` and `||` accept Bool and short-circuit. An `if` expression
-always has an `else` branch.
+comparison. Prefix `!` accepts Bool and returns the opposite canonical Bool;
+it binds more tightly than comparisons and boolean infix operators. `&&` and
+`||` accept Bool and short-circuit. An `if` expression always has an `else`
+branch.
 
 ## Functions and contracts
 

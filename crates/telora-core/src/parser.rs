@@ -1217,10 +1217,12 @@ impl<'a> Lowerer<'a> {
             }
             Rule::FunctionContract => return self.contract_expression(node),
             Rule::UnaryExpr => ExprKind::Unary {
-                operator: located(
-                    UnaryOperator::Negate,
-                    self.location(self.first_token(node, Token::Minus)?),
-                ),
+                operator: if let Some(operator) = self.token_children(node, Token::Minus).next() {
+                    located(UnaryOperator::Negate, self.location(operator))
+                } else {
+                    let operator = self.first_token(node, Token::Bang)?;
+                    located(UnaryOperator::Not, self.location(operator))
+                },
                 operand: Box::new(
                     self.expression(
                         self.children(node)
@@ -3033,6 +3035,34 @@ export { private as visible, identity as map };"#,
         }
         assert!(parse("test", "(1 < 2) == 3").is_ok());
         assert!(parse("test", "1 < (2 == 3)").is_ok());
+    }
+
+    #[test]
+    fn lowers_prefix_logical_negation_with_unary_precedence() {
+        let program = parse("test", "!!'True == !'False").unwrap();
+        let ExprKind::Binary { left, right, .. } = &program.value.body.value.result.value else {
+            panic!("expected equality expression");
+        };
+        assert!(matches!(
+            &left.value,
+            ExprKind::Unary {
+                operator: Located {
+                    value: UnaryOperator::Not,
+                    ..
+                },
+                operand,
+            } if matches!(operand.value, ExprKind::Unary { .. })
+        ));
+        assert!(matches!(
+            &right.value,
+            ExprKind::Unary {
+                operator: Located {
+                    value: UnaryOperator::Not,
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     #[test]

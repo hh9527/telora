@@ -172,6 +172,7 @@ pub enum StringPartKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnaryOperator {
     Negate,
+    Not,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
