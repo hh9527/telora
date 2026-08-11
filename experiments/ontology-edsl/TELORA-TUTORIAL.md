@@ -256,7 +256,7 @@ return `Option`, `Result`, an explicit enum, or diagnostic values; do not use
 
 ```telora
 import "std/array" as array;
-import "./local.telora" { compile };
+import "@src/local.telora" { compile };
 import "ontology-lib/types.telora" as types;
 
 export def compile: Fn(Input) -> Output = fn(input) { ... };
@@ -265,6 +265,22 @@ export { Entity, Requirement, compile };
 
 Imports are static. A module exposes only explicit exports. The eDSL must
 export every type and function promised to enterprise authors.
+
+An entry under `a2/bin-src/` is a Host-selected root entry, not a source module
+located beside `a2/src/`. Import reusable code from that entry with an explicit
+source-root path:
+
+```telora
+# a2/bin-src/main.telora
+import "@src/ontology.telora" { compile };
+```
+
+In a `bin-src/` entry, `./ontology.telora` and other `./` or `../` imports are
+invalid. Within a module under `a2/src/`, relative imports remain valid and
+resolve from the importing module's logical directory. `@src/` always resolves
+from the source root of the importing module's own crate. A package path such
+as `ontology-lib/types.telora` selects a dependency fixed by the crate manifest;
+`std/...` selects a Host-registered builtin module.
 
 ## Recursion and bounded work
 

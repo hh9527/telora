@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+exec "$workspace/bin/telora" show "$workspace/a2/bin-src/main.telora"

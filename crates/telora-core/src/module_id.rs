@@ -175,6 +175,7 @@ pub struct ModuleResolver {
     workspace_root: PathBuf,
     source_root: PathBuf,
     main_path: PathBuf,
+    main_is_bin_entry: bool,
     dependencies: BTreeMap<String, PathBuf>,
     formats: BTreeMap<String, ModuleFormat>,
     builtins: BTreeMap<String, u32>,
@@ -207,7 +208,8 @@ impl ModuleResolver {
             .ancestors()
             .map(|directory| directory.join("telora-deps.json"))
             .find(|candidate| candidate.is_file());
-        let inferred_root = if start.file_name().and_then(|name| name.to_str()) == Some("bin-src") {
+        let main_is_bin_entry = start.file_name().and_then(|name| name.to_str()) == Some("bin-src");
+        let inferred_root = if main_is_bin_entry {
             start.parent().unwrap_or(start)
         } else {
             start
@@ -227,6 +229,7 @@ impl ModuleResolver {
             workspace_root,
             source_root,
             main_path: resolve_physical(&root)?,
+            main_is_bin_entry,
             dependencies: BTreeMap::new(),
             formats: BTreeMap::new(),
             builtins: BTreeMap::new(),
@@ -382,6 +385,11 @@ impl ModuleResolver {
         if target.starts_with("./") || target.starts_with("../") {
             return match importer {
                 ModuleId::Main => {
+                    if self.main_is_bin_entry {
+                        return Err(ResolveModuleError::InvalidImport(format!(
+                            "{target}; bin-src entries must import crate sources with @src/..."
+                        )));
+                    }
                     let logical = lexical_normalize_relative(Path::new(target))
                         .ok_or_else(|| ResolveModuleError::CrateEscape(target.into()))?;
                     self.resolve_source(logical, target)
@@ -985,13 +993,11 @@ mod tests {
             .resolve_import(&root.id, "@src/model/a.telora")
             .unwrap();
         assert_eq!(local.to_string(), "@src/model/a.telora");
-        assert_eq!(
-            resolver
-                .resolve_import(&root.id, "./model/a.telora")
-                .unwrap()
-                .id,
-            local.id
-        );
+        assert!(matches!(
+            resolver.resolve_import(&root.id, "./model/a.telora"),
+            Err(ResolveModuleError::InvalidImport(message))
+                if message.contains("bin-src entries must import crate sources with @src/...")
+        ));
 
         let dependency = resolver
             .resolve_import(&root.id, "parser/model/a.telora")

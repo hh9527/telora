@@ -5,19 +5,33 @@ experiment. It separates versioned experiment inputs from per-run artifacts.
 
 ## Files
 
-- `A2-PROMPT.md` is the exact initial prompt passed to the eDSL implementer.
+- `A2-PROMPT.md` is the minimal exact initial prompt passed to the eDSL
+  implementer.
+- `TASK-A2.md` defines the A2 role, workspace boundary, task, and completion
+  requirements.
 - `TELORA-TUTORIAL.md` is the bounded language tutorial supplied to the eDSL
   implementer.
+- `TELORA-CLI.md` is the fixed self-validation workflow supplied to the eDSL
+  implementer in self-validating runs.
 - `EDSL-DESIGN.md` is the normative, domain-neutral behavior contract supplied
   to the eDSL implementer.
 - `EVAL-METHOD.md` defines the Host-side process and outcome evaluation.
 - `README.md` defines how an experiment run is prepared and archived.
+- `opencode-workspace/` contains the versioned workspace files and validation
+  wrappers used by self-validating runs.
+- `open-opencode-tui.sh` creates or resumes the isolated self-validating
+  opencode environment and enters its TUI.
+- `control-opencode.sh` starts the prepared A2 task and records its successful
+  completion through a stable, stateful interface.
+- `observe-opencode.sh` provides a stable, read-only interface for Host-side
+  status, recent-message, file, and filtered-event observation.
 
-Only `TELORA-TUTORIAL.md` and `EDSL-DESIGN.md` are injected into a run's `a1/`
-directory. The runner passes the exact UTF-8 contents of `A2-PROMPT.md` as the
-initial user prompt, without a prefix, suffix, or run-specific interpolation.
-`EVAL-METHOD.md` remains Host-only: exposing its hidden acceptance fixtures or
-evaluation guidance to A2 would change the experiment.
+`TASK-A2.md`, `TELORA-TUTORIAL.md`, `TELORA-CLI.md`, and `EDSL-DESIGN.md` are
+injected into a self-validating run's `a1/` directory. The runner passes the
+exact UTF-8 contents of `A2-PROMPT.md` as the initial user prompt, without a
+prefix, suffix, or run-specific interpolation. `EVAL-METHOD.md` remains
+Host-only: exposing its hidden acceptance fixtures or evaluation guidance to
+A2 would change the experiment.
 
 ## Run layout
 
@@ -26,7 +40,9 @@ Each run uses a fresh directory under `target/`:
 ```text
 target/opencode-test-N/
   a1/
+    TASK-A2.md
     TELORA-TUTORIAL.md
+    TELORA-CLI.md
     EDSL-DESIGN.md
   a2/
     ontology-edsl/
@@ -38,17 +54,16 @@ target/opencode-test-N/
   SUMMARY.md
 ```
 
-At the start of A2, the Host copies the two injectable documents from this
-directory into `a1/` without editing them and starts one recoverable session
-with `A2-PROMPT.md` verbatim. The Host records all three content hashes, the
-Telora revision, model identity, runner configuration, and evaluation-method
-revision in `RUNLOG.md`.
+At the start of A2, the Host copies the injectable documents from this directory
+into `a1/` without editing them and starts one recoverable session with
+`A2-PROMPT.md` verbatim. The Host records every input content hash, the Telora
+revision, model identity, runner configuration, and evaluation-method revision
+in `RUNLOG.md`.
 
-There is no separate A2 protocol or role-brief file. The stable prompt owns the
+The initial prompt only directs A2 to the stable task. `TASK-A2.md` owns the
 role, filesystem boundary, and completion instruction; the tutorial owns
-language facts; the design document owns observable eDSL behavior. Duplicating
-those responsibilities in another A2-visible file would create a second task
-definition.
+language facts; the CLI document owns the validation interface; and the design
+document owns observable eDSL behavior.
 
 Historical `target/opencode-test-*` inputs and outputs are immutable evidence.
 Changes to this anchor apply only to later runs. When the stable input changes,
@@ -57,10 +72,13 @@ verbatim comparability with an older run.
 
 ## Experimental boundary
 
-A2 may read only `a1/` and may write only `a2/`. It must not read repository
-ontology examples, earlier experiment outputs, Host fixtures, or this
-Host-only evaluation method. A2 authors the eDSL independently and cannot run
-Telora or Cargo; the Host executes checks and relays observations.
+Every run keeps repository ontology examples, earlier experiment outputs, Host
+fixtures, and this Host-only evaluation method outside A2's visible boundary.
+
+The original Host-relayed protocol gives A2 read access to `a1/` and write
+access to `a2/`. A2 cannot run Telora or Cargo; the Host executes checks and
+relays observations. Historical runs using this protocol remain evidence of
+that protocol and input revision.
 
 The Host may report:
 
@@ -73,12 +91,132 @@ The Host may report:
 The Host must not provide a reference implementation, algorithm name,
 pseudocode, or a patch. A2 remains responsible for design and correction.
 
+## Self-validating opencode runs
+
+The self-validating protocol gives A2 read access to `a1/` and `a2/`, and write
+access only to `a2/src/` and `a2/bin-src/`. A2 may execute these fixed commands:
+
+```text
+./bin/run
+./bin/run-test
+./bin/types
+./bin/show
+```
+
+`./bin/run-test` always evaluates the single scratch entry
+`a2/bin-src/test.telora`. The permission configuration contains one exact rule
+for each command, so additional arguments and compound shell commands remain
+denied without exposing a numbered command space. The wrappers pin every
+source path and the copied Telora executable. `a2/telora-deps.json` is readable
+and immutable; its empty dependency map prevents path dependencies from
+crossing the workspace boundary.
+
+Create a run with:
+
+```text
+experiments/ontology-edsl/open-opencode-tui.sh
+```
+
+The launcher accepts `--port` and `--telora`. It defaults to loopback port
+`4096`, uses `target/debug/telora` or builds it when necessary, and rejects a
+port occupied by another service. When no session ID exists, it briefly starts
+a headless daemon, creates an empty workspace-bound session through the local
+API, and stops that daemon. It then replaces itself with the ordinary opencode
+TUI, passing the recorded session ID and fixed port. It does not send
+`A2-PROMPT.md` or invoke a model. The daemon and TUI have the same lifecycle;
+running the same command later resumes the workspace and session.
+
+The generated layout is:
+
+```text
+/tmp/test-XXXXXX/
+  ws/
+    a1/
+      TASK-A2.md
+      TELORA-TUTORIAL.md
+      TELORA-CLI.md
+      EDSL-DESIGN.md
+    a2/
+      telora-deps.json
+      src/
+      bin-src/
+        main.telora
+        test.telora
+    bin/
+      telora
+      run
+      run-test
+      types
+      show
+    opencode.json
+
+target/exp/
+  lock
+  dir
+  session-id
+  server-url
+  HANDSHAKE.log
+  SESSION.json
+```
+
+The files under `target/exp/` are controller state and remain outside `ws/`.
+`dir` and `session-id` are stable identities: the launcher never silently
+replaces an existing workspace or session. `server-url` records the fixed TUI
+endpoint, while `HANDSHAKE.log` records the temporary session-creation server.
+`SESSION.json` captures the initial repository state, input hashes, and exact
+TUI command. While the TUI is running, its `/event` endpoint exposes the live
+process stream to an external observer.
+
+Once the TUI reports the empty session ready, the observer tells the Host. The
+Host starts A2 with:
+
+```text
+experiments/ontology-edsl/control-opencode.sh start
+```
+
+The controller verifies the recorded input hash and empty session before it
+sends `A2-PROMPT.md` verbatim. It records the start only after the asynchronous
+prompt request succeeds and refuses to submit the task twice. Session
+preparation and experiment start are therefore separate events; ordinary setup
+does not add a synthetic `hello` turn to the experiment context.
+
+The Host observes an active run through one fixed command surface:
+
+```text
+experiments/ontology-edsl/observe-opencode.sh snapshot
+experiments/ontology-edsl/observe-opencode.sh status
+experiments/ontology-edsl/observe-opencode.sh recent 3
+experiments/ontology-edsl/observe-opencode.sh files
+experiments/ontology-edsl/observe-opencode.sh events
+```
+
+`snapshot` combines health, session status, the three newest assistant steps,
+and the current `a2/` file list. `events` filters token deltas and retains only
+session status, completed messages, completed or failed tools, and errors. The
+observer never sends a prompt or abort request.
+
+After observation shows an idle session whose final assistant message completed
+with `finish=stop`, record the server-reported completion time with:
+
+```text
+experiments/ontology-edsl/control-opencode.sh finalize
+```
+
+Both controller operations are idempotent. The controller does not start or
+stop the daemon; the TUI continues to own that lifecycle.
+
+Self-validating runs and Host-relayed runs measure different developer
+conditions. Report their protocol and input revision explicitly rather than
+treating their iteration counts as directly comparable.
+
 ## Interpretation
 
 The experiment evaluates whether an isolated model can create a reusable,
-typed ontology eDSL from stable language and behavior specifications. It does
-not measure memorization of Telora syntax, and it does not prove that one model
-or one successful run generalizes to other domains.
+typed ontology eDSL from stable language and behavior specifications. A
+self-validating run additionally evaluates whether the bounded Telora feedback
+loop is sufficient for independent correction. Neither protocol measures
+memorization of Telora syntax, and one successful run does not establish
+generalization to other domains.
 
 Results are reported separately for language learnability, eDSL contract
 compliance, enterprise extensibility, diagnostic quality, convergence, and

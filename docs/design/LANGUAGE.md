@@ -466,13 +466,28 @@ def show:
 
 ```telora
 import "std/array" as array;
-import "./model.telora" { User, make_user };
+import "@src/model.telora" { User, make_user };
+import "./validation.telora" { validate };
 import "package/path.telora";
 import "package/path.telora" as model, { User };
 ```
 
 支持 namespace、选择性、alias 和 open import。所有形式必须观察同一个 export
 scheme，不能因导入写法不同而丢失泛型关系。
+
+Host 选择的根入口位于 crate 的 `bin-src/` 下时，它不属于 `src/` 模块层级，不能
+使用 `./` 或 `../` 导入 crate source；crate source 必须写成 `@src/<path>`，并从
+当前 crate 的 `src/` 根解析：
+
+```telora
+# bin-src/report.telora
+import "@src/model/report.telora" { compile };
+```
+
+`@src/` 以 importing module 所属 crate 为准，因此依赖模块中的 `@src/` 仍指向该依赖
+自己的 source root。`./` 和 `../` 只表示 source module 或 dependency module 内部、
+相对于 importing module 逻辑目录的导入。Package import 的首段选择固定依赖，
+`std/...` 等 builtin identity 由 Host 注册。上述解析均在模块初始化前完成。
 
 模块 import graph 不允许初始化 cycle。递归函数和递归 TypeMetadata 在单个模块及
 已建立的模块接口内由各自机制处理，不把 module cycle 当作递归定义机制。
