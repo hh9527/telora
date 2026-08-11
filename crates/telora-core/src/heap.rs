@@ -1459,7 +1459,7 @@ impl<'a> HeapView<'a> {
                 | "Struct"
                 | "Enum"
                 | "Union"
-                | "Function"
+                | "Func"
                 | "WithAttributes"
                 | "Bound"
         ))

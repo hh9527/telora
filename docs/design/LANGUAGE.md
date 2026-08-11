@@ -82,7 +82,7 @@ Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'Tru
 Int, Float, String, Bytes,
 Atom, Tagged,
 Tuple, Array, Dict,
-Function,
+Func,
 Type metadata, native opaque value, Dyn
 ```
 
@@ -103,6 +103,9 @@ Tuple 是固定长度的异质积：
 ```telora
 let entry: Tuple([String, Int]) = ("port", 8080);
 ```
+
+`Tuple` 是接收单个 TypeMetadata Array 的普通元数据构造器。该形式在类型 alias、
+显式元数据表达式和受限契约中一致；`Tuple(A, B)` 不是 Tuple 类型的另一种写法。
 
 Record 字面量与 `Dict(T)` 在运行时都使用 String key 的 Dict 表示，但静态意义不同：
 
@@ -276,6 +279,18 @@ Record/Struct 类型按字段结构检查；type alias 不创建新的名义身�
 
 ### 6.1 函数契约和 rank-1 多态
 
+函数契约使用专用的 `Fn(P1, ..., Pn) -> R` 记法。它精确降解为普通元数据构造
+`Func([P1, ..., Pn], R)`；`Fn` 不是值环境中的 callable，`Func` 才是构造函数元数据的
+普通内建 callable。参数和结果位置都递归接受完整契约记法，例如：
+
+```telora
+Fn(A) -> Tuple([B, C])
+Fn(Fn(A) -> B) -> Array(Tuple([A, B]))
+```
+
+显式写作 `Func([A], B)` 与 `Fn(A) -> B` 产生相同的规范 TypeMetadata。`Fn([A], B)`
+不是显式构造形式，也不被当作旧语法兼容。
+
 显式多态写为：
 
 ```telora
@@ -323,9 +338,13 @@ TypeDesc   用户态解释器观察的擦除后 descriptor 视图
 
 ```telora
 Array(String)
-Fn([Int, Int], Int)
+Func([Int, Int], Int)
 Option(String)
 ```
+
+规范函数元数据的公开 descriptor kind 是 `'Func`，其 `parameters` 是 TypeMetadata
+Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函数元数据的 kind
+观察均返回 `'Func`。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
 
 类型 annotation、decorator 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
 阶段与程序阶段共享函数语义、值模型、fuel 和失败规则；区别在于 Host 调用它们的
@@ -736,7 +755,7 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 
 - 参数化 TypeMetadata family 不能参数化递归，也不能调用同模块普通 helper；
 - `interpreter!` 只提升直接 A 参数的消费型解释器，不能适配高阶或返回 A 的位置；
-- Function 在公开 Type descriptor 解释中是受限的 opaque leaf；
+- Func 在公开 Type descriptor 解释中是受限的 opaque leaf；
 - 普通 CLI 严格失败输出不保证一次展示 recovery 已收集的全部独立诊断；
 - Host-observed diagnostic 具有 severity/message/location/labels，但还没有稳定的领域
   category、cause graph 或 repair schema；

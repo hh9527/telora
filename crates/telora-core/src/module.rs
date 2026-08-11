@@ -6023,6 +6023,7 @@ unchanged", "|"),
                let refs = arrays.flat_map(array_nodes, desc.children);
                {
                    int_kind: desc.kind(Int),
+                   func_kind: desc.kind(Func([Int], String)),
                    attributed_kind: desc.kind(attributes.add(Int, {doc: "number"})),
                    resolve_int: desc.resolve(Int),
                    ref_kinds: arrays.map(refs, desc.kind),
@@ -6041,6 +6042,7 @@ unchanged", "|"),
             panic!("type descriptor test must return a Dict")
         };
         assert_eq!(output.get("int_kind").unwrap().to_string(), "'Int");
+        assert_eq!(output.get("func_kind").unwrap().to_string(), "'Func");
         assert_eq!(
             output.get("attributed_kind").unwrap().to_string(),
             "'WithAttributes"
@@ -6191,10 +6193,14 @@ unchanged", "|"),
                let string_value = dyn.pack(String, "text");
                let float_value = dyn.pack(Float, 1.5);
                let bytes_value = dyn.pack(Bytes, b"ab");
+               type Unary = Func([Int], Int);
+               let identity: Fn(Int) -> Int = fn(value) { value };
+               let func_value = dyn.pack(Unary, identity);
                let captured = fn() { int_value };
                {
                    int_type: dyn.desc(int_value),
                    int_kind: dyn.kind(int_value),
+                   func_kind: dyn.kind(func_value),
                    int_value: dyn.check_int(int_value),
                    wrong_value: dyn.check_string(int_value),
                    string_value: dyn.check_string(string_value),
@@ -6218,6 +6224,7 @@ unchanged", "|"),
         };
         assert_eq!(output.get("int_type").unwrap().to_string(), "{kind: 'Int}");
         assert_eq!(output.get("int_kind").unwrap().to_string(), "'Int");
+        assert_eq!(output.get("func_kind").unwrap().to_string(), "'Func");
         assert_eq!(output.get("int_value").unwrap().to_string(), "'Some(41)");
         assert_eq!(output.get("wrong_value").unwrap().to_string(), "'None");
         assert_eq!(

@@ -8,7 +8,7 @@ import "std/hash" as hash;
     Int: 'None, Float: 'None, String: 'None, Bytes: 'None,
     Atom: 'None, Array: 'None, Dict: 'None, Tagged: 'None,
     Tuple: 'None, Struct: 'None, Enum: 'None, Union: 'None,
-    Function: 'None, Opaque: 'None, WithAttributes: 'None,
+    Func: 'None, Opaque: 'None, WithAttributes: 'None,
     Bound: 'None, Dyn: 'None, Ref: 'None,
 };
 type HashState = hash.HashState;

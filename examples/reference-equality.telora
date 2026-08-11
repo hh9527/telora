@@ -7,7 +7,7 @@ import "std/dyn" as dyn;
     Int: 'None, Float: 'None, String: 'None, Bytes: 'None,
     Atom: 'None, Array: 'None, Dict: 'None, Tagged: 'None,
     Tuple: 'None, Struct: 'None, Enum: 'None, Union: 'None,
-    Function: 'None, WithAttributes: 'None, Bound: 'None, Dyn: 'None, Ref: 'None,
+    Func: 'None, WithAttributes: 'None, Bound: 'None, Dyn: 'None, Ref: 'None,
 };
 type EqualityResult = Result(Bool, BlameError);
 type DynPair = Tuple([Dyn, Dyn]);
@@ -67,7 +67,7 @@ def equal_items: Fn(Array(Dyn), Array(Dyn)) -> Result(Bool, BlameError) =
     };
 
 def equal_fields:
-    Fn(Array(Tuple(String, Dyn)), Array(Tuple(String, Dyn))) -> Result(Bool, BlameError) =
+    Fn(Array(Tuple([String, Dyn])), Array(Tuple([String, Dyn]))) -> Result(Bool, BlameError) =
     fn(left, right) {
         match arrays.zip(left, right) {
             'None => 'Ok('False),

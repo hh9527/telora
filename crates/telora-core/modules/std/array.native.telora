@@ -1,7 +1,7 @@
 native length: for(A) Fn(Array(A)) -> Int;
 native push: for(A) Fn(Array(A), A) -> Array(A);
 native concat: for(A) Fn(Array(Array(A))) -> Array(A);
-native zip: for(A, B) Fn(Array(A), Array(B)) -> Option(Array(Tuple(A, B)));
+native zip: for(A, B) Fn(Array(A), Array(B)) -> Option(Array(Tuple([A, B])));
 native map: for(A, B) Fn(Array(A), Fn(A) -> B) -> Array(B);
 native filter: for(A) Fn(Array(A), Fn(A) -> Bool) -> Array(A);
 native flat_map: for(A, B) Fn(Array(A), Fn(A) -> Array(B)) -> Array(B);

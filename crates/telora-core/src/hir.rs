@@ -663,7 +663,7 @@ mod tests {
              f(loop(2))",
         )
         .unwrap();
-        let hir = HirProgram::resolve(&program, ["Fn".into(), "Int".into(), "ext".into()]);
+        let hir = HirProgram::resolve(&program, ["Func".into(), "Int".into(), "ext".into()]);
         let unresolved = hir
             .unresolved()
             .map(|reference| reference.name.as_str())
@@ -692,11 +692,11 @@ mod tests {
 
     #[test]
     fn retains_type_argument_placeholders_without_references() {
-        let source = "native pair: for(A, B) Fn(A, B) -> Tuple(A, B); pair[Int, _](1, \"x\")";
+        let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[Int, _](1, \"x\")";
         let program = parse("hir.telora", source).unwrap();
         let hir = HirProgram::resolve(
             &program,
-            ["for".into(), "Fn".into(), "Int".into(), "pair".into()],
+            ["for".into(), "Func".into(), "Int".into(), "pair".into()],
         );
         let placeholder = hir
             .expressions()
@@ -719,7 +719,7 @@ mod tests {
         .unwrap();
         let hir = HirProgram::resolve(
             &program,
-            ["Fn", "TypeOf", "Bool", "eq_i"]
+            ["Func", "TypeOf", "Bool", "eq_i"]
                 .into_iter()
                 .map(str::to_owned),
         );

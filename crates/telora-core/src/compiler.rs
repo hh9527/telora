@@ -1701,7 +1701,7 @@ pub(crate) fn function_contract_arity(contract: &Expr) -> Option<u32> {
     let ExprKind::Variable(name) = &callee.value else {
         return None;
     };
-    if name.value != "Fn" || arguments.len() != 2 {
+    if name.value != "Func" || arguments.len() != 2 {
         return None;
     }
     let ExprKind::Array(parameters) = &arguments[0].value else {

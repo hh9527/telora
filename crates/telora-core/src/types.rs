@@ -416,7 +416,7 @@ impl TypeGraph {
                 }
                 TypeNode::Enum(decoded)
             }
-            "Function" => {
+            "Func" => {
                 require(&["kind", "parameters", "result"])?;
                 let values = value.dict_get("parameters").expect("field exists");
                 if values.kind() != ValueKind::Array {
@@ -775,7 +775,7 @@ impl TypeDescriptor {
                 ),
             ],
             Self::Function { parameters, result } => vec![
-                kind_entry("Function"),
+                kind_entry("Func"),
                 (
                     "parameters".into(),
                     Value::Array(
@@ -3059,10 +3059,10 @@ fn substitute_type_metadata_rich(
             | ("TypeOf", "instance")
             | ("Array" | "Dict", "item")
             | ("Tagged", "payload")
-            | ("Function", "result") => {
+            | ("Func", "result") => {
                 substitute_type_metadata_rich(value, replacements, context, register)?;
             }
-            ("Tuple", "items") | ("Union", "variants") | ("Function", "parameters") => {
+            ("Tuple", "items") | ("Union", "variants") | ("Func", "parameters") => {
                 substitute_type_metadata_array(value, replacements, context, register)?;
             }
             ("Struct", "fields") => {
@@ -3601,7 +3601,7 @@ fn core_prelude_values(vm: &mut Vm) -> BTreeMap<String, Value> {
         NativeFunction::new("TypeOf", 1, native_type_of_type),
         NativeFunction::new("Tagged", 2, native_tagged_type),
         NativeFunction::new("Tuple", 1, native_tuple_type),
-        NativeFunction::new("Fn", 2, native_function_type),
+        NativeFunction::new("Func", 2, native_function_type),
         NativeFunction::new("validate", 2, native_validate),
         NativeFunction::core_diagnostic(CoreDiagnosticFunction::Report),
     ] {
@@ -3673,7 +3673,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ),
     );
     prelude.insert(
-        "Fn".into(),
+        "Func".into(),
         function(
             vec![
                 TypeDescriptor::Array(Box::new(metadata.clone())),
@@ -3997,7 +3997,7 @@ fn native_tuple_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeErro
 fn native_function_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let parameters_value = context.value(context.argument(0)?)?;
     if parameters_value.kind() != ValueKind::Array {
-        return Err(NativeError::new("Fn expects an Array of parameter Types"));
+        return Err(NativeError::new("Func expects an Array of parameter Types"));
     }
     for index in 0..parameters_value.sequence_len().expect("Array has a length") {
         let parameter = parameters_value
@@ -4014,7 +4014,7 @@ fn native_function_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeE
     }
     write_native_type_record(
         context,
-        "Function",
+        "Func",
         &[("parameters", context.argument(0)?), ("result", result)],
     )
 }
@@ -4278,7 +4278,7 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
                     .collect::<Result<_, String>>()?,
             )
         }
-        "Function" => {
+        "Func" => {
             require(&["kind", "parameters", "result"])?;
             let parameters = value
                 .dict_get("parameters")
@@ -4670,7 +4670,7 @@ pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, S
                     .collect::<Result<_, _>>()?,
             )
         }
-        "Function" => {
+        "Func" => {
             require_fields(metadata, path, &["kind", "parameters", "result"])?;
             let Value::Array(parameters) = metadata.get("parameters").expect("required field")
             else {
@@ -8674,7 +8674,7 @@ mod tests {
 
         let deferred = analyze_with_natives(
             "native combine: for(Record, Left, Right)\
-                 Fn(Fn(Record) -> Left, Fn(Record) -> Right, Record) -> Tuple(Left, Right);\
+                 Fn(Fn(Record) -> Left, Fn(Record) -> Right, Record) -> Tuple([Left, Right]);\
              combine(fn(value) { value.left }, fn(value) { value.right }, {left: 1, right: \"x\"})",
             &[("combine", 3)],
         )
@@ -9656,15 +9656,15 @@ mod tests {
     fn partial_type_application_combines_rigid_and_inferred_arguments() {
         for (source, expected) in [
             (
-                "native pair: for(A, B) Fn(A, B) -> Tuple(A, B); pair[Int, _](1, \"x\")",
+                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[Int, _](1, \"x\")",
                 "(Int, String)",
             ),
             (
-                "native pair: for(A, B) Fn(A, B) -> Tuple(A, B); pair[_, String](1, \"x\")",
+                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[_, String](1, \"x\")",
                 "(Int, String)",
             ),
             (
-                "native pair: for(A, B) Fn(A, B) -> Tuple(A, B); pair[_, _](1, \"x\")",
+                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[_, _](1, \"x\")",
                 "(Int, String)",
             ),
             (
@@ -9680,7 +9680,7 @@ mod tests {
             assert_eq!(analysis.display(analysis.result_type), expected);
         }
 
-        let source = "native pair: for(A, B) Fn(A, B) -> Tuple(A, B); pair[Int, _](1, \"x\")";
+        let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[Int, _](1, \"x\")";
         let analysis = analyze_with_natives(source, &[("pair", 2)]).unwrap();
         let placeholder = analysis
             .hir
@@ -10234,6 +10234,11 @@ mod tests {
             ]))),
         };
         let value = descriptor.to_value(&mut Vm::new());
+        assert!(matches!(
+            &value,
+            Value::Dict(fields)
+                if matches!(fields.get("kind"), Some(Value::Atom(kind)) if kind.name() == "Func")
+        ));
         assert_eq!(TypeDescriptor::from_value(&value).unwrap(), descriptor);
 
         let bound = TypeDescriptor::Array(Box::new(TypeDescriptor::Bound(TypeParameterId(7))));
@@ -10296,6 +10301,64 @@ mod tests {
         )
         .unwrap_err();
         assert!(bad_result.message.contains("cannot unify Int with Type"));
+    }
+
+    #[test]
+    fn fn_notation_and_func_constructor_share_canonical_metadata() {
+        let definitions = analyze_source(
+            "definitions.telora",
+            "def make: Fn(Int) -> Tuple([Int, String]) = fn(value) { (value, \"ok\") };\
+             decl copy: Fn(Int) -> Tuple([Int, String]);\
+             def copy = make;\
+             (make(1), copy(2))",
+        )
+        .unwrap();
+        assert_eq!(
+            definitions.display(definitions.result_type),
+            "((Int, String), (Int, String))"
+        );
+
+        let native = analyze_with_natives(
+            "native convert: Fn(Int) -> Array(Tuple([String, Int])); convert(1)",
+            &[("convert", 1)],
+        )
+        .unwrap();
+        assert_eq!(native.display(native.result_type), "Array<(String, Int)>");
+
+        let explicit = analyze_source(
+            "explicit.telora",
+            "type ViaSyntax = Func([Int], String);\
+             def value: ViaSyntax = fn(number) { if number == 0 { \"zero\" } else { \"other\" } };\
+             value",
+        )
+        .unwrap();
+        assert_eq!(
+            explicit.display(explicit.declared_types["ViaSyntax"]),
+            "Fn(Int) -> String"
+        );
+    }
+
+    #[test]
+    fn tuple_contracts_do_not_rewrite_constructor_arity() {
+        let error = analyze_with_natives(
+            "native invalid: Fn(Int) -> Tuple(Int, String); invalid(1)",
+            &[("invalid", 1)],
+        )
+        .unwrap_err();
+        assert!(
+            error.message.contains("expected 1 arguments, got 2"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn function_remains_available_as_a_domain_type_name() {
+        let analysis = analyze_source(
+            "domain-name.telora",
+            "type Function = Int; let value: Function = 1; value",
+        )
+        .unwrap();
+        assert_eq!(analysis.display(analysis.result_type), "Int");
     }
 
     #[test]

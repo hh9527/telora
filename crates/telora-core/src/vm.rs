@@ -4885,7 +4885,7 @@ fn run_core_type_desc(
                     "Struct",
                     "Enum",
                     "Union",
-                    "Function",
+                    "Func",
                     "WithAttributes",
                     "Bound",
                     "Dyn",
@@ -5090,7 +5090,7 @@ fn run_core_dyn(
                 RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_) => "Atom",
                 RuntimeValue::Tagged(_) => "Tagged",
                 RuntimeValue::Tuple(_) => "Tuple",
-                RuntimeValue::Func(_) => "Function",
+                RuntimeValue::Func(_) => "Func",
                 RuntimeValue::Dyn(_) => "Dyn",
                 RuntimeValue::UpLink(_) => {
                     return Err(error(
@@ -5765,7 +5765,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
                 .collect()
         }
         "Any" | "Never" | "Type" | "Dyn" | "Int" | "Float" | "String" | "Bytes" | "Opaque"
-        | "Atom" | "Function" | "Bound" => Ok(Vec::new()),
+        | "Atom" | "Func" | "Bound" => Ok(Vec::new()),
         other => Err(format!("unknown Type metadata kind '{other}")),
     }
 }
@@ -6709,7 +6709,7 @@ fn decode_runtime_type_at(
             }
             CodecKind::Enum(decoded)
         }
-        "Function" => CodecKind::Function,
+        "Func" => CodecKind::Function,
         other => return Err(format!("{path}.kind has unsupported value '{other}")),
     };
     Ok(CodecType {
@@ -8688,7 +8688,7 @@ fn codec_type_name(schema: &CodecType) -> &'static str {
             "Enum"
         }
         CodecKind::Union(_) => "Union",
-        CodecKind::Function => "Function",
+        CodecKind::Function => "Func",
     }
 }
 

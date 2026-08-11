@@ -1,7 +1,7 @@
 @enum type ValueKind = {
     Int: 'None, Float: 'None, String: 'None, Bytes: 'None, Type: 'None, Opaque: 'None,
     Dict: 'None, Array: 'None, Atom: 'None, Tagged: 'None,
-    Tuple: 'None, Function: 'None, Dyn: 'None,
+    Tuple: 'None, Func: 'None, Dyn: 'None,
 };
 native pack: for(A) Fn(TypeOf(A), A) -> Dyn;
 native desc: Fn(Dyn) -> Type;
@@ -11,7 +11,7 @@ native check_float: Fn(Dyn) -> Option(Float);
 native check_string: Fn(Dyn) -> Option(String);
 native check_bytes: Fn(Dyn) -> Option(Bytes);
 native field: Fn(Dyn, String) -> Result(Dyn, BlameError);
-native fields: Fn(Dyn) -> Result(Array(Tuple(String, Dyn)), BlameError);
+native fields: Fn(Dyn) -> Result(Array(Tuple([String, Dyn])), BlameError);
 native array_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
 native tuple_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
 native tag: Fn(Dyn) -> Result(String, BlameError);

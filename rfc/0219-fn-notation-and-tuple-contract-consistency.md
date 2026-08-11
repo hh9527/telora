@@ -1,6 +1,6 @@
 # RFC 0219: Fn Notation and Tuple Contract Consistency
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0003, RFC 0022, RFC 0050, RFC 0051, RFC 0127, RFC 0203,
   RFC 0218
 
@@ -397,6 +397,26 @@ publish unavailable facts under the existing workspace rules.
 8. add syntax, parser, HIR, strict inference, tool-stage, runtime, recovery,
    module-interface, hover, and display tests; and
 9. run formatting, strict Clippy, the full workspace suite, and diff checks.
+
+## Implementation result
+
+Implemented in `telora-core` by extending the restricted contract grammar with
+metadata Array arguments and lowering authored `Fn` notation to ordinary
+`Func` calls. The previous callee-name-based Tuple wrapping is removed. The
+runtime and static preludes expose `Func`, and canonical metadata encoding,
+decoding, substitution, validation, `std/type-desc`, and `std/dyn` consistently
+use the `'Func` kind.
+
+Standard native contracts and reference interpreters now use
+`Tuple([A, B])`. The language SSOT records the `Fn`/`Func` boundary, the single
+Tuple constructor protocol, the public observer vocabulary, and the fact that
+`Function` remains available to domain models.
+
+Tests cover syntax lowering and rejection, inline `def`, `decl`, and `native`
+contracts, nested Tuple metadata, explicit `Func` construction, removed Tuple
+rewriting, canonical metadata round trips, both public kind observers, and a
+domain type named `Function`. Formatting, strict workspace Clippy, and the full
+workspace test suite pass.
 
 ## Acceptance criteria
 

@@ -1,7 +1,7 @@
 native keys: Fn(Any) -> Array(String);
 native values: Fn(Any) -> Array(Any);
-native pairs: Fn(Any) -> Array(Tuple(String, Any));
-native from_pairs: Fn(Array(Tuple(String, Any))) -> Any;
+native pairs: Fn(Any) -> Array(Tuple([String, Any]));
+native from_pairs: Fn(Array(Tuple([String, Any]))) -> Any;
 native merge: Fn(Any, Any) -> Any;
 native map_values: for(A, B) Fn(Dict(A), Fn(A) -> B) -> Dict(B);
 native filter: for(A) Fn(Dict(A), Fn(A) -> Bool) -> Dict(A);

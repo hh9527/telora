@@ -200,6 +200,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     fn predicate_function_contract_1(&self) -> bool {
         self.peek(1) != Token::RParen
     }
+    fn predicate_contract_array_1(&self) -> bool {
+        self.peek(1) != Token::RBracket
+    }
     fn predicate_match_expr_1(&self) -> bool {
         self.peek(1) != Token::RBrace
     }

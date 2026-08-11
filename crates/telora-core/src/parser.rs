@@ -1788,7 +1788,7 @@ impl<'a> Lowerer<'a> {
         location: Location,
     ) -> Expr {
         let parameters = located(ExprKind::Array(parameters), location);
-        let callee_name = located("Fn".to_owned(), location);
+        let callee_name = located("Func".to_owned(), location);
         located(
             ExprKind::Call {
                 callee: Box::new(located(ExprKind::Variable(callee_name), location)),
@@ -1814,7 +1814,12 @@ impl<'a> Lowerer<'a> {
                     .filter(|child| {
                         matches!(
                             self.rule(*child),
-                            Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                            Some(
+                                Rule::Contract
+                                    | Rule::ContractExpr
+                                    | Rule::FunctionContract
+                                    | Rule::ContractArray
+                            )
                         )
                     })
                     .map(|child| self.contract_expression(child))
@@ -1822,11 +1827,6 @@ impl<'a> Lowerer<'a> {
                 if arguments.is_empty() {
                     Ok(located(ExprKind::Variable(name), location))
                 } else {
-                    let arguments = if name.value == "Tuple" {
-                        vec![located(ExprKind::Array(arguments), location)]
-                    } else {
-                        arguments
-                    };
                     Ok(located(
                         ExprKind::Call {
                             callee: Box::new(located(ExprKind::Variable(name), location)),
@@ -1836,6 +1836,20 @@ impl<'a> Lowerer<'a> {
                     ))
                 }
             }
+            Some(Rule::ContractArray) => Ok(located(
+                ExprKind::Array(
+                    self.rule_children(node)
+                        .filter(|child| {
+                            matches!(
+                                self.rule(*child),
+                                Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                            )
+                        })
+                        .map(|child| self.contract_expression(child))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                location,
+            )),
             Some(Rule::FunctionContract) => {
                 let mut parts = self
                     .rule_children(node)
@@ -2538,7 +2552,7 @@ fn function_contract_parts(contract: &Expr) -> Option<(&[Expr], &Expr)> {
     let ExprKind::Call { callee, arguments } = &contract.value else {
         return None;
     };
-    if !is_variable(callee, "Fn") {
+    if !is_variable(callee, "Func") {
         return None;
     }
     let [parameters, result] = arguments.as_slice() else {
@@ -2794,7 +2808,7 @@ export { private as visible, identity as map };"#,
     fn lowers_heterogeneous_tuple_contracts_through_array_metadata() {
         let program = parse(
             "test.telora",
-            "native pairs: Fn(Any) -> Array(Tuple(String, Any)); 0",
+            "native pairs: Fn(Any) -> Array(Tuple([String, Any])); 0",
         )
         .unwrap();
         let annotation = program.value.body.value.bindings[0]
@@ -2812,6 +2826,32 @@ export { private as visible, identity as map };"#,
             panic!("expected Tuple metadata call");
         };
         assert!(matches!(&arguments[0].value, ExprKind::Array(items) if items.len() == 2));
+    }
+
+    #[test]
+    fn function_notation_lowers_to_the_func_metadata_constructor() {
+        let program = parse("test.telora", "native convert: Fn(A) -> Tuple([B, C]); 0").unwrap();
+        let annotation = program.value.body.value.bindings[0]
+            .value
+            .annotation
+            .as_ref()
+            .expect("native annotation");
+        let ExprKind::Call { callee, arguments } = &annotation.value else {
+            panic!("expected Func metadata call");
+        };
+        assert!(is_variable(callee, "Func"));
+        assert!(matches!(&arguments[0].value, ExprKind::Array(items) if items.len() == 1));
+        let ExprKind::Call { callee, arguments } = &arguments[1].value else {
+            panic!("expected Tuple metadata call");
+        };
+        assert!(is_variable(callee, "Tuple"));
+        assert!(matches!(&arguments[0].value, ExprKind::Array(items) if items.len() == 2));
+    }
+
+    #[test]
+    fn rejects_constructor_shaped_fn_notation() {
+        let error = parse("test.telora", "native invalid: Fn([A], B); 0").unwrap_err();
+        assert!(error.to_string().contains("expected"), "{error}");
     }
 
     #[test]
