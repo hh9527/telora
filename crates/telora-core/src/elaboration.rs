@@ -1,18 +1,24 @@
 use crate::Location;
 use crate::ast::*;
-use crate::types::PropagationFamily;
+use crate::types::{NotFamily, PropagationFamily};
 use std::collections::HashMap;
 
 pub(crate) fn elaborate_program(
     program: &mut Program,
     families: &HashMap<Location, PropagationFamily>,
+    not_families: &HashMap<Location, NotFamily>,
 ) {
-    let mut elaborator = Elaborator { families, next: 0 };
+    let mut elaborator = Elaborator {
+        families,
+        not_families,
+        next: 0,
+    };
     elaborator.block(&mut program.value.body);
 }
 
 struct Elaborator<'a> {
     families: &'a HashMap<Location, PropagationFamily>,
+    not_families: &'a HashMap<Location, NotFamily>,
     next: u32,
 }
 
@@ -51,22 +57,10 @@ impl Elaborator<'_> {
             ExprKind::Unary { operator, operand } => {
                 self.expression(operand);
                 if operator.value == UnaryOperator::Not {
-                    let condition = operand.clone();
-                    let atom =
-                        |name: &str| located(ExprKind::Atom(name.into()), expression.location);
-                    let block = |result: Expr| {
-                        located(
-                            BlockKind {
-                                bindings: Vec::new(),
-                                result: Box::new(result),
-                            },
-                            expression.location,
-                        )
-                    };
-                    expression.value = ExprKind::If {
-                        condition,
-                        then_branch: block(atom("False")),
-                        else_branch: block(atom("True")),
+                    operator.value = match self.not_families[&expression.location] {
+                        NotFamily::Bool => UnaryOperator::LogicalNot,
+                        NotFamily::Int => UnaryOperator::BitNot,
+                        NotFamily::Dynamic => UnaryOperator::Not,
                     };
                 }
             }
@@ -367,6 +361,7 @@ mod tests {
         );
         let mut elaborator = Elaborator {
             families: &HashMap::new(),
+            not_families: &HashMap::new(),
             next: 0,
         };
         let ExprKind::Block(block) =

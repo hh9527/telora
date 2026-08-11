@@ -173,6 +173,8 @@ pub enum StringPartKind {
 pub enum UnaryOperator {
     Negate,
     Not,
+    LogicalNot,
+    BitNot,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -187,6 +189,9 @@ pub enum BinaryOperator {
     GreaterThanOrEqual,
     Equal,
     NotEqual,
+    BitAnd,
+    BitOr,
+    BitXor,
     And,
     Or,
 }

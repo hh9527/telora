@@ -53,12 +53,13 @@ operands; there is no mixed numeric coercion. String order is lexicographic over
 the exact internal UTF-8 byte sequence, without normalization, locale rules,
 case folding, or natural-number sorting.
 
+Prefix `!` returns the opposite canonical Bool for Bool and bitwise complement
+for Int. Binary `&`, `^`, and `|` accept only Int. Their precedence is
+arithmetic, `&`, `^`, `|`, comparison, `&&`, then `||`, from tighter to looser.
 All six comparisons share one non-associative precedence level. Write
 parentheses when comparing a comparison result; `a < b <= c` is not a chained
-comparison. Prefix `!` accepts Bool and returns the opposite canonical Bool;
-it binds more tightly than comparisons and boolean infix operators. `&&` and
-`||` accept Bool and short-circuit. An `if` expression always has an `else`
-branch.
+comparison. `&&` and `||` accept Bool and short-circuit. An `if` expression
+always has an `else` branch.
 
 ## Functions and contracts
 

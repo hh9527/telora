@@ -89,7 +89,11 @@ pub(crate) fn compile_program_with_promoted_types(
         binding.value.kind == BindingKind::Type
             || !erased_bindings.contains(&binding.value.name.value)
     });
-    crate::elaboration::elaborate_program(&mut program, &analysis.propagation_families);
+    crate::elaboration::elaborate_program(
+        &mut program,
+        &analysis.propagation_families,
+        &analysis.not_families,
+    );
     Compiler::program_in(
         source_file.name.as_ref(),
         Some(source_file),
@@ -916,10 +920,13 @@ impl<'a> Compiler<'a> {
                         self.emit(Operation::Negate { dst, src }, expression.location);
                     }
                     UnaryOperator::Not => {
-                        return Err(self.error_at(
-                            expression.location,
-                            "unelaborated logical negation expression",
-                        ));
+                        self.emit(Operation::Not { dst, src }, expression.location);
+                    }
+                    UnaryOperator::LogicalNot => {
+                        self.emit(Operation::LogicalNot { dst, src }, expression.location);
+                    }
+                    UnaryOperator::BitNot => {
+                        self.emit(Operation::BitNot { dst, src }, expression.location);
                     }
                 }
                 Ok(dst)
@@ -971,6 +978,9 @@ impl<'a> Compiler<'a> {
                     },
                     BinaryOperator::Equal => Operation::Equal { dst, left, right },
                     BinaryOperator::NotEqual => Operation::NotEqual { dst, left, right },
+                    BinaryOperator::BitAnd => Operation::BitAnd { dst, left, right },
+                    BinaryOperator::BitOr => Operation::BitOr { dst, left, right },
+                    BinaryOperator::BitXor => Operation::BitXor { dst, left, right },
                     BinaryOperator::And | BinaryOperator::Or => {
                         return Err(self.error_at(
                             expression.location,
@@ -2896,8 +2906,12 @@ let decorators = {
     #[test]
     fn logical_negation_executes_with_unary_precedence_and_dynamic_checks() {
         let value =
-            run("(!'True, !'False, !!'True, !('True && 'False), !'False == 'True)").unwrap();
-        assert_eq!(value.to_string(), "('False, 'True, 'True, 'True, 'True)");
+            run("(!'True, !'False, !!'True, !('True && 'False), !'False == 'True, !0, !-1)")
+                .unwrap();
+        assert_eq!(
+            value.to_string(),
+            "('False, 'True, 'True, 'True, 'True, -1, 0)"
+        );
 
         let dynamic = run("let invert: Fn(Any) -> Bool = fn(value) { !value };\
              (invert('True), invert('False))")
@@ -2908,6 +2922,37 @@ let decorators = {
             run("let invert: Fn(Any) -> Bool = fn(value) { !value }; invert(1)").unwrap_err()
         else {
             panic!("expected runtime Bool check");
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
+
+        let dynamic = run("let invert: Fn(Any) -> Any = fn(value) { !value };\
+             (invert('True), invert(0))")
+        .unwrap();
+        assert_eq!(dynamic.to_string(), "('False, -1)");
+
+        let ExecutionError::Runtime(error) =
+            run("let invert: Fn(Any) -> Int = fn(value) { !value }; invert('True)").unwrap_err()
+        else {
+            panic!("expected runtime Int check");
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
+    }
+
+    #[test]
+    fn bitwise_integer_operators_execute_with_stable_precedence() {
+        let value = run("(6 & 3, 4 | 1, 6 ^ 3, 1 | 2 ^ 3 & 1, 6 & 3 == 2)").unwrap();
+        assert_eq!(value.to_string(), "(2, 5, 5, 3, 'True)");
+
+        for source in ["1 & 1.0", "1 | 'True", "\"x\" ^ 1"] {
+            let error = compile_source("test", source).unwrap_err();
+            assert!(error.message.contains("Int"), "{}", error.message);
+        }
+
+        let ExecutionError::Runtime(error) =
+            run("let bit_and: Fn(Any, Any) -> Int = fn(left, right) { left & right }; bit_and(1, \"x\")")
+                .unwrap_err()
+        else {
+            panic!("expected runtime Int check");
         };
         assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
     }

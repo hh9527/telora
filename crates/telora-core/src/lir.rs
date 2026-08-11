@@ -65,6 +65,33 @@ pub enum Operation {
         dst: RegisterId,
         src: RegisterId,
     },
+    Not {
+        dst: RegisterId,
+        src: RegisterId,
+    },
+    LogicalNot {
+        dst: RegisterId,
+        src: RegisterId,
+    },
+    BitNot {
+        dst: RegisterId,
+        src: RegisterId,
+    },
+    BitAnd {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
+    BitOr {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
+    BitXor {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
     Equal {
         dst: RegisterId,
         left: RegisterId,
@@ -357,6 +384,33 @@ fn lower_operation(
         Operation::Negate { dst, src } => Instruction::Negate {
             dst: register(dst)?,
             src: register(src)?,
+        },
+        Operation::Not { dst, src } => Instruction::Not {
+            dst: register(dst)?,
+            src: register(src)?,
+        },
+        Operation::LogicalNot { dst, src } => Instruction::LogicalNot {
+            dst: register(dst)?,
+            src: register(src)?,
+        },
+        Operation::BitNot { dst, src } => Instruction::BitNot {
+            dst: register(dst)?,
+            src: register(src)?,
+        },
+        Operation::BitAnd { dst, left, right } => Instruction::BitAnd {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
+        },
+        Operation::BitOr { dst, left, right } => Instruction::BitOr {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
+        },
+        Operation::BitXor { dst, left, right } => Instruction::BitXor {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
         },
         Operation::Equal { dst, left, right } => Instruction::Equal {
             dst: register(dst)?,

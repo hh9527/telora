@@ -65,6 +65,33 @@ pub enum Instruction {
         dst: Register,
         src: Register,
     },
+    Not {
+        dst: Register,
+        src: Register,
+    },
+    LogicalNot {
+        dst: Register,
+        src: Register,
+    },
+    BitNot {
+        dst: Register,
+        src: Register,
+    },
+    BitAnd {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    BitOr {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    BitXor {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
     Equal {
         dst: Register,
         left: Register,
@@ -237,6 +264,33 @@ pub enum Opcode {
     Negate {
         dst: Register,
         src: Register,
+    },
+    Not {
+        dst: Register,
+        src: Register,
+    },
+    LogicalNot {
+        dst: Register,
+        src: Register,
+    },
+    BitNot {
+        dst: Register,
+        src: Register,
+    },
+    BitAnd {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    BitOr {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    BitXor {
+        dst: Register,
+        left: Register,
+        right: Register,
     },
     Equal {
         dst: Register,
@@ -618,6 +672,12 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Multiply { dst, left, right } => Opcode::Multiply { dst, left, right },
         Instruction::Divide { dst, left, right } => Opcode::Divide { dst, left, right },
         Instruction::Negate { dst, src } => Opcode::Negate { dst, src },
+        Instruction::Not { dst, src } => Opcode::Not { dst, src },
+        Instruction::LogicalNot { dst, src } => Opcode::LogicalNot { dst, src },
+        Instruction::BitNot { dst, src } => Opcode::BitNot { dst, src },
+        Instruction::BitAnd { dst, left, right } => Opcode::BitAnd { dst, left, right },
+        Instruction::BitOr { dst, left, right } => Opcode::BitOr { dst, left, right },
+        Instruction::BitXor { dst, left, right } => Opcode::BitXor { dst, left, right },
         Instruction::Equal { dst, left, right } => Opcode::Equal { dst, left, right },
         Instruction::NotEqual { dst, left, right } => Opcode::NotEqual { dst, left, right },
         Instruction::LessThan { dst, left, right } => Opcode::LessThan { dst, left, right },

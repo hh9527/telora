@@ -65,6 +65,9 @@ pub enum Token {
     EqualEqual,
     BangEqual,
     Equal,
+    BitAnd,
+    BitOr,
+    BitXor,
     AndAnd,
     OrOr,
     Arrow,
@@ -181,6 +184,12 @@ enum NormalToken {
     Arrow,
     #[token("=")]
     Equal,
+    #[token("&")]
+    BitAnd,
+    #[token("|")]
+    BitOr,
+    #[token("^")]
+    BitXor,
     #[token("&&")]
     AndAnd,
     #[token("||")]
@@ -625,6 +634,9 @@ impl From<NormalToken> for Token {
             NormalToken::BangEqual => Self::BangEqual,
             NormalToken::Arrow => Self::Arrow,
             NormalToken::Equal => Self::Equal,
+            NormalToken::BitAnd => Self::BitAnd,
+            NormalToken::BitOr => Self::BitOr,
+            NormalToken::BitXor => Self::BitXor,
             NormalToken::AndAnd => Self::AndAnd,
             NormalToken::OrOr => Self::OrOr,
             NormalToken::FatArrow => Self::FatArrow,
@@ -697,6 +709,29 @@ mod tests {
                 Token::GreaterEqual,
                 Token::EqualEqual,
                 Token::BangEqual,
+            ]
+        );
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn distinguishes_bitwise_boolean_and_pipeline_operators() {
+        let mut diagnostics = Vec::new();
+        let (tokens, _) = tokenize("! != & && | || |> ^", &mut diagnostics);
+        assert_eq!(
+            tokens
+                .into_iter()
+                .filter(|token| *token != Token::Whitespace)
+                .collect::<Vec<_>>(),
+            vec![
+                Token::Bang,
+                Token::BangEqual,
+                Token::BitAnd,
+                Token::AndAnd,
+                Token::BitOr,
+                Token::OrOr,
+                Token::Pipe,
+                Token::BitXor,
             ]
         );
         assert!(diagnostics.is_empty());

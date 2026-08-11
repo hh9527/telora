@@ -1556,6 +1556,92 @@ impl Vm {
                             pc,
                         )?;
                     }
+                    Opcode::Not { dst, src } => {
+                        let input = *read_register(&registers, *src, function, pc)?;
+                        let value = match input.value {
+                            RuntimeValue::Int(value) => RuntimeValue::Int(!value),
+                            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::False)
+                            }
+                            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::True)
+                            }
+                            _ => {
+                                return Err(runtime_type_error(
+                                    "Int or Bool",
+                                    &input,
+                                    &view,
+                                    function,
+                                    pc,
+                                ));
+                            }
+                        };
+                        write_register(
+                            &mut registers,
+                            *dst,
+                            RichValue::new(value, instruction_location(function, pc)),
+                            function,
+                            pc,
+                        )?;
+                    }
+                    Opcode::LogicalNot { dst, src } => {
+                        let input = *read_register(&registers, *src, function, pc)?;
+                        let value = match input.value {
+                            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::False)
+                            }
+                            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::True)
+                            }
+                            _ => {
+                                return Err(runtime_type_error(
+                                    "Bool", &input, &view, function, pc,
+                                ));
+                            }
+                        };
+                        write_register(
+                            &mut registers,
+                            *dst,
+                            RichValue::new(value, instruction_location(function, pc)),
+                            function,
+                            pc,
+                        )?;
+                    }
+                    Opcode::BitNot { dst, src } => {
+                        let input = *read_register(&registers, *src, function, pc)?;
+                        let RuntimeValue::Int(value) = input.value else {
+                            return Err(runtime_type_error("Int", &input, &view, function, pc));
+                        };
+                        write_register(
+                            &mut registers,
+                            *dst,
+                            RichValue::new(
+                                RuntimeValue::Int(!value),
+                                instruction_location(function, pc),
+                            ),
+                            function,
+                            pc,
+                        )?;
+                    }
+                    Opcode::BitAnd { dst, left, right }
+                    | Opcode::BitOr { dst, left, right }
+                    | Opcode::BitXor { dst, left, right } => {
+                        let operation = match instruction {
+                            Opcode::BitAnd { .. } => BitwiseOperation::And,
+                            Opcode::BitOr { .. } => BitwiseOperation::Or,
+                            Opcode::BitXor { .. } => BitwiseOperation::Xor,
+                            _ => unreachable!(),
+                        };
+                        let value = bitwise_binary(
+                            read_register(&registers, *left, function, pc)?,
+                            read_register(&registers, *right, function, pc)?,
+                            operation,
+                            &view,
+                            function,
+                            pc,
+                        )?;
+                        write_register(&mut registers, *dst, value, function, pc)?;
+                    }
                     Opcode::Equal { dst, left, right } => {
                         let left = *read_register(&registers, *left, function, pc)?;
                         let right = *read_register(&registers, *right, function, pc)?;
@@ -10280,6 +10366,37 @@ enum NumericOperation {
     Subtract,
     Multiply,
     Divide,
+}
+
+#[derive(Clone, Copy)]
+enum BitwiseOperation {
+    And,
+    Or,
+    Xor,
+}
+
+fn bitwise_binary(
+    left: &RichValue,
+    right: &RichValue,
+    operation: BitwiseOperation,
+    view: &HeapView<'_>,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<RichValue, RuntimeError> {
+    let (RuntimeValue::Int(left), RuntimeValue::Int(right)) = (left.value, right.value) else {
+        let invalid = if !matches!(left.value, RuntimeValue::Int(_)) {
+            left
+        } else {
+            right
+        };
+        return Err(runtime_type_error("Int", invalid, view, function, pc));
+    };
+    let value = match operation {
+        BitwiseOperation::And => left & right,
+        BitwiseOperation::Or => left | right,
+        BitwiseOperation::Xor => left ^ right,
+    };
+    Ok(RuntimeValue::Int(value).into())
 }
 
 fn numeric_binary(

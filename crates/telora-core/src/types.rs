@@ -956,6 +956,7 @@ pub struct Analysis {
     pub module_interface: ModuleInterface,
     pub explicit_exports: bool,
     pub(crate) propagation_families: HashMap<crate::Location, PropagationFamily>,
+    pub(crate) not_families: HashMap<crate::Location, NotFamily>,
     pub(crate) prelude: BTreeMap<String, Value>,
     pub(crate) external_values: BTreeMap<String, Value>,
     pub(crate) dynamic_bindings: HashSet<String>,
@@ -966,6 +967,13 @@ pub struct Analysis {
 pub(crate) enum PropagationFamily {
     Option,
     Result,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NotFamily {
+    Bool,
+    Int,
+    Dynamic,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2785,6 +2793,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .map_err(|message| frontend_error(source_name, message))?;
     }
     let propagation_families = std::mem::take(&mut inference.propagation_families);
+    let not_families = std::mem::take(&mut inference.not_families);
     Ok(Analysis {
         types,
         declared_types,
@@ -2803,6 +2812,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .iter()
             .any(|binding| binding.value.kind == BindingKind::Export),
         propagation_families,
+        not_families,
         prelude: prelude_values,
         external_values: external_values.clone(),
         dynamic_bindings: dynamic_bindings.clone(),
@@ -4763,6 +4773,7 @@ struct GenericInference<'a> {
     delayed_initializer_depth: usize,
     recursive_body_inference_depth: usize,
     numeric_variables: HashSet<InferenceVariableId>,
+    not_variables: HashSet<InferenceVariableId>,
     ordered_variables: HashSet<InferenceVariableId>,
     field_requirements: HashMap<InferenceVariableId, BTreeMap<String, TypeDescriptor>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
@@ -4773,6 +4784,7 @@ struct GenericInference<'a> {
     propagation_boundaries: Vec<Option<PropagationRequirement>>,
     return_boundaries: Vec<Option<ReturnBoundary>>,
     propagation_families: HashMap<crate::Location, PropagationFamily>,
+    not_families: HashMap<crate::Location, NotFamily>,
 }
 
 #[derive(Clone)]
@@ -4962,6 +4974,7 @@ impl<'a> GenericInference<'a> {
             delayed_initializer_depth: 0,
             recursive_body_inference_depth: 0,
             numeric_variables: HashSet::new(),
+            not_variables: HashSet::new(),
             ordered_variables: HashSet::new(),
             field_requirements: HashMap::new(),
             recursive_equations: HashMap::new(),
@@ -4972,6 +4985,7 @@ impl<'a> GenericInference<'a> {
             propagation_boundaries: vec![None],
             return_boundaries: vec![None],
             propagation_families: HashMap::new(),
+            not_families: HashMap::new(),
         }
     }
 
@@ -5158,6 +5172,9 @@ impl<'a> GenericInference<'a> {
                 if self.numeric_variables.contains(&variable) {
                     self.numeric_variables.insert(fresh);
                 }
+                if self.not_variables.contains(&variable) {
+                    self.not_variables.insert(fresh);
+                }
                 if self.ordered_variables.contains(&variable) {
                     self.ordered_variables.insert(fresh);
                 }
@@ -5233,6 +5250,7 @@ impl<'a> GenericInference<'a> {
         if variables.is_empty()
             || variables.iter().any(|variable| {
                 self.numeric_variables.contains(variable)
+                    || self.not_variables.contains(variable)
                     || self.ordered_variables.contains(variable)
             })
         {
@@ -5552,6 +5570,26 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn require_not_operand(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
+        match self.resolve(ty) {
+            TypeDescriptor::Inference(variable) => {
+                self.not_variables.insert(variable);
+                Ok(())
+            }
+            TypeDescriptor::Int | TypeDescriptor::Any | TypeDescriptor::Never => Ok(()),
+            TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::True | BuiltinAtom::False)) => Ok(()),
+            TypeDescriptor::Enum(variants)
+                if TypeDescriptor::Enum(variants.clone()) == normalized_bool_descriptor() =>
+            {
+                Ok(())
+            }
+            ty => Err(format!(
+                "! requires Int or Bool, found {}",
+                ty.display_name()
+            )),
+        }
+    }
+
     fn require_ordered(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
         match self.resolve(ty) {
             TypeDescriptor::Inference(variable) => {
@@ -5600,6 +5638,28 @@ impl<'a> GenericInference<'a> {
             && self.numeric_variables.contains(&target)
         {
             self.numeric_variables.insert(variable);
+        }
+        if self.not_variables.contains(&variable) {
+            match &ty {
+                TypeDescriptor::Inference(target) => {
+                    self.not_variables.insert(*target);
+                }
+                TypeDescriptor::Int | TypeDescriptor::Any | TypeDescriptor::Never => {}
+                TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::True | BuiltinAtom::False)) => {}
+                TypeDescriptor::Enum(variants)
+                    if TypeDescriptor::Enum(variants.clone()) == normalized_bool_descriptor() => {}
+                _ => {
+                    return Err(format!(
+                        "! requires Int or Bool, found {}",
+                        ty.display_name()
+                    ));
+                }
+            }
+        }
+        if let TypeDescriptor::Inference(target) = ty
+            && self.not_variables.contains(&target)
+        {
+            self.not_variables.insert(variable);
         }
         if self.ordered_variables.contains(&variable) {
             match &ty {
@@ -6208,12 +6268,60 @@ impl<'a> GenericInference<'a> {
                     self.resolve(&numeric)
                 }
                 UnaryOperator::Not => {
-                    let bool_type = normalized_bool_descriptor();
+                    let resolved_expected = expected.map(|expected| self.resolve(expected));
+                    let expected_family =
+                        resolved_expected
+                            .as_ref()
+                            .and_then(|expected| match expected {
+                                TypeDescriptor::Int => Some(NotFamily::Int),
+                                TypeDescriptor::Enum(variants)
+                                    if TypeDescriptor::Enum(variants.clone())
+                                        == normalized_bool_descriptor() =>
+                                {
+                                    Some(NotFamily::Bool)
+                                }
+                                TypeDescriptor::Any => Some(NotFamily::Dynamic),
+                                _ => None,
+                            });
+                    let operand_expectation = resolved_expected.as_ref().filter(|expected| {
+                        matches!(expected, TypeDescriptor::Int | TypeDescriptor::Any)
+                            || matches!(
+                                expected,
+                                TypeDescriptor::Enum(variants)
+                                    if TypeDescriptor::Enum(variants.clone())
+                                        == normalized_bool_descriptor()
+                            )
+                    });
+                    let operand = self.infer(operand, environment, operand_expectation)?;
+                    self.require_not_operand(&operand)?;
+                    let resolved_operand = self.resolve(&operand);
+                    let family = expected_family.unwrap_or(match &resolved_operand {
+                        TypeDescriptor::Int => NotFamily::Int,
+                        TypeDescriptor::Atom(Atom::Builtin(
+                            BuiltinAtom::True | BuiltinAtom::False,
+                        ))
+                        | TypeDescriptor::Enum(_) => NotFamily::Bool,
+                        _ => NotFamily::Dynamic,
+                    });
+                    self.not_families.insert(expression.location, family);
+                    let result = match family {
+                        NotFamily::Bool => normalized_bool_descriptor(),
+                        NotFamily::Int => TypeDescriptor::Int,
+                        NotFamily::Dynamic => resolved_operand,
+                    };
                     if let Some(expected) = expected {
-                        self.check(&bool_type, expected)?;
+                        self.check(&result, expected)?;
                     }
+                    result
+                }
+                UnaryOperator::LogicalNot => {
+                    let bool_type = normalized_bool_descriptor();
                     self.infer(operand, environment, Some(&bool_type))?;
                     bool_type
+                }
+                UnaryOperator::BitNot => {
+                    self.infer(operand, environment, Some(&TypeDescriptor::Int))?;
+                    TypeDescriptor::Int
                 }
             },
             ExprKind::Propagate { operand } => {
@@ -6289,6 +6397,14 @@ impl<'a> GenericInference<'a> {
                     self.infer(left, environment, None)?;
                     self.infer(right, environment, None)?;
                     normalized_bool_descriptor()
+                }
+                BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::BitXor => {
+                    if let Some(expected) = expected {
+                        self.check(&TypeDescriptor::Int, expected)?;
+                    }
+                    self.infer(left, environment, Some(&TypeDescriptor::Int))?;
+                    self.infer(right, environment, Some(&TypeDescriptor::Int))?;
+                    TypeDescriptor::Int
                 }
                 BinaryOperator::LessThan
                 | BinaryOperator::LessThanOrEqual
@@ -9783,24 +9899,41 @@ mod tests {
         let equality = analyze_with_natives("1 == \"1\"", &[]).unwrap();
         assert_eq!(equality.display(equality.result_type), "enum {False, True}");
 
-        let logical_not =
-            analyze_with_natives("let invert = fn(value) { !value }; invert", &[]).unwrap();
+        let logical_not = analyze_with_natives(
+            "let invert_bool: Fn(Bool) -> Bool = fn(value) { !value };\
+             let invert_int: Fn(Int) -> Int = fn(value) { !value };\
+             (invert_bool, invert_int, !'True, !0)",
+            &[],
+        )
+        .unwrap();
         assert_eq!(
             logical_not.display(logical_not.result_type),
-            "Fn(enum {False, True}) -> enum {False, True}"
+            "(Fn(enum {False, True}) -> enum {False, True}, Fn(Int) -> Int, enum {False, True}, Int)"
         );
     }
 
     #[test]
     fn intrinsic_expression_constraints_reject_invalid_or_ambiguous_operators() {
-        for source in ["-\"text\"", "!1", "!\"text\"", "1 + 1.5"] {
+        for source in ["-\"text\"", "!1.0", "!\"text\"", "1 + 1.5"] {
             let error = analyze_with_natives(source, &[]).unwrap_err();
             assert!(
-                error.message.contains("Int or Float") || error.message.contains("cannot unify"),
+                error.message.contains("Int or Float")
+                    || error.message.contains("Int or Bool")
+                    || error.message.contains("cannot unify"),
                 "{}",
                 error.message
             );
         }
+
+        let ambiguous =
+            analyze_with_natives("let invert = fn(value) { !value }; invert", &[]).unwrap_err();
+        assert!(
+            ambiguous
+                .message
+                .contains("cannot infer monomorphic binding"),
+            "{}",
+            ambiguous.message
+        );
 
         let ambiguous =
             analyze_with_natives("let negate = fn(value) { -value }; negate", &[]).unwrap_err();
