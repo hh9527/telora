@@ -1,6 +1,6 @@
 # RFC 0220: Array Access and Enumeration
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0011, RFC 0012, RFC 0015, RFC 0021, RFC 0023, RFC 0048,
   RFC 0053, RFC 0127, RFC 0219
 - Tracking issue: #18
@@ -212,6 +212,25 @@ the versioned standard module.
 8. Dynamic type failures, integer overflow, allocation failure, and core trace
    names remain sourced and deterministic.
 9. Existing Array and workspace tests remain green under strict Clippy.
+
+## Implementation result
+
+`std/array` now exports the two accepted generic contracts through its
+declarative native module. `CoreArrayFunction::Get` and `Enumerate` run as
+synchronous core calls through the existing layered heap view; neither enters
+the callback-continuation path.
+
+`get` converts non-negative indices with a checked host conversion, returns the
+canonical `'None` for every absent position, and allocates the two-slot tagged
+object only for `'Some`. `enumerate` checks that its length fits `Int`, checks
+the `3 * n` logical output size, charges the complete output before mutation,
+and then constructs call-located indices and Tuple/Array wrappers around the
+original rich source values.
+
+Tests cover empty and boundary access, order, static generic results, tool-stage
+metadata construction, dynamic boundary errors, exact fuel/allocation limits,
+JSON element provenance, generated-index call provenance, and the existing
+Array operation suite.
 
 ## Non-goals and deferred work
 

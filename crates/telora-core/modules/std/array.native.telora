@@ -1,4 +1,6 @@
 native length: for(A) Fn(Array(A)) -> Int;
+native get: for(A) Fn(Array(A), Int) -> Option(A);
+native enumerate: for(A) Fn(Array(A)) -> Array(Tuple([Int, A]));
 native push: for(A) Fn(Array(A), A) -> Array(A);
 native concat: for(A) Fn(Array(Array(A))) -> Array(A);
 native zip: for(A, B) Fn(Array(A), Array(B)) -> Option(Array(Tuple([A, B])));
@@ -10,4 +12,4 @@ native fold_control: for(A, S, R) Fn(Array(A), S, Fn(S, A) -> FoldControl(S, R))
 native any: for(A) Fn(Array(A), Fn(A) -> Bool) -> Bool;
 native all: for(A) Fn(Array(A), Fn(A) -> Bool) -> Bool;
 native find: for(A) Fn(Array(A), Fn(A) -> Bool) -> Option(A);
-export { length, push, concat, zip, map, filter, flat_map, fold, fold_control, any, all, find };
+export { length, get, enumerate, push, concat, zip, map, filter, flat_map, fold, fold_control, any, all, find };

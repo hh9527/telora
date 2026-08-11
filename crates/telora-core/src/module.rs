@@ -4690,6 +4690,13 @@ name = "rustc"
                let empty_strings: Array(String) = [];
                {
                    length: arrays.length(values),
+                   first: arrays.get(values, 0),
+                   last: arrays.get(values, 2),
+                   negative: arrays.get(values, -1),
+                   out_of_range: arrays.get(values, 3),
+                   empty_get: arrays.get(empty, 0),
+                   enumerated: arrays.enumerate(values),
+                   enumerated_empty: arrays.enumerate(empty),
                    pushed: arrays.push(values, 4),
                    pushed_empty: arrays.push(empty, 1),
                    original: values,
@@ -4735,6 +4742,16 @@ name = "rustc"
             panic!("expected Dict result")
         };
         assert_eq!(result.get("length").unwrap().to_string(), "3");
+        assert_eq!(result.get("first").unwrap().to_string(), "'Some(1)");
+        assert_eq!(result.get("last").unwrap().to_string(), "'Some(3)");
+        assert_eq!(result.get("negative").unwrap().to_string(), "'None");
+        assert_eq!(result.get("out_of_range").unwrap().to_string(), "'None");
+        assert_eq!(result.get("empty_get").unwrap().to_string(), "'None");
+        assert_eq!(
+            result.get("enumerated").unwrap().to_string(),
+            "[(0, 1), (1, 2), (2, 3)]"
+        );
+        assert_eq!(result.get("enumerated_empty").unwrap().to_string(), "[]");
         assert_eq!(result.get("pushed").unwrap().to_string(), "[1, 2, 3, 4]");
         assert_eq!(result.get("pushed_empty").unwrap().to_string(), "[1]");
         assert_eq!(result.get("original").unwrap().to_string(), "[1, 2, 3]");
@@ -5704,6 +5721,16 @@ unchanged", "|"),
                 .contains("cannot unify Int with Array")
         );
         assert!(
+            analysis_error("get-index.telora", "arrays.get([1], \"first\")")
+                .to_string()
+                .contains("cannot unify String with Int")
+        );
+        assert!(
+            analysis_error("enumerate.telora", "arrays.enumerate(1)")
+                .to_string()
+                .contains("cannot unify Int with Array")
+        );
+        assert!(
             analysis_error("push.telora", "arrays.push([1], \"wrong\")")
                 .to_string()
                 .contains("cannot unify")
@@ -5737,6 +5764,12 @@ unchanged", "|"),
                 .iter()
                 .any(|frame| frame.function == "std/array.map")
         );
+        let dynamic_get = run_error(
+            "dynamic-get.telora",
+            "let index: Any = \"first\"; arrays.get([1], index)",
+        );
+        assert_eq!(dynamic_get.kind, crate::RuntimeErrorKind::TypeMismatch);
+        assert!(dynamic_get.message.contains("Int"));
 
         let nested_depth = run_error(
             "nested-depth.telora",
@@ -5851,6 +5884,193 @@ unchanged", "|"),
             failure.kind,
             crate::RuntimeErrorKind::AllocationQuotaExceeded
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn array_get_and_enumerate_obey_exact_allocation_and_tool_stage_contracts() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(directory.join("values.json"), "[10, 20]").unwrap();
+        let load = |expression: &str| {
+            fs::write(
+                &main,
+                format!(
+                    "import \"std/array\" as arrays;\nimport \"./values.json\" as values;\n{expression}"
+                ),
+            )
+            .unwrap();
+            load_module(&main, BTreeMap::new(), 100_000).unwrap()
+        };
+        let value_bytes = std::mem::size_of::<Value>() as u64;
+
+        let some = load("arrays.get(values, 1)");
+        let mut exact_some = QuotaAccount::new(Quota::new(1, 1_000, 2 * value_bytes));
+        let result = Vm::new()
+            .execute_in_work(
+                &some.runtime.main.heap,
+                &some.runtime.externals,
+                &some.function,
+                &[],
+                &mut exact_some,
+            )
+            .unwrap()
+            .export(&some.runtime.main.heap)
+            .unwrap();
+        assert_eq!(result.to_string(), "'Some(20)");
+        assert_eq!(exact_some.requested_allocation_bytes(), 2 * value_bytes);
+        let mut short_some = QuotaAccount::new(Quota::new(1, 1_000, 2 * value_bytes - 1));
+        let failure = match Vm::new().execute_in_work(
+            &some.runtime.main.heap,
+            &some.runtime.externals,
+            &some.function,
+            &[],
+            &mut short_some,
+        ) {
+            Ok(_) => panic!("allocation must be exhausted"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            failure.kind,
+            crate::RuntimeErrorKind::AllocationQuotaExceeded
+        );
+
+        let none = load("arrays.get(values, -1)");
+        let mut no_allocation = QuotaAccount::new(Quota::new(1, 1_000, 0));
+        let result = Vm::new()
+            .execute_in_work(
+                &none.runtime.main.heap,
+                &none.runtime.externals,
+                &none.function,
+                &[],
+                &mut no_allocation,
+            )
+            .unwrap()
+            .export(&none.runtime.main.heap)
+            .unwrap();
+        assert_eq!(result.to_string(), "'None");
+        assert_eq!(no_allocation.requested_allocation_bytes(), 0);
+
+        let enumerate = load("arrays.enumerate(values)");
+        let requested = 6 * value_bytes;
+        let mut exact_enumerate = QuotaAccount::new(Quota::new(1, 1_000, requested));
+        let result = Vm::new()
+            .execute_in_work(
+                &enumerate.runtime.main.heap,
+                &enumerate.runtime.externals,
+                &enumerate.function,
+                &[],
+                &mut exact_enumerate,
+            )
+            .unwrap()
+            .export(&enumerate.runtime.main.heap)
+            .unwrap();
+        assert_eq!(result.to_string(), "[(0, 10), (1, 20)]");
+        assert_eq!(exact_enumerate.requested_allocation_bytes(), requested);
+        let mut short_enumerate = QuotaAccount::new(Quota::new(1, 1_000, requested - 1));
+        let failure = match Vm::new().execute_in_work(
+            &enumerate.runtime.main.heap,
+            &enumerate.runtime.externals,
+            &enumerate.function,
+            &[],
+            &mut short_enumerate,
+        ) {
+            Ok(_) => panic!("allocation must be exhausted"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            failure.kind,
+            crate::RuntimeErrorKind::AllocationQuotaExceeded
+        );
+
+        fs::write(
+            directory.join("types.telora"),
+            r#"import "std/array" as arrays;
+               type Pair = Tuple(arrays.map(
+                   arrays.enumerate([String, Int]),
+                   fn(entry) { let (index, item) = entry; item },
+               ));
+               let pair: Pair = ("ten", 10);
+               pair"#,
+        )
+        .unwrap();
+        let types = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            types.analysis.display(types.analysis.result_type),
+            "(String, Int)"
+        );
+        assert_eq!(types.execute(100_000).unwrap().to_string(), "(\"ten\", 10)");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn array_get_and_enumerate_preserve_element_and_call_provenance() {
+        let directory = fixture_dir();
+        let data = directory.join("data.json");
+        let main = directory.join("main.telora");
+        fs::write(&data, "[10]").unwrap();
+
+        fs::write(
+            &main,
+            r#"import "std/array" as arrays;
+               import "std/result" as result;
+               import "./data.json" as data;
+               match arrays.get(data, 0) {
+                   'Some(value) => result.unwrap('Err(blame!("selected", value))),
+                   'None => 0,
+               }"#,
+        )
+        .unwrap();
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let failure = module
+            .execute(100_000)
+            .unwrap_err()
+            .with_sources(&module.sources)
+            .to_string();
+        assert!(failure.contains("data.json:1:2:"), "{failure}");
+
+        fs::write(
+            &main,
+            r#"import "std/array" as arrays;
+               import "std/result" as result;
+               import "./data.json" as data;
+               let indexed = arrays.enumerate(data);
+               arrays.map(indexed, fn(entry) {
+                   let (index, value) = entry;
+                   if value == 10 {
+                       result.unwrap('Err(blame!("selected", value)))
+                   } else { index }
+               })"#,
+        )
+        .unwrap();
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let failure = module
+            .execute(100_000)
+            .unwrap_err()
+            .with_sources(&module.sources)
+            .to_string();
+        assert!(failure.contains("data.json:1:2:"), "{failure}");
+
+        fs::write(
+            &main,
+            r#"import "std/array" as arrays;
+               import "std/result" as result;
+               import "./data.json" as data;
+               let indexed = arrays.enumerate(data);
+               let first = arrays.get(indexed, 0);
+               match first {
+                   'Some((index, value)) => result.unwrap('Err(blame!("index", index))),
+                   'None => 0,
+               }"#,
+        )
+        .unwrap();
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let failure = module
+            .execute(100_000)
+            .unwrap_err()
+            .with_sources(&module.sources)
+            .to_string();
+        assert!(failure.contains("main.telora:4:"), "{failure}");
         fs::remove_dir_all(directory).unwrap();
     }
 

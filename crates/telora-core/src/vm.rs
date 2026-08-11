@@ -2975,6 +2975,95 @@ fn start_array_continuation(
             return_target,
         });
     }
+    if function == CoreArrayFunction::Get {
+        let RuntimeValue::Int(index) = arguments[1].value else {
+            return Err(runtime_type_error(
+                "Int",
+                &arguments[1],
+                &view,
+                &call_function,
+                call_pc,
+            ));
+        };
+        let values = view
+            .sequence(source_handle, false)
+            .map_err(|heap_error| core_dict_heap_error(heap_error, &call_function, call_pc))?;
+        let value = usize::try_from(index)
+            .ok()
+            .and_then(|index| values.get(index).copied());
+        let Some(payload) = value else {
+            return Ok(VmAction::Return {
+                value: RichValue::new(
+                    RuntimeValue::BuiltinAtom(BuiltinAtom::None),
+                    instruction_location(&call_function, call_pc),
+                ),
+                return_target,
+            });
+        };
+        charge_allocation(
+            account,
+            logical_value_bytes(2)
+                .map_err(|error| allocation_error(error.message, &call_function, call_pc))?,
+            &call_function,
+            call_pc,
+        )?;
+        let location = instruction_location(&call_function, call_pc);
+        return Ok(VmAction::Return {
+            value: RichValue::new(
+                RuntimeValue::Tagged(current.allocate(Object::Tagged {
+                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Some), location),
+                    payload,
+                })),
+                location,
+            ),
+            return_target,
+        });
+    }
+    if function == CoreArrayFunction::Enumerate {
+        let values = view
+            .sequence(source_handle, false)
+            .map_err(|heap_error| core_dict_heap_error(heap_error, &call_function, call_pc))?
+            .to_vec();
+        i64::try_from(values.len()).map_err(|_| {
+            error(
+                RuntimeErrorKind::IntegerOverflow,
+                "Array enumeration index does not fit Int",
+                &call_function,
+                call_pc,
+            )
+        })?;
+        let output_slots = values.len().checked_mul(3).ok_or_else(|| {
+            allocation_error("Array enumeration size overflowed", &call_function, call_pc)
+        })?;
+        charge_allocation(
+            account,
+            logical_value_bytes(output_slots)
+                .map_err(|error| allocation_error(error.message, &call_function, call_pc))?,
+            &call_function,
+            call_pc,
+        )?;
+        let location = instruction_location(&call_function, call_pc);
+        let output = values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let index = i64::try_from(index).expect("enumeration length checked above");
+                RichValue::new(
+                    RuntimeValue::Tuple(current.allocate(Object::Tuple(
+                        vec![RichValue::new(RuntimeValue::Int(index), location), value].into(),
+                    ))),
+                    location,
+                )
+            })
+            .collect();
+        return Ok(VmAction::Return {
+            value: RichValue::new(
+                RuntimeValue::Array(current.allocate(Object::Array(output))),
+                location,
+            ),
+            return_target,
+        });
+    }
     if function == CoreArrayFunction::Push {
         let source_values = view.sequence(source_handle, false).map_err(|heap_error| {
             error(
@@ -3175,6 +3264,8 @@ fn resume_array_continuation(
 ) -> Result<VmAction, RuntimeError> {
     match continuation.function {
         CoreArrayFunction::Length
+        | CoreArrayFunction::Get
+        | CoreArrayFunction::Enumerate
         | CoreArrayFunction::Push
         | CoreArrayFunction::Concat
         | CoreArrayFunction::Zip => {
@@ -3423,6 +3514,8 @@ fn next_array_action(
                 )
             }
             CoreArrayFunction::Length
+            | CoreArrayFunction::Get
+            | CoreArrayFunction::Enumerate
             | CoreArrayFunction::Push
             | CoreArrayFunction::Concat
             | CoreArrayFunction::Zip => {

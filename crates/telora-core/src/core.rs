@@ -152,6 +152,11 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             functions: vec![
                 ("all", NativeFunction::core_array(CoreArrayFunction::All)),
                 ("any", NativeFunction::core_array(CoreArrayFunction::Any)),
+                (
+                    "enumerate",
+                    NativeFunction::core_array(CoreArrayFunction::Enumerate),
+                ),
+                ("get", NativeFunction::core_array(CoreArrayFunction::Get)),
                 ("push", NativeFunction::core_array(CoreArrayFunction::Push)),
                 (
                     "concat",
