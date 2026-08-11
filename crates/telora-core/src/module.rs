@@ -5490,7 +5490,8 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("families.telora"),
-            r#"@struct type Box(A) = {value: A};
+            r#"@enum type Status = {Ready: 'None};
+               @struct type Box(A) = {status: Status, value: A};
                {Box: Box}"#,
         )
         .unwrap();
@@ -5518,7 +5519,7 @@ unchanged", "|"),
                 format!(
                     r#"{import}
                        type IntBox = {family}(Int);
-                       let value: IntBox = {{value: 42}};
+                       let value: IntBox = {{status: 'Ready, value: 42}};
                        value"#
                 ),
             )
@@ -5526,12 +5527,12 @@ unchanged", "|"),
             let module = load_module(directory.join(name), BTreeMap::new(), 100_000).unwrap();
             assert_eq!(
                 module.analysis.display(module.analysis.result_type),
-                "{value: Int}",
+                "{status: enum {Ready}, value: Int}",
                 "{name}"
             );
             assert_eq!(
                 module.execute(100_000).unwrap().to_string(),
-                "{value: 42}",
+                "{status: 'Ready, value: 42}",
                 "{name}"
             );
         }
@@ -5629,6 +5630,72 @@ unchanged", "|"),
             field_attributes.get("std/json.rename").unwrap().to_string(),
             "\"payload\""
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_concrete_family_dependencies_preserve_metadata_and_match_imports() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("attributes.telora"),
+            r#"import "std/attributes" as attributes;
+               type Local = attributes.add(Int, {marker: "local"});
+               type Pair(A) = Tuple([Local, A]);
+               {direct: Local, captured: Pair(String)}"#,
+        )
+        .unwrap();
+        let module = load_module(
+            directory.join("attributes.telora"),
+            BTreeMap::new(),
+            100_000,
+        )
+        .unwrap();
+        let Value::Dict(result) = module.execute(100_000).unwrap() else {
+            panic!("expected metadata result")
+        };
+        let Value::Dict(captured) = result.get("captured").unwrap() else {
+            panic!("expected Tuple metadata")
+        };
+        let Value::Array(items) = captured.get("items").unwrap() else {
+            panic!("expected Tuple items")
+        };
+        assert_eq!(
+            items[0].to_string(),
+            result.get("direct").unwrap().to_string()
+        );
+
+        fs::write(
+            directory.join("base.telora"),
+            "@enum type Status = {Ready: 'None}; {Status: Status}",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("local.telora"),
+            "@enum type Status = {Ready: 'None};\
+             @struct type Box(A) = {status: Status, value: A};\
+             {Box: Box}",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("imported.telora"),
+            "import \"./base.telora\" {Status};\
+             @struct type Box(A) = {status: Status, value: A};\
+             {Box: Box}",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("compare.telora"),
+            "import \"./local.telora\" as local;\
+             import \"./imported.telora\" as imported;\
+             (local.Box(Int), imported.Box(Int))",
+        )
+        .unwrap();
+        let module =
+            load_module(directory.join("compare.telora"), BTreeMap::new(), 100_000).unwrap();
+        let Value::Tuple(items) = module.execute(100_000).unwrap() else {
+            panic!("expected metadata pair")
+        };
+        assert_eq!(items[0].to_string(), items[1].to_string());
         fs::remove_dir_all(directory).unwrap();
     }
 

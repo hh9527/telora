@@ -1,8 +1,8 @@
 use crate::ast::{
-    BinaryOperator, BindingKind, Block, Expr, ExprKind, Pattern, Program, StringPartKind,
+    BinaryOperator, Binding, BindingKind, Block, Expr, ExprKind, Pattern, Program, StringPartKind,
     TypeArgumentKind, UnaryOperator, located,
 };
-use crate::compiler::{collect_runtime_names, compile_expression_with_bindings};
+use crate::compiler::compile_expression_with_bindings;
 use crate::heap::{Handle, Heap, PersistentValue};
 use crate::hir::{HirDefinitionId, HirDefinitionKind, HirExpressionId, HirProgram, HirResolution};
 use crate::json::{Provenance, ValuePath, ValuePathSegment};
@@ -1156,19 +1156,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .cloned()
             .collect::<Vec<_>>(),
     );
-    let mut bindings = BTreeMap::new();
-    for binding in &recovered.bindings {
-        if binding.value.kind != BindingKind::Type {
-            continue;
-        }
-        if let Some(definition) = hir.definitions().iter().find(|definition| {
-            definition.top_level
-                && definition.kind == HirDefinitionKind::Type
-                && definition.location == binding.value.name.location
-        }) {
-            bindings.insert(definition.id, binding);
-        }
-    }
+    let bindings = type_definition_bindings(&hir, &recovered.bindings);
     let type_definitions = bindings.keys().copied().collect::<HashSet<_>>();
     let import_definitions = hir
         .definitions()
@@ -1181,55 +1169,15 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         .map(|definition| definition.id)
         .collect::<HashSet<_>>();
     let mut unavailable_dependencies = BTreeMap::new();
-    let mut nodes = bindings
-        .keys()
-        .map(|definition| {
-            let root = hir
-                .definition(*definition)
-                .and_then(|definition| definition.value)
-                .expect("retained type definition has a value expression");
-            let references = hir
-                .expressions()
-                .iter()
-                .filter(|expression| expression_descends_from(&hir, expression.id, root))
-                .filter_map(|expression| expression.reference)
-                .filter_map(|reference| hir.reference(reference))
-                .collect::<Vec<_>>();
-            if let Some(import) =
-                references
-                    .iter()
-                    .find_map(|reference| match reference.resolution {
-                        crate::hir::HirResolution::Definition(dependency)
-                            if import_definitions.contains(&dependency) =>
-                        {
-                            Some(dependency)
-                        }
-                        _ => None,
-                    })
-            {
-                unavailable_dependencies.insert(*definition, import);
-            }
-            let mut dependencies = references
-                .iter()
-                .filter_map(|reference| match reference.resolution {
-                    crate::hir::HirResolution::Definition(dependency)
-                        if type_definitions.contains(&dependency) =>
-                    {
-                        Some(dependency)
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            dependencies.sort_unstable();
-            dependencies.dedup();
-            SemanticDependencyNode {
-                definition: *definition,
-                dependencies,
-            }
-        })
-        .collect::<Vec<_>>();
-    nodes.sort_by_key(|node| node.definition);
-    let dependencies = SemanticDependencyGraph { nodes };
+    for definition in bindings.keys() {
+        if let Some(import) = definition_dependencies(&hir, *definition)
+            .into_iter()
+            .find(|dependency| import_definitions.contains(dependency))
+        {
+            unavailable_dependencies.insert(*definition, import);
+        }
+    }
+    let dependencies = type_dependency_graph(&hir, &type_definitions);
 
     let mut diagnostics = initial_diagnostics;
     let mut facts: BTreeMap<HirDefinitionId, SemanticFact<TypeId>> = BTreeMap::new();
@@ -1527,6 +1475,66 @@ fn dependency_reaches(
     visit(graph, current, target, &mut HashSet::new())
 }
 
+fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
+    let root = hir
+        .definition(definition)
+        .and_then(|definition| definition.value)
+        .expect("type definition has a value expression");
+    let mut dependencies = hir
+        .expressions()
+        .iter()
+        .filter(|expression| expression_descends_from(hir, expression.id, root))
+        .filter_map(|expression| expression.reference)
+        .filter_map(|reference| hir.reference(reference))
+        .filter_map(|reference| match reference.resolution {
+            HirResolution::Definition(dependency) => Some(dependency),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    dependencies.sort_unstable();
+    dependencies.dedup();
+    dependencies
+}
+
+fn type_dependency_graph(
+    hir: &HirProgram,
+    type_definitions: &HashSet<HirDefinitionId>,
+) -> SemanticDependencyGraph {
+    let mut nodes = type_definitions
+        .iter()
+        .copied()
+        .map(|definition| SemanticDependencyNode {
+            definition,
+            dependencies: definition_dependencies(hir, definition)
+                .into_iter()
+                .filter(|dependency| type_definitions.contains(dependency))
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by_key(|node| node.definition);
+    SemanticDependencyGraph { nodes }
+}
+
+fn type_definition_bindings<'a>(
+    hir: &HirProgram,
+    bindings: &'a [Binding],
+) -> BTreeMap<HirDefinitionId, &'a Binding> {
+    bindings
+        .iter()
+        .filter(|binding| binding.value.kind == BindingKind::Type)
+        .filter_map(|binding| {
+            hir.definitions()
+                .iter()
+                .find(|definition| {
+                    definition.top_level
+                        && definition.kind == HirDefinitionKind::Type
+                        && definition.location == binding.value.name.location
+                })
+                .map(|definition| (definition.id, binding))
+        })
+        .collect()
+}
+
 fn classify_partial_error(message: &str) -> FactState {
     if message.contains("not assignable") || message.contains("incompatible") {
         FactState::Conflicted(Conflict::IncompatibleContract)
@@ -1701,70 +1709,88 @@ pub(crate) fn analyze_program_with_bindings_observed(
         tool_values.insert(name.clone(), value);
     }
 
-    let family_bindings = program
-        .value
-        .body
-        .value
-        .bindings
+    let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
+    let type_definitions = type_bindings.keys().copied().collect::<HashSet<_>>();
+    let type_dependencies = type_dependency_graph(&hir, &type_definitions);
+    let family_definitions = type_bindings
         .iter()
-        .filter(|binding| {
-            binding.value.kind == BindingKind::Type && !binding.value.type_parameters.is_empty()
-        })
+        .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
+        .map(|(definition, _)| *definition)
         .collect::<Vec<_>>();
-    let family_names = family_bindings
-        .iter()
-        .map(|binding| binding.value.name.value.clone())
-        .collect::<HashSet<_>>();
-    let local_concrete_type_names = program
-        .value
-        .body
-        .value
-        .bindings
-        .iter()
-        .filter(|binding| {
-            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
-        })
-        .map(|binding| binding.value.name.value.clone())
-        .collect::<HashSet<_>>();
-    let mut pending_families = (0..family_bindings.len()).collect::<BTreeSet<_>>();
+    let mut scheduled_types = BTreeSet::new();
+    let mut frontier = family_definitions;
+    while let Some(definition) = frontier.pop() {
+        if !scheduled_types.insert(definition) {
+            continue;
+        }
+        if let Some(node) = type_dependencies
+            .nodes
+            .iter()
+            .find(|node| node.definition == definition)
+        {
+            frontier.extend(node.dependencies.iter().copied());
+        }
+    }
+
+    let mut pending_types = scheduled_types.clone();
+    let mut evaluated_types = BTreeSet::new();
+    let mut evaluated_concrete_type_names = HashSet::new();
     let mut type_family_values = BTreeMap::new();
-    while !pending_families.is_empty() {
+    while !pending_types.is_empty() {
         let mut progressed = false;
-        for index in pending_families.iter().copied().collect::<Vec<_>>() {
-            let binding = family_bindings[index];
-            let parameter_names = binding
-                .value
-                .type_parameters
+        for definition in pending_types.iter().copied().collect::<Vec<_>>() {
+            let node = type_dependencies
+                .nodes
                 .iter()
-                .map(|parameter| parameter.value.as_str())
-                .collect::<HashSet<_>>();
-            let mut referenced = HashSet::new();
-            collect_runtime_names(&binding.value.value, &mut referenced);
-            if let Some(dependency) = referenced.iter().find(|name| {
-                local_concrete_type_names.contains(*name)
-                    && !parameter_names.contains(name.as_str())
-            }) {
-                return Err(FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(
-                        format!(
-                            "type family {} cannot depend on local concrete type {:?}",
-                            binding.value.name.value, dependency
-                        ),
-                        binding.value.value.location,
-                    ),
-                ));
-            }
-            let dependencies = referenced
+                .find(|node| node.definition == definition)
+                .expect("scheduled type has a dependency node");
+            if node
+                .dependencies
                 .iter()
-                .filter(|name| {
-                    family_names.contains(*name) && !parameter_names.contains(name.as_str())
-                })
-                .collect::<Vec<_>>();
-            if dependencies
-                .iter()
-                .any(|dependency| !type_family_values.contains_key(*dependency))
+                .any(|dependency| !evaluated_types.contains(dependency))
             {
+                continue;
+            }
+            let binding = type_bindings[&definition];
+            if binding.value.type_parameters.is_empty() {
+                let value = evaluate_tool_expression(
+                    source_name,
+                    &binding.value.value,
+                    &tool_values,
+                    account,
+                    sources,
+                    debug_sink,
+                )?;
+                let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                    FrontendError::from_diagnostic(
+                        sources,
+                        Diagnostic::error(
+                            format!(
+                                "type {} produced invalid metadata: {message}",
+                                binding.value.name.value
+                            ),
+                            binding.value.value.location,
+                        ),
+                    )
+                })?;
+                let name = binding.value.name.value.clone();
+                declared_types.insert(name.clone(), descriptor.clone());
+                declared_type_spans.insert(name.clone(), binding.location);
+                tool_values.insert(name.clone(), value);
+                let witness = TypeDescriptor::TypeOf(Box::new(descriptor));
+                static_environment.insert(name.clone(), witness.clone());
+                binding_types.insert(name.clone(), witness.clone());
+                binding_schemes.insert(
+                    name.clone(),
+                    TypeScheme {
+                        parameters: Vec::new(),
+                        body: witness,
+                    },
+                );
+                evaluated_concrete_type_names.insert(name);
+                pending_types.remove(&definition);
+                evaluated_types.insert(definition);
+                progressed = true;
                 continue;
             }
 
@@ -1856,24 +1882,43 @@ pub(crate) fn analyze_program_with_bindings_observed(
             binding_types.insert(binding.value.name.value.clone(), erased);
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
             type_family_values.insert(binding.value.name.value.clone(), family_value);
-            pending_families.remove(&index);
+            pending_types.remove(&definition);
+            evaluated_types.insert(definition);
             progressed = true;
         }
         if !progressed {
-            let binding = family_bindings[*pending_families
+            let root = pending_types
                 .iter()
-                .next()
-                .expect("non-empty pending family set")];
-            return Err(FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(
-                    format!(
-                        "recursive type family component containing {:?} is not supported",
-                        binding.value.name.value
-                    ),
-                    binding.location,
-                ),
-            ));
+                .copied()
+                .find(|definition| dependency_reaches(&type_dependencies, *definition, *definition))
+                .expect("stalled type dependency schedule contains a cycle");
+            let mut component = pending_types
+                .iter()
+                .copied()
+                .filter(|definition| {
+                    dependency_reaches(&type_dependencies, root, *definition)
+                        && dependency_reaches(&type_dependencies, *definition, root)
+                })
+                .collect::<Vec<_>>();
+            component.sort_unstable();
+            let names = component
+                .iter()
+                .map(|definition| type_bindings[definition].value.name.value.as_str())
+                .collect::<Vec<_>>();
+            let binding = type_bindings[&root];
+            let mut diagnostic = Diagnostic::error(
+                format!("recursive type family component containing {names:?} is not supported"),
+                binding.value.name.location,
+            );
+            for definition in component {
+                if definition == root {
+                    continue;
+                }
+                let participant = type_bindings[&definition];
+                diagnostic =
+                    diagnostic.with_secondary("cycle participant", participant.value.name.location);
+            }
+            return Err(FrontendError::from_diagnostic(sources, diagnostic));
         }
     }
 
@@ -2050,7 +2095,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 }
             }
             BindingKind::Type => {
-                if !binding.value.type_parameters.is_empty() {
+                if !binding.value.type_parameters.is_empty()
+                    || evaluated_concrete_type_names.contains(&binding.value.name.value)
+                {
                     continue;
                 }
                 let value = evaluate_tool_expression(
@@ -10984,6 +11031,46 @@ mod tests {
     }
 
     #[test]
+    fn parameterized_type_families_capture_acyclic_local_concrete_types() {
+        for (name, source) in [
+            (
+                "earlier-concrete.telora",
+                "type Id = Int;\
+                 type Pair(A) = Tuple([Id, A]);\
+                 type Output = Pair(String);\
+                 Output",
+            ),
+            (
+                "later-concrete.telora",
+                "type Pair(A) = Tuple([Id, A]);\
+                 type Id = Int;\
+                 type Output = Pair(String);\
+                 Output",
+            ),
+            (
+                "concrete-family-chain.telora",
+                "type Outer(A) = Tuple([Local, A]);\
+                 type Local = Inner(String);\
+                 type Inner(A) = Tuple([A, Int]);\
+                 type Output = Outer(Float);\
+                 Output",
+            ),
+        ] {
+            let analysis = analyze_source(name, source).unwrap();
+            let expected = if name == "concrete-family-chain.telora" {
+                "((String, Int), Float)"
+            } else {
+                "(Int, String)"
+            };
+            assert_eq!(
+                analysis.display(analysis.declared_types["Output"]),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn parameterized_type_family_diagnostics_preserve_bounded_failures() {
         let duplicate = analyze_source(
             "duplicate-family.telora",
@@ -11006,17 +11093,6 @@ mod tests {
         let invalid = analyze_source("invalid-family.telora", "type Broken(A) = 1; 0").unwrap_err();
         assert!(invalid.message.contains("produced invalid metadata"));
 
-        let local_concrete = analyze_source(
-            "concrete-family.telora",
-            "type Id = Int; type Box(A) = Tuple([Id, A]); 0",
-        )
-        .unwrap_err();
-        assert!(
-            local_concrete
-                .message
-                .contains("cannot depend on local concrete type \"Id\"")
-        );
-
         let direct =
             analyze_source("recursive-family.telora", "type Loop(A) = Loop(A); 0").unwrap_err();
         assert!(direct.message.contains("recursive type family component"));
@@ -11027,6 +11103,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(mutual.message.contains("recursive type family component"));
+
+        let concrete_cycle = analyze_source(
+            "concrete-family-cycle.telora",
+            "type Family(A) = Tuple([Concrete, A]);\
+             type Concrete = Family(Int);\
+             0",
+        )
+        .unwrap_err();
+        assert!(
+            concrete_cycle.message.contains("Concrete")
+                && concrete_cycle.message.contains("Family"),
+            "{}",
+            concrete_cycle.message
+        );
+        let diagnostic = concrete_cycle.diagnostic.expect("cycle diagnostic");
+        assert_eq!(diagnostic.labels.len(), 2);
     }
 
     #[test]
@@ -11385,6 +11477,44 @@ mod tests {
             .find(|node| node.definition == c)
             .unwrap();
         assert_eq!(c_node.dependencies, vec![b]);
+    }
+
+    #[test]
+    fn partial_type_evaluation_resolves_local_concrete_family_dependencies() {
+        let partial = analyze_partial_types(
+            "partial-family.telora",
+            "type Result(A) = Tuple([Outcome, A]);\
+             type Outcome = Int;\
+             type Output = Result(String);\
+             type Independent = Float;\
+             0",
+            Quota::with_fuel(100),
+        );
+        let definition = |name: &str| {
+            partial
+                .hir
+                .definitions()
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap()
+                .id
+        };
+        for name in ["Result", "Outcome", "Output", "Independent"] {
+            assert_eq!(
+                partial.definition_facts[&definition(name)].state,
+                FactState::Known,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            partial.types.display(
+                partial.definition_facts[&definition("Output")]
+                    .value
+                    .unwrap()
+            ),
+            "(Int, String)"
+        );
+        assert_eq!(partial.diagnostics, Vec::<Diagnostic>::new());
     }
 
     #[test]

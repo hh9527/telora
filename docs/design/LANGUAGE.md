@@ -428,12 +428,13 @@ def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
 不是 higher-kinded nominal constructor。
 
 Family 必须一次提供全部参数，不支持 partial application 或参数化递归。无环 family
-可以组合本模块中的其他 family，也可以跨完整、选择性、alias 和 open import 保留
-精确 scheme。
+可以组合本模块中的其他 family 和非参数化 concrete type，也可以跨完整、选择性、
+alias 和 open import 保留精确 scheme。Family 可达的本地 TypeMetadata 依赖按语义
+依赖图求值，声明顺序不影响结果；包含 family 的循环 component 是错误。
 
-当前 family 声明不能依赖同模块的普通 helper 或非参数化 `type` binding；
-可以依赖内建 metadata 构造器、imported metadata 能力及其他无环本地 family。该限制
-防止尚未完成调度的 concrete/recursive placeholder 进入符号模板。
+当前 family 声明仍不能依赖同模块的普通 helper，也不能捕获递归 concrete type；
+可以依赖内建 metadata 构造器和 imported metadata 能力。这一边界避免把普通源码
+求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
 
 ### 7.3 递归元数据
 

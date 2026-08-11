@@ -218,6 +218,16 @@ type TicketCapability = Capability(TicketId, Request, TicketPlan);
 
 The family is also an ordinary typed metadata capability in value position.
 Families must receive all parameters, are rank-1, and cannot be higher-kinded.
+An acyclic family may reference a concrete type or another family from the
+same module, regardless of declaration order:
+
+```telora
+@struct type Result(Value) = {outcome: Outcome, value: Option(Value)};
+@enum type Outcome = {Published: 'None, Rejected: 'None};
+```
+
+Cycles containing a family, recursive concrete dependencies, and dependencies
+on ordinary local helpers remain invalid.
 Use model-supplied concrete types for identities, payloads, mappings, and
 plans. Do not replace unknown relationships with `Any`, `Dyn`, or String
 identity.
