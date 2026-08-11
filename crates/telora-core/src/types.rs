@@ -6721,13 +6721,23 @@ impl<'a> GenericInference<'a> {
                 let value_type = self.infer(value, environment, None)?;
                 let resolved_value_type = self.resolve(&value_type);
                 let mut arm_types = Vec::with_capacity(arms.len());
+                let mut arm_evidence = Vec::new();
                 let mut covered_variants = BTreeSet::new();
                 let mut all_values_covered = false;
                 for arm in arms {
                     if let Some(query) = &self.query {
                         query.check().map_err(|error| error.to_string())?;
                     }
-                    let mut arm_environment = environment.clone();
+                    let (mut arm_environment, arm_expected, evidence) = if let Some(expected) =
+                        expected
+                        && contains_type_variable(&self.resolve(expected))
+                    {
+                        let (expected, environment, evidence) =
+                            self.freshen_join_context(expected, environment);
+                        (environment, Some(expected), Some(evidence))
+                    } else {
+                        (environment.clone(), None, None)
+                    };
                     let analysis =
                         crate::pattern::analyze_pattern(&arm.value.pattern, &resolved_value_type);
                     if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
@@ -6808,18 +6818,32 @@ impl<'a> GenericInference<'a> {
                     }
                     self.scheme_scopes.push(HashMap::new());
                     for binding in analysis.bindings {
+                        let binding_type = evidence
+                            .as_ref()
+                            .map(|replacements| {
+                                replace_inference_variables(&binding.ty, replacements)
+                            })
+                            .unwrap_or(binding.ty);
                         self.pattern_binding_types
-                            .insert(binding.location, binding.ty.clone());
+                            .insert(binding.location, binding_type.clone());
                         self.set_local_scheme(binding.name.clone(), None);
-                        arm_environment.insert(binding.name, binding.ty);
+                        arm_environment.insert(binding.name, binding_type);
                     }
                     if let Some(guard) = &arm.value.guard {
                         self.infer(guard, &arm_environment, Some(&normalized_bool_descriptor()))?;
                     }
-                    let arm_type = self.infer(&arm.value.value, &arm_environment, expected);
+                    let arm_type = self.infer(
+                        &arm.value.value,
+                        &arm_environment,
+                        arm_expected.as_ref().or(expected),
+                    );
                     self.scheme_scopes.pop();
                     arm_types.push(arm_type?);
+                    if let Some(evidence) = evidence {
+                        arm_evidence.push(evidence);
+                    }
                 }
+                self.merge_join_evidence(&arm_evidence)?;
                 if let TypeDescriptor::Enum(variants) = &resolved_value_type {
                     let missing = variants
                         .iter()

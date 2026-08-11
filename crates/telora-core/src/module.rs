@@ -4954,6 +4954,62 @@ name = "rustc"
     }
 
     #[test]
+    fn core_array_map_widens_option_fields_across_nested_generic_matches() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/array" as array;
+               @struct type Capability(Id, Output) = {
+                   id: Id,
+                   lower: Fn(Id) -> Option(Output),
+               };
+               def collect: for(Id, Output)
+                   Fn(Array(Capability(Id, Output)), Array(Id)) -> Array(Option(Output)) =
+                   fn(catalog, requests) {
+                       let steps = array.map(requests, fn(requested) {
+                           match array.find(catalog, fn(capability) {
+                               capability.id == requested
+                           }) {
+                               'Some(capability) => match capability.lower(requested) {
+                                   'Some(value) => {
+                                       evidence: 'Some(value),
+                                       error: 'None,
+                                   },
+                                   'None => {
+                                       evidence: 'None,
+                                       error: 'Some("lowering failed"),
+                                   },
+                               },
+                               'None => {
+                                   evidence: 'None,
+                                   error: 'Some("missing"),
+                               },
+                           }
+                       });
+                       array.map(steps, fn(step) { step.evidence })
+                   };
+               @enum type Id = { A: 'None, B: 'None };
+               def lower_a: Fn(Id) -> Option(Int) = fn(id) {
+                   if id == 'A { 'Some(1) } else { 'None }
+               };
+               let catalog: Array(Capability(Id, Int)) = [{id: 'A, lower: lower_a}];
+               collect(catalog, ['A, 'B])"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "Array<enum {None, Some(Int)}>"
+        );
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "['Some(1), 'None]"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn deterministic_array_string_and_path_modules_cover_plan_composition() {
         let directory = fixture_dir();
         fs::write(
