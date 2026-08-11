@@ -4773,6 +4773,166 @@ name = "rustc"
     }
 
     #[test]
+    fn core_array_fold_widens_singleton_enum_fields_in_callback_results() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/array" as array;
+               @enum type Kind = {
+                   Missing: 'None,
+                   Unauthorized: 'None,
+               };
+               @struct type Rejection = {kind: Kind};
+               let initial: Array(Rejection) = [];
+               array.fold([1, 2], initial, fn(rejections, value) {
+                   let rejection = if value == 1 {
+                       {kind: 'Missing}
+                   } else {
+                       {kind: 'Unauthorized}
+                   };
+                   array.push(rejections, rejection)
+               })"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "Array<{kind: enum {Missing, Unauthorized}}>"
+        );
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "[{kind: 'Missing}, {kind: 'Unauthorized}]"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn core_array_fold_defers_singleton_evidence_until_declared_result_widens_it() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/array" as array;
+               def collect: Fn(Array(Int)) -> Array(Option(Int)) =
+                   fn(values) {
+                       let options = array.fold(values, [], fn(options, value) {
+                           if value == 1 {
+                               array.push(options, 'None)
+                           } else {
+                               array.push(options, 'Some(value))
+                           }
+                       });
+                       options
+                   };
+               collect([1, 2])"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let inferred = module.analysis.display(module.analysis.result_type);
+        assert_eq!(inferred, "Array<enum {None, Some(Int)}>");
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "['None, 'Some(2)]"
+        );
+
+        fs::write(
+            directory.join("types.telora"),
+            r#"@enum type Kind = {
+                   Missing: 'None,
+                   Unauthorized: 'None,
+               };
+               export { Kind };"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("records.telora"),
+            r#"import "std/array" as array;
+               import "./types.telora" { Kind };
+               @struct type Rejection(Subject) = {kind: Kind, subject: Subject};
+               def reject_all: for(Subject)
+                   Fn(Array(Int), Subject) -> Array(Rejection(Subject)) =
+                   fn(values, subject) {
+                       let rejections = array.fold(values, [], fn(rejections, value) {
+                           if value == 1 {
+                               array.push(rejections, {kind: 'Missing, subject: subject})
+                           } else {
+                               array.push(rejections, {kind: 'Unauthorized, subject: subject})
+                           }
+                       });
+                       rejections
+                   };
+               reject_all([2, 1], "subject")"#,
+        )
+        .unwrap();
+        let records =
+            load_module(directory.join("records.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            records.analysis.display(records.analysis.result_type),
+            "Array<{kind: enum {Missing, Unauthorized}, subject: String}>"
+        );
+        assert_eq!(
+            records.execute(100_000).unwrap().to_string(),
+            "[{kind: 'Unauthorized, subject: \"subject\"}, {kind: 'Missing, subject: \"subject\"}]"
+        );
+
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "std/array" as array;
+               def collect: Fn(Array(Int)) -> Array(Option(Int)) =
+                   fn(values) {
+                       let options = array.fold(values, [], fn(options, value) {
+                           if value == 1 {
+                               array.push(options, 'None)
+                           } else {
+                               array.push(options, 'Missing)
+                           }
+                       });
+                       options
+                   };
+               collect([1, 2])"#,
+        )
+        .unwrap();
+        let error =
+            load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000).unwrap_err();
+        assert!(error.to_string().contains("'Missing"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn core_array_map_widens_singleton_option_arm_in_generic_callback() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/array" as array;
+               def lower_all: for(Id, Input, Output, Capability)
+                   Fn(
+                       Array(Id),
+                       Fn(Id) -> Option(Capability),
+                       Fn(Capability) -> Fn(Id, Input) -> Option(Output),
+                       Input,
+                   ) -> Array(Option(Output)) =
+                   fn(ids, find, lower, input) {
+                       array.map(ids, fn(id) {
+                           match find(id) {
+                               'Some(capability) => lower(capability)(id, input),
+                               'None => 'None,
+                           }
+                       })
+                   };
+               lower_all"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "Fn(Array<Any>, Fn(Any) -> enum {None, Some(Any)}, Fn(Any) -> Fn(Any, Any) -> enum {None, Some(Any)}, Any) -> Array<enum {None, Some(Any)}>"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn deterministic_array_string_and_path_modules_cover_plan_composition() {
         let directory = fixture_dir();
         fs::write(
