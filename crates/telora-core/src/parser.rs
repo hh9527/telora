@@ -1278,6 +1278,14 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
                 let values = self.expression_children(node)?;
+                let left = values
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| self.error(node, "binary expression has no left operand"))?;
+                let right = values
+                    .get(1)
+                    .cloned()
+                    .ok_or_else(|| self.error(node, "binary expression has no right operand"))?;
                 let (operator, operator_node) = if let Some(operator) =
                     self.token_children(node, Token::Plus).next()
                 {
@@ -1311,8 +1319,8 @@ impl<'a> Lowerer<'a> {
                 };
                 ExprKind::Binary {
                     operator: located(operator, self.location(operator_node)),
-                    left: Box::new(values[0].clone()),
-                    right: Box::new(values[1].clone()),
+                    left: Box::new(left),
+                    right: Box::new(right),
                 }
             }
             Rule::ProjectionExpr => {
@@ -3063,6 +3071,22 @@ export { private as visible, identity as map };"#,
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn missing_binary_right_operands_are_diagnosed_without_panicking() {
+        for operator in [
+            "+", "-", "*", "/", "<", "<=", ">", ">=", "==", "!=", "&&", "||",
+        ] {
+            let mut sources = SourceDatabase::default();
+            let source_id = sources.add("missing.telora", format!("1 {operator} ;"));
+            let parsed = parse_registered(&sources, source_id);
+            assert!(parsed.program.is_none(), "{operator} unexpectedly parsed");
+            assert!(
+                !parsed.diagnostics.is_empty(),
+                "{operator} has no diagnostic"
+            );
+        }
     }
 
     #[test]
