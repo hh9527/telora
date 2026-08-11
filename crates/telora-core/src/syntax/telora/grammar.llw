@@ -40,9 +40,10 @@ import_item: Identifier ['as' Identifier];
 expression:
   expression Question @propagate_expr
 | expression arguments @call_expr
-| expression type_arguments @type_apply_expr
+| expression '@' type_arguments @type_apply_expr
+| expression '[' expression ']' @index_expr
 | expression section_arguments @section_expr
-| expression '.' Identifier @field_expr
+| expression '.' (Identifier | Int) @projection_expr
 | '-' expression @unary_expr
 | expression ('*' | '/') expression @binary_expr
 | expression ('+' | '-') expression @binary_expr

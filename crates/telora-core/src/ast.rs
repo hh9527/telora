@@ -107,6 +107,14 @@ pub enum ExprKind {
         receiver: Box<Expr>,
         field: Identifier,
     },
+    Index {
+        receiver: Box<Expr>,
+        index: Box<Expr>,
+    },
+    TupleProjection {
+        receiver: Box<Expr>,
+        index: Located<usize>,
+    },
     Call {
         callee: Box<Expr>,
         arguments: Vec<Expr>,

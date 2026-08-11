@@ -114,6 +114,16 @@ pub enum Operation {
         dict: RegisterId,
         field: String,
     },
+    GetArray {
+        dst: RegisterId,
+        array: RegisterId,
+        index: RegisterId,
+    },
+    ProjectTuple {
+        dst: RegisterId,
+        tuple: RegisterId,
+        index: usize,
+    },
     FieldExists {
         dst: RegisterId,
         value: RegisterId,
@@ -399,6 +409,16 @@ fn lower_operation(
             dst: register(dst)?,
             dict: register(dict)?,
             field,
+        },
+        Operation::GetArray { dst, array, index } => Instruction::GetArray {
+            dst: register(dst)?,
+            array: register(array)?,
+            index: register(index)?,
+        },
+        Operation::ProjectTuple { dst, tuple, index } => Instruction::ProjectTuple {
+            dst: register(dst)?,
+            tuple: register(tuple)?,
+            index,
         },
         Operation::FieldExists { dst, value, field } => Instruction::FieldExists {
             dst: register(dst)?,

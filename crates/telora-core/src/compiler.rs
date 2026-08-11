@@ -988,6 +988,29 @@ impl<'a> Compiler<'a> {
                 );
                 Ok(dst)
             }
+            ExprKind::Index { receiver, index } => {
+                let array = self.compile_expr(receiver)?;
+                let index = self.compile_expr(index)?;
+                let dst = self.allocate();
+                self.emit(
+                    Operation::GetArray { dst, array, index },
+                    expression.location,
+                );
+                Ok(dst)
+            }
+            ExprKind::TupleProjection { receiver, index } => {
+                let tuple = self.compile_expr(receiver)?;
+                let dst = self.allocate();
+                self.emit(
+                    Operation::ProjectTuple {
+                        dst,
+                        tuple,
+                        index: index.value,
+                    },
+                    expression.location,
+                );
+                Ok(dst)
+            }
             ExprKind::Call { callee, arguments } => {
                 let (base, argument_count) =
                     self.compile_call_window(callee, arguments, expression.location)?;
@@ -1779,6 +1802,11 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
             free_expr(right, bound, free);
         }
         ExprKind::Field { receiver, .. } => free_expr(receiver, bound, free),
+        ExprKind::Index { receiver, index } => {
+            free_expr(receiver, bound, free);
+            free_expr(index, bound, free);
+        }
+        ExprKind::TupleProjection { receiver, .. } => free_expr(receiver, bound, free),
         ExprKind::Call { callee, arguments } => {
             free_expr(callee, bound, free);
             for argument in arguments {
@@ -1926,6 +1954,11 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
             collect_runtime_names(right, names);
         }
         ExprKind::Field { receiver, .. } => collect_runtime_names(receiver, names),
+        ExprKind::Index { receiver, index } => {
+            collect_runtime_names(receiver, names);
+            collect_runtime_names(index, names);
+        }
+        ExprKind::TupleProjection { receiver, .. } => collect_runtime_names(receiver, names),
         ExprKind::Call { callee, arguments } => {
             collect_runtime_names(callee, names);
             for argument in arguments {
@@ -2337,7 +2370,7 @@ let decorators = {
     fn erases_explicit_type_application_from_runtime_calls() {
         let value = run("decl identity: for(A) Fn(A) -> A;\
              def identity = fn(value) { value };\
-             identity[Int](42)")
+             identity@[Int](42)")
         .unwrap();
         assert!(matches!(value, Value::Int(42)));
     }
@@ -2345,7 +2378,7 @@ let decorators = {
     #[test]
     fn executes_inferred_generic_closures_without_runtime_instances() {
         let value = run("let identity = fn(value) { value };\
-             (identity(42), identity(\"value\"), identity[Int](7))")
+             (identity(42), identity(\"value\"), identity@[Int](7))")
         .unwrap();
         assert!(matches!(
             value,
@@ -2354,6 +2387,92 @@ let decorators = {
                     && matches!(&items[1], Value::String(text) if text.as_ref() == "value")
                     && matches!(items[2], Value::Int(7))
         ));
+    }
+
+    #[test]
+    fn indexes_arrays_and_projects_tuples() {
+        let value = run("let values = [10, 20, 30]; (values[1], (\"left\", 42).1)").unwrap();
+        assert!(matches!(
+            value,
+            Value::Tuple(items)
+                if matches!(items[0], Value::Int(20))
+                    && matches!(items[1], Value::Int(42))
+        ));
+    }
+
+    #[test]
+    fn array_index_out_of_range_raises_sourced_blame() {
+        for source in ["[1][-1]", "[1][1]", "[1][2]"] {
+            let ExecutionError::Runtime(error) = run(source).unwrap_err() else {
+                panic!("expected runtime failure for {source}");
+            };
+            assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
+            assert_eq!(error.message, "OutOfRange");
+            assert!(error.rule_location().is_some());
+        }
+
+        let function = compile_source("test", "[1][1]").unwrap();
+        let array_only = std::mem::size_of::<Value>() as u64;
+        let allocation = Vm::new()
+            .execute_with_quota(&function, Quota::new(0, 100, array_only))
+            .unwrap_err();
+        assert_eq!(allocation.kind, RuntimeErrorKind::AllocationQuotaExceeded);
+
+        let complete_failure = array_only
+            .checked_mul(6)
+            .and_then(|bytes| bytes.checked_add(15))
+            .unwrap();
+        let blame = Vm::new()
+            .execute_with_quota(&function, Quota::new(0, 100, complete_failure))
+            .unwrap_err();
+        assert_eq!(blame.kind, RuntimeErrorKind::RaisedBlame);
+    }
+
+    #[test]
+    fn dynamic_projection_boundaries_check_runtime_values() {
+        assert!(matches!(
+            run("let values: Any = [1, 2]; values[1]").unwrap(),
+            Value::Int(2)
+        ));
+        assert!(matches!(
+            run("let pair: Any = (1, \"x\"); pair.1").unwrap(),
+            Value::String(text) if text.as_ref() == "x"
+        ));
+
+        for source in [
+            "let value: Any = 1; value[0]",
+            "let values: Any = [1]; let index: Any = \"x\"; values[index]",
+            "let value: Any = 1; value.0",
+        ] {
+            let ExecutionError::Runtime(error) = run(source).unwrap_err() else {
+                panic!("expected runtime type mismatch for {source}");
+            };
+            assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
+        }
+
+        let ExecutionError::Runtime(error) = run("let pair: Any = (1, 2); pair.2").unwrap_err()
+        else {
+            panic!("expected dynamic tuple bounds failure");
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
+        assert_eq!(error.message, "OutOfRange");
+    }
+
+    #[test]
+    fn projection_types_are_checked_statically() {
+        let tuple_bounds = compile_source("test", "(1, \"x\").2").unwrap_err();
+        assert!(tuple_bounds.message.contains("has no item at index 2"));
+
+        let old_type_application = compile_source(
+            "test",
+            "decl identity: for(A) Fn(A) -> A; def identity = fn(value) { value }; identity[Int](1)",
+        )
+        .unwrap_err();
+        assert!(
+            old_type_application.message.contains("cannot index value"),
+            "{}",
+            old_type_application.message
+        );
     }
 
     #[test]

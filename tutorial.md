@@ -72,12 +72,16 @@ if enabled {
 
 ```telora
 let numbers: Array(Int) = [1, 2, 3];
+let second: Int = numbers[1];
 let user = {name: "Ada", active: 'True};
 let labels: Dict(String) = {region: "east", tier: "gold"};
 ```
 
 Array 是同质集合。record 字段集合是静态结构。`Dict(T)` 是 String key 到同一值
-类型 `T` 的动态映射。
+类型 `T` 的动态映射。`numbers[1]` 直接得到元素，越界会以 `OutOfRange` blame
+失败；需要可分支的缺失值时使用 `array.get(numbers, index)`。
+
+Tuple 用字面量位置选择成员，例如 `(1, "one").0` 的值是 `1`，类型是 `Int`。
 
 ## 3. 绑定和函数
 
@@ -92,6 +96,15 @@ def add: Fn(Int, Int) -> Int = fn(left, right) {
 ```
 
 函数体最后一个 expression 是返回值。`return` 可用于提前返回：
+
+泛型调用通常推断类型参数，也可以用 `@[...]` 显式应用：
+
+```telora
+identity@[Int](1)
+pair@[Int, _](1, "text")
+```
+
+`_` 由调用上下文推断。未标记的 `value[index]` 只表示 Array 索引。
 
 ```telora
 def absolute: Fn(Int) -> Int = fn(value) {

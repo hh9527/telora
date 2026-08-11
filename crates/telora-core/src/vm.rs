@@ -1955,6 +1955,53 @@ impl Vm {
                             })?;
                         write_register(&mut registers, *dst, value, function, pc)?;
                     }
+                    Opcode::GetArray { dst, array, index } => {
+                        let array = *read_register(&registers, *array, function, pc)?;
+                        let RuntimeValue::Array(handle) = array.value else {
+                            return Err(runtime_type_error("Array", &array, &view, function, pc));
+                        };
+                        let index = *read_register(&registers, *index, function, pc)?;
+                        let RuntimeValue::Int(index_value) = index.value else {
+                            return Err(runtime_type_error("Int", &index, &view, function, pc));
+                        };
+                        let items = view.sequence(handle, false).map_err(|heap_error| {
+                            error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                heap_error.to_string(),
+                                function,
+                                pc,
+                            )
+                        })?;
+                        let value = usize::try_from(index_value)
+                            .ok()
+                            .and_then(|index| items.get(index).copied());
+                        let Some(value) = value else {
+                            return Err(out_of_range_error(account, function, pc));
+                        };
+                        write_register(&mut registers, *dst, value, function, pc)?;
+                    }
+                    Opcode::ProjectTuple { dst, tuple, index } => {
+                        let tuple = *read_register(&registers, *tuple, function, pc)?;
+                        let RuntimeValue::Tuple(handle) = tuple.value else {
+                            return Err(runtime_type_error("Tuple", &tuple, &view, function, pc));
+                        };
+                        let value = view
+                            .sequence(handle, true)
+                            .map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?
+                            .get(*index)
+                            .copied();
+                        let Some(value) = value else {
+                            return Err(out_of_range_error(account, function, pc));
+                        };
+                        write_register(&mut registers, *dst, value, function, pc)?;
+                    }
                     Opcode::FieldExists { dst, value, field } => {
                         let (_, _, text_links, _) =
                             view.bytecode(frame.prototype).map_err(|heap_error| {
@@ -10492,6 +10539,30 @@ fn allocation_error(
         function,
         pc,
     )
+}
+
+fn out_of_range_error(
+    account: &mut QuotaAccount,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> RuntimeError {
+    // Equivalent to allocating the two-subject Tuple and three-field BlameError
+    // produced by fail!("OutOfRange", receiver, index).
+    let bytes = logical_value_bytes(5)
+        .and_then(|bytes| {
+            bytes
+                .checked_add(15) // "data", "message", and "rule"
+                .ok_or_else(|| NativeError::allocation_limit("allocation size overflowed"))
+        })
+        .map_err(|native_error| allocation_error(native_error.message, function, pc))
+        .and_then(|bytes| charge_allocation(account, bytes, function, pc));
+    if let Err(error) = bytes {
+        return error;
+    }
+    let location = instruction_location(function, pc);
+    let mut runtime = error(RuntimeErrorKind::RaisedBlame, "OutOfRange", function, pc);
+    runtime.set_locations(location, location);
+    runtime
 }
 
 fn charge_allocation(

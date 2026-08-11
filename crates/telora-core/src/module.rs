@@ -3146,6 +3146,10 @@ fn expression_has_import(expression: &Expr) -> bool {
             expression_has_import(left) || expression_has_import(right)
         }
         ExprKind::Field { receiver, .. } => expression_has_import(receiver),
+        ExprKind::Index { receiver, index } => {
+            expression_has_import(receiver) || expression_has_import(index)
+        }
+        ExprKind::TupleProjection { receiver, .. } => expression_has_import(receiver),
         ExprKind::Call { callee, arguments } => {
             expression_has_import(callee) || arguments.iter().any(expression_has_import)
         }
@@ -4707,19 +4711,19 @@ name = "rustc"
                    filtered: arrays.filter(values, fn(value) { 1 < value }),
                    flattened: arrays.flat_map(values, fn(value) { [value, value] }),
                    folded: arrays.fold(values, 0, fn(total, value) { total + value }),
-                   controlled: arrays.fold_control[Int, Int, String](
+                   controlled: arrays.fold_control@[Int, Int, String](
                        values,
                        0,
                        fn(total, value) { 'Continue(total + value) },
                    ),
-                   controlled_break: arrays.fold_control[Int, Int, String](
+                   controlled_break: arrays.fold_control@[Int, Int, String](
                        [1, 0],
                        0,
                        fn(total, value) {
                            if 0 < value { 'Break("done") } else { 'Continue(total + 1 / value) }
                        },
                    ),
-                   controlled_empty: arrays.fold_control[Int, Int, String](
+                   controlled_empty: arrays.fold_control@[Int, Int, String](
                        empty,
                        42,
                        fn(total, value) { 'Continue(total + 1 / value) },
@@ -5229,7 +5233,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "./identity.telora" as generic;
-               (generic.identity(1), generic.identity("x"), generic.identity[_](2))"#,
+               (generic.identity(1), generic.identity("x"), generic.identity@[_](2))"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -5360,7 +5364,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "./identity.telora" as generic;
-               (generic.identity(1), generic.identity("x"), generic.identity[_](2))"#,
+               (generic.identity(1), generic.identity("x"), generic.identity@[_](2))"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -6626,7 +6630,7 @@ unchanged", "|"),
         fs::write(
             directory.join("invalid.telora"),
             r#"import "std/dyn" as dyn;
-               dyn.pack[Int](Int, "wrong")"#,
+               dyn.pack@[Int](Int, "wrong")"#,
         )
         .unwrap();
         let error =
@@ -6748,8 +6752,8 @@ unchanged", "|"),
                def eq_fn: for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Bool =
                    interpreter!(int_eq_i);
                {
-                   equal: eq_fn[Int](Int)(1, 1),
-                   different: eq_fn[Int](Int)(1, 2),
+                   equal: eq_fn@[Int](Int)(1, 1),
+                   different: eq_fn@[Int](Int)(1, 2),
                    inferred: eq_fn(Int)(2, 2),
                }"#,
         )
@@ -9505,7 +9509,7 @@ unchanged", "|"),
                let some: Choice = 'Some("x");
                {
                    inferred: show.my_show(Int)(42),
-                   explicit: show.my_show[Int](Int)(42),
+                   explicit: show.my_show@[Int](Int)(42),
                    string: show.my_show(String)("a\"b\\c"),
                    array: show.my_show(Array(Int))([1, 2]),
                    tuple: show.my_show(Pair)((1, "x")),

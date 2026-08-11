@@ -92,6 +92,11 @@ impl Elaborator<'_> {
                 }
             }
             ExprKind::Field { receiver, .. } => self.expression(receiver),
+            ExprKind::Index { receiver, index } => {
+                self.expression(receiver);
+                self.expression(index);
+            }
+            ExprKind::TupleProjection { receiver, .. } => self.expression(receiver),
             ExprKind::Call { callee, arguments } => {
                 self.expression(callee);
                 for argument in arguments {

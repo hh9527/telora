@@ -31,8 +31,8 @@ def increment = fn(value) { value + 1 };
 ```
 
 `let`, `def`, `type`, `for`, `fn`, `match`, `native`, `decl`, `import`, and
-`export` are language words and cannot be used as identifiers. `_` is a pattern
-or explicit-type-argument placeholder; it is not a closure parameter name.
+`export` are reserved language words. `_` is a pattern or explicit-type-argument
+placeholder; closure parameters use named identifiers.
 
 ## Operators and control flow
 
@@ -68,27 +68,38 @@ def map_pair: Fn(Int, String) -> Tuple([String, Int]) =
     fn(number, text) { (text, number) };
 ```
 
-Authored function contracts use `Fn(P1, ..., Pn) -> R`. `Fn` is syntax only.
-The ordinary TypeMetadata constructor is `Func([P1, ..., Pn], R)`:
+Function type notation is authored as `Fn(P1, ..., Pn) -> R`. The ordinary
+TypeMetadata constructor call is `Func([P1, ..., Pn], R)`:
 
 ```telora
 type Unary = Func([Int], String);
 ```
 
 `Fn(Int) -> String` and `Func([Int], String)` produce the same canonical
-function metadata. `Fn([Int], String)` is not a constructor call.
+function metadata.
 
-Put the complete generic contract on a module-level helper when inference needs
-an anchor. A local annotation inside a generic body cannot currently name the
-enclosing `for` parameters reliably; do not erase the type with `Any` to work
-around that boundary.
+Generic calls infer type arguments unless an explicit `@[...]` application is
+written:
 
-When an `if` inside generic code contributes different narrow variants of the
-same expected enum result, Telora merges branch evidence before widening the
-result. For example, a typed `Array(Option(Output))` fold may push `'None` in
-one branch and `'Some(output)` in the other. Helper extraction is not required
-solely to make those variants join, although a named helper with a complete
-contract remains useful for an otherwise underconstrained callback.
+```telora
+identity@[Int](1)
+pair@[Int, _](1, "text")
+```
+
+`_` leaves that type argument to the complete call context. Unmarked
+`value[index]` is only Array indexing.
+
+A local annotation inside a generic body cannot refer to type parameters
+introduced by the enclosing module-level `for` contract. Put the complete
+generic contract on a module-level helper, and do not erase the type with `Any`
+to bypass that boundary.
+
+Telora merges branch evidence before widening the result: an `if` inside generic
+code that contributes different narrow variants of the same expected enum result
+joins them first, then widens to the enum. For example, a typed
+`Array(Option(Output))` fold can push `'None` in one branch and `'Some(output)`
+in the other. A named helper with a complete contract remains useful when a
+callback is otherwise underconstrained.
 
 ## Structs, enums, and patterns
 
@@ -133,6 +144,7 @@ The main operations used by this experiment are:
 
 ```telora
 array.length(values)                 # Int
+values[index]                        # A; fails with OutOfRange blame
 array.get(values, index)             # Option(A)
 array.enumerate(values)              # Array(Tuple([Int, A]))
 array.find(values, predicate)        # Option(A)
@@ -150,20 +162,24 @@ Arrays preserve order. `find` returns the first matching item, `filter`
 preserves input order, and folds process items from left to right. These order
 properties may be part of a deterministic eDSL contract.
 
-`get` uses a zero-based Int index. A negative or out-of-range index returns
-`'None`; it is not a runtime bounds failure. `enumerate` pairs each item with
-its zero-based Int index while preserving source order and duplicates:
+Both indexing forms use a zero-based Int index. `values[index]` returns the
+element directly and a negative or out-of-range index fails with
+`fail!("OutOfRange", values, index)`. `array.get` returns `'None` for the same
+missing positions. `enumerate` pairs each item with its zero-based Int index
+while preserving source order and duplicates:
 
 ```telora
 array.get(["a", "b"], 1)       # 'Some("b")
+["a", "b"][1]                 # "b"
 array.enumerate(["a", "b"])   # [(0, "a"), (1, "b")]
 ```
 
-There is no `values[index]` subscript syntax. Use `array.get` for total access
-and `array.enumerate` when an algorithm must retain positions.
+Use `array.get` when absence is expected control flow and direct indexing when
+absence violates an invariant. Use `array.enumerate(values)` when an algorithm
+must retain positions.
 
-There is no implicit Set or graph value. Build any required bounded structure
-from typed immutable values and ordinary library functions.
+Build any required bounded structure, such as a graph or set, from typed
+immutable values and ordinary library functions.
 
 ## Tuple metadata
 
@@ -171,12 +187,14 @@ Tuple values and Tuple TypeMetadata are distinct uses of ordinary values:
 
 ```telora
 let pair: Tuple([Int, String]) = (1, "one");
+let number: Int = pair.0;
 type Pair = Tuple([Int, String]);
 ```
 
-`Tuple` is a one-argument metadata constructor whose argument is an Array of
-TypeMetadata. `Tuple(A, B)` is invalid in every source position. Nested forms
-such as `Fn(A) -> Array(Tuple([B, C]))` are valid.
+`Tuple` takes exactly one argument, an Array of TypeMetadata: `Tuple([A, B])`.
+Tuple values use a non-negative literal projection such as `pair.0`; known
+out-of-range positions are analysis errors. Nested forms such as
+`Fn(A) -> Array(Tuple([B, C]))` are valid.
 
 ## TypeMetadata families
 

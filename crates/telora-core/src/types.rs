@@ -3253,6 +3253,9 @@ fn collect_nested_annotation_types(
         | ExprKind::Propagate { operand }
         | ExprKind::Field {
             receiver: operand, ..
+        }
+        | ExprKind::TupleProjection {
+            receiver: operand, ..
         } => {
             collect_nested_annotation_types(
                 source_name,
@@ -3293,6 +3296,19 @@ fn collect_nested_annotation_types(
         )?,
         ExprKind::Binary { left, right, .. } => {
             for expression in [left.as_ref(), right.as_ref()] {
+                collect_nested_annotation_types(
+                    source_name,
+                    expression,
+                    bindings,
+                    account,
+                    sources,
+                    debug_sink,
+                    annotations,
+                )?;
+            }
+        }
+        ExprKind::Index { receiver, index } => {
+            for expression in [receiver.as_ref(), index.as_ref()] {
                 collect_nested_annotation_types(
                     source_name,
                     expression,
@@ -5948,6 +5964,32 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn project_tuple(
+        &mut self,
+        receiver: &TypeDescriptor,
+        index: usize,
+    ) -> Result<TypeDescriptor, String> {
+        match self.resolve(receiver) {
+            TypeDescriptor::Tuple(items) => items.get(index).cloned().ok_or_else(|| {
+                format!(
+                    "Tuple of length {} has no item at index {index}",
+                    items.len()
+                )
+            }),
+            TypeDescriptor::Union(variants) => variants
+                .iter()
+                .map(|variant| self.project_tuple(variant, index))
+                .collect::<Result<Vec<_>, _>>()
+                .map(canonical_union),
+            TypeDescriptor::Never => Ok(TypeDescriptor::Never),
+            TypeDescriptor::Any => Ok(TypeDescriptor::Any),
+            descriptor => Err(format!(
+                "cannot project tuple item {index} from {}",
+                descriptor.display_name()
+            )),
+        }
+    }
+
     fn materialize_field_requirements(
         &mut self,
         descriptor: &TypeDescriptor,
@@ -6274,6 +6316,35 @@ impl<'a> GenericInference<'a> {
                     let receiver = self.infer(receiver, environment, None)?;
                     self.project_field(&receiver, &field.value)?
                 }
+            }
+            ExprKind::Index { receiver, index } => {
+                let receiver = self.infer(receiver, environment, None)?;
+                let receiver = self.resolve(&receiver);
+                let result = match receiver {
+                    TypeDescriptor::Array(item) => *item,
+                    TypeDescriptor::Inference(variable) => {
+                        let item = self.fresh_variable();
+                        self.bind_inference_variable(
+                            variable,
+                            &TypeDescriptor::Array(Box::new(item.clone())),
+                        )?;
+                        item
+                    }
+                    TypeDescriptor::Never => TypeDescriptor::Never,
+                    TypeDescriptor::Any => TypeDescriptor::Any,
+                    descriptor => {
+                        return Err(format!(
+                            "cannot index value of type {}",
+                            descriptor.display_name()
+                        ));
+                    }
+                };
+                self.infer(index, environment, Some(&TypeDescriptor::Int))?;
+                result
+            }
+            ExprKind::TupleProjection { receiver, index } => {
+                let receiver = self.infer(receiver, environment, None)?;
+                self.project_tuple(&receiver, index.value)?
             }
             ExprKind::Call { callee, arguments } => {
                 let has_placeholder = matches!(
@@ -7380,6 +7451,9 @@ fn expression_references_names(
         | ExprKind::Propagate { operand }
         | ExprKind::Field {
             receiver: operand, ..
+        }
+        | ExprKind::TupleProjection {
+            receiver: operand, ..
         } => expression_references_names(operand, names, bound),
         ExprKind::Return { value } => expression_references_names(value, names, bound),
         ExprKind::Panic { message } => expression_references_names(message, names, bound),
@@ -7387,6 +7461,10 @@ fn expression_references_names(
         ExprKind::Binary { left, right, .. } => {
             expression_references_names(left, names, bound)
                 || expression_references_names(right, names, bound)
+        }
+        ExprKind::Index { receiver, index } => {
+            expression_references_names(receiver, names, bound)
+                || expression_references_names(index, names, bound)
         }
         ExprKind::Call { callee, arguments } => {
             expression_references_names(callee, names, bound)
@@ -7785,6 +7863,23 @@ fn infer_expr_with(
                 _ => TypeDescriptor::Any,
             }
         }
+        ExprKind::Index { receiver, index } => {
+            let receiver = infer_expr_with(receiver, environment, record);
+            infer_expr_with(index, environment, record);
+            match receiver {
+                TypeDescriptor::Array(item) => *item,
+                _ => TypeDescriptor::Any,
+            }
+        }
+        ExprKind::TupleProjection { receiver, index } => {
+            match infer_expr_with(receiver, environment, record) {
+                TypeDescriptor::Tuple(items) => items
+                    .get(index.value)
+                    .cloned()
+                    .unwrap_or(TypeDescriptor::Any),
+                _ => TypeDescriptor::Any,
+            }
+        }
         ExprKind::TypeApply { callee, arguments } => {
             infer_expr_with(callee, environment, record);
             for argument in arguments {
@@ -7938,6 +8033,13 @@ fn check_interpolations(
             check_interpolations(right, environment, sources)?;
         }
         ExprKind::Field { receiver, .. } => {
+            check_interpolations(receiver, environment, sources)?;
+        }
+        ExprKind::Index { receiver, index } => {
+            check_interpolations(receiver, environment, sources)?;
+            check_interpolations(index, environment, sources)?;
+        }
+        ExprKind::TupleProjection { receiver, .. } => {
             check_interpolations(receiver, environment, sources)?;
         }
         ExprKind::Call { callee, arguments } => {
@@ -9206,7 +9308,7 @@ mod tests {
 
         let partial = analyze_with_natives(
             "native empty: for(A) Fn() -> A; native choose: for(A) Fn(A, A) -> A;\
-             choose[_](empty(), \"value\")",
+             choose@[_](empty(), \"value\")",
             &[("empty", 0), ("choose", 2)],
         )
         .unwrap();
@@ -9718,7 +9820,7 @@ mod tests {
         assert_eq!(callback.display(callback.result_type), "Float");
 
         let explicit = analyze_with_natives(
-            "let negate = fn(value) { -value }; negate[String](\"x\")",
+            "let negate = fn(value) { -value }; negate@[String](\"x\")",
             &[],
         )
         .unwrap_err();
@@ -9881,7 +9983,7 @@ mod tests {
     #[test]
     fn explicit_type_application_instantiates_complete_generic_schemes() {
         let empty = analyze_with_natives(
-            "native empty: for(A) Fn() -> Array(A); empty[Int]()",
+            "native empty: for(A) Fn() -> Array(A); empty@[Int]()",
             &[("empty", 0)],
         )
         .unwrap();
@@ -9889,7 +9991,7 @@ mod tests {
 
         let pair = analyze_with_natives(
             "native pair: for(A, B) Fn(A, B) -> B;\
-             pair[Int, String](1, \"x\")",
+             pair@[Int, String](1, \"x\")",
             &[("pair", 2)],
         )
         .unwrap();
@@ -9897,7 +9999,7 @@ mod tests {
 
         let computed = analyze_with_natives(
             "native identity: for(A) Fn(A) -> A;\
-             identity[Array(Int)]([1, 2])",
+             identity@[Array(Int)]([1, 2])",
             &[("identity", 1)],
         )
         .unwrap();
@@ -9908,23 +10010,23 @@ mod tests {
     fn partial_type_application_combines_rigid_and_inferred_arguments() {
         for (source, expected) in [
             (
-                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[Int, _](1, \"x\")",
+                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair@[Int, _](1, \"x\")",
                 "(Int, String)",
             ),
             (
-                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[_, String](1, \"x\")",
+                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair@[_, String](1, \"x\")",
                 "(Int, String)",
             ),
             (
-                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[_, _](1, \"x\")",
+                "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair@[_, _](1, \"x\")",
                 "(Int, String)",
             ),
             (
-                "native empty: for(A) Fn() -> Array(A); let values: Array(Int) = empty[_](); values",
+                "native empty: for(A) Fn() -> Array(A); let values: Array(Int) = empty@[_](); values",
                 "Array<Int>",
             ),
             (
-                "let pair = fn(left, right) { (left, right) }; pair[Int, _](1, \"x\")",
+                "let pair = fn(left, right) { (left, right) }; pair@[Int, _](1, \"x\")",
                 "(Int, String)",
             ),
         ] {
@@ -9932,7 +10034,7 @@ mod tests {
             assert_eq!(analysis.display(analysis.result_type), expected);
         }
 
-        let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[Int, _](1, \"x\")";
+        let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair@[Int, _](1, \"x\")";
         let analysis = analyze_with_natives(source, &[("pair", 2)]).unwrap();
         let placeholder = analysis
             .hir
@@ -9951,7 +10053,7 @@ mod tests {
 
     #[test]
     fn partial_type_application_rejects_unresolved_and_conflicting_arguments() {
-        let unresolved_source = "native empty: for(A) Fn() -> Array(A); empty[_]()";
+        let unresolved_source = "native empty: for(A) Fn() -> Array(A); empty@[_]()";
         let unresolved = analyze_with_natives(unresolved_source, &[("empty", 0)]).unwrap_err();
         assert!(
             unresolved
@@ -9966,7 +10068,7 @@ mod tests {
         );
 
         let never = analyze_with_natives(
-            "native stop: Fn() -> Never; native identity: for(A) Fn(A) -> A; identity[_](stop())",
+            "native stop: Fn() -> Never; native identity: for(A) Fn(A) -> A; identity@[_](stop())",
             &[("stop", 0), ("identity", 1)],
         )
         .unwrap_err();
@@ -9977,14 +10079,14 @@ mod tests {
         );
 
         let explicit_any = analyze_with_natives(
-            "native empty: for(A) Fn() -> Array(A); empty[Any]()",
+            "native empty: for(A) Fn() -> Array(A); empty@[Any]()",
             &[("empty", 0)],
         )
         .unwrap();
         assert_eq!(explicit_any.display(explicit_any.result_type), "Array<Any>");
 
         let conflict = analyze_with_natives(
-            "native identity: for(A) Fn(A) -> A; identity[Int](\"x\")",
+            "native identity: for(A) Fn(A) -> A; identity@[Int](\"x\")",
             &[("identity", 1)],
         )
         .unwrap_err();
@@ -9999,15 +10101,15 @@ mod tests {
     fn explicit_type_application_rejects_bad_targets_counts_and_values() {
         for (source, expected) in [
             (
-                "native pair: for(A, B) Fn(A, B) -> A; pair[Int](1, 2)",
+                "native pair: for(A, B) Fn(A, B) -> A; pair@[Int](1, 2)",
                 "expects 2 arguments, found 1",
             ),
             (
-                "native identity: for(A) Fn(A) -> A; identity[Int, String](1)",
+                "native identity: for(A) Fn(A) -> A; identity@[Int, String](1)",
                 "expects 1 arguments, found 2",
             ),
             (
-                "let identity = fn(value: Int) { value }; identity[Int](1)",
+                "let identity = fn(value: Int) { value }; identity@[Int](1)",
                 "statically known generic binding",
             ),
         ] {
@@ -10016,11 +10118,15 @@ mod tests {
         }
 
         let invalid = analyze_with_natives(
-            "native identity: for(A) Fn(A) -> A; identity[1](1)",
+            "native identity: for(A) Fn(A) -> A; identity@[1](1)",
             &[("identity", 1)],
         )
         .unwrap_err();
-        assert!(invalid.message.contains("type argument is invalid"));
+        assert!(
+            invalid.message.contains("type argument is invalid"),
+            "{}",
+            invalid.message
+        );
     }
 
     #[test]
@@ -10247,7 +10353,7 @@ mod tests {
         );
 
         let explicit =
-            analyze_with_natives("let identity = fn(value) { value }; identity[Int](1)", &[])
+            analyze_with_natives("let identity = fn(value) { value }; identity@[Int](1)", &[])
                 .unwrap();
         assert_eq!(explicit.display(explicit.result_type), "Int");
 

@@ -487,6 +487,15 @@ impl Resolver {
                 self.index_expr(receiver, scopes);
                 None
             }
+            ExprKind::Index { receiver, index } => {
+                self.index_expr(receiver, scopes);
+                self.index_expr(index, scopes);
+                None
+            }
+            ExprKind::TupleProjection { receiver, .. } => {
+                self.index_expr(receiver, scopes);
+                None
+            }
             ExprKind::Call { callee, arguments } => {
                 self.index_expr(callee, scopes);
                 for argument in arguments {
@@ -692,7 +701,7 @@ mod tests {
 
     #[test]
     fn retains_type_argument_placeholders_without_references() {
-        let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair[Int, _](1, \"x\")";
+        let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair@[Int, _](1, \"x\")";
         let program = parse("hir.telora", source).unwrap();
         let hir = HirProgram::resolve(
             &program,

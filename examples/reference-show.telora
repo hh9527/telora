@@ -49,7 +49,7 @@ def finish_parts: Fn(FoldControl(ShowState, ShowState), String, String) -> ShowR
 
 def show_items: Fn(Array(Dyn), String, String) -> ShowResult = fn(values, open, close) {
     finish_parts(
-        arrays.fold_control[Dyn, ShowState, ShowState](values, 'Ok([]), fn(state, value) {
+        arrays.fold_control@[Dyn, ShowState, ShowState](values, 'Ok([]), fn(state, value) {
             match state {
                 'Err(error) => 'Break('Err(error)),
                 'Ok(parts) => match show_dyn(value) {
@@ -65,7 +65,7 @@ def show_items: Fn(Array(Dyn), String, String) -> ShowResult = fn(values, open, 
 
 def show_fields: Fn(Array(Field)) -> ShowResult = fn(fields) {
     finish_parts(
-        arrays.fold_control[Field, ShowState, ShowState](fields, 'Ok([]), fn(state, field) {
+        arrays.fold_control@[Field, ShowState, ShowState](fields, 'Ok([]), fn(state, field) {
             match state {
                 'Err(error) => 'Break('Err(error)),
                 'Ok(parts) => match field {

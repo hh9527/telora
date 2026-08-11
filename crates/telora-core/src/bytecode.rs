@@ -114,6 +114,16 @@ pub enum Instruction {
         dict: Register,
         field: String,
     },
+    GetArray {
+        dst: Register,
+        array: Register,
+        index: Register,
+    },
+    ProjectTuple {
+        dst: Register,
+        tuple: Register,
+        index: usize,
+    },
     FieldExists {
         dst: Register,
         value: Register,
@@ -276,6 +286,16 @@ pub enum Opcode {
         dst: Register,
         dict: Register,
         field: TextLinkId,
+    },
+    GetArray {
+        dst: Register,
+        array: Register,
+        index: Register,
+    },
+    ProjectTuple {
+        dst: Register,
+        tuple: Register,
+        index: usize,
     },
     FieldExists {
         dst: Register,
@@ -621,6 +641,10 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             dict,
             field: text(field, links),
         },
+        Instruction::GetArray { dst, array, index } => Opcode::GetArray { dst, array, index },
+        Instruction::ProjectTuple { dst, tuple, index } => {
+            Opcode::ProjectTuple { dst, tuple, index }
+        }
         Instruction::FieldExists { dst, value, field } => Opcode::FieldExists {
             dst,
             value,

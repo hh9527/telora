@@ -46,7 +46,7 @@ def equal_items: Fn(Array(Dyn), Array(Dyn)) -> Result(Bool, BlameError) =
     fn(left, right) {
         match arrays.zip(left, right) {
             'None => 'Ok('False),
-            'Some(pairs) => match arrays.fold_control[DynPair, EqualityResult, EqualityResult](pairs, 'Ok('True), fn(state, pair) {
+            'Some(pairs) => match arrays.fold_control@[DynPair, EqualityResult, EqualityResult](pairs, 'Ok('True), fn(state, pair) {
                 match state {
                     'Err(error) => 'Break('Err(error)),
                     'Ok(equal) => match equal {
@@ -71,7 +71,7 @@ def equal_fields:
     fn(left, right) {
         match arrays.zip(left, right) {
             'None => 'Ok('False),
-            'Some(pairs) => match arrays.fold_control[FieldPair, EqualityResult, EqualityResult](pairs, 'Ok('True), fn(state, pair) {
+            'Some(pairs) => match arrays.fold_control@[FieldPair, EqualityResult, EqualityResult](pairs, 'Ok('True), fn(state, pair) {
                 match state {
                     'Err(error) => 'Break('Err(error)),
                     'Ok(equal) => match equal {

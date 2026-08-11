@@ -43,7 +43,7 @@ def finish_control: Fn(HashControl) -> HashResult = fn(control) {
 def hash_items: Fn(Array(Dyn), HashState, String) -> HashResult = fn(values, state, kind) {
     let state = hash.update_string(state, kind);
     let state = hash.update_int(state, arrays.length(values));
-    finish_control(arrays.fold_control[Dyn, HashResult, HashResult](values, 'Ok(state), fn(result, value) {
+    finish_control(arrays.fold_control@[Dyn, HashResult, HashResult](values, 'Ok(state), fn(result, value) {
         match result {
             'Err(error) => 'Break('Err(error)),
             'Ok(state) => match hash_dyn(value, state) {
@@ -57,7 +57,7 @@ def hash_items: Fn(Array(Dyn), HashState, String) -> HashResult = fn(values, sta
 def hash_fields: Fn(Array(Field), HashState, String) -> HashResult = fn(fields, state, kind) {
     let state = hash.update_string(state, kind);
     let state = hash.update_int(state, arrays.length(fields));
-    finish_control(arrays.fold_control[Field, HashResult, HashResult](fields, 'Ok(state), fn(result, field) {
+    finish_control(arrays.fold_control@[Field, HashResult, HashResult](fields, 'Ok(state), fn(result, field) {
         match result {
             'Err(error) => 'Break('Err(error)),
             'Ok(state) => match field {

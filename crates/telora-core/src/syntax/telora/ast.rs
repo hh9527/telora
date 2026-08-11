@@ -507,7 +507,7 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::Closure
                 | Rule::FunctionContract
                 | Rule::DictExpr
-                | Rule::FieldExpr
+                | Rule::IndexExpr
                 | Rule::FloatExpr
                 | Rule::IfExpr
                 | Rule::IfLetExpr
@@ -518,10 +518,12 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::MatchExpr
                 | Rule::ParenExpr
                 | Rule::PipelineExpr
+                | Rule::ProjectionExpr
                 | Rule::PropagateExpr
                 | Rule::ReturnExpr
                 | Rule::SectionExpr
                 | Rule::StringExpr
+                | Rule::TypeApplyExpr
                 | Rule::UnaryExpr
                 | Rule::VariableExpr
         )

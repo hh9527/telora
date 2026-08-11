@@ -1,6 +1,6 @@
 # RFC 0222: Array Indexing, Tuple Projection, and Marked Type Application
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0003, RFC 0021, RFC 0052, RFC 0077, RFC 0081, RFC 0127,
   RFC 0189, RFC 0219, RFC 0220
 
@@ -408,6 +408,10 @@ named fields because field names are Identifier tokens, and it does not split
 Float tokens.
 
 ## Implementation Plan
+
+The implemented ontology tutorial baseline has SHA-256
+`af7c07d4a56c7b2f12fd9a3ecc5b1badb2304c3feb0877ec76fdaab3d6826ad6`.
+The next ontology eDSL experiment using it is a new input baseline.
 
 1. Extend lossless grammar and typed CST views with marked `@[...]` type
    application, Array indexing, and numeric postfix projection.

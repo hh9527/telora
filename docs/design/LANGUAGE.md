@@ -92,7 +92,12 @@ Array 是有序同质序列：
 
 ```telora
 let ids: Array(Int) = [1, 2, 3];
+let second: Int = ids[1];
 ```
+
+`array[index]` 对 `Array(A)` 使用零基 `Int` 索引并直接返回 `A`。负数或超出范围的
+索引执行等价于 `fail!("OutOfRange", array, index)` 的结构化失败；需要把缺失作为值
+处理时使用总操作 `array.get(array, index) -> Option(A)`。
 
 无 expected item type 的 Array 字面量对各元素类型做规范 join。不同的已知类型形成
 Union，例如 `[1, "one"]` 的类型是 `Array(Int | String)`；`Never` 不贡献可达元素
@@ -189,6 +194,9 @@ let result = {
 ```
 
 `&&` 和 `||` 只接受 Bool 并短路。`left |> right` 统一降低为 `right(left)`。
+
+Tuple 使用非负十进制字面量做位置投影，例如 `(left, right).0`。已知 Tuple 的位置在
+分析期检查并得到精确成员类型；通过 `Any` 边界的 Tuple 在运行期检查类型和范围。
 
 `if` 必须有 `else`，两个分支产生可合并的类型：
 
@@ -308,15 +316,16 @@ Fn(Fn(A) -> B) -> Array(Tuple([A, B]))
 def identity: for(A) Fn(A) -> A = fn(value) { value };
 ```
 
-定义 body 必须对刚性的每一个 A 成立。调用时可以推断类型参数，或者使用方括号
-显式应用：
+定义 body 必须对刚性的每一个 A 成立。调用时可以推断类型参数，或者使用
+`@[...]` 显式应用：
 
 ```telora
-identity[Int](1)
-pair[Int, _](1, "text")
+identity@[Int](1)
+pair@[Int, _](1, "text")
 ```
 
 `_` 留下一个必须由完整调用上下文解决的参数。无法解决或证据冲突都会产生诊断。
+未标记的 `expression[index]` 只表示 Array 索引，不表示类型应用。
 
 显式 `def` 契约作为 rigid expected type 参与严格双向检查；这同时适用于 inline
 契约和先 `decl` 后初始化的定义。工具阶段的 shallow projection 可以产生 provisional

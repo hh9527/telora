@@ -1313,18 +1313,38 @@ impl<'a> Lowerer<'a> {
                     right: Box::new(values[1].clone()),
                 }
             }
-            Rule::FieldExpr => {
+            Rule::ProjectionExpr => {
                 let receiver = self
                     .children(node)
                     .find(|child| self.is_expression(*child))
-                    .ok_or_else(|| self.error(node, "field access has no receiver"))?;
-                let field = self
-                    .token_children(node, Token::Identifier)
-                    .last()
-                    .ok_or_else(|| self.error(node, "field access has no field"))?;
-                ExprKind::Field {
-                    receiver: Box::new(self.expression(receiver)?),
-                    field: self.identifier(field),
+                    .ok_or_else(|| self.error(node, "projection has no receiver"))?;
+                let receiver = Box::new(self.expression(receiver)?);
+                if let Some(field) = self.token_children(node, Token::Identifier).last() {
+                    ExprKind::Field {
+                        receiver,
+                        field: self.identifier(field),
+                    }
+                } else {
+                    let index_token = self.first_token(node, Token::Int)?;
+                    let index = self.text(index_token).parse::<usize>().map_err(|_| {
+                        self.error(index_token, "tuple projection index is too large")
+                    })?;
+                    ExprKind::TupleProjection {
+                        receiver,
+                        index: located(index, self.location(index_token)),
+                    }
+                }
+            }
+            Rule::IndexExpr => {
+                let mut values = self.expression_children(node)?;
+                if values.len() != 2 {
+                    return Err(self.error(node, "array index requires a receiver and an index"));
+                }
+                let index = values.pop().expect("two expressions");
+                let receiver = values.pop().expect("two expressions");
+                ExprKind::Index {
+                    receiver: Box::new(receiver),
+                    index: Box::new(index),
                 }
             }
             Rule::CallExpr => {
@@ -2075,7 +2095,7 @@ impl<'a> Lowerer<'a> {
                     | Rule::CallExpr
                     | Rule::Closure
                     | Rule::DictExpr
-                    | Rule::FieldExpr
+                    | Rule::IndexExpr
                     | Rule::FloatExpr
                     | Rule::FunctionContract
                     | Rule::IfExpr
@@ -2087,6 +2107,7 @@ impl<'a> Lowerer<'a> {
                     | Rule::MatchExpr
                     | Rule::ParenExpr
                     | Rule::PipelineExpr
+                    | Rule::ProjectionExpr
                     | Rule::PropagateExpr
                     | Rule::ReturnExpr
                     | Rule::SectionExpr
@@ -2936,7 +2957,7 @@ export { private as visible, identity as map };"#,
 
     #[test]
     fn lowers_only_direct_type_argument_placeholders() {
-        let program = parse("types.telora", "pair[Int, _](1, \"x\")").unwrap();
+        let program = parse("types.telora", "pair@[Int, _](1, \"x\")").unwrap();
         let ExprKind::Call { callee, .. } = &program.value.body.value.result.value else {
             panic!("expected call");
         };
@@ -2945,15 +2966,34 @@ export { private as visible, identity as map };"#,
         };
         assert!(matches!(arguments[0].value, TypeArgumentKind::Explicit(_)));
         assert!(matches!(arguments[1].value, TypeArgumentKind::Infer));
-        assert_eq!(arguments[1].location.range(), 10..11);
+        assert_eq!(arguments[1].location.range(), 11..12);
 
-        for source in ["pair[Int, _0](1, 2)", "pair[Array(_), Int](1, 2)"] {
+        for source in ["pair@[Int, _0](1, 2)", "pair@[Array(_), Int](1, 2)"] {
             let mut sources = SourceDatabase::default();
             let id = sources.add("invalid.telora", source);
             let parsed = parse_registered(&sources, id);
             assert!(parsed.program.is_none(), "{source} unexpectedly parsed");
             assert!(!parsed.diagnostics.is_empty(), "{source} has no diagnostic");
         }
+    }
+
+    #[test]
+    fn distinguishes_postfix_application_and_projection_forms() {
+        let program = parse(
+            "postfix.telora",
+            "(generic@[Int], values[index], pair.0, 1.0)",
+        )
+        .unwrap();
+        let ExprKind::Tuple(items) = &program.value.body.value.result.value else {
+            panic!("expected tuple");
+        };
+        assert!(matches!(items[0].value, ExprKind::TypeApply { .. }));
+        assert!(matches!(items[1].value, ExprKind::Index { .. }));
+        assert!(matches!(
+            items[2].value,
+            ExprKind::TupleProjection { ref index, .. } if index.value == 0
+        ));
+        assert!(matches!(items[3].value, ExprKind::Float(value) if value == 1.0));
     }
 
     #[test]
