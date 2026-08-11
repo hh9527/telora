@@ -2158,7 +2158,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             BindingKind::Def => {
                 let name = &binding.value.name.value;
                 let inferred = inferred_expression;
-                let checked = definition_contracts.get(name).cloned().unwrap_or(inferred);
+                let checked = definition_contracts
+                    .get(name)
+                    .map(erase_type_variables)
+                    .unwrap_or(inferred);
                 static_environment.insert(name.clone(), checked.clone());
                 binding_types.insert(name.clone(), checked);
                 if let Ok(value) = evaluate_tool_expression(
@@ -10768,6 +10771,31 @@ mod tests {
             "{value: Int}"
         );
         assert_eq!(analysis.display(analysis.result_type), "{value: Int}");
+    }
+
+    #[test]
+    fn generic_calls_infer_parameters_through_struct_family_arguments() {
+        let analysis = analyze_source(
+            "family-argument.telora",
+            "@struct type Box(Content) = {value: Content};\
+             def unbox: for(Content) Fn(Box(Content)) -> Content = fn(boxed) { boxed.value };\
+             let boxed: Box(Int) = {value: 7};\
+             let value: Int = unbox(boxed);\
+             let inferred = unbox(boxed);\
+             (value, inferred)",
+        )
+        .unwrap();
+        let unbox = analysis
+            .hir
+            .definitions()
+            .iter()
+            .find(|definition| definition.name == "unbox")
+            .expect("unbox definition");
+        assert_eq!(
+            analysis.definition_schemes[&unbox.id].display_name(),
+            "for(Content) Fn({value: Content}) -> Content"
+        );
+        assert_eq!(analysis.display(analysis.result_type), "(Int, Int)");
     }
 
     #[test]
