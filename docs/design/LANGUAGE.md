@@ -292,6 +292,10 @@ pair[Int, _](1, "text")
 
 `_` 留下一个必须由完整调用上下文解决的参数。无法解决或证据冲突都会产生诊断。
 
+显式 `def` 契约作为 rigid expected type 参与严格双向检查；这同时适用于 inline
+契约和先 `decl` 后初始化的定义。工具阶段的 shallow projection 可以产生 provisional
+fact，但不能用其中为恢复而保守引入的 `Any` 在严格检查前否决定义。
+
 未标注、由 closure 字面量初始化的合格局部 binding 可以得到保守 rank-1 scheme。
 Generalization 保留尚未解决的 callable 和数值 obligation；递归组、不稳定约束以及
 普通 alias 不会被无条件泛化。跨模块导出的 scheme 会在每个合法使用点重新实例化，

@@ -2221,13 +2221,16 @@ let decorators = {
             "decl f: Fn(Int) -> Int; let build = fn(value) { value }; def f = build(fn(a, b) { a + b }); f",
         )
         .unwrap_err();
-        assert!(matches!(
-            wrong_arity,
-            ExecutionError::Runtime(RuntimeError {
-                kind: RuntimeErrorKind::TypeMismatch,
-                ..
-            })
-        ));
+        let ExecutionError::Frontend(wrong_arity) = wrong_arity else {
+            panic!("expected strict contract error");
+        };
+        assert!(
+            wrong_arity
+                .message
+                .contains("cannot unify Fn(Any, Any) -> Any with Fn(Int) -> Int")
+        );
+        assert_eq!(wrong_arity.location.line, 1);
+        assert_eq!(wrong_arity.location.column, 66);
     }
 
     #[test]

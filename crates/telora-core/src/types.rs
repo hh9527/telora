@@ -2158,32 +2158,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             BindingKind::Def => {
                 let name = &binding.value.name.value;
                 let inferred = inferred_expression;
-                let checked = if let Some(expected) = definition_contracts.get(name) {
-                    if !assignable(
-                        &erase_type_witnesses(&inferred),
-                        &erase_type_witnesses(expected),
-                    ) {
-                        let declaration = declaration_locations
-                            .get(name)
-                            .copied()
-                            .unwrap_or(binding.location);
-                        return Err(FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(
-                                format!(
-                                    "definition {name} has type {}, which is not assignable to {}",
-                                    inferred.display_name(),
-                                    expected.display_name()
-                                ),
-                                binding.value.value.location,
-                            )
-                            .with_secondary("contract declared here", declaration),
-                        ));
-                    }
-                    expected.clone()
-                } else {
-                    inferred
-                };
+                let checked = definition_contracts.get(name).cloned().unwrap_or(inferred);
                 static_environment.insert(name.clone(), checked.clone());
                 binding_types.insert(name.clone(), checked);
                 if let Ok(value) = evaluate_tool_expression(
@@ -2451,11 +2426,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let expected = if binding.value.kind == BindingKind::Type {
             Some(&type_metadata_expected)
         } else {
-            binding
-                .value
-                .annotation
-                .as_ref()
-                .and_then(|_| binding_types.get(&binding.value.name.value))
+            definition_contracts
+                .get(&binding.value.name.value)
+                .or_else(|| {
+                    binding
+                        .value
+                        .annotation
+                        .as_ref()
+                        .and_then(|_| binding_types.get(&binding.value.name.value))
+                })
                 .or_else(|| {
                     recursive_skeletons
                         .get(&binding.value.name.value)
@@ -8044,48 +8023,6 @@ fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
     }
 }
 
-fn erase_type_witnesses(descriptor: &TypeDescriptor) -> TypeDescriptor {
-    match descriptor {
-        TypeDescriptor::TypeOf(_) => TypeDescriptor::Type,
-        TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(erase_type_witnesses(item))),
-        TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(erase_type_witnesses(item))),
-        TypeDescriptor::Tagged { tag, payload } => TypeDescriptor::Tagged {
-            tag: tag.clone(),
-            payload: Box::new(erase_type_witnesses(payload)),
-        },
-        TypeDescriptor::Tuple(items) => {
-            TypeDescriptor::Tuple(items.iter().map(erase_type_witnesses).collect())
-        }
-        TypeDescriptor::Struct(fields) => TypeDescriptor::Struct(
-            fields
-                .iter()
-                .map(|(name, field)| (name.clone(), erase_type_witnesses(field)))
-                .collect(),
-        ),
-        TypeDescriptor::Enum(variants) => TypeDescriptor::Enum(
-            variants
-                .iter()
-                .map(|(name, payload)| {
-                    (
-                        name.clone(),
-                        payload
-                            .as_ref()
-                            .map(|payload| Box::new(erase_type_witnesses(payload))),
-                    )
-                })
-                .collect(),
-        ),
-        TypeDescriptor::Union(variants) => {
-            TypeDescriptor::Union(variants.iter().map(erase_type_witnesses).collect())
-        }
-        TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
-            parameters: parameters.iter().map(erase_type_witnesses).collect(),
-            result: Box::new(erase_type_witnesses(result)),
-        },
-        descriptor => descriptor.clone(),
-    }
-}
-
 fn join_all_types(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     types.into_iter().fold(TypeDescriptor::Never, join_types)
 }
@@ -8839,9 +8776,80 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            invalid
-                .message
-                .contains("is not assignable to Fn(T0) -> T0"),
+            invalid.message.contains("cannot unify Int with T0"),
+            "{}",
+            invalid.message
+        );
+    }
+
+    #[test]
+    fn strict_contracts_authorize_related_generic_results_after_shallow_inference() {
+        let natives = &[("map", 2), ("flat_map", 2)];
+        let helpers = "native map: for(A, B) Fn(Array(A), Fn(A) -> B) -> Array(B);\
+                       native flat_map: for(A, B) Fn(Array(A), Fn(A) -> Array(B)) -> Array(B);\
+                       def option_to_list: for(A) Fn(Option(A)) -> Array(A) = fn(value) {\
+                           match value { 'Some(item) => [item], 'None => [] }\
+                       };\
+                       def completed_values: for(A) Fn(Array(Option(A))) -> Array(A) = fn(results) {\
+                           flat_map(results, option_to_list)\
+                       };";
+
+        let tuple_source = [
+            helpers,
+            "type Batch(A) = Tuple([Array(Option(A)), Array(A)]);\
+             export def collect: for(Input, Output)\
+                 Fn(Array(Input), Fn(Input) -> Option(Output)) -> Batch(Output) =\
+                 fn(inputs, lower) {\
+                     let results = map(inputs, lower);\
+                     let values = completed_values(results);\
+                     (results, values)\
+                 };",
+        ]
+        .concat();
+        let tuple = analyze_with_natives(&tuple_source, natives).unwrap();
+        assert_eq!(
+            tuple.module_interface.exports["collect"].display_name(),
+            "for(Input, Output) Fn(Array<Input>, Fn(Input) -> enum {None, Some(Output)}) -> (Array<enum {None, Some(Output)}>, Array<Output>)"
+        );
+
+        let struct_source = [
+            helpers,
+            "@struct type Batch(A) = {\
+                 complete: Option(Array(A)),\
+                 results: Array(Option(A)),\
+                 values: Array(A),\
+             };\
+             export def collect: for(Input, Output)\
+                 Fn(Array(Input), Fn(Input) -> Option(Output)) -> Batch(Output) =\
+                 fn(inputs, lower) {\
+                     let results = map(inputs, lower);\
+                     let values = completed_values(results);\
+                     let complete = if 'True { 'Some(values) } else { 'None };\
+                     {complete: complete, results: results, values: values}\
+                 };",
+        ]
+        .concat();
+        let structure = analyze_with_natives(&struct_source, natives).unwrap();
+        assert!(
+            structure.module_interface.exports["collect"]
+                .display_name()
+                .contains("complete: enum {None, Some(Array<Output>)}")
+        );
+
+        let invalid_source = [
+            helpers,
+            "@struct type Batch(A) = {results: Array(Option(A)), values: Array(A)};\
+             export def collect: for(Input, Output)\
+                 Fn(Array(Input), Fn(Input) -> Option(Output)) -> Batch(Output) =\
+                 fn(inputs, lower) {\
+                     let results = map(inputs, lower);\
+                     {results: results, values: [1]}\
+                 };",
+        ]
+        .concat();
+        let invalid = analyze_with_natives(&invalid_source, natives).unwrap_err();
+        assert!(
+            invalid.message.contains("cannot unify Int with T1"),
             "{}",
             invalid.message
         );
@@ -8915,9 +8923,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            specialized
-                .message
-                .contains("is not assignable to Fn(T0) -> T0")
+            specialized.message.contains("cannot unify Int with T0"),
+            "{}",
+            specialized.message
         );
     }
 
@@ -10287,11 +10295,7 @@ mod tests {
             "def Broken: Fn(Type) -> Type = fn(Item) { 1 }; Broken",
         )
         .unwrap_err();
-        assert!(
-            bad_result
-                .message
-                .contains("not assignable to Fn(Type) -> Type")
-        );
+        assert!(bad_result.message.contains("cannot unify Int with Type"));
     }
 
     #[test]
