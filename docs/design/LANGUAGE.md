@@ -94,6 +94,10 @@ Array 是有序同质序列：
 let ids: Array(Int) = [1, 2, 3];
 ```
 
+无 expected item type 的 Array 字面量对各元素类型做规范 join。不同的已知类型形成
+Union，例如 `[1, "one"]` 的类型是 `Array(Int | String)`；`Never` 不贡献可达元素
+类型，已有的 `Any` 则保持擦除。严格推断不会因为元素类型不同而自行制造 `Any`。
+
 Tuple 是固定长度的异质积：
 
 ```telora
@@ -109,6 +113,14 @@ let labels: Dict(String) = {region: "east", tier: "gold"};
 
 Record 的字段集合属于静态结构；`Dict(T)` 的 key 集合可以动态变化，所有 value 具有
 同一静态类型。Dict 的无领域顺序观察和序列化采用规范顺序。
+
+字段投影保留静态证据：已知 Record/Struct 必须声明该字段，`Dict(T)` 的字段结果是
+T，Union receiver 的每个可达 variant 都必须允许投影并对结果做规范 join。已知的
+非记录值和 `Dyn` 会产生静态诊断；只有 receiver 本来就是 `Any` 时，字段结果才是
+`Any`。暂未确定的 receiver 可以在同一个单态推断边界内积累字段 obligation，后续
+具体证据必须满足全部字段；这种 obligation 不会泛化或发布为开放 row constraint。
+若推断边界结束时仍无具体证据，程序必须提供参数或函数契约。Dict key 是否实际存在
+仍在求值时检查，缺失 key 是可恢复的程序失败。
 
 Array 和 Dict 支持 spread：
 
@@ -257,7 +269,8 @@ Any, Never
 Record/Struct 类型按字段结构检查；type alias 不创建新的名义身份。Native opaque type
 具有由注册模块和 slot 决定的名义身份，普通用户代码不能伪造其值。
 
-`Any` 表示程序显式放弃静态精度。它不是 editor 因源码损坏而暂时不知道类型的状态。
+`Any` 表示源码契约或 Host 边界显式放弃静态精度。严格推断不会用 `Any` 代替已知
+类型之间的冲突；它也不是 editor 因源码损坏而暂时不知道类型的状态。
 `Never` 表示不产生值的路径，例如 `return`、`raise!` 和 `panic!`；它作为 bottom
 参与方向性检查，避免根失败制造级联类型错误。
 

@@ -20,4 +20,6 @@ Current discussions:
 - `user-space-type-metadata-interpreters.md`: open-recursion interpreter ABI,
   native/Telora parity, fallback, and reflection gaps; and
 - `adversarial-validation-gaps-rank1-inference.md`: completed review inventory
-  retained as validation history.
+  retained as validation history; and
+- `silent-any-generic-inference-audit.md`: completed classification of strict,
+  recovery, and Host-boundary `Any` paths after the imported-scheme fix.

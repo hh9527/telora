@@ -335,7 +335,8 @@ fn exec_captures_only_declared_environment_names() {
         &main,
         r#"option "exec.capture-envs" ["TELORA_CAPTURED", "TELORA_MISSING"];
 option "exec.capture-envs" ["TELORA_CAPTURED"];
-export def exec = fn(settings, request) {
+import "std/rt-types/exec.telora" { ExecFn };
+export def exec: ExecFn = fn(settings, request) {
     {install: [], cwd: 'None, bin: "true", args: [], env: {
         clear: 'False,
         update: {TELORA_CAPTURED: 'Some(request.env.TELORA_CAPTURED)},

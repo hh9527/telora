@@ -2390,11 +2390,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 Diagnostic::error(message, binding.value.value.location),
             )
         })?;
-        let scheme = inference.generalize_local_closure(
-            &inferred,
-            first_owned_variable,
-            binding.value.name.location,
-        );
+        let scheme = inference
+            .generalize_local_closure(&inferred, first_owned_variable, binding.value.name.location)
+            .map_err(|message| {
+                FrontendError::from_diagnostic(
+                    sources,
+                    Diagnostic::error(message, binding.value.value.location),
+                )
+            })?;
         let descriptor = scheme.as_ref().map_or_else(
             || inference.resolve(&inferred),
             |scheme| scheme.body.clone(),
@@ -2409,6 +2412,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
             inference
                 .top_level_inferred_schemes
                 .insert(binding.value.name.value.clone(), scheme);
+        } else {
+            delayed_bindings.push((
+                binding.value.name.value.clone(),
+                binding.value.value.location,
+                inferred,
+                first_owned_variable,
+            ));
         }
     }
     for binding in &program.value.body.value.bindings {
@@ -2504,18 +2514,26 @@ pub(crate) fn analyze_program_with_bindings_observed(
             continue;
         }
         if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def) {
-            let inferred_scheme = (binding.value.kind == BindingKind::Let
+            let inferred_scheme = if binding.value.kind == BindingKind::Let
                 && binding.value.annotation.is_none()
                 && binding.value.type_parameters.is_empty()
-                && matches!(binding.value.value.value, ExprKind::Closure { .. }))
-            .then(|| {
-                inference.generalize_local_closure(
-                    &inferred,
-                    first_owned_variable,
-                    binding.value.name.location,
-                )
-            })
-            .flatten();
+                && matches!(binding.value.value.value, ExprKind::Closure { .. })
+            {
+                inference
+                    .generalize_local_closure(
+                        &inferred,
+                        first_owned_variable,
+                        binding.value.name.location,
+                    )
+                    .map_err(|message| {
+                        FrontendError::from_diagnostic(
+                            sources,
+                            Diagnostic::error(message, binding.value.value.location),
+                        )
+                    })?
+            } else {
+                None
+            };
             let checked = inferred_scheme.as_ref().map_or_else(
                 || expected.cloned().unwrap_or(inferred),
                 |scheme| scheme.body.clone(),
@@ -4747,6 +4765,7 @@ struct GenericInference<'a> {
     delayed_initializer_depth: usize,
     recursive_body_inference_depth: usize,
     numeric_variables: HashSet<InferenceVariableId>,
+    field_requirements: HashMap<InferenceVariableId, BTreeMap<String, TypeDescriptor>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     substitutions: HashMap<InferenceVariableId, TypeDescriptor>,
     records: HashMap<crate::Location, TypeDescriptor>,
@@ -4944,6 +4963,7 @@ impl<'a> GenericInference<'a> {
             delayed_initializer_depth: 0,
             recursive_body_inference_depth: 0,
             numeric_variables: HashSet::new(),
+            field_requirements: HashMap::new(),
             recursive_equations: HashMap::new(),
             substitutions: HashMap::new(),
             records: HashMap::new(),
@@ -5118,22 +5138,28 @@ impl<'a> GenericInference<'a> {
     }
 
     fn generalize_local_closure(
-        &self,
+        &mut self,
         descriptor: &TypeDescriptor,
         first_owned_variable: u32,
         location: crate::Location,
-    ) -> Option<TypeScheme> {
+    ) -> Result<Option<TypeScheme>, String> {
         let descriptor = self.resolve(descriptor);
         let mut variables = Vec::new();
         collect_inference_variables(&descriptor, &mut variables);
         variables.retain(|variable| variable.0 >= first_owned_variable);
         variables.dedup();
+        if variables
+            .iter()
+            .any(|variable| self.field_requirements.contains_key(variable))
+        {
+            return Ok(None);
+        }
         if variables.is_empty()
             || variables
                 .iter()
                 .any(|variable| self.numeric_variables.contains(variable))
         {
-            return None;
+            return Ok(None);
         }
         let mut bound_parameters = Vec::new();
         collect_bound_parameters(&descriptor, &mut bound_parameters);
@@ -5141,7 +5167,8 @@ impl<'a> GenericInference<'a> {
             .iter()
             .map(|parameter| parameter.0)
             .max()
-            .map_or(Some(0), |parameter| parameter.checked_add(1))?;
+            .map_or(Some(0), |parameter| parameter.checked_add(1))
+            .ok_or_else(|| "inferred type parameter identity overflow".to_owned())?;
         let replacements = variables
             .iter()
             .enumerate()
@@ -5156,10 +5183,10 @@ impl<'a> GenericInference<'a> {
                 location,
             })
             .collect();
-        Some(TypeScheme {
+        Ok(Some(TypeScheme {
             parameters,
             body: bind_inference_variables(&descriptor, &replacements),
-        })
+        }))
     }
 
     fn unresolved_placeholder_since(&self, start: usize) -> Option<(crate::Location, String)> {
@@ -5479,6 +5506,24 @@ impl<'a> GenericInference<'a> {
         {
             self.numeric_variables.insert(variable);
         }
+        if let Some(requirements) = self.field_requirements.remove(&variable) {
+            if let TypeDescriptor::Inference(target) = &ty {
+                let mut merged = self.field_requirements.remove(target).unwrap_or_default();
+                for (field, result) in requirements {
+                    if let Some(existing) = merged.get(&field).cloned() {
+                        self.unify(&result, &existing)?;
+                    } else {
+                        merged.insert(field, result);
+                    }
+                }
+                self.field_requirements.insert(*target, merged);
+            } else {
+                for (field, result) in requirements {
+                    let projected = self.project_field(&ty, &field)?;
+                    self.check(&projected, &result)?;
+                }
+            }
+        }
         self.substitutions.insert(variable, ty);
         Ok(())
     }
@@ -5764,6 +5809,63 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn project_field(
+        &mut self,
+        receiver: &TypeDescriptor,
+        field: &str,
+    ) -> Result<TypeDescriptor, String> {
+        match self.resolve(receiver) {
+            TypeDescriptor::Struct(fields) => fields
+                .get(field)
+                .cloned()
+                .ok_or_else(|| format!("Struct has no field {field:?}")),
+            TypeDescriptor::Dict(item) => Ok(*item),
+            TypeDescriptor::Union(variants) => variants
+                .iter()
+                .map(|variant| self.project_field(variant, field))
+                .collect::<Result<Vec<_>, _>>()
+                .map(join_all_types),
+            TypeDescriptor::Never => Ok(TypeDescriptor::Never),
+            TypeDescriptor::Any => Ok(TypeDescriptor::Any),
+            TypeDescriptor::Inference(variable) => {
+                if let Some(result) = self
+                    .field_requirements
+                    .get(&variable)
+                    .and_then(|fields| fields.get(field))
+                {
+                    return Ok(result.clone());
+                }
+                let result = self.fresh_variable();
+                self.field_requirements
+                    .entry(variable)
+                    .or_default()
+                    .insert(field.to_owned(), result.clone());
+                Ok(result)
+            }
+            descriptor => Err(format!(
+                "cannot access field {field:?} on {}",
+                descriptor.display_name()
+            )),
+        }
+    }
+
+    fn materialize_field_requirements(
+        &mut self,
+        descriptor: &TypeDescriptor,
+    ) -> Result<(), String> {
+        let mut variables = Vec::new();
+        collect_inference_variables(&self.resolve(descriptor), &mut variables);
+        variables.sort_unstable();
+        variables.dedup();
+        for variable in variables {
+            let Some(fields) = self.field_requirements.remove(&variable) else {
+                continue;
+            };
+            self.bind_inference_variable(variable, &TypeDescriptor::Struct(fields))?;
+        }
+        Ok(())
+    }
+
     fn infer(
         &mut self,
         expression: &Expr,
@@ -5830,7 +5932,7 @@ impl<'a> GenericInference<'a> {
                 } else if items.is_empty() && self.delayed_initializer_depth > 0 {
                     self.fresh_variable()
                 } else {
-                    common_type(item_types).unwrap_or(TypeDescriptor::Any)
+                    join_all_types(item_types)
                 };
                 TypeDescriptor::Array(Box::new(item))
             }
@@ -5900,9 +6002,7 @@ impl<'a> GenericInference<'a> {
                         }
                     }
                     TypeDescriptor::Dict(Box::new(
-                        item_expected.unwrap_or_else(|| {
-                            common_type(item_types).unwrap_or(TypeDescriptor::Any)
-                        }),
+                        item_expected.unwrap_or_else(|| join_all_types(item_types)),
                     ))
                 } else {
                     if let Some(TypeDescriptor::Dict(item)) = expected.map(|ty| self.resolve(ty)) {
@@ -6070,13 +6170,7 @@ impl<'a> GenericInference<'a> {
                     self.instantiate(&scheme)
                 } else {
                     let receiver = self.infer(receiver, environment, None)?;
-                    match self.resolve(&receiver) {
-                        TypeDescriptor::Struct(fields) => fields
-                            .get(&field.value)
-                            .cloned()
-                            .unwrap_or(TypeDescriptor::Any),
-                        _ => TypeDescriptor::Any,
-                    }
+                    self.project_field(&receiver, &field.value)?
                 }
             }
             ExprKind::Call { callee, arguments } => {
@@ -6144,6 +6238,9 @@ impl<'a> GenericInference<'a> {
                             }
                             self.check(&argument_type, parameter)?;
                         }
+                        self.materialize_field_requirements(&TypeDescriptor::Tuple(
+                            parameters.clone(),
+                        ))?;
                         if partial_tagged_evidence {
                             for parameter in &parameters {
                                 self.default_inference_variables_to_any(parameter);
@@ -6286,12 +6383,19 @@ impl<'a> GenericInference<'a> {
                 if inferring_unannotated {
                     self.closure_inference_depth += 1;
                 }
+                self.scheme_scopes.push(
+                    parameters
+                        .iter()
+                        .map(|parameter| (parameter.name.value.clone(), None))
+                        .collect(),
+                );
                 self.propagation_boundaries.push(None);
                 self.return_boundaries.push(Some(ReturnBoundary {
                     expected: result_expected.cloned(),
                     values: Vec::new(),
                 }));
                 let result = self.infer_block(body, &closure_environment, result_expected);
+                self.scheme_scopes.pop();
                 let return_boundary = self
                     .return_boundaries
                     .pop()
@@ -6675,7 +6779,7 @@ impl<'a> GenericInference<'a> {
                 &inferred,
                 first_owned_variable,
                 binding.value.name.location,
-            );
+            )?;
             let descriptor = scheme
                 .as_ref()
                 .map_or_else(|| self.resolve(&inferred), |scheme| scheme.body.clone());
@@ -6684,6 +6788,12 @@ impl<'a> GenericInference<'a> {
             if let Some(scheme) = scheme {
                 self.inferred_schemes
                     .insert(binding.value.name.location, scheme);
+            } else {
+                delayed.push((
+                    binding.value.name.value.clone(),
+                    inferred,
+                    first_owned_variable,
+                ));
             }
         }
         for binding in &block.value.bindings {
@@ -6738,18 +6848,19 @@ impl<'a> GenericInference<'a> {
                 binding.value.kind,
                 BindingKind::Let | BindingKind::Def | BindingKind::Import
             ) {
-                let inferred_scheme = (binding.value.kind == BindingKind::Let
+                let inferred_scheme = if binding.value.kind == BindingKind::Let
                     && binding.value.annotation.is_none()
                     && binding.value.type_parameters.is_empty()
-                    && matches!(binding.value.value.value, ExprKind::Closure { .. }))
-                .then(|| {
+                    && matches!(binding.value.value.value, ExprKind::Closure { .. })
+                {
                     self.generalize_local_closure(
                         &inferred,
                         first_owned_variable,
                         binding.value.name.location,
-                    )
-                })
-                .flatten();
+                    )?
+                } else {
+                    None
+                };
                 let descriptor = inferred_scheme.as_ref().map_or_else(
                     || binding_expected.cloned().unwrap_or(inferred),
                     |scheme| scheme.body.clone(),
@@ -7975,6 +8086,10 @@ fn erase_type_witnesses(descriptor: &TypeDescriptor) -> TypeDescriptor {
     }
 }
 
+fn join_all_types(types: Vec<TypeDescriptor>) -> TypeDescriptor {
+    types.into_iter().fold(TypeDescriptor::Never, join_types)
+}
+
 fn join_types(left: TypeDescriptor, right: TypeDescriptor) -> TypeDescriptor {
     if left == right {
         return left;
@@ -8063,6 +8178,9 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
         (TypeDescriptor::Enum(variants), expected) => variants.iter().all(|(name, payload)| {
             assignable(&enum_variant_type(name, payload.as_deref()), expected)
         }),
+        (TypeDescriptor::Union(actual), TypeDescriptor::Union(expected)) => actual
+            .iter()
+            .all(|actual| expected.iter().any(|expected| assignable(actual, expected))),
         (actual, TypeDescriptor::Union(variants)) => {
             variants.iter().any(|variant| assignable(actual, variant))
         }
@@ -8414,6 +8532,252 @@ mod tests {
             &sources,
             &BTreeMap::new(),
         )
+    }
+
+    fn analyze_with_host_binding(
+        source: &str,
+        value: Value,
+        dynamic: bool,
+        interface: Option<TypeScheme>,
+    ) -> Result<Analysis, FrontendError> {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("host-binding.telora", source);
+        let parsed = parse_registered(&sources, source_id);
+        let program = parsed.program.unwrap_or_else(|| {
+            panic!(
+                "host binding source parses: {source:?}: {:?}",
+                parsed.diagnostics
+            )
+        });
+        let external_values = BTreeMap::from([("host".to_owned(), value)]);
+        let dynamic_bindings = if dynamic {
+            HashSet::from(["host".to_owned()])
+        } else {
+            HashSet::new()
+        };
+        let external_interfaces = interface
+            .map(|scheme| {
+                BTreeMap::from([(
+                    "host".to_owned(),
+                    ModuleInterface {
+                        exports: BTreeMap::from([("host".to_owned(), scheme)]),
+                    },
+                )])
+            })
+            .unwrap_or_default();
+        let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+        analyze_program_with_bindings_observed(
+            "host-binding.telora",
+            &program,
+            &mut QuotaAccount::new(Quota::with_fuel(100_000)),
+            &external_values,
+            &dynamic_bindings,
+            &sources,
+            &BTreeMap::new(),
+            &external_interfaces,
+            &debug_sink,
+        )
+    }
+
+    #[test]
+    fn host_bindings_distinguish_erased_dynamic_and_declared_interfaces() {
+        let function = || {
+            Value::Func(Arc::new(Closure::native(NativeFunction::new(
+                "host",
+                1,
+                native_validate,
+            ))))
+        };
+
+        let erased = analyze_with_host_binding("host(1)", function(), false, None).unwrap();
+        assert_eq!(
+            erased.display(erased.binding_types["host"]),
+            "Fn(Any) -> Any"
+        );
+        assert_eq!(erased.display(erased.result_type), "Any");
+
+        let mut interface_sources = SourceDatabase::default();
+        let interface_source = interface_sources.add("host-interface", "");
+        let interface_location = crate::Location::from_usize(interface_source, 0..0).unwrap();
+        let parameter = TypeParameterId(37);
+        let declared = analyze_with_host_binding(
+            "host(1)",
+            function(),
+            false,
+            Some(TypeScheme {
+                parameters: vec![TypeParameter {
+                    id: parameter,
+                    name: "Value".into(),
+                    location: interface_location,
+                }],
+                body: TypeDescriptor::Function {
+                    parameters: vec![TypeDescriptor::Bound(parameter)],
+                    result: Box::new(TypeDescriptor::Bound(parameter)),
+                },
+            }),
+        )
+        .unwrap();
+        assert_eq!(declared.display(declared.result_type), "Int");
+        assert_eq!(
+            declared.module_interface.exports.get("host"),
+            None,
+            "a consumed Host interface is not implicitly re-exported"
+        );
+
+        let dynamic = analyze_with_host_binding("host", Value::Int(1), true, None).unwrap();
+        assert_eq!(dynamic.display(dynamic.binding_types["host"]), "Any");
+        assert_eq!(dynamic.display(dynamic.result_type), "Any");
+    }
+
+    #[test]
+    fn unresolved_source_names_fail_before_generic_inference_fallbacks() {
+        let error = analyze_with_natives("missing(1)", &[]).unwrap_err();
+        assert_eq!(error.message, "unknown binding \"missing\"");
+    }
+
+    #[test]
+    fn strict_collection_joins_preserve_unions_without_synthesizing_any() {
+        let arrays = analyze_with_natives(
+            "native stop: Fn() -> Never;\
+             let values = [1, \"x\"];\
+             let reachable = [stop(), 1];\
+             let dynamic: Any = 1;\
+             let erased = [dynamic, \"x\"];\
+             (values, reachable, erased)",
+            &[("stop", 0)],
+        )
+        .unwrap();
+        assert_eq!(
+            arrays.display(arrays.binding_types["values"]),
+            "Array<Int | String>"
+        );
+        assert_eq!(
+            arrays.display(arrays.binding_types["reachable"]),
+            "Array<Int>"
+        );
+        assert_eq!(arrays.display(arrays.binding_types["erased"]), "Array<Any>");
+
+        let dict = analyze_with_natives(
+            "let ints: Dict(Int) = {a: 1};\
+             let strings: Dict(String) = {b: \"x\"};\
+             let values = {...ints, ...strings};\
+             values",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            dict.display(dict.binding_types["values"]),
+            "Dict<Int | String>"
+        );
+
+        for source in [
+            "let values = [1, \"x\"]; let output: Array(Int) = values; output",
+            "let ints: Dict(Int) = {a: 1};\
+             let strings: Dict(String) = {b: \"x\"};\
+             let values = {...ints, ...strings};\
+             let output: Dict(Int) = values; output",
+        ] {
+            let error = analyze_with_natives(source, &[]).unwrap_err();
+            assert!(
+                error.message.contains("String") && error.message.contains("Int"),
+                "{}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn strict_field_projection_is_precise_or_diagnostic() {
+        let source = "let record = {value: 1};\
+                      let dictionary: Dict(String) = {value: \"x\"};\
+                      let alternative = if 'True { {value: 1} } else { {value: \"x\"} };\
+                      let dynamic: Any = record;\
+                      export let output = (record.value, dictionary.value, alternative.value, dynamic.value);";
+        let analysis = analyze_with_natives(source, &[]).unwrap();
+        assert_eq!(
+            analysis.display(analysis.binding_types["output"]),
+            "(Int, String, Int | String, Any)"
+        );
+        assert_eq!(
+            analysis.module_interface.exports["output"].display_name(),
+            "(Int, String, Int | String, Any)"
+        );
+        let dictionary_field_start = source.find("dictionary.value").unwrap();
+        let dictionary_field = analysis
+            .hir
+            .expressions()
+            .iter()
+            .filter(|expression| expression.location.range().start == dictionary_field_start)
+            .max_by_key(|expression| expression.location.range().end)
+            .expect("dictionary field expression");
+        assert_eq!(
+            analysis.display(analysis.expression_types[&dictionary_field.id]),
+            "String"
+        );
+
+        let inferred_accessor = analyze_with_natives(
+            "let get = fn(value) { value.name }; get({name: \"x\", extra: 1})",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            inferred_accessor.display(inferred_accessor.result_type),
+            "String"
+        );
+
+        let unconstrained =
+            analyze_with_natives("let get = fn(value) { value.name }; get", &[]).unwrap_err();
+        assert!(
+            unconstrained
+                .message
+                .contains("cannot infer monomorphic binding \"get\""),
+            "{}",
+            unconstrained.message
+        );
+
+        let deferred = analyze_with_natives(
+            "native combine: for(Record, Left, Right)\
+                 Fn(Fn(Record) -> Left, Fn(Record) -> Right, Record) -> Tuple(Left, Right);\
+             combine(fn(value) { value.left }, fn(value) { value.right }, {left: 1, right: \"x\"})",
+            &[("combine", 3)],
+        )
+        .unwrap();
+        assert_eq!(deferred.display(deferred.result_type), "(Int, String)");
+
+        let shadowed = analyze_with_natives(
+            "@struct type Holder = {value: Int};\
+             let value = fn(input) { input };\
+             let read: Fn(Holder) -> Int = fn(value) { value.value };\
+             read({value: 1})",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(shadowed.display(shadowed.result_type), "Int");
+
+        for (source, expected) in [
+            (
+                "let value = {present: 1}; value.missing",
+                "Struct has no field \"missing\"",
+            ),
+            ("1.missing", "cannot access field \"missing\" on Int"),
+            (
+                "let value: Dict(String) = {present: \"x\"};\
+                 let output: Int = value.present; output",
+                "cannot unify String with Int",
+            ),
+            (
+                "let get: Fn(Dyn) -> Any = fn(value) { value.missing }; get",
+                "cannot access field \"missing\" on Dyn",
+            ),
+            (
+                "let value = if 'True { {present: 1} } else { {other: 2} };\
+                 value.present",
+                "Struct has no field \"present\"",
+            ),
+        ] {
+            let error = analyze_with_natives(source, &[]).unwrap_err();
+            assert!(error.message.contains(expected), "{}", error.message);
+        }
     }
 
     #[test]
