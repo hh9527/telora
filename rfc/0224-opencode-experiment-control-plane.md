@@ -147,6 +147,30 @@ External executables are capability dependencies, not Python packages:
 - `jaq`, `jq`, or mise is required only by `query`; and
 - plan validation commands may require their declared tools.
 
+The control plane is plan-neutral. It contains no A1/A2 role names, ontology
+paths, Telora commands, or plan-specific file roots. Each plan manifest owns
+workspace layout, observed paths, permissions, artifacts, feedback location,
+validation commands, and archive selection. The plan README owns the concrete
+sequence in which Main combines `oc-run` and `oc-ctl` for that experiment.
+
+Every external CLI is resolved uniformly through executable probes. For each
+logical capability and its ordered CLI candidates, the controller first tries:
+
+```text
+<cli> --version
+```
+
+across all candidates. It then tries failed candidates through:
+
+```text
+mise x -- <cli> --version
+```
+
+The first successful probe is cached as the capability's argument prefix, for
+example `{"curl": ["curl"], "query": ["mise", "x", "--", "jaq"]}`.
+Subsequent call sites append arguments to that prefix. A plan declares commands
+and capabilities, but does not describe mise tool names or detection mechanics.
+
 ## Identifiers and immutable binding
 
 `plan-id` and `exec-name` match:
@@ -198,8 +222,11 @@ The manifest defines at least:
 ```json
 {
   "schema": "telora.opencode-experiment/v1",
-  "initial_prompt": "A2-PROMPT.md",
-  "feedback_prompt": "FEEDBACK-PROMPT.md",
+  "prompts": {
+    "start": "Carry out the task.",
+    "continue": "Continue.",
+    "feedback": "Read the feedback file and assess it."
+  },
   "workspace": {
     "template": "opencode-workspace",
     "copies": [
@@ -219,11 +246,14 @@ The manifest defines at least:
     {"name": "run", "command": ["./bin/run"]},
     {"name": "run-test", "command": ["./bin/run-test"]}
   ],
+  "observe": ["a2"],
   "archive": ["a1", "a2", "opencode.json"]
 }
 ```
 
-Paths are workspace-relative POSIX paths. Absolute paths, parent traversal,
+`observe` selects the plan-owned workspace paths exposed by `files`,
+`snapshot`, and the normalized query document; the controller does not assume
+an output directory name. Paths are workspace-relative POSIX paths. Absolute paths, parent traversal,
 symlink escape, duplicate destinations, and writes outside declared mutable
 roots are rejected. Commands are argument arrays, never shell strings.
 
@@ -232,9 +262,10 @@ Telora binary and its workspace destination. Preparation builds the artifact
 only through an explicitly declared command. Its digest is recorded after the
 build and copy.
 
-The plan owns exact initial and feedback prompts. `oc-ctl` sends their UTF-8
-contents without interpolation, prefix, or suffix. General `ask` text is the
-only intentionally dynamic prompt class.
+The plan owns exact nonempty `start`, `continue`, and `feedback` prompt strings.
+`oc-ctl` sends their UTF-8 values without interpolation, prefix, or suffix.
+The manifest digest makes these protocol inputs immutable for one execution.
+General `ask` text is the only intentionally dynamic prompt class.
 
 ## Execution filesystem
 
@@ -395,6 +426,7 @@ oc-ctl continue <exec-name>
 oc-ctl feedback <exec-name>
 oc-ctl feedback-status <exec-name>
 oc-ctl validate <exec-name>
+oc-ctl export <exec-name>
 oc-ctl finish <exec-name>
 oc-ctl query <exec-name> QUERY
 oc-ctl query <exec-name> --file PATH [--raw-output]
@@ -445,11 +477,8 @@ as formal downstream feedback.
 ### Continue
 
 `continue` is a constrained recovery operation. It requires a live idle session
-whose latest assistant message ended with `finish=length`. It sends exactly:
-
-```text
-Continue.
-```
+whose latest assistant message ended with `finish=length`. It sends exactly
+the plan's `prompts.continue` value
 
 once for that terminal message. It rejects `finish=stop`, busy sessions,
 additional text, and duplicate recovery attempts. An automatic model-side
@@ -480,6 +509,14 @@ The feedback file is Host-owned. It is readable by the role but denied by the
 role's write/edit policy. A2, A3, or A4 may assess, reject, or act on the
 feedback; the controller records the answer without deciding correctness.
 
+Iterative feedback does not require an execution restart. Main keeps all
+participating TUI processes alive, uses read-only live queries while a role is
+`active`, obtains the completed answer after the role returns to `idle`, and
+relays selected observations through a new `feedback` round on the target
+execution. `finish=stop` terminates only that round. Main repeats this loop
+until the experiment-level stopping condition holds, then invokes `finish` once
+per execution.
+
 The plan's fixed notification is neutral and directs the role to read the file,
 assess each observation, update justified deliverables and validations, and
 report the result. Feedback contents are not duplicated into the prompt.
@@ -491,6 +528,17 @@ arrays from the prepared workspace. It captures command, cwd, start/end,
 stdout, stderr, and exit status under the execution result area. Validation is
 repeatable and does not send a model message. A plan distinguishes visible role
 commands from Host-only validation commands.
+
+### Export
+
+`export` resolves the session from the execution name and writes the complete
+raw opencode export atomically to
+`target/exp/<exec-name>/session-export.json`. It reports the path, byte count,
+and message count; callers do not invoke `opencode export` with a session ID.
+The implementation connects the exporter to a temporary regular file before
+parsing because large tool outputs are not reliably preserved through every
+CLI pipe implementation. Malformed or failed exports are retried a bounded
+number of times and never replace a valid prior export.
 
 ### Finish
 
@@ -511,6 +559,9 @@ execution terminal. It:
 `finish` never terminates the TUI or daemon directly. The external `oc-run`
 process performs exact temporary-directory cleanup after the TUI exits and
 only when frozen evidence has passed completeness checks.
+Workspace archiving is staged and atomically replaced so read-only inputs and
+interrupted attempts remain safely retryable. Infrastructure errors restore
+the pre-finish idle phase; required validation failures enter `failed`.
 
 ### Retire
 
@@ -554,30 +605,30 @@ used:
 ```text
 jaq
 jq
-mise x jaq -- jaq
-mise x jq -- jq
+mise x -- jaq
+mise x -- jq
 ```
 
 Automatic selection order is:
 
-1. `jaq` on `PATH`;
-2. `jq` on `PATH`;
-3. `mise x jaq -- jaq`; and
-4. `mise x jq -- jq`.
+1. successful `jaq --version`;
+2. successful `jq --version`;
+3. successful `mise x -- jaq --version`; and
+4. successful `mise x -- jq --version`.
 
 `OC_QUERY_ENGINE` may select `jaq`, `jq`, `mise-jaq`, or `mise-jq`. An explicit
-selection is strict and does not fall back. Direct backends are detected with
-`shutil.which`; mise backends are probed with a no-input null query. Because a
-mise probe may install a tool, `doctor` reports the command before probing and
-`query` reports the selected mise backend on stderr.
+selection is strict and does not fall back. Both direct and mise backends use
+the common `--version` probe. Because a mise probe may install a tool,
+`doctor` exposes the selected command prefix and `query` reports the selected
+mise backend on stderr.
 
 The selected command is represented as an argument prefix:
 
 ```text
 ["jaq"]
 ["jq"]
-["mise", "x", "jaq", "--", "jaq"]
-["mise", "x", "jq", "--", "jq"]
+["mise", "x", "--", "jaq"]
+["mise", "x", "--", "jq"]
 ```
 
 `query` appends the user expression or `-f` file and optional `-r`, passes the
@@ -644,7 +695,7 @@ plane.
 The migration must:
 
 1. add `experiments/ontology-edsl/experiment.json`;
-2. add the fixed feedback notification and a Host-owned feedback seed/path;
+2. add the fixed manifest prompts and a Host-owned feedback seed/path;
 3. express all current injected files, workspace templates, Telora artifact,
    permissions, wrappers, validation, and archive paths in the manifest;
 4. update `experiments/ontology-edsl/README.md` to use only `oc-run` and
@@ -670,9 +721,9 @@ target/exp/<exec-name>/
 ```
 
 and its `result/` is the canonical archive. The currently active legacy
-`target/exp/` shape, if present during migration, must be detected and rejected
-with an explicit migration instruction; it must not be guessed into a named
-execution.
+`target/exp/` shape is temporary controller state, not an execution archive.
+During the one-time plan migration it is discarded, not converted or guessed
+into a named execution. Historical experiment results are not migrated.
 
 ## Error behavior
 
@@ -752,7 +803,7 @@ Required coverage includes:
 5. implement answer, ask, continue, and formal feedback rounds;
 6. implement validation, finish, archive, retirement, and normalized queries;
 7. implement jaq/jq/mise backend discovery and doctor;
-8. add the ontology eDSL manifest and feedback prompt;
+8. add the ontology eDSL manifest prompts;
 9. migrate its README and run a fresh named execution;
 10. remove the three legacy ontology controller scripts; and
 11. record the accepted command/state schemas as the infrastructure SSOT.

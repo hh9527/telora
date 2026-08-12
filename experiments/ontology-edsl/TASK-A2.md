@@ -6,11 +6,12 @@ Read `a1/TELORA-TUTORIAL.md`, `a1/TELORA-CLI.md`, and `a1/EDSL-DESIGN.md`
 completely. Treat them as the complete visible language, validation, and
 behavior inputs for this experiment.
 
-Read only `a1/` and `a2/`. Write only `a2/src/` and `a2/bin-src/`. Do not modify
-`a2/telora-deps.json`. Do not inspect repository code, examples, prior
-experiments, hidden fixtures, or Host evaluation material. Validate your work
-through the fixed commands documented in `a1/TELORA-CLI.md`; no other commands
-are available.
+Read only `a1/` and `a2/`. Write Telora source only under `a2/src/` and
+`a2/bin-src/`; write `EDSL_TUTORIAL.md`, `AI3_CONTRACT.md`, and
+`STAGE2_NOTES.md` directly under `a2/`. Do not modify `a2/telora-deps.json`.
+Do not inspect repository code, examples, prior experiments, hidden fixtures,
+or Host evaluation material. Validate your work through the fixed commands
+documented in `a1/TELORA-CLI.md`; no other commands are available.
 
 Implement all deliverables required by `a1/EDSL-DESIGN.md` under `a2/`. Do not
 stop at a plan, analysis, or partial scaffold. Preserve precise types; do not

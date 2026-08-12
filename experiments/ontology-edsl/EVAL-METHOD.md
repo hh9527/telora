@@ -18,8 +18,8 @@ reliability. A passing final program does not erase process friction.
 
 Before a run, record:
 
-- hash of `A2-PROMPT.md` and confirmation that its exact UTF-8 contents were
-  used as the initial user prompt without a wrapper;
+- hash of `experiment.json` and confirmation that its exact `prompts.start`
+  UTF-8 value was used as the initial user prompt without a wrapper;
 - hashes of injected `TELORA-TUTORIAL.md` and `EDSL-DESIGN.md`;
 - repository revision and dirty-worktree state;
 - Telora binary revision;
@@ -34,10 +34,11 @@ correction.
 
 ## A2 procedure
 
-A2 reads only `a1/` and writes only `a2/`. It cannot execute commands. Start
-one recoverable model session with `A2-PROMPT.md` verbatim and retain that
-session for the stage. Run-specific task text must not be appended to the
-initial prompt.
+A2 reads only `a1/` and `a2/`, writes only the paths declared by
+`experiment.json`, and executes only its four fixed Telora wrappers. Start one
+recoverable model session with the manifest's `prompts.start` value verbatim
+and retain that session for the stage. Run-specific task text must not be
+appended to the initial prompt.
 
 The Host validates deliverables in this order:
 
