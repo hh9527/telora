@@ -11,11 +11,13 @@ Commands:
   recent [COUNT]    Show summarized assistant reasoning and tools (default 3).
   timeline [COUNT]  Show message metadata and part types (default 8).
   audit             Summarize the session, user prompts, and grouped failures.
+  continue          Resume an idle assistant step that ended at its length limit.
   files             List current A2 files.
   events            Stream filtered events until interrupted.
 
 Reads the active ontology eDSL experiment recorded under target/exp. All
-commands are observational; this script never sends prompts or aborts a session.
+commands except continue are observational. continue can only send the fixed
+text "Continue." after the latest assistant step ends with finish=length.
 EOF
 }
 
@@ -293,6 +295,37 @@ show_audit() {
               }'
 }
 
+continue_length_limited_session() {
+    local statuses status messages payload
+    statuses=$(curl "${curl_common[@]}" \
+        "$server_url/session/status?directory=$workspace_query")
+    status=$(jq -r --arg id "$session_id" \
+        '.[$id].type // "idle"' <<<"$statuses")
+    if [[ $status != idle ]]; then
+        printf 'session is %s; refusing to continue\n' "$status" >&2
+        exit 65
+    fi
+
+    messages=$(curl "${curl_common[@]}" \
+        "$server_url/session/$session_id/message?directory=$workspace_query")
+    if ! jq -e '
+        length > 0
+        and .[-1].info.role == "assistant"
+        and .[-1].info.finish == "length"
+    ' <<<"$messages" >/dev/null; then
+        printf 'latest message is not an assistant length finish; refusing to continue\n' >&2
+        exit 65
+    fi
+
+    payload=$(jq -n --arg text 'Continue.' \
+        '{parts: [{type: "text", text: $text}]}')
+    curl "${curl_common[@]}" --request POST \
+        --header 'Content-Type: application/json' \
+        "$server_url/session/$session_id/prompt_async?directory=$workspace_query" \
+        --data-raw "$payload" >/dev/null
+    printf 'continued length-limited session %s\n' "$session_id"
+}
+
 show_files() {
     find "$workspace/a2" -maxdepth 3 -type f \
         -printf '%TY-%Tm-%TdT%TH:%TM:%TS %s %P\n' | sort
@@ -363,6 +396,10 @@ case $mode in
     audit)
         [[ $# -eq 0 ]] || { usage >&2; exit 64; }
         show_audit
+        ;;
+    continue)
+        [[ $# -eq 0 ]] || { usage >&2; exit 64; }
+        continue_length_limited_session
         ;;
     files)
         [[ $# -eq 0 ]] || { usage >&2; exit 64; }

@@ -202,6 +202,7 @@ experiments/ontology-edsl/observe-opencode.sh status
 experiments/ontology-edsl/observe-opencode.sh recent 3
 experiments/ontology-edsl/observe-opencode.sh timeline 8
 experiments/ontology-edsl/observe-opencode.sh audit
+experiments/ontology-edsl/observe-opencode.sh continue
 experiments/ontology-edsl/observe-opencode.sh files
 experiments/ontology-edsl/observe-opencode.sh events
 ```
@@ -212,7 +213,10 @@ metadata and part types without dumping full tool inputs. `audit` makes one
 post-run request and reports session counts, every user prompt, and grouped
 tool failures for `RUNLOG.md`. `events` filters token deltas and retains only
 session status, completed messages, completed or failed tools, and errors. The
-observer never sends a prompt or abort request.
+commands are observational except for `continue`: it requires an idle session
+whose latest message is an assistant `finish=length`, then sends only the fixed
+text `Continue.`. It rejects busy sessions, other finish states, extra
+arguments, and repeated recovery attempts. The observer never aborts a session.
 
 ### Finalize and exit
 
