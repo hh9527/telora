@@ -2631,6 +2631,24 @@ let decorators = {
     }
 
     #[test]
+    fn control_flow_else_chains_evaluate_like_nested_expressions() {
+        let cases = [
+            "if 'False { 1 } else if 'False { 2 } else if 'True { 3 } else { 4 }",
+            "if 'False { 1 } else if let 'Some(value) = 'Some(3) { value } else { 4 }",
+            "let choose = fn(value: Bool) { if 'False { 1 } else match value { 'True => 3, 'False => 4 } }; choose('True)",
+        ];
+        for source in cases {
+            assert!(matches!(run(source).unwrap(), Value::Int(3)));
+        }
+
+        let returned = run(
+            "let choose = fn(condition: Bool) { if condition { 3 } else return 4; }; (choose('True), choose('False))",
+        )
+        .unwrap();
+        assert_eq!(returned.to_string(), "(3, 4)");
+    }
+
+    #[test]
     fn match_destructures_tagged_tuples() {
         let value = run("match ('Ok, 42) { ('Ok, value) => value }").unwrap();
         assert!(matches!(value, Value::Int(42)));

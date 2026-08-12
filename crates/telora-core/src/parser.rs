@@ -1434,10 +1434,11 @@ impl<'a> Lowerer<'a> {
                     .filter(|child| self.rule(**child) == Some(Rule::Block))
                     .copied()
                     .collect::<Vec<_>>();
+                let else_branch = self.ctrl_block(node, &blocks, &rules)?;
                 ExprKind::If {
                     condition: Box::new(condition),
                     then_branch: self.block_body(blocks[0])?,
-                    else_branch: self.block_body(blocks[1])?,
+                    else_branch,
                 }
             }
             Rule::IfLetExpr => {
@@ -1462,7 +1463,7 @@ impl<'a> Lowerer<'a> {
                     pattern: self.pattern(pattern)?,
                     value: Box::new(self.expression(value)?),
                     then_branch: self.block_body(blocks[0])?,
-                    else_branch: self.block_body(blocks[1])?,
+                    else_branch: self.ctrl_block(node, &blocks, &rules)?,
                 }
             }
             Rule::MatchExpr => {
@@ -1485,6 +1486,35 @@ impl<'a> Lowerer<'a> {
             _ => return Err(self.error(node, format!("unexpected expression rule {rule:?}"))),
         };
         Ok(located(inner, location))
+    }
+
+    fn ctrl_block(
+        &self,
+        node: NodeRef,
+        blocks: &[NodeRef],
+        rules: &[NodeRef],
+    ) -> Result<Block, Diagnostic> {
+        if let Some(block) = blocks.get(1) {
+            return self.block_body(*block);
+        }
+        let nested = rules
+            .iter()
+            .copied()
+            .find(|child| {
+                matches!(
+                    self.rule(*child),
+                    Some(Rule::IfExpr | Rule::IfLetExpr | Rule::MatchExpr | Rule::ReturnExpr)
+                )
+            })
+            .ok_or_else(|| self.error(node, "control-flow expression has no ctrl_block"))?;
+        let nested = self.expression(nested)?;
+        Ok(located(
+            BlockKind {
+                bindings: Vec::new(),
+                result: Box::new(nested.clone()),
+            },
+            nested.location,
+        ))
     }
 
     fn lower_contextual_intrinsic(
@@ -2760,6 +2790,71 @@ mod tests {
             "{:?}",
             arms[0].value.pattern.value
         );
+    }
+
+    #[test]
+    fn lowers_control_flow_else_chains_into_else_blocks() {
+        let cases = [
+            ("if 'False { 1 } else if 'True { 2 } else { 3 }", "if"),
+            (
+                "if 'False { 1 } else if let 'Some(value) = 'Some(2) { value } else { 3 }",
+                "if let",
+            ),
+            (
+                "if 'False { 1 } else match 'Some(2) { 'Some(value) => value, 'None => 3 }",
+                "match",
+            ),
+            ("if 'False { 1 } else return 2;", "return"),
+        ];
+        for (source, expected) in cases {
+            let program = parse("test.telora", source).unwrap();
+            let ExprKind::If { else_branch, .. } = &program.value.body.value.result.value else {
+                panic!("expected outer if");
+            };
+            assert!(else_branch.value.bindings.is_empty());
+            assert!(match expected {
+                "if" => matches!(else_branch.value.result.value, ExprKind::If { .. }),
+                "if let" => matches!(else_branch.value.result.value, ExprKind::IfLet { .. }),
+                "match" => matches!(else_branch.value.result.value, ExprKind::Match { .. }),
+                "return" => matches!(else_branch.value.result.value, ExprKind::Return { .. }),
+                _ => unreachable!(),
+            });
+        }
+
+        let program = parse(
+            "test.telora",
+            "if let 'Some(value) = 'None { value } else match 'Some(2) { 'Some(item) => item, 'None => 3 }",
+        )
+        .unwrap();
+        let ExprKind::IfLet { else_branch, .. } = &program.value.body.value.result.value else {
+            panic!("expected outer if let");
+        };
+        assert!(matches!(
+            else_branch.value.result.value,
+            ExprKind::Match { .. }
+        ));
+
+        let program = parse(
+            "test.telora",
+            "if let 'Some(value) = 'None { value } else return 2;",
+        )
+        .unwrap();
+        let ExprKind::IfLet { else_branch, .. } = &program.value.body.value.result.value else {
+            panic!("expected outer if let");
+        };
+        assert!(matches!(
+            else_branch.value.result.value,
+            ExprKind::Return { .. }
+        ));
+    }
+
+    #[test]
+    fn malformed_else_if_chain_recovers_without_panicking() {
+        let mut sources = SourceDatabase::default();
+        let id = sources.add("test.telora", "if 'True { 1 } else if { 2 } else { 3 }");
+        let parsed = parse_registered(&sources, id);
+        assert!(!parsed.diagnostics.is_empty());
+        assert!(parsed.program.is_none());
     }
 
     #[test]

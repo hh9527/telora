@@ -76,7 +76,28 @@ tighter to looser.
 All six comparisons share one non-associative precedence level. Write
 parentheses when comparing a comparison result; `a < b <= c` is not a chained
 comparison. `&&` and `||` accept Bool and short-circuit. An `if` expression
-always has an `else` branch.
+always has an `else` branch. A `ctrl_block` is a regular block, `if`, `if let`,
+`match`, or `return expression;`. The `else` of `if` and `if let` accepts a `ctrl_block`;
+a non-block form is normalized to a block containing that control-flow
+expression. `else if` may therefore be chained:
+
+```telora
+if score >= 90 { 'Excellent }
+else if score >= 60 { 'Pass }
+else { 'Fail }
+```
+
+```telora
+if ready { value }
+else if let 'Some(cached) = candidate { cached }
+else match fallback { 'Some(value) => value, 'None => default }
+```
+
+An early return can also be used directly as the branch:
+
+```telora
+if ready { value } else return fallback;
+```
 
 ## Functions and contracts
 

@@ -235,6 +235,28 @@ Tuple 在运行期检查类型和范围。
 if enabled { "on" } else { "off" }
 ```
 
+`ctrl_block` 是普通 block、`if`、`if let`、`match` 或 `return expression;`。`if` 和 `if let` 的
+`else` 接受一个 `ctrl_block`；非普通 block 的形式规范化为只含该控制流表达式的
+block。因此 `else if` 可以连续使用：
+
+```telora
+if score >= 90 { 'Excellent }
+else if score >= 60 { 'Pass }
+else { 'Fail }
+```
+
+```telora
+if ready { value }
+else if let 'Some(cached) = candidate { cached }
+else match fallback { 'Some(value) => value, 'None => default }
+```
+
+提前返回同样可以直接作为 `else` 分支：
+
+```telora
+if ready { value } else return fallback;
+```
+
 `return expression;` 从最近的函数返回。它不是模块导出机制。
 
 ### 4.1 模式匹配

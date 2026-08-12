@@ -9248,6 +9248,19 @@ mod tests {
         let dynamic = analyze_with_host_binding("host", Value::Int(1), true, None).unwrap();
         assert_eq!(dynamic.display(dynamic.binding_types["host"]), "Any");
         assert_eq!(dynamic.display(dynamic.result_type), "Any");
+
+        let chained =
+            analyze_with_natives("if 'False { 1 } else if 'True { \"x\" } else { 2.0 }", &[])
+                .unwrap();
+        let explicit_nested = analyze_with_natives(
+            "if 'False { 1 } else { if 'True { \"x\" } else { 2.0 } }",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            chained.display(chained.result_type),
+            explicit_nested.display(explicit_nested.result_type)
+        );
     }
 
     #[test]

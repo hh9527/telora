@@ -125,6 +125,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     fn predicate_primary_6(&self) -> bool {
         self.current == Token::If && self.peek(1) == Token::Let
     }
+    fn predicate_ctrl_block_1(&self) -> bool {
+        self.predicate_primary_6()
+    }
     fn predicate_braced_1(&self) -> bool {
         if self.peek(1) == Token::RBrace
             || self.peek(1) == Token::At
