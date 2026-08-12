@@ -10451,37 +10451,29 @@ fn numeric_binary(
 ) -> Result<RichValue, RuntimeError> {
     match (left.value, right.value) {
         (RuntimeValue::Int(left), RuntimeValue::Int(right)) => {
-            if matches!(
-                operation,
-                NumericOperation::Divide | NumericOperation::Remainder
-            ) && right == 0
-            {
-                return Err(error(
-                    RuntimeErrorKind::DivisionByZero,
-                    match operation {
-                        NumericOperation::Divide => "integer division by zero",
-                        NumericOperation::Remainder => "integer remainder by zero",
-                        _ => unreachable!("zero check only applies to division and remainder"),
-                    },
-                    function,
-                    pc,
-                ));
-            }
             let value = match operation {
                 NumericOperation::Add => left.checked_add(right),
                 NumericOperation::Subtract => left.checked_sub(right),
                 NumericOperation::Multiply => left.checked_mul(right),
                 NumericOperation::Divide => left.checked_div(right),
                 NumericOperation::Remainder => left.checked_rem(right),
-            }
-            .ok_or_else(|| {
-                error(
-                    RuntimeErrorKind::IntegerOverflow,
-                    "integer arithmetic overflowed",
-                    function,
-                    pc,
-                )
-            })?;
+            };
+            let Some(value) = value else {
+                let (kind, message) = match (operation, right) {
+                    (NumericOperation::Divide, 0) => {
+                        (RuntimeErrorKind::DivisionByZero, "integer division by zero")
+                    }
+                    (NumericOperation::Remainder, 0) => (
+                        RuntimeErrorKind::DivisionByZero,
+                        "integer remainder by zero",
+                    ),
+                    _ => (
+                        RuntimeErrorKind::IntegerOverflow,
+                        "integer arithmetic overflowed",
+                    ),
+                };
+                return Err(error(kind, message, function, pc));
+            };
             Ok(RuntimeValue::Int(value).into())
         }
         (RuntimeValue::Float(left_value), RuntimeValue::Float(right_value)) => {
