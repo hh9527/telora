@@ -137,6 +137,22 @@ argument and an `Array(NodeId)` argument can infer `NodeId` together. Use
 explicit `@[...]` only when the complete call remains genuinely ambiguous or
 underconstrained.
 
+Anonymous Struct arguments also participate in the complete call context. A
+generic callback result can widen singleton Atom and empty collection fields in
+an earlier seed. This fold therefore infers `flag: Bool` and
+`items: Array(Int)` directly:
+
+```telora
+array.fold([1, 2, 3], {flag: 'False, items: []}, fn(state, item) {
+    {flag: item > 1 || state.flag, items: array.push(state.items, item)}
+})
+```
+
+When callback branches return multiple corresponding Struct variants, their
+union preserves relationships between fields. The seed completes against a
+unique compatible variant; an unrelated Atom or ambiguous completion remains
+an error.
+
 An unannotated local binding initialized by a closure can receive its expected
 function type from a later generic call. A variant union produced by the
 closure branches refines to the expected closed enum when every variant and

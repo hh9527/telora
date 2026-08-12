@@ -381,6 +381,12 @@ pair@[Int, _](1, "text")
 类型参数从完整调用收集证据；裸 closed Atom 实参不会在同次调用的结构化或完整 enum
 实参之前把共享参数固定为 singleton。若后者确定了包含该 Atom 的闭合 enum，调用采用
 该 enum；不相关 enum 或 enum 之外的 Atom 仍是类型错误。
+匿名 Struct 实参同样在完整调用上下文中检查。若 generic callback 的结果确定了共享
+Struct 类型，较早书写的 seed 中的 singleton Atom 字段和空 collection 字段按该结果
+检查并拓宽；例如 fold callback 返回 Bool 时，seed 的 `{flag: 'False, items: []}` 可
+参与 `{flag: Bool, items: Array(A)}`。若 callback 产生多个同形 Struct variant，联合
+保留字段之间的相关性，seed 只在唯一兼容 variant 中补全未定字段。不相关 Atom、字段
+shape 冲突和不唯一的补全仍是类型错误。
 由 closure 字面量初始化的未标注局部 binding 可以从后续 generic call 获得 expected
 function type。若 closure 分支产生的 variant union 完整映射到 expected 闭合 enum，
 各分支参与 enum payload 推断，例如 `'None | 'Some(String)` 可精化为

@@ -4988,6 +4988,59 @@ name = "rustc"
     }
 
     #[test]
+    fn core_array_fold_widens_atom_fields_from_callback_results() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/array" as array;
+               let computed = array.fold(
+                   [1, 2, 3],
+                   {flag: 'False, items: []},
+                   fn(state, item) {
+                       {flag: item > 1 || state.flag,
+                        items: array.push(state.items, item)}
+                   },
+               );
+               let branched = array.fold(
+                   [1, 2],
+                   {flag: 'False, items: []},
+                   fn(state, item) {
+                       if item > 1 {
+                           {flag: 'True, items: array.push(state.items, item)}
+                       } else {
+                           {flag: 'False, items: array.push(state.items, item)}
+                       }
+                   },
+               );
+               (computed, branched)"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "({flag: enum {False, True}, items: Array<Int>}, {flag: 'False, items: Array<Int>} | {flag: 'True, items: Array<Int>})"
+        );
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "({flag: 'True, items: [1, 2, 3]}, {flag: 'True, items: [1, 2]})"
+        );
+
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "std/array" as array;
+               array.fold([1], {flag: 'False}, fn(state, item) {
+                   {flag: 'Foreign}
+               })"#,
+        )
+        .unwrap();
+        let error =
+            load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000).unwrap_err();
+        assert!(error.to_string().contains("Foreign"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_map_widens_singleton_option_arm_in_generic_callback() {
         let directory = fixture_dir();
         fs::write(

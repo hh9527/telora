@@ -6039,6 +6039,17 @@ impl<'a> GenericInference<'a> {
             let evidence = self.freshen_runtime_never_leaves(&actual);
             return self.bind_inference_variable(variable, &evidence);
         }
+        if contains_type_variable(&actual)
+            && let TypeDescriptor::Union(variants) = &expected
+        {
+            let candidates = variants
+                .iter()
+                .filter(|variant| potentially_assignable(&actual, variant))
+                .collect::<Vec<_>>();
+            if let [candidate] = candidates.as_slice() {
+                return self.check(&actual, candidate);
+            }
+        }
         match (&actual, &expected) {
             (TypeDescriptor::Union(variants), TypeDescriptor::Enum(_)) => {
                 for variant in variants {
@@ -6774,7 +6785,8 @@ impl<'a> GenericInference<'a> {
                         let mut argument_order = (0..arguments.len()).collect::<Vec<_>>();
                         argument_order.sort_by_key(|index| match &arguments[*index].value {
                             _ if self.explicit_scheme(&arguments[*index]).is_some() => 0,
-                            ExprKind::Atom(_) => 2,
+                            ExprKind::Dict(_) => 2,
+                            ExprKind::Atom(_) => 3,
                             _ => 1,
                         });
                         for index in argument_order {
@@ -8774,6 +8786,37 @@ fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
 
 fn join_all_types(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     types.into_iter().fold(TypeDescriptor::Never, join_types)
+}
+
+fn potentially_assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
+    if matches!(actual, TypeDescriptor::Inference(_) | TypeDescriptor::Any)
+        || matches!(expected, TypeDescriptor::Inference(_) | TypeDescriptor::Any)
+    {
+        return true;
+    }
+    match (actual, expected) {
+        (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
+        | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
+        | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
+            potentially_assignable(actual, expected)
+        }
+        (TypeDescriptor::Tuple(actual), TypeDescriptor::Tuple(expected))
+            if actual.len() == expected.len() =>
+        {
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| potentially_assignable(actual, expected))
+        }
+        (TypeDescriptor::Struct(actual), TypeDescriptor::Struct(expected))
+            if actual.keys().eq(expected.keys()) =>
+        {
+            actual
+                .iter()
+                .all(|(name, actual)| potentially_assignable(actual, &expected[name]))
+        }
+        _ => assignable(actual, expected),
+    }
 }
 
 fn join_types(left: TypeDescriptor, right: TypeDescriptor) -> TypeDescriptor {
