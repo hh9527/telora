@@ -195,7 +195,7 @@ let result = {
 
 ```text
 !x  -x
-*  /  +  -
+*  /  %  +  -
 &  ^  |
 <  >  <=  >=  ==  !=
 &&  ||
@@ -208,11 +208,17 @@ let result = {
 高于比较。前缀 `!` 和数值负号结合得更紧。`&&` 和 `||` 只接受 Bool 并短路。
 `left |> right` 统一降低为 `right(left)`。
 
-Float 的 `+`、`-`、`*` 和 `/` 执行 binary64 运算，但结果必须仍是有限 Float。
+`%` 与 `*`、`/` 处于同一优先级并左结合，接受两个类型相同的 Int 或 Float。
+它使用截断商余数：`r = left - trunc(left / right) * right`。因此非零余数与左操作数
+同号，且其绝对值小于右操作数的绝对值；例如 `-7 % 3 == -1`、
+`7 % -3 == 1`。Int 的零除数产生 `DivisionByZero`；最小 Int 对 `-1` 求余产生
+`IntegerOverflow`。
+
+Float 的 `+`、`-`、`*`、`/` 和 `%` 执行 binary64 运算，但结果必须仍是有限 Float。
 如果结果为 `NaN`、`+Inf` 或 `-Inf`，求值执行等价于
 `fail!("NonFiniteFloat", left, right)` 的结构化失败；两个操作数按源码顺序各求值
-一次，完整运算表达式是 rule origin。Float 除以正零或负零也使用这一失败，而不是
-Int 的除零错误。Float 一元负号保持有限域不变。
+一次，完整运算表达式是 rule origin。Float 除以或对正零、负零求余也使用这一失败，
+而不是 Int 的除零错误。Float 一元负号保持有限域不变。
 
 `!` 的 Bool/Int 重载由已知操作数或期望结果类型选择；两者都未知时不任意默认。
 通过 `Any` 边界但结果已约束为 Bool 或 Int 时，运行期仍检查所选择重载的输入。

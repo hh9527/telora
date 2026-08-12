@@ -61,6 +61,11 @@ pub enum Operation {
         left: RegisterId,
         right: RegisterId,
     },
+    Remainder {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
     Negate {
         dst: RegisterId,
         src: RegisterId,
@@ -377,6 +382,11 @@ fn lower_operation(
             right: register(right)?,
         },
         Operation::Divide { dst, left, right } => Instruction::Divide {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
+        },
+        Operation::Remainder { dst, left, right } => Instruction::Remainder {
             dst: register(dst)?,
             left: register(left)?,
             right: register(right)?,

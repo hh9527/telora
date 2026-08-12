@@ -61,6 +61,11 @@ pub enum Instruction {
         left: Register,
         right: Register,
     },
+    Remainder {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
     Negate {
         dst: Register,
         src: Register,
@@ -257,6 +262,11 @@ pub enum Opcode {
         right: Register,
     },
     Divide {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    Remainder {
         dst: Register,
         left: Register,
         right: Register,
@@ -671,6 +681,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Subtract { dst, left, right } => Opcode::Subtract { dst, left, right },
         Instruction::Multiply { dst, left, right } => Opcode::Multiply { dst, left, right },
         Instruction::Divide { dst, left, right } => Opcode::Divide { dst, left, right },
+        Instruction::Remainder { dst, left, right } => Opcode::Remainder { dst, left, right },
         Instruction::Negate { dst, src } => Opcode::Negate { dst, src },
         Instruction::Not { dst, src } => Opcode::Not { dst, src },
         Instruction::LogicalNot { dst, src } => Opcode::LogicalNot { dst, src },

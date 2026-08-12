@@ -1541,6 +1541,18 @@ impl Vm {
                         )?;
                         write_register(&mut registers, *dst, value, function, pc)?;
                     }
+                    Opcode::Remainder { dst, left, right } => {
+                        let value = numeric_binary(
+                            read_register(&registers, *left, function, pc)?,
+                            read_register(&registers, *right, function, pc)?,
+                            NumericOperation::Remainder,
+                            &view,
+                            account,
+                            function,
+                            pc,
+                        )?;
+                        write_register(&mut registers, *dst, value, function, pc)?;
+                    }
                     Opcode::Negate { dst, src } => {
                         let input = *read_register(&registers, *src, function, pc)?;
                         let value = match input.value {
@@ -10394,6 +10406,7 @@ enum NumericOperation {
     Subtract,
     Multiply,
     Divide,
+    Remainder,
 }
 
 #[derive(Clone, Copy)]
@@ -10438,10 +10451,18 @@ fn numeric_binary(
 ) -> Result<RichValue, RuntimeError> {
     match (left.value, right.value) {
         (RuntimeValue::Int(left), RuntimeValue::Int(right)) => {
-            if matches!(operation, NumericOperation::Divide) && right == 0 {
+            if matches!(
+                operation,
+                NumericOperation::Divide | NumericOperation::Remainder
+            ) && right == 0
+            {
                 return Err(error(
                     RuntimeErrorKind::DivisionByZero,
-                    "integer division by zero",
+                    match operation {
+                        NumericOperation::Divide => "integer division by zero",
+                        NumericOperation::Remainder => "integer remainder by zero",
+                        _ => unreachable!("zero check only applies to division and remainder"),
+                    },
                     function,
                     pc,
                 ));
@@ -10451,6 +10472,7 @@ fn numeric_binary(
                 NumericOperation::Subtract => left.checked_sub(right),
                 NumericOperation::Multiply => left.checked_mul(right),
                 NumericOperation::Divide => left.checked_div(right),
+                NumericOperation::Remainder => left.checked_rem(right),
             }
             .ok_or_else(|| {
                 error(
@@ -10468,6 +10490,7 @@ fn numeric_binary(
                 NumericOperation::Subtract => left_value - right_value,
                 NumericOperation::Multiply => left_value * right_value,
                 NumericOperation::Divide => left_value / right_value,
+                NumericOperation::Remainder => left_value % right_value,
             };
             if !value.is_finite() {
                 return Err(non_finite_float_error(account, left, right, function, pc));

@@ -58,6 +58,7 @@ pub enum Token {
     Minus,
     Star,
     Slash,
+    Percent,
     Less,
     LessEqual,
     Greater,
@@ -168,6 +169,8 @@ enum NormalToken {
     Star,
     #[token("/")]
     Slash,
+    #[token("%")]
+    Percent,
     #[token("<")]
     Less,
     #[token("<=")]
@@ -679,6 +682,7 @@ impl From<NormalToken> for Token {
             NormalToken::Minus => Self::Minus,
             NormalToken::Star => Self::Star,
             NormalToken::Slash => Self::Slash,
+            NormalToken::Percent => Self::Percent,
             NormalToken::Less => Self::Less,
             NormalToken::LessEqual => Self::LessEqual,
             NormalToken::Greater => Self::Greater,
@@ -763,6 +767,20 @@ mod tests {
                 Token::EqualEqual,
                 Token::BangEqual,
             ]
+        );
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn recognizes_remainder_as_an_operator() {
+        let mut diagnostics = Vec::new();
+        let (tokens, _) = tokenize("7 % 3", &mut diagnostics);
+        assert_eq!(
+            tokens
+                .into_iter()
+                .filter(|token| *token != Token::Whitespace)
+                .collect::<Vec<_>>(),
+            vec![Token::Int, Token::Percent, Token::Int]
         );
         assert!(diagnostics.is_empty());
     }

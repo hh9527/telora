@@ -57,15 +57,22 @@ operands; there is no mixed numeric coercion. String order is lexicographic over
 the exact internal UTF-8 byte sequence, without normalization, locale rules,
 case folding, or natural-number sorting.
 
-Float `+`, `-`, `*`, and `/` must produce a finite Float. A NaN or infinity
+`%` accepts matching Int or Float operands, shares precedence and left
+associativity with `*` and `/`, and uses truncating remainder. A nonzero result
+has the sign of the left operand: `-7 % 3 == -1` and `7 % -3 == 1`. Int `% 0`
+fails with `DivisionByZero`.
+
+Float `+`, `-`, `*`, `/`, and `%` must produce a finite Float. A NaN or infinity
 result raises sourced blame equivalent to
 `fail!("NonFiniteFloat", left, right)`. This includes Float division by positive
-or negative zero and arithmetic overflow. The operands evaluate once in source
-order. Finite Float comparison has ordinary numeric behavior, and `-0.0 == 0.0`.
+or negative zero, Float remainder by either zero, and arithmetic overflow. The
+operands evaluate once in source order. Finite Float comparison has ordinary
+numeric behavior, and `-0.0 == 0.0`.
 
 Prefix `!` returns the opposite canonical Bool for Bool and bitwise complement
 for Int. Binary `&`, `^`, and `|` accept only Int. Their precedence is
-arithmetic, `&`, `^`, `|`, comparison, `&&`, then `||`, from tighter to looser.
+unary, `*`/`/`/`%`, `+`/`-`, `&`, `^`, `|`, comparison, `&&`, then `||`, from
+tighter to looser.
 All six comparisons share one non-associative precedence level. Write
 parentheses when comparing a comparison result; `a < b <= c` is not a chained
 comparison. `&&` and `||` accept Bool and short-circuit. An `if` expression

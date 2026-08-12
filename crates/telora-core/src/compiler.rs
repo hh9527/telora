@@ -962,6 +962,7 @@ impl<'a> Compiler<'a> {
                     BinaryOperator::Subtract => Operation::Subtract { dst, left, right },
                     BinaryOperator::Multiply => Operation::Multiply { dst, left, right },
                     BinaryOperator::Divide => Operation::Divide { dst, left, right },
+                    BinaryOperator::Remainder => Operation::Remainder { dst, left, right },
                     BinaryOperator::LessThan => Operation::LessThan { dst, left, right },
                     BinaryOperator::LessThanOrEqual => {
                         Operation::LessThanOrEqual { dst, left, right }
@@ -2981,6 +2982,67 @@ let decorators = {
             panic!("expected runtime Int check");
         };
         assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
+    }
+
+    #[test]
+    fn remainder_supports_int_float_precedence_and_dynamic_boundaries() {
+        let value = run("(7 % 3, -7 % 3, 7 % -3, -7 % -3, \
+             5.5 % 2.0, -5.5 % 2.0, 5.5 % -2.0, \
+             2 + 7 % 4 * 3, 20 / 3 % 2, 20 % 6 * 2)")
+        .unwrap();
+        assert_eq!(
+            value.to_string(),
+            "(1, -1, 1, -1, 1.5, -1.5, 1.5, 11, 0, 4)"
+        );
+
+        let dynamic =
+            run("let rem: Fn(Any, Any) -> Int = fn(left, right) { left % right }; rem(7, 3)")
+                .unwrap();
+        assert_eq!(dynamic.to_string(), "1");
+
+        for source in ["1 % 1.0", "\"x\" % 1"] {
+            let error = compile_source("test", source).unwrap_err();
+            assert!(
+                error.message.contains("Int or Float") || error.message.contains("cannot unify"),
+                "{source}: {}",
+                error.message
+            );
+        }
+
+        let ExecutionError::Runtime(error) =
+            run("let rem: Fn(Any, Any) -> Int = fn(left, right) { left % right }; rem(7, \"x\")")
+                .unwrap_err()
+        else {
+            panic!("expected runtime numeric type error")
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::TypeMismatch);
+    }
+
+    #[test]
+    fn remainder_uses_existing_numeric_failure_paths() {
+        let ExecutionError::Runtime(error) = run("7 % 0").unwrap_err() else {
+            panic!("expected Int zero-divisor failure")
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::DivisionByZero);
+        assert_eq!(error.message, "integer remainder by zero");
+        assert!(error.origin().is_some());
+
+        let ExecutionError::Runtime(error) = run("(-9223372036854775807 - 1) % -1").unwrap_err()
+        else {
+            panic!("expected Int remainder overflow")
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::IntegerOverflow);
+
+        for source in ["7.0 % 0.0", "7.0 % -0.0"] {
+            let ExecutionError::Runtime(error) = run(source).unwrap_err() else {
+                panic!("expected Float non-finite failure")
+            };
+            assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
+            assert_eq!(error.message, "NonFiniteFloat");
+            assert!(error.data_location().is_some());
+            assert!(error.rule_location().is_some());
+            assert_eq!(error.origin(), error.rule_location().map(Origin::Source));
+        }
     }
 
     #[test]

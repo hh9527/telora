@@ -1305,6 +1305,8 @@ impl<'a> Lowerer<'a> {
                     (BinaryOperator::Multiply, operator)
                 } else if let Some(operator) = self.token_children(node, Token::Slash).next() {
                     (BinaryOperator::Divide, operator)
+                } else if let Some(operator) = self.token_children(node, Token::Percent).next() {
+                    (BinaryOperator::Remainder, operator)
                 } else if let Some(operator) = self.token_children(node, Token::Less).next() {
                     (BinaryOperator::LessThan, operator)
                 } else if let Some(operator) = self.token_children(node, Token::LessEqual).next() {
@@ -3138,7 +3140,7 @@ export { private as visible, identity as map };"#,
     #[test]
     fn missing_binary_right_operands_are_diagnosed_without_panicking() {
         for operator in [
-            "+", "-", "*", "/", "&", "|", "^", "<", "<=", ">", ">=", "==", "!=", "&&", "||",
+            "+", "-", "*", "/", "%", "&", "|", "^", "<", "<=", ">", ">=", "==", "!=", "&&", "||",
         ] {
             let mut sources = SourceDatabase::default();
             let source_id = sources.add("missing.telora", format!("1 {operator} ;"));
