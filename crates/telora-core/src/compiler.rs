@@ -2339,7 +2339,7 @@ let decorators = {
                 .contains("cannot unify Fn(Any, Any) -> Any with Fn(Int) -> Int")
         );
         assert_eq!(wrong_arity.location.line, 1);
-        assert_eq!(wrong_arity.location.column, 66);
+        assert_eq!(wrong_arity.location.column, 72);
     }
 
     #[test]

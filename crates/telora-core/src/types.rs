@@ -2380,10 +2380,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         inference.recursive_body_inference_depth -= 1;
         inference.delayed_initializer_depth -= 1;
         let inferred = inferred.map_err(|message| {
-            FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(message, binding.value.value.location),
-            )
+            let location = inference.take_failure_location(binding.value.value.location);
+            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
         })?;
         if let (
             Some(variable),
@@ -2418,10 +2416,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let inferred = inference.infer(&binding.value.value, &checked_environment, None);
         inference.delayed_initializer_depth -= 1;
         let inferred = inferred.map_err(|message| {
-            FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(message, binding.value.value.location),
-            )
+            let location = inference.take_failure_location(binding.value.value.location);
+            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
         })?;
         let scheme = inference
             .generalize_local_closure(&inferred, first_owned_variable, binding.value.name.location)
@@ -2542,10 +2538,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
             inference.delayed_initializer_depth -= 1;
         }
         let inferred = inferred.map_err(|message| {
-            FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(message, binding.value.value.location),
-            )
+            let location = inference.take_failure_location(binding.value.value.location);
+            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
         })?;
         if binding.value.kind == BindingKind::Type {
             continue;
@@ -2607,10 +2601,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let result_type = inference
         .infer(&program.value.body.value.result, &checked_environment, None)
         .map_err(|message| {
-            FrontendError::from_diagnostic(
-                sources,
-                Diagnostic::error(message, program.value.body.value.result.location),
-            )
+            let location =
+                inference.take_failure_location(program.value.body.value.result.location);
+            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
         })?;
     let module_requirement = inference
         .propagation_boundaries
@@ -4832,6 +4825,7 @@ struct GenericInference<'a> {
     return_boundaries: Vec<Option<ReturnBoundary>>,
     propagation_families: HashMap<crate::Location, PropagationFamily>,
     not_families: HashMap<crate::Location, NotFamily>,
+    failure_location: Option<crate::Location>,
 }
 
 #[derive(Clone)]
@@ -5033,7 +5027,12 @@ impl<'a> GenericInference<'a> {
             return_boundaries: vec![None],
             propagation_families: HashMap::new(),
             not_families: HashMap::new(),
+            failure_location: None,
         }
+    }
+
+    fn take_failure_location(&mut self, fallback: crate::Location) -> crate::Location {
+        self.failure_location.take().unwrap_or(fallback)
     }
 
     fn finish_return_boundary(
@@ -6118,6 +6117,19 @@ impl<'a> GenericInference<'a> {
     }
 
     fn infer(
+        &mut self,
+        expression: &Expr,
+        environment: &HashMap<String, TypeDescriptor>,
+        expected: Option<&TypeDescriptor>,
+    ) -> Result<TypeDescriptor, String> {
+        let result = self.infer_inner(expression, environment, expected);
+        if result.is_err() && self.failure_location.is_none() {
+            self.failure_location = Some(expression.location);
+        }
+        result
+    }
+
+    fn infer_inner(
         &mut self,
         expression: &Expr,
         environment: &HashMap<String, TypeDescriptor>,
@@ -9305,6 +9317,27 @@ mod tests {
             invalid.message.contains("cannot unify Int with T0"),
             "{}",
             invalid.message
+        );
+    }
+
+    #[test]
+    fn nested_inference_errors_retain_the_offending_expression_location() {
+        let source = "def apply: for(A) Fn(Fn(A, Int, A) -> A, A) -> A = fn(step, acc) {\
+                      step(acc, 1)\
+                      };\
+                      apply(fn(acc, value, extra) { acc + value + extra }, 0)";
+        let error = analyze_with_natives(source, &[]).unwrap_err();
+        assert!(
+            error.message.contains("call expects 3 arguments, found 2"),
+            "{}",
+            error.message
+        );
+        let diagnostic = error.diagnostic.expect("located inference diagnostic");
+        let call = "step(acc, 1)";
+        let start = source.find(call).expect("call expression exists");
+        assert_eq!(
+            diagnostic.labels[0].location.range(),
+            start..start + call.len()
         );
     }
 
