@@ -176,6 +176,14 @@ fn validate_option_literal(expression: &Expr) -> Result<(), Diagnostic> {
     }
 }
 
+fn parse_float_literal(text: &str) -> Result<f64, &'static str> {
+    let value = text.parse::<f64>().map_err(|_| "invalid Float literal")?;
+    value
+        .is_finite()
+        .then_some(value)
+        .ok_or("Float literal must be finite")
+}
+
 fn valid_option_key(key: &str) -> bool {
     let mut segments = key.split('.');
     let Some(first) = segments.next() else {
@@ -1049,9 +1057,8 @@ impl<'a> Lowerer<'a> {
                         .map_err(|_| self.error(node, "Int literal is outside the i64 range"))?,
                 ),
                 Token::Float => ExprKind::Float(
-                    self.text(node)
-                        .parse()
-                        .map_err(|_| self.error(node, "invalid Float literal"))?,
+                    parse_float_literal(&self.text(node))
+                        .map_err(|message| self.error(node, message))?,
                 ),
                 Token::Bytes => ExprKind::Bytes(self.decode_telora_string(node)?.into_bytes()),
                 Token::Atom => ExprKind::Atom(self.text(node).trim_start_matches('\'').to_owned()),
@@ -1077,11 +1084,13 @@ impl<'a> Lowerer<'a> {
                     .parse()
                     .map_err(|_| self.error(node, "Int literal is outside the i64 range"))?,
             ),
-            Rule::FloatExpr => ExprKind::Float(
-                self.text(self.first_token(node, Token::Float)?)
-                    .parse()
-                    .map_err(|_| self.error(node, "invalid Float literal"))?,
-            ),
+            Rule::FloatExpr => {
+                let token = self.first_token(node, Token::Float)?;
+                ExprKind::Float(
+                    parse_float_literal(&self.text(token))
+                        .map_err(|message| self.error(token, message))?,
+                )
+            }
             Rule::StringExpr => return self.string_expression(node),
             Rule::BytesExpr => ExprKind::Bytes(
                 self.decode_telora_string(self.first_token(node, Token::Bytes)?)?
@@ -1704,9 +1713,8 @@ impl<'a> Lowerer<'a> {
                         .map_err(|_| self.error(node, "invalid Int pattern"))?,
                 ),
                 Token::Float => PatternKind::Float(
-                    self.text(node)
-                        .parse()
-                        .map_err(|_| self.error(node, "invalid Float pattern"))?,
+                    parse_float_literal(&self.text(node))
+                        .map_err(|message| self.error(node, message))?,
                 ),
                 Token::Atom => {
                     PatternKind::Atom(self.text(node).trim_start_matches('\'').to_owned())
@@ -1743,11 +1751,13 @@ impl<'a> Lowerer<'a> {
                     .parse()
                     .map_err(|_| self.error(node, "invalid Int pattern"))?,
             ),
-            Rule::FloatPattern => PatternKind::Float(
-                self.text(self.first_token(node, Token::Float)?)
-                    .parse()
-                    .map_err(|_| self.error(node, "invalid Float pattern"))?,
-            ),
+            Rule::FloatPattern => {
+                let token = self.first_token(node, Token::Float)?;
+                PatternKind::Float(
+                    parse_float_literal(&self.text(token))
+                        .map_err(|message| self.error(token, message))?,
+                )
+            }
             Rule::StringPattern => {
                 let string = self
                     .rule_children(node)
@@ -3024,6 +3034,38 @@ export { private as visible, identity as map };"#,
             ExprKind::TupleProjection { ref index, .. } if index.value == 1
         ));
         assert!(matches!(items[11].value, ExprKind::Float(value) if value == 1.0));
+    }
+
+    #[test]
+    fn rejects_non_finite_float_literals_and_patterns() {
+        for source in [
+            "1e9999".to_owned(),
+            "match 1.0 { 1e9999 => 0, _ => 1 }".to_owned(),
+        ] {
+            let mut sources = SourceDatabase::default();
+            let id = sources.add("float.telora", &source);
+            let parsed = parse_registered(&sources, id);
+            assert!(parsed.program.is_none(), "accepted {source}");
+            assert!(
+                parsed
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains("Float literal must be finite")),
+                "{source}: {:?}",
+                parsed.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn parses_finite_float_exponent_notation() {
+        let program = parse("float.telora", "(1e3, 1.25e-3, 1.0E+8)").unwrap();
+        let ExprKind::Tuple(values) = &program.value.body.value.result.value else {
+            panic!("expected tuple")
+        };
+        assert!(matches!(values[0].value, ExprKind::Float(value) if value == 1000.0));
+        assert!(matches!(values[1].value, ExprKind::Float(value) if value == 0.00125));
+        assert!(matches!(values[2].value, ExprKind::Float(value) if value == 100_000_000.0));
     }
 
     #[test]

@@ -55,6 +55,7 @@ Telora 源文件通常以 `.telora` 结尾。`#` 引入行注释；文件开头�
 ```telora
 42                         # Int
 0.75                       # Float
+1e308                      # 使用十进制指数记法的 Float
 "text"                     # String
 b"bytes"                   # Bytes
 r"raw text"                # raw String
@@ -73,6 +74,11 @@ let greeting = `hello \{name}`;
 
 Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
 条件位置只接受 Bool，不进行 truthiness 转换。
+
+Float 是有限的 IEEE 754 binary64 值。字面量可以写成 `digits.digits`、
+`digits exponent` 或 `digits.digits exponent`；exponent 使用 `e` 或 `E`，并可带
+`+`/`-` 号。舍入为 `NaN`、`+Inf` 或 `-Inf` 的形式不是合法字面量；语言也不提供
+这些值的关键字或特殊拼写。正负零、正规数和次正规数都属于 Float。
 
 ## 3. 运行时值
 
@@ -163,9 +169,8 @@ Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。�
 而不是比较代码或闭包捕获内容。`!=` 是 `==` 的精确布尔补集。
 
 `<`、`>`、`<=` 和 `>=` 只接受类型相同的 `Int`、`Float` 或 `String` 操作数；数值
-之间没有隐式转换。Int 使用有符号数值顺序。Float 使用 IEEE/Rust primitive 比较：
-涉及 NaN 的四种顺序比较均为 false，NaN 与任何值（包括自身）的 `==` 为 false、
-`!=` 为 true，正负零相等。
+之间没有隐式转换。Int 使用有符号数值顺序。Float 只包含有限 binary64 值，使用
+通常的有限数值顺序，正负零相等。因此 Float 相等是自反的，不存在 unordered 比较。
 
 String 顺序是其内部 UTF-8 字节序列的字典序：第一个不同字节较小者在前；若一方是
 另一方的前缀，较短者在前。不执行 Unicode normalization、locale collation、
@@ -202,6 +207,12 @@ let result = {
 使用其有符号二进制补码表示。位运算的优先级依次为 `&`、`^`、`|`，低于算术、
 高于比较。前缀 `!` 和数值负号结合得更紧。`&&` 和 `||` 只接受 Bool 并短路。
 `left |> right` 统一降低为 `right(left)`。
+
+Float 的 `+`、`-`、`*` 和 `/` 执行 binary64 运算，但结果必须仍是有限 Float。
+如果结果为 `NaN`、`+Inf` 或 `-Inf`，求值执行等价于
+`fail!("NonFiniteFloat", left, right)` 的结构化失败；两个操作数按源码顺序各求值
+一次，完整运算表达式是 rule origin。Float 除以正零或负零也使用这一失败，而不是
+Int 的除零错误。Float 一元负号保持有限域不变。
 
 `!` 的 Bool/Int 重载由已知操作数或期望结果类型选择；两者都未知时不任意默认。
 通过 `Any` 边界但结果已约束为 Bool 或 Int 时，运行期仍检查所选择重载的输入。

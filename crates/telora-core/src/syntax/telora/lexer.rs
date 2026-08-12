@@ -200,7 +200,7 @@ enum NormalToken {
     Pipe,
     #[regex(r"[0-9]+")]
     Int,
-    #[regex(r"[0-9]+\.[0-9]+")]
+    #[regex(r"[0-9]+(\.[0-9]+([eE][+-]?[0-9]+)?|[eE][+-]?[0-9]+)")]
     Float,
     #[token("\"")]
     DoubleQuote,
@@ -456,8 +456,11 @@ fn contextualize_projection_tokens(
     let mut index = 0;
     while index < tokens.len() {
         let token = tokens[index];
-        if token == Token::Float && previous_significant == Some(Token::Dot) {
-            let span = spans[index].clone();
+        let span = spans[index].clone();
+        if token == Token::Float
+            && previous_significant == Some(Token::Dot)
+            && source[span.clone()].contains('.')
+        {
             let decimal = source[span.clone()]
                 .find('.')
                 .expect("Float token contains a decimal point");
@@ -860,6 +863,37 @@ mod tests {
         assert_eq!(significant[11].1, &(25..27));
         assert_eq!(significant[12].1, &(27..28));
         assert_eq!(significant[13].1, &(28..30));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn recognizes_float_exponent_notation_without_affecting_projections() {
+        let mut diagnostics = Vec::new();
+        let source = "1e3 1.25e-3 1.0E+8 pair.1.0 pair.1e2";
+        let (tokens, spans) = tokenize(source, &mut diagnostics);
+        let significant = tokens
+            .iter()
+            .copied()
+            .zip(spans.iter())
+            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::Comment))
+            .map(|(token, span)| (token, &source[span.clone()]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            significant,
+            vec![
+                (Token::Float, "1e3"),
+                (Token::Float, "1.25e-3"),
+                (Token::Float, "1.0E+8"),
+                (Token::Identifier, "pair"),
+                (Token::Dot, "."),
+                (Token::Int, "1"),
+                (Token::Dot, "."),
+                (Token::Int, "0"),
+                (Token::Identifier, "pair"),
+                (Token::Dot, "."),
+                (Token::Float, "1e2"),
+            ]
+        );
         assert!(diagnostics.is_empty());
     }
 

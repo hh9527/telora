@@ -487,6 +487,19 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
     }
 
     pub fn set_float(&mut self, destination: RegisterId, value: f64) -> Result<(), NativeError> {
+        if !value.is_finite() {
+            let value_count = self
+                .argument_count
+                .checked_add(3)
+                .ok_or_else(|| NativeError::allocation_limit("allocation item count overflowed"))?;
+            let bytes = logical_value_bytes(value_count)?
+                .checked_add(15) // "data", "message", and "rule"
+                .ok_or_else(|| NativeError::allocation_limit("allocation size overflowed"))?;
+            self.account
+                .charge_allocation(bytes)
+                .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))?;
+            return Err(NativeError::non_finite_float());
+        }
         self.set(destination, RuntimeValue::Float(value).into())
     }
 
@@ -1474,6 +1487,7 @@ impl Vm {
                             read_register(&registers, *right, function, pc)?,
                             NumericOperation::Add,
                             &view,
+                            account,
                             function,
                             pc,
                         )?;
@@ -1491,6 +1505,7 @@ impl Vm {
                             read_register(&registers, *right, function, pc)?,
                             NumericOperation::Subtract,
                             &view,
+                            account,
                             function,
                             pc,
                         )?;
@@ -1508,6 +1523,7 @@ impl Vm {
                             read_register(&registers, *right, function, pc)?,
                             NumericOperation::Multiply,
                             &view,
+                            account,
                             function,
                             pc,
                         )?;
@@ -1519,6 +1535,7 @@ impl Vm {
                             read_register(&registers, *right, function, pc)?,
                             NumericOperation::Divide,
                             &view,
+                            account,
                             function,
                             pc,
                         )?;
@@ -3064,6 +3081,17 @@ fn native_runtime_error(
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
+    if native_error.is_non_finite_float() {
+        let location = instruction_location(function, pc);
+        let mut runtime = error(
+            RuntimeErrorKind::RaisedBlame,
+            "NonFiniteFloat",
+            function,
+            pc,
+        );
+        runtime.set_locations(location, location);
+        return runtime;
+    }
     error(
         match native_error.limit() {
             Some(NativeLimit::Stack) => RuntimeErrorKind::StackLimitExceeded,
@@ -10404,6 +10432,7 @@ fn numeric_binary(
     right: &RichValue,
     operation: NumericOperation,
     view: &HeapView<'_>,
+    account: &mut QuotaAccount,
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<RichValue, RuntimeError> {
@@ -10433,14 +10462,17 @@ fn numeric_binary(
             })?;
             Ok(RuntimeValue::Int(value).into())
         }
-        (RuntimeValue::Float(left), RuntimeValue::Float(right)) => {
-            Ok(RuntimeValue::Float(match operation {
-                NumericOperation::Add => left + right,
-                NumericOperation::Subtract => left - right,
-                NumericOperation::Multiply => left * right,
-                NumericOperation::Divide => left / right,
-            })
-            .into())
+        (RuntimeValue::Float(left_value), RuntimeValue::Float(right_value)) => {
+            let value = match operation {
+                NumericOperation::Add => left_value + right_value,
+                NumericOperation::Subtract => left_value - right_value,
+                NumericOperation::Multiply => left_value * right_value,
+                NumericOperation::Divide => left_value / right_value,
+            };
+            if !value.is_finite() {
+                return Err(non_finite_float_error(account, left, right, function, pc));
+            }
+            Ok(RuntimeValue::Float(value).into())
         }
         _ => Err(runtime_numeric_type_error(left, right, view, function, pc)),
     }
@@ -10679,6 +10711,39 @@ fn out_of_range_error(
     let location = instruction_location(function, pc);
     let mut runtime = error(RuntimeErrorKind::RaisedBlame, "OutOfRange", function, pc);
     runtime.set_locations(location, location);
+    runtime
+}
+
+fn non_finite_float_error(
+    account: &mut QuotaAccount,
+    left: &RichValue,
+    right: &RichValue,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> RuntimeError {
+    // Equivalent to allocating the two-subject Tuple and three-field BlameError
+    // produced by fail!("NonFiniteFloat", left, right).
+    let bytes = logical_value_bytes(5)
+        .and_then(|bytes| {
+            bytes
+                .checked_add(15) // "data", "message", and "rule"
+                .ok_or_else(|| NativeError::allocation_limit("allocation size overflowed"))
+        })
+        .map_err(|native_error| allocation_error(native_error.message, function, pc))
+        .and_then(|bytes| charge_allocation(account, bytes, function, pc));
+    if let Err(error) = bytes {
+        return error;
+    }
+    let mut runtime = error(
+        RuntimeErrorKind::RaisedBlame,
+        "NonFiniteFloat",
+        function,
+        pc,
+    );
+    runtime.set_locations(
+        left.loc().or(right.loc()),
+        instruction_location(function, pc),
+    );
     runtime
 }
 
@@ -11264,6 +11329,34 @@ mod tests {
             .as_int()
             .ok_or_else(|| NativeError::new("expected Int argument"))?;
         context.set_int(context.result(), value)
+    }
+
+    fn native_non_finite_float(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+        context.set_float(context.result(), f64::INFINITY)
+    }
+
+    #[test]
+    fn native_non_finite_float_result_raises_blame_at_the_call() {
+        let native = NativeFunction::new("non_finite_float", 0, native_non_finite_float);
+        let function = BytecodeFunction::new(
+            "native-float-call",
+            1,
+            vec![Value::Func(Arc::new(Closure::native(native)))],
+            vec![
+                Instruction::LoadConst {
+                    dst: Register(0),
+                    constant: 0,
+                },
+                Instruction::Call {
+                    base: Register(0),
+                    argument_count: 0,
+                },
+                Instruction::Return { src: Register(0) },
+            ],
+        );
+        let error = Vm::new().execute(&function, 1).unwrap_err();
+        assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
+        assert_eq!(error.message, "NonFiniteFloat");
     }
 
     #[test]

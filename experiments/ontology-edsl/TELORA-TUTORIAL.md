@@ -13,6 +13,7 @@ TypeMetadata is ordinary data evaluated by the same VM as program code.
 ```telora
 42                         # Int
 3.5                        # Float
+1e6                        # Float with a decimal exponent
 "text"                     # String
 b"bytes"                   # Bytes
 'Ready                     # Atom
@@ -24,6 +25,9 @@ b"bytes"                   # Bytes
 ```
 
 Bool values are `'True` and `'False`; Telora has no truthiness conversion.
+Float is finite IEEE 754 binary64. Float literals accept decimal-point form
+(`3.5`) and exponent form (`1e6`, `1.25e-3`). NaN and positive or negative
+infinity are not Telora values.
 
 ```telora
 let answer = 40 + 2;
@@ -52,6 +56,12 @@ values. Ordered comparison accepts only matching `Int`, `Float`, or `String`
 operands; there is no mixed numeric coercion. String order is lexicographic over
 the exact internal UTF-8 byte sequence, without normalization, locale rules,
 case folding, or natural-number sorting.
+
+Float `+`, `-`, `*`, and `/` must produce a finite Float. A NaN or infinity
+result raises sourced blame equivalent to
+`fail!("NonFiniteFloat", left, right)`. This includes Float division by positive
+or negative zero and arithmetic overflow. The operands evaluate once in source
+order. Finite Float comparison has ordinary numeric behavior, and `-0.0 == 0.0`.
 
 Prefix `!` returns the opposite canonical Bool for Bool and bitwise complement
 for Int. Binary `&`, `^`, and `|` accept only Int. Their precedence is

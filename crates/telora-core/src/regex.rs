@@ -354,10 +354,15 @@ fn execute_plan(plan: &ParsePlan, input: &str) -> Result<ParsedValue, String> {
             .parse::<i64>()
             .map_err(|_| "input is not a valid Int".to_owned())
             .map(ParsedValue::Int),
-        ParsePlan::Float => input
-            .parse::<f64>()
-            .map_err(|_| "input is not a valid Float".to_owned())
-            .map(ParsedValue::Float),
+        ParsePlan::Float => {
+            let value = input
+                .parse::<f64>()
+                .map_err(|_| "input is not a valid Float".to_owned())?;
+            value
+                .is_finite()
+                .then_some(ParsedValue::Float(value))
+                .ok_or_else(|| "input is not a finite Float".to_owned())
+        }
         ParsePlan::Regex { compiled, fields } => {
             let captures = compiled
                 .regex
@@ -480,4 +485,23 @@ pub(crate) fn native_encode_by_display(
     context: &mut CallContext<'_, '_>,
 ) -> Result<(), NativeError> {
     native_text_codec_marker(context, "std/string.encode_by_display")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_plan_rejects_non_finite_results() {
+        for input in ["NaN", "inf", "-inf", "1e9999"] {
+            let Err(error) = execute_plan(&ParsePlan::Float, input) else {
+                panic!("accepted non-finite Float {input}")
+            };
+            assert!(error.contains("finite Float"), "{input}: {error}");
+        }
+        assert!(matches!(
+            execute_plan(&ParsePlan::Float, "1.5"),
+            Ok(ParsedValue::Float(1.5))
+        ));
+    }
 }

@@ -1,6 +1,6 @@
 # RFC 0223: Finite Float Domain and Non-finite Failure
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0003, RFC 0021, RFC 0052, RFC 0105, RFC 0127,
   RFC 0187, RFC 0189, RFC 0221
 - Tracking issue: #32
@@ -114,6 +114,10 @@ choice independently.
 Decimal Float literals must parse to a finite binary64 value. A literal whose
 magnitude rounds to infinity is invalid source and receives a diagnostic at
 the literal. There are no NaN or infinity keywords or literal spellings.
+
+Float literals accept decimal-point notation (`1.25`) and exponent notation
+with or without a decimal point (`1e308`, `1.25e-3`, `1.0E+8`). A leading sign
+remains an ordinary unary operator rather than part of the literal token.
 
 Literal rejection is an analysis error, not a runtime `fail!`, because no
 valid executable Float operand exists.
@@ -395,3 +399,23 @@ If a boundary cannot preserve sourced `fail!` behavior because it has no
 authored expression, it must reject the value before insertion and use that
 boundary's existing sourced validation error. It must not fabricate a Telora
 expression origin or temporarily store the non-finite value.
+
+## Implementation result
+
+Implemented in the parser, VM, heap boundary, native result API, static-data
+loaders, and regex/string parser. Float arithmetic raises `RaisedBlame` with
+the exact `NonFiniteFloat` message. Its data location is the first available
+operand origin and its rule location is the complete authored operation; the
+failure also charges the allocation equivalent of the two-subject
+`BlameError`, following the existing direct `OutOfRange` implementation model.
+
+Telora source now accepts finite decimal exponent notation. TOML and YAML
+non-finite spellings and numeric overflow are rejected at their scalar source;
+JSON retains its finite-number check. Heap import and export reject non-finite
+`Value::Float`, which protects module publication, `Any`, `Dyn`, and legacy
+Host value boundaries. `CallContext::set_float` rejects non-finite native
+results and maps the authored call to `RaisedBlame("NonFiniteFloat")`.
+
+The language SSOT and ontology experiment tutorial now describe only finite
+Float comparison. Historical RFC 0221 remains unchanged and its NaN/infinity
+clauses are superseded by this RFC.

@@ -572,7 +572,8 @@ impl Heap {
         let loc = provenance.values.get(path).copied();
         let value = match value {
             Value::Int(value) => RuntimeValue::Int(*value),
-            Value::Float(value) => RuntimeValue::Float(*value),
+            Value::Float(value) if value.is_finite() => RuntimeValue::Float(*value),
+            Value::Float(_) => return Err(HeapError("Telora Float must be finite")),
             Value::String(value) => self.string(background, value),
             Value::Bytes(value) => {
                 RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
@@ -656,7 +657,8 @@ impl Heap {
         Ok(RichValue::new(
             match value {
                 Value::Int(value) => RuntimeValue::Int(*value),
-                Value::Float(value) => RuntimeValue::Float(*value),
+                Value::Float(value) if value.is_finite() => RuntimeValue::Float(*value),
+                Value::Float(_) => return Err(HeapError("Telora Float must be finite")),
                 Value::String(value) => self.string(background, value),
                 Value::Bytes(value) => {
                     RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
@@ -1267,7 +1269,8 @@ impl<'a> HeapView<'a> {
     ) -> Result<Value, HeapError> {
         Ok(match value {
             RuntimeValue::Int(value) => Value::Int(value),
-            RuntimeValue::Float(value) => Value::Float(value),
+            RuntimeValue::Float(value) if value.is_finite() => Value::Float(value),
+            RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             RuntimeValue::BuiltinAtom(atom) => Value::Atom(Atom::builtin(atom)),
             RuntimeValue::Atom(id) => Value::atom(self.text(id)?),
             RuntimeValue::ShortString(id) => Value::string(self.text(id)?),
@@ -1608,9 +1611,9 @@ impl PendingCopy {
         value: RichValue,
     ) -> Result<RichValue, HeapError> {
         let copied = match value.value {
-            RuntimeValue::Int(_) | RuntimeValue::Float(_) | RuntimeValue::BuiltinAtom(_) => {
-                value.value
-            }
+            RuntimeValue::Int(_) | RuntimeValue::BuiltinAtom(_) => value.value,
+            RuntimeValue::Float(float) if float.is_finite() => value.value,
+            RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             RuntimeValue::Atom(id) => RuntimeValue::Atom(self.copy_text(target, source, id)?),
             RuntimeValue::ShortString(id) => {
                 RuntimeValue::ShortString(self.copy_text(target, source, id)?)
@@ -2477,5 +2480,27 @@ mod tests {
         .export_value(runtime)
         .unwrap();
         assert_eq!(exported.to_string(), value.to_string());
+    }
+
+    #[test]
+    fn legacy_value_boundary_rejects_non_finite_float() {
+        let mut heap = Heap::work();
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let error = heap.import_value(None, &Value::Float(value)).unwrap_err();
+            assert_eq!(error.to_string(), "Telora Float must be finite");
+        }
+
+        let runtime = RichValue::unknown(RuntimeValue::Float(f64::NAN));
+        let error = HeapView {
+            current: &heap,
+            background: None,
+        }
+        .export_value(runtime)
+        .unwrap_err();
+        assert_eq!(error.to_string(), "Telora Float must be finite");
+
+        let mut world = Heap::main();
+        let error = publish_root(&mut world, &heap, runtime).unwrap_err();
+        assert_eq!(error.to_string(), "Telora Float must be finite");
     }
 }

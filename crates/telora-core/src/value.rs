@@ -193,6 +193,7 @@ pub struct Closure {
 pub struct NativeError {
     pub message: String,
     limit: Option<NativeLimit>,
+    non_finite_float: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -206,6 +207,7 @@ impl NativeError {
         Self {
             message: message.into(),
             limit: None,
+            non_finite_float: false,
         }
     }
 
@@ -213,6 +215,7 @@ impl NativeError {
         Self {
             message: message.into(),
             limit: Some(NativeLimit::Stack),
+            non_finite_float: false,
         }
     }
 
@@ -220,11 +223,24 @@ impl NativeError {
         Self {
             message: message.into(),
             limit: Some(NativeLimit::Allocation),
+            non_finite_float: false,
+        }
+    }
+
+    pub(crate) fn non_finite_float() -> Self {
+        Self {
+            message: "NonFiniteFloat".into(),
+            limit: None,
+            non_finite_float: true,
         }
     }
 
     pub(crate) const fn limit(&self) -> Option<NativeLimit> {
         self.limit
+    }
+
+    pub(crate) const fn is_non_finite_float(&self) -> bool {
+        self.non_finite_float
     }
 }
 

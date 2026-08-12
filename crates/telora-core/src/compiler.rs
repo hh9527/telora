@@ -2125,14 +2125,36 @@ let decorators = {
             "('True, 'True, 'True, 'True, 'True, 'True)"
         );
 
-        let floats = run("let nan = 0.0 / 0.0; let infinity = 1.0 / 0.0;\
-             (1.0 < 2.0, -0.0 == 0.0, infinity > 1.0,\
-              nan == nan, nan != nan, nan < 0.0, nan <= 0.0, nan > 0.0, nan >= 0.0)")
+        let floats = run("(1.0 == 1.0, 1.0 != 2.0, 1.0 < 2.0, 2.0 > 1.0, \
+             1.0 <= 1.0, 2.0 >= 2.0, -0.0 == 0.0)")
         .unwrap();
         assert_eq!(
             floats.to_string(),
-            "('True, 'True, 'True, 'False, 'True, 'False, 'False, 'False, 'False)"
+            "('True, 'True, 'True, 'True, 'True, 'True, 'True)"
         );
+    }
+
+    #[test]
+    fn non_finite_float_arithmetic_raises_sourced_blame() {
+        let sources = [
+            "0.0 / 0.0".to_owned(),
+            "1.0 / 0.0".to_owned(),
+            "-1.0 / 0.0".to_owned(),
+            "1e308 * 2.0".to_owned(),
+            "1e308 + 1e308".to_owned(),
+            "-1e308 - 1e308".to_owned(),
+        ];
+        for source in sources {
+            let error = run(&source).unwrap_err();
+            let ExecutionError::Runtime(error) = error else {
+                panic!("expected runtime blame for {source}")
+            };
+            assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame, "{source}");
+            assert_eq!(error.message, "NonFiniteFloat", "{source}");
+            assert!(error.data_location().is_some(), "{source}");
+            assert!(error.rule_location().is_some(), "{source}");
+            assert_eq!(error.origin(), error.rule_location().map(Origin::Source));
+        }
     }
 
     #[test]

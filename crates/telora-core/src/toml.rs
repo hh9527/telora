@@ -562,10 +562,9 @@ fn parse_number(text: &str) -> Result<Value, &'static str> {
     validate_numeric_underscores(text)?;
     let normalized = text.replace('_', "");
     match normalized.as_str() {
-        "inf" | "+inf" => return Ok(Value::Float(f64::INFINITY)),
-        "-inf" => return Ok(Value::Float(f64::NEG_INFINITY)),
-        "nan" | "+nan" => return Ok(Value::Float(f64::NAN)),
-        "-nan" => return Ok(Value::Float(-f64::NAN)),
+        "inf" | "+inf" | "-inf" | "nan" | "+nan" | "-nan" => {
+            return Err("TOML Float must be finite");
+        }
         _ => {}
     }
     let unsigned_prefix = normalized.trim_start_matches(['+', '-']);
@@ -580,10 +579,13 @@ fn parse_number(text: &str) -> Result<Value, &'static str> {
             return Err("invalid leading zero in TOML Float");
         }
         validate_float_syntax(&normalized)?;
-        return normalized
-            .parse::<f64>()
-            .map(Value::Float)
-            .map_err(|_| "invalid TOML Float");
+        let value = normalized.parse::<f64>().map_err(|_| "invalid TOML Float");
+        return value.and_then(|value| {
+            value
+                .is_finite()
+                .then_some(Value::Float(value))
+                .ok_or("TOML Float must be finite")
+        });
     }
     let (negative, unsigned) = normalized
         .strip_prefix('-')
@@ -966,6 +968,20 @@ name = "two"
         ] {
             let parsed = parse(source);
             assert!(parsed.value.is_none(), "accepted invalid TOML: {source}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_float_values() {
+        for source in [
+            "value = inf\n",
+            "value = -inf\n",
+            "value = nan\n",
+            "value = 1.0e9999\n",
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.value.is_none(), "accepted {source}");
+            assert!(parsed.diagnostics[0].message.contains("must be finite"));
         }
     }
 }

@@ -502,15 +502,20 @@ fn parse_scalar(text: &str, location: Location) -> Result<YamlNode, &'static str
         "" | "~" | "null" | "Null" | "NULL" => Value::Atom(crate::Atom::builtin(BuiltinAtom::None)),
         "true" | "True" | "TRUE" => Value::bool(true),
         "false" | "False" | "FALSE" => Value::bool(false),
-        ".inf" | ".Inf" | ".INF" => Value::Float(f64::INFINITY),
-        "-.inf" | "-.Inf" | "-.INF" => Value::Float(f64::NEG_INFINITY),
-        ".nan" | ".NaN" | ".NAN" => Value::Float(f64::NAN),
+        ".inf" | ".Inf" | ".INF" | "-.inf" | "-.Inf" | "-.INF" | ".nan" | ".NaN" | ".NAN" => {
+            return Err("YAML Float must be finite");
+        }
         _ if looks_integer(text) => Value::Int(parse_yaml_int(text)?),
-        _ if looks_float(text) => Value::Float(
-            text.replace('_', "")
-                .parse()
-                .map_err(|_| "invalid YAML Float")?,
-        ),
+        _ if looks_float(text) => {
+            let value = text
+                .replace('_', "")
+                .parse::<f64>()
+                .map_err(|_| "invalid YAML Float")?;
+            if !value.is_finite() {
+                return Err("YAML Float must be finite");
+            }
+            Value::Float(value)
+        }
         _ => Value::string(text),
     };
     Ok(YamlNode::Scalar(value, location))
@@ -932,6 +937,20 @@ mod tests {
         ] {
             let parsed = parse(source);
             assert!(parsed.value.is_none(), "accepted {source}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_float_values() {
+        for source in [
+            "value: .inf\n",
+            "value: -.inf\n",
+            "value: .nan\n",
+            "value: 1.0e9999\n",
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.value.is_none(), "accepted {source}");
+            assert!(parsed.diagnostics[0].message.contains("must be finite"));
         }
     }
 }
