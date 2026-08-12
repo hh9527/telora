@@ -47,6 +47,7 @@ struct OpenImportCandidate {
     scheme: crate::types::TypeScheme,
     provenance: Option<Provenance>,
     opaque: bool,
+    concrete_types: BTreeMap<String, TypeDescriptor>,
 }
 
 #[derive(Clone)]
@@ -56,6 +57,7 @@ struct RecoveryOpenImportCandidate {
     scheme: crate::types::TypeScheme,
     sourced: Option<SourcedValue>,
     root: PersistentValue,
+    concrete_types: BTreeMap<String, TypeDescriptor>,
 }
 
 fn recovery_open_import_exports(
@@ -94,6 +96,7 @@ fn recovery_open_import_exports(
                     scheme: scheme.clone(),
                     sourced: sourced.cloned(),
                     root: field_root,
+                    concrete_types: interface.concrete_types.clone(),
                 },
             ))
         })
@@ -138,6 +141,7 @@ fn open_import_exports(
                     scheme: scheme.clone(),
                     provenance: provenance.cloned(),
                     opaque,
+                    concrete_types: interface.concrete_types.clone(),
                 },
             ))
         })
@@ -331,6 +335,7 @@ impl PendingModule {
                     )
                 })
                 .collect(),
+            concrete_types: BTreeMap::new(),
         };
         let mut state = self
             .inner
@@ -815,6 +820,7 @@ fn select_import_value(
         selected,
         ModuleInterface {
             exports: BTreeMap::from([(local.to_owned(), scheme)]),
+            concrete_types: interface.concrete_types,
         },
     ))
 }
@@ -1719,6 +1725,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                     name.clone(),
                     ModuleInterface {
                         exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
+                        concrete_types: candidate.concrete_types,
                     },
                 );
                 external_values.insert(name, candidate.value);
@@ -2544,26 +2551,7 @@ impl ModuleLoader {
                         let root = arena
                             .publish(&mut self.main.heap)
                             .map_err(|error| ModuleError::new(error.to_string()))?;
-                        let mut interface = analysis.module_interface.clone();
-                        for (name, scheme) in &mut interface.exports {
-                            let field_root = root
-                                .dict_get(&self.main.heap, name)
-                                .map_err(|error| ModuleError::new(error.to_string()))?
-                                .ok_or_else(|| {
-                                    ModuleError::new(format!(
-                                        "module has no root for export {name:?}"
-                                    ))
-                                })?;
-                            if matches!(scheme.body, TypeDescriptor::TypeOf(_))
-                                && self
-                                    .main
-                                    .heap
-                                    .persistent_contains_up_link(field_root)
-                                    .map_err(|error| ModuleError::new(error.to_string()))?
-                            {
-                                scheme.body = TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Any));
-                            }
-                        }
+                        let interface = analysis.module_interface.clone();
                         let contains_up_link = self
                             .main
                             .heap
@@ -2908,6 +2896,7 @@ impl ModuleLoader {
                 name.clone(),
                 ModuleInterface {
                     exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
+                    concrete_types: candidate.concrete_types,
                 },
             );
             if candidate.opaque {
@@ -8204,6 +8193,20 @@ unchanged", "|"),
             assert_eq!(module.execute(100_000).unwrap().to_string(), "{output: 3}");
         }
 
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "./expr.telora" {Expr, depth};
+               export let output = depth("bad");"#,
+        )
+        .unwrap();
+        let invalid = load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            invalid.contains("String") && invalid.contains("Expr"),
+            "{invalid}"
+        );
+
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -10292,7 +10295,7 @@ export let output: String = error.message;"#,
             .unwrap_err()
             .to_string();
         assert!(invalid.contains("field lower"), "{invalid}");
-        assert!(invalid.contains("Some(String)"), "{invalid}");
+        assert!(invalid.contains("String"), "{invalid}");
 
         let missing = recovery_engine()
             .recover_workspace(examples.join("missing.telora"))

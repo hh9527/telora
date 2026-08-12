@@ -489,9 +489,9 @@ Family 必须一次提供全部参数，不支持 partial application 或参数�
 alias 和 open import 保留精确 scheme。Family 可达的本地 TypeMetadata 依赖按语义
 依赖图求值，声明顺序不影响结果；包含 family 的循环 component 是错误。
 
-当前 family 声明仍不能依赖同模块的普通 helper，也不能捕获递归 concrete type；
-可以依赖内建 metadata 构造器和 imported metadata 能力。这一边界避免把普通源码
-求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
+Family 声明可以捕获已经封闭的非参数化递归 concrete type，但不能依赖同模块的
+普通 helper；可以依赖内建 metadata 构造器和 imported metadata 能力。这一边界
+避免把普通源码求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
 
 ### 7.3 递归元数据
 
@@ -922,24 +922,28 @@ TypeMetadata。不能在 enum 类型声明的 payload 位置直接放置匿名 S
 let expr: Expr = 'Column({alias: "orders", column: "id"});
 ```
 
-### 14.3 Family 与递归 concrete type
+### 14.3 Family 与递归类型
 
-递归 concrete TypeMetadata 可以作为有限类型图发布和观察，但当前不能被参数化
-family 的符号模板捕获。若某个 family 的字段契约直接或间接引用递归 concrete
-type，定义会因不支持的递归 component 而失败。Family 自身也不能参数化递归、
-形成循环 component，或调用同模块普通 helper。
-
-当应用只需要有界深度时，可以在 family 契约边界使用无环表示。例如把“一层函数”
-拆成原子参数和函数节点：
+递归 concrete TypeMetadata 在普通 definition contract、参数化 family contract 和
+模块接口中保持具名 identity 与有限图回边。契约检查按递归图比较类型，并以已经
+访问的 reference pair 终止；不会把回边展开为无限树，也不会将递归位置擦除为
+`Any`。因此递归表达式类型可以直接进入函数和 family：
 
 ```telora
-@enum type Atom = {Column: ColumnRef, Literal: Value};
-@struct type Call = {name: String, args: Array(Atom)};
-@enum type Expr = {Column: ColumnRef, Literal: Value, Call: Call};
+@enum type Expr = {Literal: Value, Call: CallExpr};
+@struct type CallExpr = {name: String, args: Array(Expr)};
+
+@struct type Dialect(Context) = {
+    render: Fn(Context, Expr) -> String,
+};
 ```
 
-这是一种有界数据模型，不等价于递归表达式树。需要任意嵌套时，程序不能依赖该
-写法获得未声明的递归能力，也不能使用 `Any` 绕过 family sealing。
+同一递归结构经 whole-module、selective 或 open import 得到的契约保持结构等价；
+模块内部用于避免名称碰撞的 identity 不属于显示名称，也不是源码可引用的类型名。
+
+Family 自身仍不能参数化递归或形成循环 family component，也不能调用同模块普通
+helper。这里的限制是 family 求值依赖的限制，不限制 family 字段引用已经封闭的
+递归 concrete type。
 
 ### 14.4 多态 binding 与外围类型参数
 

@@ -1325,6 +1325,7 @@ fn merge_type_node(
         TypeNode::Pending => WorkspaceTypeNode::Pending,
         TypeNode::Ref(child) => WorkspaceTypeNode::Ref(map(*child, target, mapped)),
         TypeNode::Bound(parameter) => WorkspaceTypeNode::Bound(parameter.index()),
+        TypeNode::Named(name) => WorkspaceTypeNode::Opaque(format!("type-ref:{name}")),
         TypeNode::Any => WorkspaceTypeNode::Any,
         TypeNode::Never => WorkspaceTypeNode::Never,
         TypeNode::Type => WorkspaceTypeNode::Type,

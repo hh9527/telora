@@ -5179,6 +5179,7 @@ fn run_core_type_desc(
                     "Func",
                     "WithAttributes",
                     "Bound",
+                    "Named",
                     "Dyn",
                 ];
                 if !KINDS.contains(&kind) {
@@ -6056,7 +6057,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
                 .collect()
         }
         "Any" | "Never" | "Type" | "Dyn" | "Int" | "Float" | "String" | "Bytes" | "Opaque"
-        | "Atom" | "Func" | "Bound" => Ok(Vec::new()),
+        | "Atom" | "Func" | "Bound" | "Named" => Ok(Vec::new()),
         other => Err(format!("unknown Type metadata kind '{other}")),
     }
 }
@@ -6838,6 +6839,7 @@ fn decode_runtime_type_at(
     }
     let kind = match kind {
         "Bound" => CodecKind::Any,
+        "Named" => CodecKind::Any,
         "Any" => CodecKind::Any,
         "Type" => CodecKind::Type,
         "Dyn" => CodecKind::Dyn,

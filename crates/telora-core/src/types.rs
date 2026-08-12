@@ -30,6 +30,10 @@ const DEFAULT_TOOL_FUEL: usize = 100_000;
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TypeId(u32);
 
+fn display_named_type(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
+}
+
 impl TypeId {
     pub const fn index(self) -> usize {
         self.0 as usize
@@ -41,6 +45,7 @@ pub enum TypeNode {
     Pending,
     Ref(TypeId),
     Bound(TypeParameterId),
+    Named(String),
     Any,
     Never,
     Type,
@@ -111,6 +116,11 @@ impl TypeGraph {
     fn intern_descriptor(&mut self, descriptor: &TypeDescriptor) -> TypeId {
         let node = match descriptor {
             TypeDescriptor::Bound(parameter) => TypeNode::Bound(*parameter),
+            TypeDescriptor::Named(name) => self
+                .names
+                .get(name)
+                .copied()
+                .map_or_else(|| TypeNode::Named(name.clone()), TypeNode::Ref),
             TypeDescriptor::Inference(_) => {
                 unreachable!("solver descriptors must be explicitly erased before interning")
             }
@@ -173,6 +183,25 @@ impl TypeGraph {
 
     fn intern_erased_descriptor(&mut self, descriptor: &TypeDescriptor) -> TypeId {
         self.intern_descriptor(&erase_type_variables(descriptor))
+    }
+
+    fn install_named_descriptors(
+        &mut self,
+        descriptors: &BTreeMap<String, TypeDescriptor>,
+    ) -> BTreeMap<String, TypeId> {
+        let roots = descriptors
+            .keys()
+            .map(|name| {
+                let id = self.push(TypeNode::Pending);
+                self.names.insert(name.clone(), id);
+                (name.clone(), id)
+            })
+            .collect::<BTreeMap<_, _>>();
+        for (name, descriptor) in descriptors {
+            let body = self.intern_descriptor(descriptor);
+            self.nodes[roots[name].index()] = self.nodes[body.index()].clone();
+        }
+        roots
     }
 
     fn decode_persistent(
@@ -262,6 +291,14 @@ impl TypeGraph {
                     .and_then(|parameter| u32::try_from(parameter).ok())
                     .ok_or_else(|| format!("{path}.parameter must be a non-negative Int"))?;
                 TypeNode::Bound(TypeParameterId(parameter))
+            }
+            "Named" => {
+                require(&["kind", "name"])?;
+                let name = value
+                    .dict_get("name")
+                    .and_then(ValueRef::as_str)
+                    .ok_or_else(|| format!("{path}.name must be a String"))?;
+                TypeNode::Named(name.to_owned())
             }
             "Any" => {
                 require(&["kind"])?;
@@ -446,13 +483,16 @@ impl TypeGraph {
             return self
                 .names
                 .iter()
-                .find_map(|(name, candidate)| (*candidate == id).then(|| name.clone()))
+                .find_map(|(name, candidate)| {
+                    (*candidate == id).then(|| display_named_type(name).to_owned())
+                })
                 .unwrap_or_else(|| "recursive".into());
         }
         let shown = match self.node(id) {
             TypeNode::Pending => "<pending>".into(),
             TypeNode::Ref(target) => self.display_with(*target, active),
             TypeNode::Bound(parameter) => format!("T{}", parameter.0),
+            TypeNode::Named(name) => display_named_type(name).to_owned(),
             TypeNode::Any => "Any".into(),
             TypeNode::Never => "Never".into(),
             TypeNode::Type => "Type".into(),
@@ -532,6 +572,7 @@ impl TypeGraph {
             (TypeNode::Ref(actual), _) => self.assignable_with(*actual, expected, visited),
             (_, TypeNode::Ref(expected)) => self.assignable_with(actual, *expected, visited),
             (TypeNode::Bound(actual), TypeNode::Bound(expected)) => actual == expected,
+            (TypeNode::Named(actual), TypeNode::Named(expected)) => actual == expected,
             (TypeNode::Never, _) => true,
             (TypeNode::Any, _) | (_, TypeNode::Any) => true,
             (TypeNode::TypeOf(_), TypeNode::Type) => true,
@@ -651,6 +692,39 @@ impl TypeScheme {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModuleInterface {
     pub exports: BTreeMap<String, TypeScheme>,
+    pub concrete_types: BTreeMap<String, TypeDescriptor>,
+}
+
+impl ModuleInterface {
+    fn qualified(&self, namespace: &str) -> Self {
+        let names = self
+            .concrete_types
+            .keys()
+            .map(|name| (name.clone(), format!("\0import:{namespace}:{name}")))
+            .collect::<HashMap<_, _>>();
+        Self {
+            exports: self
+                .exports
+                .iter()
+                .map(|(name, scheme)| {
+                    (
+                        name.clone(),
+                        TypeScheme {
+                            parameters: scheme.parameters.clone(),
+                            body: rename_named_types(&scheme.body, &names),
+                        },
+                    )
+                })
+                .collect(),
+            concrete_types: self
+                .concrete_types
+                .iter()
+                .map(|(name, descriptor)| {
+                    (names[name].clone(), rename_named_types(descriptor, &names))
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -662,6 +736,10 @@ pub(crate) struct TypeFamilyTemplate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TypeDescriptor {
     Bound(TypeParameterId),
+    /// A static reference to a concrete type declaration. Runtime recursive
+    /// metadata continues to use heap up-links; this variant preserves the
+    /// declaration identity while contracts are analyzed.
+    Named(String),
     Inference(InferenceVariableId),
     Any,
     Never,
@@ -696,6 +774,10 @@ impl TypeDescriptor {
             Self::Bound(parameter) => vec![
                 kind_entry("Bound"),
                 ("parameter".into(), Value::Int(i64::from(parameter.0))),
+            ],
+            Self::Named(name) => vec![
+                kind_entry("Named"),
+                ("name".into(), Value::string(name.as_str())),
             ],
             Self::Inference(_) => panic!("inference variables are not runtime type metadata"),
             Self::Any => vec![kind_entry("Any")],
@@ -800,6 +882,7 @@ impl TypeDescriptor {
     pub fn display_name(&self) -> String {
         match self {
             Self::Bound(parameter) => format!("T{}", parameter.0),
+            Self::Named(name) => display_named_type(name).to_owned(),
             Self::Inference(variable) => format!("?{}", variable.0),
             Self::Any => "Any".into(),
             Self::Never => "Never".into(),
@@ -870,6 +953,7 @@ fn display_scheme_descriptor(
         TypeDescriptor::Bound(parameter) => names
             .get(parameter)
             .map_or_else(|| format!("T{}", parameter.0), |name| (*name).to_owned()),
+        TypeDescriptor::Named(name) => display_named_type(name).to_owned(),
         TypeDescriptor::Inference(variable) => format!("?{}", variable.0),
         TypeDescriptor::Any => "Any".into(),
         TypeDescriptor::Never => "Never".into(),
@@ -1634,6 +1718,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut binding_types = BTreeMap::new();
     let mut declared_type_spans = HashMap::new();
     let mut expression_descriptors = HashMap::new();
+    let qualified_external_interfaces = external_interfaces
+        .iter()
+        .map(|(name, interface)| (name.clone(), interface.qualified(name)))
+        .collect::<BTreeMap<_, _>>();
 
     let authored_names = program
         .value
@@ -1653,11 +1741,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
         if authored_names.contains(name.as_str()) {
             continue;
         }
-        tool_values.insert(name.clone(), value.clone());
-        let scheme = external_interfaces
+        let scheme = qualified_external_interfaces
             .get(name)
             .and_then(|interface| interface.exports.get(name))
             .cloned();
+        let tool_value = match scheme.as_ref().map(|scheme| &scheme.body) {
+            Some(TypeDescriptor::TypeOf(instance)) if contains_named_type(instance) => {
+                instance.to_value(&mut tool_vm)
+            }
+            _ => value.clone(),
+        };
+        tool_values.insert(name.clone(), tool_value);
         let inferred = scheme.as_ref().map_or_else(
             || infer_value(value),
             |scheme| erase_type_variables(&scheme.body),
@@ -1668,11 +1762,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
             binding_schemes.insert(name.clone(), scheme);
         }
     }
+    let imported_named_types = qualified_external_interfaces
+        .values()
+        .flat_map(|interface| interface.concrete_types.clone())
+        .collect::<BTreeMap<_, _>>();
     validate_export_references(program, prelude_names.iter(), external_values, sources)?;
 
-    // Tool-stage descriptors are currently trees. Predeclare type names with
-    // conservative metadata so self and forward references can be evaluated;
-    // the runtime retains the authoritative recursive metadata graph.
     let any_metadata = tool_values
         .get("Any")
         .expect("core prelude defines Any")
@@ -1710,12 +1805,35 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let value = external_values.get(name).cloned().ok_or_else(|| {
             frontend_error(source_name, format!("import {name} has not been resolved"))
         })?;
+        let value = qualified_external_interfaces
+            .get(name)
+            .and_then(|interface| interface.exports.get(name))
+            .and_then(|scheme| match &scheme.body {
+                TypeDescriptor::TypeOf(instance) if contains_named_type(instance) => {
+                    Some(instance.to_value(&mut tool_vm))
+                }
+                _ => None,
+            })
+            .unwrap_or(value);
         tool_values.insert(name.clone(), value);
     }
 
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
     let type_definitions = type_bindings.keys().copied().collect::<HashSet<_>>();
     let type_dependencies = type_dependency_graph(&hir, &type_definitions);
+    for node in &type_dependencies.nodes {
+        let binding = type_bindings[&node.definition];
+        if binding.value.type_parameters.is_empty()
+            && !binding.value.decorators.is_empty()
+            && dependency_reaches(&type_dependencies, node.definition, node.definition)
+        {
+            let name = binding.value.name.value.clone();
+            tool_values.insert(
+                name.clone(),
+                TypeDescriptor::Named(name).to_value(&mut tool_vm),
+            );
+        }
+    }
     let family_definitions = type_bindings
         .iter()
         .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
@@ -1735,14 +1853,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .flat_map(|annotation| hir.expression_ids_at(annotation.location))
         .flat_map(|root| expression_dependencies(&hir, root))
         .filter(|definition| type_definitions.contains(definition))
-        .filter(|definition| {
-            !type_dependencies.nodes.iter().any(|node| {
-                dependency_reaches(&type_dependencies, node.definition, node.definition)
-                    && !type_bindings[&node.definition].value.decorators.is_empty()
-                    && (*definition == node.definition
-                        || dependency_reaches(&type_dependencies, *definition, node.definition))
-            })
-        })
         .collect::<Vec<_>>();
     let mut scheduled_types = BTreeSet::new();
     let mut frontier = family_definitions;
@@ -1937,6 +2047,51 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let contains_family = component
                 .iter()
                 .any(|definition| !type_bindings[definition].value.type_parameters.is_empty());
+            let concrete_decorated = !contains_family
+                && component
+                    .iter()
+                    .all(|definition| !type_bindings[definition].value.decorators.is_empty());
+            if concrete_decorated {
+                for definition in component {
+                    let binding = type_bindings[&definition];
+                    let value = evaluate_tool_expression(
+                        source_name,
+                        &binding.value.value,
+                        &tool_values,
+                        account,
+                        sources,
+                        debug_sink,
+                    )?;
+                    let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                        frontend_error(
+                            source_name,
+                            format!(
+                                "type {} produced invalid metadata: {message}",
+                                binding.value.name.value
+                            ),
+                        )
+                    })?;
+                    let name = binding.value.name.value.clone();
+                    declared_types.insert(name.clone(), descriptor.clone());
+                    declared_type_spans.insert(name.clone(), binding.location);
+                    tool_values.insert(name.clone(), value);
+                    let witness =
+                        TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Named(name.clone())));
+                    static_environment.insert(name.clone(), witness.clone());
+                    binding_types.insert(name.clone(), witness.clone());
+                    binding_schemes.insert(
+                        name.clone(),
+                        TypeScheme {
+                            parameters: Vec::new(),
+                            body: witness,
+                        },
+                    );
+                    evaluated_concrete_type_names.insert(name);
+                    pending_types.remove(&definition);
+                    evaluated_types.insert(definition);
+                }
+                continue;
+            }
             let message = if contains_family {
                 format!("recursive type family component containing {names:?} is not supported")
             } else {
@@ -2191,7 +2346,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
-                    if !assignable(&inferred, &expected) {
+                    if !contains_named_type(&expected) && !assignable(&inferred, &expected) {
                         let message = format!(
                             "binding {} has type {}, which is not assignable to {}",
                             binding.value.name.value,
@@ -2336,10 +2491,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         debug_sink,
         &mut local_annotations,
     )?;
+    let mut named_types = imported_named_types;
+    named_types.extend(declared_types.clone());
     let mut inference = GenericInference::new(
         &binding_schemes,
         &hir,
-        external_interfaces,
+        &qualified_external_interfaces,
+        &named_types,
         &local_annotations,
         !external_values.contains_key("Tuple"),
         account.query_context(),
@@ -2755,14 +2913,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })?;
     }
     let mut types = TypeGraph::default();
-    let declared_types: BTreeMap<String, TypeId> = declared_types
+    let declared_type_names = declared_types.keys().cloned().collect::<Vec<_>>();
+    let installed_named_types = types.install_named_descriptors(&named_types);
+    let declared_types = declared_type_names
         .into_iter()
-        .map(|(name, descriptor)| {
-            let id = types.intern_descriptor(&descriptor);
-            types.names.insert(name.clone(), id);
-            (name, id)
-        })
-        .collect();
+        .map(|name| (name.clone(), installed_named_types[&name]))
+        .collect::<BTreeMap<_, _>>();
     let binding_types: BTreeMap<String, TypeId> = binding_types
         .into_iter()
         .map(|(name, descriptor)| {
@@ -2863,6 +3019,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .collect(),
             _ => BTreeMap::new(),
         },
+        concrete_types: named_types
+            .iter()
+            .filter(|(_, descriptor)| contains_named_type(descriptor))
+            .map(|(name, descriptor)| (name.clone(), descriptor.clone()))
+            .collect(),
     };
     for scheme in module_interface.exports.values() {
         validate_publishable_scheme(scheme)
@@ -4226,6 +4387,14 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
                 .ok_or_else(|| format!("{path}.parameter must be a non-negative Int"))?;
             TypeDescriptor::Bound(TypeParameterId(parameter))
         }
+        "Named" => {
+            require(&["kind", "name"])?;
+            let name = value
+                .dict_get("name")
+                .and_then(ValueRef::as_str)
+                .ok_or_else(|| format!("{path}.name must be a String"))?;
+            TypeDescriptor::Named(name.to_owned())
+        }
         "Any" => {
             require(&["kind"])?;
             TypeDescriptor::Any
@@ -4624,6 +4793,13 @@ pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, S
                     .map_err(|_| format!("{path}.parameter must be a non-negative Int"))?,
             ))
         }
+        "Named" => {
+            require_fields(metadata, path, &["kind", "name"])?;
+            let Some(Value::String(name)) = metadata.get("name") else {
+                return Err(format!("{path}.name must be a String"));
+            };
+            TypeDescriptor::Named(name.to_string())
+        }
         "Any" => {
             require_fields(metadata, path, &["kind"])?;
             TypeDescriptor::Any
@@ -4842,6 +5018,7 @@ struct GenericInference<'a> {
     placeholder_obligations: Vec<(InferenceVariableId, crate::Location, String)>,
     hir: &'a HirProgram,
     external_interfaces: &'a BTreeMap<String, ModuleInterface>,
+    named_types: &'a BTreeMap<String, TypeDescriptor>,
     local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
@@ -4863,6 +5040,7 @@ struct GenericInference<'a> {
     propagation_families: HashMap<crate::Location, PropagationFamily>,
     not_families: HashMap<crate::Location, NotFamily>,
     failure_location: Option<crate::Location>,
+    checking_named_pairs: HashSet<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -5034,6 +5212,7 @@ impl<'a> GenericInference<'a> {
         schemes: &HashMap<String, TypeScheme>,
         hir: &'a HirProgram,
         external_interfaces: &'a BTreeMap<String, ModuleInterface>,
+        named_types: &'a BTreeMap<String, TypeDescriptor>,
         local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
         builtin_tuple_available: bool,
         query: Option<crate::query::QueryContext>,
@@ -5046,6 +5225,7 @@ impl<'a> GenericInference<'a> {
             placeholder_obligations: Vec::new(),
             hir,
             external_interfaces,
+            named_types,
             local_annotations,
             builtin_tuple_available,
             query,
@@ -5067,11 +5247,50 @@ impl<'a> GenericInference<'a> {
             propagation_families: HashMap::new(),
             not_families: HashMap::new(),
             failure_location: None,
+            checking_named_pairs: HashSet::new(),
         }
     }
 
     fn take_failure_location(&mut self, fallback: crate::Location) -> crate::Location {
         self.failure_location.take().unwrap_or(fallback)
+    }
+
+    fn expose_named(&self, ty: &TypeDescriptor) -> TypeDescriptor {
+        let mut current = self.resolve(ty);
+        let mut visited = HashSet::new();
+        while let TypeDescriptor::Named(name) = &current {
+            if !visited.insert(name.clone()) {
+                break;
+            }
+            let Some(target) = self.named_type(name) else {
+                break;
+            };
+            current = self.resolve(target);
+        }
+        current
+    }
+
+    fn named_type(&self, name: &str) -> Option<&TypeDescriptor> {
+        self.named_types.get(name).or_else(|| {
+            let short = display_named_type(name);
+            let mut candidates = self
+                .named_types
+                .iter()
+                .filter(|(candidate, _)| display_named_type(candidate) == short)
+                .map(|(_, descriptor)| descriptor);
+            let candidate = candidates.next()?;
+            let normalized = normalize_named_names(candidate);
+            candidates
+                .all(|other| normalize_named_names(other) == normalized)
+                .then_some(candidate)
+        })
+    }
+
+    fn named_identity(&self, ty: &TypeDescriptor) -> Option<String> {
+        match ty {
+            TypeDescriptor::Named(name) => Some(name.clone()),
+            _ => None,
+        }
     }
 
     fn finish_return_boundary(
@@ -5917,6 +6136,12 @@ impl<'a> GenericInference<'a> {
         }
         if !contains_type_variable(&left)
             && !contains_type_variable(&right)
+            && (contains_named_type(&left) || contains_named_type(&right))
+        {
+            return self.check(&left, &right);
+        }
+        if !contains_type_variable(&left)
+            && !contains_type_variable(&right)
             && (assignable(&left, &right) || assignable(&right, &left))
         {
             return Ok(());
@@ -6028,8 +6253,66 @@ impl<'a> GenericInference<'a> {
     }
 
     fn check(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
-        let actual = self.resolve(actual);
-        let expected = self.resolve(expected);
+        if let (TypeDescriptor::Named(actual), TypeDescriptor::Named(expected)) = (actual, expected)
+        {
+            if actual == expected {
+                return Ok(());
+            }
+            let pair = (actual.clone(), expected.clone());
+            if !self.checking_named_pairs.insert(pair.clone()) {
+                return Ok(());
+            }
+            let actual_body = self.named_type(actual).cloned();
+            let expected_body = self.named_type(expected).cloned();
+            let result = match (actual_body, expected_body) {
+                (Some(actual), Some(expected)) => self.check(&actual, &expected),
+                _ => Err(format!(
+                    "cannot unify {} with {}",
+                    display_named_type(actual),
+                    display_named_type(expected)
+                )),
+            };
+            self.checking_named_pairs.remove(&pair);
+            return result;
+        }
+        if let Some(actual_name) = self.named_identity(actual) {
+            let pair = (actual_name.clone(), format!("{:?}", expected));
+            if !self.checking_named_pairs.insert(pair.clone()) {
+                return Ok(());
+            }
+            let actual_body = self.named_type(&actual_name).cloned();
+            let result = actual_body.map_or_else(
+                || {
+                    Err(format!(
+                        "unknown concrete type {}",
+                        display_named_type(&actual_name)
+                    ))
+                },
+                |actual| self.check(&actual, expected),
+            );
+            self.checking_named_pairs.remove(&pair);
+            return result;
+        }
+        if let Some(expected_name) = self.named_identity(expected) {
+            let pair = (format!("{:?}", actual), expected_name.clone());
+            if !self.checking_named_pairs.insert(pair.clone()) {
+                return Ok(());
+            }
+            let expected_body = self.named_type(&expected_name).cloned();
+            let result = expected_body.map_or_else(
+                || {
+                    Err(format!(
+                        "unknown concrete type {}",
+                        display_named_type(&expected_name)
+                    ))
+                },
+                |expected| self.check(actual, &expected),
+            );
+            self.checking_named_pairs.remove(&pair);
+            return result;
+        }
+        let actual = self.expose_named(actual);
+        let expected = self.expose_named(expected);
         if matches!(actual, TypeDescriptor::Never) {
             return Ok(());
         }
@@ -6056,6 +6339,21 @@ impl<'a> GenericInference<'a> {
                     self.check(variant, &expected)?;
                 }
                 return Ok(());
+            }
+            (TypeDescriptor::Tagged { tag, payload }, TypeDescriptor::Enum(variants)) => {
+                let Some(Some(expected_payload)) = variants.get(tag.name()) else {
+                    return Err(format!(
+                        "cannot unify {} with {}",
+                        actual.display_name(),
+                        expected.display_name()
+                    ));
+                };
+                return self.check(payload, expected_payload);
+            }
+            (TypeDescriptor::Atom(tag), TypeDescriptor::Enum(variants)) => {
+                if matches!(variants.get(tag.name()), Some(None)) {
+                    return Ok(());
+                }
             }
             (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
             | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
@@ -6091,6 +6389,20 @@ impl<'a> GenericInference<'a> {
             (TypeDescriptor::Struct(actual), TypeDescriptor::Dict(expected)) => {
                 for actual in actual.values() {
                     self.check(actual, expected)?;
+                }
+                return Ok(());
+            }
+            (TypeDescriptor::Enum(actual), TypeDescriptor::Enum(expected))
+                if actual.keys().eq(expected.keys()) =>
+            {
+                for (name, actual_payload) in actual {
+                    match (actual_payload, &expected[name]) {
+                        (None, None) => {}
+                        (Some(actual), Some(expected)) => self.check(actual, expected)?,
+                        _ => {
+                            return Err(format!("Enum variant {name} payload shape differs"));
+                        }
+                    }
                 }
                 return Ok(());
             }
@@ -6196,7 +6508,7 @@ impl<'a> GenericInference<'a> {
         receiver: &TypeDescriptor,
         field: &str,
     ) -> Result<TypeDescriptor, String> {
-        match self.resolve(receiver) {
+        match self.expose_named(receiver) {
             TypeDescriptor::Struct(fields) => fields
                 .get(field)
                 .cloned()
@@ -6236,7 +6548,7 @@ impl<'a> GenericInference<'a> {
         receiver: &TypeDescriptor,
         index: usize,
     ) -> Result<TypeDescriptor, String> {
-        match self.resolve(receiver) {
+        match self.expose_named(receiver) {
             TypeDescriptor::Tuple(items) => items.get(index).cloned().ok_or_else(|| {
                 format!(
                     "Tuple of length {} has no item at index {index}",
@@ -6665,7 +6977,7 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Index { receiver, index } => {
                 let receiver = self.infer(receiver, environment, None)?;
-                let receiver = self.resolve(&receiver);
+                let receiver = self.expose_named(&receiver);
                 let result = match receiver {
                     TypeDescriptor::Array(item) => *item,
                     TypeDescriptor::Inference(variable) => {
@@ -7028,7 +7340,7 @@ impl<'a> GenericInference<'a> {
                 else_branch,
             } => {
                 let value_type = self.infer(value, environment, None)?;
-                let resolved_value_type = self.resolve(&value_type);
+                let resolved_value_type = self.expose_named(&value_type);
                 let analysis = crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                 if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                     && analysis.problems.is_empty()
@@ -7070,7 +7382,7 @@ impl<'a> GenericInference<'a> {
                 body,
             } => {
                 let value_type = self.infer(value, environment, None)?;
-                let resolved_value_type = self.resolve(&value_type);
+                let resolved_value_type = self.expose_named(&value_type);
                 let analysis = crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                 if analysis.irrefutable {
                     self.pattern_diagnostics
@@ -7115,7 +7427,7 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Match { value, arms } => {
                 let value_type = self.infer(value, environment, None)?;
-                let resolved_value_type = self.resolve(&value_type);
+                let resolved_value_type = self.expose_named(&value_type);
                 let mut arm_types = Vec::with_capacity(arms.len());
                 let mut arm_evidence = Vec::new();
                 let mut covered_variants = BTreeSet::new();
@@ -7560,6 +7872,7 @@ fn collect_inference_variables(
             collect_inference_variables(result, variables);
         }
         TypeDescriptor::Bound(_)
+        | TypeDescriptor::Named(_)
         | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
@@ -7639,6 +7952,7 @@ fn replace_inference_variables(
             result: Box::new(replace_inference_variables(result, replacements)),
         },
         TypeDescriptor::Bound(_)
+        | TypeDescriptor::Named(_)
         | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
@@ -7649,6 +7963,111 @@ fn replace_inference_variables(
         | TypeDescriptor::Bytes
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => descriptor.clone(),
+    }
+}
+
+fn rename_named_types(
+    descriptor: &TypeDescriptor,
+    names: &HashMap<String, String>,
+) -> TypeDescriptor {
+    match descriptor {
+        TypeDescriptor::Named(name) => names
+            .get(name)
+            .cloned()
+            .map(TypeDescriptor::Named)
+            .unwrap_or_else(|| descriptor.clone()),
+        TypeDescriptor::Array(item) => {
+            TypeDescriptor::Array(Box::new(rename_named_types(item, names)))
+        }
+        TypeDescriptor::Dict(item) => {
+            TypeDescriptor::Dict(Box::new(rename_named_types(item, names)))
+        }
+        TypeDescriptor::TypeOf(item) => {
+            TypeDescriptor::TypeOf(Box::new(rename_named_types(item, names)))
+        }
+        TypeDescriptor::Tagged { tag, payload } => TypeDescriptor::Tagged {
+            tag: tag.clone(),
+            payload: Box::new(rename_named_types(payload, names)),
+        },
+        TypeDescriptor::Tuple(items) => TypeDescriptor::Tuple(
+            items
+                .iter()
+                .map(|item| rename_named_types(item, names))
+                .collect(),
+        ),
+        TypeDescriptor::Struct(fields) => TypeDescriptor::Struct(
+            fields
+                .iter()
+                .map(|(name, field)| (name.clone(), rename_named_types(field, names)))
+                .collect(),
+        ),
+        TypeDescriptor::Enum(variants) => TypeDescriptor::Enum(
+            variants
+                .iter()
+                .map(|(name, payload)| {
+                    (
+                        name.clone(),
+                        payload
+                            .as_ref()
+                            .map(|payload| Box::new(rename_named_types(payload, names))),
+                    )
+                })
+                .collect(),
+        ),
+        TypeDescriptor::Union(items) => TypeDescriptor::Union(
+            items
+                .iter()
+                .map(|item| rename_named_types(item, names))
+                .collect(),
+        ),
+        TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
+            parameters: parameters
+                .iter()
+                .map(|parameter| rename_named_types(parameter, names))
+                .collect(),
+            result: Box::new(rename_named_types(result, names)),
+        },
+        _ => descriptor.clone(),
+    }
+}
+
+fn normalize_named_names(descriptor: &TypeDescriptor) -> TypeDescriptor {
+    let mut names = HashMap::new();
+    collect_named_names(descriptor, &mut names);
+    rename_named_types(descriptor, &names)
+}
+
+fn collect_named_names(descriptor: &TypeDescriptor, names: &mut HashMap<String, String>) {
+    match descriptor {
+        TypeDescriptor::Named(name) => {
+            names.insert(name.clone(), display_named_type(name).to_owned());
+        }
+        TypeDescriptor::Array(item)
+        | TypeDescriptor::Dict(item)
+        | TypeDescriptor::TypeOf(item)
+        | TypeDescriptor::Tagged { payload: item, .. } => collect_named_names(item, names),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            for item in items {
+                collect_named_names(item, names);
+            }
+        }
+        TypeDescriptor::Struct(fields) => {
+            for field in fields.values() {
+                collect_named_names(field, names);
+            }
+        }
+        TypeDescriptor::Enum(variants) => {
+            for payload in variants.values().flatten() {
+                collect_named_names(payload, names);
+            }
+        }
+        TypeDescriptor::Function { parameters, result } => {
+            for parameter in parameters {
+                collect_named_names(parameter, names);
+            }
+            collect_named_names(result, names);
+        }
+        _ => {}
     }
 }
 
@@ -7690,6 +8109,7 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
             collect_bound_parameters(result, parameters);
         }
         TypeDescriptor::Inference(_)
+        | TypeDescriptor::Named(_)
         | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
@@ -7826,6 +8246,28 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
     }
 }
 
+fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
+    match descriptor {
+        TypeDescriptor::Named(_) => true,
+        TypeDescriptor::Array(item)
+        | TypeDescriptor::Dict(item)
+        | TypeDescriptor::TypeOf(item)
+        | TypeDescriptor::Tagged { payload: item, .. } => contains_named_type(item),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            items.iter().any(contains_named_type)
+        }
+        TypeDescriptor::Struct(fields) => fields.values().any(contains_named_type),
+        TypeDescriptor::Enum(variants) => variants
+            .values()
+            .flatten()
+            .any(|payload| contains_named_type(payload)),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters.iter().any(contains_named_type) || contains_named_type(result)
+        }
+        _ => false,
+    }
+}
+
 fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Never => true,
@@ -7835,6 +8277,7 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
         TypeDescriptor::Tuple(items) => items.iter().any(contains_runtime_never_leaf),
         TypeDescriptor::Struct(fields) => fields.values().any(contains_runtime_never_leaf),
         TypeDescriptor::Any
+        | TypeDescriptor::Named(_)
         | TypeDescriptor::Type
         | TypeDescriptor::TypeOf(_)
         | TypeDescriptor::Int
@@ -8591,7 +9034,7 @@ fn check_block_interpolations(
 
 fn interpolation_type_supported(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
-        TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) => false,
+        TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) | TypeDescriptor::Named(_) => false,
         TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Int
@@ -9290,6 +9733,7 @@ mod tests {
                     "host".to_owned(),
                     ModuleInterface {
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
+                        concrete_types: BTreeMap::new(),
                     },
                 )])
             })
@@ -9698,6 +10142,62 @@ mod tests {
         )
         .expect("decorated recursive type contracts retain the sealing path");
         assert!(recursive.declared_types.contains_key("Node"));
+    }
+
+    #[test]
+    fn recursive_concrete_types_remain_strict_in_definition_contracts_and_families() {
+        let recursive = analyze_source(
+            "recursive-node.telora",
+            "@struct type Node = {value: Int, children: Array(Node)};\
+             def value_of: Fn(Node) -> Int = fn(node) { node.value };\
+             let node: Node = {value: 1, children: []};\
+             value_of(node)",
+        )
+        .unwrap();
+        assert_eq!(recursive.display(recursive.result_type), "Int");
+        assert!(
+            recursive
+                .display(recursive.binding_types["value_of"])
+                .contains("children: Array<")
+        );
+
+        let invalid = analyze_source(
+            "recursive-node-invalid.telora",
+            "@struct type Node = {value: Int, children: Array(Node)};\
+             def value_of: Fn(Node) -> Int = fn(node) { node.value };\
+             value_of(\"bad\")",
+        )
+        .unwrap_err();
+        assert!(invalid.message.contains("String") && invalid.message.contains("Node"));
+
+        let mutual = analyze_source(
+            "recursive-expr.telora",
+            "@enum type Expr = {Value: Int, Call: CallExpr};\
+             @struct type CallExpr = {name: String, args: Array(Expr)};\
+             @struct type Renderer(Context) = {render: Fn(Context, Expr) -> String};\
+             @struct type Context = {prefix: String};\
+             def inspect: Fn(Expr) -> Int = fn(expr) {\
+                 match expr {'Value(value) => value, 'Call(call) => 0}\
+             };\
+             let expr: Expr = 'Call({name: \"sum\", args: ['Value(1)]});\
+             inspect(expr)",
+        )
+        .unwrap();
+        assert_eq!(mutual.display(mutual.result_type), "Int");
+        assert!(
+            !mutual
+                .display(mutual.binding_types["inspect"])
+                .contains("Any")
+        );
+        let renderer = mutual
+            .definition_schemes
+            .iter()
+            .find_map(|(definition, scheme)| {
+                (mutual.hir.definition(*definition)?.name == "Renderer").then_some(scheme)
+            })
+            .expect("Renderer family scheme");
+        assert!(renderer.display_name().contains("Expr"));
+        assert!(!renderer.display_name().contains("Any"));
     }
 
     #[test]
@@ -11272,9 +11772,17 @@ mod tests {
         let schemes = HashMap::new();
         let interfaces = BTreeMap::new();
         let annotations = HashMap::new();
+        let named_types = BTreeMap::new();
         let hir = HirProgram::default();
-        let mut inference =
-            GenericInference::new(&schemes, &hir, &interfaces, &annotations, true, None);
+        let mut inference = GenericInference::new(
+            &schemes,
+            &hir,
+            &interfaces,
+            &named_types,
+            &annotations,
+            true,
+            None,
+        );
         let variable = TypeDescriptor::Inference(InferenceVariableId(0));
         assert!(
             inference
