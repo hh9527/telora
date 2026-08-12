@@ -5595,6 +5595,35 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_generic_apis_widen_singleton_fields_in_anonymous_records() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("api.telora"),
+            r#"def use: for(Req, Node) Fn(Array(Req), Fn(Req) -> Node) -> Node =
+                   fn(requirements, selector) { selector(requirements[0]) };
+               {use}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./api.telora" as api;
+               @enum type Node = {A: 'None, B: 'None};
+               @struct type Requirement = {target: Node};
+               def target_of: Fn(Requirement) -> Node = fn(req) { req.target };
+               api.use([{target: 'B}], target_of)"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "enum {A, B}"
+        );
+        assert_eq!(module.execute(100_000).unwrap().to_string(), "'B");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn parameterized_type_families_preserve_attributes_and_codec_rules() {
         let directory = fixture_dir();
         fs::write(

@@ -6766,8 +6766,10 @@ impl<'a> GenericInference<'a> {
                         let mut partial_tagged_evidence = false;
                         let mut unresolved_argument_evidence = false;
                         let mut argument_order = (0..arguments.len()).collect::<Vec<_>>();
-                        argument_order.sort_by_key(|index| {
-                            matches!(arguments[*index].value, ExprKind::Atom(_))
+                        argument_order.sort_by_key(|index| match &arguments[*index].value {
+                            _ if self.explicit_scheme(&arguments[*index]).is_some() => 0,
+                            ExprKind::Atom(_) => 2,
+                            _ => 1,
                         });
                         for index in argument_order {
                             let argument = &arguments[index];
@@ -11440,6 +11442,50 @@ mod tests {
             "for(Content) Fn({value: Content}) -> Content"
         );
         assert_eq!(analysis.display(analysis.result_type), "(Int, Int)");
+    }
+
+    #[test]
+    fn generic_call_context_widens_singleton_fields_in_anonymous_records() {
+        let prelude = "@enum type Node = {A: 'None, B: 'None};\
+             @struct type Requirement = {target: Node};\
+             def target_of: Fn(Requirement) -> Node = fn(req) { req.target };\
+             def use: for(Req) Fn(Array(Req), Fn(Req) -> Node) -> Node =\
+                 fn(requirements, selector) { selector(requirements[0]) };";
+        for records in ["[{target: 'B}]", "[{target: 'A}, {target: 'B}]"] {
+            let analysis = analyze_source(
+                "generic-record-widening.telora",
+                &format!("{prelude} use({records}, target_of)"),
+            )
+            .unwrap();
+            assert_eq!(analysis.display(analysis.result_type), "enum {A, B}");
+        }
+
+        let conflict = analyze_source(
+            "generic-record-conflict.telora",
+            &format!("{prelude} use([{{target: 'Foreign}}], target_of)"),
+        )
+        .unwrap_err();
+        assert!(
+            conflict.message.contains("Foreign") && conflict.message.contains("enum {A, B}"),
+            "{}",
+            conflict.message
+        );
+
+        let conflicting_enum = analyze_source(
+            "generic-record-enum-conflict.telora",
+            &format!(
+                "{prelude} @enum type Foreign = {{Foreign: 'None}};\
+                 let foreign: Foreign = 'Foreign;\
+                 use([{{target: foreign}}], target_of)"
+            ),
+        )
+        .unwrap_err();
+        assert!(
+            conflicting_enum.message.contains("enum {Foreign}")
+                && conflicting_enum.message.contains("enum {A, B}"),
+            "{}",
+            conflicting_enum.message
+        );
     }
 
     #[test]
