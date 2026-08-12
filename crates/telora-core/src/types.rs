@@ -2341,6 +2341,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &hir,
         external_interfaces,
         &local_annotations,
+        !external_values.contains_key("Tuple"),
         account.query_context(),
     );
     let mut checked_environment = static_environment.clone();
@@ -4842,6 +4843,7 @@ struct GenericInference<'a> {
     hir: &'a HirProgram,
     external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
+    builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
     next_variable: u32,
     closure_inference_depth: usize,
@@ -5033,6 +5035,7 @@ impl<'a> GenericInference<'a> {
         hir: &'a HirProgram,
         external_interfaces: &'a BTreeMap<String, ModuleInterface>,
         local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
+        builtin_tuple_available: bool,
         query: Option<crate::query::QueryContext>,
     ) -> Self {
         Self {
@@ -5044,6 +5047,7 @@ impl<'a> GenericInference<'a> {
             hir,
             external_interfaces,
             local_annotations,
+            builtin_tuple_available,
             query,
             next_variable: 0,
             closure_inference_depth: 0,
@@ -6672,6 +6676,45 @@ impl<'a> GenericInference<'a> {
                 self.project_tuple(&receiver, index.value)?
             }
             ExprKind::Call { callee, arguments } => {
+                if self.is_builtin_tuple(callee)
+                    && let [argument] = arguments.as_slice()
+                    && let ExprKind::Array(items) = &argument.value
+                    && items
+                        .iter()
+                        .all(|item| !matches!(item.value, ExprKind::Spread(_)))
+                {
+                    self.infer(callee, environment, None)?;
+                    let metadata_array = TypeDescriptor::Array(Box::new(TypeDescriptor::Type));
+                    self.infer(argument, environment, Some(&metadata_array))?;
+                    let mut tuple_items = Vec::with_capacity(items.len());
+                    for item in items {
+                        let item = self
+                            .records
+                            .get(&item.location)
+                            .map(|item| self.resolve(item))
+                            .ok_or_else(|| "Tuple item has no inferred Type metadata".to_owned())?;
+                        match item {
+                            TypeDescriptor::TypeOf(item) => tuple_items.push(*item),
+                            TypeDescriptor::Type | TypeDescriptor::Any => {
+                                tuple_items.push(TypeDescriptor::Any)
+                            }
+                            item => {
+                                return Err(format!(
+                                    "Tuple items must be Type metadata, found {}",
+                                    item.display_name()
+                                ));
+                            }
+                        };
+                    }
+                    let inferred =
+                        TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Tuple(tuple_items)));
+                    if let Some(expected) = expected {
+                        self.check(&inferred, expected)?;
+                    }
+                    let inferred = self.resolve(&inferred);
+                    self.records.insert(expression.location, inferred.clone());
+                    return Ok(inferred);
+                }
                 let has_placeholder = matches!(
                     &callee.value,
                     ExprKind::TypeApply { arguments, .. }
@@ -7219,6 +7262,20 @@ impl<'a> GenericInference<'a> {
         let inferred = self.resolve(&inferred);
         self.records.insert(expression.location, inferred.clone());
         Ok(inferred)
+    }
+
+    fn is_builtin_tuple(&self, expression: &Expr) -> bool {
+        if !self.builtin_tuple_available {
+            return false;
+        }
+        self.hir
+            .expression_ids_at(expression.location)
+            .filter_map(|id| self.hir.expression(id))
+            .filter_map(|expression| expression.reference)
+            .filter_map(|id| self.hir.reference(id))
+            .any(|reference| {
+                reference.name == "Tuple" && reference.resolution == HirResolution::External
+            })
     }
 
     fn infer_block(
@@ -11124,7 +11181,8 @@ mod tests {
         let interfaces = BTreeMap::new();
         let annotations = HashMap::new();
         let hir = HirProgram::default();
-        let mut inference = GenericInference::new(&schemes, &hir, &interfaces, &annotations, None);
+        let mut inference =
+            GenericInference::new(&schemes, &hir, &interfaces, &annotations, true, None);
         let variable = TypeDescriptor::Inference(InferenceVariableId(0));
         assert!(
             inference
@@ -11382,6 +11440,53 @@ mod tests {
             "for(Content) Fn({value: Content}) -> Content"
         );
         assert_eq!(analysis.display(analysis.result_type), "(Int, Int)");
+    }
+
+    #[test]
+    fn generic_struct_families_construct_nested_array_tuple_fields() {
+        let analysis = analyze_source(
+            "nested-family-field.telora",
+            "@struct type Box(A) = {value: Array(Tuple([A, Int]))};\
+             def make: for(A) Fn(Array(Tuple([A, Int]))) -> Box(A) =\
+                 fn(value) { {value} };\
+             make([(1, 2)]).value",
+        )
+        .unwrap();
+        assert_eq!(analysis.display(analysis.result_type), "Array<(Int, Int)>");
+
+        for source in [
+            "@struct type Box(A) = {value: Array(Tuple([Int, A]))};\
+             def make: for(A) Fn(Array(Tuple([Int, A]))) -> Box(A) =\
+                 fn(value) { {value} };\
+             make([(1, \"two\")]).value",
+            "@struct type Box(A) = {value: Array(Tuple([Int, A, String]))};\
+             def make: for(A) Fn(Array(Tuple([Int, A, String]))) -> Box(A) =\
+                 fn(value) { {value} };\
+             make([(1, 2.0, \"three\")]).value",
+        ] {
+            analyze_source("nested-family-position.telora", source).unwrap();
+        }
+
+        let incompatible = analyze_source(
+            "incompatible-nested-family-field.telora",
+            "@struct type Box(A) = {value: Array(Tuple([A, Int]))};\
+             def make: for(A) Fn(Array(Tuple([A, String]))) -> Box(A) =\
+                 fn(value) { {value} };\
+             make([(1, \"wrong\")])",
+        )
+        .unwrap_err();
+        assert!(
+            incompatible.message.contains("String") && incompatible.message.contains("Int"),
+            "{}",
+            incompatible.message
+        );
+
+        let shadowed = analyze_source(
+            "shadowed-tuple.telora",
+            "let Tuple = fn(value) { value }; Tuple([1, 2])",
+        )
+        .unwrap();
+        assert_eq!(shadowed.display(shadowed.result_type), "Array<Int>");
     }
 
     #[test]

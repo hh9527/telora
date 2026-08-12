@@ -5565,6 +5565,36 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_generic_struct_families_construct_nested_array_tuple_fields() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("families.telora"),
+            r#"@struct type Box(A) = {value: Array(Tuple([A, Int]))};
+               def make: for(A) Fn(Array(Tuple([A, Int]))) -> Box(A) =
+                   fn(value) { {value} };
+               {Box, make}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./families.telora" as families;
+               families.make([("ready", 1)]).value"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "Array<(String, Int)>"
+        );
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "[(\"ready\", 1)]"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn parameterized_type_families_preserve_attributes_and_codec_rules() {
         let directory = fixture_dir();
         fs::write(
