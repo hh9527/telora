@@ -200,12 +200,17 @@ The Host observes an active run through one fixed command surface:
 experiments/ontology-edsl/observe-opencode.sh snapshot
 experiments/ontology-edsl/observe-opencode.sh status
 experiments/ontology-edsl/observe-opencode.sh recent 3
+experiments/ontology-edsl/observe-opencode.sh timeline 8
+experiments/ontology-edsl/observe-opencode.sh audit
 experiments/ontology-edsl/observe-opencode.sh files
 experiments/ontology-edsl/observe-opencode.sh events
 ```
 
 `snapshot` combines health, session status, the three newest assistant steps,
-and the current `a2/` file list. `events` filters token deltas and retains only
+and the current `a2/` file list. `timeline` exposes recent message lifecycle
+metadata and part types without dumping full tool inputs. `audit` makes one
+post-run request and reports session counts, every user prompt, and grouped
+tool failures for `RUNLOG.md`. `events` filters token deltas and retains only
 session status, completed messages, completed or failed tools, and errors. The
 observer never sends a prompt or abort request.
 
