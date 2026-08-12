@@ -441,9 +441,42 @@ fn tokenize_internal(
         active = next;
     }
     if contextualize {
+        contextualize_projection_tokens(source, &mut tokens, &mut spans, None);
         contextualize_option_tokens(&mut tokens);
     }
     (tokens, spans)
+}
+
+fn contextualize_projection_tokens(
+    source: &str,
+    tokens: &mut Vec<Token>,
+    spans: &mut Vec<Span>,
+    mut previous_significant: Option<Token>,
+) -> Option<Token> {
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        if token == Token::Float && previous_significant == Some(Token::Dot) {
+            let span = spans[index].clone();
+            let decimal = source[span.clone()]
+                .find('.')
+                .expect("Float token contains a decimal point");
+            let dot = span.start + decimal;
+            tokens.splice(index..=index, [Token::Int, Token::Dot, Token::Int]);
+            spans.splice(
+                index..=index,
+                [span.start..dot, dot..dot + 1, dot + 1..span.end],
+            );
+            previous_significant = Some(Token::Int);
+            index += 3;
+            continue;
+        }
+        if !matches!(token, Token::Whitespace | Token::Comment) {
+            previous_significant = Some(token);
+        }
+        index += 1;
+    }
+    previous_significant
 }
 
 fn contextualize_option_tokens(tokens: &mut [Token]) {
@@ -476,20 +509,30 @@ fn tokenize_fragments<'a>(
     let mut spans = Vec::new();
     let mut pending = String::new();
     let mut pending_start = 0;
+    let mut previous_significant = None;
 
     for fragment in fragments {
         pending.push_str(fragment);
         let mut local_diags = Vec::new();
-        let (local_tokens, local_spans) = tokenize_internal(&pending, &mut local_diags, false);
+        let (mut local_tokens, mut local_spans) =
+            tokenize_internal(&pending, &mut local_diags, false);
         let commit = stable_root_prefix(&local_tokens, &local_spans, &pending);
         if commit == 0 {
             continue;
         }
         let committed_end = local_spans[commit - 1].end;
-        tokens.extend_from_slice(&local_tokens[..commit]);
+        local_tokens.truncate(commit);
+        local_spans.truncate(commit);
+        previous_significant = contextualize_projection_tokens(
+            &pending,
+            &mut local_tokens,
+            &mut local_spans,
+            previous_significant,
+        );
+        tokens.extend(local_tokens);
         spans.extend(
-            local_spans[..commit]
-                .iter()
+            local_spans
+                .into_iter()
                 .map(|span| pending_start + span.start..pending_start + span.end),
         );
         for mut diagnostic in local_diags {
@@ -511,7 +554,14 @@ fn tokenize_fragments<'a>(
 
     if !pending.is_empty() {
         let mut local_diags = Vec::new();
-        let (local_tokens, local_spans) = tokenize_internal(&pending, &mut local_diags, false);
+        let (mut local_tokens, mut local_spans) =
+            tokenize_internal(&pending, &mut local_diags, false);
+        contextualize_projection_tokens(
+            &pending,
+            &mut local_tokens,
+            &mut local_spans,
+            previous_significant,
+        );
         tokens.extend(local_tokens);
         spans.extend(
             local_spans
@@ -772,6 +822,48 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_chained_projections_from_float_literals() {
+        let mut diagnostics = Vec::new();
+        let source = "pair.1.0 1.0 1.0.1 pair. 12.34";
+        let (tokens, spans) = tokenize(source, &mut diagnostics);
+        let significant = tokens
+            .iter()
+            .copied()
+            .zip(spans.iter())
+            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::Comment))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            significant
+                .iter()
+                .map(|(token, _)| *token)
+                .collect::<Vec<_>>(),
+            vec![
+                Token::Identifier,
+                Token::Dot,
+                Token::Int,
+                Token::Dot,
+                Token::Int,
+                Token::Float,
+                Token::Float,
+                Token::Dot,
+                Token::Int,
+                Token::Identifier,
+                Token::Dot,
+                Token::Int,
+                Token::Dot,
+                Token::Int,
+            ]
+        );
+        assert_eq!(significant[2].1, &(5..6));
+        assert_eq!(significant[3].1, &(6..7));
+        assert_eq!(significant[4].1, &(7..8));
+        assert_eq!(significant[11].1, &(25..27));
+        assert_eq!(significant[12].1, &(27..28));
+        assert_eq!(significant[13].1, &(28..30));
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn chunk_bridge_matches_contiguous_lexing() {
         let samples = [
             "#!/usr/bin/env -S telora run\nlet identifier = 123.456 # comment\nidentifier",
@@ -782,6 +874,7 @@ mod tests {
             "_12 |> transform\\(_1, 2)",
             "let 中 = \"emoji 😀 and escape \\n\"; 中",
             "let option = 1; option \"module.test\" {}; option",
+            "let pair = (0, (1, 2)); pair.1.0; (pair. 1.0, 1.0.1)",
         ];
         for sample in samples {
             let mut expected_diags = Vec::new();

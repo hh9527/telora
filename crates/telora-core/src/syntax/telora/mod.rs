@@ -178,6 +178,19 @@ option "module.documentation" {stability: "experimental"};"#;
     }
 
     #[test]
+    fn cst_preserves_chained_tuple_projections_losslessly() {
+        let source = "let pair = (0, (1, \"ok\")); pair.1.0";
+        let document = crate::document::DocumentText::new(source);
+        let mut sources = crate::source::SourceDatabase::default();
+        let id = sources.add("projection.telora", source);
+        let parsed = parse_document(id, &document);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let mut reconstructed = String::new();
+        reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
+        assert_eq!(reconstructed, source);
+    }
+
+    #[test]
     fn cst_preserves_generic_definition_declarations_losslessly() {
         let source =
             "decl identity: for(A) Fn(A) -> A; def identity = fn(value) { value }; identity";

@@ -2997,7 +2997,9 @@ export { private as visible, identity as map };"#,
     fn distinguishes_postfix_application_and_projection_forms() {
         let program = parse(
             "postfix.telora",
-            "(generic@[Int], values[index], pair.0, 1.0)",
+            "(generic@[Int], values[index], pair.0, pair.1.0, pair.1.0.2, \
+             record.pair.1.0, values[0].1.0, make().1.0, \
+             pair.1.0.field, pair.1.0[0], pair.1.0(), 1.0)",
         )
         .unwrap();
         let ExprKind::Tuple(items) = &program.value.body.value.result.value else {
@@ -3009,7 +3011,19 @@ export { private as visible, identity as map };"#,
             items[2].value,
             ExprKind::TupleProjection { ref index, .. } if index.value == 0
         ));
-        assert!(matches!(items[3].value, ExprKind::Float(value) if value == 1.0));
+        let ExprKind::TupleProjection {
+            receiver,
+            index: outer_index,
+        } = &items[3].value
+        else {
+            panic!("expected outer tuple projection");
+        };
+        assert_eq!(outer_index.value, 0);
+        assert!(matches!(
+            receiver.value,
+            ExprKind::TupleProjection { ref index, .. } if index.value == 1
+        ));
+        assert!(matches!(items[11].value, ExprKind::Float(value) if value == 1.0));
     }
 
     #[test]

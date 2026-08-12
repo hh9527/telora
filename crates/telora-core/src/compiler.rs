@@ -2447,6 +2447,10 @@ let decorators = {
     #[test]
     fn dynamic_projection_boundaries_check_runtime_values() {
         assert!(matches!(
+            run("let pair = (0, (1, \"ok\")); pair.1.0").unwrap(),
+            Value::Int(1)
+        ));
+        assert!(matches!(
             run("let values: Any = [1, 2]; values[1]").unwrap(),
             Value::Int(2)
         ));

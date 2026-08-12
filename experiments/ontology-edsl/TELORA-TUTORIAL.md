@@ -195,8 +195,10 @@ type Pair = Tuple([Int, String]);
 ```
 
 `Tuple` takes exactly one argument, an Array of TypeMetadata: `Tuple([A, B])`.
-Tuple values use a non-negative literal projection such as `pair.0`; known
-out-of-range positions are analysis errors. Nested forms such as
+Tuple values use a non-negative literal projection such as `pair.0`. Projection
+is a composable postfix operation: `value.1.0` means `(value.1).0` and can be
+combined with field selection, indexing, and calls. Known out-of-range positions
+are analysis errors. Nested forms such as
 `Fn(A) -> Array(Tuple([B, C]))` are valid.
 
 ## TypeMetadata families
