@@ -13,11 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from .client import Client
-from .config import ControlError, Manifest, repository_root, sha256, validate_identifier, load_manifest
+from .config import ControlError, Manifest, load_manifest, repository_root, sha256, validate_identifier
 from .context import Context
 from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
 from .state import SCHEMA, atomic_json, atomic_write, bind_plan, load_state, locked, now, save_state
+
+
+def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update(state.get("opencode_environment", {}))
+    return environment
 
 
 def git_metadata(repo: Path) -> tuple[str, bool]:
@@ -33,34 +39,20 @@ def _copy_file(source: Path, destination: Path, mode: int) -> None:
     shutil.copyfile(source, destination); destination.chmod(mode)
 
 
-def _copy_template(source: Path, destination: Path) -> None:
-    if not source.is_dir() or source.is_symlink(): raise ControlError(f"missing workspace template: {source}", 66)
-    for path in source.rglob("*"):
-        if path.is_symlink(): raise ControlError(f"workspace template contains a symlink: {path}")
-    shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=False)
-
-
-def _opencode_config(manifest: Manifest) -> dict[str, Any]:
-    reads = manifest.permissions["read"]
-    writes = manifest.permissions["write"]
-    read_rules: dict[str, str] = {"*": "deny"}
-    for value in reads:
-        read_rules[value] = "allow"; read_rules[f"**/{value}"] = "allow"
-    list_rules = dict(read_rules)
-    for value in reads:
-        base = value.removesuffix("/**")
-        list_rules[base] = "allow"; list_rules[f"**/{base}"] = "allow"
-    write_rules: dict[str, str] = {"*": "deny"}
-    for value in writes:
-        write_rules[value] = "allow"; write_rules[f"**/{value}"] = "allow"
-    feedback = manifest.feedback["path"]
-    write_rules[feedback] = "deny"; write_rules[f"**/{feedback}"] = "deny"
-    bash = {"*": "deny", **{command: "allow" for command in manifest.permissions["commands"]}, "__no_more_commands__": "deny"}
-    return {"$schema": "https://opencode.ai/config.json", "permission": {
-        "read": read_rules, "list": list_rules, "glob": read_rules, "grep": read_rules,
-        "edit": write_rules, "write": write_rules, "bash": bash, "task": "deny",
-        "webfetch": "deny", "external_directory": "deny",
-    }}
+def plan_git_metadata(manifest: Manifest) -> tuple[str, str]:
+    git = resolve_cli("git")
+    top = subprocess.run([*git, "rev-parse", "--show-toplevel"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if top.returncode or Path(top.stdout.strip()).resolve() != manifest.root.resolve():
+        raise ControlError(f"experiment plan must be an independent Git worktree: {manifest.root}", 66)
+    dirty = subprocess.run([*git, "status", "--porcelain"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if dirty.returncode or dirty.stdout:
+        raise ControlError("experiment plan worktree must be clean and committed", 65)
+    revision = subprocess.run([*git, "rev-parse", "HEAD"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if revision.returncode:
+        raise ControlError("experiment plan has no committed revision", 66)
+    remote = subprocess.run([*git, "remote", "get-url", "origin"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    source = remote.stdout.strip() if not remote.returncode else str(manifest.root.resolve())
+    return revision.stdout.strip(), source
 
 
 def _port_free(port: int) -> bool:
@@ -71,15 +63,16 @@ def _port_free(port: int) -> bool:
 
 def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
     workspace = Path(state["workspace"])
-    for item in manifest.copies:
-        name = str(item["from"]); source = manifest.source(name); destination = workspace / str(item["to"])
-        expected = state["input_hashes"].get(name)
-        if not source.is_file() or sha256(source) != expected:
-            raise ControlError(f"plan input changed since preparation: {name}")
-        if not destination.is_file() or destination.is_symlink() or sha256(destination) != expected:
-            raise ControlError(f"workspace input changed since preparation: {item['to']}")
-    if sha256(manifest.root / "experiment.json") != state["input_hashes"].get("experiment.json"):
-        raise ControlError("experiment.json changed since preparation")
+    if state.get("opencode_environment", {}) != manifest.environment:
+        raise ControlError("opencode environment changed since preparation")
+    if sha256(manifest.root / manifest.manifest_name) != state["input_hashes"].get(manifest.manifest_name):
+        raise ControlError(f"{manifest.manifest_name} changed since preparation")
+    if sha256(manifest.root / "opencode.json") != state["input_hashes"].get("opencode.json"):
+        raise ControlError("opencode.json changed since preparation")
+    git = resolve_cli("git")
+    revision = subprocess.run([*git, "rev-parse", "HEAD"], cwd=workspace, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if revision.returncode or revision.stdout.strip() != state.get("plan_revision"):
+        raise ControlError("workspace plan revision changed after preparation")
     for item in manifest.artifacts:
         name = str(item["name"]); destination = workspace / str(item["to"])
         if not destination.is_file() or destination.is_symlink() or sha256(destination) != state["binary_hashes"].get(name):
@@ -88,49 +81,42 @@ def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
 
 def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None) -> tuple[Path, dict[str, Any], bool]:
     repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
-    if port is not None and (port < 1 or port > 65535): raise ControlError("port must be from 1 through 65535", 64)
-    legacy = repo / "target" / "exp" / "dir"
-    if legacy.exists():
-        raise ControlError(f"legacy temporary controller state exists at {legacy}; remove it before using named executions")
+    if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
     manifest = load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
     with locked(root):
         if (root / "state.json").exists():
             state = load_state(root)
             if state["plan_id"] != plan_id: raise ControlError("execution plan mismatch")
             if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"execution {exec_name} is {state['phase']}")
-            if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError(f"execution already uses port {state['server_url'].rsplit(':',1)[1]}", 64)
+            if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError("execution already uses another port", 64)
             if not Path(state["workspace"]).is_dir(): raise ControlError("recorded workspace is missing", 66)
-            verify_prepared(manifest, state)
-            return root, state, False
+            verify_prepared(manifest, state); return root, state, False
         port = port or 4096
-        revision, dirty = git_metadata(repo)
+        revision, dirty = git_metadata(repo); plan_revision, plan_source = plan_git_metadata(manifest)
         run_root = Path(tempfile.mkdtemp(prefix=f"oc-exp-{exec_name}-", dir="/tmp")).resolve(); workspace = run_root / "ws"
         state: dict[str, Any] = {"schema": SCHEMA, "plan_id": plan_id, "exec_name": exec_name, "run_id": uuid.uuid4().hex,
             "phase": "preparing", "workspace": str(workspace), "run_root": str(run_root), "session_id": None,
             "server_url": f"http://127.0.0.1:{port}", "repository_revision": revision, "repository_dirty": dirty,
+            "plan_revision": plan_revision, "plan_source": plan_source,
+            "opencode_environment": manifest.environment,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
             "created_at": now(), "started_at": None, "finished_at": None}
         save_state(root, state)
         try:
-            workspace.mkdir()
-            _copy_template(manifest.source(manifest.template), workspace)
-            feedback_path = workspace / str(manifest.feedback["path"])
-            if not feedback_path.exists():
-                atomic_write(feedback_path, b"")
-            for item in manifest.copies:
-                source = manifest.source(str(item["from"])); target = workspace / str(item["to"])
-                _copy_file(source, target, int(str(item["mode"]), 8)); state["input_hashes"][str(item["from"])] = sha256(source)
-            artifact_overrides = artifacts or {}
+            git = resolve_cli("git")
+            result = subprocess.run([*git, "clone", "--quiet", "--no-local", str(manifest.root), str(workspace)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode: raise ControlError(f"failed to clone experiment plan: {result.stderr.decode(errors='replace')}", 70)
+            result = subprocess.run([*git, "checkout", "--quiet", plan_revision], cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode: raise ControlError(f"failed to checkout experiment plan revision: {result.stderr.decode(errors='replace')}", 70)
             for item in manifest.artifacts:
-                name = str(item["name"]); source_value = artifact_overrides.get(name, str(item["source"])); source = Path(source_value)
+                name = str(item["name"]); source = Path((artifacts or {}).get(name, str(item["source"])))
                 if not source.is_absolute(): source = repo / source
                 if not source.is_file() and item.get("build"):
                     result = subprocess.run(resolve_command(item["build"], repo), cwd=repo)
                     if result.returncode: raise ControlError(f"artifact build failed: {name}", 70)
                 target = workspace / str(item["to"]); _copy_file(source.resolve(), target, int(str(item.get("mode", "0555")), 8)); state["binary_hashes"][name] = sha256(target)
-            atomic_json(workspace / "opencode.json", _opencode_config(manifest))
-            state["input_hashes"]["experiment.json"] = sha256(manifest.root / "experiment.json")
-            save_state(root, state)
+            state["input_hashes"][manifest.manifest_name] = sha256(manifest.root / manifest.manifest_name)
+            state["input_hashes"]["opencode.json"] = sha256(manifest.root / "opencode.json"); save_state(root, state)
         except Exception:
             state["phase"] = "failed"; save_state(root, state); raise
     return root, state, True
@@ -141,7 +127,7 @@ def create_empty_session(root: Path, state: dict[str, Any], title: str) -> dict[
     port = int(state["server_url"].rsplit(":", 1)[1])
     if not _port_free(port): raise ControlError(f"port {port} is occupied", 69)
     log = (root / "handshake.log").open("ab")
-    process = subprocess.Popen([*resolve_cli("opencode"), "serve", "--hostname", "127.0.0.1", "--port", str(port), "--pure"], cwd=state["workspace"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+    process = subprocess.Popen([*resolve_cli("opencode"), "serve", "--hostname", "127.0.0.1", "--port", str(port), "--pure"], cwd=state["workspace"], env=opencode_environment(state), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
     client = Client(state["server_url"], state["workspace"])
     try:
         healthy = False
@@ -315,6 +301,16 @@ def finish(context: Context) -> dict[str, Any]:
         result = context.root / "result"; copy_archive(context, result / "workspace")
         raw_session = export_session(context, state["session_id"])
         atomic_json(result / "session.json", raw_session)
+        children = context.client().children()
+        child_exports = []
+        child_dir = result / "children"; child_dir.mkdir(exist_ok=True)
+        for child in children:
+            child_id = child.get("id")
+            if not isinstance(child_id, str): continue
+            value = export_session(context, child_id); atomic_json(child_dir / f"{child_id}.json", value)
+            atomic_json(child_dir / f"{child_id}.messages.json", context.client().session_messages(child_id))
+            child_exports.append({"session_id": child_id, "title": child.get("title")})
+        atomic_json(result / "children.json", child_exports)
         atomic_json(result / "messages.json", messages)
         final_state = dict(state); final_state["phase"] = "finished"; final_state["finished_at"] = now()
         document = normalized(final_state, messages, context.client().status(), context.rounds(), context.manifest.observe, validation)
@@ -333,6 +329,7 @@ def finish(context: Context) -> dict[str, Any]:
 
 def safe_cleanup(state: dict[str, Any]) -> None:
     run_root = Path(state["run_root"]); workspace = Path(state["workspace"])
-    if run_root.parent != Path("/tmp") or not run_root.name.startswith(f"oc-exp-{state['exec_name']}-") or workspace != run_root / "ws" or run_root.is_symlink():
+    expected = f"oc-exp-{state['exec_name']}-"
+    if run_root.parent != Path("/tmp") or not run_root.name.startswith(expected) or workspace != run_root / "ws" or run_root.is_symlink():
         raise ControlError("refusing unsafe temporary cleanup")
     if run_root.exists(): shutil.rmtree(run_root)

@@ -9,7 +9,7 @@ from pathlib import Path
 from .client import Client
 from .config import ControlError
 from .external import resolve_cli
-from .lifecycle import create_empty_session, prepare, safe_cleanup
+from .lifecycle import create_empty_session, opencode_environment, prepare, safe_cleanup
 from .state import load_state
 
 
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         except ControlError: pass
         command = ([*opencode, "attach", server_url, "--dir", workspace, "--session", session_id, "--pure"] if live else
                    [*opencode, workspace, "--hostname", "127.0.0.1", "--port", str(port), "--session", session_id, "--pure"])
-        result = subprocess.run(command)
+        result = subprocess.run(command, env=opencode_environment(state))
         state = load_state(root)
         if state["phase"] in ("finished", "retired") and all((root / "result" / name).is_file() for name in ("query.json", "session.json", "messages.json")):
             safe_cleanup(state)

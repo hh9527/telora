@@ -7,13 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .config import ControlError, repository_root, sha256
+from .config import ControlError, repository_root, validate_identifier
 from .context import Context, resolve
 from .external import resolve_capabilities, resolve_cli
 from .lifecycle import finish, live_boundary, reconcile, run_validation, safe_cleanup, send_round, verify_prepared
 from .observe import failures, latest_assistant, normalized, recent, text_parts, timeline
 from .query import run_query, select_engine
-from .state import atomic_json, atomic_write, load_state, locked, now, save_state
+from .state import atomic_json, load_state, locked, save_state
 
 
 def emit(value: object) -> None:
@@ -30,14 +30,17 @@ def count(value: str, maximum: int) -> int:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control and observe named opencode experiments.")
     commands = root.add_subparsers(dest="command", required=True)
-    doctor = commands.add_parser("doctor"); doctor.add_argument("exec_name", nargs="?")
-    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "feedback-status", "validate", "export", "finish", "retire"):
+    commands.add_parser("doctor")
+    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "validate", "export", "finish", "retire", "children", "tree"):
         item = commands.add_parser(name); item.add_argument("exec_name")
         if name == "answer": item.add_argument("--json", action="store_true", dest="as_json")
     for name, default, maximum in (("recent", 3, 20), ("timeline", 8, 50)):
         item = commands.add_parser(name); item.add_argument("exec_name"); item.add_argument("count", nargs="?", default=default, type=lambda x, m=maximum: count(x, m))
     ask = commands.add_parser("ask"); ask.add_argument("exec_name"); group = ask.add_mutually_exclusive_group(required=True); group.add_argument("message", nargs="?"); group.add_argument("--file")
-    feedback = commands.add_parser("feedback"); feedback.add_argument("exec_name"); feedback.add_argument("--source-exec"); feedback.add_argument("--source-round", type=int); feedback.add_argument("--source-message")
+    child = commands.add_parser("child-recent"); child.add_argument("exec_name"); child.add_argument("session_id"); child.add_argument("count", nargs="?", default=3, type=lambda x: count(x, 20))
+    child_continue = commands.add_parser("child-continue"); child_continue.add_argument("exec_name"); child_continue.add_argument("session_id")
+    child_ask = commands.add_parser("child-ask"); child_ask.add_argument("exec_name"); child_ask.add_argument("session_id"); child_ask.add_argument("--agent", required=True); group = child_ask.add_mutually_exclusive_group(required=True); group.add_argument("message", nargs="?"); group.add_argument("--file")
+    child_abort = commands.add_parser("child-abort"); child_abort.add_argument("exec_name"); child_abort.add_argument("session_id")
     query = commands.add_parser("query"); query.add_argument("exec_name"); group = query.add_mutually_exclusive_group(required=True); group.add_argument("expression", nargs="?"); group.add_argument("--file"); query.add_argument("--raw-output", action="store_true")
     return root
 
@@ -47,11 +50,11 @@ def live_document(context: Context) -> tuple[dict, list]:
     return normalized(state, messages, context.client().status(), context.rounds(), context.manifest.observe), messages
 
 
-def doctor(exec_name: str | None) -> dict:
+def doctor() -> dict:
     repo = repository_root(); git = resolve_cli("git"); revision = subprocess.run([*git, "rev-parse", "HEAD"], cwd=repo, text=True, stdout=subprocess.PIPE).stdout.strip()
     result = {"python": sys.version.split()[0], "repository": str(repo), "revision": revision,
               "commands": {},
-              "override": os.environ.get("OC_QUERY_ENGINE"), "query_engine": None, "execution": None}
+              "override": os.environ.get("OC_QUERY_ENGINE"), "query_engine": None}
     for capability, choices in {"git": ("git",), "opencode": ("opencode",), "query": ("jaq", "jq")}.items():
         try: result["commands"][capability] = list(resolve_capabilities({capability: choices})[capability])
         except ControlError: result["commands"][capability] = None
@@ -60,43 +63,27 @@ def doctor(exec_name: str | None) -> dict:
     if result["commands"]["opencode"]:
         version = subprocess.run([*result["commands"]["opencode"], "--version"], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         result["opencode_version"] = version.stdout.strip()
-    if exec_name: result["execution"] = resolve(exec_name).state
     return result
-
-
-def feedback_command(context: Context, args: argparse.Namespace) -> dict:
-    verify_prepared(context.manifest, context.state)
-    path = Path(context.state["workspace"]) / context.manifest.feedback["path"]
-    if not path.is_file() or path.is_symlink(): raise ControlError(f"feedback file is missing: {path}", 66)
-    text = path.read_text(encoding="utf-8")
-    if not text.strip(): raise ControlError("feedback file is empty")
-    digest = sha256(path); directory = context.root / "feedback"; directory.mkdir(exist_ok=True)
-    previous = []
-    for meta in sorted(directory.glob("*.json")):
-        previous.append(json.loads(meta.read_text(encoding="utf-8")))
-    delivered = [item for item in previous if item.get("digest") == digest and item.get("round") is not None]
-    if delivered: raise ControlError("this feedback digest was already delivered")
-    pending = next((item for item in previous if item.get("digest") == digest), None)
-    number = pending["number"] if pending else len(previous) + 1
-    frozen = directory / f"{number:03d}.md"
-    if pending:
-        if frozen.read_text(encoding="utf-8") != text: raise ControlError("pending feedback snapshot does not match live feedback")
-    else:
-        atomic_write(frozen, text.encode(), 0o444)
-    source = {"exec_name": args.source_exec, "round": args.source_round, "message_id": args.source_message}
-    metadata = pending or {"schema": "telora.opencode-feedback/v1", "number": number, "target": context.state["exec_name"], "digest": digest, "created_at": now(), "source": source, "round": None}
-    if not pending: atomic_json(directory / f"{number:03d}.json", metadata)
-    prompt = context.manifest.prompts["feedback"]
-    record = send_round(context, "feedback", prompt, source=source)
-    metadata["round"] = record["number"]; metadata["delivered_at"] = now(); atomic_json(directory / f"{number:03d}.json", metadata)
-    return metadata
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        if args.command == "doctor": emit(doctor(args.exec_name)); return 0
+        if args.command == "doctor": emit(doctor()); return 0
         context = resolve(args.exec_name)
+        exec_name = args.exec_name
+        if args.command in ("child-continue", "child-ask", "child-abort"):
+            children = context.client().children()
+            if not any(child.get("id") == args.session_id for child in children):
+                raise ControlError("session is not a direct child of this execution", 64)
+            if args.command == "child-abort":
+                context.client().abort_session(args.session_id)
+                emit({"exec_name": exec_name, "session_id": args.session_id, "aborted": True}); return 0
+            text = context.manifest.prompts["continue"] if args.command == "child-continue" else (Path(args.file).read_text(encoding="utf-8") if args.file else args.message)
+            if not text or not text.strip(): raise ControlError("child message must not be empty", 64)
+            agent = None if args.command == "child-continue" else validate_identifier(args.agent, "agent")
+            context.client().prompt_session(args.session_id, text, agent)
+            emit({"exec_name": exec_name, "session_id": args.session_id, "agent": agent, "text": text}); return 0
         if args.command == "workspace": print(context.state["workspace"]); return 0
         if args.command == "start":
             verify_prepared(context.manifest, context.state)
@@ -104,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
             if initial and initial[0].get("user_message_id"):
                 emit(initial[0]); return 0
             emit(send_round(context, "initial", context.manifest.prompts["start"], require_empty=True)); return 0
-        if args.command in ("status", "snapshot", "recent", "timeline", "files", "failures", "audit", "answer", "query"):
+        if args.command in ("status", "snapshot", "recent", "timeline", "files", "failures", "audit", "answer", "query", "children", "tree", "child-recent"):
             if context.state["phase"] in ("finished", "retired") or not Path(context.state["workspace"]).exists():
                 document = json.loads((context.root / "result" / "query.json").read_text(encoding="utf-8")); messages = document["messages"]
                 document["state"] = context.state
@@ -119,8 +106,19 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "answer":
                 latest = latest_assistant(messages)
                 if not latest or latest.get("info", {}).get("time", {}).get("completed") is None: raise ControlError("no completed assistant answer")
-                info = latest["info"]; value = {"exec_name": args.exec_name, "message_id": info.get("id"), "completed": info.get("time", {}).get("completed"), "finish": info.get("finish"), "text": "\n".join(text_parts(latest))}
+                info = latest["info"]; value = {"exec_name": exec_name, "message_id": info.get("id"), "completed": info.get("time", {}).get("completed"), "finish": info.get("finish"), "text": "\n".join(text_parts(latest))}
                 emit(value) if args.as_json else print(value["text"])
+            elif args.command in ("children", "tree"):
+                if context.state["phase"] in ("finished", "retired"):
+                    emit(json.loads((context.root / "result" / "children.json").read_text(encoding="utf-8")))
+                else:
+                    emit(context.client().children())
+            elif args.command == "child-recent":
+                if context.state["phase"] in ("finished", "retired"):
+                    path = context.root / "result" / "children" / f"{args.session_id}.messages.json"
+                    emit(recent(json.loads(path.read_text(encoding="utf-8")), args.count))
+                else:
+                    emit(recent(context.client().session_messages(args.session_id), args.count))
             else:
                 return run_query(json.dumps(document, ensure_ascii=False), args.expression, args.file, args.raw_output)
             return 0
@@ -139,10 +137,6 @@ def main(argv: list[str] | None = None) -> int:
             _, latest = live_boundary(context, allow_length=True)
             if latest.get("info", {}).get("finish") != "length": raise ControlError("latest assistant message did not finish at length")
             emit(send_round(context, "continue", context.manifest.prompts["continue"], require_finish="length")); return 0
-        if args.command == "feedback": emit(feedback_command(context, args)); return 0
-        if args.command == "feedback-status":
-            values = [json.loads(p.read_text()) for p in sorted((context.root / "feedback").glob("*.json"))] if (context.root / "feedback").exists() else []
-            emit(values); return 0
         if args.command == "validate":
             values = run_validation(context); emit(values); return 1 if any(v["exit"] for v in values) else 0
         if args.command == "export":
@@ -152,13 +146,13 @@ def main(argv: list[str] | None = None) -> int:
             emit({"path": str(path), "bytes": path.stat().st_size,
                   "messages": len(value.get("messages", [])) if isinstance(value, dict) else None})
             return 0
-        if args.command == "finish": finish(context); print(f"Execution {args.exec_name} is frozen. You may exit the TUI."); return 0
+        if args.command == "finish": finish(context); print(f"Execution {exec_name} is frozen. You may exit the TUI."); return 0
         if args.command == "retire":
             if context.state["phase"] not in ("finished", "retired"): raise ControlError("only a finished execution can be retired")
             if not all((context.root / "result" / name).is_file() for name in ("query.json", "session.json", "messages.json")): raise ControlError("frozen query evidence is incomplete")
             safe_cleanup(context.state)
             with locked(context.root): state = load_state(context.root); state["phase"] = "retired"; save_state(context.root, state)
-            print(f"Execution {args.exec_name} retired."); return 0
+            print(f"Execution {exec_name} retired."); return 0
         raise ControlError(f"unsupported command: {args.command}", 64)
     except ControlError as exc:
         print(f"oc-ctl: {exc}", file=sys.stderr); return exc.code

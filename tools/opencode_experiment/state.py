@@ -24,6 +24,16 @@ def execution_root(repo: Path, exec_name: str) -> Path:
     return repo / "target" / "exp" / exec_name
 
 
+def bind_plan(repo: Path, plan_id: str, exec_name: str) -> Path:
+    root = execution_root(repo, exec_name); root.mkdir(parents=True, exist_ok=True)
+    binding = root / "plan"; expected = f"{plan_id}\n"
+    if binding.exists():
+        if binding.read_text(encoding="utf-8") != expected:
+            raise ControlError(f"execution {exec_name} is bound to another plan")
+    else:
+        atomic_write(binding, expected.encode(), 0o444)
+    return root
+
 def atomic_write(path: Path, content: bytes, mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -50,30 +60,6 @@ def locked(root: Path, exclusive: bool = True) -> Iterator[None]:
         fcntl.flock(lock, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
         try: yield
         finally: fcntl.flock(lock, fcntl.LOCK_UN)
-
-
-def bind_plan(repo: Path, plan_id: str, exec_name: str) -> Path:
-    root = execution_root(repo, exec_name)
-    root.mkdir(parents=True, exist_ok=True)
-    binding = root / "plan"
-    expected = f"{plan_id}\n"
-    if binding.exists():
-        if binding.read_text(encoding="utf-8") != expected:
-            raise ControlError(f"execution {exec_name} is bound to another plan")
-    else:
-        try:
-            descriptor = os.open(binding, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
-        except FileExistsError:
-            if binding.read_text(encoding="utf-8") != expected:
-                raise ControlError(f"execution {exec_name} is bound to another plan") from None
-        else:
-            with os.fdopen(descriptor, "wb") as output:
-                output.write(expected.encode()); output.flush(); os.fsync(output.fileno())
-            directory = os.open(root, os.O_RDONLY)
-            try: os.fsync(directory)
-            finally: os.close(directory)
-    return root
-
 
 def load_state(root: Path) -> dict[str, Any]:
     try: data = json.loads((root / "state.json").read_text(encoding="utf-8"))

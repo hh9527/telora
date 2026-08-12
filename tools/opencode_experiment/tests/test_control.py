@@ -11,12 +11,12 @@ from pathlib import Path
 from unittest import mock
 
 from tools.opencode_experiment.client import Client
-from tools.opencode_experiment.config import ControlError, load_manifest, safe_relative, validate_identifier
+from tools.opencode_experiment.config import ControlError, Manifest, load_manifest, safe_relative, validate_identifier
 from tools.opencode_experiment.observe import failures, latest_assistant, normalized, summarize
 from tools.opencode_experiment.query import select_engine
 from tools.opencode_experiment.external import probe_direct, probe_mise, resolve_capabilities, resolve_cli, resolve_command
-from tools.opencode_experiment.state import atomic_json, bind_plan, load_state, save_state, SCHEMA
-from tools.opencode_experiment.lifecycle import copy_archive, export_session, prepare
+from tools.opencode_experiment.state import atomic_json, load_state, save_state, SCHEMA
+from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare
 from tools.opencode_experiment.context import Context
 
 
@@ -58,6 +58,7 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(self.client.health()["healthy"]); self.assertEqual(self.client.status()["type"], "idle")
         self.assertEqual(Client(self.client.url, "/tmp/ws").create_session("test")["id"], "ses_test")
         self.client.prompt("hello"); self.assertEqual(self.client.messages()[-1]["parts"][0]["text"], "hello")
+        self.client.prompt_session("ses_test", "continue"); self.assertEqual(self.client.messages()[-1]["parts"][0]["text"], "continue")
 
     def test_loopback_only(self):
         with self.assertRaises(ControlError): Client("http://example.com:12", "/tmp/ws")
@@ -67,6 +68,18 @@ class ServerTest(unittest.TestCase):
 
 
 class ConfigStateTest(unittest.TestCase):
+    @staticmethod
+    def write_plan(plan: Path, *, environment: dict[str, str] | None = None) -> None:
+        plan.mkdir(parents=True)
+        (plan / "experiment.json").write_text(json.dumps({
+            "schema": "telora.opencode-cloned-plan/v1",
+            "prompts": {"start": "start", "continue": "continue"},
+            "artifacts": [{"name": "tool", "source": "tool", "to": "bin/tool", "mode": "0555"}],
+            "validation": [], "observe": ["bin"], "archive": ["bin", "opencode.json", "experiment.json"],
+            "environment": environment or {},
+        }))
+        (plan / "opencode.json").write_text(json.dumps({"default_agent": "main"}))
+
     def test_identifiers_and_paths(self):
         self.assertEqual(validate_identifier("a2-001", "exec"), "a2-001")
         for value in ("../x", "/x", ".", "a/../b"):
@@ -74,37 +87,87 @@ class ConfigStateTest(unittest.TestCase):
         for value in ("A", "a/b", ".hidden", "a b"):
             with self.assertRaises(ControlError): validate_identifier(value, "id")
 
-    def test_binding_and_atomic_state(self):
+    def test_atomic_state(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); root = bind_plan(repo, "plan", "run")
-            self.assertEqual((root / "plan").read_text(), "plan\n")
-            with self.assertRaises(ControlError): bind_plan(repo, "other", "run")
+            root = Path(temporary); (root / "plan").write_text("plan\n")
             state = {"schema": SCHEMA, "plan_id": "plan", "exec_name": "run", "phase": "ready"}; save_state(root, state)
             self.assertEqual(load_state(root), state)
 
-    def test_manifest_unknown_key(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); plan = root / "experiments" / "p"; plan.mkdir(parents=True)
-            (plan / "experiment.json").write_text(json.dumps({"schema": "telora.opencode-experiment/v1", "typo": 1}))
-            with self.assertRaisesRegex(ControlError, "unknown manifest"): load_manifest(root, "p")
+    def test_ontology_plan_control_inputs(self):
+        repo = Path(__file__).resolve().parents[3]
+        manifest = load_manifest(repo, "ontology-edsl")
+        self.assertEqual(manifest.prompts, {
+            "start": "请开始实验。",
+            "continue": "恢复执行。",
+        })
+        self.assertEqual(
+            [item["name"] for item in manifest.validation],
+            ["ontology", "ontology-test", "enterprise", "enterprise-test"],
+        )
 
-    def test_manifest_requires_exact_prompts(self):
+        plan = repo / "experiments" / "ontology-edsl"
+        a2 = (plan / ".opencode" / "agents" / "a2.md").read_text(encoding="utf-8")
+        a3 = (plan / ".opencode" / "agents" / "a3.md").read_text(encoding="utf-8")
+        coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
+        design = (plan / "ontology" / "DESIGN.md").read_text(encoding="utf-8")
+        self.assertIn("## Telora 自学与探索", a2)
+        self.assertIn("./bin/telora run ontology/bin-src/*.telora", a2)
+        self.assertIn("## Telora 自学与探索", a3)
+        self.assertIn("./bin/telora run ent-1/bin-src/*.telora", a3)
+        self.assertIn("Model := ModellingFactory(DomainKnowledge)", design)
+        self.assertIn("SqlQuery := transform(Plan)", design)
+        self.assertIn("bindings: Array(Val)", design)
+        self.assertIn("必须重新读取", coordinator)
+        self.assertIn("不能只依据上一次", coordinator)
+
+    def test_manifest_validates_opencode_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); plan = root / "experiments" / "p"; plan.mkdir(parents=True)
-            base = {
-                "schema": "telora.opencode-experiment/v1",
-                "prompts": {"start": "Start.", "continue": "Continue.", "feedback": "Feedback."},
-                "workspace": {"template": "template", "copies": []},
-                "permissions": {"read": ["output/**"], "write": ["output/**"], "commands": ["./bin/run"]},
-                "feedback": {"path": "output/feedback.md", "role_writable": False},
-            }
-            for prompts in (
-                {"start": "Start.", "feedback": "Feedback."},
-                {"start": "Start.", "continue": "", "feedback": "Feedback."},
-                {"start": "Start.", "cont": "Continue.", "feedback": "Feedback."},
-            ):
-                (plan / "experiment.json").write_text(json.dumps({**base, "prompts": prompts}))
-                with self.assertRaises(ControlError): load_manifest(root, "p")
+            repo = Path(temporary); plan = repo / "experiments" / "demo"
+            self.write_plan(plan, environment={"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"})
+            manifest = load_manifest(repo, "demo")
+            self.assertEqual(manifest.environment, {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"})
+            self.assertEqual(opencode_environment({"opencode_environment": manifest.environment})["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"], "128000")
+
+        for environment in ({"PATH": "/tmp"}, {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "0"},
+                            {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "lots"}):
+            with tempfile.TemporaryDirectory() as temporary:
+                repo = Path(temporary); plan = repo / "experiments" / "demo"
+                self.write_plan(plan, environment=environment)
+                with self.assertRaises(ControlError):
+                    load_manifest(repo, "demo")
+
+    def test_prepare_clones_committed_plan_revision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
+            artifact = repo / "tool"; artifact.write_text("tool")
+            subprocess.run(["git", "init", "--quiet"], cwd=plan, check=True)
+            subprocess.run(["git", "add", "."], cwd=plan, check=True)
+            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "plan"], cwd=plan, check=True)
+            git = ("git",)
+            with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo), \
+                 mock.patch("tools.opencode_experiment.lifecycle.git_metadata", return_value=("rev", False)), \
+                 mock.patch("tools.opencode_experiment.lifecycle.resolve_cli", return_value=git), \
+                 mock.patch("tools.opencode_experiment.lifecycle.subprocess.run", wraps=subprocess.run):
+                _root, state, created = prepare("demo", "run", 4567)
+            self.assertTrue(created)
+            result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=state["workspace"], text=True, stdout=subprocess.PIPE)
+            self.assertEqual(result.stdout.strip(), state["plan_revision"])
+            self.assertTrue((Path(state["workspace"]) / "experiment.json").is_file())
+            self.assertEqual((Path(state["workspace"]) / "bin/tool").read_text(), "tool")
+            self.assertEqual(state["opencode_environment"], {})
+
+    def test_prepare_rejects_dirty_plan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
+            artifact = repo / "tool"; artifact.write_text("tool")
+            subprocess.run(["git", "init", "--quiet"], cwd=plan, check=True)
+            subprocess.run(["git", "add", "."], cwd=plan, check=True)
+            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "plan"], cwd=plan, check=True)
+            (plan / "dirty").write_text("dirty")
+            with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo), \
+                 mock.patch("tools.opencode_experiment.lifecycle.git_metadata", return_value=("rev", False)):
+                with self.assertRaisesRegex(ControlError, "clean and committed"):
+                    prepare("demo", "run", 4567)
 
 
 class ObserveQueryTest(unittest.TestCase):
@@ -144,39 +207,17 @@ class ObserveQueryTest(unittest.TestCase):
             self.assertEqual(select_engine(), ("jq", ["jq"]))
 
 
-class MigrationTest(unittest.TestCase):
-    def manifest(self, root: Path) -> None:
-        plan = root / "experiments" / "demo"; (plan / "template" / "a2").mkdir(parents=True)
-        (plan / "template" / "a2" / "feedback.md").write_text("")
-        (plan / "input.md").write_text("input")
-        (root / "bin").mkdir(); artifact = root / "bin" / "tool"; artifact.write_text("tool")
-        (plan / "experiment.json").write_text(json.dumps({
-            "schema": "telora.opencode-experiment/v1", "prompts": {"start": "Start.", "continue": "Continue.", "feedback": "Read feedback."},
-            "workspace": {"template": "template", "copies": [{"from": "input.md", "to": "a1/input.md", "mode": "0444"}]},
-            "permissions": {"read": ["a1/**", "a2/**"], "write": ["a2/src/**"], "commands": ["./bin/run"]},
-            "feedback": {"path": "a2/feedback.md", "role_writable": False},
-            "artifacts": [{"name": "tool", "source": "bin/tool", "to": "bin/tool", "mode": "0555"}],
-            "validation": [], "observe": ["a2"], "archive": ["a1", "a2", "opencode.json"]
-        }))
-
-    def test_prepare_and_archive(self):
+class ArchiveExportTest(unittest.TestCase):
+    def test_archive_is_repeatable_and_rejects_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); self.manifest(repo)
-            with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo), mock.patch("tools.opencode_experiment.lifecycle.git_metadata", return_value=("rev", False)):
-                root, state, created = prepare("demo", "run-1", 4567)
-                _, resumed, created_again = prepare("demo", "run-1", None)
-            self.assertTrue(created); workspace = Path(state["workspace"])
-            self.assertFalse(created_again); self.assertEqual(resumed["server_url"], "http://127.0.0.1:4567")
-            self.assertEqual((workspace / "a1/input.md").read_text(), "input")
-            self.assertEqual((workspace / "a1/input.md").stat().st_mode & 0o777, 0o444)
-            self.assertEqual((workspace / "bin/tool").stat().st_mode & 0o777, 0o555)
-            config = json.loads((workspace / "opencode.json").read_text())
-            self.assertEqual(config["permission"]["write"]["a2/feedback.md"], "deny")
-            context = Context(repo, root, state, load_manifest(repo, "demo")); destination = root / "result" / "workspace"
-            copy_archive(context, destination); self.assertTrue((destination / "a1/input.md").is_file())
-            copy_archive(context, destination); self.assertTrue((destination / "a1/input.md").is_file())
-            os.symlink("/tmp", workspace / "a2" / "escape")
-            context.manifest = type(context.manifest)(**{**context.manifest.__dict__, "archive": ("a2",)})
+            repo = Path(temporary); root = repo / "role"; workspace = repo / "workspace"
+            (workspace / "output").mkdir(parents=True); (workspace / "output" / "x").write_text("x")
+            manifest = Manifest("demo", repo, {"start": "s", "continue": "c"}, (),
+                                ("output",), ("output",), (), {})
+            context = Context(repo, root, {"workspace": str(workspace)}, manifest); destination = root / "result" / "workspace"
+            copy_archive(context, destination); self.assertTrue((destination / "output/x").is_file())
+            copy_archive(context, destination); self.assertTrue((destination / "output/x").is_file())
+            os.symlink("/tmp", workspace / "output" / "escape")
             with self.assertRaises(ControlError): copy_archive(context, destination)
 
     def test_export_retries_truncated_json(self):

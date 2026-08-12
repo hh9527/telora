@@ -1,6 +1,6 @@
 # RFC 0224: Opencode Experiment Control Plane
 
-- Status: Proposed
+- Status: Amended by RFC 0225
 - Depends on: RFC 0217
 
 ## Summary

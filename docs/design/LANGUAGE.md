@@ -855,7 +855,6 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 
 此外，下列能力具有明确的当前限制：
 
-- 参数化 TypeMetadata family 不能参数化递归，也不能调用同模块普通 helper；
 - `interpreter!` 只提升直接 A 参数的消费型解释器，不能适配高阶或返回 A 的位置；
 - Func 在公开 Type descriptor 解释中是受限的 opaque leaf；
 - 普通 CLI 严格失败输出不保证一次展示 recovery 已收集的全部独立诊断；
@@ -864,6 +863,94 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 - 工具可以保守丢失精度，不能以猜测填补缺失语法或失败依赖。
 
 这些限制是当前规范的一部分。应用不能依赖规范之外的推断、反射或 Host fallback。
+
+### 14.1 复合值的保守类型推断
+
+第 6 节规定的完整调用证据、expected function type、callback widening 和 enum
+payload 精化均属于当前语义。但推断不保证为任意一组分别构造的窄值主动寻找一个
+公共的高层 family 实例。
+
+特别是，当同一个 Array 的元素同时包含不同 singleton Atom、不同 closure、不同
+`Option` variant 或匿名 Struct 时，仅凭元素字面量可能无法收敛到预期的封闭 enum、
+函数契约或参数化 family。严格模式会报告冲突或未解决约束，不会把元素静默擦除为
+`Any`。错误中出现较大的 variant union，通常表示缺少共同的 expected type，而不
+表示运行时存在动态 union。
+
+缓解方法是在最小公共边界提供具体契约。可以给 Array、完整记录或各个具名构建
+函数标注同一个 family 实例：
+
+```telora
+@struct type Entry(Id, Value) = {
+    id: Id,
+    value: Option(Value),
+};
+
+@enum type EntryId = {First: 'None, Second: 'None};
+type IntEntry = Entry(EntryId, Int);
+
+def first: Fn() -> IntEntry = fn() {
+    {id: 'First, value: 'Some(1)}
+};
+
+def second: Fn() -> IntEntry = fn() {
+    {id: 'Second, value: 'None}
+};
+
+let entries: Array(IntEntry) = [first(), second()];
+```
+
+该标注提供检查目标，不改变值的运行时表示，也不授权 `Any` fallback。若完整泛型
+调用仍有歧义，可以进一步使用 `@[...]` 显式提供无法由值参数唯一确定的类型实参。
+
+### 14.2 Enum payload 的具名类型要求
+
+`@enum` decorator 当前要求每个有 payload 的 variant 引用可解析的具名
+TypeMetadata。不能在 enum 类型声明的 payload 位置直接放置匿名 Struct：
+
+```telora
+# 非法：payload 是匿名 Struct TypeMetadata
+# @enum type Expr = {Column: {alias: String, column: String}};
+
+@struct type ColumnRef = {alias: String, column: String};
+@enum type Expr = {Column: ColumnRef};
+```
+
+该限制只属于类型声明。构造 tagged value 时，payload 的匿名记录仍会按具名 Struct
+契约检查，因此下式合法：
+
+```telora
+let expr: Expr = 'Column({alias: "orders", column: "id"});
+```
+
+### 14.3 Family 与递归 concrete type
+
+递归 concrete TypeMetadata 可以作为有限类型图发布和观察，但当前不能被参数化
+family 的符号模板捕获。若某个 family 的字段契约直接或间接引用递归 concrete
+type，定义会因不支持的递归 component 而失败。Family 自身也不能参数化递归、
+形成循环 component，或调用同模块普通 helper。
+
+当应用只需要有界深度时，可以在 family 契约边界使用无环表示。例如把“一层函数”
+拆成原子参数和函数节点：
+
+```telora
+@enum type Atom = {Column: ColumnRef, Literal: Value};
+@struct type Call = {name: String, args: Array(Atom)};
+@enum type Expr = {Column: ColumnRef, Literal: Value, Call: Call};
+```
+
+这是一种有界数据模型，不等价于递归表达式树。需要任意嵌套时，程序不能依赖该
+写法获得未声明的递归能力，也不能使用 `Any` 绕过 family sealing。
+
+### 14.4 多态 binding 与外围类型参数
+
+Telora 不提供任意 binding 的无限制 let-polymorphism。一个泛型 callable 经普通
+alias 绑定后，只在该 alias 初始化时实例化一次；需要在多个类型上使用时，应直接
+调用原泛型定义、在调用点使用 `@[...]`，或声明具有完整 `for` 契约的具名定义。
+
+此外，泛型函数 body 内的局部 annotation 当前不能引用由外围模块级 `for` 契约
+引入、但未在该局部定义契约中重新量化的类型参数。需要这种 annotation 时，应把
+相关计算提升为模块级辅助定义，并在其完整 `for(...) Fn(...) -> ...` 契约中显式
+列出所需参数。不得通过 `Any` 擦除该依赖。
 
 ## 15. 规范性总结
 
