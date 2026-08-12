@@ -1,203 +1,181 @@
-# Ontology eDSL design contract
+# 本体 eDSL 设计契约
 
-This document specifies the observable behavior of a reusable ontology eDSL.
-It deliberately does not prescribe function names, module layout, graph
-algorithm, internal state representation, or teaching structure.
+本文档规定可复用本体 eDSL 的可观察行为。它不规定函数名称、模块布局、
+图算法、内部状态表示或教学结构。
 
-The goal is to let structurally different enterprises define private measures,
-dimensions, relationships, physical mappings, and plan builders while one
-domain-neutral library owns capability compilation, path policy, diagnostics,
-and atomic publication.
+其目标是允许结构各异的企业定义私有的度量、维度、关系、物理映射和计划
+构建器，同时由一个领域无关的库统一负责能力编译、路径策略、诊断和原子发布。
 
-## Ownership boundary
+## 所有权边界
 
 ```text
-Reusable eDSL
-  semantic-role TypeMetadata families
-  capability lookup and independent lowering
-  completeness evidence and requirement collection
-  path selection and classification
-  diagnostic construction and publication policy
-  atomic publication orchestration
+可复用 eDSL
+  语义角色 TypeMetadata family
+  能力查找与独立 lowering
+  完整性证据与需求收集
+  路径选择与分类
+  诊断构造与发布策略
+  原子发布编排
 
-Enterprise model
-  closed identities and domain values
-  capability definitions and formulas
-  relation catalogs and physical mappings
-  combination and final plan-building policy
+企业模型
+  封闭的标识类型与领域值
+  能力定义与公式
+  关系目录与物理映射
+  组合策略与最终计划构建策略
 ```
 
-The eDSL must contain no enterprise entity, table, column, SQL fragment,
-formula, status code, or String-based identity. Enterprise models must not
-duplicate the shared compilation and classification rules.
+eDSL 不得包含企业实体、表、列、SQL 片段、公式、状态码或基于 String 的
+标识。企业模型不得重复实现共享的编译规则和分类规则。
 
-## Semantic role families
+## 语义角色 family
 
-The eDSL exposes executable TypeMetadata families for at least these roles:
+eDSL 至少为下列角色暴露可执行的 TypeMetadata family：
 
-- **MeasureDefinition**: identity, semantic value, natural-granularity entity,
-  aggregation classification, and a model-specific lowering capability.
-- **DimensionDefinition**: identity and model-specific lowering capability;
-  requirements derived by a dimension belong in its output payload.
-- **RelationDefinition**: semantic from/to endpoints, cardinality
-  classification, and an enterprise-owned physical mapping payload.
+- **MeasureDefinition**：标识、语义值、自然粒度实体、聚合分类，以及模型特定
+  的 lowering 能力。
+- **DimensionDefinition**：标识和模型特定的 lowering 能力；由维度派生的需求
+  属于该维度的输出 payload。
+- **RelationDefinition**：语义起点和终点、基数分类，以及企业所有的物理映射
+  payload。
 
-Field meanings are library-owned; all concrete identity, input, output,
-entity, classification, mapping, and plan types are model-supplied. The
-families and any promised classification types must be exported and consumable
-from another module.
+字段含义由库所有；所有具体的标识、输入、输出、实体、分类、映射和计划类型
+均由模型提供。各个 family 以及承诺提供的分类类型必须被导出，并且能够从其他
+模块使用。
 
-## Capability compilation
+## 能力编译
 
-Given requested identities and a typed catalog, the shared protocol must:
+给定一组请求标识和一个有类型的目录，共享协议必须：
 
-1. check authorization and locate each capability independently;
-2. invoke lowering with the original requested identity;
-3. retain an aligned `Array(Option(Output))` or equivalent per-request
-   evidence;
-4. collect every completed value without fabricating a replacement;
-5. derive and de-duplicate relation requirements through typed selectors; and
-6. continue independent work after one expected domain rejection.
+1. 独立检查每项能力的授权状态并定位该能力；
+2. 使用原始请求标识调用 lowering；
+3. 为每项请求保留对齐的 `Array(Option(Output))` 或等价证据；
+4. 收集每个已完成的值，不得伪造替代值；
+5. 通过有类型的 selector 派生关系需求并去重；
+6. 一项预期的领域拒绝发生后，继续处理彼此独立的工作。
 
-Missing, unauthorized, mismatched, or unsuccessful capabilities must be
-observable as domain rejection evidence with authored subjects. They must not
-be indistinguishable from an accidental runtime error.
+缺失、未授权、不匹配或未成功的能力必须作为带有创作主体的领域拒绝证据可被
+观察。它们不得与意外的运行时错误无法区分。
 
-## Path inputs
+## 路径输入
 
-Path classification receives:
+路径分类接收：
 
-- a safe relation catalog;
-- a fan-out relation catalog;
-- a base node;
-- ordered target requirements;
-- typed endpoint selectors; and
-- any typed equality capability required by the chosen API.
+- 一个安全关系目录；
+- 一个扇出关系目录；
+- 一个基点；
+- 一组有序的目标需求；
+- 有类型的端点 selector；
+- 所选 API 所需的任何有类型相等性能力。
 
-Every relation value, including its enterprise physical mapping, must survive
-selection unchanged. A semantic edge in both catalogs is an invalid catalog
-fact and produces a sourced diagnostic.
+每个关系值，包括其中由企业所有的物理映射，都必须原样通过选择过程。同一条
+语义边同时出现在两个目录中属于无效目录事实，并产生带来源的诊断。
 
-## Safe path selection
+## 安全路径选择
 
-For every target that has a pure-safe path of at most eight edges from the
-base, select one path using this policy:
+对于从基点出发、存在不超过八条边的纯安全路径的每个目标，按照下列策略选择
+一条路径：
 
-1. choose the path with the fewest edges;
-2. when paths have equal length, compare their safe-catalog index sequences
-   lexicographically and choose the lower sequence; and
-3. preserve base-to-target edge order in the selected path.
+1. 选择边数最少的路径；
+2. 路径长度相同时，按字典序比较它们在安全目录中的索引序列，选择较小序列；
+3. 在所选路径中保留从基点到目标的边顺序。
 
-Combine selected paths in target order. If an edge occurs in more than one
-selected path, retain its first occurrence. Consequently:
+按目标顺序组合所选路径。如果一条边出现在多条所选路径中，只保留它第一次
+出现的位置。因此：
 
-- no targets produce no selected safe edges;
-- a reachable branch unrelated to every target is excluded;
-- a multi-hop target contributes every edge on its selected path; and
-- alternative paths are not all passed to the plan builder.
+- 没有目标时，不选择任何安全边；
+- 与所有目标均无关的可达分支被排除；
+- 多跳目标贡献其所选路径上的每条边；
+- 不能把所有备选路径都传给计划构建器。
 
-These are observable requirements, not an instruction to use a particular
-search algorithm.
+这些是可观察要求，并非要求使用某一种搜索算法。
 
-## Fan-out and missing classification
+## 扇出与缺失分类
 
-Full reachability uses the union of safe and fan-out catalogs and permits the
-two edge classes to alternate along a path.
+完整可达性使用安全目录与扇出目录的并集，并允许两类边在一条路径中交替出现。
 
-Within the eight-edge bound, each ordered target is classified as exactly one
-of:
+在八条边的界限内，每个有序目标必须恰好被分类为以下一种：
 
-- **safe**: a pure-safe path exists;
-- **fan-out-only**: no pure-safe path exists, but a path in the union catalog
-  exists; or
-- **missing**: no path in the union catalog exists within the bound.
+- **safe**：存在纯安全路径；
+- **fan-out-only**：不存在纯安全路径，但在并集目录中存在路径；
+- **missing**：在界限内，并集目录中不存在路径。
 
-Classification preserves target order. Fan-out and missing diagnostics retain
-the authored requirement subject rather than blaming only a generic node.
+分类保留目标顺序。扇出和缺失诊断保留原始创作的需求主体，而不是只归责于
+一个通用节点。
 
-The result also exposes whether either bounded traversal had an unexpanded
-frontier after eight edges. This `truncated` evidence is `True` exactly when
-the configured bound may have hidden further reachability. A truncated result
-cannot authorize publication. Fuel exhaustion is a runtime failure, not
-truncation evidence.
+结果还要暴露两次有界遍历中是否有任何一次在八条边后仍有未展开的前沿。
+当且仅当配置的界限可能隐藏了更远的可达性时，该 `truncated` 证据为 `True`。
+截断的结果不得授权发布。fuel 耗尽是运行时失败，不是截断证据。
 
-## Builder transport
+## 构建器传输
 
-The final enterprise builder must receive both:
+最终的企业构建器必须同时接收：
 
-- the validated combined semantic value; and
-- the selected safe relation values in deterministic path order.
+- 经过验证的组合语义值；
+- 按确定性路径顺序排列的所选安全关系值。
 
-Passing only target nodes, dropping selected edges, or reconstructing mappings
-from String names violates the contract. The builder must be able to consume
-the enterprise-owned physical mapping carried by each selected relation.
+只传递目标节点、丢弃所选边，或者根据 String 名称重建映射，都违反本契约。
+构建器必须能够使用每个所选关系所携带的、由企业所有的物理映射。
 
-The eDSL may choose a direct product, a named semantic input record, or typed
-callbacks, provided the exact types and relation values are preserved.
+eDSL 可以选择直接积、具名语义输入记录或有类型的回调，前提是精确类型和关系
+值均得到保留。
 
-## Diagnostic and decision channels
+## 诊断与决策通道
 
-Expected model outcomes are represented explicitly. The compile result must let
-a caller distinguish at least:
+预期的模型结果使用显式表示。编译结果必须至少让调用方区分：
 
-- a published plan;
-- rejection because capability evidence is incomplete;
-- rejection because paths are fan-out-only, missing, or truncated; and
-- rejection by the enterprise builder.
+- 已发布的计划；
+- 因能力证据不完整而拒绝；
+- 因路径仅能扇出、缺失或截断而拒绝；
+- 被企业构建器拒绝。
 
-It also retains per-request completion evidence and structured `BlameError`
-values, or an equally precise typed representation. The eDSL must not use a
-fatal reported diagnostic as the only representation of expected rejection.
+结果还保留逐请求的完成证据和结构化 `BlameError` 值，或者同等精确的有类型
+表示。eDSL 不得把已报告的致命诊断用作预期拒绝的唯一表示。
 
-Diagnostics preserve three origins when applicable:
+适用时，诊断保留下列三个来源：
 
-1. intent: the requested identity;
-2. model fact: the capability or relation involved; and
-3. shared rule: the eDSL check that rejected it.
+1. 意图：请求的标识；
+2. 模型事实：涉及的能力或关系；
+3. 共享规则：作出拒绝的 eDSL 检查。
 
-Independent diagnostics run before the final publication decision. A premature
-gate must not hide an unrelated failure.
+彼此独立的诊断先于最终发布决策运行。过早的 gate 不得掩盖无关的失败。
 
-## Atomic publication
+## 原子发布
 
-A plan may be published only when all of the following hold:
+只有下列条件全部成立时，才能发布计划：
 
-- every requested capability produced a value;
-- path classification is not truncated;
-- every required target has an accepted safe path under the policy above;
-- independent downstream diagnostics have run; and
-- the enterprise builder returned a plan.
+- 每个请求的能力都产生了值；
+- 路径分类未被截断；
+- 每个必要目标都具有符合上述策略且可接受的安全路径；
+- 彼此独立的下游诊断均已运行；
+- 企业构建器返回了计划。
 
-Otherwise the result is explicitly rejected and contains no partial plan.
+否则，结果被显式拒绝，并且不包含部分计划。
 
-## Enterprise extension points
+## 企业扩展点
 
-An enterprise supplies:
+企业提供：
 
-1. closed identity, entity, requirement, output, and plan types;
-2. concrete measure and dimension capability catalogs;
-3. safe and fan-out relation facts with physical mapping payloads;
-4. typed identity, lowering, endpoint, requirement, and subject selectors;
-5. authorization, semantic combination, and final plan-building policies; and
-6. any additional requirements produced by other semantic stages.
+1. 封闭的标识、实体、需求、输出和计划类型；
+2. 具体的度量与维度能力目录；
+3. 带有物理映射 payload 的安全关系事实和扇出关系事实；
+4. 有类型的标识、lowering、端点、需求和主体 selector；
+5. 授权、语义组合和最终计划构建策略；
+6. 由其他语义阶段产生的任何附加需求。
 
-It does not reimplement capability traversal, completeness, requirement
-collection, path selection, classification, diagnostic ordering, or the
-publication gate.
+企业不重新实现能力遍历、完整性、需求收集、路径选择、分类、诊断顺序或发布
+gate。
 
-## Implementation freedom and constraints
+## 实现自由与约束
 
-A2 chooses the public API, file layout, helper functions, TypeMetadata family
-shapes, internal state, and algorithm. The implementation must remain pure,
-deterministic, typed, and domain-neutral.
+A2 自行选择公共 API、文件布局、辅助函数、TypeMetadata family 形状、内部
+状态和算法。实现必须保持纯、确定、有类型且领域无关。
 
-Do not use `Any`, `Dyn`, String identity, Host-native graph operations, hidden
-mutable state, or copied repository implementations. A bounded ordinary Telora
-implementation is required.
+不得使用 `Any`、`Dyn`、String 标识、Host 原生图操作、隐藏的可变状态或复制
+仓库中的实现。必须使用普通 Telora 完成有界实现。
 
-The delivery includes:
+交付物包括：
 
-- the eDSL source;
-- `EDSL_TUTORIAL.md` for enterprise authors;
-- `AI3_CONTRACT.md` listing required model inputs and eDSL guarantees; and
-- `STAGE2_NOTES.md` documenting API choices, tradeoffs, and known risks.
+- eDSL 源码；
+- 面向企业作者的 `EDSL_TUTORIAL.md`；
+- 列出模型必要输入和 eDSL 保证的 `AI3_CONTRACT.md`；
+- 记录 API 选择、权衡和已知风险的 `STAGE2_NOTES.md`。
