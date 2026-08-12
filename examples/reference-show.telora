@@ -9,6 +9,7 @@ import "std/string" as strings;
     Atom: 'None, Array: 'None, Dict: 'None, Tagged: 'None,
     Tuple: 'None, Struct: 'None, Enum: 'None, Union: 'None,
     Func: 'None, WithAttributes: 'None, Bound: 'None, Dyn: 'None, Ref: 'None,
+    Opaque: 'None,
 };
 type ShowResult = Result(String, BlameError);
 type ShowState = Result(Array(String), BlameError);

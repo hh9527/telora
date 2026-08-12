@@ -1475,11 +1475,7 @@ fn dependency_reaches(
     visit(graph, current, target, &mut HashSet::new())
 }
 
-fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
-    let root = hir
-        .definition(definition)
-        .and_then(|definition| definition.value)
-        .expect("type definition has a value expression");
+fn expression_dependencies(hir: &HirProgram, root: HirExpressionId) -> Vec<HirDefinitionId> {
     let mut dependencies = hir
         .expressions()
         .iter()
@@ -1494,6 +1490,14 @@ fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec
     dependencies.sort_unstable();
     dependencies.dedup();
     dependencies
+}
+
+fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
+    let root = hir
+        .definition(definition)
+        .and_then(|definition| definition.value)
+        .expect("type definition has a value expression");
+    expression_dependencies(hir, root)
 }
 
 fn type_dependency_graph(
@@ -1717,8 +1721,32 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
         .map(|(definition, _)| *definition)
         .collect::<Vec<_>>();
+    let contract_type_definitions = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| {
+            matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native)
+                || binding.value.kind == BindingKind::Def && binding.value.annotation.is_some()
+        })
+        .filter_map(|binding| binding.value.annotation.as_ref())
+        .flat_map(|annotation| hir.expression_ids_at(annotation.location))
+        .flat_map(|root| expression_dependencies(&hir, root))
+        .filter(|definition| type_definitions.contains(definition))
+        .filter(|definition| {
+            !type_dependencies.nodes.iter().any(|node| {
+                dependency_reaches(&type_dependencies, node.definition, node.definition)
+                    && !type_bindings[&node.definition].value.decorators.is_empty()
+                    && (*definition == node.definition
+                        || dependency_reaches(&type_dependencies, *definition, node.definition))
+            })
+        })
+        .collect::<Vec<_>>();
     let mut scheduled_types = BTreeSet::new();
     let mut frontier = family_definitions;
+    frontier.extend(contract_type_definitions);
     while let Some(definition) = frontier.pop() {
         if !scheduled_types.insert(definition) {
             continue;
@@ -1906,10 +1934,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .map(|definition| type_bindings[definition].value.name.value.as_str())
                 .collect::<Vec<_>>();
             let binding = type_bindings[&root];
-            let mut diagnostic = Diagnostic::error(
-                format!("recursive type family component containing {names:?} is not supported"),
-                binding.value.name.location,
-            );
+            let contains_family = component
+                .iter()
+                .any(|definition| !type_bindings[definition].value.type_parameters.is_empty());
+            let message = if contains_family {
+                format!("recursive type family component containing {names:?} is not supported")
+            } else {
+                format!(
+                    "recursive type component required by a definition contract containing {names:?} is not supported"
+                )
+            };
+            let mut diagnostic = Diagnostic::error(message, binding.value.name.location);
             for definition in component {
                 if definition == root {
                     continue;
@@ -9318,6 +9353,119 @@ mod tests {
             "{}",
             invalid.message
         );
+    }
+
+    #[test]
+    fn definition_contracts_evaluate_referenced_concrete_types_first() {
+        for (name, source) in [
+            (
+                "earlier-contract-type.telora",
+                "@struct type Plan = {name: String};\
+                 def builder: Fn(Int) -> Plan = fn(value) { {name: `plan \\{value}`} };\
+                 builder(1)",
+            ),
+            (
+                "later-contract-type.telora",
+                "def builder: Fn(Int) -> Plan = fn(value) { {name: `plan \\{value}`} };\
+                 @struct type Plan = {name: String};\
+                 builder(1)",
+            ),
+            (
+                "parameter-and-result-contract-types.telora",
+                "@struct type Input = {value: Int};\
+                 @struct type Output = {text: String};\
+                 def convert: Fn(Input) -> Output = fn(input) { {text: `value \\{input.value}`} };\
+                 convert({value: 1})",
+            ),
+            (
+                "transitive-contract-types.telora",
+                "type Plan = NamedPlan;\
+                 @struct type NamedPlan = {name: String};\
+                 def builder: Fn(Int) -> Plan = fn(value) { {name: `plan \\{value}`} };\
+                 builder(1)",
+            ),
+        ] {
+            let analysis = analyze_source(name, source).unwrap();
+            let expected = if name == "parameter-and-result-contract-types.telora" {
+                "{text: String}"
+            } else {
+                "{name: String}"
+            };
+            assert_eq!(analysis.display(analysis.result_type), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn contracted_definitions_preserve_generic_callback_result_precision() {
+        let source = "@struct type Box(T) = {value: T};\
+                      @struct type Plan = {name: String};\
+                      def invoke: for(P) Fn(Fn(Int) -> P) -> Box(P) = fn(build) {\
+                          {value: build(1)}\
+                      };\
+                      def builder: Fn(Int) -> Plan = fn(value) {\
+                          {name: `plan:\\{value}`}\
+                      };\
+                      let result = invoke(builder);\
+                      let output = result;\
+                      {output}";
+        let analysis = analyze_source("callback-contract.telora", source).unwrap();
+        assert_eq!(
+            analysis.display(analysis.result_type),
+            "{output: {value: {name: String}}}"
+        );
+        assert_eq!(
+            analysis.display(analysis.binding_types["output"]),
+            "{value: {name: String}}"
+        );
+
+        let with_unused_family = analyze_source(
+            "callback-contract-unused-family.telora",
+            "@struct type Box(T) = {value: T};\
+             @struct type Plan = {name: String};\
+             type Unused(T) = Tuple([Plan, T]);\
+             def invoke: for(P) Fn(Fn(Int) -> P) -> Box(P) = fn(build) {\
+                 {value: build(1)}\
+             };\
+             def builder: Fn(Int) -> Plan = fn(value) {\
+                 {name: `plan:\\{value}`}\
+             };\
+             let result = invoke(builder);\
+             let output = result;\
+             {output}",
+        )
+        .unwrap();
+        assert_eq!(
+            with_unused_family.display(with_unused_family.result_type),
+            analysis.display(analysis.result_type)
+        );
+    }
+
+    #[test]
+    fn contract_reachable_concrete_type_cycles_are_diagnosed_deterministically() {
+        let error = analyze_source(
+            "contract-type-cycle.telora",
+            "type Left = Right;\
+             type Right = Left;\
+             def use: Fn(Left) -> Int = fn(value) { 0 };\
+             use",
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("recursive type component required by a definition contract"),
+            "{error}"
+        );
+        assert!(error.message.contains("Left") && error.message.contains("Right"));
+
+        let recursive = analyze_source(
+            "recursive-contract-type.telora",
+            "@struct type Node = {value: Int, children: Array(Node)};\
+             def leaf: Fn(Int) -> Node = fn(value) { {value, children: []} };\
+             leaf(1)",
+        )
+        .expect("decorated recursive type contracts retain the sealing path");
+        assert!(recursive.declared_types.contains_key("Node"));
     }
 
     #[test]
