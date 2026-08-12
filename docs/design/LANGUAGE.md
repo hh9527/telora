@@ -339,6 +339,9 @@ pair@[Int, _](1, "text")
 ```
 
 `_` 留下一个必须由完整调用上下文解决的参数。无法解决或证据冲突都会产生诊断。
+类型参数从完整调用收集证据；裸 closed Atom 实参不会在同次调用的结构化或完整 enum
+实参之前把共享参数固定为 singleton。若后者确定了包含该 Atom 的闭合 enum，调用采用
+该 enum；不相关 enum 或 enum 之外的 Atom 仍是类型错误。
 未标记的 `expression[index]` 只表示 Array 索引，不表示类型应用。
 
 显式 `def` 契约作为 rigid expected type 参与严格双向检查；这同时适用于 inline

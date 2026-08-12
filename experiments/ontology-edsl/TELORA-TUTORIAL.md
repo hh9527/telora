@@ -92,6 +92,13 @@ pair@[Int, _](1, "text")
 `_` leaves that type argument to the complete call context. Unmarked
 `value[index]` is only Array indexing.
 
+Inference combines evidence from the complete generic call. A bare closed Atom
+argument does not prematurely fix a shared parameter to its singleton type when
+another argument establishes the enclosing enum. For example, a `'Base`
+argument and an `Array(NodeId)` argument can infer `NodeId` together. Use
+explicit `@[...]` only when the complete call remains genuinely ambiguous or
+underconstrained.
+
 A local annotation inside a generic body cannot refer to type parameters
 introduced by the enclosing module-level `for` contract. Put the complete
 generic contract on a module-level helper, and do not erase the type with `Any`

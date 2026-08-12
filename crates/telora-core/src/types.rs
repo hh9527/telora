@@ -6722,7 +6722,13 @@ impl<'a> GenericInference<'a> {
                         }
                         let mut partial_tagged_evidence = false;
                         let mut unresolved_argument_evidence = false;
-                        for (argument, parameter) in arguments.iter().zip(&parameters) {
+                        let mut argument_order = (0..arguments.len()).collect::<Vec<_>>();
+                        argument_order.sort_by_key(|index| {
+                            matches!(arguments[*index].value, ExprKind::Atom(_))
+                        });
+                        for index in argument_order {
+                            let argument = &arguments[index];
+                            let parameter = &parameters[index];
                             let argument_type =
                                 self.infer(argument, environment, Some(parameter))?;
                             unresolved_argument_evidence |=
@@ -9799,6 +9805,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(partial.display(partial.result_type), "String");
+    }
+
+    #[test]
+    fn generic_calls_combine_singleton_atoms_with_closed_enum_evidence() {
+        let prelude = "@enum type NodeId = {Base: 'None, Other: 'None};\
+             let nodes: Array(NodeId) = ['Other];";
+        for call in [
+            "def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };\
+             choose('Base, nodes)",
+            "def choose: for(Node) Fn(Array(Node), Node) -> Node = fn(nodes, base) { base };\
+             choose(nodes, 'Base)",
+            "def choose: for(Node) Fn(Node, Node, Array(Node)) -> Node = fn(base, other, nodes) { base };\
+             choose('Base, 'Other, nodes)",
+        ] {
+            let analysis = analyze_with_natives(&format!("{prelude}{call}"), &[]).unwrap();
+            assert_eq!(analysis.display(analysis.result_type), "enum {Base, Other}");
+        }
+
+        let conflict = analyze_with_natives(
+            "@enum type NodeId = {Base: 'None, Other: 'None};\
+             @enum type ForeignId = {Foreign: 'None};\
+             def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };\
+             let foreign: Array(ForeignId) = ['Foreign];\
+             choose('Base, foreign)",
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            conflict.message.contains("cannot unify"),
+            "{}",
+            conflict.message
+        );
     }
 
     #[test]
