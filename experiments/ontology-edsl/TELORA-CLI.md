@@ -30,10 +30,14 @@ experiment:
 - `./bin/run-test` evaluates `a2/bin-src/test.telora` and prints its exported
   `output` value.
 - `./bin/types` prints the inferred types for
-  `a2/bin-src/main.telora`.
+  `a2/bin-src/main.telora`. It is the module-level type summary: quantified
+  definitions retain their `for(...)` schemes, and internal function
+  parameters are not listed as module bindings.
 - `./bin/show` prints the semantic snapshot for `a2/bin-src/main.telora`,
   including diagnostics, modules, definitions, references, expressions, and
-  types.
+  types. Generic definition rows retain their quantified schemes. Nested
+  parameter and expression rows are uninstantiated debug facts; an `Any` on
+  those rows does not replace the enclosing definition's displayed scheme.
 Each command preserves Telora's standard output, standard error, and exit
 status. A zero exit status means that the requested operation succeeded. A
 nonzero exit status means that Telora or the wrapper rejected it; read the

@@ -69,6 +69,46 @@ fn check_run_and_types_cover_the_closed_world_loop() {
 }
 
 #[test]
+fn types_preserves_generic_schemes_and_concrete_call_results() {
+    let directory = fixture_dir();
+    let main = directory.join("main.telora");
+    fs::write(
+        &main,
+        r#"@struct type Pair(A, B) = {left: A, right: B};
+           def make: for(A, B) Fn(A, B) -> Pair(A, B) =
+               fn(left, right) { {left, right} };
+           let concrete = make(1, "two");
+           export { concrete as output };"#,
+    )
+    .unwrap();
+
+    let types = telora()
+        .args(["types", main.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        types.status.success(),
+        "{}",
+        String::from_utf8_lossy(&types.stderr)
+    );
+    let output = String::from_utf8_lossy(&types.stdout);
+    assert!(
+        output.contains("type Pair = for(A, B) Fn(TypeOf(A), TypeOf(B))"),
+        "{output}"
+    );
+    assert!(
+        output.contains("let make: for(A, B) Fn(A, B) -> {left: A, right: B}"),
+        "{output}"
+    );
+    assert!(
+        output.contains("let concrete: {left: Int, right: String}"),
+        "{output}"
+    );
+    assert!(!output.contains("TypeOf(Any)"), "{output}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn run_accepts_external_json_and_failures_are_nonzero() {
     let directory = fixture_dir();
     fs::write(directory.join("main.telora"), "export { input as output };").unwrap();
@@ -841,6 +881,34 @@ fn show_reports_inferred_local_type_schemes() {
     let output = String::from_utf8_lossy(&show.stdout);
     assert!(
         output.contains("Let identity") && output.contains("for(A) Fn(A) -> A"),
+        "{output}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn show_marks_generic_definitions_with_their_quantified_scheme() {
+    let directory = fixture_dir();
+    let main = directory.join("main.telora");
+    fs::write(
+        &main,
+        "def pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) { (left, right) };\
+         export { pair };",
+    )
+    .unwrap();
+
+    let show = telora()
+        .args(["show", main.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "{}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let output = String::from_utf8_lossy(&show.stdout);
+    assert!(
+        output.contains("DefinitionSlot pair") && output.contains("for(A, B) Fn(A, B) -> (A, B)"),
         "{output}"
     );
     fs::remove_dir_all(directory).unwrap();

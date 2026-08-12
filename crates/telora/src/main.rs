@@ -325,7 +325,7 @@ fn types_command(arguments: &[String]) -> Result<(), String> {
         .workspace
         .definitions()
         .iter()
-        .filter(|definition| definition.module == root.id)
+        .filter(|definition| definition.module == root.id && definition.top_level)
         .filter_map(|definition| definition.ty.value.map(|ty| (definition, ty)))
         .collect::<Vec<_>>();
     definitions.sort_by(|(left, _), (right, _)| left.name.cmp(&right.name));
@@ -336,7 +336,7 @@ fn types_command(arguments: &[String]) -> Result<(), String> {
         println!(
             "type {} = {}",
             definition.name,
-            display_workspace_type(&module.workspace, *ty)?
+            display_definition_type(&module.workspace, definition, *ty)?
         );
     }
     for (definition, ty) in definitions
@@ -346,7 +346,7 @@ fn types_command(arguments: &[String]) -> Result<(), String> {
         println!(
             "let {}: {}",
             definition.name,
-            display_workspace_type(&module.workspace, *ty)?
+            display_definition_type(&module.workspace, definition, *ty)?
         );
     }
     println!(
@@ -358,6 +358,17 @@ fn types_command(arguments: &[String]) -> Result<(), String> {
         )?
     );
     Ok(())
+}
+
+fn display_definition_type(
+    workspace: &WorkspaceSnapshot,
+    definition: &telora_core::semantic::Definition,
+    ty: WorkspaceTypeId,
+) -> Result<String, String> {
+    definition
+        .scheme
+        .clone()
+        .map_or_else(|| display_workspace_type(workspace, ty), Ok)
 }
 
 fn display_workspace_type(

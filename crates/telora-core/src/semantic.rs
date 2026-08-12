@@ -171,6 +171,7 @@ pub struct Definition {
     pub kind: DefinitionKind,
     pub location: Location,
     pub additional_locations: Vec<Location>,
+    pub top_level: bool,
     pub ty: SemanticFact<WorkspaceTypeId>,
     pub scheme: Option<String>,
     pub import_target: Option<WorkspaceModuleId>,
@@ -438,6 +439,7 @@ impl WorkspaceSnapshot {
                 kind: definition.kind,
                 location: definition.location,
                 additional_locations: definition.additional_locations.clone(),
+                top_level: definition.top_level,
                 ty: partial.definition_facts.get(&definition.id).map_or_else(
                     || SemanticFact::unknown(UnknownReason::InvalidSyntax),
                     |fact| map_partial_fact(fact, &type_map),
@@ -1113,6 +1115,7 @@ impl WorkspaceSnapshot {
                     kind: definition.kind,
                     location: definition.location,
                     additional_locations: definition.additional_locations.clone(),
+                    top_level: definition.top_level,
                     ty,
                     scheme: input
                         .analysis
