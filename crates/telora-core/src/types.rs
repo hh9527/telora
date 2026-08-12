@@ -5311,6 +5311,108 @@ impl<'a> GenericInference<'a> {
         Ok(())
     }
 
+    fn merge_structural_join_evidence(
+        &mut self,
+        branches: &[TypeDescriptor],
+    ) -> Result<(), String> {
+        fn collect(
+            unresolved: &TypeDescriptor,
+            evidence: &TypeDescriptor,
+            collected: &mut HashMap<InferenceVariableId, Vec<TypeDescriptor>>,
+            collection_element: bool,
+        ) {
+            if let TypeDescriptor::Inference(variable) = unresolved {
+                if collection_element && !contains_type_variable(evidence) {
+                    collected
+                        .entry(*variable)
+                        .or_default()
+                        .push(evidence.clone());
+                }
+                return;
+            }
+            match (unresolved, evidence) {
+                (TypeDescriptor::Array(left), TypeDescriptor::Array(right))
+                | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
+                    collect(left, right, collected, true);
+                }
+                (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
+                    collect(left, right, collected, collection_element);
+                }
+                (
+                    TypeDescriptor::Tagged {
+                        tag: left_tag,
+                        payload: left,
+                    },
+                    TypeDescriptor::Tagged {
+                        tag: right_tag,
+                        payload: right,
+                    },
+                ) if left_tag == right_tag => {
+                    collect(left, right, collected, collection_element);
+                }
+                (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right))
+                    if left.len() == right.len() =>
+                {
+                    for (left, right) in left.iter().zip(right) {
+                        collect(left, right, collected, collection_element);
+                    }
+                }
+                (TypeDescriptor::Struct(left), TypeDescriptor::Struct(right))
+                    if left.keys().eq(right.keys()) =>
+                {
+                    for (name, left) in left {
+                        collect(left, &right[name], collected, collection_element);
+                    }
+                }
+                (TypeDescriptor::Enum(left), TypeDescriptor::Enum(right))
+                    if left.keys().eq(right.keys()) =>
+                {
+                    for (name, left) in left {
+                        if let (Some(left), Some(right)) = (left.as_deref(), right[name].as_deref())
+                        {
+                            collect(left, right, collected, collection_element);
+                        }
+                    }
+                }
+                (
+                    TypeDescriptor::Function {
+                        parameters: left_parameters,
+                        result: left_result,
+                    },
+                    TypeDescriptor::Function {
+                        parameters: right_parameters,
+                        result: right_result,
+                    },
+                ) if left_parameters.len() == right_parameters.len() => {
+                    for (left, right) in left_parameters.iter().zip(right_parameters) {
+                        collect(left, right, collected, collection_element);
+                    }
+                    collect(left_result, right_result, collected, collection_element);
+                }
+                _ => {}
+            }
+        }
+
+        let resolved = branches
+            .iter()
+            .map(|branch| self.resolve(branch))
+            .collect::<Vec<_>>();
+        let mut collected = HashMap::new();
+        for (index, branch) in resolved.iter().enumerate() {
+            for evidence in resolved.iter().skip(index + 1) {
+                collect(branch, evidence, &mut collected, false);
+                collect(evidence, branch, &mut collected, false);
+            }
+        }
+        for (variable, evidence) in collected {
+            self.check(
+                &join_all_types(evidence),
+                &TypeDescriptor::Inference(variable),
+            )?;
+        }
+        Ok(())
+    }
+
     fn generalize_local_closure(
         &mut self,
         descriptor: &TypeDescriptor,
@@ -6847,6 +6949,7 @@ impl<'a> GenericInference<'a> {
                         self.infer_block(else_branch, environment, expected)?,
                     )
                 };
+                self.merge_structural_join_evidence(&[then_type.clone(), else_type.clone()])?;
                 join_types(self.resolve(&then_type), self.resolve(&else_type))
             }
             ExprKind::IfLet {
@@ -6888,6 +6991,7 @@ impl<'a> GenericInference<'a> {
                 self.scheme_scopes.pop();
                 let then_type = then_type?;
                 let else_type = self.infer_block(else_branch, environment, expected)?;
+                self.merge_structural_join_evidence(&[then_type.clone(), else_type.clone()])?;
                 join_types(self.resolve(&then_type), self.resolve(&else_type))
             }
             ExprKind::LetElse {
@@ -7067,6 +7171,7 @@ impl<'a> GenericInference<'a> {
                     }
                 }
                 self.merge_join_evidence(&arm_evidence)?;
+                self.merge_structural_join_evidence(&arm_types)?;
                 if let TypeDescriptor::Enum(variants) = &resolved_value_type {
                     let missing = variants
                         .iter()
@@ -10315,6 +10420,58 @@ mod tests {
         assert_eq!(
             no_leak.display(no_leak.result_type),
             "(Int | String, Float | Int)"
+        );
+    }
+
+    #[test]
+    fn structural_joins_infer_empty_collection_elements_from_sibling_branches() {
+        for source in [
+            "let choose = fn(flag) { if flag { {kind: 'Full, path: [1]} } else { {kind: 'Empty, path: []} } }; choose",
+            "let choose = fn(flag) { if flag { {kind: 'Empty, path: []} } else { {kind: 'Full, path: [1]} } }; choose",
+        ] {
+            let analysis = analyze_with_natives(source, &[]).unwrap();
+            assert_eq!(
+                analysis.display(analysis.result_type),
+                "Fn(enum {False, True}) -> {kind: 'Empty, path: Array<Int>} | {kind: 'Full, path: Array<Int>}"
+            );
+        }
+
+        let matched = analyze_with_natives(
+            "let choose = fn(value) { match value {\
+                 0 => {kind: 'First, path: []},\
+                 1 => {kind: 'Second, path: [1]},\
+                 2 => {kind: 'Third, path: []}\
+             } }; choose",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            matched.display(matched.result_type),
+            "Fn(Any) -> {kind: 'First, path: Array<Int>} | {kind: 'Second, path: Array<Int>} | {kind: 'Third, path: Array<Int>}"
+        );
+
+        let nested = analyze_with_natives(
+            "let choose = fn(flag) { if flag { 'Some(({path: []},)) } else { 'Some(({path: [1]},)) } }; choose",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            nested.display(nested.result_type),
+            "Fn(enum {False, True}) -> 'Some(({path: Array<Int>}))"
+        );
+
+        let conflict = analyze_with_natives(
+            "let choose = fn(value) { match value {\
+                 0 => {kind: 'Empty, path: []},\
+                 1 => {kind: 'Ints, path: [1]},\
+                 2 => {kind: 'Strings, path: [\"x\"]}\
+             } }; choose",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            conflict.display(conflict.result_type),
+            "Fn(Any) -> {kind: 'Empty, path: Array<Int | String>} | {kind: 'Ints, path: Array<Int>} | {kind: 'Strings, path: Array<String>}"
         );
     }
 

@@ -165,6 +165,12 @@ Arrays preserve order. `find` returns the first matching item, `filter`
 preserves input order, and folds process items from left to right. These order
 properties may be part of a deterministic eDSL contract.
 
+Within structurally corresponding `if`, `if let`, or `match` results, a branch
+with concrete Array or Dict elements supplies element-type evidence to an empty
+branch. This is independent of branch order. If every reachable branch is empty
+and there is no expected element type, add an explicit annotation such as
+`let none: Array(Item) = [];`.
+
 Both indexing forms use a zero-based Int index. `values[index]` returns the
 element directly and a negative or out-of-range index fails with
 `fail!("OutOfRange", values, index)`. `array.get` returns `'None` for the same

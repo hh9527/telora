@@ -102,6 +102,9 @@ let second: Int = ids[1];
 无 expected item type 的 Array 字面量对各元素类型做规范 join。不同的已知类型形成
 Union，例如 `[1, "one"]` 的类型是 `Array(Int | String)`；`Never` 不贡献可达元素
 类型，已有的 `Any` 则保持擦除。严格推断不会因为元素类型不同而自行制造 `Any`。
+在 `if`、`if let` 或 `match` 的结构化分支结果中，同一 Array 或 Dict 元素位置的具体
+分支为无元素分支提供类型证据；该合并与分支顺序无关。若所有可达分支均无元素且
+没有 expected item type，必须用类型注解提供元素类型。
 
 Tuple 是固定长度的异质积：
 
