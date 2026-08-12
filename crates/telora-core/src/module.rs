@@ -5691,6 +5691,38 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_generic_apis_refine_option_results_of_let_bound_callbacks() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("api.telora"),
+            r#"def apply: for(A, B) Fn(A, Fn(A) -> Option(B)) -> Option(B) =
+                   fn(value, callback) { callback(value) };
+               {apply}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./api.telora" as api;
+               let build = fn(value) {
+                   if value > 0 { 'Some("ok") } else { 'None }
+               };
+               api.apply(1, build)"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "enum {None, Some(String)}"
+        );
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "'Some(\"ok\")"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn parameterized_type_families_preserve_attributes_and_codec_rules() {
         let directory = fixture_dir();
         fs::write(

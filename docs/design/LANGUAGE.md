@@ -381,6 +381,10 @@ pair@[Int, _](1, "text")
 类型参数从完整调用收集证据；裸 closed Atom 实参不会在同次调用的结构化或完整 enum
 实参之前把共享参数固定为 singleton。若后者确定了包含该 Atom 的闭合 enum，调用采用
 该 enum；不相关 enum 或 enum 之外的 Atom 仍是类型错误。
+由 closure 字面量初始化的未标注局部 binding 可以从后续 generic call 获得 expected
+function type。若 closure 分支产生的 variant union 完整映射到 expected 闭合 enum，
+各分支参与 enum payload 推断，例如 `'None | 'Some(String)` 可精化为
+`Option(String)`；未知 variant 或不兼容 payload 仍产生类型错误。
 未标记的 `expression[index]` 只表示 Array 索引，不表示类型应用。
 
 显式 `def` 契约作为 rigid expected type 参与严格双向检查；这同时适用于 inline

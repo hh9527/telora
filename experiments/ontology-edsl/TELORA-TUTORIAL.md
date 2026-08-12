@@ -137,6 +137,12 @@ argument and an `Array(NodeId)` argument can infer `NodeId` together. Use
 explicit `@[...]` only when the complete call remains genuinely ambiguous or
 underconstrained.
 
+An unannotated local binding initialized by a closure can receive its expected
+function type from a later generic call. A variant union produced by the
+closure branches refines to the expected closed enum when every variant and
+payload is compatible; for example, `'None | 'Some(String)` refines to
+`Option(String)`. Unknown variants and incompatible payloads remain errors.
+
 A local annotation inside a generic body cannot refer to type parameters
 introduced by the enclosing module-level `for` contract. Put the complete
 generic contract on a module-level helper, and do not erase the type with `Any`

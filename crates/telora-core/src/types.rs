@@ -6040,6 +6040,12 @@ impl<'a> GenericInference<'a> {
             return self.bind_inference_variable(variable, &evidence);
         }
         match (&actual, &expected) {
+            (TypeDescriptor::Union(variants), TypeDescriptor::Enum(_)) => {
+                for variant in variants {
+                    self.check(variant, &expected)?;
+                }
+                return Ok(());
+            }
             (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
             | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
             | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
@@ -9877,6 +9883,47 @@ mod tests {
         )
         .unwrap();
         assert_eq!(partial.display(partial.result_type), "String");
+    }
+
+    #[test]
+    fn generic_use_refines_option_result_of_a_let_bound_callback() {
+        let analysis = analyze_with_natives(
+            "def apply: for(A, B) Fn(A, Fn(A) -> Option(B)) -> Option(B) =\
+                 fn(value, f) { f(value) };\
+             let build = fn(value) {\
+                 if value > 0 { 'Some(\"ok\") } else { 'None }\
+             };\
+             let unrelated = 1;\
+             apply(1, build)",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.display(analysis.result_type),
+            "enum {None, Some(String)}"
+        );
+
+        for callback in [
+            "fn(value) { if value > 0 { 'Some(1) } else { 'None } }",
+            "fn(value) { if value > 0 { 'Some(\"ok\") } else { 'Foreign } }",
+        ] {
+            let error = analyze_with_natives(
+                &format!(
+                    "def apply: for(A) Fn(A, Fn(A) -> Option(String)) -> Option(String) =\
+                         fn(value, f) {{ f(value) }};\
+                     let build = {callback}; apply(1, build)"
+                ),
+                &[],
+            )
+            .unwrap_err();
+            assert!(
+                error.message.contains("Int")
+                    || error.message.contains("Foreign")
+                    || error.message.contains("Some(String)"),
+                "{}",
+                error.message
+            );
+        }
     }
 
     #[test]
