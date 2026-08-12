@@ -4921,6 +4921,73 @@ name = "rustc"
     }
 
     #[test]
+    fn core_array_fold_infers_anonymous_state_from_computed_array_fields() {
+        let directory = fixture_dir();
+        let source = r#"import "std/array" as array;
+               @struct type Report(A) = {value: A, accepted: Bool};
+               @struct type CollectResult(A) = {
+                   reports: Array(Report(A)),
+                   diagnostics: Array(BlameError),
+               };
+               def collect: for(A)
+                   Fn(Array(A), Array(BlameError)) -> CollectResult(A) =
+                   fn(values, prior) {
+                       let initial = {reports: [], diagnostics: prior};
+                       array.fold(values, initial, fn(acc, value) {
+                           if value == value {
+                               {reports: array.push(acc.reports, {value, accepted: 'True}),
+                                diagnostics: acc.diagnostics}
+                           } else {
+                               {reports: array.push(acc.reports, {value, accepted: 'False}),
+                                diagnostics: array.push(acc.diagnostics, blame!("rejected", value))}
+                           }
+                       })
+                   };
+               collect([1, 2], [])"#;
+        fs::write(directory.join("main.telora"), source).unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let expected = module.analysis.display(module.analysis.result_type);
+        assert_eq!(
+            expected,
+            "{diagnostics: Array<{data: Any, message: String, rule: Any}>, reports: Array<{accepted: enum {False, True}, value: Int}>}"
+        );
+
+        let reversed = source
+            .replace("if value == value", "if value != value")
+            .replace(
+                "{reports: array.push(acc.reports, {value, accepted: 'True}),\n                                diagnostics: acc.diagnostics}",
+                "{diagnostics: acc.diagnostics,\n                                reports: array.push(acc.reports, {accepted: 'True, value})}",
+            )
+            .replace(
+                "{reports: array.push(acc.reports, {value, accepted: 'False}),\n                                diagnostics: array.push(acc.diagnostics, blame!(\"rejected\", value))}",
+                "{diagnostics: array.push(acc.diagnostics, blame!(\"rejected\", value)),\n                                reports: array.push(acc.reports, {accepted: 'False, value})}",
+            );
+        fs::write(directory.join("reversed.telora"), reversed).unwrap();
+        let reversed =
+            load_module(directory.join("reversed.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            reversed.analysis.display(reversed.analysis.result_type),
+            expected
+        );
+
+        let incompatible = source.replace(
+            "Fn(Array(A), Array(BlameError))",
+            "Fn(Array(A), Array(String))",
+        );
+        fs::write(directory.join("incompatible.telora"), incompatible).unwrap();
+        let error = load_module(
+            directory.join("incompatible.telora"),
+            BTreeMap::new(),
+            100_000,
+        )
+        .unwrap_err();
+        assert!(error.message.contains("String"), "{}", error.message);
+        assert!(!error.message.contains(" T"), "{}", error.message);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_map_widens_singleton_option_arm_in_generic_callback() {
         let directory = fixture_dir();
         fs::write(
