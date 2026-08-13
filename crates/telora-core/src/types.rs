@@ -12141,6 +12141,62 @@ mod tests {
     }
 
     #[test]
+    fn explicit_array_context_checks_anonymous_concrete_family_catalogs() {
+        let definitions = "@enum type Id = {First: 'None, Second: 'None};\
+             @enum type Mode = {Direct: 'None, Derived: 'None};\
+             @struct type Capability(IdType, Input, Output) = {\
+                 id: IdType,\
+                 mode: Mode,\
+                 lower: Fn(Input) -> Option(Output),\
+                 dependencies: Array(IdType),\
+             };\
+             type Concrete = Capability(Id, Int, String);";
+        let first = "{\
+            id: 'First,\
+            mode: 'Direct,\
+            lower: fn(value) { 'Some(`value=\\{value}`) },\
+            dependencies: [],\
+        }";
+        let second = "{\
+            id: 'Second,\
+            mode: 'Derived,\
+            lower: fn(value) { if value == 0 { 'None } else { 'Some(`value=\\{value}`) } },\
+            dependencies: ['First],\
+        }";
+
+        for (name, elements) in [
+            ("forward", format!("{first}, {second}")),
+            ("reverse", format!("{second}, {first}")),
+        ] {
+            let source =
+                format!("{definitions} let catalog: Array(Concrete) = [{elements}]; catalog");
+            let analysis = analyze_source(&format!("catalog-{name}.telora"), &source).unwrap();
+            assert_eq!(
+                analysis.display(analysis.result_type),
+                "Array<{dependencies: Array<enum {First, Second}>, id: enum {First, Second}, lower: Fn(Int) -> enum {None, Some(String)}, mode: enum {Derived, Direct}}>"
+            );
+        }
+
+        let incompatible = analyze_source(
+            "catalog-incompatible.telora",
+            &format!(
+                "{definitions} let catalog: Array(Concrete) = [{first}, {{\
+                    id: 'Second,\
+                    mode: 'Derived,\
+                    lower: fn(value) {{ 'Some(value) }},\
+                    dependencies: ['First],\
+                }}]; catalog"
+            ),
+        )
+        .unwrap_err();
+        assert!(
+            incompatible.message.contains("String") && incompatible.message.contains("Int"),
+            "{}",
+            incompatible.message
+        );
+    }
+
+    #[test]
     fn parameterized_type_families_compose_symbolic_templates() {
         let analysis = analyze_source(
             "families.telora",

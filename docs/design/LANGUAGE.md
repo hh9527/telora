@@ -114,6 +114,10 @@ let second: Int = ids[1];
 无 expected item type 的 Array 字面量对各元素类型做规范 join。不同的已知类型形成
 Union，例如 `[1, "one"]` 的类型是 `Array(Int | String)`；`Never` 不贡献可达元素
 类型，已有的 `Any` 则保持擦除。严格推断不会因为元素类型不同而自行制造 `Any`。
+显式 `Array(T)` expected type 会向每个普通元素和 spread operand 下传 `T`。因此当
+`T` 是 concrete family 实例时，多个匿名记录元素中的 singleton Atom、闭包、窄
+Option variant 和空集合都按完整的共同契约检查，而不是先各自形成 variant union。
+该检查与元素顺序无关；真正不兼容的字段在对应元素位置报告类型冲突。
 在 `if`、`if let` 或 `match` 的结构化分支结果中，同一 Array 或 Dict 元素位置的具体
 分支为无元素分支提供类型证据；该合并与分支顺序无关。若所有可达分支均无元素且
 没有 expected item type，必须用类型注解提供元素类型。
@@ -999,14 +1003,13 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 payload 精化均属于当前语义。但推断不保证为任意一组分别构造的窄值主动寻找一个
 公共的高层 family 实例。
 
-特别是，当同一个 Array 的元素同时包含不同 singleton Atom、不同 closure、不同
-`Option` variant 或匿名 Struct 时，仅凭元素字面量可能无法收敛到预期的封闭 enum、
-函数契约或参数化 family。严格模式会报告冲突或未解决约束，不会把元素静默擦除为
-`Any`。错误中出现较大的 variant union，通常表示缺少共同的 expected type，而不
-表示运行时存在动态 union。
+特别是，当同一个 Array 没有显式 item expected type，而元素同时包含不同 singleton
+Atom、不同 closure、不同 `Option` variant 或匿名 Struct 时，仅凭元素字面量可能
+无法主动找到预期的封闭 enum、函数契约或参数化 family。严格模式会报告冲突或未
+解决约束，不会把元素静默擦除为 `Any`。错误中出现较大的 variant union，通常表示
+缺少共同的 expected type，而不表示运行时存在动态 union。
 
-缓解方法是在最小公共边界提供具体契约。可以给 Array、完整记录或各个具名构建
-函数标注同一个 family 实例：
+在最小公共边界给 Array 提供具体契约即可把同一个 family 实例下传到匿名元素：
 
 ```telora
 @struct type Entry(Id, Value) = {
@@ -1017,18 +1020,14 @@ payload 精化均属于当前语义。但推断不保证为任意一组分别构
 @enum type EntryId = {First: 'None, Second: 'None};
 type IntEntry = Entry(EntryId, Int);
 
-def first: Fn() -> IntEntry = fn() {
-    {id: 'First, value: 'Some(1)}
-};
-
-def second: Fn() -> IntEntry = fn() {
-    {id: 'Second, value: 'None}
-};
-
-let entries: Array(IntEntry) = [first(), second()];
+let entries: Array(IntEntry) = [
+    {id: 'First, value: 'Some(1)},
+    {id: 'Second, value: 'None},
+];
 ```
 
-该标注提供检查目标，不改变值的运行时表示，也不授权 `Any` fallback。若完整泛型
+该标注提供检查目标，不改变值的运行时表示，也不授权 `Any` fallback。若记录需要在
+数组之外分别构造，可以改为给完整记录或具名构建函数标注 `IntEntry`。若完整泛型
 调用仍有歧义，可以进一步使用 `@[...]` 显式提供无法由值参数唯一确定的类型实参。
 
 ### 14.2 Enum payload 的具名类型要求
