@@ -5920,6 +5920,61 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_family_aliases_preserve_provider_local_concrete_arguments() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("provider.telora"),
+            r#"@struct type Box(A) = {value: A}; export {Box};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("alias.telora"),
+            r#"import "./provider.telora" {Box};
+               @enum type Local = {A: 'None};
+               type LocalBox = Box(Local);
+               export {LocalBox, Local};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./provider.telora" {Box};
+               import "./alias.telora" {LocalBox, Local};
+               def identity: Fn(LocalBox) -> LocalBox = fn(value) { value };
+               let via_alias: LocalBox = identity({value: 'A});
+               let direct: Box(Local) = {value: 'A};
+               export let output = (via_alias, direct);"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module
+                .analysis
+                .display(module.analysis.binding_types["via_alias"]),
+            "{value: enum {A}}"
+        );
+        assert_eq!(
+            module
+                .analysis
+                .display(module.analysis.binding_types["direct"]),
+            "{value: enum {A}}"
+        );
+        assert_eq!(
+            module
+                .analysis
+                .display(module.analysis.binding_types["identity"]),
+            "Fn({value: enum {A}}) -> {value: enum {A}}"
+        );
+        assert_eq!(
+            module
+                .analysis
+                .display(module.analysis.binding_types["output"]),
+            "({value: enum {A}}, {value: enum {A}})"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn exports_instantiated_higher_order_creators_with_recursive_results() {
         let directory = fixture_dir();
         fs::write(

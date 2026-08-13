@@ -1745,12 +1745,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .get(name)
             .and_then(|interface| interface.exports.get(name))
             .cloned();
-        let tool_value = match scheme.as_ref().map(|scheme| &scheme.body) {
-            Some(TypeDescriptor::TypeOf(instance)) if contains_named_type(instance) => {
-                instance.to_value(&mut tool_vm)
-            }
-            _ => value.clone(),
-        };
+        let tool_value = scheme
+            .as_ref()
+            .and_then(|scheme| monomorphic_type_metadata(&scheme.body))
+            .map_or_else(|| value.clone(), |instance| instance.to_value(&mut tool_vm));
         tool_values.insert(name.clone(), tool_value);
         let inferred = scheme.as_ref().map_or_else(
             || infer_value(value),
@@ -1808,12 +1806,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let value = qualified_external_interfaces
             .get(name)
             .and_then(|interface| interface.exports.get(name))
-            .and_then(|scheme| match &scheme.body {
-                TypeDescriptor::TypeOf(instance) if contains_named_type(instance) => {
-                    Some(instance.to_value(&mut tool_vm))
-                }
-                _ => None,
-            })
+            .and_then(|scheme| monomorphic_type_metadata(&scheme.body))
+            .map(|instance| instance.to_value(&mut tool_vm))
             .unwrap_or(value);
         tool_values.insert(name.clone(), value);
     }
@@ -2451,9 +2445,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
+                    let tool_value = monomorphic_type_metadata(&scheme.body)
+                        .map_or(value, |instance| instance.to_value(&mut tool_vm));
                     binding_schemes.insert(binding.value.name.value.clone(), scheme);
+                    tool_values.insert(binding.value.name.value.clone(), tool_value);
+                } else {
+                    tool_values.insert(binding.value.name.value.clone(), value);
                 }
-                tool_values.insert(binding.value.name.value.clone(), value);
             }
         }
     }
@@ -3065,6 +3063,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         dynamic_bindings: dynamic_bindings.clone(),
         type_family_values,
     })
+}
+
+fn monomorphic_type_metadata(descriptor: &TypeDescriptor) -> Option<&TypeDescriptor> {
+    match descriptor {
+        TypeDescriptor::TypeOf(instance) => Some(instance),
+        _ => None,
+    }
 }
 
 fn validate_interpreter_contract(
