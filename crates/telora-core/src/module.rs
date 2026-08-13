@@ -5766,6 +5766,59 @@ unchanged", "|"),
     }
 
     #[test]
+    fn exports_instantiated_higher_order_creators_with_recursive_results() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("factory.telora"),
+            r#"@struct type Model(Subject, Output) = {subject: Subject, output: Output};
+               def apply: for(Input, Output) Fn(Input, Fn(Input) -> Output) -> Output =
+                   fn(input, callback) { callback(input) };
+               export def make_creator:
+                   for(Subject, Output)
+                   Fn(Model(Subject, Output)) -> Fn(Subject) -> Output =
+                   fn(model) { fn(subject) { model.output } };
+               export def make_composed_creator:
+                   for(Subject, Output)
+                   Fn(Model(Subject, Output)) -> Fn(Subject) -> Output =
+                   fn(model) {
+                       fn(subject) { apply(subject, fn(current) { model.output }) }
+                   };
+               export { Model };"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("domain.telora"),
+            r#"import "./factory.telora" {Model, make_creator, make_composed_creator};
+               @enum type Subject = {Order: 'None};
+               @struct type CallExpr = {name: String, args: Array(Expr)};
+               @enum type Expr = {Subject: Subject, Call: CallExpr};
+               let model: Model(Subject, Expr) = {
+                   subject: 'Order,
+                   output: 'Call({name: "root", args: ['Subject('Order)]}),
+               };
+               export let creator = make_creator(model);
+               export let composed_creator = make_composed_creator(model);"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./domain.telora" {creator, composed_creator};
+               (creator('Order), composed_creator('Order))"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let result_type = module.analysis.display(module.analysis.result_type);
+        assert!(result_type.contains("Array<Expr>"), "{result_type}");
+        assert!(!result_type.contains("Any"), "{result_type}");
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "('Call({args: ['Subject('Order)], name: \"root\"}), 'Call({args: ['Subject('Order)], name: \"root\"}))"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_generic_apis_widen_singleton_fields_in_anonymous_records() {
         let directory = fixture_dir();
         fs::write(
