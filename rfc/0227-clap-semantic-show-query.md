@@ -1,7 +1,7 @@
 # RFC 0227: Clap-based semantic `show` queries
 
 - Status: Proposed
-- Depends on: RFC 0039, RFC 0040, RFC 0042, RFC 0044, RFC 0059, RFC 0142
+- Depends on: RFC 0039, RFC 0040, RFC 0042, RFC 0044, RFC 0059, RFC 0142, RFC 0228
 - Tracking issue: #47
 
 ## Summary
@@ -10,23 +10,24 @@ Telora replaces its hand-written CLI argument dispatch with a single `clap`
 command model and makes `show` the canonical command for semantic observation:
 
 ```text
-telora show <module-id> --bin <bin-file>
+telora show <module-id>
     [-p <substring>]
     [-k <kind>[,<kind>...]]
     [--exports]
 
-telora show <module-id> --bin <bin-file>
+telora show <module-id>
     --at <line>[:<column>]
 ```
 
-`--bin` selects the Host root entry and therefore establishes the crate,
-manifest, source root, dependency graph, and recoverable workspace. The
-positional `<module-id>` then selects one already resolved logical module in
-that workspace, using the same canonical spellings as the module resolver:
+The current working directory establishes the crate by nearest-ancestor
+`telora-deps.json` lookup. The positional `<module-id>` selects the stable
+logical root to analyze, using the same canonical spellings as the module
+resolver:
 
 ```text
-@main
 @src/model.telora
+@bin/main.telora
+@test/model.telora
 ontology/lib.telora
 std/array
 ```
@@ -49,7 +50,7 @@ compiler diagnostics remain on standard error. Empty named queries produce no
 lines and succeed.
 
 The overlapping `telora types` command is removed. Strict validity remains the
-responsibility of `telora check <bin-file>`; `show` observes a recoverable
+responsibility of `telora check <module-id>`; `show` observes a recoverable
 workspace and explicitly reports whether each fact is authoritative or a
 recovery/debug observation.
 
@@ -98,8 +99,8 @@ tree. All existing commands move to that model in the same implementation:
 telora run <module.telora> [--input <file|->]
 telora exec --dry-run <module.telora> [-- <arguments>...]
 telora build --dry-run <module.telora>
-telora check <module.telora>
-telora show <module-id> --bin <bin-file> ...
+telora check <module-id>
+telora show <module-id> ...
 telora lsp
 ```
 
@@ -114,7 +115,6 @@ The initial `show` grammar is equivalent to:
 ```text
 ShowArgs :=
   module_id: String
-  --bin: PathBuf                         required
   -p, --pattern: non-empty String       optional, at most once
   -k, --kind: Kind[,Kind...]            optional, at most once
   --exports                             optional
@@ -135,26 +135,24 @@ sentinel.
 
 ## Resolution context and module selection
 
-`--bin <bin-file>` is a physical Host input, not a module identity. It selects
-the same root entry accepted by current strict and recoverable engine APIs. The
-resolver uses it to discover:
+The resolver discovers context from CWD as specified by RFC 0228. It uses the
+nearest ancestor `telora-deps.json` to determine:
 
 - the containing crate and source root;
 - `telora-deps.json` and dependency roots;
-- `bin-src` entry rules;
+- `src`, `src/bin`, and `tests` physical roots;
 - exact module formats and private-module boundaries; and
 - the complete module graph reachable from that entry.
 
-The selected entry has canonical identity `@main`, regardless of its physical
-filename. `<module-id>` is parsed and compared as a canonical logical identity,
-not interpreted as a filesystem path. It must identify a module already
-present in the recovered workspace. `show` never loads a new source merely
-because its logical name was requested.
+`<module-id>` is parsed as a canonical logical root identity, not interpreted
+as a filesystem path. `show` recovers the workspace rooted at that exact
+module and retains its identity in every record.
 
 The accepted identity forms are exactly those published by the resolver:
 
-- `@main` for the Host-selected `--bin` entry;
 - `@src/<relative-path>` for a source in the root entry's crate;
+- `@bin/<relative-path>` for a Host-selectable application root;
+- `@test/<relative-path>` for a Host-selectable test root;
 - `<dependency>/<relative-path>` for a declared dependency source; and
 - canonical runtime/package module names such as `std/array` when represented
   in the workspace snapshot.
@@ -164,10 +162,10 @@ identity aliases are rejected. Module selection must use structured resolver
 identity where available; it must not recover semantics by parsing diagnostic
 display strings.
 
-When the requested module is unknown, the command fails and reports the
-canonical IDs currently queryable in that workspace in deterministic order.
-An unavailable module retained by recovery remains selectable and may produce
-recovery-state definition or diagnostic records.
+When the requested root is unknown, the command fails without guessing a
+physical path. An unavailable dependency retained by recovery may still
+produce recovery-state definition or diagnostic records after its importing
+root is selected.
 
 ## Named local queries
 
@@ -318,7 +316,8 @@ Ordinary compiler/debug sinks must not write to standard output during a
 
 ## Authority and strictness
 
-`show` always builds the recoverable workspace selected by `--bin`. It is an
+`show` always builds the recoverable workspace selected by `<module-id>` in the
+CWD-discovered crate. It is an
 observation command and succeeds when recovery can produce a queryable
 snapshot, even if that snapshot contains diagnostics or unavailable facts.
 
@@ -336,7 +335,7 @@ In particular, an expression-level `Any` does not replace an enclosing
 definition's quantified scheme. They appear as separate records with separate
 states.
 
-`telora check <bin-file>` is the strict publication gate. It returns
+`telora check <module-id>` is the strict publication gate. It returns
 success only when the selected root and its dependency graph satisfy existing
 strict loading rules. Consumers that require authoritative results run
 `check` before `show` or reject non-authoritative JSONL records explicitly.
@@ -348,20 +347,20 @@ second formatting and strictness surface. Its useful queries become:
 
 ```text
 # All local authored types in the root entry
-telora show @main --bin app/bin-src/main.telora -k type
+telora show @bin/main.telora -k type
 
 # One family or related set of definitions in a library module
-telora show @src/model.telora --bin app/bin-src/main.telora -p Relation -k type,def
+telora show @src/model.telora -p Relation -k type,def
 
 # Public type surface
-telora show @src/model.telora --bin app/bin-src/main.telora -p Relation --exports
+telora show @src/model.telora -p Relation --exports
 ```
 
 Scripts requiring strict validity use:
 
 ```text
-telora check app/bin-src/main.telora
-telora show @main --bin app/bin-src/main.telora -k type
+telora check @bin/main.telora
+telora show @bin/main.telora -k type
 ```
 
 There is no hidden `show` mode that changes from recovery to strict loading.
@@ -372,7 +371,7 @@ This keeps validity and observation as explicit, composable operations.
 The command exits nonzero for:
 
 - invalid or conflicting CLI arguments;
-- an unreadable or invalid `--bin` root;
+- failure to discover a crate manifest from CWD;
 - failure to construct a recoverable workspace;
 - an invalid or unknown canonical module ID;
 - a module without source used with `--at`;
@@ -395,7 +394,7 @@ After implementation:
 - `docs/design/LANGUAGE.md` records the canonical Host CLI and the separation
   between strict `check` and recoverable JSONL `show`;
 - the ontology experiment's `docs/TELORA-CLI.md`, goals, validation commands,
-  and opencode permissions use `show <module-id> --bin ...`;
+  and opencode permissions use logical root module IDs;
 - agent-facing documentation explains `-p` as literal substring matching and
   recommends semantic filters instead of shell `grep`, `head`, or redirection;
 - references to `telora types` are removed from maintained documentation and
@@ -431,8 +430,9 @@ not describe physical source paths as query identities.
 
 1. All CLI subcommands use one `clap` command model; no parallel hand-written
    top-level option parser remains.
-2. `show` requires one canonical `<module-id>` and `--bin <bin-file>` and can
-   select `@main`, `@src/...`, and dependency modules from the recovered graph.
+2. `show` requires one canonical root `<module-id>`, discovers the crate from
+   CWD, and can select `@src/...`, `@bin/...`, `@test/...`, and dependency
+   modules.
 3. Unknown module IDs fail with a deterministic inventory of queryable IDs and
    never cause an unreferenced source to load.
 4. `-p` performs case-sensitive literal substring matching; `*` and `?` have
@@ -476,10 +476,10 @@ public name. `--exports` is a query-domain switch, not `-k export`.
 
 ### Accept a physical module filename
 
-Physical paths conflate Host root discovery with logical identity, leak
+Physical paths conflate crate discovery with logical identity, leak
 machine-specific paths, and cannot name dependency or runtime modules
-uniformly. `--bin` establishes resolution context; `<module-id>` selects within
-that context.
+uniformly. CWD establishes crate context; `<module-id>` selects the stable
+analysis root within that context.
 
 ### Encode position in the module ID
 
