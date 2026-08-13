@@ -84,9 +84,7 @@ enum Command {
         dry_run: bool,
         module_id: String,
     },
-    Check {
-        module_id: String,
-    },
+    Check(CheckArgs),
     Show(ShowArgs),
     Lsp,
 }
@@ -104,8 +102,17 @@ struct RunArgs {
 }
 
 #[derive(Args)]
+struct CheckArgs {
+    module_id: String,
+    #[arg(short = 'C', value_name = "CONTEXT")]
+    context: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct ShowArgs {
     module_id: String,
+    #[arg(short = 'C', value_name = "CONTEXT")]
+    context: Option<PathBuf>,
     #[arg(short = 'p', long = "pattern", value_parser = non_empty)]
     pattern: Option<String>,
     #[arg(short = 'k', long = "kind", value_parser = parse_kinds, conflicts_with = "exports")]
@@ -204,7 +211,7 @@ fn run_cli(cli: Cli) -> Result<(), String> {
             dry_run: _,
             module_id,
         } => build_command(&module_id),
-        Command::Check { module_id } => check_command(&module_id),
+        Command::Check(arguments) => check_command(arguments),
         Command::Show(arguments) => show_command(arguments),
         Command::Lsp => lsp_command(),
     }
@@ -427,19 +434,25 @@ fn canonical_build_json(value: &Value) -> Result<String, String> {
     Ok(output)
 }
 
-fn check_command(module_id: &str) -> Result<(), String> {
-    let cwd = env::current_dir().map_err(|error| error.to_string())?;
+fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
+    context
+        .map_or_else(env::current_dir, Ok)
+        .map_err(|error| format!("cannot determine context: {error}"))
+}
+
+fn check_command(arguments: CheckArgs) -> Result<(), String> {
+    let context = command_context(arguments.context)?;
     let module = engine()
-        .load_module_id(cwd, module_id, BTreeMap::new())
+        .load_module_id(context, &arguments.module_id, BTreeMap::new())
         .map_err(|error| error.to_string())?;
     println!("ok ({} dependencies)", module.dependencies.len());
     Ok(())
 }
 
 fn show_command(arguments: ShowArgs) -> Result<(), String> {
-    let cwd = env::current_dir().map_err(|error| error.to_string())?;
+    let context = command_context(arguments.context)?;
     let workspace = engine()
-        .recover_workspace_id(cwd, &arguments.module_id)
+        .recover_workspace_id(context, &arguments.module_id)
         .map_err(|error| error.to_string())?;
     let root = workspace
         .modules()

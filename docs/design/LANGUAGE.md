@@ -855,11 +855,11 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 当前 `telora` 二进制提供：
 
 ```text
-telora check <module>
+telora check <module> [-C <context>]
 telora run <binary-name> [-C <context>] [--input <json|->]
 telora run -S <file> [--input <json|->]
-telora show <module> [-p <substring>] [-k type,let,def,import] [--exports]
-telora show <module> --at <line>[:<column>]
+telora show <module> [-C <context>] [-p <substring>] [-k type,let,def,import] [--exports]
+telora show <module> [-C <context>] --at <line>[:<column>]
 telora exec --dry-run <module> [-- <arguments>...]
 telora build --dry-run <module>
 telora lsp
@@ -867,8 +867,9 @@ telora lsp
 
 `run abc` 的 binary name 是一个不含路径分隔符和 `.telora` 后缀的 stem；Host 从 CWD
 向上发现最近的 manifest，并固定选择 `@bin/abc.telora`。调用者写 `run abc`，不写
-`run @bin/abc.telora`。`-C` 指定 manifest discovery 的起始目录，该目录不必就是 crate
-root。`run -S file` 是独立 standalone 模式：即使文件的祖先目录存在 manifest 也不
+`run @bin/abc.telora`。`run`、`check` 和 `show` 的 `-C` 都指定 manifest discovery
+的起始目录，该目录不必就是 crate root。`run -S file` 是独立 standalone 模式：
+即使文件的祖先目录存在 manifest 也不
 查找，只使用根文件内的 `crate.dependency` / `crate.format` options，且 options 相对
 文件所在目录解析。只有 standalone 根文件可以声明这些 resolver options。`-S` 与
 binary name、`-C` 互斥。

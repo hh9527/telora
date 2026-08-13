@@ -250,6 +250,46 @@ fn run_context_selects_the_manifest_discovery_start() {
 }
 
 #[test]
+fn check_and_show_context_select_the_manifest_discovery_start() {
+    let cwd = fixture();
+    let other = fixture();
+    fs::write(
+        other.join("src/lib.telora"),
+        "type Answer = Int; export {Answer};",
+    )
+    .unwrap();
+
+    let check = telora(&cwd)
+        .args(["check", "@src/lib.telora", "-C", other.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let show = telora(&cwd)
+        .args([
+            "show",
+            "@src/lib.telora",
+            "-C",
+            other.to_str().unwrap(),
+            "--exports",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "{}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let records = jsonl(&show.stdout);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["name"], "Answer");
+}
+
+#[test]
 fn standalone_run_uses_only_embedded_dependency_options() {
     let cwd = fixture();
     let dependency = cwd.join("dep");
