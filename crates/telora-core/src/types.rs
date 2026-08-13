@@ -12363,20 +12363,21 @@ mod tests {
         .unwrap_err();
         assert!(mutual.message.contains("recursive type family component"));
 
-        let concrete_cycle = analyze_source(
-            "concrete-family-cycle.telora",
+        let mixed = analyze_source(
+            "mixed-recursive-family.telora",
             "type Family(A) = Tuple([Concrete, A]);\
              type Concrete = Family(Int);\
              0",
         )
         .unwrap_err();
         assert!(
-            concrete_cycle.message.contains("Concrete")
-                && concrete_cycle.message.contains("Family"),
+            mixed.message.contains("recursive type family component")
+                && mixed.message.contains("Family")
+                && mixed.message.contains("Concrete"),
             "{}",
-            concrete_cycle.message
+            mixed.message
         );
-        let diagnostic = concrete_cycle.diagnostic.expect("cycle diagnostic");
+        let diagnostic = mixed.diagnostic.expect("mixed cycle diagnostic");
         assert_eq!(diagnostic.labels.len(), 2);
     }
 

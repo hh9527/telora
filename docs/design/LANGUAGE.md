@@ -508,6 +508,14 @@ Family 声明可以捕获已经封闭的非参数化递归 concrete type，但�
 普通 helper；可以依赖内建 metadata 构造器和 imported metadata 能力。这一边界
 避免把普通源码求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
 
+这一拒绝是稳定的语言边界，不是待补齐的推断 fallback。Family 是有限符号模板，
+递归 concrete type 是预声明并 sealing 的有限图；参数化递归 back-edge 还需要携带
+family 应用及参数环境，无法表示为普通 `Bound` 替换或 concrete `Named` reference。
+语言不通过 eager unfolding、深度截断、`Any` 或按 concrete 参数重跑 family body
+近似该能力。需要变化叶节点集合时，声明不同的封闭递归类型或一个包含全部受支持
+variant 的闭合 enum；需要共享行为时，在递归数据之外参数化 renderer、visitor、
+capability、policy 或 dialect。
+
 ### 7.3 递归元数据
 
 递归类型使用有限图和受控 reference 表示，而不是无限展开的树。成功初始化的递归

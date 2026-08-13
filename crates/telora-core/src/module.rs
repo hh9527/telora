@@ -8651,9 +8651,12 @@ unchanged", "|"),
                        right: 'Column({alias: "t", column: "id"}),
                    })}},
                };
-               codec.encode(Use, relation)
-                   |> result.unwrap
-                   |> json.stringify"#,
+               {
+                   encoded: codec.encode(Use, relation)
+                       |> result.unwrap
+                       |> json.stringify,
+                   schema: json.schema(Use),
+               }"#,
         )
         .unwrap();
 
@@ -8661,6 +8664,8 @@ unchanged", "|"),
         let output = module.execute(100_000).unwrap().to_string();
         assert!(output.contains("\\\"left\\\""), "{output}");
         assert!(output.contains("\\\"column\\\":\\\"id\\\""), "{output}");
+        assert!(output.contains("$defs"), "{output}");
+        assert!(output.contains("#/$defs/Type"), "{output}");
         fs::remove_dir_all(directory).unwrap();
     }
 
