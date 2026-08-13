@@ -819,6 +819,25 @@ Tool stage 执行 annotation、type initializer、decorator、module interface �
 静态 annotation 和 witness 默认从程序执行中擦除；当程序显式把 TypeMetadata 当作
 普通值使用时，该值会保留到运行时。
 
+`codec.encode(witness, value)` 等需要 `TypeOf(A)` 的运行时边界必须收到实际、受检查
+的 TypeMetadata 值。语言不从普通值的运行时表示反射其已擦除静态类型，也不允许从
+`Any` 或 `Dyn` 伪造 witness。复杂 concrete family 的定义模块应拥有一次完整实例化，
+并导出 concrete alias 或 typed boundary function：
+
+```telora
+type Rejection = RejectionPayload(Entity, Dimension, Intent, Expr, Plan, Sql);
+
+def encode_rejection = fn(value: Rejection) {
+    codec.encode(Rejection, value)
+};
+
+export { Rejection, encode_rejection };
+```
+
+下游调用 `encode_rejection(value)`，不重复 family 实参；函数契约仍严格检查 value 与
+witness 对应。该模块/API 方案适用于跨模块和包含封闭递归参数的 family，不引入隐式
+反射或新的表面语法。
+
 ### 10.2 Fuel 和配额
 
 Fuel 在函数调用及实际执行的 control-flow back edge 等动态扩展点扣减。直线指令和

@@ -8665,6 +8665,72 @@ unchanged", "|"),
     }
 
     #[test]
+    fn exported_codec_boundary_owns_complex_family_witness() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"import "std/codec" as codec;
+               @struct type Binary = {left: Expr, right: Expr};
+               @enum type Expr = {Lit: Int, Add: Binary};
+               @struct type Payload(A, B, C, D, E, F, G) = {
+                   a: A, b: B, c: C, d: D, e: E, f: F, g: G,
+               };
+               type Rejection = Payload(
+                   Int, String, Bool, Float, Expr, Array(Int), Option(String)
+               );
+               def encode_rejection = fn(value: Rejection) {
+                   codec.encode(Rejection, value)
+               };
+               export {Expr, Rejection, encode_rejection};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               import "std/json" as json;
+               import "std/result" as result;
+               let rejection: types.Rejection = {
+                   a: 1,
+                   b: "two",
+                   c: 'True,
+                   d: 4.0,
+                   e: 'Add({left: 'Lit(5), right: 'Lit(6)}),
+                   f: [7],
+                   g: 'Some("eight"),
+               };
+               types.encode_rejection(rejection)
+                   |> result.unwrap
+                   |> json.stringify"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("\\\"left\\\""), "{output}");
+        assert!(output.contains("\\\"g\\\":\\\"eight\\\""), "{output}");
+
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "./types.telora" as types;
+               types.encode_rejection({
+                   a: "wrong",
+                   b: "two",
+                   c: 'True,
+                   d: 4.0,
+                   e: 'Lit(5),
+                   f: [7],
+                   g: 'None,
+               })"#,
+        )
+        .unwrap();
+        let error = load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("String") && error.contains("Int"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn recursive_type_metadata_keeps_typed_module_import_surfaces() {
         let directory = fixture_dir();
         fs::write(
