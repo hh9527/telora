@@ -577,21 +577,6 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, value)
     }
 
-    pub(crate) fn set_value_at_call_site(
-        &mut self,
-        destination: RegisterId,
-        value: &crate::Value,
-    ) -> Result<(), NativeError> {
-        let bytes = usize::try_from(legacy_value_bytes(value)?)
-            .map_err(|_| NativeError::allocation_limit("native value is too large"))?;
-        self.charge_allocation(bytes)?;
-        let value = self
-            .current
-            .import_value_at(self.background, value, self.call_site)
-            .map_err(|error| NativeError::new(error.to_string()))?;
-        self.set(destination, value)
-    }
-
     pub(crate) fn mark_at_call_site(&mut self, register: RegisterId) -> Result<(), NativeError> {
         let value = self.owned(register)?.with_loc(self.call_site);
         self.set(register, value)

@@ -533,22 +533,6 @@ impl Heap {
         self.import_value_with(background, value, &HashMap::new(), &mut prototypes, None)
     }
 
-    pub(crate) fn import_value_at(
-        &mut self,
-        background: Option<&Heap>,
-        value: &Value,
-        location: Option<crate::Loc>,
-    ) -> Result<RichValue, HeapError> {
-        let mut prototypes = HashMap::new();
-        self.import_value_with(
-            background,
-            value,
-            &HashMap::new(),
-            &mut prototypes,
-            location,
-        )
-    }
-
     pub(crate) fn import_sourced_value(
         &mut self,
         background: Option<&Heap>,

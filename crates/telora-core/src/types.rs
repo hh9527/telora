@@ -3261,11 +3261,11 @@ fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), Nat
     let mut replacements = HashMap::with_capacity(arity);
     for index in 0..arity {
         let register = context.argument(index)?;
-        let argument = context.export_value(register)?;
-        TypeDescriptor::from_value(&argument).map_err(|message| {
+        validate_native_type(context.value(register)?).map_err(|error| {
             NativeError::new(format!(
-                "type-family argument {} is not valid TypeMetadata: {message}",
-                index + 1
+                "type-family argument {} is not valid TypeMetadata: {}",
+                index + 1,
+                error.message
             ))
         })?;
         replacements.insert(
@@ -3307,8 +3307,8 @@ fn substitute_type_metadata_rich(
         let replacement = replacements.get(&parameter).copied().ok_or_else(|| {
             NativeError::new(format!("type-family template has unbound T{}", parameter.0))
         })?;
-        let value = context.export_value(replacement)?;
-        return context.set_value_at_call_site(destination, &value);
+        context.copy(destination, replacement)?;
+        return context.mark_at_call_site(destination);
     }
 
     let mut output_fields = Vec::with_capacity(fields.values().len());
@@ -12256,6 +12256,24 @@ mod tests {
             outputs.push((name, analysis.display(analysis.declared_types["Output"])));
         }
         assert!(outputs.iter().all(|(_, output)| output == &outputs[0].1));
+    }
+
+    #[test]
+    fn type_aliases_preserve_recursive_concrete_family_arguments() {
+        let analysis = analyze_source(
+            "recursive-family-alias.telora",
+            "@struct type Box(A) = {value: A};\
+             @struct type Branch = {children: Array(Tree)};\
+             @enum type Tree = {Leaf: Int, Branch: Branch};\
+             type TreeBox = Box(Tree);\
+             def identity: Fn(TreeBox) -> TreeBox = fn(value) { value };\
+             identity({value: 'Leaf(1)})",
+        )
+        .unwrap();
+        let alias = analysis.display(analysis.declared_types["TreeBox"]);
+        assert!(alias.contains("Array<Tree>"), "{alias}");
+        assert!(!alias.contains("Any"), "{alias}");
+        assert!(!analysis.display(analysis.result_type).contains("Any"));
     }
 
     #[test]

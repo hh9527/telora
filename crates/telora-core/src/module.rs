@@ -5734,6 +5734,38 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_families_preserve_recursive_arguments_in_top_level_aliases() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("families.telora"),
+            r#"@struct type Box(A) = {value: A}; export { Box };"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./families.telora" {Box};
+               @struct type Branch = {children: Array(Tree)};
+               @enum type Tree = {Leaf: Int, Branch: Branch};
+               type TreeBox = Box(Tree);
+               def identity: Fn(TreeBox) -> TreeBox = fn(value) { value };
+               identity({value: 'Branch({children: ['Leaf(1)]})})"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let alias = module
+            .analysis
+            .display(module.analysis.declared_types["TreeBox"]);
+        assert!(alias.contains("Array<Tree>"), "{alias}");
+        assert!(!alias.contains("Any"), "{alias}");
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{value: 'Branch({children: ['Leaf(1)]})}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_generic_apis_widen_singleton_fields_in_anonymous_records() {
         let directory = fixture_dir();
         fs::write(
