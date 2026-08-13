@@ -1667,6 +1667,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                         name: if open { "*".into() } else { name.clone() },
                         location,
                         target: target_module.id.clone(),
+                        namespace: !open && imported_name.is_none(),
                     });
                     if let Some((value, root, interface)) = self.core_modules.get(&target) {
                         if open {
@@ -1729,6 +1730,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                     name: if open { "*".into() } else { name.clone() },
                     location,
                     target: target_module.id.clone(),
+                    namespace: !open && imported_name.is_none(),
                 });
                 let value = match target_module.format {
                     ModuleFormat::Telora => self.load_telora(target_module.clone()).await,
@@ -2940,6 +2942,8 @@ impl ModuleLoader {
                     },
                     location: binding.value.name.location,
                     target: imported.id.clone(),
+                    namespace: binding.value.kind != BindingKind::OpenImport
+                        && binding.value.imported_name.is_none(),
                 });
                 if binding.value.kind == BindingKind::OpenImport {
                     for (name, candidate) in open_import_exports(
@@ -2991,6 +2995,8 @@ impl ModuleLoader {
                 },
                 location: binding.value.name.location,
                 target: imported_id.clone(),
+                namespace: binding.value.kind != BindingKind::OpenImport
+                    && binding.value.imported_name.is_none(),
             });
             let ModuleState::Ready {
                 root,

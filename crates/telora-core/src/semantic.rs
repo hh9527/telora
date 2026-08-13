@@ -138,6 +138,7 @@ pub struct WorkspaceImport {
     pub name: String,
     pub location: Location,
     pub target: WorkspaceModuleId,
+    pub namespace: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,6 +176,7 @@ pub struct Definition {
     pub ty: SemanticFact<WorkspaceTypeId>,
     pub scheme: Option<String>,
     pub import_target: Option<WorkspaceModuleId>,
+    pub import_namespace: bool,
 }
 
 impl Definition {
@@ -446,6 +448,7 @@ impl WorkspaceSnapshot {
                 ),
                 scheme: None,
                 import_target: None,
+                import_namespace: false,
             })
             .collect::<Vec<_>>();
         let mut diagnostics = partial.diagnostics;
@@ -981,6 +984,7 @@ impl WorkspaceSnapshot {
                     name: import.name.clone(),
                     location: import.location,
                     target: ids[&import.target.to_string()],
+                    namespace: import.namespace,
                 })
                 .collect();
             let result_type = input
@@ -1077,7 +1081,12 @@ impl WorkspaceSnapshot {
             let import_targets = input
                 .imports
                 .iter()
-                .map(|import| (import.name.as_str(), ids[&import.target.to_string()]))
+                .map(|import| {
+                    (
+                        import.name.as_str(),
+                        (ids[&import.target.to_string()], import.namespace),
+                    )
+                })
                 .collect::<HashMap<_, _>>();
             let module = WorkspaceModuleId(index as u32);
             let mut map = Vec::with_capacity(hir.definitions().len());
@@ -1133,8 +1142,16 @@ impl WorkspaceSnapshot {
                         })
                         .map(crate::types::TypeScheme::display_name),
                     import_target: (definition.kind == DefinitionKind::Import)
-                        .then(|| import_targets.get(definition.name.as_str()).copied())
+                        .then(|| {
+                            import_targets
+                                .get(definition.name.as_str())
+                                .map(|(target, _)| *target)
+                        })
                         .flatten(),
+                    import_namespace: definition.kind == DefinitionKind::Import
+                        && import_targets
+                            .get(definition.name.as_str())
+                            .is_some_and(|(_, namespace)| *namespace),
                 });
                 map.push(id);
             }
@@ -1390,6 +1407,7 @@ pub(crate) struct SemanticImport {
     pub name: String,
     pub location: Location,
     pub target: ModuleId,
+    pub namespace: bool,
 }
 
 #[derive(Clone, Debug)]

@@ -540,6 +540,16 @@ fn show_definitions(
         .collect::<Vec<_>>();
     definitions.sort_by_key(|(d, kind)| (&d.name, *kind, d.location.start));
     for (d, kind) in definitions {
+        if kind == ShowKind::Import && d.import_namespace {
+            let target = d
+                .import_target
+                .and_then(|target| workspace.module(target))
+                .map(|module| module.name.as_str());
+            emit(
+                json!({"schema":"telora.show/v1","module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"target":target,"location":location_json(workspace,d.location)}),
+            )?;
+            continue;
+        }
         let ty = d
             .scheme
             .clone()

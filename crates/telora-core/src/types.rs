@@ -1745,10 +1745,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .get(name)
             .and_then(|interface| interface.exports.get(name))
             .cloned();
-        let tool_value = scheme
-            .as_ref()
-            .and_then(|scheme| monomorphic_type_metadata(&scheme.body))
-            .map_or_else(|| value.clone(), |instance| instance.to_value(&mut tool_vm));
+        let tool_value = authoritative_imported_metadata(value, scheme.as_ref(), &mut tool_vm);
         tool_values.insert(name.clone(), tool_value);
         let inferred = scheme.as_ref().map_or_else(
             || infer_value(value),
@@ -1803,12 +1800,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let value = external_values.get(name).cloned().ok_or_else(|| {
             frontend_error(source_name, format!("import {name} has not been resolved"))
         })?;
-        let value = qualified_external_interfaces
+        let scheme = qualified_external_interfaces
             .get(name)
             .and_then(|interface| interface.exports.get(name))
-            .and_then(|scheme| monomorphic_type_metadata(&scheme.body))
-            .map(|instance| instance.to_value(&mut tool_vm))
-            .unwrap_or(value);
+            .cloned();
+        let value = authoritative_imported_metadata(&value, scheme.as_ref(), &mut tool_vm);
         tool_values.insert(name.clone(), value);
     }
 
@@ -2445,8 +2441,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
-                    let tool_value = monomorphic_type_metadata(&scheme.body)
-                        .map_or(value, |instance| instance.to_value(&mut tool_vm));
+                    let tool_value =
+                        authoritative_imported_metadata(&value, Some(&scheme), &mut tool_vm);
                     binding_schemes.insert(binding.value.name.value.clone(), scheme);
                     tool_values.insert(binding.value.name.value.clone(), tool_value);
                 } else {
@@ -3065,10 +3061,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
     })
 }
 
-fn monomorphic_type_metadata(descriptor: &TypeDescriptor) -> Option<&TypeDescriptor> {
-    match descriptor {
-        TypeDescriptor::TypeOf(instance) => Some(instance),
-        _ => None,
+fn authoritative_imported_metadata(
+    value: &Value,
+    scheme: Option<&TypeScheme>,
+    vm: &mut Vm,
+) -> Value {
+    let Some(TypeDescriptor::TypeOf(expected)) = scheme.map(|scheme| &scheme.body) else {
+        return value.clone();
+    };
+    match TypeDescriptor::from_value(value) {
+        Ok(actual) if actual == **expected => value.clone(),
+        _ => expected.to_value(vm),
     }
 }
 

@@ -882,6 +882,10 @@ local definitions。`-p` 执行大小写敏感的字面子串匹配，不解释 
 事实，带列号时选择覆盖该点的事实；它与 `-p`、`-k`、`--exports` 互斥。空匹配成功
 且不输出记录。每条记录显式区分 `authoritative`、`recovery` 或 `debug` 权威层级；
 表达式级记录属于 `debug`，错误恢复所得记录的权威层级服从其事实和模块状态。
+Namespace import 的 definition record 以 `target` 给出被导入模块的稳定 ID，并省略
+普通值的 `type` 字段；其成员的精确公开 type/scheme 由该目标模块的 `--exports`
+记录定义。Selective import 仍在本地 definition record 中直接携带所选成员的精确
+type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct 类型。
 
 `run` 从显式 export record 选择 `output`。外部 JSON 输入以显式 `input` binding 进入。
 `exec` 和 `build` 是具体协议，不是通用 action ABI：前者通过受信 entry module 调用

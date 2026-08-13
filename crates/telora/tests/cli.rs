@@ -157,6 +157,47 @@ fn show_named_queries_emit_stable_jsonl() {
 }
 
 #[test]
+fn show_namespace_imports_reference_exact_module_interfaces() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/types.telora"),
+        "@struct type CallExpr = {args: Array(Expr)};\n@enum type Expr = {Text: String, Call: CallExpr};\n@struct type Box(A) = {value: A};\nexport {CallExpr, Expr, Box};\n",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/lib.telora"),
+        "import \"@src/types.telora\" as types;\nimport \"@src/types.telora\" { Expr };\nexport {types, Expr};\n",
+    )
+    .unwrap();
+
+    let show = telora(&cwd)
+        .args(["show", "@src/lib.telora", "-k", "import"])
+        .output()
+        .unwrap();
+    assert!(
+        show.status.success(),
+        "{}",
+        String::from_utf8_lossy(&show.stderr)
+    );
+    let records = jsonl(&show.stdout);
+    let namespace = records
+        .iter()
+        .find(|record| record["name"] == "types")
+        .unwrap();
+    assert_eq!(namespace["authority"], "authoritative");
+    assert_eq!(namespace["target"], "@src/types.telora");
+    assert!(namespace.get("type").is_none());
+
+    let selective = records
+        .iter()
+        .find(|record| record["name"] == "Expr")
+        .unwrap();
+    let ty = selective["type"].as_str().unwrap();
+    assert!(ty.contains("TypeOf(enum"), "{ty}");
+    assert!(!ty.contains("Any"), "{ty}");
+}
+
+#[test]
 fn show_position_and_conflicts_are_structured() {
     let cwd = fixture();
     fs::write(
