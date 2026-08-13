@@ -1899,7 +1899,26 @@ impl<'a> Lowerer<'a> {
                 self.contract_expression(inner)
             }
             Some(Rule::ContractExpr) => {
-                let name = self.identifier(self.first_token(node, Token::Identifier)?);
+                let path = self
+                    .rule_children(node)
+                    .find(|child| self.rule(*child) == Some(Rule::ContractPath))
+                    .unwrap_or(node);
+                let mut names = self
+                    .token_children(path, Token::Identifier)
+                    .map(|token| self.identifier(token));
+                let name = names
+                    .next()
+                    .ok_or_else(|| self.error(node, "contract has no name"))?;
+                let mut callee = located(ExprKind::Variable(name), location);
+                for field in names {
+                    callee = located(
+                        ExprKind::Field {
+                            receiver: Box::new(callee),
+                            field,
+                        },
+                        location,
+                    );
+                }
                 let arguments = self
                     .rule_children(node)
                     .filter(|child| {
@@ -1916,11 +1935,11 @@ impl<'a> Lowerer<'a> {
                     .map(|child| self.contract_expression(child))
                     .collect::<Result<Vec<_>, _>>()?;
                 if arguments.is_empty() {
-                    Ok(located(ExprKind::Variable(name), location))
+                    Ok(callee)
                 } else {
                     Ok(located(
                         ExprKind::Call {
-                            callee: Box::new(located(ExprKind::Variable(name), location)),
+                            callee: Box::new(callee),
                             arguments,
                         },
                         location,
@@ -3003,6 +3022,25 @@ export { private as visible, identity as map };"#,
         };
         assert!(is_variable(callee, "Tuple"));
         assert!(matches!(&arguments[0].value, ExprKind::Array(items) if items.len() == 2));
+    }
+
+    #[test]
+    fn function_contracts_accept_qualified_type_paths() {
+        let program = parse(
+            "types.telora",
+            "native consume: Fn(types.Input, Array(types.Item)) -> types.Output; 0",
+        )
+        .unwrap();
+        let annotation = program.value.body.value.bindings[0]
+            .value
+            .annotation
+            .as_ref()
+            .expect("native annotation");
+        let ExprKind::Call { arguments, .. } = &annotation.value else {
+            panic!("expected Func metadata call");
+        };
+        assert!(matches!(arguments[0].value, ExprKind::Array(ref items) if items.len() == 2));
+        assert!(matches!(arguments[1].value, ExprKind::Field { .. }));
     }
 
     #[test]

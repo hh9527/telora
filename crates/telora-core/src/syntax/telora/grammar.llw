@@ -93,7 +93,8 @@ interpreter_intrinsic: 'interpreter' '!' '(' [expression (?1 ',' expression)* ['
 named_intrinsic: Identifier '!' '(' [expression (?1 ',' expression)* [',']] ')';
 legacy_interpreter_expr: 'interpreter' '(' expression ')';
 function_contract: 'Fn' '(' [contract (?1 ',' contract)* [',']] ')' '->' contract;
-contract: Identifier [?1 '(' [contract_argument (?2 ',' contract_argument)* [',']] ')'] @contract_expr | function_contract;
+contract: contract_path [?1 '(' [contract_argument (?2 ',' contract_argument)* [',']] ')'] @contract_expr | function_contract;
+contract_path: Identifier (?1 '.' Identifier)*;
 contract_argument^: contract | contract_array;
 contract_array: '[' [contract (?1 ',' contract)* [',']] ']';
 parameters: '(' [parameter (?1 ',' parameter)* [',']] ')';

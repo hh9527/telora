@@ -4977,6 +4977,36 @@ name = "rustc"
     }
 
     #[test]
+    fn function_contracts_resolve_qualified_imported_type_paths() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"@struct type Input = {value: Int};
+               @struct type Item = {name: String};
+               @struct type Output = {count: Int};
+               export { Input, Item, Output };"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               def consume:
+                   Fn(types.Input, Array(types.Item)) -> types.Output =
+                   fn(input, items) { {count: input.value} };
+               consume({value: 2}, [{name: "first"}])"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.display(module.analysis.result_type),
+            "{count: Int}"
+        );
+        assert_eq!(module.execute(100_000).unwrap().to_string(), "{count: 2}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_fold_widens_atom_fields_from_callback_results() {
         let directory = fixture_dir();
         fs::write(

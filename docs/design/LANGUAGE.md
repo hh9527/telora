@@ -358,7 +358,12 @@ Record/Struct 类型按字段结构检查；type alias 不创建新的名义身�
 ```telora
 Fn(A) -> Tuple([B, C])
 Fn(Fn(A) -> B) -> Array(Tuple([A, B]))
+Fn(types.Input, Array(types.Item)) -> types.Output
 ```
+
+契约中的类型名接受模块限定路径；限定路径在参数、结果、嵌套 family 实参和普通
+类型标注中的含义一致。消费者可以用 whole-module alias 保持类型 namespace，
+不必仅为函数契约额外选择性导入未限定类型名。
 
 显式写作 `Func([A], B)` 与 `Fn(A) -> B` 产生相同的规范 TypeMetadata。`Fn([A], B)`
 不是显式构造形式，也不被当作旧语法兼容。

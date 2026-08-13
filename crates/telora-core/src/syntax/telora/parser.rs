@@ -200,6 +200,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     fn predicate_contract_2(&self) -> bool {
         self.peek(1) != Token::RParen
     }
+    fn predicate_contract_path_1(&self) -> bool {
+        self.current == Token::Dot
+    }
     fn predicate_function_contract_1(&self) -> bool {
         self.peek(1) != Token::RParen
     }
