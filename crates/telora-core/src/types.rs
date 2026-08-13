@@ -1834,11 +1834,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
             );
         }
     }
-    let family_definitions = type_bindings
-        .iter()
-        .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
-        .map(|(definition, _)| *definition)
-        .collect::<Vec<_>>();
     let contract_type_definitions = program
         .value
         .body
@@ -1854,8 +1849,23 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .flat_map(|root| expression_dependencies(&hir, root))
         .filter(|definition| type_definitions.contains(definition))
         .collect::<Vec<_>>();
+    let family_definitions = type_bindings
+        .iter()
+        .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
+        .map(|(definition, _)| *definition)
+        .collect::<Vec<_>>();
+    let family_dependents = type_definitions
+        .iter()
+        .copied()
+        .filter(|definition| {
+            family_definitions.iter().any(|family| {
+                *definition == *family
+                    || dependency_reaches(&type_dependencies, *definition, *family)
+            })
+        })
+        .collect::<Vec<_>>();
     let mut scheduled_types = BTreeSet::new();
-    let mut frontier = family_definitions;
+    let mut frontier = family_dependents;
     frontier.extend(contract_type_definitions);
     while let Some(definition) = frontier.pop() {
         if !scheduled_types.insert(definition) {
@@ -12206,6 +12216,46 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn concrete_types_schedule_family_applications_with_later_concrete_arguments() {
+        let analysis = analyze_source(
+            "decorated-concrete-family-chain.telora",
+            "@struct type Requirement(E) = {target: E, reason: String};\
+             @struct type Output = {requirements: Array(Requirement(Entity))};\
+             @enum type Entity = {Order: 'None};\
+             Output",
+        )
+        .unwrap();
+        assert_eq!(
+            analysis.display(analysis.declared_types["Output"]),
+            "{requirements: Array<{reason: String, target: enum {Order}}>}"
+        );
+    }
+
+    #[test]
+    fn concrete_family_dependency_scheduling_is_source_order_independent_and_transitive() {
+        let mut outputs = Vec::new();
+        for (name, source) in [
+            (
+                "earlier-concrete-argument.telora",
+                "@enum type Entity = {Order: 'None};\
+                 @struct type Requirement(E) = {target: E, reason: String};\
+                 @struct type Output = {requirements: Array(Requirement(Entity))}; Output",
+            ),
+            (
+                "multilevel-concrete-family-chain.telora",
+                "@struct type Requirement(E) = {target: E, reason: String};\
+                 type Requirements(E) = Array(Requirement(E));\
+                 @struct type Output = {requirements: Requirements(Entity)};\
+                 @enum type Entity = {Order: 'None}; Output",
+            ),
+        ] {
+            let analysis = analyze_source(name, source).unwrap();
+            outputs.push((name, analysis.display(analysis.declared_types["Output"])));
+        }
+        assert!(outputs.iter().all(|(_, output)| output == &outputs[0].1));
     }
 
     #[test]
