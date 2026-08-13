@@ -478,6 +478,10 @@ impl Resolver {
                 self.index_expr(error, scopes);
                 None
             }
+            ExprKind::Debug { value, .. } => {
+                self.index_expr(value, scopes);
+                None
+            }
             ExprKind::Binary { left, right, .. } => {
                 self.index_expr(left, scopes);
                 self.index_expr(right, scopes);

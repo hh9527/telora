@@ -1340,19 +1340,37 @@ impl<'a> Lowerer<'a> {
                     right: Box::new(right),
                 }
             }
-            Rule::ProjectionExpr => {
+            Rule::DotPostfixExpr => {
                 let receiver = self
                     .children(node)
                     .find(|child| self.is_expression(*child))
-                    .ok_or_else(|| self.error(node, "projection has no receiver"))?;
-                let receiver = Box::new(self.expression(receiver)?);
-                if let Some(field) = self.token_children(node, Token::Identifier).last() {
+                    .ok_or_else(|| self.error(node, "dot postfix expression has no receiver"))?;
+                let receiver_expression = self.expression(receiver)?;
+                let suffix = self
+                    .rule_children(node)
+                    .find(|child| {
+                        matches!(
+                            self.rule(*child),
+                            Some(Rule::PostfixIntrinsicSuffix | Rule::ProjectionSuffix)
+                        )
+                    })
+                    .ok_or_else(|| self.error(node, "dot postfix expression has no suffix"))?;
+                if self.rule(suffix) == Some(Rule::PostfixIntrinsicSuffix) {
+                    return self.lower_postfix_intrinsic(
+                        receiver,
+                        receiver_expression,
+                        suffix,
+                        node,
+                    );
+                }
+                let receiver = Box::new(receiver_expression);
+                if let Some(field) = self.token_children(suffix, Token::Identifier).last() {
                     ExprKind::Field {
                         receiver,
                         field: self.identifier(field),
                     }
                 } else {
-                    let index_token = self.first_token(node, Token::Int)?;
+                    let index_token = self.first_token(suffix, Token::Int)?;
                     let index = self.text(index_token).parse::<usize>().map_err(|_| {
                         self.error(index_token, "tuple projection index is too large")
                     })?;
@@ -1533,55 +1551,156 @@ impl<'a> Lowerer<'a> {
                     .next()
                     .ok_or_else(|| self.error(node, "contextual intrinsic has no name"))?;
                 let name_text = self.text(name);
-                if matches!(
-                    name_text.as_ref(),
-                    "blame" | "panic" | "raise" | "emit_info" | "emit_warn" | "emit_error" | "fail"
-                ) {
-                    let bang = self.first_token(node, Token::Bang)?;
-                    let arguments = self
-                        .children(node)
-                        .filter(|child| {
-                            self.is_expression(*child)
-                                && self.cst.span(*child).start > self.cst.span(bang).end
-                        })
-                        .map(|argument| self.expression(argument))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if name_text == "blame" {
-                        self.lower_blame(arguments, node)
-                    } else if matches!(
-                        name_text.as_ref(),
-                        "emit_info" | "emit_warn" | "emit_error" | "fail"
-                    ) {
-                        self.lower_diagnostic_convenience(&name_text, arguments, node)
-                    } else {
-                        if arguments.len() != 1 {
-                            return Err(self.error(
-                                node,
-                                format!(
-                                    "{name_text}! expects exactly one argument, found {}",
-                                    arguments.len()
-                                ),
-                            ));
-                        }
-                        let argument = Box::new(arguments.into_iter().next().unwrap());
-                        let kind = if name_text == "panic" {
-                            ExprKind::Panic { message: argument }
-                        } else {
-                            ExprKind::Raise { error: argument }
-                        };
-                        Ok(located(kind, self.location(node)))
-                    }
-                } else if matches!(name_text.as_ref(), "file" | "line") {
-                    Err(self.error(
-                        name,
-                        format!("{name_text}! is reserved but not implemented"),
-                    ))
-                } else {
-                    Err(self.error(name, format!("unknown contextual intrinsic {name_text}!")))
-                }
+                let bang = self.first_token(node, Token::Bang)?;
+                let argument_nodes = self
+                    .children(node)
+                    .filter(|child| {
+                        self.is_expression(*child)
+                            && self.cst.span(*child).start > self.cst.span(bang).end
+                    })
+                    .collect::<Vec<_>>();
+                self.lower_named_intrinsic(&name_text, name, &argument_nodes, node)
             }
             _ => Err(self.error(node, "contextual intrinsic has no supported name")),
         }
+    }
+
+    fn lower_postfix_intrinsic(
+        &self,
+        receiver_node: NodeRef,
+        receiver: Expr,
+        suffix: NodeRef,
+        invocation: NodeRef,
+    ) -> Result<Expr, Diagnostic> {
+        let name = self
+            .token_children(suffix, Token::Identifier)
+            .next()
+            .ok_or_else(|| self.error(suffix, "postfix contextual intrinsic has no name"))?;
+        let name_text = self.text(name);
+        let arguments_node = self
+            .rule_children(suffix)
+            .find(|child| self.rule(*child) == Some(Rule::Arguments))
+            .ok_or_else(|| self.error(suffix, "postfix contextual intrinsic has no arguments"))?;
+        let mut argument_nodes = vec![receiver_node];
+        argument_nodes.extend(
+            self.children(arguments_node)
+                .filter(|child| self.is_expression(*child)),
+        );
+        self.lower_named_intrinsic_with_receiver(
+            &name_text,
+            name,
+            &argument_nodes,
+            Some(receiver),
+            invocation,
+        )
+    }
+
+    fn lower_named_intrinsic(
+        &self,
+        name: &str,
+        name_node: NodeRef,
+        argument_nodes: &[NodeRef],
+        invocation: NodeRef,
+    ) -> Result<Expr, Diagnostic> {
+        self.lower_named_intrinsic_with_receiver(name, name_node, argument_nodes, None, invocation)
+    }
+
+    fn lower_named_intrinsic_with_receiver(
+        &self,
+        name: &str,
+        name_node: NodeRef,
+        argument_nodes: &[NodeRef],
+        receiver: Option<Expr>,
+        invocation: NodeRef,
+    ) -> Result<Expr, Diagnostic> {
+        if !matches!(
+            name,
+            "blame" | "panic" | "raise" | "dbg" | "emit_info" | "emit_warn" | "emit_error" | "fail"
+        ) {
+            return if matches!(name, "file" | "line") {
+                Err(self.error(
+                    name_node,
+                    format!("{name}! is reserved but not implemented"),
+                ))
+            } else {
+                Err(self.error(name_node, format!("unknown contextual intrinsic {name}!")))
+            };
+        }
+        if name == "dbg" {
+            return self.lower_debug(argument_nodes, receiver, invocation);
+        }
+        let mut arguments = Vec::with_capacity(argument_nodes.len());
+        for (index, argument) in argument_nodes.iter().copied().enumerate() {
+            if index == 0
+                && let Some(receiver) = receiver.clone()
+            {
+                arguments.push(receiver);
+            } else {
+                arguments.push(self.expression(argument)?);
+            }
+        }
+        if name == "blame" {
+            self.lower_blame(arguments, invocation)
+        } else if matches!(name, "emit_info" | "emit_warn" | "emit_error" | "fail") {
+            self.lower_diagnostic_convenience(name, arguments, invocation)
+        } else {
+            if arguments.len() != 1 {
+                return Err(self.error(
+                    invocation,
+                    format!(
+                        "{name}! expects exactly one argument, found {}",
+                        arguments.len()
+                    ),
+                ));
+            }
+            let argument = Box::new(arguments.into_iter().next().unwrap());
+            let kind = if name == "panic" {
+                ExprKind::Panic { message: argument }
+            } else {
+                ExprKind::Raise { error: argument }
+            };
+            Ok(located(kind, self.location(invocation)))
+        }
+    }
+
+    fn lower_debug(
+        &self,
+        arguments: &[NodeRef],
+        receiver: Option<Expr>,
+        node: NodeRef,
+    ) -> Result<Expr, Diagnostic> {
+        if !(1..=2).contains(&arguments.len()) {
+            return Err(self.error(
+                node,
+                format!(
+                    "dbg! expects an expression and an optional String literal, found {} arguments",
+                    arguments.len()
+                ),
+            ));
+        }
+        let value_node = arguments[0];
+        let value = match receiver {
+            Some(receiver) => receiver,
+            None => self.expression(value_node)?,
+        };
+        let message = if let Some(message_node) = arguments.get(1).copied() {
+            match self.expression(message_node)?.value {
+                ExprKind::String(message) => Some(message),
+                _ => {
+                    return Err(self.error(message_node, "dbg! message must be a String literal"));
+                }
+            }
+        } else {
+            None
+        };
+        Ok(located(
+            ExprKind::Debug {
+                value: Box::new(value),
+                message,
+                expression: self.text(value_node).into_owned(),
+            },
+            self.location(node),
+        ))
     }
 
     fn lower_blame(&self, arguments: Vec<Expr>, node: NodeRef) -> Result<Expr, Diagnostic> {
@@ -2184,7 +2303,7 @@ impl<'a> Lowerer<'a> {
                     | Rule::MatchExpr
                     | Rule::ParenExpr
                     | Rule::PipelineExpr
-                    | Rule::ProjectionExpr
+                    | Rule::DotPostfixExpr
                     | Rule::PropagateExpr
                     | Rule::ReturnExpr
                     | Rule::SectionExpr
@@ -3557,6 +3676,14 @@ export { private as visible, identity as map };"#,
                 "blame! expects a message followed by zero or more subjects",
             ),
             (
+                "dbg!()",
+                "dbg! expects an expression and an optional String literal",
+            ),
+            (
+                "let message = \"dynamic\"; dbg!(1, message)",
+                "dbg! message must be a String literal",
+            ),
+            (
                 "emit_warn!()",
                 "emit_warn! expects a message followed by zero or more subjects",
             ),
@@ -3582,6 +3709,58 @@ export { private as visible, identity as map };"#,
                 error.message
             );
         }
+    }
+
+    #[test]
+    fn lowers_prefix_and_postfix_debug_with_authored_expression_names() {
+        for (source, expected_name) in [
+            ("dbg!(request.user, \"seen\")", "request.user"),
+            ("request.user.dbg!(\"seen\")", "request.user"),
+            ("make(1).dbg!().field", "make(1)"),
+            ("items[0].dbg!()", "items[0]"),
+        ] {
+            let program = parse("debug.telora", source).unwrap();
+            let mut expression = &program.value.body.value.result;
+            if let ExprKind::Field { receiver, .. } = &expression.value {
+                expression = receiver;
+            }
+            let ExprKind::Debug {
+                expression: name,
+                message,
+                ..
+            } = &expression.value
+            else {
+                panic!("expected contextual debug for {source}")
+            };
+            assert_eq!(name, expected_name);
+            assert_eq!(
+                message.as_deref(),
+                source.contains("seen").then_some("seen")
+            );
+        }
+    }
+
+    #[test]
+    fn postfix_contextual_intrinsics_prepend_the_receiver() {
+        let program = parse("postfix.telora", "error.raise!()").unwrap();
+        let ExprKind::Raise { error } = &program.value.body.value.result.value else {
+            panic!("expected raise")
+        };
+        assert!(matches!(&error.value, ExprKind::Variable(name) if name.value == "error"));
+
+        let error = parse("postfix.telora", "error.raise!(other)").unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("raise! expects exactly one argument")
+        );
+
+        let error = parse("postfix.telora", "value.unknown!()").unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("unknown contextual intrinsic unknown!")
+        );
     }
 
     #[test]

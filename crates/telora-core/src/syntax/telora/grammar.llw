@@ -43,7 +43,7 @@ expression:
 | expression '@' type_arguments @type_apply_expr
 | expression '[' expression ']' @index_expr
 | expression section_arguments @section_expr
-| expression '.' (Identifier | Int) @projection_expr
+| expression '.' dot_suffix @dot_postfix_expr
 | ('-' | '!') expression @unary_expr
 | expression ('*' | '/' | '%') expression @binary_expr
 | expression ('+' | '-') expression @binary_expr
@@ -91,6 +91,9 @@ block: '{' body '}';
 closure: 'fn' parameters ['->' expression] block;
 interpreter_intrinsic: 'interpreter' '!' '(' [expression (?1 ',' expression)* [',']] ')';
 named_intrinsic: Identifier '!' '(' [expression (?1 ',' expression)* [',']] ')';
+dot_suffix^: ?1 postfix_intrinsic_suffix | projection_suffix;
+postfix_intrinsic_suffix: Identifier '!' arguments;
+projection_suffix: Identifier | Int;
 legacy_interpreter_expr: 'interpreter' '(' expression ')';
 function_contract: 'Fn' '(' [contract (?1 ',' contract)* [',']] ')' '->' contract;
 contract: contract_path [?1 '(' [contract_argument (?2 ',' contract_argument)* [',']] ')'] @contract_expr | function_contract;

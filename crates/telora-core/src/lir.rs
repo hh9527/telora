@@ -216,6 +216,13 @@ pub enum Operation {
     Raise {
         error: RegisterId,
     },
+    Debug {
+        value: RegisterId,
+        module: String,
+        line: u32,
+        name: String,
+        message: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -575,6 +582,19 @@ fn lower_operation(
         },
         Operation::Raise { error } => Instruction::Raise {
             error: register(error)?,
+        },
+        Operation::Debug {
+            value,
+            module,
+            line,
+            name,
+            message,
+        } => Instruction::Debug {
+            value: register(value)?,
+            module,
+            line,
+            name,
+            message,
         },
     })
 }

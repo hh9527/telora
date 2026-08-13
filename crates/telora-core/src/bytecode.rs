@@ -216,6 +216,13 @@ pub enum Instruction {
     Raise {
         error: Register,
     },
+    Debug {
+        value: Register,
+        module: String,
+        line: u32,
+        name: String,
+        message: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -420,6 +427,13 @@ pub enum Opcode {
     },
     Raise {
         error: Register,
+    },
+    Debug {
+        value: Register,
+        module: String,
+        line: u32,
+        name: String,
+        message: Option<String>,
     },
 }
 
@@ -763,6 +777,19 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Fail { message } => Opcode::Fail { message },
         Instruction::Panic { message } => Opcode::Panic { message },
         Instruction::Raise { error } => Opcode::Raise { error },
+        Instruction::Debug {
+            value,
+            module,
+            line,
+            name,
+            message,
+        } => Opcode::Debug {
+            value,
+            module,
+            line,
+            name,
+            message,
+        },
     }
 }
 

@@ -98,6 +98,11 @@ pub enum ExprKind {
     Raise {
         error: Box<Expr>,
     },
+    Debug {
+        value: Box<Expr>,
+        message: Option<String>,
+        expression: String,
+    },
     Binary {
         operator: Located<BinaryOperator>,
         left: Box<Expr>,

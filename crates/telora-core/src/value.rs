@@ -377,12 +377,6 @@ impl CoreBuiltinTypeFunction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreDebugFunction {
-    Dbg,
-    DbgWith,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreDiagnosticFunction {
     Report,
 }
@@ -584,22 +578,6 @@ impl CoreJsonFunction {
     }
 }
 
-impl CoreDebugFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Dbg => "std/debug.dbg",
-            Self::DbgWith => "std/debug.dbg_with",
-        }
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        match self {
-            Self::Dbg => 1,
-            Self::DbgWith => 2,
-        }
-    }
-}
-
 impl CoreDictFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
@@ -713,7 +691,6 @@ pub(crate) enum NativeKind {
     CoreDict(CoreDictFunction),
     CoreString(CoreStringFunction),
     CorePath(CorePathFunction),
-    CoreDebug(CoreDebugFunction),
     CoreDiagnostic(CoreDiagnosticFunction),
     CoreHash(CoreHashFunction),
     CoreCodec(CoreCodecFunction),
@@ -825,16 +802,6 @@ impl NativeFunction {
             arity: function.arity(),
             callback: unavailable_core_callback,
             kind: NativeKind::CorePath(function),
-            native_type_local: None,
-        }
-    }
-
-    pub(crate) const fn core_debug(function: CoreDebugFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreDebug(function),
             native_type_local: None,
         }
     }

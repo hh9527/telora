@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::env;
@@ -29,11 +30,27 @@ fn engine() -> Engine {
 
 struct StderrDebugSink;
 
+#[derive(Serialize)]
+struct DebugRecord<'a> {
+    name: &'a str,
+    repr: &'a str,
+    module: &'a str,
+    line: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<&'a str>,
+}
+
 impl DebugSink for StderrDebugSink {
     fn emit(&self, event: DebugEvent) {
-        match event.label {
-            Some(label) => eprintln!("[debug] {label:?}: {}", event.value),
-            None => eprintln!("[debug] {}", event.value),
+        let record = DebugRecord {
+            name: &event.name,
+            repr: &event.repr,
+            module: &event.module,
+            line: event.line,
+            message: event.message.as_deref(),
+        };
+        if let Ok(record) = serde_json::to_string(&record) {
+            eprintln!("{record}");
         }
     }
 }

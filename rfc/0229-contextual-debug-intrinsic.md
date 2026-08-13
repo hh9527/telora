@@ -1,6 +1,6 @@
 # RFC 0229: Contextual `dbg!` observation
 
-- Status: Accepted for implementation
+- Status: Implemented
 - Replaces: RFC 0019
 - Tracking issue: #52
 
@@ -22,8 +22,8 @@ compiler; it is not a second runtime expression.
 Every event carries compiler-authored context for the first argument:
 
 - the stable logical module identity;
-- the complete `dbg!` call location;
-- the source text of `expression` as authored;
+- the one-based `dbg!` call line;
+- the source text of `expression` as authored, exposed as `name`;
 - the optional authored message; and
 - the existing bounded, deterministic representation of the resulting value.
 
@@ -137,39 +137,40 @@ String value and not part of value equality. Synthetic expressions without an
 authored slice use the stable placeholder `<generated>`.
 
 Module identity and source positions follow the same logical-source mapping as
-other diagnostics. Line and column are one-based. Physical absolute paths are
-not exposed when a stable module identity exists.
+other diagnostics. Line is one-based. Physical absolute paths are not exposed
+when a stable module identity exists.
 
-## Event and CLI rendering
+## Event and CLI JSONL
 
 The Host-facing event is conceptually:
 
 ```text
 DebugEvent {
     module: String,
-    location: Location,
-    expression: String,
+    line: Int,
+    name: String,
     message: Option<String>,
-    value: String,
+    repr: String,
 }
 ```
 
-`expression`, `message`, and `value` are owned, bounded text. The value uses the
+`name`, `message`, and `repr` are owned, bounded text. `repr` uses the
 existing cycle-safe debug formatter, including deterministic Dict ordering and
 fixed depth, item-count, and byte limits. The formatter remains a debug
 representation, not JSON or a stable serialization protocol.
 
-The CLI writes one physical stderr record per event. Its logical form is:
+The CLI writes exactly one compact JSON object per physical stderr line. It
+does not add prose, prefixes, ANSI escapes, headers, or summaries:
 
-```text
-[debug] @src/query.telora:42:12 make_plan(model, request) = {...}
-[debug] @src/query.telora:43:12 "before validation": plan = {...}
+```json
+{"name":"var","repr":"3","module":"@src/query.telora","line":42}
+{"name":"plan","repr":"{...}","module":"@src/query.telora","line":43,"message":"before validation"}
 ```
 
-Control characters in messages, expression text, and value text are escaped so
-one event cannot forge additional records. Exact cosmetic punctuation is a CLI
-presentation detail; the module, position, expression, optional message, and
-value are required information.
+Fields are emitted in the order shown. `message` is omitted when absent. JSON
+escaping ensures that control characters in names, messages, and
+representations cannot forge additional records. `repr` is a String containing
+the debug representation; it is not embedded as arbitrary JSON data.
 
 Debug events never enter stdout, the module export record, diagnostics, JSON
 codec output, or the `output` entry protocol. A Host sink cannot change Telora
@@ -301,11 +302,11 @@ JSON boundaries belong to codec and schema contracts.
    event to the Host.
 3. The result retains the exact static type and exact runtime identity of the
    observed value, including generic, function, recursive, and composite values.
-4. Every event identifies the stable logical module, one-based call location,
-   authored first-argument text, optional message, and bounded value text.
+4. Every event identifies the stable logical module, one-based call line,
+   authored first-argument `name`, optional message, and bounded `repr` text.
 5. Pipeline use through `dbg!(_, "message")` works without weakening inference.
-6. CLI debug records go only to stderr; stdout and exported `output` are
-   unchanged.
+6. CLI debug records are compact JSONL written only to stderr; stdout and
+   exported `output` are unchanged.
 7. Cycles and formatter limits remain deterministic and cannot panic.
 8. Tool-stage authoritative evaluation may emit an event; speculative,
    bootstrap, and recovery work does not publish duplicate observations.

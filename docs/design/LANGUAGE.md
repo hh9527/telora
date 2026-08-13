@@ -41,9 +41,10 @@ Telora 是一门在封闭世界中进行不可变数据计算的静态类型语�
 7. 机制优先：领域政策应写成库；只有一般语言模型无法忠实表达的能力，才是
    核心机制候选。
 
-这里的“纯”需要精确定义：普通值计算没有外部效果；调试输出和诊断报告是由 Host
-观察的两个受控通道。特别是 `report`/`emit_*` 会产生诊断事件，并可能使最终结果
-不可发布。它们不修改 Telora 值，但属于求值的可观察行为。
+这里的“纯”需要精确定义：普通值计算没有外部效果。`report`/`emit_*` 会产生诊断
+事件，并可能使最终结果不可发布，因此属于 Telora 求值的受控可观察行为。`dbg!`
+则是 Host 对求值的旁路观察：Telora 内部世界不能感知 Host 是否安装 observer、是否
+输出事件或是否截断表示。
 
 ## 2. 源文件和词法表面
 
@@ -695,7 +696,47 @@ match validate(User, raw) {
 产生无结构的程序失败，应表示实现错误或无法恢复的不变量破坏，而不是可预期的领域
 拒绝。
 
-### 9.3 Host-observed diagnostic
+所有 contextual intrinsic 都支持统一的后置糖：
+
+```text
+receiver.ident!(arguments...) == ident!(receiver, arguments...)
+```
+
+例如 `error.raise!()` 等价于 `raise!(error)`，`"OutOfRange".fail!(arr, idx)` 等价于
+`fail!("OutOfRange", arr, idx)`。这只是把 receiver 放到第一个参数位置；它不执行
+method lookup，也不开放用户定义宏。未知 intrinsic 在前置和后置形式下都被拒绝。
+
+### 9.3 Host debug observation
+
+`dbg!` 临时观察一个显式表达式：
+
+```telora
+dbg!(value)
+dbg!(value, "message")
+value.dbg!()
+value.dbg!("message")
+```
+
+前置和后置写法语义相同。首个参数只求值一次，`dbg!` 返回同一个运行时值并保留其
+精确静态类型；可选 message 必须是 String literal。编译器同时记录首个参数的源码
+文本、稳定 module ID 和调用行。`dbg!` 不捕获作用域中的其他变量。
+
+观察使用有界、确定、cycle-safe 的 debug formatter。它不经过 `Any`、`Dyn`、codec
+或值导出，表示也不是 JSON serialization contract。Host sink、格式化、截断或输出
+失败不能改变 Telora 的值、失败、诊断、控制流、fuel、stack 或 allocation account。
+
+CLI 把每个事件作为一行紧凑 JSON 写入 stderr：
+
+```json
+{"name":"value","repr":"3","module":"@src/query.telora","line":42}
+{"name":"plan","repr":"{...}","module":"@src/query.telora","line":43,"message":"generated"}
+```
+
+`name` 是首个参数的 authored expression text，`repr` 是有界 debug 表示。stderr 事件
+不进入模块 export、stdout、诊断集合或 `output` entry 协议。语言不提供 `std/debug`
+模块或 context-free `dbg` 函数。
+
+### 9.4 Host-observed diagnostic
 
 Prelude 提供：
 
@@ -728,7 +769,7 @@ def reject: Fn(Intent) -> Option(Plan) = fn(intent) {
 多个 subject 可以贡献 primary 和 related location；其载体表示不构成公开的诊断
 序列化协议。
 
-### 9.4 失败类别
+### 9.5 失败类别
 
 VM 区分可恢复的程序失败与终止整个 evaluation session 的资源/一致性失败。前者包括
 类型不匹配、missing field、non-exhaustive dynamic match、panic、raised blame 和
@@ -878,7 +919,7 @@ Result、argv 等组合政策；native 模块提供需要高效 heap 观察或�
 的确定操作。
 
 当前通用能力包括 Array/Dict 组合、String、lexical path、SHA-256、regex、JSON codec
-与 schema、TypeMetadata attribute、Dyn observer、文本 parse/display、debug 等。
+与 schema、TypeMetadata attribute、Dyn observer、文本 parse/display 等。
 这些 API 不授予环境或文件系统访问权限。例如 path 操作是词法操作，hash 操作只
 处理显式输入。
 

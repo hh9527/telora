@@ -1,7 +1,7 @@
 use crate::value::{
-    CoreArrayFunction, CoreAttributesFunction, CoreCodecFunction, CoreDebugFunction,
-    CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction,
-    CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction, CoreStringFunction,
+    CoreArrayFunction, CoreAttributesFunction, CoreCodecFunction, CoreDiagnosticFunction,
+    CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction, CoreJsonFunction,
+    CoreModelFunction, CorePathFunction, CoreResultFunction, CoreStringFunction,
     CoreTypeDescFunction, NativeFunction,
 };
 
@@ -9,7 +9,6 @@ pub(crate) const PRELUDE_MODULE: &str = "core/prelude";
 pub(crate) const ARRAY_MODULE: &str = "std/array";
 pub(crate) const ATTRIBUTES_MODULE: &str = "std/attributes";
 pub(crate) const DICT_MODULE: &str = "std/dict";
-pub(crate) const DEBUG_MODULE: &str = "std/debug";
 pub(crate) const BUILD_MODULE: &str = "std/build";
 pub(crate) const EXEC_MODULE: &str = "std/rt-types/exec.telora";
 pub(crate) const ARGV_MODULE: &str = "std/argv";
@@ -312,18 +311,6 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             name: TOML_MODULE,
             source: include_str!("../modules/std/toml.telora"),
             functions: vec![],
-        },
-        CoreModuleSpec {
-            native_id: 10,
-            name: DEBUG_MODULE,
-            source: include_str!("../modules/std/debug.native.telora"),
-            functions: vec![
-                ("dbg", NativeFunction::core_debug(CoreDebugFunction::Dbg)),
-                (
-                    "dbg_with",
-                    NativeFunction::core_debug(CoreDebugFunction::DbgWith),
-                ),
-            ],
         },
         CoreModuleSpec {
             native_id: 11,

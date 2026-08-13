@@ -1,6 +1,6 @@
 # RFC 0230: Postfix contextual intrinsic sugar
 
-- Status: Accepted for implementation
+- Status: Implemented
 - Depends on: RFC 0101
 
 ## Summary

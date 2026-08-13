@@ -2796,7 +2796,7 @@ impl ModuleLoader {
         let path = module_source.context_path();
         let synthetic = matches!(module_source, TeloraModuleSource::Synthetic { .. });
         let (source_name, source) = match module_source {
-            TeloraModuleSource::File(path) => (path.display().to_string(), read(path)?),
+            TeloraModuleSource::File(path) => (module_id.to_string(), read(path)?),
             TeloraModuleSource::Synthetic { name, source, .. } => {
                 (name.to_owned(), source.to_owned())
             }
@@ -3336,6 +3336,7 @@ fn expression_has_import(expression: &Expr) -> bool {
         ExprKind::Return { value } => expression_has_import(value),
         ExprKind::Panic { message } => expression_has_import(message),
         ExprKind::Raise { error } => expression_has_import(error),
+        ExprKind::Debug { value, .. } => expression_has_import(value),
         ExprKind::Binary { left, right, .. } => {
             expression_has_import(left) || expression_has_import(right)
         }
@@ -4003,16 +4004,15 @@ type Independent = String;
     }
 
     #[test]
-    fn core_debug_observes_values_without_changing_results() {
+    fn contextual_debug_observes_values_with_authored_context() {
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/debug" as debug;
-               let identity: Fn(Any) -> Any = fn(value) { value };
+            r#"let identity: Fn(Any) -> Any = fn(value) { value };
                let data = { text: "line\nnext", items: [1, 'Ok, (2,)] };
-               let observed = debug.dbg_with("loaded\nvalue", data);
-               let seen_identity = debug.dbg(identity);
-               let seen_value = debug.dbg(observed);
+               let observed = dbg!(data, "loaded\nvalue");
+               let seen_identity = dbg!(identity);
+               let seen_value = dbg!(observed);
                export let output = if seen_identity == identity { seen_value } else { data };"#,
         )
         .unwrap();
@@ -4032,44 +4032,39 @@ type Independent = String;
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 6);
         for phase in events.chunks_exact(3) {
-            assert_eq!(phase[0].label.as_deref(), Some("loaded\nvalue"));
+            assert_eq!(phase[0].message.as_deref(), Some("loaded\nvalue"));
+            assert_eq!(phase[0].name, "data");
+            assert!(phase[0].module.ends_with("main.telora"));
+            assert_eq!(phase[0].line, 3);
             assert_eq!(
-                phase[0].value,
+                phase[0].repr,
                 "{\"items\": [1, 'Ok, (2,)], \"text\": \"line\\nnext\"}"
             );
-            assert!(phase[1].value.starts_with("<fn "));
-            assert_eq!(phase[2].value, phase[0].value);
+            assert_eq!(phase[1].name, "identity");
+            assert!(phase[1].repr.starts_with("<fn "));
+            assert_eq!(phase[2].name, "observed");
+            assert_eq!(phase[2].repr, phase[0].repr);
         }
         drop(events);
 
         fs::write(
-            directory.join("bad-label.telora"),
-            r#"import "std/debug" as debug; export let output = debug.dbg_with(1, 42);"#,
+            directory.join("bad-message.telora"),
+            r#"let message = "dynamic"; export let output = dbg!(42, message);"#,
         )
         .unwrap();
         let bad = engine
-            .load_module(directory.join("bad-label.telora"), BTreeMap::new())
+            .load_module(directory.join("bad-message.telora"), BTreeMap::new())
             .unwrap_err();
-        assert!(bad.to_string().contains("String"));
+        assert!(bad.to_string().contains("String literal"));
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn core_debug_uses_one_fuel_no_telora_allocation_and_observes_module_init() {
+    fn contextual_debug_is_outside_telora_fuel_and_allocation() {
         let directory = fixture_dir();
-        fs::write(directory.join("data.json"), r#"{"value":42}"#).unwrap();
-        fs::write(
-            directory.join("dependency.telora"),
-            r#"import "std/debug" as debug; export let value = debug.dbg_with("tool", 41);"#,
-        )
-        .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/debug" as debug;
-               import "./dependency.telora" as dependency;
-               import "./data.json" as data;
-               type Observed = debug.dbg(Int);
-               export let output = debug.dbg(data);"#,
+            r#"export let output = dbg!(42, "answer");"#,
         )
         .unwrap();
         let sink = Arc::new(CapturingDebugSink::default());
@@ -4081,22 +4076,8 @@ type Independent = String;
         let module = engine
             .load_module(directory.join("main.telora"), BTreeMap::new())
             .unwrap();
-        {
-            let events = sink.events.lock().unwrap();
-            assert!(
-                events
-                    .iter()
-                    .any(|event| event.label.as_deref() == Some("tool"))
-            );
-            assert!(
-                events
-                    .iter()
-                    .any(|event| event.value.contains("\"kind\": 'Int"))
-            );
-        }
-
         let initial_events = sink.events.lock().unwrap().len();
-        let mut exact = QuotaAccount::new(Quota::new(1, 1_000, 1_000));
+        let mut exact = QuotaAccount::new(Quota::new(0, 1_000, u64::MAX));
         let arena = Vm::new()
             .with_debug_sink(sink.clone())
             .execute_in_work(
@@ -4107,46 +4088,11 @@ type Independent = String;
                 &mut exact,
             )
             .unwrap();
-        assert!(exact.requested_allocation_bytes() > 0);
         assert_eq!(
             named_output(arena.export(&module.runtime.main.heap).unwrap()).to_string(),
-            "{value: 42}"
+            "42"
         );
         assert_eq!(sink.events.lock().unwrap().len(), initial_events + 1);
-
-        let mut second = QuotaAccount::new(Quota::new(1, 1_000, 1_000));
-        Vm::new()
-            .with_debug_sink(sink.clone())
-            .execute_in_work(
-                &module.runtime.main.heap,
-                &module.runtime.externals,
-                &module.function,
-                &[],
-                &mut second,
-            )
-            .unwrap();
-        assert_eq!(
-            sink.events.lock().unwrap().len(),
-            initial_events + 2,
-            "the type RHS must not execute again in a later session"
-        );
-
-        let mut no_fuel = QuotaAccount::new(Quota::new(0, 1_000, 0));
-        assert_eq!(
-            Vm::new()
-                .with_debug_sink(sink)
-                .execute_in_work(
-                    &module.runtime.main.heap,
-                    &module.runtime.externals,
-                    &module.function,
-                    &[],
-                    &mut no_fuel,
-                )
-                .err()
-                .expect("debug call must consume fuel")
-                .kind,
-            crate::RuntimeErrorKind::FuelExhausted
-        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -4155,8 +4101,7 @@ type Independent = String;
         let directory = fixture_dir();
         fs::write(
             directory.join("erased.telora"),
-            r#"import "std/debug" as debug;
-               def observe: Fn(Any) -> Any = fn(value) { debug.dbg_with("metadata", value) };
+            r#"def observe: Fn(Any) -> Any = fn(value) { dbg!(value, "metadata") };
                type Observed = observe(Int);
                0"#,
         )
@@ -4181,8 +4126,7 @@ type Independent = String;
 
         fs::write(
             directory.join("retained.telora"),
-            r#"import "std/debug" as debug;
-               def observe: Fn(Any) -> Any = fn(value) { debug.dbg_with("observed", value) };
+            r#"def observe: Fn(Any) -> Any = fn(value) { dbg!(value, "observed") };
                type Observed = observe(Int);
                observe(1)"#,
         )
@@ -4207,8 +4151,7 @@ type Independent = String;
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/debug" as debug;
-               type Observed = debug.dbg(Int);
+            r#"type Observed = dbg!(Int);
                0"#,
         )
         .unwrap();
@@ -6402,7 +6345,7 @@ unchanged", "|"),
         let rule_location = failure.rule_location().expect("codec rule location");
         assert_eq!(
             module.sources.get(rule_location.source).name.as_ref(),
-            main.display().to_string()
+            "@standalone/main.telora"
         );
         assert!(
             module
@@ -9111,45 +9054,37 @@ unchanged", "|"),
     }
 
     #[test]
-    fn json_skip_serializing_if_calls_promoted_bytecode_and_native_predicates() {
+    fn json_skip_serializing_if_calls_promoted_bytecode_and_builtin_predicates() {
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
-               import "std/debug" as debug;
                import "std/json" as json;
                let zero = 0;
                def is_zero: Fn(Int) -> Bool = fn(value) { value == zero };
                @struct type Model = {
                    @json.skip_serializing_if(is_zero) omitted: Int,
                    @json.skip_serializing_if(is_zero) retained: Int,
-                   @json.skip_serializing_if(debug.dbg) native_omitted: Bool,
+                   @json.skip_serializing_if('False) native_omitted: Bool,
                };
                codec.encode(Model, {
                    omitted: 0,
                    retained: 7,
-                   native_omitted: 'True,
+                   native_omitted: 'False,
                })"#,
         )
         .unwrap();
-        let sink = Arc::new(CapturingDebugSink::default());
         let module = load_module_with_quota_and_debug_sink(
             directory.join("main.telora"),
             BTreeMap::new(),
             Quota::with_fuel(100_000),
-            sink.clone(),
+            Arc::new(crate::DiscardDebugSink),
         )
         .unwrap();
-        let failure = module
-            .execute_with_quota_and_debug_sink(Quota::with_fuel(3), sink.clone())
-            .unwrap_err();
+        let failure = module.execute_with_quota(Quota::with_fuel(2)).unwrap_err();
         assert_eq!(failure.kind, crate::RuntimeErrorKind::FuelExhausted);
-        sink.events.lock().unwrap().clear();
-        let value = module
-            .execute_with_quota_and_debug_sink(Quota::with_fuel(4), sink.clone())
-            .unwrap();
+        let value = module.execute_with_quota(Quota::with_fuel(3)).unwrap();
         assert_eq!(value.to_string(), "'Ok({retained: 7})");
-        assert_eq!(sink.events.lock().unwrap().len(), 1);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -10476,10 +10411,7 @@ match arrays.find(diagnostics, fn(item) {{ item.message == "{message}" }}) {{
             let rule_location = error.rule_location().expect("diagnostic rule location");
             assert_eq!(
                 module.sources.get(rule_location.source).name.as_ref(),
-                directory
-                    .join("explicit-diagnostics.telora")
-                    .display()
-                    .to_string()
+                "@src/explicit-diagnostics.telora"
             );
         }
         fs::remove_dir_all(directory).unwrap();

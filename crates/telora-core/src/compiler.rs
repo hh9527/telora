@@ -974,6 +974,28 @@ impl<'a> Compiler<'a> {
                 self.emit(Operation::Raise { error }, expression.location);
                 Ok(error)
             }
+            ExprKind::Debug {
+                value,
+                message,
+                expression: source_expression,
+            } => {
+                let value = self.compile_expr(value)?;
+                let source_file = self
+                    .source_file
+                    .expect("debug expressions require a registered source");
+                let position = source_file.position(expression.location.start);
+                self.emit(
+                    Operation::Debug {
+                        value,
+                        module: self.source_name.to_owned(),
+                        line: u32::try_from(position.line).unwrap_or(u32::MAX),
+                        name: source_expression.clone(),
+                        message: message.clone(),
+                    },
+                    expression.location,
+                );
+                Ok(value)
+            }
             ExprKind::Binary {
                 operator,
                 left,
@@ -1846,6 +1868,7 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
         ExprKind::Return { value } => free_expr(value, bound, free),
         ExprKind::Panic { message } => free_expr(message, bound, free),
         ExprKind::Raise { error } => free_expr(error, bound, free),
+        ExprKind::Debug { value, .. } => free_expr(value, bound, free),
         ExprKind::Binary { left, right, .. } => {
             free_expr(left, bound, free);
             free_expr(right, bound, free);
@@ -1998,6 +2021,7 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
         ExprKind::Return { value } => collect_runtime_names(value, names),
         ExprKind::Panic { message } => collect_runtime_names(message, names),
         ExprKind::Raise { error } => collect_runtime_names(error, names),
+        ExprKind::Debug { value, .. } => collect_runtime_names(value, names),
         ExprKind::Binary { left, right, .. } => {
             collect_runtime_names(left, names);
             collect_runtime_names(right, names);

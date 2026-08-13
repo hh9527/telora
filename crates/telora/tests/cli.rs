@@ -73,6 +73,36 @@ fn run_and_check_select_logical_roots_from_cwd() {
 }
 
 #[test]
+fn run_writes_contextual_debug_as_stderr_jsonl() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        "let var = 3; export let output = var.dbg!(\"observed\");",
+    )
+    .unwrap();
+    let run = telora(&cwd).args(["run", "main"]).output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3");
+    let records = jsonl(&run.stderr);
+    assert_eq!(
+        records.len(),
+        2,
+        "module initialization and execution observe once each"
+    );
+    for record in records {
+        assert_eq!(record["name"], "var");
+        assert_eq!(record["repr"], "3");
+        assert_eq!(record["module"], "@bin/main.telora");
+        assert_eq!(record["line"], 1);
+        assert_eq!(record["message"], "observed");
+    }
+}
+
+#[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export let output = 1;").unwrap();

@@ -1,3 +1,0 @@
-native dbg: for(A) Fn(A) -> A;
-native dbg_with: for(A) Fn(String, A) -> A;
-export { dbg, dbg_with };

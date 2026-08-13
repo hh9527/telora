@@ -188,6 +188,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     fn predicate_named_intrinsic_1(&self) -> bool {
         self.peek(1) != Token::RParen
     }
+    fn predicate_dot_suffix_1(&self) -> bool {
+        self.current == Token::Identifier && self.peek(1) == Token::Bang
+    }
     fn predicate_pattern_2(&self) -> bool {
         self.peek(1) == Token::LParen
     }

@@ -518,7 +518,7 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::MatchExpr
                 | Rule::ParenExpr
                 | Rule::PipelineExpr
-                | Rule::ProjectionExpr
+                | Rule::DotPostfixExpr
                 | Rule::PropagateExpr
                 | Rule::ReturnExpr
                 | Rule::SectionExpr

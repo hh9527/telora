@@ -5,10 +5,10 @@ use crate::heap::{
 use crate::lir::RegisterId;
 use crate::value::{
     BuiltinAtom, CoreArrayFunction, CoreAttributesFunction, CoreBuiltinTypeFunction,
-    CoreCodecFunction, CoreDebugFunction, CoreDiagnosticFunction, CoreDictFunction,
-    CoreDynFunction, CoreEqFunction, CoreHashFunction, CoreJsonFunction, CoreModelFunction,
-    CorePathFunction, CoreResultFunction, CoreStringFunction, CoreTypeDescFunction, Dict,
-    NativeError, NativeKind, NativeLimit, Shape, Value,
+    CoreCodecFunction, CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
+    CoreHashFunction, CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction,
+    CoreStringFunction, CoreTypeDescFunction, Dict, NativeError, NativeKind, NativeLimit, Shape,
+    Value,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -18,8 +18,11 @@ use std::sync::{Arc, Weak};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DebugEvent {
-    pub label: Option<String>,
-    pub value: String,
+    pub name: String,
+    pub repr: String,
+    pub module: String,
+    pub line: u32,
+    pub message: Option<String>,
 }
 
 pub trait DebugSink: Send + Sync {
@@ -2287,7 +2290,6 @@ impl Vm {
                             &mut current,
                             background,
                             account,
-                            debug_sink.as_ref(),
                         )? {
                             DriveOutcome::Pending => continue,
                             DriveOutcome::Root(value) => return Ok(value),
@@ -2321,7 +2323,6 @@ impl Vm {
                             &mut current,
                             background,
                             account,
-                            debug_sink.as_ref(),
                         )? {
                             DriveOutcome::Pending => continue,
                             DriveOutcome::Root(value) => return Ok(value),
@@ -2373,7 +2374,6 @@ impl Vm {
                             &mut current,
                             background,
                             account,
-                            debug_sink.as_ref(),
                         )? {
                             DriveOutcome::Pending => continue,
                             DriveOutcome::Root(value) => return Ok(value),
@@ -2495,6 +2495,24 @@ impl Vm {
                         runtime.set_locations(data.loc(), rule.loc());
                         return Err(runtime);
                     }
+                    Opcode::Debug {
+                        value,
+                        module,
+                        line,
+                        name,
+                        message,
+                    } => {
+                        let value = *read_register(&registers, *value, function, pc)?;
+                        if let Ok(value_text) = DebugValueFormatter::new(view).format(value) {
+                            debug_sink.emit(DebugEvent {
+                                name: name.clone(),
+                                repr: value_text,
+                                module: module.clone(),
+                                line: *line,
+                                message: message.clone(),
+                            });
+                        }
+                    }
                 }
                 frames.last_mut().expect("execution frame").pc += 1;
             }
@@ -2596,7 +2614,6 @@ fn drive_vm_action(
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
-    debug_sink: &dyn DebugSink,
 ) -> Result<DriveOutcome, RuntimeError> {
     loop {
         action = match action {
@@ -2917,16 +2934,6 @@ fn drive_vm_action(
                                 current,
                                 background,
                                 account,
-                            )?,
-                            NativeKind::CoreDebug(function) => run_core_debug(
-                                function,
-                                &arguments,
-                                return_target,
-                                &call_function,
-                                call_pc,
-                                current,
-                                background,
-                                debug_sink,
                             )?,
                             NativeKind::CoreDiagnostic(CoreDiagnosticFunction::Report) => {
                                 run_core_diagnostic(
@@ -9805,54 +9812,6 @@ fn values_len_hint(handle: Handle, view: &HeapView<'_>, tuple: bool) -> Result<u
 const DEBUG_MAX_DEPTH: usize = 8;
 const DEBUG_MAX_ITEMS: usize = 32;
 const DEBUG_MAX_BYTES: usize = 4_096;
-const DEBUG_MAX_LABEL_BYTES: usize = 256;
-
-#[allow(clippy::too_many_arguments)]
-fn run_core_debug(
-    operation: CoreDebugFunction,
-    arguments: &[RichValue],
-    return_target: ReturnTarget,
-    function: &BytecodeFunction,
-    pc: usize,
-    current: &Heap,
-    background: &Heap,
-    sink: &dyn DebugSink,
-) -> Result<VmAction, RuntimeError> {
-    let view = HeapView {
-        current,
-        background: Some(background),
-    };
-    let (label, value) = match operation {
-        CoreDebugFunction::Dbg => (None, arguments[0]),
-        CoreDebugFunction::DbgWith => {
-            let Some(label) = view
-                .string_text(arguments[0])
-                .map_err(|heap_error| core_debug_heap_error(heap_error, function, pc))?
-            else {
-                return Err(runtime_type_error(
-                    "String",
-                    &arguments[0],
-                    &view,
-                    function,
-                    pc,
-                ));
-            };
-            (Some(truncate_debug_label(label)), arguments[1])
-        }
-    };
-    let value_text = DebugValueFormatter::new(view)
-        .format(value)
-        .map_err(|heap_error| core_debug_heap_error(heap_error, function, pc))?;
-    sink.emit(DebugEvent {
-        label,
-        value: value_text,
-    });
-    Ok(VmAction::Return {
-        value,
-        return_target,
-    })
-}
-
 fn run_core_diagnostic(
     arguments: &[RichValue],
     return_target: ReturnTarget,
@@ -10018,30 +9977,6 @@ fn diagnostic_from_blame(
         diagnostic = diagnostic.with_secondary("rule declared here", rule);
     }
     Ok(diagnostic)
-}
-
-fn core_debug_heap_error(
-    heap_error: crate::heap::HeapError,
-    function: &BytecodeFunction,
-    pc: usize,
-) -> RuntimeError {
-    error(
-        RuntimeErrorKind::InvalidBytecode,
-        format!("std/debug formatter: {heap_error}"),
-        function,
-        pc,
-    )
-}
-
-fn truncate_debug_label(label: &str) -> String {
-    if label.len() <= DEBUG_MAX_LABEL_BYTES {
-        return label.to_owned();
-    }
-    let mut end = DEBUG_MAX_LABEL_BYTES.saturating_sub(3);
-    while !label.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}...", &label[..end])
 }
 
 struct DebugValueFormatter<'a> {
