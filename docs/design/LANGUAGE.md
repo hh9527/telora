@@ -580,6 +580,15 @@ Telora crate 使用 `src/`、`src/bin/` 和 `tests/`。Host 从当前工作目�
 import "@src/model/report.telora" { compile };
 ```
 
+逻辑 ID 到 crate 内物理位置的映射为：
+
+```text
+@src/x.telora       -> <crate>/src/x.telora
+@bin/x.telora       -> <crate>/src/bin/x.telora
+@test/x.telora      -> <crate>/tests/x.telora
+dependency/x.telora -> <dependency-crate>/src/x.telora
+```
+
 `@bin` 和 `@test` 只能由 Host 选择，任何 Telora import 都不能引用它们。Binary 和
 test 根也不能使用 `./` 或 `../`；它们必须以 `@src/` 导入本 crate 的可复用源码。
 依赖仅公开其 `src/`，不公开 `src/bin/` 或 `tests/`。不存在 `@main` 身份。
@@ -611,8 +620,12 @@ export record 定义，Host adapter 再从该 record 选择协议规定的 entry
 Path crate 的依赖由根目录 `telora-deps.json` 固定。依赖名是 package import 的首段。
 当前没有通用 registry 获取、版本求解或运行时 package acquisition。
 
-Resolver 配置只来自 `telora-deps.json`。静态 `option` 可声明模块或 Host 协议配置，必须位于 import 解析
-之前的有效位置，嵌套依赖不能借此修改根 Host 的策略。
+普通 crate 模式的 resolver 配置只来自向上发现的最近一个 `telora-deps.json`；模块中
+不得声明 `crate.dependency` 或 `crate.format` resolver options。`run -S` 的 standalone
+模式不查找 manifest，其 resolver 配置只来自根文件内的 `crate.dependency` 和
+`crate.format` options，并相对该文件的父目录解析；被导入的文件不能继续声明这些
+options。其他静态 `option` 可声明模块或 Host 协议配置，必须位于 import 解析之前的
+有效位置，嵌套依赖不能借此修改根 Host 的策略。
 
 普通 `.telora` 模块可以公开导入；`.priv.telora` 受 crate 可见性限制；
 `.native.telora` 只承载由 Host 注册、slot 明确的 native 声明。源文件声明 native
@@ -804,15 +817,22 @@ telora build --dry-run <module>
 telora lsp
 ```
 
-`run abc` 从 CWD 向上发现最近的 manifest，并固定选择 `@bin/abc.telora`；`-C` 改变
-manifest discovery 的起点。`run -S file` 是独立 standalone 模式：不查找 manifest，
-只使用该文件内的 `crate.dependency` / `crate.format` options，且 option 相对文件所在
-目录解析。`-S` 与 binary name、`-C` 互斥。
+`run abc` 的 binary name 是一个不含路径分隔符和 `.telora` 后缀的 stem；Host 从 CWD
+向上发现最近的 manifest，并固定选择 `@bin/abc.telora`。调用者写 `run abc`，不写
+`run @bin/abc.telora`。`-C` 指定 manifest discovery 的起始目录，该目录不必就是 crate
+root。`run -S file` 是独立 standalone 模式：即使文件的祖先目录存在 manifest 也不
+查找，只使用根文件内的 `crate.dependency` / `crate.format` options，且 options 相对
+文件所在目录解析。只有 standalone 根文件可以声明这些 resolver options。`-S` 与
+binary name、`-C` 互斥。
 
 其他命令的 `<module>` 是 `@src/...`、`@bin/...`、`@test/...` 或依赖模块 ID，不是物理
-文件名。`show` 以稳定 JSONL 输出语义事实；默认查询选中模块的顶层 local definitions，
-`--exports` 查询公共接口，`--at` 查询与位置相交的事实。每条记录显式区分
-`authoritative`、`recovery` 或 `debug` 权威层级。空匹配成功且不输出记录。
+文件名。`show` 以稳定 `telora.show/v1` JSONL 输出语义事实，默认查询选中模块的顶层
+local definitions。`-p` 执行大小写敏感的字面子串匹配，不解释 glob 或正则表达式；
+`-k` 接受由逗号分隔的 `type`、`let`、`def`、`import`。`--exports` 改查公共接口并与
+`-k` 互斥。`--at` 接受从一开始计数的 `line[:column]`：只有行号时选择与该行相交的
+事实，带列号时选择覆盖该点的事实；它与 `-p`、`-k`、`--exports` 互斥。空匹配成功
+且不输出记录。每条记录显式区分 `authoritative`、`recovery` 或 `debug` 权威层级；
+表达式级记录属于 `debug`，错误恢复所得记录的权威层级服从其事实和模块状态。
 
 `run` 从显式 export record 选择 `output`。外部 JSON 输入以显式 `input` binding 进入。
 `exec` 和 `build` 是具体协议，不是通用 action ABI：前者通过受信 entry module 调用
