@@ -10,11 +10,11 @@ def contains_option: Fn(Array(String), String) -> Bool = fn(arguments, option) {
 };
 
 def reject_option:
-    Fn(Array(String), String) -> Result(Array(String), BlameError) =
+    Fn(Array(String), String) -> Result(Array(String), String) =
     fn(arguments, option) {
         match array.find(arguments, fn(argument) { matches_option(argument, option) }) {
             'None => 'Ok(arguments),
-            'Some(argument) => 'Err(blame!(`conflicting argument: \{option}`, argument)),
+            'Some(argument) => 'Err(`conflicting argument: \{option}`),
         }
     };
 

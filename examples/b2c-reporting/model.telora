@@ -176,8 +176,9 @@ def measure_required_entities: Fn(Array(MeasurePlan)) -> Array(Entity) = fn(meas
 def combine_measures: Fn(Array(MeasurePlan)) -> Option(CombinedMeasure) = fn(measures) {
     match array.find(measures, fn(ignored) { 'True }) {
         'None => {
-            let ignored = emit_error!("a B2C report requires a supported measure", measures);
-            'None
+            let reject: Fn(Array(MeasurePlan)) -> Result(CombinedMeasure, String) =
+                fn(values) { 'Err("a B2C report requires a supported measure") };
+            reject.should_ok!(measures)
         },
         'Some(first) => {
             if array.all(measures, fn(item) { item.base_entity == first.base_entity }) {
@@ -187,11 +188,9 @@ def combine_measures: Fn(Array(MeasurePlan)) -> Option(CombinedMeasure) = fn(mea
                     required_entities: measure_required_entities(measures),
                 })
             } else {
-                let ignored = emit_error!(
-                    "B2C measures at different grains require an explicit alignment policy",
-                    measures,
-                );
-                'None
+                let reject: Fn(Array(MeasurePlan)) -> Result(CombinedMeasure, String) =
+                    fn(values) { 'Err("B2C measures at different grains require an explicit alignment policy") };
+                reject.should_ok!(measures)
             }
         },
     }

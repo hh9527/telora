@@ -585,7 +585,7 @@ fn install_native_modules(
     }
     let mut default_prelude = None;
     for spec in specs {
-        let source_name = format!("<{}>", spec.name);
+        let source_name = format!("<{}.native.telora", spec.name);
         let source_id = sources.add(source_name.clone(), &spec.source);
         let parsed = parse_registered(sources, source_id);
         let program = parsed.program.ok_or_else(|| {
@@ -899,8 +899,16 @@ impl LoadedModule {
         quota: Quota,
         debug_sink: Arc<dyn DebugSink>,
     ) -> Result<Value, crate::RuntimeError> {
+        self.execute_observed(quota, debug_sink).0
+    }
+
+    fn execute_observed(
+        &self,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> (Result<Value, crate::RuntimeError>, Vec<Diagnostic>) {
         let mut account = QuotaAccount::new(quota);
-        let arena = Vm::new()
+        let result = Vm::new()
             .with_debug_sink(debug_sink)
             .execute_in_work(
                 &self.runtime.main.heap,
@@ -909,10 +917,13 @@ impl LoadedModule {
                 &[],
                 &mut account,
             )
-            .map_err(|error| error.with_sources(&self.sources))?;
-        arena
-            .export(&self.runtime.main.heap)
-            .map_err(|error| crate::RuntimeError::from_heap_error(&self.function, error))
+            .map_err(|error| error.with_sources(&self.sources))
+            .and_then(|arena| {
+                arena
+                    .export(&self.runtime.main.heap)
+                    .map_err(|error| crate::RuntimeError::from_heap_error(&self.function, error))
+            });
+        (result, account.take_diagnostics())
     }
 
     pub fn invoke_with_quota_and_debug_sink(
@@ -1306,6 +1317,13 @@ impl Engine {
         )
     }
 
+    fn execute_observed(
+        &self,
+        module: &LoadedModule,
+    ) -> (Result<Value, crate::RuntimeError>, Vec<Diagnostic>) {
+        module.execute_observed(self.config.session_quota, Arc::clone(&self.debug_sink))
+    }
+
     pub fn invoke(
         &self,
         module: &LoadedModule,
@@ -1334,9 +1352,13 @@ impl Engine {
             .path()
             .expect("local root has a path")
             .to_owned();
-        if let Ok(module) = self.load_module(&root, BTreeMap::new()) {
-            match self.execute(&module) {
-                Ok(_) => return Ok(module.workspace),
+        if let Ok(mut module) = self.load_module(&root, BTreeMap::new()) {
+            let (result, diagnostics) = self.execute_observed(&module);
+            match result {
+                Ok(_) => {
+                    module.workspace.extend_diagnostics(diagnostics);
+                    return Ok(module.workspace);
+                }
                 Err(error)
                     if error.failure_class() == crate::evaluation::FailureClass::Recoverable => {}
                 Err(_) => return Ok(module.workspace),
@@ -1395,7 +1417,7 @@ impl Engine {
         let root_module = resolver
             .selected_root()
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        if let Ok(module) = load_module_with_resolver(
+        if let Ok(mut module) = load_module_with_resolver(
             resolver.clone(),
             BTreeMap::new(),
             BTreeMap::new(),
@@ -1404,7 +1426,8 @@ impl Engine {
             &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         ) {
-            let _ = self.execute(&module);
+            let (_, diagnostics) = self.execute_observed(&module);
+            module.workspace.extend_diagnostics(diagnostics);
             return Ok(module.workspace);
         }
         let mut main = MainWorld::building();
@@ -5076,10 +5099,10 @@ name = "rustc"
                @struct type Report(A) = {value: A, accepted: Bool};
                @struct type CollectResult(A) = {
                    reports: Array(Report(A)),
-                   diagnostics: Array(BlameError),
+                   diagnostics: Array(String),
                };
                def collect: for(A)
-                   Fn(Array(A), Array(BlameError)) -> CollectResult(A) =
+                   Fn(Array(A), Array(String)) -> CollectResult(A) =
                    fn(values, prior) {
                        let initial = {reports: [], diagnostics: prior};
                        array.fold(values, initial, fn(acc, value) {
@@ -5088,7 +5111,7 @@ name = "rustc"
                                 diagnostics: acc.diagnostics}
                            } else {
                                {reports: array.push(acc.reports, {value, accepted: 'False}),
-                                diagnostics: array.push(acc.diagnostics, blame!("rejected", value))}
+                                diagnostics: array.push(acc.diagnostics, "rejected")}
                            }
                        })
                    };
@@ -5099,7 +5122,7 @@ name = "rustc"
         let expected = module.analysis.display(module.analysis.result_type);
         assert_eq!(
             expected,
-            "{diagnostics: Array<{data: Any, message: String, rule: Any}>, reports: Array<{accepted: enum {False, True}, value: Int}>}"
+            "{diagnostics: Array<String>, reports: Array<{accepted: enum {False, True}, value: Int}>}"
         );
 
         let reversed = source
@@ -5109,8 +5132,8 @@ name = "rustc"
                 "{diagnostics: acc.diagnostics,\n                                reports: array.push(acc.reports, {accepted: 'True, value})}",
             )
             .replace(
-                "{reports: array.push(acc.reports, {value, accepted: 'False}),\n                                diagnostics: array.push(acc.diagnostics, blame!(\"rejected\", value))}",
-                "{diagnostics: array.push(acc.diagnostics, blame!(\"rejected\", value)),\n                                reports: array.push(acc.reports, {accepted: 'False, value})}",
+                "{reports: array.push(acc.reports, {value, accepted: 'False}),\n                                diagnostics: array.push(acc.diagnostics, \"rejected\")}",
+                "{diagnostics: array.push(acc.diagnostics, \"rejected\"),\n                                reports: array.push(acc.reports, {accepted: 'False, value})}",
             );
         fs::write(directory.join("reversed.telora"), reversed).unwrap();
         let reversed =
@@ -5120,10 +5143,8 @@ name = "rustc"
             expected
         );
 
-        let incompatible = source.replace(
-            "Fn(Array(A), Array(BlameError))",
-            "Fn(Array(A), Array(String))",
-        );
+        let incompatible =
+            source.replace("Fn(Array(A), Array(String))", "Fn(Array(A), Array(Int))");
         fs::write(directory.join("incompatible.telora"), incompatible).unwrap();
         let error = load_module(
             directory.join("incompatible.telora"),
@@ -6621,7 +6642,7 @@ unchanged", "|"),
                         let values = arrays.push(data, APPENDED);
                         arrays.map(values, fn(value) {
                             if value == TARGET {
-                                result.unwrap('Err(blame!("selected value", value)))
+                                fail!("selected value", value)
                             } else { value }
                         })"#;
 
@@ -6829,7 +6850,7 @@ unchanged", "|"),
                import "std/result" as result;
                import "./data.json" as data;
                match arrays.get(data, 0) {
-                   'Some(value) => result.unwrap('Err(blame!("selected", value))),
+                   'Some(value) => fail!("selected", value),
                    'None => 0,
                }"#,
         )
@@ -6851,7 +6872,7 @@ unchanged", "|"),
                arrays.map(indexed, fn(entry) {
                    let (index, value) = entry;
                    if value == 10 {
-                       result.unwrap('Err(blame!("selected", value)))
+                       fail!("selected", value)
                    } else { index }
                })"#,
         )
@@ -6872,7 +6893,7 @@ unchanged", "|"),
                let indexed = arrays.enumerate(data);
                let first = arrays.get(indexed, 0);
                match first {
-                   'Some((index, value)) => result.unwrap('Err(blame!("index", index))),
+                   'Some((index, value)) => fail!("index", index),
                    'None => 0,
                }"#,
         )
@@ -6968,7 +6989,6 @@ unchanged", "|"),
                    codec.decode(User, {name: "Kai"}),
                    fn(user) { user.name },
                ));
-               let blame_error = BlameError;
                {
                    decoded: decoded,
                    encoded: encoded,
@@ -6977,7 +6997,6 @@ unchanged", "|"),
                    formatted: formatted,
                    chained: chained,
                    name: name,
-                   BlameError: blame_error,
                }"#,
         )
         .unwrap();
@@ -7018,12 +7037,6 @@ unchanged", "|"),
                 .display(module.analysis.binding_types["name"]),
             "String"
         );
-        assert_eq!(
-            module
-                .analysis
-                .display(module.analysis.binding_types["blame_error"]),
-            "TypeOf({data: Any, message: String, rule: Any})"
-        );
         let Value::Dict(output) = module.execute(100_000).unwrap() else {
             panic!("typed boundary test must return a Dict")
         };
@@ -7051,13 +7064,6 @@ unchanged", "|"),
         );
         assert_eq!(error.get("data").unwrap().to_string(), "{name: 1}");
         assert!(error.get("rule").unwrap().to_string().contains("'Struct"));
-        assert!(
-            output
-                .get("BlameError")
-                .unwrap()
-                .to_string()
-                .contains("'Struct")
-        );
 
         fs::write(
             directory.join("wrong-encode.telora"),
@@ -7146,7 +7152,7 @@ unchanged", "|"),
                let target: Option(String) = dict.get(environment, "TARGET");
                let missing: Option(String) = dict.get(environment, "MISSING");
                def rewrite:
-                   Fn(Array(String)) -> Result(Array(String), BlameError) = fn(arguments) {
+                   Fn(Array(String)) -> Result(Array(String), String) = fn(arguments) {
                        let arguments = argv.reject_option(arguments, "--sysroot")?;
                        let arguments = argv.reject_option(arguments, "-fdebug-prefix-map")?;
                        'Ok(argv.prepend(
@@ -7193,7 +7199,6 @@ unchanged", "|"),
         );
         let rejected = output.get("rejected").unwrap().to_string();
         assert!(rejected.contains("'Err("), "{rejected}");
-        assert!(rejected.contains("--sysroot=/other"), "{rejected}");
         assert!(
             rejected.contains("conflicting argument: --sysroot"),
             "{rejected}"
@@ -9778,7 +9783,7 @@ unchanged", "|"),
             &main,
             r#"import "std/result" as result;
                import "./data.json" as data;
-               let output = result.unwrap('Err(blame!("invalid name", data.name)));
+               let output = fail!("invalid name", data.name);
                export { output };"#,
         )
         .unwrap();
@@ -10320,10 +10325,10 @@ unchanged", "|"),
             panic!("unsupported Function must return blame")
         };
         assert_eq!(tag.name(), "Err");
-        let Value::Dict(error) = payload.as_ref() else {
-            panic!("show error must contain BlameError")
-        };
-        assert_eq!(error.get("rule").unwrap().to_string(), "\"blame!\"");
+        assert_eq!(
+            payload.to_string(),
+            "\"unsupported my_show descriptor: Func\""
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -10410,7 +10415,7 @@ unchanged", "|"),
             r#"import "./explicit-diagnostics.telora" as validation;
 import "std/array" as arrays;
 import "./project.json" as project;
-let initial: Array(BlameError) = [];
+let initial: Array(validation.DiagnosticRecord) = [];
 let output = match validation.validate_project(project, initial) {
     (checked, diagnostics) => {
         count: arrays.length(diagnostics),
@@ -10445,63 +10450,25 @@ export { output };"#,
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
         assert!(snapshot.diagnostics().is_empty());
 
-        for message in [
-            "project name must not be empty",
-            "package name must not be empty",
-            "package version must be positive",
-        ] {
-            fs::write(
-                &main,
-                format!(
-                    r#"import "./explicit-diagnostics.telora" as validation;
-import "std/array" as arrays;
-import "std/result" as results;
-import "./project.json" as project;
-let diagnostics = match validation.validate_project(project, []) {{
-    (_, collected) => collected,
-}};
-match arrays.find(diagnostics, fn(item) {{ item.message == "{message}" }}) {{
-    'Some(error) => results.unwrap('Err(error)),
-    'None => 0,
-}}"#
-                ),
-            )
-            .unwrap();
-            let module = load_module(&main, BTreeMap::new(), 500_000).unwrap();
-            let error = module.execute(500_000).unwrap_err();
-            assert!(error.message.contains(message));
-            let data_location = error.data_location().expect("diagnostic data location");
-            assert_eq!(
-                module.sources.get(data_location.source).name.as_ref(),
-                data.display().to_string()
-            );
-            let rule_location = error.rule_location().expect("diagnostic rule location");
-            assert_eq!(
-                module.sources.get(rule_location.source).name.as_ref(),
-                "@src/explicit-diagnostics.telora"
-            );
-        }
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn blame_intrinsic_preserves_data_and_authored_rule_locations() {
+    fn fail_intrinsic_preserves_data_and_authored_rule_locations() {
         let directory = fixture_dir();
         fs::write(directory.join("user.json"), r#"{"age":42}"#).unwrap();
         let source = r#"import "./user.json" as user;
 import "std/result" as result;
 import "std/dyn" as dyn;
 @struct type User = {age: Int};
-type ProbeResult = Result(Int, BlameError);
-def inspect_i: Fn(Dyn) -> ProbeResult = fn(value) {
+def inspect_i: Fn(Dyn) -> Int = fn(value) {
     match dyn.field(value, "age") {
-        'Ok(age) => 'Err(blame!("age rejected", age)),
-        'Err(error) => 'Err(error),
+        'Ok(age) => fail!("age rejected", age),
+        'Err(error) => fail!(error.message, error),
     }
 };
-def inspect: for(A) Fn(TypeOf(A)) -> Fn(A) -> ProbeResult = interpreter!(inspect_i);
-let failure = inspect(User)(user);
-result.unwrap(failure)"#;
+def inspect: for(A) Fn(TypeOf(A)) -> Fn(A) -> Int = interpreter!(inspect_i);
+inspect(User)(user)"#;
         fs::write(directory.join("main.telora"), source).unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -10519,11 +10486,11 @@ result.unwrap(failure)"#;
         let rule = error.rule_location().expect("blame rule location");
         assert_eq!(
             module.sources.get(rule.source).slice(rule).as_deref(),
-            Some("blame!(\"age rejected\", age)")
+            Some("fail!(\"age rejected\", age)")
         );
         let rendered = error.to_string();
         assert!(rendered.contains("user.json:1:8"), "{rendered}");
-        assert!(rendered.contains("main.telora:8:26"), "{rendered}");
+        assert!(rendered.contains("main.telora:7:21"), "{rendered}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -10571,25 +10538,30 @@ result.unwrap(failure)"#;
     }
 
     #[test]
-    fn report_publishes_severity_and_invalidates_error_results() {
+    fn should_and_must_ok_select_warning_or_failure() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"let warning = report('Warn, blame!("deprecated", "old"));
-export let output: String = warning.message;"#,
+            r#"def reject: Fn(String) -> Result(String, String) = fn(value) { 'Err("deprecated") };
+export let output = reject.should_ok!("old");"#,
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             named_output(module.execute(100_000).unwrap()).to_string(),
-            "\"deprecated\""
+            "'None"
         );
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        assert!(snapshot.diagnostics().iter().any(|diagnostic| {
+            diagnostic.severity == crate::source::Severity::Warning
+                && diagnostic.message == "deprecated"
+        }));
 
         fs::write(
             &main,
-            r#"let error = report('Error, blame!("invalid", 42));
-export let output: String = error.message;"#,
+            r#"def reject: Fn(Int) -> Result(Int, String) = fn(value) { 'Err("invalid") };
+export let output = reject.must_ok!(42);"#,
         )
         .unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
@@ -10601,7 +10573,7 @@ export let output: String = error.message;"#,
         assert_eq!(error.severity, crate::source::Severity::Error);
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         let failure = module.execute(100_000).unwrap_err();
-        assert_eq!(failure.kind, crate::RuntimeErrorKind::ReportedDiagnostic);
+        assert_eq!(failure.kind, crate::RuntimeErrorKind::RaisedBlame);
         fs::remove_dir_all(directory).unwrap();
     }
 

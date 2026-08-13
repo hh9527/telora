@@ -1,8 +1,7 @@
 use crate::value::{
-    CoreArrayFunction, CoreAttributesFunction, CoreCodecFunction, CoreDiagnosticFunction,
-    CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction, CoreJsonFunction,
-    CoreModelFunction, CorePathFunction, CoreResultFunction, CoreStringFunction,
-    CoreTypeDescFunction, NativeFunction,
+    CoreArrayFunction, CoreAttributesFunction, CoreCodecFunction, CoreDictFunction,
+    CoreDynFunction, CoreEqFunction, CoreHashFunction, CoreJsonFunction, CoreModelFunction,
+    CorePathFunction, CoreResultFunction, CoreStringFunction, CoreTypeDescFunction, NativeFunction,
 };
 
 pub(crate) const PRELUDE_MODULE: &str = "core/prelude";
@@ -457,10 +456,6 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             name: PRELUDE_MODULE,
             source: include_str!("../modules/core/prelude.native.telora"),
             functions: vec![
-                (
-                    "report",
-                    NativeFunction::core_diagnostic(CoreDiagnosticFunction::Report),
-                ),
                 (
                     "struct",
                     NativeFunction::core_model(CoreModelFunction::Struct),

@@ -10,7 +10,7 @@ import "std/array" as arrays;
     packages: Array(Package),
 };
 
-type DiagnosticRecord = BlameError;
+@struct type DiagnosticRecord = {message: String};
 type Diagnostics = Array(DiagnosticRecord);
 type Validation = Tuple([Project, Diagnostics]);
 
@@ -18,7 +18,7 @@ def require_text:
     Fn(String, String, Diagnostics) -> Diagnostics =
     fn(value, message, diagnostics) {
         if value == "" {
-            arrays.push(diagnostics, blame!(message, value))
+            arrays.push(diagnostics, {message})
         } else {
             diagnostics
         }
@@ -35,7 +35,7 @@ def check_package:
         let diagnostics = if package.version < 1 {
             arrays.push(
                 diagnostics,
-                blame!("package version must be positive", package.version),
+                {message: "package version must be positive"},
             )
         } else {
             diagnostics

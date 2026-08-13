@@ -2,7 +2,4 @@ native struct: Fn(Any, Any) -> Type;
 native enum: Fn(Any, Any) -> Type;
 native union: Fn(Any, Any) -> Type;
 native validate: for(A) Fn(TypeOf(A), Any) -> Result(A, BlameError);
-@enum type Severity = { Info: 'None, Warn: 'None, Error: 'None };
-native report: Fn(Severity, BlameError) -> BlameError;
-
-export { struct, enum, union, validate, Severity, report };
+export { struct, enum, union, validate };

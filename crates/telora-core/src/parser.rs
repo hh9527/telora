@@ -1615,7 +1615,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Expr, Diagnostic> {
         if !matches!(
             name,
-            "blame" | "panic" | "raise" | "dbg" | "emit_info" | "emit_warn" | "emit_error" | "fail"
+            "panic" | "dbg" | "should_ok" | "must_ok" | "try_unwrap" | "unwrap" | "fail"
         ) {
             return if matches!(name, "file" | "line") {
                 Err(self.error(
@@ -1639,10 +1639,12 @@ impl<'a> Lowerer<'a> {
                 arguments.push(self.expression(argument)?);
             }
         }
-        if name == "blame" {
-            self.lower_blame(arguments, invocation)
-        } else if matches!(name, "emit_info" | "emit_warn" | "emit_error" | "fail") {
-            self.lower_diagnostic_convenience(name, arguments, invocation)
+        if matches!(name, "should_ok" | "must_ok") {
+            self.lower_check(name, arguments, invocation)
+        } else if matches!(name, "try_unwrap" | "unwrap") {
+            self.lower_unwrap(name, arguments, invocation)
+        } else if name == "fail" {
+            self.lower_fail(arguments, invocation)
         } else {
             if arguments.len() != 1 {
                 return Err(self.error(
@@ -1654,11 +1656,7 @@ impl<'a> Lowerer<'a> {
                 ));
             }
             let argument = Box::new(arguments.into_iter().next().unwrap());
-            let kind = if name == "panic" {
-                ExprKind::Panic { message: argument }
-            } else {
-                ExprKind::Raise { error: argument }
-            };
+            let kind = ExprKind::Panic { message: argument };
             Ok(located(kind, self.location(invocation)))
         }
     }
@@ -1703,11 +1701,16 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
-    fn lower_blame(&self, arguments: Vec<Expr>, node: NodeRef) -> Result<Expr, Diagnostic> {
+    fn lower_blame(
+        &self,
+        name: &str,
+        arguments: Vec<Expr>,
+        node: NodeRef,
+    ) -> Result<Expr, Diagnostic> {
         if arguments.is_empty() {
             return Err(self.error(
                 node,
-                "blame! expects a message followed by zero or more subjects",
+                format!("{name}! expects a message followed by zero or more subjects"),
             ));
         }
         let location = self.location(node);
@@ -1718,7 +1721,7 @@ impl<'a> Lowerer<'a> {
             1 => subjects.into_iter().next().expect("one blame subject"),
             _ => located(ExprKind::Tuple(subjects), location),
         };
-        let rule = located(ExprKind::String("blame!".into()), location);
+        let rule = located(ExprKind::String(format!("{name}!")), location);
         let fields = [("data", data), ("message", message), ("rule", rule)]
             .into_iter()
             .map(|(name, value)| {
@@ -1735,7 +1738,24 @@ impl<'a> Lowerer<'a> {
         Ok(located(ExprKind::Dict(fields), location))
     }
 
-    fn lower_diagnostic_convenience(
+    fn lower_fail(&self, arguments: Vec<Expr>, node: NodeRef) -> Result<Expr, Diagnostic> {
+        if arguments.is_empty() {
+            return Err(self.error(
+                node,
+                "fail! expects a message followed by zero or more subjects",
+            ));
+        }
+        let location = self.location(node);
+        let blame = self.lower_blame("fail", arguments, node)?;
+        Ok(located(
+            ExprKind::Raise {
+                error: Box::new(blame),
+            },
+            location,
+        ))
+    }
+
+    fn lower_check(
         &self,
         name: &str,
         arguments: Vec<Expr>,
@@ -1744,33 +1764,285 @@ impl<'a> Lowerer<'a> {
         if arguments.is_empty() {
             return Err(self.error(
                 node,
-                format!("{name}! expects a message followed by zero or more subjects"),
+                format!("{name}! expects a checker followed by zero or more arguments"),
             ));
         }
         let location = self.location(node);
-        let blame = self.lower_blame(arguments, node)?;
-        if name == "fail" {
-            return Ok(located(
-                ExprKind::Raise {
-                    error: Box::new(blame),
+        let prefix = format!("${name}:{}", location.range().start);
+        let identifier = |suffix: &str| located(format!("{prefix}:{suffix}"), location);
+        let variable = |suffix: &str| located(ExprKind::Variable(identifier(suffix)), location);
+        let binding = |suffix: &str, value| {
+            located(
+                BindingData {
+                    decorators: Vec::new(),
+                    kind: BindingKind::Let,
+                    imported_name: None,
+                    name: identifier(suffix),
+                    type_parameters: Vec::new(),
+                    annotation: None,
+                    value,
                 },
                 location,
-            ));
-        }
-        let severity = match name {
-            "emit_info" => "Info",
-            "emit_warn" => "Warn",
-            "emit_error" => "Error",
-            _ => unreachable!("diagnostic convenience name was checked"),
+            )
         };
-        Ok(located(
+        let mut arguments = arguments.into_iter();
+        let checker = arguments.next().expect("check checker was checked");
+        let values = arguments.collect::<Vec<_>>();
+        let mut bindings = vec![binding("checker", checker)];
+        bindings.extend(
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| binding(&format!("argument:{index}"), value)),
+        );
+        let call_arguments = (0..bindings.len() - 1)
+            .map(|index| variable(&format!("argument:{index}")))
+            .collect::<Vec<_>>();
+        let evidence = located(ExprKind::Tuple(call_arguments.clone()), location);
+        let call = located(
+            ExprKind::Call {
+                callee: Box::new(variable("checker")),
+                arguments: call_arguments,
+            },
+            location,
+        );
+        let payload = identifier("payload");
+        let message = identifier("message");
+        let tagged_pattern = |tag: &str, payload: Identifier| {
+            located(
+                PatternKind::Tagged {
+                    tag: tag.into(),
+                    payload: Box::new(located(PatternKind::Binding(payload), location)),
+                },
+                location,
+            )
+        };
+        let tagged_value = |tag: &str, value: Expr| {
+            located(
+                ExprKind::Call {
+                    callee: Box::new(located(ExprKind::Atom(tag.into()), location)),
+                    arguments: vec![value],
+                },
+                location,
+            )
+        };
+        let diagnostic = located(
             ExprKind::Call {
                 callee: Box::new(located(
-                    ExprKind::Variable(located("report".into(), location)),
+                    ExprKind::Variable(located("\0telora_warn".into(), location)),
                     location,
                 )),
-                arguments: vec![located(ExprKind::Atom(severity.into()), location), blame],
+                arguments: vec![
+                    located(ExprKind::Variable(message.clone()), location),
+                    evidence,
+                ],
             },
+            location,
+        );
+        let rejected = if name == "should_ok" {
+            located(
+                ExprKind::Block(located(
+                    BlockKind {
+                        bindings: vec![binding("warning", diagnostic)],
+                        result: Box::new(located(ExprKind::Atom("None".into()), location)),
+                    },
+                    location,
+                )),
+                location,
+            )
+        } else {
+            let message_value = located(ExprKind::Variable(message.clone()), location);
+            let envelope = self.lower_blame(
+                "must_ok",
+                std::iter::once(message_value)
+                    .chain(
+                        (0..bindings.len() - 1).map(|index| variable(&format!("argument:{index}"))),
+                    )
+                    .collect(),
+                node,
+            )?;
+            located(
+                ExprKind::Raise {
+                    error: Box::new(envelope),
+                },
+                location,
+            )
+        };
+        let result = located(
+            ExprKind::Match {
+                value: Box::new(call),
+                arms: vec![
+                    located(
+                        MatchArmKind {
+                            pattern: tagged_pattern("Ok", payload.clone()),
+                            guard: None,
+                            value: if name == "should_ok" {
+                                tagged_value("Some", located(ExprKind::Variable(payload), location))
+                            } else {
+                                located(ExprKind::Variable(payload), location)
+                            },
+                            irrefutable_required: false,
+                        },
+                        location,
+                    ),
+                    located(
+                        MatchArmKind {
+                            pattern: tagged_pattern("Err", message),
+                            guard: None,
+                            value: rejected,
+                            irrefutable_required: false,
+                        },
+                        location,
+                    ),
+                ],
+            },
+            location,
+        );
+        Ok(located(
+            ExprKind::Block(located(
+                BlockKind {
+                    bindings,
+                    result: Box::new(result),
+                },
+                location,
+            )),
+            location,
+        ))
+    }
+
+    fn lower_unwrap(
+        &self,
+        name: &str,
+        arguments: Vec<Expr>,
+        node: NodeRef,
+    ) -> Result<Expr, Diagnostic> {
+        if arguments.len() != 1 {
+            return Err(self.error(
+                node,
+                format!(
+                    "{name}! expects exactly one Result value, found {} arguments",
+                    arguments.len()
+                ),
+            ));
+        }
+        let location = self.location(node);
+        let prefix = format!("${name}:{}", location.range().start);
+        let identifier = |suffix: &str| located(format!("{prefix}:{suffix}"), location);
+        let variable = |suffix: &str| located(ExprKind::Variable(identifier(suffix)), location);
+        let binding = |suffix: &str, value| {
+            located(
+                BindingData {
+                    decorators: Vec::new(),
+                    kind: BindingKind::Let,
+                    imported_name: None,
+                    name: identifier(suffix),
+                    type_parameters: Vec::new(),
+                    annotation: None,
+                    value,
+                },
+                location,
+            )
+        };
+        let result = arguments
+            .into_iter()
+            .next()
+            .expect("unwrap arity was checked");
+        let payload = identifier("payload");
+        let message = identifier("message");
+        let tagged_pattern = |tag: &str, payload: Identifier| {
+            located(
+                PatternKind::Tagged {
+                    tag: tag.into(),
+                    payload: Box::new(located(PatternKind::Binding(payload), location)),
+                },
+                location,
+            )
+        };
+        let success = if name == "try_unwrap" {
+            located(
+                ExprKind::Call {
+                    callee: Box::new(located(ExprKind::Atom("Some".into()), location)),
+                    arguments: vec![located(ExprKind::Variable(payload.clone()), location)],
+                },
+                location,
+            )
+        } else {
+            located(ExprKind::Variable(payload.clone()), location)
+        };
+        let rejected = if name == "try_unwrap" {
+            let warning = located(
+                ExprKind::Call {
+                    callee: Box::new(located(
+                        ExprKind::Variable(located("\0telora_warn".into(), location)),
+                        location,
+                    )),
+                    arguments: vec![
+                        located(ExprKind::Variable(message.clone()), location),
+                        variable("result"),
+                    ],
+                },
+                location,
+            );
+            located(
+                ExprKind::Block(located(
+                    BlockKind {
+                        bindings: vec![binding("warning", warning)],
+                        result: Box::new(located(ExprKind::Atom("None".into()), location)),
+                    },
+                    location,
+                )),
+                location,
+            )
+        } else {
+            let envelope = self.lower_blame(
+                "unwrap",
+                vec![
+                    located(ExprKind::Variable(message.clone()), location),
+                    variable("result"),
+                ],
+                node,
+            )?;
+            located(
+                ExprKind::Raise {
+                    error: Box::new(envelope),
+                },
+                location,
+            )
+        };
+        let matched = located(
+            ExprKind::Match {
+                value: Box::new(variable("result")),
+                arms: vec![
+                    located(
+                        MatchArmKind {
+                            pattern: tagged_pattern("Ok", payload),
+                            guard: None,
+                            value: success,
+                            irrefutable_required: false,
+                        },
+                        location,
+                    ),
+                    located(
+                        MatchArmKind {
+                            pattern: tagged_pattern("Err", message),
+                            guard: None,
+                            value: rejected,
+                            irrefutable_required: false,
+                        },
+                        location,
+                    ),
+                ],
+            },
+            location,
+        );
+        Ok(located(
+            ExprKind::Block(located(
+                BlockKind {
+                    bindings: vec![binding("result", result)],
+                    result: Box::new(matched),
+                },
+                location,
+            )),
             location,
         ))
     }
@@ -3671,10 +3943,7 @@ export { private as visible, identity as map };"#,
                 "interpreter(...) has been replaced by interpreter!(...)",
             ),
             ("unknown!(1)", "unknown contextual intrinsic unknown!"),
-            (
-                "blame!()",
-                "blame! expects a message followed by zero or more subjects",
-            ),
+            ("blame!()", "unknown contextual intrinsic blame!"),
             (
                 "dbg!()",
                 "dbg! expects an expression and an optional String literal",
@@ -3684,8 +3953,8 @@ export { private as visible, identity as map };"#,
                 "dbg! message must be a String literal",
             ),
             (
-                "emit_warn!()",
-                "emit_warn! expects a message followed by zero or more subjects",
+                "must_ok!()",
+                "must_ok! expects a checker followed by zero or more arguments",
             ),
             (
                 "fail!()",
@@ -3742,17 +4011,17 @@ export { private as visible, identity as map };"#,
 
     #[test]
     fn postfix_contextual_intrinsics_prepend_the_receiver() {
-        let program = parse("postfix.telora", "error.raise!()").unwrap();
+        let program = parse("postfix.telora", "\"bad\".fail!(error)").unwrap();
         let ExprKind::Raise { error } = &program.value.body.value.result.value else {
             panic!("expected raise")
         };
-        assert!(matches!(&error.value, ExprKind::Variable(name) if name.value == "error"));
+        assert!(matches!(&error.value, ExprKind::Dict(_)));
 
-        let error = parse("postfix.telora", "error.raise!(other)").unwrap_err();
+        let error = parse("postfix.telora", "error.raise!()").unwrap_err();
         assert!(
             error
                 .message
-                .contains("raise! expects exactly one argument")
+                .contains("unknown contextual intrinsic raise!")
         );
 
         let error = parse("postfix.telora", "value.unknown!()").unwrap_err();
@@ -3764,10 +4033,13 @@ export { private as visible, identity as map };"#,
     }
 
     #[test]
-    fn lowers_blame_to_the_canonical_sourced_record() {
-        let program = parse("blame.telora", "blame!(message, data)").unwrap();
-        let ExprKind::Dict(fields) = &program.value.body.value.result.value else {
-            panic!("expected blame record")
+    fn lowers_fail_to_a_raise_with_an_internal_envelope() {
+        let program = parse("fail.telora", "fail!(message, data)").unwrap();
+        let ExprKind::Raise { error } = &program.value.body.value.result.value else {
+            panic!("expected raise")
+        };
+        let ExprKind::Dict(fields) = &error.value else {
+            panic!("expected envelope")
         };
         assert_eq!(
             fields
@@ -3786,8 +4058,8 @@ export { private as visible, identity as map };"#,
         );
         assert!(matches!(
             &fields[2].value.value.value,
-            ExprKind::String(marker) if marker == "blame!"
+            ExprKind::String(marker) if marker == "fail!"
         ));
-        assert_eq!(fields[2].value.value.location.range(), 0..21);
+        assert_eq!(fields[2].value.value.location.range(), 0..20);
     }
 }

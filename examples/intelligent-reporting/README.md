@@ -298,6 +298,7 @@ policy。后续阶段还需要：
 handler；只有嵌套意图编译器的真实需求足够明确时，才应另开 RFC 定义其类型和
 Error 传播规则。
 
-RFC 0190 已删除 `RequirementCompilation` 和诊断数组。当前实验没有证明需要
-accumulation effect：可恢复的领域拒绝使用 `emit_error! + Option`，真正无法继续
-的依赖链才使用 `raise!`。是否需要更细粒度恢复，应由新的真实场景重新举证。
+RFC 0190 已删除 `RequirementCompilation` 和诊断数组。当前实现用返回
+`Result(R, String)` 的 checker 表达可恢复领域拒绝，并通过 `should_ok!` 得到 Warning
+和 `Option(R)`；真正无法继续的依赖链使用 `must_ok!` 或 `fail!`。是否需要更细粒度
+恢复，应由新的真实场景重新举证。

@@ -2939,7 +2939,7 @@ fn drive_vm_action(
                                 background,
                                 account,
                             )?,
-                            NativeKind::CoreDiagnostic(CoreDiagnosticFunction::Report) => {
+                            NativeKind::CoreDiagnostic(CoreDiagnosticFunction::Warn) => {
                                 run_core_diagnostic(
                                     &arguments,
                                     return_target,
@@ -9825,116 +9825,12 @@ fn run_core_diagnostic(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    let severity = match arguments[0].value {
-        RuntimeValue::BuiltinAtom(atom) => atom.name(),
-        RuntimeValue::Atom(id) => HeapView {
-            current,
-            background: Some(background),
-        }
-        .text(id)
-        .map_err(|heap_error| {
-            error(
-                RuntimeErrorKind::InvalidBytecode,
-                heap_error.to_string(),
-                function,
-                pc,
-            )
-        })?,
-        _ => {
-            return Err(runtime_type_error(
-                "Severity",
-                &arguments[0],
-                &HeapView {
-                    current,
-                    background: Some(background),
-                },
-                function,
-                pc,
-            ));
-        }
-    };
-    let severity = match severity {
-        "Info" => crate::source::Severity::Info,
-        "Warn" => crate::source::Severity::Warning,
-        "Error" => crate::source::Severity::Error,
-        other => {
-            return Err(error(
-                RuntimeErrorKind::TypeMismatch,
-                format!("unknown diagnostic severity {other:?}"),
-                function,
-                pc,
-            ));
-        }
-    };
     let view = HeapView {
         current,
         background: Some(background),
     };
-    let diagnostic = diagnostic_from_blame(arguments[1], severity, &view, function, pc)?;
-    account.diagnostics.push(diagnostic);
-    Ok(VmAction::Return {
-        value: arguments[1],
-        return_target,
-    })
-}
-
-fn diagnostic_from_blame(
-    structured: RichValue,
-    severity: crate::source::Severity,
-    view: &HeapView<'_>,
-    function: &BytecodeFunction,
-    pc: usize,
-) -> Result<Diagnostic, RuntimeError> {
-    let RuntimeValue::Dict(handle) = structured.value else {
-        return Err(runtime_type_error(
-            "BlameError",
-            &structured,
-            view,
-            function,
-            pc,
-        ));
-    };
-    let fields = view.dict_fields(handle).map_err(|heap_error| {
-        error(
-            RuntimeErrorKind::InvalidBytecode,
-            heap_error.to_string(),
-            function,
-            pc,
-        )
-    })?;
-    if fields.as_slice() != ["data", "message", "rule"] {
-        return Err(runtime_type_error(
-            "BlameError",
-            &structured,
-            view,
-            function,
-            pc,
-        ));
-    }
-    let field = |name| {
-        view.dict_get_text(handle, name)
-            .map_err(|heap_error| {
-                error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    heap_error.to_string(),
-                    function,
-                    pc,
-                )
-            })?
-            .ok_or_else(|| {
-                error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    format!("BlameError is missing {name}"),
-                    function,
-                    pc,
-                )
-            })
-    };
-    let data = field("data")?;
-    let message = field("message")?;
-    let rule = field("rule")?;
     let message = view
-        .string_text(message)
+        .string_text(arguments[0])
         .map_err(|heap_error| {
             error(
                 RuntimeErrorKind::InvalidBytecode,
@@ -9943,8 +9839,8 @@ fn diagnostic_from_blame(
                 pc,
             )
         })?
-        .ok_or_else(|| runtime_type_error("String", &message, view, function, pc))?;
-    let subjects = match data.value {
+        .ok_or_else(|| runtime_type_error("String", &arguments[0], &view, function, pc))?;
+    let subjects = match arguments[1].value {
         RuntimeValue::Tuple(handle) => view
             .sequence(handle, true)
             .map_err(|heap_error| {
@@ -9958,29 +9854,29 @@ fn diagnostic_from_blame(
             .iter()
             .filter_map(|value| value.loc())
             .collect::<Vec<_>>(),
-        _ => data.loc().into_iter().collect(),
+        _ => arguments[1].loc().into_iter().collect(),
     };
-    let fallback = rule.loc().or_else(|| instruction_location(function, pc));
-    let Some(primary) = subjects.first().copied().or(fallback) else {
-        return Ok(Diagnostic {
-            severity,
+    let fallback = instruction_location(function, pc);
+    let primary = fallback.or_else(|| subjects.first().copied());
+    let mut diagnostic = primary.map_or_else(
+        || Diagnostic {
+            severity: crate::source::Severity::Warning,
             message: message.to_owned(),
             labels: Vec::new(),
             notes: Vec::new(),
-        });
-    };
-    let mut diagnostic = Diagnostic::new(severity, message, primary);
-    for related in subjects.into_iter().skip(1) {
-        if related != primary {
+        },
+        |location| Diagnostic::new(crate::source::Severity::Warning, message, location),
+    );
+    for related in subjects {
+        if primary != Some(related) {
             diagnostic = diagnostic.with_secondary("related value", related);
         }
     }
-    if let Some(rule) = rule.loc()
-        && rule != primary
-    {
-        diagnostic = diagnostic.with_secondary("rule declared here", rule);
-    }
-    Ok(diagnostic)
+    account.diagnostics.push(diagnostic);
+    Ok(VmAction::Return {
+        value: RichValue::unknown(RuntimeValue::BuiltinAtom(BuiltinAtom::None)),
+        return_target,
+    })
 }
 
 struct DebugValueFormatter<'a> {

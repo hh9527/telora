@@ -11,12 +11,12 @@ import "std/string" as strings;
     Func: 'None, WithAttributes: 'None, Bound: 'None, Dyn: 'None, Ref: 'None,
     Opaque: 'None,
 };
-type ShowResult = Result(String, BlameError);
-type ShowState = Result(Array(String), BlameError);
+type ShowResult = Result(String, String);
+type ShowState = Result(Array(String), String);
 type Field = Tuple([String, Dyn]);
 
-def blame: Fn(Dyn, String) -> ShowResult = fn(value, message) {
-    'Err(blame!(message, value))
+def reject: Fn(Dyn, String) -> ShowResult = fn(value, message) {
+    'Err(message)
 };
 
 def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
@@ -84,9 +84,9 @@ def show_fields: Fn(Array(Field)) -> ShowResult = fn(fields) {
 
 def show_tagged: Fn(Dyn) -> ShowResult = fn(value) {
     match dyn.tag(value) {
-        'Err(error) => 'Err(error),
+        'Err(error) => 'Err(error.message),
         'Ok(tag) => match dyn.payload(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok('None) => 'Ok(`'\{tag}`),
             'Ok('Some(payload)) => match show_dyn(payload) {
                 'Err(error) => 'Err(error),
@@ -106,37 +106,37 @@ def quote: Fn(String) -> String = fn(value) {
 def show_dyn: Fn(Dyn) -> ShowResult = fn(value) {
     match logical_kind(dyn.desc(value)) {
         'Int => match dyn.check_int(value) {
-            'None => blame(value, "invalid Int package"),
+            'None => reject(value, "invalid Int package"),
             'Some(number) => 'Ok(`\{number}`),
         },
         'Float => match dyn.check_float(value) {
-            'None => blame(value, "invalid Float package"),
+            'None => reject(value, "invalid Float package"),
             'Some(number) => 'Ok(`\{number}`),
         },
         'String => match dyn.check_string(value) {
-            'None => blame(value, "invalid String package"),
+            'None => reject(value, "invalid String package"),
             'Some(text) => 'Ok(quote(text)),
         },
         'Array => match dyn.array_items(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(items) => show_items(items, "[", "]"),
         },
         'Tuple => match dyn.tuple_items(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(items) => show_items(items, "(", ")"),
         },
         'Struct => match dyn.fields(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(fields) => show_fields(fields),
         },
         'Dict => match dyn.fields(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(fields) => show_fields(fields),
         },
         'Atom => show_tagged(value),
         'Tagged => show_tagged(value),
         'Enum => show_tagged(value),
-        kind => blame(value, `unsupported my_show descriptor: \{kind}`),
+        kind => reject(value, `unsupported my_show descriptor: \{kind}`),
     }
 };
 

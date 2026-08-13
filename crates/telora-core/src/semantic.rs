@@ -814,6 +814,10 @@ impl WorkspaceSnapshot {
         &self.diagnostics
     }
 
+    pub(crate) fn extend_diagnostics(&mut self, diagnostics: impl IntoIterator<Item = Diagnostic>) {
+        self.diagnostics.extend(diagnostics);
+    }
+
     pub fn type_at(&self, location: Location) -> Option<WorkspaceTypeId> {
         if let Some(reference) = self.reference_at(location)
             && let Some(ty) = reference

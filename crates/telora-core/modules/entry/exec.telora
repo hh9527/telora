@@ -11,10 +11,10 @@ import "std/rt-types/exec.telora" {
     Install,
 };
 
-def unwrap: for(A) Fn(Result(A, BlameError)) -> A = fn(result) {
+def unwrap = fn(result) {
     match result {
         'Ok(value) => value,
-        'Err(error) => raise!(error),
+        'Err(error) => fail!("entry operation failed", error),
     }
 };
 

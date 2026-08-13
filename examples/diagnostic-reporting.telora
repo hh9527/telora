@@ -1,9 +1,6 @@
-let warning = report(
-    'Warn,
-    blame!("configuration key is deprecated", "old-key", 42),
-);
+@struct type DiagnosticRecord = {message: String};
 
 export let output = {
-    let same_error: BlameError = warning;
-    same_error.message
+    let warning: DiagnosticRecord = {message: "configuration key is deprecated"};
+    warning.message
 };

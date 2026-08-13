@@ -16,22 +16,22 @@ type ExecFn = exec_types.ExecFn;
 def validated_source: Fn(Any) -> ToolchainSource = fn(raw) {
     match validate(ToolchainSource, raw) {
         'Ok(source) => source,
-        'Err(error) => raise!(error),
+        'Err(error) => fail!(error.message, error),
     }
 };
 
 def checked_compiler_args = fn(request, sysroot_dest) {
     let arguments = match argv.reject_option(request.args, "--sysroot") {
         'Ok(arguments) => arguments,
-        'Err(error) => raise!(error),
+        'Err(error) => fail!(error.message, error),
     };
     let arguments = match argv.reject_option(arguments, "-ffile-prefix-map") {
         'Ok(arguments) => arguments,
-        'Err(error) => raise!(error),
+        'Err(error) => fail!(error.message, error),
     };
     let arguments = match argv.reject_option(arguments, "-fdebug-prefix-map") {
         'Ok(arguments) => arguments,
-        'Err(error) => raise!(error),
+        'Err(error) => fail!(error.message, error),
     };
     argv.prepend([
         `--sysroot=\{sysroot_dest}`,

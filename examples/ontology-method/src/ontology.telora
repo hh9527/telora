@@ -4,6 +4,10 @@ def contains: for(A) Fn(Array(A), A) -> Bool = fn(values, expected) {
     array.any(values, fn(value) { value == expected })
 };
 
+def reject_same: for(A)
+    Fn(A, String) -> Result(A, String) =
+    fn(evidence, message) { 'Err(message) };
+
 def find_capability:
     for(Id, Capability)
     Fn(Array(Capability), Id, Fn(Capability) -> Id) -> Option(Capability) =
@@ -30,7 +34,10 @@ def lower_requested:
             match find_capability(capabilities, id, id_of) {
                 'Some(capability) => lower_of(capability, id, input),
                 'None => {
-                    let ignored = emit_error!(`no ontology capability is defined for \{id}`, id);
+                    let ignored = reject_same.should_ok!(
+                        id,
+                        `no ontology capability is defined for \{id}`,
+                    );
                     'None
                 },
             }
@@ -195,9 +202,9 @@ def verify_path_requirements:
                     required_node(requirement) == target
                 }),
                 fn(requirement) {
-                    emit_error!(
-                        `reaching \{target} expands the measure grain; define pre-aggregation or an allocation policy`,
+                    reject_same.should_ok!(
                         subject_of(requirement),
+                        `reaching \{target} expands the measure grain; define pre-aggregation or an allocation policy`,
                     )
                 },
             )
@@ -208,9 +215,9 @@ def verify_path_requirements:
                     required_node(requirement) == target
                 }),
                 fn(requirement) {
-                    emit_error!(
-                        `no verified relationship path reaches \{target}`,
+                    reject_same.should_ok!(
                         subject_of(requirement),
+                        `no verified relationship path reaches \{target}`,
                     )
                 },
             )
@@ -227,7 +234,10 @@ def verify_allowed:
             if contains(allowed, required) {
                 []
             } else {
-                [emit_error!(`ontology requirement needs unauthorized entity \{required}`, requirement, allowed)]
+                [reject_same.should_ok!(
+                    requirement,
+                    `ontology requirement needs unauthorized entity \{required}`,
+                )]
             }
         });
         array.length(failures) == 0

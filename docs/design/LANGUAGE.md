@@ -41,10 +41,10 @@ Telora 是一门在封闭世界中进行不可变数据计算的静态类型语�
 7. 机制优先：领域政策应写成库；只有一般语言模型无法忠实表达的能力，才是
    核心机制候选。
 
-这里的“纯”需要精确定义：普通值计算没有外部效果。`report`/`emit_*` 会产生诊断
-事件，并可能使最终结果不可发布，因此属于 Telora 求值的受控可观察行为。`dbg!`
-则是 Host 对求值的旁路观察：Telora 内部世界不能感知 Host 是否安装 observer、是否
-输出事件或是否截断表示。
+这里的“纯”需要精确定义：普通值计算没有外部效果。`should_ok!`、`try_unwrap!`、
+`must_ok!` 和 `fail!` 可以产生 Host 可见诊断，因此属于 Telora 求值的受控可观察
+行为。`dbg!` 则是 Host 对求值的旁路观察：Telora 内部世界不能感知 Host 是否安装
+observer、是否输出事件或是否截断表示。
 
 ## 2. 源文件和词法表面
 
@@ -272,7 +272,7 @@ Pattern 可以匹配字面量、Atom、Tagged payload、Tuple 和 Struct 字段�
 ```telora
 match result {
     'Ok(value) => value,
-    'Err(error) => raise!(error),
+    'Err(message) => fail!(message, result),
 }
 ```
 
@@ -298,7 +298,7 @@ let 'Some(value) = candidate else {
 block。不同家族不能混合传播：
 
 ```telora
-def parse_pair: Fn(String, String) -> Result(Tuple([Int, Int]), BlameError) =
+def parse_pair: Fn(String, String) -> Result(Tuple([Int, Int]), String) =
     fn(left, right) {
         let a = parse_int(left)?;
         let b = parse_int(right)?;
@@ -352,7 +352,7 @@ Record/Struct 类型按字段结构检查；type alias 不创建新的名义身�
 
 `Any` 表示源码契约或 Host 边界显式放弃静态精度。严格推断不会用 `Any` 代替已知
 类型之间的冲突；它也不是 editor 因源码损坏而暂时不知道类型的状态。
-`Never` 表示不产生值的路径，例如 `return`、`raise!` 和 `panic!`；它作为 bottom
+`Never` 表示不产生值的路径，例如 `return`、`fail!` 和 `panic!`；它作为 bottom
 参与方向性检查，避免根失败制造级联类型错误。
 
 ### 6.1 函数契约和 rank-1 多态
@@ -521,10 +521,10 @@ root 在冻结后发布；未初始化 reference 不能进入 persistent world�
 `interpreter!` 将擦除的消费型函数提升为带静态 witness 的 API：
 
 ```telora
-def show_dyn: Fn(Dyn) -> Result(String, BlameError) = ...;
+def show_dyn: Fn(Dyn) -> Result(String, String) = ...;
 
 def show:
-    for(A) Fn(TypeOf(A)) -> Fn(A) -> Result(String, BlameError) =
+    for(A) Fn(TypeOf(A)) -> Fn(A) -> Result(String, String) =
     interpreter!(show_dyn);
 ```
 
@@ -678,28 +678,46 @@ Result(A, E) 调用者必须显式处理的边界结果
 
 它们不会自动产生 Host diagnostic，也不会自动使模块失败。
 
-### 9.2 Blame 和立即终止
+### 9.2 检查、解包和立即终止
 
-`BlameError` 当前是结构类型：
-
-```telora
-{data: Any, message: String, rule: Any}
-```
-
-`blame!(message, subjects...)` 构造该值，并用调用位置及 subject origin 建立诊断所需的
-关系。`raise!(error)` 要求一个 BlameError，以 `Never` 终止当前计算并将控制权交还
-VM/Host：
+表面语言提供七个 contextual intrinsic 名称：
 
 ```telora
-match validate(User, raw) {
-    'Ok(user) => user,
-    'Err(error) => raise!(error),
-}
+dbg!(value [, "message"])
+should_ok!(checker, arguments...)
+must_ok!(checker, arguments...)
+try_unwrap!(result)
+unwrap!(result)
+fail!(message, subjects...)
+panic!(message)
 ```
 
-`fail!(message, subjects...)` 是 `raise!(blame!(...))` 的便利形式。`panic!(message)`
-产生无结构的程序失败，应表示实现错误或无法恢复的不变量破坏，而不是可预期的领域
-拒绝。
+对于 `checker: Fn(A1, ..., An) -> Result(R, String)`：
+
+```text
+checker.should_ok!(a1, ..., an) : Option(R)
+checker.must_ok!(a1, ..., an)   : R
+```
+
+checker 和参数各求值一次，顺序从左到右。`should_ok!` 把 `Ok(r)` 变成 `Some(r)`；
+`Err(message)` 产生一条 Warning，并以有序参数作为诊断证据，然后返回 `None`。
+`must_ok!` 在 `Ok(r)` 时返回 `r`，在 `Err(message)` 时产生失败并得到 `Never`。
+checker 可以没有参数，但不能省略 checker。
+
+对已有的 `result: Result(R, String)`：
+
+```text
+result.try_unwrap!() : Option(R)
+result.unwrap!()     : R
+```
+
+`try_unwrap!` 对 Err 产生 Warning 和 `None`；`unwrap!` 对 Err 产生失败和 `Never`。
+result 只求值一次并作为诊断证据。两者不同于 `?`：`?` 只传播原 Option/Result 分支，
+不产生诊断，也不改变容器家族。
+
+`fail!(message, subjects...)` 产生失败和 `Never`。message 必须是 String，subjects
+作为有序证据保留来源。`panic!(message)` 表示实现错误或无法恢复的不变量破坏，
+而不是可预期的领域拒绝。
 
 所有 contextual intrinsic 都支持统一的后置糖：
 
@@ -707,9 +725,24 @@ match validate(User, raw) {
 receiver.ident!(arguments...) == ident!(receiver, arguments...)
 ```
 
-例如 `error.raise!()` 等价于 `raise!(error)`，`"OutOfRange".fail!(arr, idx)` 等价于
-`fail!("OutOfRange", arr, idx)`。这只是把 receiver 放到第一个参数位置；它不执行
-method lookup，也不开放用户定义宏。未知 intrinsic 在前置和后置形式下都被拒绝。
+例如 `check_order.should_ok!(a, b)` 等价于 `should_ok!(check_order, a, b)`，
+`result.try_unwrap!()` 等价于 `try_unwrap!(result)`，`"OutOfRange".fail!(arr, idx)`
+等价于 `fail!("OutOfRange", arr, idx)`。这只是把 receiver 放到第一个参数位置；
+它不执行 method lookup，也不开放用户定义宏。未知 intrinsic 在前置和后置形式下
+都被拒绝。
+
+`BlameError` 是求值器与 Host 之间的 opaque native carrier。只有 `.native.telora`
+中的 native ABI 声明可以引用它；普通 `.telora` 不能命名、构造、导入或导出该类型。
+普通代码可以匹配 native 调用返回的推断错误值并读取 ABI 字段，例如：
+
+```telora
+match validate(User, raw) {
+    'Ok(user) => user,
+    'Err(error) => fail!(error.message, error, raw),
+}
+```
+
+native module 不得 re-export `BlameError` 类型绑定。
 
 ### 9.3 Host debug observation
 
@@ -745,42 +778,21 @@ CLI 把每个事件作为一行紧凑 JSON 写入 stderr：
 
 ### 9.4 Host-observed diagnostic
 
-Prelude 提供：
+Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返回值。Host
+负责排序、去重、渲染、JSONL 格式和退出协议；Telora 代码不能观察 Host 是否保存或
+展示 Warning。`should_ok!` 与 `try_unwrap!` 产生非阻塞 Warning；`must_ok!`、
+`unwrap!` 和 `fail!` 使当前结果不可产生。
 
-```telora
-report: Fn(Severity, BlameError) -> BlameError
-```
-
-它记录 Info、Warn 或 Error 事件并返回原 BlameError。便利形式：
-
-```telora
-emit_info!(message, subjects...)
-emit_warn!(message, subjects...)
-emit_error!(message, subjects...)
-```
-
-分别降低为 `report(severity, blame!(...))`。Info/Warn 不阻止成功；Error 允许当前普通
-控制流继续，使独立检查能够报告更多根因，但 session 在发布前会失败：
-
-```telora
-def reject: Fn(Intent) -> Option(Plan) = fn(intent) {
-    let ignored = emit_error!("intent cannot be lowered", intent);
-    'None
-};
-```
-
-诊断集合属于 evaluation account，而不是隐含的普通 Array 返回值。调用次数和顺序
-可被 Host 观察，因此 `report` 是一项窄的诊断 effect；实现和优化必须保留它。
-
-当前 BlameError 没有稳定 category、stage、expected/actual、cause 或 repair 字段。
-多个 subject 可以贡献 primary 和 related location；其载体表示不构成公开的诊断
-序列化协议。
+在 best-effort 求值中，`fail!` 得到的内部 `Never` 会阻止所有依赖计算执行；Host
+仍可继续已经证明独立的求值单元，以一次收集更多根因。`Never` 不是可物化值，不能
+作为 Array 元素、字段、Tuple 成员、module export 或最终结果发布。严格执行遇到
+未处理失败立即失败。
 
 ### 9.5 失败类别
 
 VM 区分可恢复的程序失败与终止整个 evaluation session 的资源/一致性失败。前者包括
-类型不匹配、missing field、non-exhaustive dynamic match、panic、raised blame 和
-reported Error；后者包括取消、fuel/分配/栈/调用深度耗尽以及无效 bytecode。
+类型不匹配、missing field、non-exhaustive dynamic match、panic 和 `fail!`；后者
+包括取消、fuel/分配/栈/调用深度耗尽以及无效 bytecode。
 
 Workspace recovery 可以在一个 binding 或模块失败后继续独立工作，但严格 Host
 执行不会把 recoverable failure 当作成功值。

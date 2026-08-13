@@ -1234,7 +1234,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     let hir = HirProgram::resolve_recovered(
         recovered,
         prelude
-            .visible_names()
+            .values
+            .keys()
+            .filter(|name| source_name.ends_with(".native.telora") || name.as_str() != "BlameError")
             .filter(|name| !external_values.contains_key(*name))
             .chain(external_values.keys())
             .cloned()
@@ -1696,7 +1698,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let hir = HirProgram::resolve(
         program,
         prelude
-            .visible_names()
+            .values
+            .keys()
+            .filter(|name| source_name.ends_with(".native.telora") || name.as_str() != "BlameError")
             .filter(|name| !external_values.contains_key(*name))
             .chain(external_values.keys())
             .cloned()
@@ -1708,7 +1712,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .filter(|(name, _)| !external_values.contains_key(*name))
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
-    let prelude_names = prelude.visible_names().cloned().collect::<Vec<_>>();
+    let native_abi = source_name.ends_with(".native.telora");
+    let prelude_names = prelude
+        .values
+        .keys()
+        .filter(|name| native_abi || name.as_str() != "BlameError")
+        .cloned()
+        .collect::<Vec<_>>();
     let BootstrapPrelude {
         values: mut tool_values,
         types: mut static_environment,
@@ -3858,10 +3868,6 @@ impl BootstrapPrelude {
         }));
         artifact
     }
-
-    fn visible_names(&self) -> impl Iterator<Item = &String> {
-        self.values.keys().filter(|name| !name.starts_with('\0'))
-    }
 }
 
 fn core_prelude_values(vm: &mut Vm) -> BTreeMap<String, Value> {
@@ -3879,7 +3885,6 @@ fn core_prelude_values(vm: &mut Vm) -> BTreeMap<String, Value> {
         prelude.insert(name.into(), descriptor.to_value(vm));
     }
     prelude.insert("Bool".into(), normalized_bool_value(vm));
-    prelude.insert("Severity".into(), normalized_severity_value(vm));
     prelude.insert("BlameError".into(), blame_error_descriptor().to_value(vm));
     for function in [
         NativeFunction::core_model(CoreModelFunction::Struct),
@@ -3896,7 +3901,7 @@ fn core_prelude_values(vm: &mut Vm) -> BTreeMap<String, Value> {
         NativeFunction::new("Tuple", 1, native_tuple_type),
         NativeFunction::new("Func", 2, native_function_type),
         NativeFunction::new("validate", 2, native_validate),
-        NativeFunction::core_diagnostic(CoreDiagnosticFunction::Report),
+        NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
     ] {
         prelude.insert(
             function.name().into(),
@@ -3930,7 +3935,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("String", TypeDescriptor::String),
         ("Bytes", TypeDescriptor::Bytes),
         ("Bool", normalized_bool_descriptor()),
-        ("Severity", normalized_severity_descriptor()),
         ("BlameError", blame_error_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
@@ -3998,10 +4002,10 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         function(vec![metadata, TypeDescriptor::Any], TypeDescriptor::Any),
     );
     prelude.insert(
-        "report".into(),
+        "\0telora_warn".into(),
         function(
-            vec![normalized_severity_descriptor(), blame_error_descriptor()],
-            blame_error_descriptor(),
+            vec![TypeDescriptor::String, TypeDescriptor::Any],
+            TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
         ),
     );
     prelude.insert(
@@ -4076,17 +4080,17 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             )),
         ),
         (
-            "report".into(),
+            "\0telora_warn".into(),
             scheme(function(
-                vec![normalized_severity_descriptor(), blame_error_descriptor()],
-                blame_error_descriptor(),
+                vec![TypeDescriptor::String, TypeDescriptor::Any],
+                TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
             )),
         ),
     ])
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["Severity", "enum", "report", "struct", "union", "validate"]
+    let expected = ["enum", "struct", "union", "validate"]
         .into_iter()
         .collect::<BTreeSet<_>>();
     let actual = interface
@@ -4095,10 +4099,7 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err(
-            "core/prelude must export exactly Severity, enum, report, struct, union, and validate"
-                .into(),
-        );
+        return Err("core/prelude must export exactly enum, struct, union, and validate".into());
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];
@@ -4184,31 +4185,6 @@ fn normalized_bool_descriptor() -> TypeDescriptor {
     TypeDescriptor::Enum(BTreeMap::from([
         ("False".into(), None),
         ("True".into(), None),
-    ]))
-}
-
-fn normalized_severity_value(vm: &mut Vm) -> Value {
-    let variants = ["Error", "Info", "Warn"]
-        .into_iter()
-        .map(|name| (name.into(), normalized_legacy_value(vm, Value::none())))
-        .collect::<Vec<_>>();
-    let variants = vm
-        .make_dict(variants)
-        .expect("Severity variant names are unique");
-    let metadata = vm
-        .make_dict(vec![
-            ("kind".into(), Value::atom("Enum")),
-            ("variants".into(), variants),
-        ])
-        .expect("Severity metadata fields are unique");
-    normalized_legacy_value(vm, metadata)
-}
-
-fn normalized_severity_descriptor() -> TypeDescriptor {
-    TypeDescriptor::Enum(BTreeMap::from([
-        ("Error".into(), None),
-        ("Info".into(), None),
-        ("Warn".into(), None),
     ]))
 }
 
@@ -9689,7 +9665,7 @@ mod tests {
     fn bootstrap_prelude_keeps_public_projections_consistent() {
         let mut vm = Vm::new();
         let prelude = BootstrapPrelude::new(&mut vm);
-        assert!(prelude.visible_names().all(|name| !name.starts_with('\0')));
+        assert!(prelude.values.keys().any(|name| name.starts_with('\0')));
         assert!(prelude.values.contains_key("\0telora_pack_dyn"));
         for name in prelude.schemes.keys() {
             assert!(
@@ -12899,22 +12875,11 @@ mod tests {
     }
 
     #[test]
-    fn blame_requires_a_string_message_in_its_canonical_shape() {
-        let analysis = analyze_source(
-            "blame.telora",
-            "let error: BlameError = blame!(\"bad\", 1); error",
-        )
-        .unwrap();
-        assert_eq!(
-            analysis.display(analysis.result_type),
-            "{data: Any, message: String, rule: Any}"
-        );
+    fn fail_requires_a_string_message_and_has_never_type() {
+        let analysis = analyze_source("fail.telora", "fail!(\"bad\", 1)").unwrap();
+        assert_eq!(analysis.display(analysis.result_type), "Never");
 
-        let error = analyze_source(
-            "blame.telora",
-            "let error: BlameError = blame!(2, 1); error",
-        )
-        .unwrap_err();
+        let error = analyze_source("fail.telora", "fail!(2, 1)").unwrap_err();
         assert!(
             error.message.contains("Int") && error.message.contains("String"),
             "{}",

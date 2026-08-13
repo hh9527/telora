@@ -378,12 +378,12 @@ impl CoreBuiltinTypeFunction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreDiagnosticFunction {
-    Report,
+    Warn,
 }
 
 impl CoreDiagnosticFunction {
     pub(crate) const fn name(self) -> &'static str {
-        "report"
+        "\0telora_warn"
     }
 
     pub(crate) const fn arity(self) -> usize {

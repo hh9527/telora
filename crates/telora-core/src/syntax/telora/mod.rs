@@ -228,10 +228,10 @@ option "module.documentation" {stability: "experimental"};"#;
     }
 
     #[test]
-    fn cst_preserves_blame_intrinsics_losslessly() {
-        let source = "blame!(\"bad\", data)";
+    fn cst_preserves_contextual_intrinsics_losslessly() {
+        let source = "fail!(\"bad\", data)";
         let mut sources = crate::source::SourceDatabase::default();
-        let id = sources.add("blame.telora", source);
+        let id = sources.add("fail.telora", source);
         let parsed = parse(id, source);
         assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
         let mut reconstructed = String::new();

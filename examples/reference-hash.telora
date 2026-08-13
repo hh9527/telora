@@ -12,12 +12,12 @@ import "std/hash" as hash;
     Bound: 'None, Dyn: 'None, Ref: 'None,
 };
 type HashState = hash.HashState;
-type HashResult = Result(HashState, BlameError);
+type HashResult = Result(HashState, String);
 type HashControl = FoldControl(HashResult, HashResult);
 type Field = Tuple([String, Dyn]);
 
-def blame: Fn(Dyn, String) -> HashResult = fn(value, message) {
-    'Err(blame!(message, value))
+def reject: Fn(Dyn, String) -> HashResult = fn(value, message) {
+    'Err(message)
 };
 
 def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
@@ -75,12 +75,12 @@ def hash_fields: Fn(Array(Field), HashState, String) -> HashResult = fn(fields, 
 
 def hash_tagged: Fn(Dyn, HashState, String) -> HashResult = fn(value, state, kind) {
     match dyn.tag(value) {
-        'Err(error) => 'Err(error),
+        'Err(error) => 'Err(error.message),
         'Ok(tag) => {
             let state = hash.update_string(state, kind);
             let state = hash.update_string(state, tag);
             match dyn.payload(value) {
-                'Err(error) => 'Err(error),
+                'Err(error) => 'Err(error.message),
                 'Ok('None) => 'Ok(hash.update_int(state, 0)),
                 'Ok('Some(payload)) => {
                     let state = hash.update_int(state, 1);
@@ -95,37 +95,37 @@ def hash_tagged: Fn(Dyn, HashState, String) -> HashResult = fn(value, state, kin
 def hash_dyn: Fn(Dyn, HashState) -> HashResult = fn(value, state) {
     match logical_kind(dyn.desc(value)) {
         'Int => match dyn.check_int(value) {
-            'None => blame(value, "invalid Int package"),
+            'None => reject(value, "invalid Int package"),
             'Some(number) => 'Ok(hash.update_int(hash.update_string(state, "Int"), number)),
         },
         'String => match dyn.check_string(value) {
-            'None => blame(value, "invalid String package"),
+            'None => reject(value, "invalid String package"),
             'Some(text) => 'Ok(hash.update_string(hash.update_string(state, "String"), text)),
         },
         'Bytes => match dyn.check_bytes(value) {
-            'None => blame(value, "invalid Bytes package"),
+            'None => reject(value, "invalid Bytes package"),
             'Some(bytes) => 'Ok(hash.update_bytes(hash.update_string(state, "Bytes"), bytes)),
         },
         'Array => match dyn.array_items(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(items) => hash_items(items, state, "Array"),
         },
         'Tuple => match dyn.tuple_items(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(items) => hash_items(items, state, "Tuple"),
         },
         'Struct => match dyn.fields(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(fields) => hash_fields(fields, state, "Struct"),
         },
         'Dict => match dyn.fields(value) {
-            'Err(error) => 'Err(error),
+            'Err(error) => 'Err(error.message),
             'Ok(fields) => hash_fields(fields, state, "Dict"),
         },
         'Atom => hash_tagged(value, state, "Atom"),
         'Tagged => hash_tagged(value, state, "Tagged"),
         'Enum => hash_tagged(value, state, "Enum"),
-        kind => blame(value, `unsupported my_hash descriptor: \{kind}`),
+        kind => reject(value, `unsupported my_hash descriptor: \{kind}`),
     }
 };
 

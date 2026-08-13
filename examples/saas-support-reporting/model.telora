@@ -190,8 +190,9 @@ def measure_required_entities: Fn(MeasurePlan) -> Array(Entity) =
 def combine_measures: Fn(Array(MeasurePlan)) -> Option(CombinedMeasure) = fn(plans) {
     match array.find(plans, fn(plan) { 'True }) {
         'None => {
-            let ignored = emit_error!("at least one measure is required", plans);
-            'None
+            let reject: Fn(Array(MeasurePlan)) -> Result(CombinedMeasure, String) =
+                fn(values) { 'Err("at least one measure is required") };
+            reject.should_ok!(plans)
         },
         'Some(first) => {
             if array.all(plans, fn(plan) { plan.base_entity == first.base_entity }) {
@@ -204,11 +205,9 @@ def combine_measures: Fn(Array(MeasurePlan)) -> Option(CombinedMeasure) = fn(pla
                     ),
                 })
             } else {
-                let ignored = emit_error!(
-                    "measures with different natural grains cannot be combined",
-                    plans,
-                );
-                'None
+                let reject: Fn(Array(MeasurePlan)) -> Result(CombinedMeasure, String) =
+                    fn(values) { 'Err("measures with different natural grains cannot be combined") };
+                reject.should_ok!(plans)
             }
         },
     }

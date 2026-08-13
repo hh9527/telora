@@ -2839,10 +2839,9 @@ let decorators = {
     }
 
     #[test]
-    fn raise_preserves_structured_blame_locations() {
-        let error =
-            run("let fail = fn() {\n  let data = 1;\n  raise!(blame!(\"bad\", data))\n};\nfail()")
-                .unwrap_err();
+    fn fail_preserves_structured_diagnostic_locations() {
+        let error = run("let stop = fn() {\n  let data = 1;\n  fail!(\"bad\", data)\n};\nstop()")
+            .unwrap_err();
         let ExecutionError::Runtime(error) = error else {
             panic!("expected raised blame")
         };
@@ -2855,24 +2854,21 @@ let decorators = {
     }
 
     #[test]
-    fn raise_requires_one_blame_error() {
-        let wrong_type = compile_source("test", "raise!(1)").unwrap_err();
+    fn fail_requires_a_string_message() {
+        let wrong_type = compile_source("test", "fail!(1)").unwrap_err();
         assert!(
             wrong_type.message.contains("Int") && wrong_type.message.contains("message"),
             "{}",
             wrong_type.message
         );
 
-        let wrong_arity = compile_source("test", "raise!()").unwrap_err();
-        assert!(wrong_arity.message.contains("exactly one argument"));
+        let wrong_arity = compile_source("test", "fail!()").unwrap_err();
+        assert!(wrong_arity.message.contains("message followed by"));
     }
 
     #[test]
-    fn blame_accepts_heterogeneous_variadic_subjects() {
-        let error = run(
-            "let error: BlameError = blame!(\"different subjects\", 1, \"two\", 'Three); raise!(error)",
-        )
-        .unwrap_err();
+    fn fail_accepts_heterogeneous_variadic_subjects() {
+        let error = run("fail!(\"different subjects\", 1, \"two\", 'Three)").unwrap_err();
         let ExecutionError::Runtime(error) = error else {
             panic!("expected raised blame")
         };
@@ -2881,50 +2877,61 @@ let decorators = {
     }
 
     #[test]
-    fn report_records_a_diagnostic_and_returns_the_error() {
+    fn check_records_a_warning_and_returns_option() {
         let function = compile_source(
             "test",
-            "let error = report('Warn, blame!(\"warning\", 1, \"two\")); error.message",
+            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { 'Err(\"warning\") }; reject.should_ok!(1, \"two\")",
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
         let value = Vm::new()
             .execute_with_account(&function, &[], &mut account)
             .unwrap();
-        assert_eq!(value.to_string(), "\"warning\"");
+        assert_eq!(value.to_string(), "'None");
         assert_eq!(account.diagnostics().len(), 1);
         assert_eq!(
             account.diagnostics()[0].severity,
             crate::source::Severity::Warning
         );
         assert_eq!(account.diagnostics()[0].labels.len(), 3);
+
+        let discarded = compile_source(
+            "test",
+            "let reject: Fn(Int) -> Result(Int, String) = fn(value) { 'Err(\"discarded\") }; let ignored = reject.should_ok!(1); 0",
+        )
+        .unwrap();
+        let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
+        let value = Vm::new()
+            .execute_with_account(&discarded, &[], &mut account)
+            .unwrap();
+        assert_eq!(value.to_string(), "0");
+        assert_eq!(account.diagnostics().len(), 1);
+        assert_eq!(account.diagnostics()[0].message, "discarded");
     }
 
     #[test]
-    fn diagnostic_convenience_intrinsics_compose_blame_report_and_raise() {
+    fn check_and_fail_have_distinct_control_flow() {
         let function = compile_source(
             "test",
-            "let warning: BlameError = emit_warn!(\"deprecated\", \"old\", 42); warning.message",
+            "let accept: Fn(Int) -> Result(Int, String) = fn(value) { 'Ok(value + 1) }; accept.must_ok!(6)",
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
         let value = Vm::new()
             .execute_with_account(&function, &[], &mut account)
             .unwrap();
-        assert_eq!(value.to_string(), "\"deprecated\"");
-        assert_eq!(account.diagnostics().len(), 1);
-        assert_eq!(
-            account.diagnostics()[0].severity,
-            crate::source::Severity::Warning
-        );
-        assert_eq!(account.diagnostics()[0].labels.len(), 3);
+        assert_eq!(value.to_string(), "7");
+        assert!(account.diagnostics().is_empty());
 
-        let error = run("let ignored = emit_error!(\"invalid\", 42); 7").unwrap_err();
+        let error = run(
+            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { 'Err(\"rejected\") }; reject.must_ok!(1, \"two\")",
+        )
+        .unwrap_err();
         let ExecutionError::Runtime(error) = error else {
-            panic!("expected a reported diagnostic")
+            panic!("expected check failure")
         };
-        assert_eq!(error.kind, RuntimeErrorKind::ReportedDiagnostic);
-        assert_eq!(error.message, "invalid");
+        assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
+        assert_eq!(error.message, "rejected");
 
         let error = run("fail!(\"stopped\", 42)").unwrap_err();
         let ExecutionError::Runtime(error) = error else {
@@ -2935,11 +2942,39 @@ let decorators = {
     }
 
     #[test]
+    fn result_unwrap_intrinsics_choose_recovery_policy() {
+        let value = run("let result: Result(Int, String) = 'Ok(7); result.try_unwrap!()").unwrap();
+        assert_eq!(value.to_string(), "'Some(7)");
+        let value = run("let result: Result(Int, String) = 'Ok(7); result.unwrap!()").unwrap();
+        assert_eq!(value.to_string(), "7");
+
+        let function = compile_source(
+            "test",
+            "let result: Result(Int, String) = 'Err(\"recoverable\"); result.try_unwrap!()",
+        )
+        .unwrap();
+        let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
+        let value = Vm::new()
+            .execute_with_account(&function, &[], &mut account)
+            .unwrap();
+        assert_eq!(value.to_string(), "'None");
+        assert_eq!(account.diagnostics().len(), 1);
+        assert_eq!(account.diagnostics()[0].message, "recoverable");
+
+        let error = run("let result: Result(Int, String) = 'Err(\"required\"); result.unwrap!()")
+            .unwrap_err();
+        let ExecutionError::Runtime(error) = error else {
+            panic!("expected unwrap failure")
+        };
+        assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
+        assert_eq!(error.message, "required");
+    }
+
+    #[test]
     fn diagnostic_convenience_intrinsics_require_string_messages() {
         for source in [
-            "emit_info!(1)",
-            "emit_warn!(1)",
-            "emit_error!(1)",
+            "let invalid: Fn() -> Result(Int, Int) = fn() { 'Err(1) }; invalid.should_ok!()",
+            "let invalid: Fn() -> Result(Int, Int) = fn() { 'Err(1) }; invalid.must_ok!()",
             "fail!(1)",
         ] {
             let error = compile_source("test", source).unwrap_err();

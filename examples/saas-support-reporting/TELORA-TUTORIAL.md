@@ -58,11 +58,12 @@ match value {
 }
 ```
 
-领域规则拒绝一个候选时，可报告错误并返回 None：
+领域规则拒绝一个候选时，可通过 typed checker 产生 Warning 并返回 None：
 
 ```telora
-let ignored = emit_error!("message", authored_value);
-'None
+def reject: Fn(Value) -> Result(Output, String) =
+    fn(authored_value) { 'Err("message") };
+let output = reject.should_ok!(authored_value);
 ```
 
 Host recovery 会收集独立执行路径上的诊断。不要为了继续执行而构造假的计划。

@@ -146,8 +146,9 @@ def complete_requirement: Fn(Dimension, Projection, Expr, Entity, ResultField) -
 };
 
 def rejected_requirement: Fn(Dimension, String) -> Option(GroupRequirement) = fn(value, message) {
-    let ignored = emit_error!(message, value);
-    'None
+    let reject: Fn(Dimension, String) -> Result(GroupRequirement, String) =
+        fn(evidence, reason) { 'Err(reason) };
+    reject.should_ok!(value, message)
 };
 
 # A higher-order compiler factory: construct a dimension capability whose
@@ -271,8 +272,9 @@ def net_revenue: MeasureCapability = {
             'PreAggregate(target) => if target == 'Order {
                 'Some('Order)
             } else {
-                let ignored = emit_error!(`NetRevenue cannot align from Order to \{target}`, alignment);
-                'None
+                let reject: Fn(Alignment) -> Result(Entity, String) =
+                    fn(evidence) { 'Err(`NetRevenue cannot align from Order to \{target}`) };
+                reject.should_ok!(alignment)
             },
         };
         match aligned {
@@ -359,8 +361,9 @@ def units_sold: MeasureCapability = {
                 measure_fields: [{name: "units_sold", ty: 'Count}],
             })
         } else {
-            let ignored = emit_error!(`UnitsSold supports pre-aggregation from OrderItem to Order, not \{target}`, alignment);
-            'None
+            let reject: Fn(Alignment) -> Result(QueryPlan, String) =
+                fn(evidence) { 'Err(`UnitsSold supports pre-aggregation from OrderItem to Order, not \{target}`) };
+            reject.should_ok!(alignment)
         },
         }
     },
@@ -427,8 +430,9 @@ def dimension_capabilities: Array(DimensionCapability) = array.map(
 
 def selected_measures: Fn(ReportIntent) -> Option(Array(Measure)) = fn(intent) {
     if array.length(intent.measures) == 0 {
-        let ignored = emit_error!("a report requires at least one measure", intent.measures);
-        'None
+        let reject: Fn(Array(Measure)) -> Result(Array(Measure), String) =
+            fn(evidence) { 'Err("a report requires at least one measure") };
+        reject.should_ok!(intent.measures)
     } else {
         'Some(intent.measures)
     }
@@ -457,11 +461,10 @@ def combine_query_plans: Fn(Array(QueryPlan), Alignment) -> Option(QueryPlan) = 
             measure_fields,
         })
     } else {
-        let ignored = emit_error!(
-            `selected measures remain at incompatible grains; use 'PreAggregate('Order) instead of \{alignment}`,
-            array.map(plans, fn(plan) { plan.base_entity }),
-        );
-        'None
+        let reject: Fn(Array(QueryPlan)) -> Result(QueryPlan, String) = fn(evidence) {
+            'Err(`selected measures remain at incompatible grains; use 'PreAggregate('Order) instead of \{alignment}`)
+        };
+        reject.should_ok!(plans)
     },
     }
 };
@@ -484,7 +487,9 @@ def verify_order: Fn(ReportIntent) -> Bool = fn(intent) {
         if array.any(intent.dimensions, fn(dimension) { dimension == ordered }) {
             'True
         } else {
-            let ignored = emit_error!("an ordered dimension must also be selected", ordered);
+            let reject: Fn(Dimension) -> Result(Dimension, String) =
+                fn(evidence) { 'Err("an ordered dimension must also be selected") };
+            let ignored = reject.should_ok!(ordered);
             'False
         }
     });
@@ -521,7 +526,7 @@ def verify_relationships: Fn(PathPlan, Array(GroupRequirement)) -> Bool = fn(pat
 def decode_restriction: Fn(Any) -> Restriction = fn(raw) {
     match codec.decode(Restriction, raw) {
         'Ok(restriction) => restriction,
-        'Err(error) => raise!(error),
+        'Err(error) => fail!(error.message, error),
     }
 };
 
@@ -534,11 +539,10 @@ def verify_restriction:
             }) {
                 []
             } else {
-                [emit_error!(
-                    `dimension \{requirement.dimension} requires unauthorized entity \{requirement.required_entity}`,
-                    requirement.dimension,
-                    restriction.allowed_entities,
-                )]
+                let reject: Fn(Dimension, Array(Entity)) -> Result(Dimension, String) = fn(evidence, allowed) {
+                    'Err(`dimension \{requirement.dimension} requires unauthorized entity \{requirement.required_entity}`)
+                };
+                [reject.should_ok!(requirement.dimension, restriction.allowed_entities)]
             }
         });
         let filter_errors = array.flat_map(filters, fn(filter) {
@@ -547,11 +551,10 @@ def verify_restriction:
             }) {
                 []
             } else {
-                [emit_error!(
-                    `filter requires unauthorized entity \{filter.required_entity}`,
-                    filter.source,
-                    restriction.allowed_entities,
-                )]
+                let reject: Fn(Filter, Array(Entity)) -> Result(Filter, String) = fn(evidence, allowed) {
+                    'Err(`filter requires unauthorized entity \{filter.required_entity}`)
+                };
+                [reject.should_ok!(filter.source, restriction.allowed_entities)]
             }
         });
         array.length(dimension_errors) == 0 && array.length(filter_errors) == 0
@@ -616,7 +619,9 @@ def lower_sql: Fn(RelationalPlan) -> SqlPlan = fn(relational) {
 def compile_render: Fn(RenderIntent, Array(ResultField)) -> Option(RenderPlan) = fn(intent, schema) {
     let missing = analytics.missing_names(intent.fields, schema, fn(field) { field.name });
     let errors = array.map(missing, fn(name) {
-        emit_error!(`render field \{name} is absent from the result schema`, name)
+        let reject: Fn(String) -> Result(String, String) =
+            fn(evidence) { 'Err(`render field \{name} is absent from the result schema`) };
+        reject.should_ok!(name)
     });
     if array.length(errors) == 0 {
         'Some({mode: intent.mode, fields: intent.fields})

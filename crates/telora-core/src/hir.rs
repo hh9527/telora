@@ -747,10 +747,10 @@ mod tests {
     }
 
     #[test]
-    fn blame_hir_indexes_arguments_but_not_the_intrinsic_name() {
+    fn fail_hir_indexes_arguments_but_not_internal_names() {
         let program = parse(
             "hir.telora",
-            "let data = 1; let message = \"bad\"; blame!(message, data)",
+            "let data = 1; let message = \"bad\"; fail!(message, data)",
         )
         .unwrap();
         let hir = HirProgram::resolve(&program, std::iter::empty());
@@ -761,6 +761,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(names.contains(&"data"));
         assert!(names.contains(&"message"));
-        assert!(!names.contains(&"blame"));
+        assert!(!names.contains(&"fail"));
     }
 }
