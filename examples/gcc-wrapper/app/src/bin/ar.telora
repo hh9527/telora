@@ -1,0 +1,7 @@
+#!/usr/bin/env -S telora exec --dry-run @bin/ar.telora --
+
+import "std/rt-types/exec.telora" { ExecFn };
+import "gcc-toolchain-define/source.json" as source;
+import "gcc-wrapper/toolchain.telora" { command };
+
+export def exec: ExecFn = command("ar", source);

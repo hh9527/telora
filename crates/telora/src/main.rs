@@ -1,13 +1,15 @@
+use clap::{Args, Parser, Subcommand};
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use telora_core::{
-    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, LoadedModule, Location, Quota,
-    TextRange, Value, WorkspaceSnapshot, WorkspaceTypeId, parse_json,
+    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, LoadedModule, Location,
+    Quota, Value, WorkspaceModuleState, WorkspaceSnapshot, parse_json,
 };
 
 const EVALUATION_FUEL: usize = 1_000_000;
@@ -37,65 +39,190 @@ impl DebugSink for StderrDebugSink {
 }
 
 fn main() {
-    if let Err(error) = run_cli(env::args().skip(1).collect()) {
+    if let Err(error) = run_cli(Cli::parse()) {
         eprintln!("error: {error}");
         std::process::exit(1);
     }
 }
 
-fn run_cli(arguments: Vec<String>) -> Result<(), String> {
-    let Some(command) = arguments.first().map(String::as_str) else {
-        return Err(usage());
+#[derive(Parser)]
+#[command(name = "telora", version, about = "The Telora language toolchain")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Run(RunArgs),
+    Exec {
+        #[arg(long, required = true)]
+        dry_run: bool,
+        module_id: String,
+        #[arg(last = true)]
+        arguments: Vec<String>,
+    },
+    Build {
+        #[arg(long, required = true)]
+        dry_run: bool,
+        module_id: String,
+    },
+    Check {
+        module_id: String,
+    },
+    Show(ShowArgs),
+    Lsp,
+}
+
+#[derive(Args)]
+struct RunArgs {
+    #[arg(required_unless_present = "standalone", conflicts_with = "standalone", value_parser = binary_name)]
+    binary: Option<String>,
+    #[arg(short = 'C', value_name = "CONTEXT", conflicts_with = "standalone")]
+    context: Option<PathBuf>,
+    #[arg(short = 'S', value_name = "FILE", conflicts_with_all = ["binary", "context"])]
+    standalone: Option<PathBuf>,
+    #[arg(long)]
+    input: Option<String>,
+}
+
+#[derive(Args)]
+struct ShowArgs {
+    module_id: String,
+    #[arg(short = 'p', long = "pattern", value_parser = non_empty)]
+    pattern: Option<String>,
+    #[arg(short = 'k', long = "kind", value_parser = parse_kinds, conflicts_with = "exports")]
+    kinds: Option<KindSet>,
+    #[arg(long, conflicts_with_all = ["kinds", "at"])]
+    exports: bool,
+    #[arg(long, value_parser = parse_position, conflicts_with_all = ["pattern", "kinds", "exports"])]
+    at: Option<ShowPosition>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ShowKind {
+    Type,
+    Let,
+    Def,
+    Import,
+}
+
+#[derive(Clone)]
+struct KindSet(Vec<ShowKind>);
+
+#[derive(Clone, Copy)]
+struct ShowPosition {
+    line: usize,
+    column: Option<usize>,
+}
+
+fn non_empty(value: &str) -> Result<String, String> {
+    (!value.is_empty())
+        .then(|| value.to_owned())
+        .ok_or_else(|| "pattern must not be empty".into())
+}
+
+fn binary_name(value: &str) -> Result<String, String> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains(['/', '\\'])
+        || value.ends_with(".telora")
+    {
+        return Err("binary name must be a single name without path separators or .telora".into());
+    }
+    Ok(value.to_owned())
+}
+
+fn parse_kinds(value: &str) -> Result<KindSet, String> {
+    let mut kinds = value
+        .split(',')
+        .map(|item| match item {
+            "type" => Ok(ShowKind::Type),
+            "let" => Ok(ShowKind::Let),
+            "def" => Ok(ShowKind::Def),
+            "import" => Ok(ShowKind::Import),
+            _ => Err(format!("unknown definition kind {item:?}")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if kinds.is_empty() {
+        return Err("kind list must not be empty".into());
+    }
+    kinds.sort();
+    kinds.dedup();
+    Ok(KindSet(kinds))
+}
+
+fn parse_position(value: &str) -> Result<ShowPosition, String> {
+    let mut parts = value.split(':');
+    let parse = |part: Option<&str>, name: &str| -> Result<usize, String> {
+        let raw = part.ok_or_else(|| format!("missing {name}"))?;
+        let number = raw
+            .parse::<usize>()
+            .map_err(|_| format!("invalid {name} {raw:?}"))?;
+        (number > 0)
+            .then_some(number)
+            .ok_or_else(|| format!("{name} must be positive"))
     };
-    match command {
-        "run" => run_command(&arguments[1..]),
-        "exec" => exec_command(&arguments[1..]),
-        "build" => build_command(&arguments[1..]),
-        "check" => check_command(&arguments[1..]),
-        "types" => types_command(&arguments[1..]),
-        "show" => show_command(&arguments[1..]),
-        "lsp" => lsp_command(&arguments[1..]),
-        "help" | "--help" | "-h" => {
-            println!("{}", usage());
-            Ok(())
-        }
-        other => Err(format!("unknown command {other:?}\n{}", usage())),
+    let line = parse(parts.next(), "line")?;
+    let column = parts
+        .next()
+        .map(|raw| parse(Some(raw), "column"))
+        .transpose()?;
+    if parts.next().is_some() {
+        return Err("position must be line or line:column".into());
+    }
+    Ok(ShowPosition { line, column })
+}
+
+fn run_cli(cli: Cli) -> Result<(), String> {
+    match cli.command {
+        Command::Run(arguments) => run_command(arguments),
+        Command::Exec {
+            dry_run: _,
+            module_id,
+            arguments,
+        } => exec_command(&module_id, arguments),
+        Command::Build {
+            dry_run: _,
+            module_id,
+        } => build_command(&module_id),
+        Command::Check { module_id } => check_command(&module_id),
+        Command::Show(arguments) => show_command(arguments),
+        Command::Lsp => lsp_command(),
     }
 }
 
-fn lsp_command(arguments: &[String]) -> Result<(), String> {
-    if !arguments.is_empty() {
-        return Err(format!("lsp does not accept arguments\n{}", usage()));
-    }
+fn lsp_command() -> Result<(), String> {
     let root = env::current_dir()
         .map_err(|error| format!("cannot determine current directory: {error}"))?;
     telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
 }
 
-fn run_command(arguments: &[String]) -> Result<(), String> {
-    let Some(module_path) = arguments.first() else {
-        return Err(format!("run requires a module path\n{}", usage()));
-    };
+fn run_command(arguments: RunArgs) -> Result<(), String> {
     let mut bindings = BTreeMap::new();
-    match &arguments[1..] {
-        [] => {}
-        [flag, input] if flag == "--input" => {
-            bindings.insert("input".into(), read_input(input)?);
-        }
-        _ => return Err(format!("invalid run arguments\n{}", usage())),
+    if let Some(input) = arguments.input.as_deref() {
+        bindings.insert("input".into(), read_input(input)?);
     }
-    let result = evaluate_module(module_path, bindings)?;
+    let engine = engine();
+    let module = if let Some(path) = arguments.standalone {
+        engine.load_standalone(path, bindings)
+    } else {
+        let context = arguments
+            .context
+            .map_or_else(env::current_dir, Ok)
+            .map_err(|error| format!("cannot determine context: {error}"))?;
+        let module_id = format!(
+            "@bin/{}.telora",
+            arguments.binary.expect("required by clap")
+        );
+        engine.load_module_id(context, &module_id, bindings)
+    }
+    .map_err(|error| error.to_string())?;
+    let exports = engine.execute(&module).map_err(|error| error.to_string())?;
+    let result = select_host_entry(&module, exports, "run", "output")?;
     println!("{result}");
     Ok(())
-}
-
-fn evaluate_module(module_path: &str, bindings: BTreeMap<String, Value>) -> Result<Value, String> {
-    let engine = engine();
-    let module = engine
-        .load_module(module_path, bindings)
-        .map_err(|error| error.to_string())?;
-    let exports = engine.execute(&module).map_err(|error| error.to_string())?;
-    select_host_entry(&module, exports, "run", "output")
 }
 
 fn select_host_entry(
@@ -113,31 +240,20 @@ fn select_host_entry(
             module_value.type_name()
         ));
     };
-    exports
-        .get(name)
-        .cloned()
-        .ok_or_else(|| format!("telora {mode} requires the explicit export {name:?} in @main"))
+    exports.get(name).cloned().ok_or_else(|| {
+        format!("telora {mode} requires the explicit export {name:?} in the selected root")
+    })
 }
 
-fn exec_command(arguments: &[String]) -> Result<(), String> {
-    let (module_path, request_args) = match arguments {
-        [dry_run, module_path] if dry_run == "--dry-run" => (module_path, &[][..]),
-        [dry_run, module_path, separator, request_args @ ..]
-            if dry_run == "--dry-run" && separator == "--" =>
-        {
-            (module_path, request_args)
-        }
-        _ => {
-            return Err(format!("exec currently requires --dry-run\n{}", usage()));
-        }
-    };
+fn exec_command(module_id: &str, request_args: Vec<String>) -> Result<(), String> {
     let engine = engine();
+    let cwd = env::current_dir().map_err(|error| error.to_string())?;
     let pending = engine
-        .prepare_module_with_arguments(module_path, request_args.to_vec())
+        .prepare_module_id_with_arguments(&cwd, module_id, request_args)
         .map_err(|error| error.to_string())?;
     let argument = pending.entry_argument();
     let entry = engine
-        .load_entry(module_path, "entry/exec.telora", BTreeMap::new())
+        .load_entry_id(&cwd, module_id, "entry/exec.telora", BTreeMap::new())
         .map_err(|error| format!("cannot load exec entry: {error}"))?;
     let exports = engine.execute(&entry).map_err(|error| error.to_string())?;
     let entry_function = select_host_entry(&entry, exports, "exec", "entry")?;
@@ -167,16 +283,11 @@ fn expect_string_export<'a>(exports: &'a telora_core::Dict, name: &str) -> Resul
     }
 }
 
-fn build_command(arguments: &[String]) -> Result<(), String> {
-    let [dry_run, module_path] = arguments else {
-        return Err(format!("build currently requires --dry-run\n{}", usage()));
-    };
-    if dry_run != "--dry-run" {
-        return Err(format!("build currently requires --dry-run\n{}", usage()));
-    }
+fn build_command(module_id: &str) -> Result<(), String> {
     let engine = engine();
+    let cwd = env::current_dir().map_err(|error| error.to_string())?;
     let module = engine
-        .load_module(module_path, BTreeMap::new())
+        .load_module_id(cwd, module_id, BTreeMap::new())
         .map_err(|error| error.to_string())?;
     let exports = engine.execute(&module).map_err(|error| error.to_string())?;
     let entry = select_host_entry(&module, exports, "build", "build")?;
@@ -299,310 +410,199 @@ fn canonical_build_json(value: &Value) -> Result<String, String> {
     Ok(output)
 }
 
-fn check_command(arguments: &[String]) -> Result<(), String> {
-    let [module_path] = arguments else {
-        return Err(format!("check requires one module path\n{}", usage()));
-    };
+fn check_command(module_id: &str) -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|error| error.to_string())?;
     let module = engine()
-        .load_module(module_path, BTreeMap::new())
+        .load_module_id(cwd, module_id, BTreeMap::new())
         .map_err(|error| error.to_string())?;
     println!("ok ({} dependencies)", module.dependencies.len());
     Ok(())
 }
 
-fn types_command(arguments: &[String]) -> Result<(), String> {
-    let [module_path] = arguments else {
-        return Err(format!("types requires one module path\n{}", usage()));
-    };
-    let module = engine()
-        .load_module(module_path, BTreeMap::new())
+fn show_command(arguments: ShowArgs) -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|error| error.to_string())?;
+    let workspace = engine()
+        .recover_workspace_id(cwd, &arguments.module_id)
         .map_err(|error| error.to_string())?;
-    let root = module
-        .workspace
-        .module_by_path(&module.path)
-        .ok_or_else(|| "loaded root is absent from the workspace snapshot".to_owned())?;
-    let mut definitions = module
-        .workspace
-        .definitions()
+    let root = workspace
+        .modules()
         .iter()
-        .filter(|definition| definition.module == root.id && definition.top_level)
-        .filter_map(|definition| definition.ty.value.map(|ty| (definition, ty)))
-        .collect::<Vec<_>>();
-    definitions.sort_by(|(left, _), (right, _)| left.name.cmp(&right.name));
-    for (definition, ty) in definitions
-        .iter()
-        .filter(|(definition, _)| definition.kind == DefinitionKind::Type)
-    {
-        println!(
-            "type {} = {}",
-            definition.name,
-            display_definition_type(&module.workspace, definition, *ty)?
-        );
+        .find(|module| module.name == arguments.module_id)
+        .ok_or_else(|| {
+            format!(
+                "selected module {:?} is absent from the workspace",
+                arguments.module_id
+            )
+        })?;
+    if let Some(position) = arguments.at {
+        show_at(&workspace, root.id, &arguments.module_id, position)
+    } else if arguments.exports {
+        show_exports(
+            &workspace,
+            root.id,
+            &arguments.module_id,
+            arguments.pattern.as_deref(),
+        )
+    } else {
+        show_definitions(
+            &workspace,
+            root.id,
+            &arguments.module_id,
+            arguments.pattern.as_deref(),
+            arguments.kinds.as_ref().map(|set| set.0.as_slice()),
+        )
     }
-    for (definition, ty) in definitions
-        .iter()
-        .filter(|(definition, _)| definition.kind != DefinitionKind::Type)
-    {
-        println!(
-            "let {}: {}",
-            definition.name,
-            display_definition_type(&module.workspace, definition, *ty)?
-        );
+}
+
+fn kind_of(kind: DefinitionKind) -> Option<ShowKind> {
+    match kind {
+        DefinitionKind::Type => Some(ShowKind::Type),
+        DefinitionKind::Let => Some(ShowKind::Let),
+        DefinitionKind::DefinitionSlot => Some(ShowKind::Def),
+        DefinitionKind::Import => Some(ShowKind::Import),
+        _ => None,
     }
+}
+fn kind_name(kind: ShowKind) -> &'static str {
+    match kind {
+        ShowKind::Type => "type",
+        ShowKind::Let => "let",
+        ShowKind::Def => "def",
+        ShowKind::Import => "import",
+    }
+}
+fn authority(state: &FactState) -> &'static str {
+    if matches!(state, FactState::Known) {
+        "authoritative"
+    } else {
+        "recovery"
+    }
+}
+fn location_json(workspace: &WorkspaceSnapshot, location: Location) -> serde_json::Value {
+    let source = workspace.sources().get(location.source);
+    let start = source.position(location.start);
+    let end = source.position(location.end);
+    json!({"line":start.line,"column":start.column,"end_line":end.line,"end_column":end.column})
+}
+fn emit(record: serde_json::Value) -> Result<(), String> {
     println!(
-        "result: {}",
-        display_workspace_type(
-            &module.workspace,
-            root.result_type
-                .ok_or_else(|| "loaded root has no workspace result type".to_owned())?,
-        )?
+        "{}",
+        serde_json::to_string(&record).map_err(|e| e.to_string())?
     );
     Ok(())
 }
 
-fn display_definition_type(
+fn show_definitions(
     workspace: &WorkspaceSnapshot,
-    definition: &telora_core::semantic::Definition,
-    ty: WorkspaceTypeId,
-) -> Result<String, String> {
-    definition
-        .scheme
-        .clone()
-        .map_or_else(|| display_workspace_type(workspace, ty), Ok)
-}
-
-fn display_workspace_type(
-    workspace: &WorkspaceSnapshot,
-    ty: WorkspaceTypeId,
-) -> Result<String, String> {
-    workspace
-        .types()
-        .display(ty)
-        .ok_or_else(|| format!("workspace type t{} is absent", ty.index()))
-}
-
-fn show_command(arguments: &[String]) -> Result<(), String> {
-    let Some(module_path) = arguments.first() else {
-        return Err(format!("show requires a module path\n{}", usage()));
-    };
-    let engine = engine();
-    let workspace = engine
-        .recover_workspace(module_path)
-        .map_err(|error| error.to_string())?;
-    show_query(&workspace, &arguments[1..])
-}
-
-fn show_query(workspace: &WorkspaceSnapshot, arguments: &[String]) -> Result<(), String> {
-    match arguments {
-        [] => show_workspace(workspace),
-        [mode, source_path, line, column] if mode == "at" => {
-            let line = line
-                .parse::<usize>()
-                .map_err(|_| format!("invalid line {line:?}"))?;
-            let column = column
-                .parse::<usize>()
-                .map_err(|_| format!("invalid column {column:?}"))?;
-            show_at(workspace, source_path, line, column)
-        }
-        _ => Err(format!("invalid show arguments\n{}", usage())),
-    }
-}
-
-fn show_workspace(workspace: &WorkspaceSnapshot) -> Result<(), String> {
-    println!("diagnostics:");
-    for diagnostic in workspace.diagnostics() {
-        println!(
-            "  {}",
-            workspace.sources().render(diagnostic).replace('\n', "\n  ")
-        );
-    }
-    println!("modules:");
-    for module in workspace.modules() {
-        println!(
-            "  m{} {:?} {:?} {}",
-            module.id.index(),
-            module.kind,
-            module.state,
-            module.name
-        );
-        for import in &module.imports {
-            println!("    import {} -> m{}", import.name, import.target.index());
-        }
-        if let Some(ty) = module.result_type {
-            println!(
-                "    result t{} = {}",
-                ty.index(),
-                workspace.types().display(ty).unwrap_or_else(|| "?".into())
-            );
-        }
-        for export in workspace.exports_of(module.id) {
-            println!(
-                "    export {}: t{} = {}",
-                export.name,
-                export.ty.index(),
-                workspace
-                    .types()
-                    .display(export.ty)
-                    .unwrap_or_else(|| "?".into())
-            );
-        }
-    }
-    println!("definitions:");
-    for definition in workspace.definitions() {
-        let location = show_location(workspace, definition.location);
-        let ty = definition.scheme.as_ref().map_or_else(
-            || {
-                definition.ty.value.map_or_else(
-                    || format!(" {:?}", definition.ty.state),
-                    |ty| {
-                        format!(
-                            " t{} = {}",
-                            ty.index(),
-                            workspace.types().display(ty).unwrap_or_else(|| "?".into())
-                        )
-                    },
-                )
-            },
-            |scheme| format!(" = {scheme}"),
-        );
-        let target = definition
-            .import_target
-            .map_or_else(String::new, |module| format!(" -> m{}", module.index()));
-        println!(
-            "  d{} {:?} {} {}{}{}",
-            definition.id.index(),
-            definition.kind,
-            definition.name,
-            location,
-            ty,
-            target
-        );
-    }
-    println!("references:");
-    for reference in workspace.references() {
-        let target = reference.definition.map_or_else(
-            || {
-                if reference.external {
-                    "external".into()
-                } else {
-                    "unresolved".into()
-                }
-            },
-            |id| format!("d{}", id.index()),
-        );
-        println!(
-            "  r{} {} {} -> {}",
-            reference.id.index(),
-            reference.name,
-            show_location(workspace, reference.location),
-            target
-        );
-    }
-    println!("expressions:");
-    for expression in workspace.expressions() {
-        let ty = expression.ty.value.map_or_else(
-            || format!("{:?}", expression.ty.state),
-            |ty| {
-                format!(
-                    "t{} = {}",
-                    ty.index(),
-                    workspace.types().display(ty).unwrap_or_else(|| "?".into())
-                )
-            },
-        );
-        println!(
-            "  e{} {} {}",
-            expression.id.index(),
-            show_location(workspace, expression.location),
-            ty
-        );
-    }
-    println!("types:");
-    for (id, node) in workspace.types().nodes() {
-        println!("  t{} {node:?}", id.index());
+    module: telora_core::WorkspaceModuleId,
+    module_name: &str,
+    pattern: Option<&str>,
+    kinds: Option<&[ShowKind]>,
+) -> Result<(), String> {
+    let mut definitions = workspace
+        .definitions()
+        .iter()
+        .filter(|d| d.module == module && d.top_level)
+        .filter_map(|d| kind_of(d.kind).map(|kind| (d, kind)))
+        .filter(|(d, kind)| {
+            pattern.is_none_or(|p| d.name.contains(p)) && kinds.is_none_or(|ks| ks.contains(kind))
+        })
+        .collect::<Vec<_>>();
+    definitions.sort_by_key(|(d, kind)| (&d.name, *kind, d.location.start));
+    for (d, kind) in definitions {
+        let ty = d
+            .scheme
+            .clone()
+            .or_else(|| d.ty.value.and_then(|id| workspace.types().display(id)));
+        emit(
+            json!({"schema":"telora.show/v1","module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":ty,"location":location_json(workspace,d.location)}),
+        )?;
     }
     Ok(())
 }
-
+fn show_exports(
+    workspace: &WorkspaceSnapshot,
+    module: telora_core::WorkspaceModuleId,
+    module_name: &str,
+    pattern: Option<&str>,
+) -> Result<(), String> {
+    let authority = match workspace.module(module).map(|item| item.state) {
+        Some(WorkspaceModuleState::Known) => "authoritative",
+        _ => "recovery",
+    };
+    let mut exports = workspace.exports_of(module);
+    exports.retain(|e| pattern.is_none_or(|p| e.name.contains(p)));
+    exports.sort_by(|a, b| a.name.cmp(&b.name));
+    for export in exports {
+        emit(
+            json!({"schema":"telora.show/v1","module":module_name,"record":"export","authority":authority,"name":export.name,"type":workspace.types().display(export.ty)}),
+        )?;
+    }
+    Ok(())
+}
 fn show_at(
     workspace: &WorkspaceSnapshot,
-    source_path: &str,
-    line: usize,
-    column: usize,
+    module: telora_core::WorkspaceModuleId,
+    module_name: &str,
+    at: ShowPosition,
 ) -> Result<(), String> {
-    let canonical = fs::canonicalize(source_path).ok();
-    let source = workspace
-        .sources()
-        .files()
-        .find(|source| {
-            source.name.as_ref() == source_path
-                || canonical
-                    .as_ref()
-                    .is_some_and(|path| source.name.as_ref() == path.to_string_lossy())
-        })
-        .ok_or_else(|| format!("source {source_path:?} is not in the workspace"))?;
-    let offset = source
-        .offset(line, column)
-        .ok_or_else(|| format!("position {line}:{column} is outside {source_path}"))?;
-    let location = Location::new(source.id(), TextRange::at(offset));
-    println!("position: {}:{line}:{column}", source.name);
-    if let Some(definition) = workspace.definition_at(location) {
-        println!(
-            "definition: d{} {:?} {}{}",
-            definition.id.index(),
-            definition.kind,
-            definition.name,
-            definition
-                .scheme
-                .as_ref()
-                .map_or_else(String::new, |scheme| format!(": {scheme}"))
-        );
+    let source_id = workspace
+        .module(module)
+        .and_then(|m| m.source)
+        .ok_or_else(|| "selected module has no source".to_owned())?;
+    let source = workspace.sources().get(source_id);
+    let (start, end) = if let Some(column) = at.column {
+        let offset = source
+            .offset(at.line, column)
+            .ok_or_else(|| format!("position {}:{} is outside {module_name}", at.line, column))?;
+        (offset, offset)
+    } else {
+        let start = source
+            .offset(at.line, 1)
+            .ok_or_else(|| format!("line {} is outside {module_name}", at.line))?;
+        let end = source
+            .offset(at.line + 1, 1)
+            .unwrap_or(source.text().byte_len() as u32);
+        (start, end)
+    };
+    let intersects = |loc: Location| {
+        loc.source == source_id
+            && if at.column.is_some() {
+                loc.start <= start && start <= loc.end
+            } else {
+                loc.start < end && start <= loc.end
+            }
+    };
+    for d in workspace
+        .definitions()
+        .iter()
+        .filter(|d| d.module == module && intersects(d.location))
+    {
+        if let Some(kind) = kind_of(d.kind) {
+            emit(
+                json!({"schema":"telora.show/v1","module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":d.scheme.clone().or_else(||d.ty.value.and_then(|id|workspace.types().display(id))),"location":location_json(workspace,d.location)}),
+            )?;
+        }
     }
-    if let Some(reference) = workspace.reference_at(location) {
-        println!(
-            "reference: r{} {} -> {}",
-            reference.id.index(),
-            reference.name,
-            reference.definition.map_or_else(
-                || {
-                    if reference.external {
-                        "external".into()
-                    } else {
-                        "unresolved".into()
-                    }
-                },
-                |id| format!("d{}", id.index()),
-            )
-        );
+    for r in workspace
+        .references()
+        .iter()
+        .filter(|r| r.module == module && intersects(r.location))
+    {
+        emit(
+            json!({"schema":"telora.show/v1","module":module_name,"record":"reference","authority":if r.definition.is_some()||r.external{"authoritative"}else{"recovery"},"name":r.name,"resolved":r.definition.is_some(),"external":r.external,"location":location_json(workspace,r.location)}),
+        )?;
     }
-    if let Some(expression) = workspace.expression_at(location) {
-        println!(
-            "expression: e{} {}",
-            expression.id.index(),
-            expression.ty.value.map_or_else(
-                || format!("{:?}", expression.ty.state),
-                |ty| format!(
-                    "t{} = {}",
-                    ty.index(),
-                    workspace.types().display(ty).unwrap_or_else(|| "?".into())
-                )
-            )
-        );
-    }
-    if let Some(ty) = workspace.type_at(location) {
-        println!(
-            "type: t{} = {}",
-            ty.index(),
-            workspace.types().display(ty).unwrap_or_else(|| "?".into())
-        );
+    for e in workspace
+        .expressions()
+        .iter()
+        .filter(|e| e.module == module && intersects(e.location))
+    {
+        emit(
+            json!({"schema":"telora.show/v1","module":module_name,"record":"expression","authority":"debug","state":format!("{:?}",e.ty.state),"type":e.ty.value.and_then(|id|workspace.types().display(id)),"location":location_json(workspace,e.location)}),
+        )?;
     }
     Ok(())
-}
-
-fn show_location(workspace: &WorkspaceSnapshot, location: Location) -> String {
-    let source = workspace.sources().get(location.source);
-    let position = source.position(location.start);
-    format!("{}:{}:{}", source.name, position.line, position.column)
 }
 
 fn read_input(path: &str) -> Result<Value, String> {
@@ -618,8 +618,4 @@ fn read_input(path: &str) -> Result<Value, String> {
         (path.to_owned(), source)
     };
     parse_json(&source_name, &source).map_err(|error| error.to_string())
-}
-
-fn usage() -> String {
-    "usage:\n  telora run <module.telora> [--input <file|->]\n  telora exec --dry-run <module.telora> [-- <arguments>...]\n  telora build --dry-run <module.telora>\n  telora check <module.telora>\n  telora types <module.telora>\n  telora show <module.telora> [at <source> <line> <column>]\n  telora lsp".into()
 }

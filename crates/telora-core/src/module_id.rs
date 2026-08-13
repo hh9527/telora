@@ -66,8 +66,10 @@ pub enum ModuleAuthority {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ModuleId {
-    Main,
     Source(PathBuf),
+    Binary(PathBuf),
+    Test(PathBuf),
+    Standalone(PathBuf),
     Builtin(String),
     Dependency { name: String, path: PathBuf },
 }
@@ -81,8 +83,10 @@ impl ModuleId {
 impl fmt::Display for ModuleId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Main => formatter.write_str("@main"),
             Self::Source(path) => write!(formatter, "@src/{}", path.display()),
+            Self::Binary(path) => write!(formatter, "@bin/{}", path.display()),
+            Self::Test(path) => write!(formatter, "@test/{}", path.display()),
+            Self::Standalone(path) => write!(formatter, "@standalone/{}", path.display()),
             Self::Builtin(name) => formatter.write_str(name),
             Self::Dependency { name, path } => write!(formatter, "{name}/{}", path.display()),
         }
@@ -174,8 +178,8 @@ impl fmt::Display for ResolveModuleError {
 pub struct ModuleResolver {
     workspace_root: PathBuf,
     source_root: PathBuf,
-    main_path: PathBuf,
-    main_is_bin_entry: bool,
+    root_path: PathBuf,
+    root_id: ModuleId,
     dependencies: BTreeMap<String, PathBuf>,
     formats: BTreeMap<String, ModuleFormat>,
     builtins: BTreeMap<String, u32>,
@@ -185,6 +189,110 @@ pub struct ModuleResolver {
 }
 
 impl ModuleResolver {
+    pub fn standalone(root_module: &Path) -> Result<Self, ResolveModuleError> {
+        let root_path = resolve_physical(&absolute_normalized(root_module)?)?;
+        let workspace_root = root_path
+            .parent()
+            .ok_or_else(|| ResolveModuleError::Io("standalone module has no parent".into()))?
+            .to_owned();
+        let name = root_path
+            .file_name()
+            .ok_or_else(|| ResolveModuleError::InvalidImport(root_path.display().to_string()))?;
+        let mut resolver = Self {
+            workspace_root: workspace_root.clone(),
+            source_root: workspace_root,
+            root_path: root_path.clone(),
+            root_id: ModuleId::Standalone(PathBuf::from(name)),
+            dependencies: BTreeMap::new(),
+            formats: BTreeMap::new(),
+            builtins: BTreeMap::new(),
+            selected_entry: None,
+            injected_modules: BTreeSet::new(),
+            virtual_modules: BTreeSet::new(),
+        };
+        let source = std::fs::read_to_string(&root_path).map_err(|error| {
+            ResolveModuleError::Io(format!("cannot read {}: {error}", root_path.display()))
+        })?;
+        let mut sources = crate::SourceDatabase::default();
+        let source_id = sources.add(root_path.display().to_string(), source);
+        let parsed = crate::parser::parse_registered(&sources, source_id);
+        let mut values = Vm::new();
+        for option in parsed
+            .options
+            .iter()
+            .filter(|option| option.key.value.starts_with("crate."))
+        {
+            let value = immediate_value(&option.value, &mut values)?;
+            resolver.apply_standalone_option(&option.key.value, &value)?;
+        }
+        Ok(resolver)
+    }
+
+    pub fn from_cwd(cwd: &Path, root_id: &str) -> Result<Self, ResolveModuleError> {
+        let cwd = absolute_normalized(cwd)?;
+        let manifest = cwd
+            .ancestors()
+            .map(|directory| directory.join("telora-deps.json"))
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| {
+                ResolveModuleError::Manifest(format!(
+                    "cannot find telora-deps.json from {} or its ancestors",
+                    cwd.display()
+                ))
+            })?;
+        let workspace_root = manifest.parent().expect("manifest has parent").to_owned();
+        let source_root = resolve_physical(&workspace_root.join("src"))?;
+        let (id, path) = logical_root(&workspace_root, &source_root, root_id)?;
+        let root_path = resolve_physical(&path)?;
+        let expected_root = match &id {
+            ModuleId::Source(_) => source_root.clone(),
+            ModuleId::Binary(_) => resolve_physical(&source_root.join("bin"))?,
+            ModuleId::Test(_) => resolve_physical(&workspace_root.join("tests"))?,
+            _ => workspace_root.clone(),
+        };
+        if !root_path.starts_with(&expected_root) {
+            return Err(ResolveModuleError::CrateEscape(root_id.into()));
+        }
+        if is_private_file_name(&root_path) {
+            return Err(ResolveModuleError::PrivateModuleRoot);
+        }
+        let mut resolver = Self {
+            workspace_root,
+            source_root,
+            root_path,
+            root_id: id,
+            dependencies: BTreeMap::new(),
+            formats: BTreeMap::new(),
+            builtins: BTreeMap::new(),
+            selected_entry: None,
+            injected_modules: BTreeSet::new(),
+            virtual_modules: BTreeSet::new(),
+        };
+        resolver.load_manifest(&manifest)?;
+        // Resolve dependency IDs after loading aliases.
+        if !root_id.starts_with('@') {
+            let resolved = resolver.resolve_dependency(root_id, root_id, true)?;
+            resolver.root_id = resolved.id;
+            resolver.root_path = resolved.physical_path.expect("dependency root has a path");
+        }
+        Ok(resolver)
+    }
+
+    pub fn selected_root(&self) -> Result<ResolvedModule, ResolveModuleError> {
+        self.resolve_root(&self.root_path)
+    }
+
+    pub fn is_root(&self, id: &ModuleId) -> bool {
+        id == &self.root_id
+    }
+
+    pub fn is_standalone(&self) -> bool {
+        matches!(self.root_id, ModuleId::Standalone(_))
+    }
+
+    pub fn root_path(&self) -> &Path {
+        &self.root_path
+    }
     pub fn for_root(root_module: &Path) -> Result<Self, ResolveModuleError> {
         Self::for_root_source(root_module, None)
     }
@@ -208,12 +316,7 @@ impl ModuleResolver {
             .ancestors()
             .map(|directory| directory.join("telora-deps.json"))
             .find(|candidate| candidate.is_file());
-        let main_is_bin_entry = start.file_name().and_then(|name| name.to_str()) == Some("bin-src");
-        let inferred_root = if main_is_bin_entry {
-            start.parent().unwrap_or(start)
-        } else {
-            start
-        };
+        let inferred_root = infer_embedding_root(start);
         let workspace_root = manifest
             .as_ref()
             .and_then(|manifest| manifest.parent())
@@ -225,11 +328,18 @@ impl ModuleResolver {
         } else {
             resolve_physical(start)?
         };
+        let resolved_root = resolve_physical(&root)?;
+        let (root_id, _root_is_entry) = module_id_for_physical_root(
+            &resolved_root,
+            &workspace_root,
+            &source_root,
+            manifest.is_some(),
+        )?;
         let mut resolver = Self {
             workspace_root,
             source_root,
-            main_path: resolve_physical(&root)?,
-            main_is_bin_entry,
+            root_path: resolved_root,
+            root_id,
             dependencies: BTreeMap::new(),
             formats: BTreeMap::new(),
             builtins: BTreeMap::new(),
@@ -237,45 +347,10 @@ impl ModuleResolver {
             injected_modules: BTreeSet::new(),
             virtual_modules: BTreeSet::new(),
         };
-        let has_external_manifest = manifest.is_some();
         if let Some(manifest) = manifest {
             resolver.load_manifest(&manifest)?;
         }
-        let source = match root_source {
-            Some(source) => Some(source),
-            None => match std::fs::read_to_string(&root) {
-                Ok(source) => Some(source),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => {
-                    return Err(ResolveModuleError::Io(format!(
-                        "cannot read {}: {error}",
-                        root.display()
-                    )));
-                }
-            },
-        };
-        if let Some(source) = source {
-            let mut sources = crate::SourceDatabase::default();
-            let source_id = sources.add(root.display().to_string(), source);
-            let parsed = crate::parser::parse_registered(&sources, source_id);
-            let crate_options = parsed
-                .options
-                .iter()
-                .filter(|option| option.key.value.starts_with("crate."))
-                .collect::<Vec<_>>();
-            if !crate_options.is_empty() {
-                if has_external_manifest {
-                    return Err(ResolveModuleError::Manifest(
-                        "@main cannot use both telora-deps.json and embedded crate options".into(),
-                    ));
-                }
-                let mut values = Vm::new();
-                for option in crate_options {
-                    let value = immediate_value(&option.value, &mut values)?;
-                    resolver.apply_option(option.key.value.as_str(), &value)?;
-                }
-            }
-        }
+        let _ = root_source;
         Ok(resolver)
     }
 
@@ -308,12 +383,31 @@ impl ModuleResolver {
 
     pub fn resolve_root(&self, path: &Path) -> Result<ResolvedModule, ResolveModuleError> {
         let path = resolve_physical(path)?;
+        if path != self.root_path {
+            if matches!(self.root_id, ModuleId::Standalone(_)) {
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| ResolveModuleError::InvalidImport(path.display().to_string()))?;
+                let id = ModuleId::Standalone(PathBuf::from(name));
+                return Ok(ResolvedModule {
+                    format: self.format_for(&id, &path)?,
+                    id,
+                    authority: ModuleAuthority::Ordinary,
+                    physical_path: Some(path),
+                });
+            }
+            return Err(ResolveModuleError::InvalidImport(format!(
+                "resolver root is {}, not {}",
+                self.root_path.display(),
+                path.display()
+            )));
+        }
         if is_private_file_name(&path) {
             return Err(ResolveModuleError::PrivateModuleRoot);
         }
-        let format = self.format_for(&ModuleId::Main, &path)?;
+        let format = self.format_for(&self.root_id, &path)?;
         Ok(ResolvedModule {
-            id: ModuleId::Main,
+            id: self.root_id.clone(),
             format,
             authority: ModuleAuthority::Ordinary,
             physical_path: Some(path),
@@ -364,19 +458,19 @@ impl ModuleResolver {
         if target.starts_with("entry/") {
             return Err(ResolveModuleError::InvalidImport(target.into()));
         }
-        if target == "@main" {
+        if target == self.root_id.to_string() {
             if !privileged {
                 return Err(ResolveModuleError::InvalidImport(target.into()));
             }
-            let format = self.format_for(&ModuleId::Main, &self.main_path)?;
+            let format = self.format_for(&self.root_id, &self.root_path)?;
             return Ok(ResolvedModule {
-                id: ModuleId::Main,
+                id: self.root_id.clone(),
                 format,
                 authority: ModuleAuthority::Ordinary,
-                physical_path: Some(self.main_path.clone()),
+                physical_path: Some(self.root_path.clone()),
             });
         }
-        if target.starts_with("@main/") {
+        if target.starts_with("@bin/") || target.starts_with("@test/") {
             return Err(ResolveModuleError::InvalidImport(target.into()));
         }
         if let Some(path) = target.strip_prefix("@src/") {
@@ -384,12 +478,12 @@ impl ModuleResolver {
         }
         if target.starts_with("./") || target.starts_with("../") {
             return match importer {
-                ModuleId::Main => {
-                    if self.main_is_bin_entry {
-                        return Err(ResolveModuleError::InvalidImport(format!(
-                            "{target}; bin-src entries must import crate sources with @src/..."
-                        )));
-                    }
+                ModuleId::Binary(_) | ModuleId::Test(_) => {
+                    return Err(ResolveModuleError::InvalidImport(format!(
+                        "{target}; binary and test roots must import crate sources with @src/..."
+                    )));
+                }
+                ModuleId::Standalone(_) => {
                     let logical = lexical_normalize_relative(Path::new(target))
                         .ok_or_else(|| ResolveModuleError::CrateEscape(target.into()))?;
                     self.resolve_source(logical, target)
@@ -486,7 +580,11 @@ impl ModuleResolver {
         Ok(())
     }
 
-    fn apply_option(&mut self, key: &str, value: &Value) -> Result<(), ResolveModuleError> {
+    fn apply_standalone_option(
+        &mut self,
+        key: &str,
+        value: &Value,
+    ) -> Result<(), ResolveModuleError> {
         let Value::Dict(fields) = value else {
             return Err(ResolveModuleError::Manifest(format!(
                 "option {key:?} must contain a Dict"
@@ -530,12 +628,14 @@ impl ModuleResolver {
                         "duplicate crate dependency {name:?}"
                     )));
                 }
-                let root = resolve_physical(&self.workspace_root.join(path))?;
-                self.dependencies.insert(name.into(), root);
+                self.dependencies.insert(
+                    name.into(),
+                    resolve_physical(&self.workspace_root.join(path))?,
+                );
             }
             "crate.format" => {
                 let module = match fields.get("module") {
-                    Some(Value::String(module)) => module.as_ref(),
+                    Some(Value::String(value)) => value.as_ref(),
                     _ => {
                         return Err(ResolveModuleError::Manifest(
                             "crate.format field \"module\" must be a String".into(),
@@ -543,7 +643,7 @@ impl ModuleResolver {
                     }
                 };
                 let format = match fields.get("format") {
-                    Some(Value::String(format)) => ModuleFormat::parse(format.as_ref())?,
+                    Some(Value::String(value)) => ModuleFormat::parse(value)?,
                     _ => {
                         return Err(ResolveModuleError::Manifest(
                             "crate.format field \"format\" must be a String".into(),
@@ -558,7 +658,7 @@ impl ModuleResolver {
             }
             _ => {
                 return Err(ResolveModuleError::Manifest(format!(
-                    "unknown pre-resolution option {key:?}"
+                    "unknown standalone resolver option {key:?}"
                 )));
             }
         }
@@ -591,7 +691,10 @@ impl ModuleResolver {
         let path = lexical_normalize_relative(path)
             .ok_or_else(|| ResolveModuleError::CrateEscape(original.into()))?;
         match importer {
-            ModuleId::Main | ModuleId::Source(_) => self.resolve_source(path, original),
+            ModuleId::Source(_)
+            | ModuleId::Binary(_)
+            | ModuleId::Test(_)
+            | ModuleId::Standalone(_) => self.resolve_source(path, original),
             ModuleId::Dependency { name, .. } => {
                 self.resolve_dependency_parts(name, path, original, true)
             }
@@ -607,7 +710,13 @@ impl ModuleResolver {
         original: &str,
     ) -> Result<ResolvedModule, ResolveModuleError> {
         let physical = resolve_physical(&self.source_root.join(&path))?;
-        if !physical.starts_with(&self.source_root) || physical == self.main_path {
+        if !physical.starts_with(&self.source_root)
+            || physical == self.root_path
+            || path
+                .components()
+                .next()
+                .is_some_and(|part| part.as_os_str() == "bin")
+        {
             return Err(ResolveModuleError::CrateEscape(original.into()));
         }
         let id = ModuleId::Source(path);
@@ -638,7 +747,12 @@ impl ModuleResolver {
             root.clone()
         };
         let physical = resolve_physical(&source_root.join(&path))?;
-        if !physical.starts_with(&source_root) {
+        if !physical.starts_with(&source_root)
+            || path
+                .components()
+                .next()
+                .is_some_and(|part| part.as_os_str() == "bin")
+        {
             return Err(ResolveModuleError::CrateEscape(original.into()));
         }
         let private = is_private_module_path(&path);
@@ -678,6 +792,60 @@ impl ModuleResolver {
             (None, extension) => extension,
         }
     }
+}
+
+fn logical_root(
+    workspace_root: &Path,
+    source_root: &Path,
+    value: &str,
+) -> Result<(ModuleId, PathBuf), ResolveModuleError> {
+    let parse = |prefix: &str| -> Result<PathBuf, ResolveModuleError> {
+        let raw = value
+            .strip_prefix(prefix)
+            .ok_or_else(|| ResolveModuleError::InvalidImport(value.into()))?;
+        if raw.is_empty() || raw.starts_with('/') {
+            return Err(ResolveModuleError::InvalidImport(value.into()));
+        }
+        let path = lexical_normalize_relative(Path::new(raw))
+            .ok_or_else(|| ResolveModuleError::InvalidImport(value.into()))?;
+        if path.to_string_lossy() != raw || path.extension().is_none() {
+            return Err(ResolveModuleError::InvalidImport(value.into()));
+        }
+        Ok(path)
+    };
+    if value.starts_with("@src/") {
+        let path = parse("@src/")?;
+        if path
+            .components()
+            .next()
+            .is_some_and(|part| part.as_os_str() == "bin")
+        {
+            return Err(ResolveModuleError::InvalidImport(value.into()));
+        }
+        return Ok((ModuleId::Source(path.clone()), source_root.join(path)));
+    }
+    if value.starts_with("@bin/") {
+        let path = parse("@bin/")?;
+        return Ok((
+            ModuleId::Binary(path.clone()),
+            source_root.join("bin").join(path),
+        ));
+    }
+    if value.starts_with("@test/") {
+        let path = parse("@test/")?;
+        return Ok((
+            ModuleId::Test(path.clone()),
+            workspace_root.join("tests").join(path),
+        ));
+    }
+    if value.starts_with('@') || value.starts_with(['.', '/']) || value.contains("//") {
+        return Err(ResolveModuleError::InvalidImport(value.into()));
+    }
+    // Dependency path is resolved after the manifest is loaded.
+    Ok((
+        ModuleId::builtin("<pending>"),
+        workspace_root.join("<pending>"),
+    ))
 }
 
 pub fn resolve_root_module(path: &Path) -> Result<ResolvedModule, ResolveModuleError> {
@@ -746,6 +914,21 @@ fn absolute_normalized(path: &Path) -> Result<PathBuf, ResolveModuleError> {
     Ok(lexical_normalize(&absolute))
 }
 
+fn infer_embedding_root(start: &Path) -> &Path {
+    if start.file_name().is_some_and(|name| name == "bin")
+        && start
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "src")
+    {
+        return start.parent().and_then(Path::parent).unwrap_or(start);
+    }
+    if start.file_name().is_some_and(|name| name == "tests") {
+        return start.parent().unwrap_or(start);
+    }
+    start
+}
+
 fn resolve_physical(path: &Path) -> Result<PathBuf, ResolveModuleError> {
     let absolute = absolute_normalized(path)?;
     let resolved = match std::fs::canonicalize(&absolute) {
@@ -757,6 +940,55 @@ fn resolve_physical(path: &Path) -> Result<PathBuf, ResolveModuleError> {
         return Err(ResolveModuleError::NonUtf8Path);
     }
     Ok(resolved)
+}
+
+fn module_id_for_physical_root(
+    root: &Path,
+    workspace_root: &Path,
+    source_root: &Path,
+    crate_mode: bool,
+) -> Result<(ModuleId, bool), ResolveModuleError> {
+    if !crate_mode {
+        let name = root
+            .file_name()
+            .ok_or_else(|| ResolveModuleError::InvalidImport(root.display().to_string()))?;
+        return Ok((ModuleId::Standalone(PathBuf::from(name)), true));
+    }
+    let tests_root = resolve_physical(&workspace_root.join("tests"))?;
+    let binary_root = resolve_physical(&source_root.join("bin"))?;
+    if let Ok(path) = root.strip_prefix(&binary_root) {
+        return Ok((ModuleId::Binary(validate_root_relative(path, root)?), true));
+    }
+    if let Ok(path) = root.strip_prefix(&tests_root) {
+        return Ok((ModuleId::Test(validate_root_relative(path, root)?), true));
+    }
+    if let Ok(path) = root.strip_prefix(source_root) {
+        let path = validate_root_relative(path, root)?;
+        if path
+            .components()
+            .next()
+            .is_some_and(|part| part.as_os_str() == "bin")
+        {
+            return Err(ResolveModuleError::InvalidImport(
+                root.display().to_string(),
+            ));
+        }
+        return Ok((ModuleId::Source(path), false));
+    }
+    let name = root
+        .file_name()
+        .ok_or_else(|| ResolveModuleError::InvalidImport(root.display().to_string()))?;
+    Ok((ModuleId::Standalone(PathBuf::from(name)), true))
+}
+
+fn validate_root_relative(path: &Path, original: &Path) -> Result<PathBuf, ResolveModuleError> {
+    if path.as_os_str().is_empty() || path.is_absolute() {
+        return Err(ResolveModuleError::InvalidImport(
+            original.display().to_string(),
+        ));
+    }
+    lexical_normalize_relative(path)
+        .ok_or_else(|| ResolveModuleError::CrateEscape(original.display().to_string()))
 }
 
 fn is_private_file_name(path: &Path) -> bool {
@@ -947,7 +1179,7 @@ mod tests {
             .resolve_import(&root.id, "dep/public.telora")
             .unwrap();
         assert!(matches!(
-            resolver.resolve_import(&dependency_module.id, "@main"),
+            resolver.resolve_import(&dependency_module.id, "@unknown"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
         let internal = resolver
@@ -963,15 +1195,15 @@ mod tests {
     }
 
     #[test]
-    fn crate_layout_resolves_main_source_and_contextual_source_roots() {
+    fn crate_layout_resolves_binary_source_and_contextual_source_roots() {
         let temporary =
             std::env::temp_dir().join(format!("telora-crate-layout-test-{}", std::process::id()));
         let app = temporary.join("app");
         let dependency = temporary.join("dependency");
         std::fs::create_dir_all(app.join("src/model")).unwrap();
-        std::fs::create_dir_all(app.join("bin-src")).unwrap();
+        std::fs::create_dir_all(app.join("src/bin")).unwrap();
         std::fs::create_dir_all(dependency.join("src/model")).unwrap();
-        let main = app.join("bin-src/tool.telora");
+        let main = app.join("src/bin/tool.telora");
         std::fs::write(&main, "0").unwrap();
         std::fs::write(app.join("src/model/a.telora"), "0").unwrap();
         std::fs::write(dependency.join("src/model/a.telora"), "0").unwrap();
@@ -986,8 +1218,8 @@ mod tests {
             .unwrap()
             .with_entry_context(entry.clone(), ["entry/opts.priv.telora".to_owned()]);
         let root = resolver.resolve_root(&main).unwrap();
-        assert_eq!(root.id, ModuleId::Main);
-        assert_eq!(root.to_string(), "@main");
+        assert_eq!(root.id, ModuleId::Binary(PathBuf::from("tool.telora")));
+        assert_eq!(root.to_string(), "@bin/tool.telora");
 
         let local = resolver
             .resolve_import(&root.id, "@src/model/a.telora")
@@ -996,7 +1228,7 @@ mod tests {
         assert!(matches!(
             resolver.resolve_import(&root.id, "./model/a.telora"),
             Err(ResolveModuleError::InvalidImport(message))
-                if message.contains("bin-src entries must import crate sources with @src/...")
+                if message.contains("binary and test roots must import crate sources with @src/...")
         ));
 
         let dependency = resolver
@@ -1011,13 +1243,16 @@ mod tests {
             dependency.id
         );
         assert!(matches!(
-            resolver.resolve_import(&local.id, "@main"),
+            resolver.resolve_import(&local.id, "@bin/tool.telora"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
         assert_eq!(entry.to_string(), "entry/exec.telora");
         assert_eq!(
-            resolver.resolve_import(&entry, "@main").unwrap().id,
-            ModuleId::Main
+            resolver
+                .resolve_import(&entry, "@bin/tool.telora")
+                .unwrap()
+                .id,
+            ModuleId::Binary(PathBuf::from("tool.telora"))
         );
         assert_eq!(
             resolver
@@ -1027,71 +1262,52 @@ mod tests {
             ModuleId::builtin("entry/opts.priv.telora")
         );
         assert!(matches!(
-            resolver.resolve_import(&ModuleId::Main, "entry/opts.priv.telora"),
+            resolver.resolve_import(&root.id, "entry/opts.priv.telora"),
             Err(ResolveModuleError::PrivateModuleAccess(_))
         ));
         assert!(matches!(
-            resolver.resolve_import(&ModuleId::Main, "@entry"),
+            resolver.resolve_import(&root.id, "@entry"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
         assert!(matches!(
-            resolver.resolve_import(&ModuleId::Main, "entry/exec.telora"),
+            resolver.resolve_import(&root.id, "entry/exec.telora"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
         std::fs::remove_dir_all(temporary).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
-    fn embedded_crate_options_mark_the_root_and_supply_dependencies() {
+    fn logical_roots_reject_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+
         let temporary = std::env::temp_dir().join(format!(
-            "telora-embedded-manifest-test-{}",
+            "telora-logical-root-symlink-test-{}",
             std::process::id()
         ));
         let app = temporary.join("app");
-        let dependency = temporary.join("dependency");
-        std::fs::create_dir_all(app.join("src")).unwrap();
-        std::fs::create_dir_all(app.join("bin-src")).unwrap();
-        std::fs::create_dir_all(dependency.join("src")).unwrap();
-        let main = app.join("bin-src/tool.telora");
-        std::fs::write(
-            &main,
-            r#"option "crate.dependency" {name: "dep", source: 'Path({path: "../dependency"})};
-import "dep/value.telora" as value;
-export { value };
-option "crate.format" {module: "dep/raw.data", format: "json"};"#,
+        std::fs::create_dir_all(app.join("src/bin")).unwrap();
+        std::fs::create_dir_all(app.join("tests")).unwrap();
+        std::fs::write(app.join("telora-deps.json"), "{}").unwrap();
+        std::fs::write(temporary.join("outside.telora"), "export let output = 1;").unwrap();
+        symlink(
+            temporary.join("outside.telora"),
+            app.join("src/bin/escape.telora"),
         )
         .unwrap();
-        std::fs::write(
-            dependency.join("src/value.telora"),
-            "export let value = 42;",
+        symlink(
+            temporary.join("outside.telora"),
+            app.join("tests/escape.telora"),
         )
         .unwrap();
-        std::fs::write(dependency.join("src/raw.data"), "{\"value\":42}").unwrap();
 
-        let resolver = ModuleResolver::for_root(&main).unwrap();
-        assert_eq!(resolver.workspace_root(), app);
-        let root = resolver.resolve_root(&main).unwrap();
-        assert_eq!(
-            resolver
-                .resolve_import(&root.id, "dep/value.telora")
-                .unwrap()
-                .id
-                .to_string(),
-            "dep/value.telora"
-        );
-        assert_eq!(
-            resolver
-                .resolve_import(&root.id, "dep/raw.data")
-                .unwrap()
-                .format,
-            ModuleFormat::Json
-        );
-
-        std::fs::write(app.join("telora-deps.json"), r#"{"dependencies":{}}"#).unwrap();
         assert!(matches!(
-            ModuleResolver::for_root(&main),
-            Err(ResolveModuleError::Manifest(message))
-                if message.contains("both telora-deps.json and embedded crate options")
+            ModuleResolver::from_cwd(&app, "@bin/escape.telora"),
+            Err(ResolveModuleError::CrateEscape(_))
+        ));
+        assert!(matches!(
+            ModuleResolver::from_cwd(&app, "@test/escape.telora"),
+            Err(ResolveModuleError::CrateEscape(_))
         ));
         std::fs::remove_dir_all(temporary).unwrap();
     }

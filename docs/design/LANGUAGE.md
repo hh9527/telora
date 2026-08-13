@@ -571,14 +571,18 @@ TypeScheme、concrete/recursive TypeMetadata graph、type-family template、opaq
 identity 和 provenance；不包装、重求值或重建 binding。Namespace binding 的导出仍是
 语义 Module，必须保留其 nested Module interface，不能退化为普通 Dict。
 
-Host 选择的根入口位于 crate 的 `bin-src/` 下时，它不属于 `src/` 模块层级，不能
-使用 `./` 或 `../` 导入 crate source；crate source 必须写成 `@src/<path>`，并从
-当前 crate 的 `src/` 根解析：
+Telora crate 使用 `src/`、`src/bin/` 和 `tests/`。Host 从当前工作目录向上查找最近的
+`telora-deps.json`，再通过稳定逻辑 ID 选择根：普通 source 是 `@src/<path>`，应用
+入口是 `@bin/<path>`，测试入口是 `@test/<path>`。例如：
 
 ```telora
-# bin-src/report.telora
+# src/bin/report.telora，逻辑 ID 为 @bin/report.telora
 import "@src/model/report.telora" { compile };
 ```
+
+`@bin` 和 `@test` 只能由 Host 选择，任何 Telora import 都不能引用它们。Binary 和
+test 根也不能使用 `./` 或 `../`；它们必须以 `@src/` 导入本 crate 的可复用源码。
+依赖仅公开其 `src/`，不公开 `src/bin/` 或 `tests/`。不存在 `@main` 身份。
 
 `@src/` 以 importing module 所属 crate 为准，因此依赖模块中的 `@src/` 仍指向该依赖
 自己的 source root。`./` 和 `../` 只表示 source module 或 dependency module 内部、
@@ -607,7 +611,7 @@ export record 定义，Host adapter 再从该 record 选择协议规定的 entry
 Path crate 的依赖由根目录 `telora-deps.json` 固定。依赖名是 package import 的首段。
 当前没有通用 registry 获取、版本求解或运行时 package acquisition。
 
-根模块可以使用静态 `option` 声明 Host/resolver 配置。Option 必须位于 import 解析
+Resolver 配置只来自 `telora-deps.json`。静态 `option` 可声明模块或 Host 协议配置，必须位于 import 解析
 之前的有效位置，嵌套依赖不能借此修改根 Host 的策略。
 
 普通 `.telora` 模块可以公开导入；`.priv.telora` 受 crate 可见性限制；
@@ -791,13 +795,24 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module>
-telora run <module> [--input <json|->]
-telora types <module>
-telora show <module> [at <source> <line> <column>]
+telora run <binary-name> [-C <context>] [--input <json|->]
+telora run -S <file> [--input <json|->]
+telora show <module> [-p <substring>] [-k type,let,def,import] [--exports]
+telora show <module> --at <line>[:<column>]
 telora exec --dry-run <module> [-- <arguments>...]
 telora build --dry-run <module>
 telora lsp
 ```
+
+`run abc` 从 CWD 向上发现最近的 manifest，并固定选择 `@bin/abc.telora`；`-C` 改变
+manifest discovery 的起点。`run -S file` 是独立 standalone 模式：不查找 manifest，
+只使用该文件内的 `crate.dependency` / `crate.format` options，且 option 相对文件所在
+目录解析。`-S` 与 binary name、`-C` 互斥。
+
+其他命令的 `<module>` 是 `@src/...`、`@bin/...`、`@test/...` 或依赖模块 ID，不是物理
+文件名。`show` 以稳定 JSONL 输出语义事实；默认查询选中模块的顶层 local definitions，
+`--exports` 查询公共接口，`--at` 查询与位置相交的事实。每条记录显式区分
+`authoritative`、`recovery` 或 `debug` 权威层级。空匹配成功且不输出记录。
 
 `run` 从显式 export record 选择 `output`。外部 JSON 输入以显式 `input` binding 进入。
 `exec` 和 `build` 是具体协议，不是通用 action ABI：前者通过受信 entry module 调用

@@ -1,0 +1,9 @@
+#!/usr/bin/env -S telora exec --dry-run @bin/g++.telora --
+
+option "exec.capture-envs" ["TARGET"];
+
+import "std/rt-types/exec.telora" { ExecFn };
+import "gcc-toolchain-define/source.json" as source;
+import "gcc-wrapper/toolchain.telora" { command };
+
+export def exec: ExecFn = command("g++", source);

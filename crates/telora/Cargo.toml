@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-lsp = { version = "0.2.4", default-features = false, features = ["stdio", "tokio"] }
+clap = { version = "4", features = ["derive"] }
 telora-core = { path = "../telora-core" }
 futures = "0.3"
 serde = "1"

@@ -114,10 +114,12 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     for item in validation:
         if not isinstance(item, dict):
             raise ControlError("validation entry must be an object")
-        _keys(item, {"name", "command", "required"}, "validation")
+        _keys(item, {"name", "command", "cwd", "required"}, "validation")
         validate_identifier(str(item.get("name", "")), "validation name")
         if not _string_array(item.get("command"), "validation command"):
             raise ControlError("validation command must be nonempty")
+        if "cwd" in item:
+            safe_relative(str(item["cwd"]), "validation cwd")
         if not isinstance(item.get("required", True), bool):
             raise ControlError("validation.required must be boolean")
     for item in artifacts:

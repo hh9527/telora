@@ -293,7 +293,6 @@ impl PendingModule {
             || id.starts_with("entry/")
             || id.ends_with(".priv.telora")
             || id.ends_with(".native.telora")
-            || id == "@main"
         {
             return Err(ModuleError::new(format!(
                 "invalid injected module ID {id:?}"
@@ -1117,6 +1116,45 @@ impl Engine {
         )
     }
 
+    pub fn load_module_id(
+        &self,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+        external_bindings: BTreeMap<String, Value>,
+    ) -> Result<LoadedModule, ModuleError> {
+        let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .with_builtins(builtin_list(&self.native_modules));
+        load_module_with_resolver(
+            resolver,
+            external_bindings,
+            BTreeMap::new(),
+            self.config.module_quota,
+            Arc::clone(&self.debug_sink),
+            &self.native_modules,
+            ModuleSourcePolicy::ExplicitExports,
+        )
+    }
+
+    pub fn load_standalone(
+        &self,
+        path: impl AsRef<Path>,
+        external_bindings: BTreeMap<String, Value>,
+    ) -> Result<LoadedModule, ModuleError> {
+        let resolver = ModuleResolver::standalone(path.as_ref())
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .with_builtins(builtin_list(&self.native_modules));
+        load_module_with_resolver(
+            resolver,
+            external_bindings,
+            BTreeMap::new(),
+            self.config.module_quota,
+            Arc::clone(&self.debug_sink),
+            &self.native_modules,
+            ModuleSourcePolicy::ExplicitExports,
+        )
+    }
+
     pub fn prepare_module(&self, path: impl AsRef<Path>) -> Result<PendingModule, ModuleError> {
         self.prepare_module_with_arguments(path, Vec::new())
     }
@@ -1128,8 +1166,27 @@ impl Engine {
     ) -> Result<PendingModule, ModuleError> {
         let resolver = ModuleResolver::for_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?;
+        self.prepare_resolved_module(resolver, arguments)
+    }
+
+    pub fn prepare_module_id_with_arguments(
+        &self,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+        arguments: Vec<String>,
+    ) -> Result<PendingModule, ModuleError> {
+        let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        self.prepare_resolved_module(resolver, arguments)
+    }
+
+    fn prepare_resolved_module(
+        &self,
+        resolver: ModuleResolver,
+        arguments: Vec<String>,
+    ) -> Result<PendingModule, ModuleError> {
         let root = resolver
-            .resolve_root(path.as_ref())
+            .selected_root()
             .map_err(|error| ModuleError::new(error.to_string()))?;
         if root.format != ModuleFormat::Telora {
             return Err(ModuleError::new(
@@ -1204,6 +1261,26 @@ impl Engine {
         self.load_entry_with_modules(main_path, entry_module, external_bindings, BTreeMap::new())
     }
 
+    pub fn load_entry_id(
+        &self,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+        entry_module: &str,
+        external_bindings: BTreeMap<String, Value>,
+    ) -> Result<LoadedModule, ModuleError> {
+        let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        load_entry_with_resolver(
+            resolver,
+            entry_module,
+            external_bindings,
+            BTreeMap::new(),
+            self.config.module_quota,
+            Arc::clone(&self.debug_sink),
+            &self.native_modules,
+        )
+    }
+
     pub fn load_entry_with_modules(
         &self,
         main_path: impl AsRef<Path>,
@@ -1264,6 +1341,71 @@ impl Engine {
                     if error.failure_class() == crate::evaluation::FailureClass::Recoverable => {}
                 Err(_) => return Ok(module.workspace),
             }
+        }
+        let mut main = MainWorld::building();
+        let mut sources = SourceDatabase::default();
+        let core_modules = install_native_modules(
+            &mut main,
+            &mut sources,
+            &self.debug_sink,
+            &self.native_modules,
+        )?
+        .into_iter()
+        .map(|(name, (value, root, interface))| (name.to_owned(), (value, root, interface)))
+        .collect();
+        let mut builder = RecoverableWorkspaceBuilder {
+            engine: self,
+            resolver,
+            overlays: &BTreeMap::new(),
+            query: None,
+            sources,
+            main,
+            core_modules,
+            inputs: BTreeMap::new(),
+            values: HashMap::new(),
+            sourced_values: HashMap::new(),
+            roots: HashMap::new(),
+            interfaces: HashMap::new(),
+            visiting: Vec::new(),
+            cycle_members: HashSet::new(),
+            cycle_reported: false,
+        };
+        block_on_recovery(builder.load_telora(root_module));
+        Ok(WorkspaceSnapshot::build(
+            builder.sources,
+            builder.inputs.into_values().collect(),
+        ))
+    }
+
+    pub fn recover_workspace_id(
+        &self,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
+        let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .with_builtins(builtin_list(&self.native_modules));
+        self.recover_with_resolver(resolver)
+    }
+
+    fn recover_with_resolver(
+        &self,
+        resolver: ModuleResolver,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
+        let root_module = resolver
+            .selected_root()
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        if let Ok(module) = load_module_with_resolver(
+            resolver.clone(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            self.config.module_quota,
+            Arc::clone(&self.debug_sink),
+            &self.native_modules,
+            ModuleSourcePolicy::ExplicitExports,
+        ) {
+            let _ = self.execute(&module);
+            return Ok(module.workspace);
         }
         let mut main = MainWorld::building();
         let mut sources = SourceDatabase::default();
@@ -1432,7 +1574,7 @@ impl RecoverableWorkspaceBuilder<'_> {
             let invalid_scoped_options = parsed
                 .options
                 .iter()
-                .filter(|_| module_id != ModuleId::Main)
+                .filter(|_| !self.resolver.is_root(&module_id))
                 .cloned()
                 .collect::<Vec<_>>();
             let program = parsed.program.clone();
@@ -1470,7 +1612,10 @@ impl RecoverableWorkspaceBuilder<'_> {
             let mut diagnostics = Vec::new();
             for option in &invalid_scoped_options {
                 diagnostics.push(Diagnostic::error(
-                    format!("option {:?} is only allowed in @main", option.key.value),
+                    format!(
+                        "option {:?} is only allowed in the selected root",
+                        option.key.value
+                    ),
                     option.location,
                 ));
             }
@@ -2198,8 +2343,28 @@ fn load_module_with_native_modules(
         .map_err(|error| ModuleError::new(error.to_string()))?
         .with_builtins(builtin_list(native_modules))
         .with_virtual_modules(injected_modules.keys().cloned());
+    load_module_with_resolver(
+        resolver,
+        external_bindings,
+        injected_modules,
+        module_quota,
+        debug_sink,
+        native_modules,
+        source_policy,
+    )
+}
+
+fn load_module_with_resolver(
+    resolver: ModuleResolver,
+    external_bindings: BTreeMap<String, Value>,
+    injected_modules: BTreeMap<String, InjectedValueModule>,
+    module_quota: Quota,
+    debug_sink: Arc<dyn DebugSink>,
+    native_modules: &[RegisteredNativeModule],
+    source_policy: ModuleSourcePolicy,
+) -> Result<LoadedModule, ModuleError> {
     let root_module = resolver
-        .resolve_root(path.as_ref())
+        .selected_root()
         .map_err(|error| ModuleError::new(error.to_string()))?;
     if root_module.format != ModuleFormat::Telora {
         return Err(ModuleError::new(
@@ -2236,21 +2401,46 @@ fn load_entry_with_native_modules(
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
 ) -> Result<LoadedModule, ModuleError> {
+    let resolver = ModuleResolver::for_root(main_path.as_ref())
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+    load_entry_with_resolver(
+        resolver,
+        entry_module,
+        external_bindings,
+        injected_modules,
+        module_quota,
+        debug_sink,
+        native_modules,
+    )
+}
+
+fn load_entry_with_resolver(
+    resolver: ModuleResolver,
+    entry_module: &str,
+    external_bindings: BTreeMap<String, Value>,
+    injected_modules: BTreeMap<String, String>,
+    module_quota: Quota,
+    debug_sink: Arc<dyn DebugSink>,
+    native_modules: &[RegisteredNativeModule],
+) -> Result<LoadedModule, ModuleError> {
     let source = entry_source(entry_module)
         .ok_or_else(|| ModuleError::new(format!("unknown Host entry module {entry_module:?}")))?;
     let entry_id = ModuleId::builtin(entry_module);
-    let resolver = ModuleResolver::for_root(main_path.as_ref())
-        .map_err(|error| ModuleError::new(error.to_string()))?
+    let resolver = resolver
         .with_builtins(builtin_list(native_modules))
         .with_entry_context(entry_id.clone(), injected_modules.keys().cloned());
     let main_module = resolver
-        .resolve_root(main_path.as_ref())
+        .selected_root()
         .map_err(|error| ModuleError::new(error.to_string()))?;
     if main_module.format != ModuleFormat::Telora {
         return Err(ModuleError::new(
             "main module must have a .telora extension",
         ));
     }
+    let main_path = main_module
+        .path()
+        .ok_or_else(|| ModuleError::new("main module has no physical path"))?
+        .to_owned();
     let mut main = MainWorld::building();
     let mut sources = SourceDatabase::default();
     let core_modules =
@@ -2268,13 +2458,8 @@ fn load_entry_with_native_modules(
         semantic_inputs: BTreeMap::new(),
         source_policy: ModuleSourcePolicy::ExplicitExports,
     };
-    loader.install_injected_modules(main_path.as_ref(), injected_modules)?;
-    loader.load_entry(
-        main_path.as_ref().to_owned(),
-        entry_id,
-        source,
-        external_bindings,
-    )
+    loader.install_injected_modules(&main_path, injected_modules)?;
+    loader.load_entry(main_path, entry_id, source, external_bindings)
 }
 
 struct ModuleLoader {
@@ -2618,9 +2803,29 @@ impl ModuleLoader {
         };
         let source_id = self.sources.add(source_name.clone(), source);
         let parsed = parse_registered(&self.sources, source_id);
-        if let Some(option) = parsed.options.iter().find(|_| *module_id != ModuleId::Main) {
+        if let Some(option) = parsed
+            .options
+            .iter()
+            .find(|option| option.key.value.starts_with("crate.") && !self.resolver.is_standalone())
+        {
             return Err(ModuleError::new(self.sources.render(&Diagnostic::error(
-                format!("option {:?} is only allowed in @main", option.key.value),
+                format!(
+                    "resolver option {:?} is only allowed in standalone mode",
+                    option.key.value
+                ),
+                option.location,
+            ))));
+        }
+        if let Some(option) = parsed
+            .options
+            .iter()
+            .find(|_| !self.resolver.is_root(module_id))
+        {
+            return Err(ModuleError::new(self.sources.render(&Diagnostic::error(
+                format!(
+                    "option {:?} is only allowed in the selected root",
+                    option.key.value
+                ),
                 option.location,
             ))));
         }
@@ -9188,16 +9393,19 @@ unchanged", "|"),
         loader.load_value(&a).unwrap();
         let counts_after_a = loader.main.heap.counts();
         loader.load_value(&b).unwrap();
-        let root = |path: &Path| match loader
-            .cache
-            .get(&loader.resolver.resolve_root(path).unwrap().id)
+        let a_id = loader.resolver.resolve_root(&a).unwrap().id;
+        let b_id = loader.resolver.resolve_root(&b).unwrap().id;
+        let c_id = loader
+            .resolver
+            .resolve_import(&a_id, "./c.telora")
             .unwrap()
-        {
+            .id;
+        let root = |id: &ModuleId| match loader.cache.get(id).unwrap() {
             ModuleState::Ready { root, .. } => *root,
         };
 
-        assert_eq!(root(&a), root(&c));
-        assert_eq!(root(&b), root(&c));
+        assert_eq!(root(&a_id), root(&c_id));
+        assert_eq!(root(&b_id), root(&c_id));
         assert_eq!(counts_after_a, loader.main.heap.counts());
         fs::remove_dir_all(directory).unwrap();
     }
@@ -10056,96 +10264,6 @@ unchanged", "|"),
             .collect::<HashSet<_>>();
         assert!(names.contains("models/user.telora"));
         assert!(names.contains("models/base.telora"));
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn embedded_crate_options_resolve_before_imports_and_are_root_only() {
-        let directory = fixture_dir();
-        let app = directory.join("app");
-        let dependency = directory.join("dependency");
-        fs::create_dir_all(app.join("bin-src")).unwrap();
-        fs::create_dir_all(app.join("src")).unwrap();
-        fs::create_dir_all(dependency.join("src")).unwrap();
-        let main = app.join("bin-src/tool.telora");
-        fs::write(
-            &main,
-            r#"option "crate.dependency" {name: "dep", source: 'Path({path: "../dependency"})};
-               option "exec.capture-envs" ["TARGET"];
-               import "dep/answer.telora" as answer;
-               option "module.documentation" {category: "tooling"};
-               export let output = answer.answer;
-               option "module.documentation" {stability: "experimental"};"#,
-        )
-        .unwrap();
-        fs::write(
-            dependency.join("src/answer.telora"),
-            "export let answer = 42;",
-        )
-        .unwrap();
-
-        let engine = recovery_engine();
-        let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
-        assert_eq!(
-            named_output(engine.execute(&loaded).unwrap()).to_string(),
-            "42"
-        );
-        let main_module = loaded
-            .workspace
-            .modules()
-            .iter()
-            .find(|module| module.name == "@main")
-            .unwrap();
-        assert_eq!(
-            main_module
-                .options
-                .iter()
-                .map(|option| option.key.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "crate.dependency",
-                "exec.capture-envs",
-                "module.documentation",
-                "module.documentation"
-            ]
-        );
-        assert_eq!(
-            loaded
-                .options("exec.capture-envs")
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
-            vec!["[\"TARGET\"]"]
-        );
-
-        fs::write(
-            app.join("src/helper.telora"),
-            "option \"crate.dependency\" {name: \"nested\", source: 'Path({path: \".\"})}; export let value = 1;",
-        )
-        .unwrap();
-        fs::write(
-            &main,
-            "import \"@src/helper.telora\" as helper; export { helper as output };",
-        )
-        .unwrap();
-        let error = engine.load_module(&main, BTreeMap::new()).unwrap_err();
-        assert!(error.message().contains("only allowed in @main"));
-
-        fs::write(
-            app.join("src/helper.telora"),
-            "option \"exec.capture-envs\" [\"TARGET\"]; export let value = 1;",
-        )
-        .unwrap();
-        let error = engine.load_module(&main, BTreeMap::new()).unwrap_err();
-        assert!(error.message().contains("only allowed in @main"));
-
-        fs::write(
-            app.join("src/helper.telora"),
-            "option \"module.documentation\" {category: \"tooling\"}; export let value = 1;",
-        )
-        .unwrap();
-        let error = engine.load_module(&main, BTreeMap::new()).unwrap_err();
-        assert!(error.message().contains("helper.telora:1:1"), "{error}");
-        assert!(error.message().contains("only allowed in @main"));
         fs::remove_dir_all(directory).unwrap();
     }
 

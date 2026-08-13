@@ -1,6 +1,6 @@
 # RFC 0227: Clap-based semantic `show` queries
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0039, RFC 0040, RFC 0042, RFC 0044, RFC 0059, RFC 0142, RFC 0228
 - Tracking issue: #47
 
@@ -29,7 +29,6 @@ resolver:
 @bin/main.telora
 @test/model.telora
 ontology/lib.telora
-std/array
 ```
 
 Named queries inspect top-level local definitions by default. `-p` performs a
@@ -96,7 +95,8 @@ The `telora` binary adopts `clap` derive declarations for the complete command
 tree. All existing commands move to that model in the same implementation:
 
 ```text
-telora run <module.telora> [--input <file|->]
+telora run <binary-name> [-C <context>] [--input <file|->]
+telora run -S <file> [--input <file|->]
 telora exec --dry-run <module.telora> [-- <arguments>...]
 telora build --dry-run <module.telora>
 telora check <module-id>
@@ -154,8 +154,7 @@ The accepted identity forms are exactly those published by the resolver:
 - `@bin/<relative-path>` for a Host-selectable application root;
 - `@test/<relative-path>` for a Host-selectable test root;
 - `<dependency>/<relative-path>` for a declared dependency source; and
-- canonical runtime/package module names such as `std/array` when represented
-  in the workspace snapshot.
+- declared dependency source modules.
 
 Physical paths, absolute paths, `file:` URIs, lexical `.`/`..`, and ad hoc
 identity aliases are rejected. Module selection must use structured resolver
@@ -455,8 +454,8 @@ not describe physical source paths as query identities.
     modules, and UTF-8 positions have focused CLI regressions.
 11. `types` and the old physical-path `show ... at ...` interface are absent
     from help and maintained documentation.
-12. `run`, `exec`, `build`, `check`, and `lsp` retain their pre-RFC behavior,
-    and `check <bin-file>` remains the explicit strict validity gate.
+12. `run`, `exec`, `build`, `check`, and `lsp` retain their Host protocols while
+    adopting RFC 0228 root selection; `check <module-id>` is the strict gate.
 13. Formatting, warning-denied Clippy, CLI tests, core tests, and the complete
     workspace suite pass.
 
@@ -513,3 +512,10 @@ The new grammar has required options, conflicts, delimited values, structured
 parsers, repeat handling, generated help, and order-independent flags. A local
 parser would add project-specific mechanics without strengthening Telora's
 language or semantic model.
+
+## Implementation result
+
+Implemented with one `clap` command tree, removal of `types`, literal name and
+kind filters, export-domain queries, one-based position queries, and stable
+`telora.show/v1` JSONL records. Definition facts preserve schemes and recovery
+authority; nested expression observations are explicitly `debug` records.

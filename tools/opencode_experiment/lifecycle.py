@@ -239,8 +239,9 @@ def run_validation(context: Context) -> list[dict[str, Any]]:
     directory = context.root / "result" / "validation"; directory.mkdir(parents=True, exist_ok=True)
     results = []
     for item in context.manifest.validation:
-        started = now(); command = resolve_command(item["command"], Path(context.state["workspace"])); result = subprocess.run(command, cwd=context.state["workspace"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        record = {"name": item["name"], "command": item["command"], "started_at": started, "finished_at": now(), "exit": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+        workspace = Path(context.state["workspace"]); cwd = workspace / item.get("cwd", "")
+        started = now(); command = resolve_command(item["command"], workspace); result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        record = {"name": item["name"], "command": item["command"], "cwd": item.get("cwd", ""), "started_at": started, "finished_at": now(), "exit": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
         atomic_json(directory / f"{item['name']}.json", record); results.append(record)
     return results
 

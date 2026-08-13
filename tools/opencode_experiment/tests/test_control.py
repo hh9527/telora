@@ -111,14 +111,15 @@ class ConfigStateTest(unittest.TestCase):
         coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
         design = (plan / "ontology" / "DESIGN.md").read_text(encoding="utf-8")
         self.assertIn("## Telora 自学与探索", a2)
-        self.assertIn("./bin/telora run ontology/bin-src/*.telora", a2)
+        self.assertIn("@bin/*.telora", a2)
         self.assertIn("## Telora 自学与探索", a3)
-        self.assertIn("./bin/telora run ent-1/bin-src/*.telora", a3)
+        self.assertIn("@bin/*.telora", a3)
         self.assertIn("Model := ModellingFactory(DomainKnowledge)", design)
         self.assertIn("SqlQuery := transform(Plan)", design)
         self.assertIn("bindings: Array(Val)", design)
-        self.assertIn("必须重新读取", coordinator)
-        self.assertIn("不能只依据上一次", coordinator)
+        self.assertIn("完整内容", coordinator)
+        self.assertIn("当前反馈完整内容", coordinator)
+        self.assertEqual([item["cwd"] for item in manifest.validation], ["ontology", "ontology", "ent-1", "ent-1"])
 
     def test_manifest_validates_opencode_environment(self):
         with tempfile.TemporaryDirectory() as temporary:

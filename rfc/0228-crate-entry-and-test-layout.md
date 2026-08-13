@@ -1,6 +1,6 @@
 # RFC 0228: Stable crate module roots
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0059, RFC 0142
 - Tracking issue: #54
 
@@ -35,8 +35,9 @@ requests. Dependency imports expose only the dependency's reusable `src/`
 modules and exclude its `src/bin/` subtree and `tests/` tree.
 
 Crate-oriented CLI commands discover context from the current working
-directory by walking upward to the nearest `telora-deps.json`. They accept a
-logical root module ID rather than a physical root filename. Selecting
+directory, or an explicit context directory, by walking upward to the nearest
+`telora-deps.json`. Semantic commands accept a logical root module ID rather
+than a physical root filename. Selecting
 `@src/lib.telora`, `@bin/main.telora`, or `@test/codec.telora` analyzes that
 exact stable module as the graph root; no `@main` alias is created.
 
@@ -87,9 +88,16 @@ The manifest determines dependency aliases, exact path dependency roots, and
 format overrides. The working source root is `<crate>/src`; binary roots are
 under `<crate>/src/bin`; test roots are under `<crate>/tests`.
 
-Low-level embedding APIs may continue to construct an explicit resolver from
-a physical document, but public crate-oriented CLI semantics do not use that
-path to reinterpret logical IDs.
+`telora run <name>` is the application convenience surface: it selects
+`@bin/<name>.telora`. `telora run <name> -C <context>` starts manifest discovery
+at `<context>` instead of process CWD. A name is one path-free stem; callers do
+not include `@bin/` or `.telora`.
+
+`telora run -S <file>` is an explicit standalone mode. It does not discover or
+read a manifest, even when one is present in an ancestor. The standalone file
+parent is the base for its embedded `crate.dependency` and `crate.format`
+options. `-S` conflicts with the binary name and `-C`. This is a distinct
+resolver mode, not a physical-path alias for crate-oriented commands.
 
 ## Stable root identities
 
@@ -122,8 +130,8 @@ Mappings are:
 `@src/bin/...` is always invalid. The exclusion is a path-component rule, so
 `@src/binning.telora` and `@src/binary/model.telora` remain valid.
 
-Root selection may use `@src`, `@bin`, `@test`, a declared dependency module,
-or a built-in module when the Host operation supports that module format.
+Root selection may use `@src`, `@bin`, `@test`, or a declared dependency
+module. Built-ins remain import-only in this CLI revision.
 Typical executable operations select `@bin` or `@test`; semantic inspection
 may select any resolved module category.
 
@@ -190,8 +198,9 @@ different consuming resolver snapshots, as established by RFC 0059.
 ## Manifest and entry options
 
 `telora-deps.json` is mandatory for public logical-root CLI commands, so crate
-configuration has one discovery mechanism. Embedded `crate.*` options on a
-synthetic `@main` root are removed with `@main`.
+configuration has one discovery mechanism. Embedded `crate.*` options do not
+configure manifest-discovered crates. They configure only the explicit
+`run -S` standalone resolver.
 
 If publishable embedded manifest metadata remains required by packaging, it
 must be handled as packaging data and must not participate in CWD crate
@@ -201,16 +210,17 @@ embedded crate options.
 
 ## CLI surface
 
-Crate-oriented commands accept stable module IDs:
+Application run and semantic commands use distinct selections:
 
 ```text
-telora run @bin/main.telora [--input <file|->]
+telora run main [-C <context>] [--input <file|->]
+telora run -S <file> [--input <file|->]
 telora check @test/codec.telora
 telora show @src/model.telora [-p <substring>] [-k <kinds>] [--exports]
 telora show @src/model.telora --at <line>[:<column>]
 ```
 
-`exec` and `build` likewise select their application root by module ID. LSP
+`exec` and `build` select their application root by module ID. LSP
 workspace initialization uses the client root/CWD to discover the manifest
 and uses logical module identities internally.
 
@@ -225,8 +235,8 @@ atomically:
 
 - `bin-src/*.telora` application/demo entries move to `src/bin/*.telora`;
 - focused validation entries move to `tests/*.telora`;
-- physical root arguments become logical `@bin`, `@test`, or `@src` IDs;
-- `@main`, `bin-src`, embedded-entry resolver alternatives, and old diagnostics
+- crate root arguments become binary names or logical `@bin`, `@test`, or `@src` IDs;
+- `@main`, `bin-src`, implicit embedded-entry resolver alternatives, and old diagnostics
   are removed from code and maintained documentation;
 - examples, test fixtures, scripts, RFC 0227, and current experiment plans are
   updated; and
@@ -265,8 +275,8 @@ intended manifest.
    and symlink containment checks.
 4. Reject `@src/bin`, dependency `bin`, all import requests for `@bin` or
    `@test`, and all relative imports from binary/test roots.
-5. Remove `bin-src` detection, `@main`, physical CLI root selection, and the
-   embedded-entry resolver branch without aliases.
+5. Remove `bin-src` detection, `@main`, and implicit physical CLI root
+   selection; isolate embedded resolver options behind explicit `run -S`.
 6. Migrate maintained crate layouts, examples, CLI/core fixtures, language
    documentation, RFC 0227, and active experiment plans.
 7. Update `docs/design/LANGUAGE.md` after implementation so it remains the
@@ -286,12 +296,12 @@ intended manifest.
    are rejected.
 5. Working and dependency `@src` requests remain contextual and cannot expose
    a consuming crate to a dependency or vice versa.
-6. No `ModuleId::Main`, `@main`, special `bin-src`, or public physical-root CLI
-   path remains.
+6. No `ModuleId::Main`, `@main`, special `bin-src`, or implicit public
+   physical-root CLI path remains; `run -S` is the only standalone path mode.
 7. Each maintained binary and test root has one stable module identity across
    loading, recovery, diagnostics, semantic queries, and execution.
-8. `run`, `check`, `show`, `exec`, `build`, and LSP use the same CWD crate
-   discovery and logical root resolver.
+8. `run`, `check`, `show`, `exec`, `build`, and LSP use the same crate discovery
+   and logical root resolver outside explicit standalone mode.
 9. Maintained examples, fixtures, docs, and ontology experiment plans use the
    new layout and commands; historical archives remain untouched.
 10. Resolver, strict loading, recovery, semantic queries, LSP, execution,
@@ -327,8 +337,17 @@ That couples identity parsing to physical search, makes nested workspaces
 ambiguous, and prevents a command from clearly selecting which dependency map
 it intends. CWD plus nearest-manifest lookup is explicit and deterministic.
 
-### Retain standalone physical-path CLI mode
+### Retain implicit physical-path CLI mode
 
-Two public resolver modes would preserve the identity and configuration
-ambiguity this RFC removes. Minimal reproductions can create a temporary crate
-with a manifest and one `@test` root.
+Treating an arbitrary positional path as either a crate root or standalone
+file would preserve the identity and configuration ambiguity this RFC removes.
+The implemented `run -S <file>` is explicit, conflicts with crate context, and
+never discovers a manifest, so its embedded resolver options cannot alter the
+crate-oriented world.
+
+## Implementation result
+
+Implemented with structured `Source`, `Binary`, `Test`, and `Standalone`
+module IDs; nearest-manifest discovery; `run <name>` and `run <name> -C`; the
+isolated `run -S` resolver; lexical and symlink containment; non-importable
+binary/test roots; and migrated maintained examples and experiment plans.
