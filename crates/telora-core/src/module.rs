@@ -8393,6 +8393,58 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_nested_type_families_preserve_recursive_codec_metadata() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"@struct type IntValue = {value: Int};
+               @struct type StringValue = {value: String};
+               @enum type Val = {Int: IntValue, Str: StringValue};
+               @struct type BinaryNode = {left: Expr, right: Expr};
+               @struct type ColumnRef = {alias: String, column: String};
+               @enum type Expr = {
+                   Value: Val,
+                   Add: BinaryNode,
+                   Column: ColumnRef,
+               };
+               @struct type Mapping = {predicate: Expr};
+               @struct type Relation(M) = {mapping: M};
+               @struct type RelationUse(Entity) = {
+                   entity: Entity,
+                   relation: Relation(Mapping),
+               };
+               export {Expr, Val, Mapping, Relation, RelationUse};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+               @enum type Entity = {Order: 'None};
+               type Use = types.RelationUse(Entity);
+               let relation: Use = {
+                   entity: 'Order,
+                   relation: {mapping: {predicate: 'Add({
+                       left: 'Value('Int({value: 1})),
+                       right: 'Column({alias: "t", column: "id"}),
+                   })}},
+               };
+               codec.encode(Use, relation)
+                   |> result.unwrap
+                   |> json.stringify"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("\\\"left\\\""), "{output}");
+        assert!(output.contains("\\\"column\\\":\\\"id\\\""), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn recursive_type_metadata_keeps_typed_module_import_surfaces() {
         let directory = fixture_dir();
         fs::write(

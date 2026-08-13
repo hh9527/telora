@@ -9,7 +9,7 @@ use crate::lexer::{FrontendError, SourceLocation};
 use crate::lir::{self, ConstantId, Item, LabelId, Operation, RegisterId};
 use crate::parser::parse_registered;
 use crate::source::{Diagnostic, Location, Origin, SourceDatabase, SourceFile, WithOrigin};
-use crate::types::{Analysis, analyze_program_registered};
+use crate::types::{Analysis, TypeDescriptor, analyze_program_registered, contains_named_type};
 use crate::value::{Atom, BuiltinAtom, Value};
 use crate::{RuntimeError, Vm};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -713,7 +713,30 @@ impl<'a> Compiler<'a> {
                                 .get(&name)
                                 .expect("analyzed type family has a callable value")
                                 .clone();
-                            let register = self.load_constant(value, binding.location);
+                            let has_named_metadata = match &value {
+                                Value::Func(closure) => closure
+                                    .upvalues()
+                                    .first()
+                                    .and_then(|metadata| TypeDescriptor::from_value(metadata).ok())
+                                    .is_some_and(|metadata| contains_named_type(&metadata)),
+                                _ => false,
+                            };
+                            let register = if has_named_metadata {
+                                let body = located(
+                                    BlockKind {
+                                        bindings: Vec::new(),
+                                        result: Box::new(binding.value.value.clone()),
+                                    },
+                                    binding.value.value.location,
+                                );
+                                self.compile_closure(
+                                    &binding.value.type_parameters,
+                                    &body,
+                                    binding.location,
+                                )?
+                            } else {
+                                self.load_constant(value, binding.location)
+                            };
                             let (link, _) = type_links[&binding.value.name.value];
                             self.emit(
                                 Operation::InitializeUpLink {
@@ -722,6 +745,7 @@ impl<'a> Compiler<'a> {
                                 },
                                 binding.location,
                             );
+                            self.ready_up_link_bindings.insert(name);
                         } else {
                             self.preserved_up_link_reads = type_links
                                 .keys()
@@ -738,6 +762,7 @@ impl<'a> Compiler<'a> {
                                 },
                                 binding.location,
                             );
+                            self.ready_up_link_bindings.insert(name);
                         }
                     }
                     continue;
@@ -1258,9 +1283,16 @@ impl<'a> Compiler<'a> {
         let captures = free.into_iter().collect::<Vec<_>>();
         let mut capture_registers = Vec::with_capacity(captures.len());
         for name in &captures {
-            let register = self.environment.get(name).copied().ok_or_else(|| {
-                frontend_error(self.source_name, format!("unknown binding {name:?}"))
-            })?;
+            let register = if let Some(register) = self.environment.get(name).copied() {
+                register
+            } else if let Some(value) = self.located_constants.get(name).cloned() {
+                self.load_constant(value, location)
+            } else {
+                return Err(frontend_error(
+                    self.source_name,
+                    format!("unknown binding {name:?}"),
+                ));
+            };
             if self.ready_up_link_bindings.contains(name) {
                 let value = self.allocate();
                 self.emit(

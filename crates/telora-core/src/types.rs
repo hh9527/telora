@@ -8256,7 +8256,7 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
     }
 }
 
-fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
+pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Named(_) => true,
         TypeDescriptor::Array(item)
