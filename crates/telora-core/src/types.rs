@@ -9061,14 +9061,14 @@ fn interpolation_type_supported(descriptor: &TypeDescriptor) -> bool {
         TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Int
+        | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Atom(_) => true,
         TypeDescriptor::Union(variants) => variants.iter().all(interpolation_type_supported),
         TypeDescriptor::Enum(variants) => variants.iter().all(|(name, payload)| {
             interpolation_type_supported(&enum_variant_type(name, payload.as_deref()))
         }),
-        TypeDescriptor::Float
-        | TypeDescriptor::Type
+        TypeDescriptor::Type
         | TypeDescriptor::Dyn
         | TypeDescriptor::TypeOf(_)
         | TypeDescriptor::Bytes

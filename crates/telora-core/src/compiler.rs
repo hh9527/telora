@@ -2637,13 +2637,13 @@ let decorators = {
     }
 
     #[test]
-    fn interpolates_strings_ints_and_atoms() {
+    fn interpolates_strings_numbers_and_atoms() {
         let value = run(
-            r#"let name = "Ada"; let count = 3; let state = 'Ok; `hi, \{name} count=\{count} state=\{state}`"#,
+            r#"let name = "Ada"; let count = 3; let ratio = 3.0; let small = 1.25e-3; let zero = -0.0; let state = 'Ok; `hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`"#,
         )
         .unwrap();
         assert!(
-            matches!(&value, Value::String(text) if text.as_ref() == "hi, Ada count=3 state=Ok")
+            matches!(&value, Value::String(text) if text.as_ref() == "hi, Ada count=3 ratio=3 small=0.00125 zero=-0 state=Ok")
         );
 
         let nested = run(r#"`value=\{if 'True { "yes" } else { "no" }}`"#).unwrap();

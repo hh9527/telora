@@ -4013,6 +4013,8 @@ type Independent = String;
                let observed = dbg!(data, "loaded\nvalue");
                let seen_identity = dbg!(identity);
                let seen_value = dbg!(observed);
+               let whole_float = dbg!(3.0);
+               let negative_zero = dbg!(-0.0);
                export let output = if seen_identity == identity { seen_value } else { data };"#,
         )
         .unwrap();
@@ -4030,8 +4032,8 @@ type Independent = String;
             "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
         );
         let events = sink.events.lock().unwrap();
-        assert_eq!(events.len(), 6);
-        for phase in events.chunks_exact(3) {
+        assert_eq!(events.len(), 10);
+        for phase in events.chunks_exact(5) {
             assert_eq!(phase[0].message.as_deref(), Some("loaded\nvalue"));
             assert_eq!(phase[0].name, "data");
             assert!(phase[0].module.ends_with("main.telora"));
@@ -4044,6 +4046,10 @@ type Independent = String;
             assert!(phase[1].repr.starts_with("<fn "));
             assert_eq!(phase[2].name, "observed");
             assert_eq!(phase[2].repr, phase[0].repr);
+            assert_eq!(phase[3].name, "3.0");
+            assert_eq!(phase[3].repr, "3.0");
+            assert_eq!(phase[4].name, "-0.0");
+            assert_eq!(phase[4].repr, "-0.0");
         }
         drop(events);
 
@@ -10034,7 +10040,7 @@ unchanged", "|"),
                export let output = fmt.display(Service, {
                    name: "api",
                    endpoint: { host: "localhost", port: 8080 },
-                   ratio: 1.5,
+                   ratio: -0.0,
                });"#,
         )
         .unwrap();
@@ -10042,7 +10048,7 @@ unchanged", "|"),
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         assert_eq!(
             named_output(engine.execute(&module).unwrap()).to_string(),
-            "\"api@localhost:8080 {ready} 1.5 api\""
+            "\"api@localhost:8080 {ready} -0 api\""
         );
 
         fs::write(

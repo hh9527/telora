@@ -1807,6 +1807,8 @@ impl Vm {
                         for value in &values {
                             length += if let RuntimeValue::Int(value) = value.value {
                                 decimal_length(value)
+                            } else if let RuntimeValue::Float(value) = value.value {
+                                value.to_string().len()
                             } else if let Some(value) =
                                 view.string_text(*value).map_err(|heap_error| {
                                     error(
@@ -1831,7 +1833,7 @@ impl Vm {
                                 value.len()
                             } else {
                                 return Err(runtime_shallow_type_error(
-                                    "String, Int, or Atom interpolation value",
+                                    "String, Int, Float, or Atom interpolation value",
                                     *value,
                                     function,
                                     pc,
@@ -1845,6 +1847,8 @@ impl Vm {
                         let mut output = String::with_capacity(length);
                         for value in &values {
                             if let RuntimeValue::Int(value) = value.value {
+                                write!(output, "{value}").expect("writing to String cannot fail");
+                            } else if let RuntimeValue::Float(value) = value.value {
                                 write!(output, "{value}").expect("writing to String cannot fail");
                             } else if let Some(value) =
                                 view.string_text(*value).map_err(|heap_error| {

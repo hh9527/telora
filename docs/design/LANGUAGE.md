@@ -71,7 +71,12 @@ r#"a "quoted" value"#      # 带 delimiter 的 raw String
 let greeting = `hello \{name}`;
 ```
 
-插值当前支持具有稳定文本表示的标量类别，不是隐式调用任意用户 `Display`。
+插值支持 String、Int、Float 和 Atom，不是隐式调用任意用户 `Display`。String 保持
+原文本，Int 使用十进制表示，Atom 省略前导 `'`。Float 使用有限 binary64 的 Display
+表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一 binary64 值的最短十进制文本，
+不受 locale 影响。该表示保留负零的符号，但不保留整数值的小数点，例如 `3.0` 表示
+为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的原始小数或指数拼写，而由同一
+Display 规则选择十进制或指数形式。
 
 Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
 条件位置只接受 Bool，不进行 truthiness 转换。
@@ -724,6 +729,8 @@ value.dbg!("message")
 观察使用有界、确定、cycle-safe 的 debug formatter。它不经过 `Any`、`Dyn`、codec
 或值导出，表示也不是 JSON serialization contract。Host sink、格式化、截断或输出
 失败不能改变 Telora 的值、失败、诊断、控制流、fuel、stack 或 allocation account。
+Float 的 debug 表示与 Rust `f64` 的 `{:?}` 一致且不受 locale 影响；它与 Display
+表示有意区分，例如 `3.0` 和 `-0.0` 的 debug 表示分别保留为 `3.0` 和 `-0.0`。
 
 CLI 把每个事件作为一行紧凑 JSON 写入 stderr：
 
