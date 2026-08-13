@@ -547,6 +547,30 @@ import "package/path.telora" as model, { User };
 支持 namespace、选择性、alias 和 open import。所有形式必须观察同一个 export
 scheme，不能因导入写法不同而丢失泛型关系。
 
+`import` 永远只在当前模块建立 local binding；它本身不改变当前 Module 的公共接口，
+也不存在 implicit public import。只有显式 `export` 才把一个当前可见的 local binding
+映射到 Module interface：
+
+```telora
+import "@src/types.telora" {Plan as LocalPlan};
+export {LocalPlan as Plan};
+```
+
+`export {a as b}` 只建立接口映射 `local a -> public b`。它不在当前模块建立名为
+`b` 的 local binding，因此后续本地表达式不能因该 export 而 resolve `b`。Public
+alias 只供下游 import 和 Module member resolution 使用。
+
+`export let`、`export def` 和 `export type` 是普通 local binding 后接 export marker
+的语法糖。例如 `export def f = value;` 与 `def f = value; export {f};` 具有相同
+语义。本地 `f` 由 `def` 建立；export marker 不建立 lexical binding、不执行用户代码，
+只选择要发布的 local binding。
+
+被 export 选中的 local binding 可以由当前模块声明，也可以由 selective、aliased、
+open 或 namespace import 建立。导出 imported local 时保留原 value identity、精确
+TypeScheme、concrete/recursive TypeMetadata graph、type-family template、opaque provider
+identity 和 provenance；不包装、重求值或重建 binding。Namespace binding 的导出仍是
+语义 Module，必须保留其 nested Module interface，不能退化为普通 Dict。
+
 Host 选择的根入口位于 crate 的 `bin-src/` 下时，它不属于 `src/` 模块层级，不能
 使用 `./` 或 `../` 导入 crate source；crate source 必须写成 `@src/<path>`，并从
 当前 crate 的 `src/` 根解析：

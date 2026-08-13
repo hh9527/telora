@@ -5819,6 +5819,162 @@ unchanged", "|"),
     }
 
     #[test]
+    fn exports_imported_local_bindings_without_creating_local_aliases() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("origin.telora"),
+            r#"@struct type Box(A) = {value: A};
+               @struct type Branch = {children: Array(Tree)};
+               @enum type Tree = {Leaf: Int, Branch: Branch};
+               export def identity: for(A) Fn(A) -> A = fn(value) { value };
+               export {Box, Tree};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("facade.telora"),
+            r#"import "./origin.telora" {Box as Container, Tree, identity};
+               export {Container as Box, Tree, identity};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./facade.telora" {Box, Tree, identity};
+               type TreeBox = Box(Tree);
+               export let output: TreeBox = identity({value: 'Leaf(1)});"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let alias = module
+            .analysis
+            .display(module.analysis.declared_types["TreeBox"]);
+        assert!(
+            alias.contains("Array<Tree>") || alias.contains("recursive"),
+            "{alias}"
+        );
+        assert!(!alias.contains("Any"), "{alias}");
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{output: {value: 'Leaf(1)}}"
+        );
+
+        fs::write(
+            directory.join("invalid-local.telora"),
+            r#"let a = 1; export {a as b}; export let output = b;"#,
+        )
+        .unwrap();
+        let error = load_module(
+            directory.join("invalid-local.telora"),
+            BTreeMap::new(),
+            100_000,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unknown binding \"b\""), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exports_imported_namespace_as_a_semantic_module() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("origin.telora"),
+            r#"@struct type Box(A) = {value: A};
+               export def identity: for(A) Fn(A) -> A = fn(value) { value };
+               export {Box};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("facade.telora"),
+            r#"import "./origin.telora" as model; export {model};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./facade.telora" {model};
+               type IntBox = model.Box(Int);
+               export let output: IntBox = model.identity({value: 1});
+               export let polymorphic = (model.identity(1), model.identity("x"));"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{output: {value: 1}, polymorphic: (1, \"x\")}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exports_open_imported_locals_through_multihop_facades() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("origin.telora"),
+            r#"export let value = 7;
+               export def identity: for(A) Fn(A) -> A = fn(item) { item };"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("first.telora"),
+            r#"import "./origin.telora" *;
+               export {value as answer, identity};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("second.telora"),
+            r#"import "./first.telora" {answer, identity as relay};
+               export {answer, relay as identity};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./origin.telora" {identity as direct};
+               import "./second.telora" {answer, identity};
+               export let output = {
+                   answer,
+                   same: direct == identity,
+                   values: (identity(1), identity("x")),
+               };"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{output: {answer: 7, same: 'True, values: (1, \"x\")}}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exports_imported_opaque_types_with_provider_identity() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("facade.telora"),
+            r#"import "std/hash" {HashState}; export {HashState as State};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./facade.telora" {State};
+               import "std/type-desc" as desc;
+               export let output = {
+                   kind: desc.kind(State),
+                   name: desc.opaque_name(State),
+               };"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{output: {kind: 'Opaque, name: 'Some(\"std/hash#HashState\")}}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_generic_apis_widen_singleton_fields_in_anonymous_records() {
         let directory = fixture_dir();
         fs::write(

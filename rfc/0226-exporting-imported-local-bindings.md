@@ -1,6 +1,6 @@
 # RFC 0226: Exporting imported local bindings
 
-- Status: Proposed
+- Status: Implemented
 - Depends on: RFC 0142, RFC 0143, RFC 0144, RFC 0146, RFC 0192, RFC 0218
 - Tracking issue: #44
 
@@ -326,3 +326,23 @@ The root representation does not contain sufficient static information for
 generic families, recursive named descriptors, nested module members, or
 semantic navigation. Module semantics remain explicit even when the runtime
 stores public roots in a canonical Dict-shaped object.
+
+## Implementation Result
+
+The existing explicit-export pipeline already resolves export markers against
+all visible local bindings, including bindings established by selective,
+aliased selective, open, and namespace imports. Recent recursive metadata and
+type-family boundary work also preserves the exact imported scheme, persistent
+root, concrete descriptor closure, and nested namespace interface through
+facade modules. No new runtime or resolver path was required.
+
+This RFC makes that behavior authoritative rather than incidental. End-to-end
+regressions now cover imported values, public and local aliases, generic
+definitions, parameterized families, recursive concrete types, native opaque
+types, open imports, namespace Modules, multi-hop facades, runtime identity,
+and the absence of local resolution effects for public aliases.
+
+`docs/design/LANGUAGE.md` now records the core model: import is always local;
+only export forms the public Module interface; export markers create no local
+bindings; and export-prefixed binding declarations are syntax sugar for an
+ordinary local binding followed by an export marker.
