@@ -689,10 +689,11 @@ impl TypeScheme {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct ModuleInterface {
     pub exports: BTreeMap<String, TypeScheme>,
     pub concrete_types: BTreeMap<String, TypeDescriptor>,
+    pub(crate) type_family_templates: BTreeMap<String, TypeFamilyTemplate>,
 }
 
 impl ModuleInterface {
@@ -723,6 +724,19 @@ impl ModuleInterface {
                     (names[name].clone(), rename_named_types(descriptor, &names))
                 })
                 .collect(),
+            type_family_templates: self
+                .type_family_templates
+                .iter()
+                .map(|(name, family)| {
+                    (
+                        name.clone(),
+                        TypeFamilyTemplate {
+                            parameters: family.parameters.clone(),
+                            metadata: rename_named_type_metadata(&family.metadata, &names),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -731,6 +745,93 @@ impl ModuleInterface {
 pub(crate) struct TypeFamilyTemplate {
     parameters: Vec<TypeParameter>,
     metadata: Value,
+}
+
+fn rename_named_type_metadata(metadata: &Value, names: &HashMap<String, String>) -> Value {
+    let Value::Dict(fields) = metadata else {
+        return metadata.clone();
+    };
+    let Some(Value::Atom(kind)) = fields.get("kind") else {
+        return metadata.clone();
+    };
+    if kind.name() == "Named" {
+        let Some(Value::String(name)) = fields.get("name") else {
+            return metadata.clone();
+        };
+        let Some(renamed) = names.get(name.as_ref()) else {
+            return metadata.clone();
+        };
+        let values = fields
+            .shape()
+            .fields()
+            .iter()
+            .zip(fields.values())
+            .map(|(field, value)| {
+                if field == "name" {
+                    Value::string(renamed.as_str())
+                } else {
+                    value.clone()
+                }
+            })
+            .collect();
+        return Value::Dict(crate::Dict::new(fields.shape().clone(), values));
+    }
+
+    let values = fields
+        .shape()
+        .fields()
+        .iter()
+        .zip(fields.values())
+        .map(|(field, value)| match (kind.name(), field.as_str()) {
+            ("WithAttributes", "inner")
+            | ("TypeOf", "instance")
+            | ("Array" | "Dict", "item")
+            | ("Tagged", "payload")
+            | ("Func", "result") => rename_named_type_metadata(value, names),
+            ("Tuple", "items") | ("Union", "variants") | ("Func", "parameters") => {
+                rename_named_type_metadata_array(value, names)
+            }
+            ("Struct", "fields") => rename_named_type_metadata_dict(value, false, names),
+            ("Enum", "variants") => rename_named_type_metadata_dict(value, true, names),
+            _ => value.clone(),
+        })
+        .collect();
+    Value::Dict(crate::Dict::new(fields.shape().clone(), values))
+}
+
+fn rename_named_type_metadata_array(metadata: &Value, names: &HashMap<String, String>) -> Value {
+    let Value::Array(values) = metadata else {
+        return metadata.clone();
+    };
+    Value::Array(
+        values
+            .iter()
+            .map(|value| rename_named_type_metadata(value, names))
+            .collect::<Vec<_>>()
+            .into(),
+    )
+}
+
+fn rename_named_type_metadata_dict(
+    metadata: &Value,
+    optional: bool,
+    names: &HashMap<String, String>,
+) -> Value {
+    let Value::Dict(fields) = metadata else {
+        return metadata.clone();
+    };
+    let values = fields
+        .values()
+        .iter()
+        .map(|value| {
+            if optional && optional_type_metadata_is_none(value) {
+                value.clone()
+            } else {
+                rename_named_type_metadata(value, names)
+            }
+        })
+        .collect();
+    Value::Dict(crate::Dict::new(fields.shape().clone(), values))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1751,11 +1852,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
         if authored_names.contains(name.as_str()) {
             continue;
         }
-        let scheme = qualified_external_interfaces
-            .get(name)
+        let interface = qualified_external_interfaces.get(name);
+        let scheme = interface
             .and_then(|interface| interface.exports.get(name))
             .cloned();
-        let tool_value = authoritative_imported_metadata(value, scheme.as_ref(), &mut tool_vm);
+        let tool_value = authoritative_imported_value(value, interface, name, &mut tool_vm);
         tool_values.insert(name.clone(), tool_value);
         let inferred = scheme.as_ref().map_or_else(
             || infer_value(value),
@@ -1810,11 +1911,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let value = external_values.get(name).cloned().ok_or_else(|| {
             frontend_error(source_name, format!("import {name} has not been resolved"))
         })?;
-        let scheme = qualified_external_interfaces
-            .get(name)
-            .and_then(|interface| interface.exports.get(name))
-            .cloned();
-        let value = authoritative_imported_metadata(&value, scheme.as_ref(), &mut tool_vm);
+        let interface = qualified_external_interfaces.get(name);
+        let value = authoritative_imported_value(&value, interface, name, &mut tool_vm);
         tool_values.insert(name.clone(), value);
     }
 
@@ -1884,6 +1982,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut evaluated_types = BTreeSet::new();
     let mut evaluated_concrete_type_names = HashSet::new();
     let mut type_family_values = BTreeMap::new();
+    let mut type_family_templates = BTreeMap::new();
     while !pending_types.is_empty() {
         let mut progressed = false;
         for definition in pending_types.iter().copied().collect::<Vec<_>>() {
@@ -2029,6 +2128,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             static_environment.insert(binding.value.name.value.clone(), erased.clone());
             binding_types.insert(binding.value.name.value.clone(), erased);
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
+            type_family_templates.insert(binding.value.name.value.clone(), family.clone());
             type_family_values.insert(binding.value.name.value.clone(), family_value);
             pending_types.remove(&definition);
             evaluated_types.insert(definition);
@@ -2440,8 +2540,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             format!("import {} has not been resolved", binding.value.name.value),
                         )
                     })?;
-                let scheme = external_interfaces
-                    .get(&binding.value.name.value)
+                let interface = qualified_external_interfaces.get(&binding.value.name.value);
+                let scheme = interface
                     .and_then(|interface| interface.exports.get(&binding.value.name.value))
                     .cloned();
                 let inferred = scheme.as_ref().map_or_else(
@@ -2451,12 +2551,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
-                    let tool_value =
-                        authoritative_imported_metadata(&value, Some(&scheme), &mut tool_vm);
+                    let tool_value = authoritative_imported_value(
+                        &value,
+                        interface,
+                        &binding.value.name.value,
+                        &mut tool_vm,
+                    );
                     binding_schemes.insert(binding.value.name.value.clone(), scheme);
                     tool_values.insert(binding.value.name.value.clone(), tool_value);
                 } else {
-                    tool_values.insert(binding.value.name.value.clone(), value);
+                    let tool_value = authoritative_imported_value(
+                        &value,
+                        interface,
+                        &binding.value.name.value,
+                        &mut tool_vm,
+                    );
+                    tool_values.insert(binding.value.name.value.clone(), tool_value);
                 }
             }
         }
@@ -3038,6 +3148,31 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .filter(|(_, descriptor)| contains_named_type(descriptor))
             .map(|(name, descriptor)| (name.clone(), descriptor.clone()))
             .collect(),
+        type_family_templates: match &program.value.body.value.result.value {
+            ExprKind::Dict(fields) => fields
+                .iter()
+                .filter_map(|field| {
+                    let ExprKind::Variable(binding) = &field.value.value.value else {
+                        return None;
+                    };
+                    field.value.name.as_ref().and_then(|name| {
+                        type_family_templates
+                            .get(&binding.value)
+                            .cloned()
+                            .or_else(|| {
+                                qualified_external_interfaces
+                                    .get(&binding.value)
+                                    .and_then(|interface| {
+                                        interface.type_family_templates.get(&binding.value)
+                                    })
+                                    .cloned()
+                            })
+                            .map(|family| (name.value.clone(), family))
+                    })
+                })
+                .collect(),
+            _ => BTreeMap::new(),
+        },
     };
     for scheme in module_interface.exports.values() {
         validate_publishable_scheme(scheme)
@@ -3083,6 +3218,40 @@ fn authoritative_imported_metadata(
         Ok(actual) if actual == **expected => value.clone(),
         _ => expected.to_value(vm),
     }
+}
+
+fn authoritative_imported_value(
+    value: &Value,
+    interface: Option<&ModuleInterface>,
+    local: &str,
+    vm: &mut Vm,
+) -> Value {
+    let Some(interface) = interface else {
+        return value.clone();
+    };
+    if let Some(family) = interface.type_family_templates.get(local) {
+        return type_family_value(family);
+    }
+    if let Some(scheme) = interface.exports.get(local) {
+        return authoritative_imported_metadata(value, Some(scheme), vm);
+    }
+    let Value::Dict(fields) = value else {
+        return value.clone();
+    };
+    let values = fields
+        .shape()
+        .fields()
+        .iter()
+        .zip(fields.values())
+        .map(|(name, value)| {
+            if let Some(family) = interface.type_family_templates.get(name) {
+                type_family_value(family)
+            } else {
+                authoritative_imported_metadata(value, interface.exports.get(name), vm)
+            }
+        })
+        .collect();
+    Value::Dict(crate::Dict::new(fields.shape().clone(), values))
 }
 
 fn validate_interpreter_contract(
@@ -9741,6 +9910,7 @@ mod tests {
                     ModuleInterface {
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),
+                        type_family_templates: BTreeMap::new(),
                     },
                 )])
             })

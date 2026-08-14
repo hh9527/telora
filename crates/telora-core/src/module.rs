@@ -18,7 +18,7 @@ use crate::semantic::{
 use crate::source::{Diagnostic, SourceDatabase};
 use crate::toml::parse_toml_registered;
 use crate::types::{
-    Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor,
+    Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor, TypeFamilyTemplate,
     analyze_partial_types_recovered_with_query, analyze_program_with_bindings_observed,
     program_references_name, recovered_reference_locations,
 };
@@ -48,6 +48,7 @@ struct OpenImportCandidate {
     provenance: Option<Provenance>,
     opaque: bool,
     concrete_types: BTreeMap<String, TypeDescriptor>,
+    type_family_template: Option<TypeFamilyTemplate>,
 }
 
 #[derive(Clone)]
@@ -58,6 +59,7 @@ struct RecoveryOpenImportCandidate {
     sourced: Option<SourcedValue>,
     root: PersistentValue,
     concrete_types: BTreeMap<String, TypeDescriptor>,
+    type_family_template: Option<TypeFamilyTemplate>,
 }
 
 fn recovery_open_import_exports(
@@ -97,6 +99,7 @@ fn recovery_open_import_exports(
                     sourced: sourced.cloned(),
                     root: field_root,
                     concrete_types: interface.concrete_types.clone(),
+                    type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
             ))
         })
@@ -142,6 +145,7 @@ fn open_import_exports(
                     provenance: provenance.cloned(),
                     opaque,
                     concrete_types: interface.concrete_types.clone(),
+                    type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
             ))
         })
@@ -335,6 +339,7 @@ impl PendingModule {
                 })
                 .collect(),
             concrete_types: BTreeMap::new(),
+            type_family_templates: BTreeMap::new(),
         };
         let mut state = self
             .inner
@@ -820,6 +825,12 @@ fn select_import_value(
         ModuleInterface {
             exports: BTreeMap::from([(local.to_owned(), scheme)]),
             concrete_types: interface.concrete_types,
+            type_family_templates: interface
+                .type_family_templates
+                .get(&exported.value)
+                .cloned()
+                .map(|family| BTreeMap::from([(local.to_owned(), family)]))
+                .unwrap_or_default(),
         },
     ))
 }
@@ -1896,6 +1907,10 @@ impl RecoverableWorkspaceBuilder<'_> {
                     ModuleInterface {
                         exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
                         concrete_types: candidate.concrete_types,
+                        type_family_templates: candidate
+                            .type_family_template
+                            .map(|family| BTreeMap::from([(name.clone(), family)]))
+                            .unwrap_or_default(),
                     },
                 );
                 external_values.insert(name, candidate.value);
@@ -3131,6 +3146,10 @@ impl ModuleLoader {
                 ModuleInterface {
                     exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
                     concrete_types: candidate.concrete_types,
+                    type_family_templates: candidate
+                        .type_family_template
+                        .map(|family| BTreeMap::from([(name.clone(), family)]))
+                        .unwrap_or_default(),
                 },
             );
             if candidate.opaque {
@@ -5947,6 +5966,128 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_families_preserve_provider_recursive_fields_regardless_of_declaration_order() {
+        let recursive_orders = [
+            r#"@struct type CallExpr = {name: String, args: Array(Expr)};
+               @enum type Expr = {Literal: Literal, Column: ColumnRef, Call: CallExpr};"#,
+            r#"@enum type Expr = {Literal: Literal, Column: ColumnRef, Call: CallExpr};
+               @struct type CallExpr = {name: String, args: Array(Expr)};"#,
+        ];
+        let imports = [
+            (
+                r#"import "./types.telora" {Expr, Definition};"#,
+                "Expr",
+                "Definition",
+            ),
+            (
+                r#"import "./types.telora" as types;"#,
+                "types.Expr",
+                "types.Definition",
+            ),
+            (r#"import "./types.telora" *;"#, "Expr", "Definition"),
+        ];
+
+        for recursive_types in recursive_orders {
+            for (import, expr, definition) in imports {
+                let directory = fixture_dir();
+                let provider = r#"@struct type Literal = {value: Int};
+                   @struct type ColumnRef = {alias: String, column: String};
+                   $RECURSIVE_TYPES
+                   @struct type Definition(Id, Output, Input) = {
+                       id: Id,
+                       expr: Expr,
+                       lower: Fn(Id, Input) -> Output,
+                   };
+                   export {Expr, CallExpr, Definition};"#
+                    .replace("$RECURSIVE_TYPES", recursive_types);
+                fs::write(directory.join("types.telora"), provider).unwrap();
+                let consumer = r#"$IMPORT
+                   @enum type Id = {Name: 'None};
+                   @struct type Output = {value: String};
+                   @enum type Input = {All: 'None};
+                   def column: Fn(String, String) -> $EXPR = fn(alias, name) {
+                       'Column({alias: alias, column: name})
+                   };
+                   def lower: Fn(Id, Input) -> Output = fn(id, input) {
+                       {value: "ready"}
+                   };
+                   type Concrete = $DEFINITION(Id, Output, Input);
+                   let definitions: Array(Concrete) = [{
+                       id: 'Name,
+                       expr: column("t", "name"),
+                       lower: lower,
+                   }];
+                   export let output = definitions;"#
+                    .replace("$IMPORT", import)
+                    .replace("$EXPR", expr)
+                    .replace("$DEFINITION", definition);
+                fs::write(directory.join("main.telora"), consumer).unwrap();
+
+                let module =
+                    load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+                for name in ["Concrete", "definitions", "output"] {
+                    let ty = module
+                        .analysis
+                        .declared_types
+                        .get(name)
+                        .or_else(|| module.analysis.binding_types.get(name))
+                        .copied()
+                        .expect("tested binding has an analyzed type");
+                    let ty = module.analysis.display(ty);
+                    assert!(!ty.contains("Any"), "{name}: {ty}");
+                }
+                let output = module.execute(100_000).unwrap().to_string();
+                assert!(output.contains("expr: 'Column"), "{output}");
+                fs::remove_dir_all(directory).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn reexported_families_preserve_provider_recursive_fields() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"@struct type Call = {args: Array(Expr)};
+               @enum type Expr = {Literal: Int, Call: Call};
+               @struct type Family(A) = {expr: Expr, value: A};
+               export {Expr, Family};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("facade.telora"),
+            r#"import "./types.telora" {Expr, Family}; export {Expr, Family};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./facade.telora" {Family};
+               type Concrete = Family(String);
+               let value: Concrete = {expr: 'Literal(1), value: "ready"};
+               export {value};"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        for name in ["Concrete", "value"] {
+            let ty = module
+                .analysis
+                .declared_types
+                .get(name)
+                .or_else(|| module.analysis.binding_types.get(name))
+                .copied()
+                .expect("tested binding has an analyzed type");
+            let ty = module.analysis.display(ty);
+            assert!(!ty.contains("Any"), "{name}: {ty}");
+        }
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{value: {expr: 'Literal(1), value: \"ready\"}}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_family_aliases_preserve_provider_local_concrete_arguments() {
         let directory = fixture_dir();
         fs::write(
@@ -6336,6 +6477,36 @@ unchanged", "|"),
         assert_eq!(
             field_attributes.get("std/json.rename").unwrap().to_string(),
             "\"payload\""
+        );
+
+        fs::write(
+            directory.join("family.telora"),
+            r#"import "std/attributes" as attributes;
+               type Box(Item) = attributes.add(
+                   struct('None, {
+                       value: attributes.add(
+                           Item,
+                           { "std/json.rename": "payload" },
+                       ),
+                   }),
+                   { "std/json.rename_all": 'CamelCase },
+               );
+               export {Box};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("imported.telora"),
+            r#"import "std/codec" as codec;
+               import "./family.telora" {Box};
+               type StringBox = Box(String);
+               codec.decode(StringBox, {payload: "imported"})"#,
+        )
+        .unwrap();
+        let imported =
+            load_module(directory.join("imported.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            imported.execute(100_000).unwrap().to_string(),
+            "'Ok({value: \"imported\"})"
         );
         fs::remove_dir_all(directory).unwrap();
     }
