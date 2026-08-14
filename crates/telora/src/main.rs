@@ -709,10 +709,49 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn check_command(arguments: CheckArgs) -> Result<(), String> {
     let context = command_context(arguments.context)?;
-    let module = engine()
-        .load_module_id(context, &arguments.module_id, BTreeMap::new())
+    // Finalization is deliberately silent: the recoverable pass below owns
+    // diagnostics and observations, so `dbg!` is never emitted twice.
+    let strict_engine = Engine::new(engine_config());
+    let strict = strict_engine
+        .load_module_id(&context, &arguments.module_id, BTreeMap::new())
+        .map_err(|error| error.to_string())
+        .and_then(|module| {
+            strict_engine
+                .execute(&module)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
+    let workspace = engine()
+        .recover_workspace_id(context, &arguments.module_id)
         .map_err(|error| error.to_string())?;
-    println!("ok ({} dependencies)", module.dependencies.len());
+    let errors = workspace
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error)
+        .map(|diagnostic| workspace.sources().render(diagnostic))
+        .collect::<Vec<_>>();
+    let incomplete = workspace
+        .modules()
+        .iter()
+        .filter(|module| module.state != WorkspaceModuleState::Known)
+        .map(|module| module.name.as_str())
+        .collect::<Vec<_>>();
+    if strict.is_err() || !errors.is_empty() || !incomplete.is_empty() {
+        let mut details = errors;
+        if details.is_empty()
+            && let Err(error) = strict
+        {
+            details.push(error);
+        }
+        if !incomplete.is_empty() {
+            details.push(format!(
+                "module finalization is incomplete: {}",
+                incomplete.join(", ")
+            ));
+        }
+        return Err(details.join("\n"));
+    }
+    println!("ok ({} dependencies)", workspace.modules().len().saturating_sub(1));
     Ok(())
 }
 

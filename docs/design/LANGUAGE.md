@@ -796,9 +796,12 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 `unwrap!` 和 `fail!` 使当前结果不可产生。
 
 在 best-effort 求值中，`fail!` 得到的内部 `Never` 会阻止所有依赖计算执行；Host
-仍可继续已经证明独立的求值单元，以一次收集更多根因。`Never` 不是可物化值，不能
-作为 Array 元素、字段、Tuple 成员、module export 或最终结果发布。严格执行遇到
-未处理失败立即失败。
+仍可继续已经证明独立的求值单元，以一次收集更多根因。Struct、Tuple、Array、tagged
+payload 和 Dict 在诊断求值图中可以暂时保留失败子节点。这类节点保持原有静态类型，
+但不是 Telora 值，源码不能构造、匹配或恢复它们。保形逐项操作可以跳过失败槽位并
+继续健康槽位；只依赖容器形状的操作不依赖子节点；选择失败槽位则传播同一根诊断。
+任何可达失败节点都会阻止普通 module、codec 或 Host value 发布。严格执行遇到未处理
+失败立即失败。
 
 ### 9.5 失败类别
 
@@ -927,6 +930,15 @@ Namespace import 的 definition record 以 `target` 给出被导入模块的稳�
 普通值的 `type` 字段；其成员的精确公开 type/scheme 由该目标模块的 `--exports`
 记录定义。Selective import 仍在本地 definition record 中直接携带所选成员的精确
 type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct 类型。
+
+`check` 用 best-effort 模式求完整模块并以严格 finalization 决定退出状态。独立计算可以
+在失败后继续，以收集更多诊断；但语法、类型、解析、运行时错误或任何可达失败节点都会
+令命令非零退出且不产生 Module value。只有完整结果与相同条件下严格加载所得 Module
+语义等价时才输出 `ok`。Warning 本身不阻止成功。
+
+`show` 不执行上述 finalization。它查询由 recoverable CST、部分语义分析和诊断求值形成
+的全面证据图，因此模块不完整或求值失败时仍可返回不受影响的事实。`show` 成功只表示查询
+成功，不表示模块健康；恢复节点不得以权威 `Any` 伪装成已知值。
 
 `run` 选择一个 Main application 和一个 Edge Entry。省略 `--entry` 时使用内置 Entry：
 它只在提供 `--input` 时请求把外部 JSON 安装为 Main 的 `input` binding，并从 Main 的

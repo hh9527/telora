@@ -73,6 +73,50 @@ fn run_and_check_select_logical_roots_from_cwd() {
 }
 
 #[test]
+fn check_requires_complete_runtime_finalization() {
+    let cwd = fixture();
+    let cases = [
+        ("failed", "export let output = fail!(\"boom\", 1);"),
+        ("division", "export let output = 1 / 0;"),
+        ("index", "export let output = [1][2];"),
+    ];
+    for (name, source) in cases {
+        fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
+        let module_id = format!("@src/{name}.telora");
+        let check = telora(&cwd)
+            .args(["check", module_id.as_str()])
+            .output()
+            .unwrap();
+        assert!(
+            !check.status.success(),
+            "{name} unexpectedly passed: {}",
+            String::from_utf8_lossy(&check.stdout)
+        );
+        assert!(!check.stderr.is_empty(), "{name} emitted no diagnostic");
+    }
+}
+
+#[test]
+fn check_accepts_a_complete_module_with_warnings() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/warning.telora"),
+        "let reject: Fn() -> Result(Int, String) = fn() { 'Err(\"notice\") }; let checked = reject.should_ok!(); export let output = 1;",
+    )
+    .unwrap();
+    let check = telora(&cwd)
+        .args(["check", "@src/warning.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(String::from_utf8_lossy(&check.stdout).starts_with("ok ("));
+}
+
+#[test]
 fn run_writes_contextual_debug_as_stderr_jsonl() {
     let cwd = fixture();
     fs::write(
