@@ -38,6 +38,7 @@ pub(crate) struct ShapeId {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum RuntimeValue {
+    Failed(u32),
     Int(i64),
     Float(f64),
     BuiltinAtom(BuiltinAtom),
@@ -337,6 +338,7 @@ impl Heap {
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
             let handle = match value {
+                RuntimeValue::Failed(_) => continue,
                 RuntimeValue::UpLink(_) => return Ok(true),
                 RuntimeValue::String(handle)
                 | RuntimeValue::Bytes(handle)
@@ -1252,6 +1254,11 @@ impl<'a> HeapView<'a> {
         up_link_projection: Option<&Value>,
     ) -> Result<Value, HeapError> {
         Ok(match value {
+            RuntimeValue::Failed(_) => {
+                return Err(HeapError(
+                    "failed evaluation node cannot cross a value boundary",
+                ));
+            }
             RuntimeValue::Int(value) => Value::Int(value),
             RuntimeValue::Float(value) if value.is_finite() => Value::Float(value),
             RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
@@ -1623,6 +1630,12 @@ impl PendingCopy {
         value: RichValue,
     ) -> Result<RichValue, HeapError> {
         let copied = match value.value {
+            RuntimeValue::Failed(id) if self.target_storage == Storage::Work => {
+                RuntimeValue::Failed(id)
+            }
+            RuntimeValue::Failed(_) => {
+                return Err(HeapError("failed evaluation node cannot enter Main world"));
+            }
             RuntimeValue::Int(_) | RuntimeValue::BuiltinAtom(_) => value.value,
             RuntimeValue::Float(float) if float.is_finite() => value.value,
             RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
@@ -1907,7 +1920,10 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
         | RuntimeValue::Func(handle)
         | RuntimeValue::Dyn(handle)
         | RuntimeValue::UpLink(handle) => handle.storage != target,
-        RuntimeValue::Int(_) | RuntimeValue::Float(_) | RuntimeValue::BuiltinAtom(_) => false,
+        RuntimeValue::Failed(_)
+        | RuntimeValue::Int(_)
+        | RuntimeValue::Float(_)
+        | RuntimeValue::BuiltinAtom(_) => false,
     }
 }
 
@@ -1935,7 +1951,10 @@ fn object_contains_disallowed(
         | RuntimeValue::Func(handle)
         | RuntimeValue::Dyn(handle)
         | RuntimeValue::UpLink(handle) => foreign(handle.storage),
-        RuntimeValue::Int(_) | RuntimeValue::Float(_) | RuntimeValue::BuiltinAtom(_) => false,
+        RuntimeValue::Failed(_)
+        | RuntimeValue::Int(_)
+        | RuntimeValue::Float(_)
+        | RuntimeValue::BuiltinAtom(_) => false,
     };
     match object {
         Object::Reserved => true,
@@ -2248,6 +2267,36 @@ mod tests {
         };
         assert_eq!(cycle_values[0], rv(RuntimeValue::Array(cycle)));
         assert_ne!(root.slot, 0);
+    }
+
+    #[test]
+    fn failed_nodes_relocate_between_work_worlds_but_cannot_enter_main_or_value() {
+        let main = Heap::main();
+        let mut source = Heap::work();
+        let root = RichValue::unknown(RuntimeValue::Array(source.allocate(Object::Array(
+            vec![RichValue::unknown(RuntimeValue::Failed(7))].into(),
+        ))));
+
+        let mut target = Heap::work();
+        let relocated = relocate_work_roots(&mut target, &main, &source, &[root]).unwrap();
+        let RuntimeValue::Array(handle) = relocated[0].value else {
+            panic!("expected relocated Array")
+        };
+        let Object::Array(items) = target.object(handle).unwrap() else {
+            panic!("expected relocated Array object")
+        };
+        assert!(matches!(items[0].value, RuntimeValue::Failed(7)));
+        assert!(
+            HeapView {
+                current: &target,
+                background: Some(&main),
+            }
+            .export_value(relocated[0])
+            .is_err()
+        );
+
+        let mut destination = Heap::main();
+        assert!(publish_root(&mut destination, &source, root).is_err());
     }
 
     #[test]

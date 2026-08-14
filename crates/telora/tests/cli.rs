@@ -164,6 +164,36 @@ fn run_writes_contextual_debug_as_stderr_jsonl() {
 }
 
 #[test]
+fn best_effort_run_collects_main_diagnostics_before_starting_entry() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/array" as array;
+def transform: Fn(Int) -> Int = fn(item) {
+    if item == 2 { fail!("two", item) }
+    else if item == 4 { fail!("four", item) }
+    else { item }
+};
+let broken = array.map([1, 2, 3, 4], transform);
+export let output = if array.length(broken) > 0 { "unexpected" } else { "empty" };"#,
+    )
+    .unwrap();
+
+    let run = telora(&cwd)
+        .args(["run", "main", "--best-effort"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(run.stdout.is_empty(), "Entry started for an invalid Main");
+    let records = jsonl(&run.stderr);
+    assert!(records.iter().any(|record| record["message"] == "two"));
+    assert!(records.iter().any(|record| record["message"] == "four"));
+    assert_eq!(records.last().unwrap()["schema"], "telora.run/v1");
+    assert_eq!(records.last().unwrap()["record"], "summary");
+    assert_eq!(records.last().unwrap()["status"], "error");
+}
+
+#[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export let output = 1;").unwrap();

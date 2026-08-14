@@ -534,6 +534,8 @@ struct RunArgs {
     input: Option<String>,
     #[arg(long, value_name = "FILE")]
     entry: Option<PathBuf>,
+    #[arg(long)]
+    best_effort: bool,
 }
 
 #[derive(Args)]
@@ -655,19 +657,66 @@ fn lsp_command() -> Result<(), String> {
 
 async fn run_command(arguments: RunArgs) -> Result<i32, String> {
     let input = arguments.input.as_deref().map(read_input).transpose()?;
+    let context = command_context(arguments.context.clone())?;
+    let module_id = arguments
+        .binary
+        .as_ref()
+        .map(|binary| format!("@bin/{binary}.telora"));
+    if arguments.best_effort {
+        let recovery_engine = Engine::new(engine_config());
+        let workspace = if let Some(path) = arguments.standalone.as_deref() {
+            recovery_engine.recover_standalone(path)
+        } else {
+            recovery_engine
+                .recover_workspace_id(&context, module_id.as_deref().expect("required by clap"))
+        }
+        .map_err(|error| error.to_string())?;
+        let selected = module_id.as_deref().unwrap_or("@standalone");
+        for diagnostic in workspace.diagnostics() {
+            emit_stderr(diagnostic_record(
+                "telora.run/v1",
+                selected,
+                &workspace,
+                diagnostic,
+            ))?;
+        }
+        let incomplete = workspace
+            .modules()
+            .iter()
+            .filter(|module| module.state != WorkspaceModuleState::Known)
+            .map(|module| module.name.as_str())
+            .collect::<Vec<_>>();
+        let failed = workspace
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error)
+            || !incomplete.is_empty();
+        if !incomplete.is_empty() {
+            emit_stderr(json!({
+                "schema": "telora.run/v1",
+                "module": selected,
+                "record": "diagnostic",
+                "severity": "error",
+                "message": format!("Main finalization is incomplete: {}", incomplete.join(", ")),
+                "labels": [],
+                "notes": [],
+            }))?;
+        }
+        if failed {
+            emit_stderr(json!({
+                "schema": "telora.run/v1",
+                "module": selected,
+                "record": "summary",
+                "status": "error",
+            }))?;
+            return Ok(1);
+        }
+    }
     let engine = engine();
     let pending = if let Some(path) = arguments.standalone {
         engine.prepare_standalone(path)
     } else {
-        let context = arguments
-            .context
-            .map_or_else(env::current_dir, Ok)
-            .map_err(|error| format!("cannot determine context: {error}"))?;
-        let module_id = format!(
-            "@bin/{}.telora",
-            arguments.binary.expect("required by clap")
-        );
-        engine.prepare_module_id(context, &module_id)
+        engine.prepare_module_id(context, module_id.as_deref().expect("required by clap"))
     }
     .map_err(|error| error.to_string())?;
     let mut host = ProcessRunHost::new();
@@ -863,10 +912,51 @@ fn location_json(workspace: &WorkspaceSnapshot, location: Location) -> serde_jso
     let end = source.position(location.end);
     json!({"line":start.line,"column":start.column,"end_line":end.line,"end_column":end.column})
 }
+fn diagnostic_record(
+    schema: &str,
+    module: &str,
+    workspace: &WorkspaceSnapshot,
+    diagnostic: &telora_core::source::Diagnostic,
+) -> serde_json::Value {
+    let severity = match diagnostic.severity {
+        telora_core::source::Severity::Error => "error",
+        telora_core::source::Severity::Warning => "warning",
+        telora_core::source::Severity::Info => "info",
+    };
+    let labels = diagnostic
+        .labels
+        .iter()
+        .map(|label| {
+            let source = workspace.sources().get(label.location.source);
+            json!({
+                "source": source.name.as_ref(),
+                "location": location_json(workspace, label.location),
+                "message": label.message,
+                "primary": label.primary,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "schema": schema,
+        "module": module,
+        "record": "diagnostic",
+        "severity": severity,
+        "message": diagnostic.message,
+        "labels": labels,
+        "notes": diagnostic.notes,
+    })
+}
 fn emit(record: serde_json::Value) -> Result<(), String> {
     println!(
         "{}",
         serde_json::to_string(&record).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+fn emit_stderr(record: serde_json::Value) -> Result<(), String> {
+    eprintln!(
+        "{}",
+        serde_json::to_string(&record).map_err(|error| error.to_string())?
     );
     Ok(())
 }

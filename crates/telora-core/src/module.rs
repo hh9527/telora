@@ -1650,6 +1650,16 @@ impl Engine {
         self.recover_with_resolver(resolver)
     }
 
+    pub fn recover_standalone(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
+        let resolver = ModuleResolver::standalone(path.as_ref())
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .with_builtins(builtin_list(&self.native_modules));
+        self.recover_with_resolver(resolver)
+    }
+
     fn recover_with_resolver(
         &self,
         resolver: ModuleResolver,
@@ -1666,9 +1676,19 @@ impl Engine {
             &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         ) {
-            let (_, diagnostics) = self.execute_observed(&module);
+            let (result, diagnostics) = self.execute_observed(&module);
             module.workspace.extend_diagnostics(diagnostics);
-            return Ok(module.workspace);
+            match result {
+                Ok(_) => return Ok(module.workspace),
+                Err(error)
+                    if error.failure_class() == crate::evaluation::FailureClass::Recoverable => {}
+                Err(error) => {
+                    if let Some(diagnostic) = error.diagnostic() {
+                        module.workspace.extend_diagnostics([diagnostic]);
+                    }
+                    return Ok(module.workspace);
+                }
+            }
         }
         let mut main = MainWorld::building();
         let mut sources = SourceDatabase::default();
@@ -2422,9 +2442,9 @@ impl RecoverableWorkspaceBuilder<'_> {
                 failed.insert(binding.value.name.value.clone());
                 continue;
             };
-            let result = Vm::new()
+            let (result, failures) = Vm::new()
                 .with_debug_sink(Arc::clone(&self.engine.debug_sink))
-                .execute_with_account(&function, &[], &mut account);
+                .execute_with_account_best_effort(&function, &[], &mut account);
             let emitted = account.take_diagnostics();
             for diagnostic in emitted {
                 if let Some(existing) = diagnostics
@@ -2436,6 +2456,20 @@ impl RecoverableWorkspaceBuilder<'_> {
                     }
                 } else {
                     diagnostics.push(diagnostic);
+                }
+            }
+            for error in failures {
+                if let Some(diagnostic) = error.diagnostic() {
+                    if let Some(existing) = diagnostics
+                        .iter_mut()
+                        .find(|existing| same_runtime_diagnostic(existing, &diagnostic))
+                    {
+                        if existing.labels.len() < diagnostic.labels.len() {
+                            *existing = diagnostic;
+                        }
+                    } else {
+                        diagnostics.push(diagnostic);
+                    }
                 }
             }
             match result {
@@ -10717,6 +10751,184 @@ unchanged", "|"),
         assert!(
             division_errors[0].labels[0].location.start
                 < division_errors[1].labels[0].location.start
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_workspace_continues_healthy_array_slots_and_skips_failed_slots() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+def first: Fn(Int) -> Int = fn(item) {
+    if item == 2 { fail!("two", item) }
+    else if item == 4 { fail!("four", item) }
+    else { item + 10 }
+};
+def second: Fn(Int) -> Int = fn(item) {
+    if item == 13 { fail!("three", item) } else { item + 100 }
+};
+export let output = [1, 2, 3, 4]
+    |> array.map\(_, first)
+    |> array.map\(_, second);"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        let mut messages = snapshot
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .filter(|message| matches!(*message, "two" | "three" | "four"))
+            .collect::<Vec<_>>();
+        messages.sort_unstable();
+        assert_eq!(messages, ["four", "three", "two"]);
+
+        let strict = load_module(&main, BTreeMap::new(), 100_000)
+            .unwrap()
+            .execute(100_000);
+        assert!(
+            strict.is_err(),
+            "strict execution published a partial Array"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_workspace_does_not_publish_a_clean_root_after_internal_failure() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+def transform: Fn(Int) -> Int = fn(item) {
+    if item == 2 { fail!("two", item) } else { item + 10 }
+};
+export let output = match array.get(array.map([1, 2, 3], transform), 0) {
+    'Some(value) => value,
+    'None => 0,
+};"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.message == "two")
+                .count(),
+            1
+        );
+
+        let strict = load_module(&main, BTreeMap::new(), 100_000)
+            .unwrap()
+            .execute(100_000);
+        assert!(strict.is_err(), "strict execution accepted a failed world");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_workspace_retains_direct_failed_children_for_diagnostics() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+def transform: Fn(Int) -> Int = fn(item) {
+    if item == 2 { fail!("two", item) }
+    else if item == 3 { fail!("three", item) }
+    else { item }
+};
+export let output = array.length([1, transform(2), 1 / 0, transform(3), 4]);"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message == "two")
+        );
+        assert!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message == "three")
+        );
+        assert!(
+            snapshot
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("division by zero"))
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_filter_continues_predicates_but_fold_stops_after_failed_accumulator() {
+        let directory = fixture_dir();
+        let filter = directory.join("filter.telora");
+        fs::write(
+            &filter,
+            r#"import "std/array" as array;
+export let output = array.filter([1, 2, 3, 4], fn(item) {
+    if item == 2 { fail!("filter-two", item) }
+    else if item == 4 { fail!("filter-four", item) }
+    else { item > 0 }
+});"#,
+        )
+        .unwrap();
+        let filtered = recovery_engine().recover_workspace(&filter).unwrap();
+        for message in ["filter-two", "filter-four"] {
+            assert_eq!(
+                filtered
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.message == message)
+                    .count(),
+                1
+            );
+        }
+
+        let fold = directory.join("fold.telora");
+        fs::write(
+            &fold,
+            r#"import "std/array" as array;
+export let output = array.fold([1, 2, 3], 0, fn(acc, item) {
+    if item == 2 { fail!("fold-stop", item) }
+    else if item == 3 { fail!("fold-must-not-run", item) }
+    else { acc + item }
+});"#,
+        )
+        .unwrap();
+        let folded = recovery_engine().recover_workspace(&fold).unwrap();
+        assert!(
+            folded
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message == "fold-stop")
+        );
+        assert!(
+            !folded
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message == "fold-must-not-run")
         );
         fs::remove_dir_all(directory).unwrap();
     }

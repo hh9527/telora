@@ -205,6 +205,9 @@ impl<'a> ValueRef<'a> {
 
     pub fn kind(self) -> ValueKind {
         match self.value.value {
+            RuntimeValue::Failed(_) => {
+                unreachable!("failed nodes are private best-effort values")
+            }
             RuntimeValue::Int(_) => ValueKind::Int,
             RuntimeValue::Float(_) => ValueKind::Float,
             RuntimeValue::ShortString(_) | RuntimeValue::String(_) => ValueKind::String,
@@ -774,8 +777,9 @@ pub struct RuntimeError {
     pub instruction: usize,
     pub trace: Vec<RuntimeFrame>,
     locations: Option<Box<RuntimeLocations>>,
-    rendered: Option<String>,
+    rendered: Option<Box<str>>,
     trace_includes_active_frame: bool,
+    propagated_failure: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -853,6 +857,9 @@ impl RuntimeError {
     }
 
     pub(crate) fn diagnostic(&self) -> Option<Diagnostic> {
+        if self.propagated_failure.is_some() {
+            return None;
+        }
         let operation_location = self.origin().and_then(|origin| match origin {
             Origin::Source(location) => Some(location),
             Origin::Synthetic { derived_from } => derived_from,
@@ -876,7 +883,7 @@ impl RuntimeError {
 
     pub fn with_sources(mut self, sources: &SourceDatabase) -> Self {
         if let Some(diagnostic) = self.diagnostic() {
-            self.rendered = Some(sources.render(&diagnostic));
+            self.rendered = Some(sources.render(&diagnostic).into_boxed_str());
         }
         self
     }
@@ -988,6 +995,14 @@ trait NativeContinuation: fmt::Debug {
         background: &Heap,
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError>;
+
+    fn resume_failed(
+        self: Box<Self>,
+        failure: RichValue,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError>;
 }
 
 #[derive(Debug)]
@@ -998,6 +1013,7 @@ struct ArrayContinuation {
     next_index: usize,
     accumulator: Option<RichValue>,
     output: Vec<RichValue>,
+    failed: Option<RichValue>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -1012,6 +1028,7 @@ struct DictContinuation {
     next_index: usize,
     accumulator: Option<RichValue>,
     output: Vec<(String, RichValue)>,
+    failed: Option<RichValue>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -1040,6 +1057,11 @@ enum DriveOutcome {
 pub(crate) struct WorkWorld {
     heap: Heap,
     root: RichValue,
+}
+
+pub(crate) struct VmExecution {
+    pub(crate) world: WorkWorld,
+    pub(crate) failures: Vec<RuntimeError>,
 }
 
 #[derive(Clone, Copy)]
@@ -1206,6 +1228,43 @@ impl Vm {
         })
     }
 
+    pub(crate) fn execute_with_account_best_effort(
+        &mut self,
+        function: &BytecodeFunction,
+        arguments: &[Value],
+        account: &mut QuotaAccount,
+    ) -> (Result<Value, RuntimeError>, Vec<RuntimeError>) {
+        let diagnostic_start = account.diagnostics.len();
+        let background = Heap::main();
+        match self.execute_in_work_best_effort(
+            &background,
+            &HashMap::new(),
+            function,
+            arguments,
+            account,
+        ) {
+            Ok(execution) => {
+                let result =
+                    fail_on_reported_error(account, diagnostic_start, function).and_then(|()| {
+                        match execution.world.export(&background) {
+                            Ok(value) => Ok(value),
+                            Err(_) if !execution.failures.is_empty() => {
+                                Err(execution.failures[0].clone())
+                            }
+                            Err(heap_error) => Err(error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                heap_error.to_string(),
+                                function,
+                                0,
+                            )),
+                        }
+                    });
+                (result, execution.failures)
+            }
+            Err(error) => (Err(error), Vec::new()),
+        }
+    }
+
     pub(crate) fn execute_in_work(
         &mut self,
         background: &Heap,
@@ -1226,6 +1285,26 @@ impl Vm {
         )?;
         fail_on_reported_error(account, diagnostic_start, function)?;
         Ok(arena)
+    }
+
+    pub(crate) fn execute_in_work_best_effort(
+        &mut self,
+        background: &Heap,
+        externals: &HashMap<String, PersistentValue>,
+        function: &BytecodeFunction,
+        arguments: &[Value],
+        account: &mut QuotaAccount,
+    ) -> Result<VmExecution, RuntimeError> {
+        self.execute_frame_with_policy(
+            background,
+            externals,
+            function,
+            None,
+            arguments,
+            &[],
+            account,
+            true,
+        )
     }
 
     pub(crate) fn execute_function_with_captures_in_work(
@@ -1281,6 +1360,24 @@ impl Vm {
         captures: &[Value],
         account: &mut QuotaAccount,
     ) -> Result<WorkWorld, RuntimeError> {
+        self.execute_frame_with_policy(
+            background, externals, function, work_state, arguments, captures, account, false,
+        )
+        .map(|execution| execution.world)
+    }
+
+    #[allow(clippy::needless_borrow, clippy::too_many_arguments)]
+    fn execute_frame_with_policy(
+        &mut self,
+        background: &Heap,
+        externals: &HashMap<String, PersistentValue>,
+        function: &BytecodeFunction,
+        work_state: Option<WorkWorld>,
+        arguments: &[Value],
+        captures: &[Value],
+        account: &mut QuotaAccount,
+        best_effort: bool,
+    ) -> Result<VmExecution, RuntimeError> {
         // Linking recursively walks the immutable prototype graph. Keep that host
         // recursion off callers' often-small test or embedding threads; VM calls
         // themselves use the explicit frame stack below.
@@ -1359,1207 +1456,96 @@ impl Vm {
         )?];
         let debug_sink = Arc::clone(&self.debug_sink);
 
-        let mut result = (|| -> Result<RichValue, RuntimeError> {
-            loop {
-                let function_arc = frames
-                    .last()
-                    .expect("execution has at least one frame")
-                    .function
-                    .clone();
-                let function = function_arc.as_ref();
-                let pc = frames.last().expect("execution frame").pc;
-                let instruction = function.instructions().get(pc).ok_or_else(|| {
-                    error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        "instruction pointer is out of bounds",
-                        function,
-                        pc,
-                    )
-                })?;
-                let frame = frames.last().expect("execution frame");
-                let base = frame.base;
-                let end = base + frame.function.register_count();
-                let mut registers = &mut stack[base..end];
-                let view = WorkView {
-                    main: background,
-                    work: &current,
-                }
-                .heap_view();
+        let mut failures = Vec::new();
+        let mut result = loop {
+            let attempt = (|| -> Result<RichValue, RuntimeError> {
+                loop {
+                    let function_arc = frames
+                        .last()
+                        .expect("execution has at least one frame")
+                        .function
+                        .clone();
+                    let function = function_arc.as_ref();
+                    let pc = frames.last().expect("execution frame").pc;
+                    let instruction = function.instructions().get(pc).ok_or_else(|| {
+                        error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            "instruction pointer is out of bounds",
+                            function,
+                            pc,
+                        )
+                    })?;
+                    let frame = frames.last().expect("execution frame");
+                    let base = frame.base;
+                    let end = base + frame.function.register_count();
+                    let mut registers = &mut stack[base..end];
+                    let view = WorkView {
+                        main: background,
+                        work: &current,
+                    }
+                    .heap_view();
 
-                match instruction {
-                    Opcode::LoadConst { dst, value } => {
-                        let (_, values, _, _) =
-                            view.bytecode(frame.prototype).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        let value = values.get(value.0).copied().ok_or_else(|| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                format!("value link {} is out of bounds", value.0),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            value.with_loc(value.loc().or(instruction_location(function, pc))),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::Move { dst, src } => {
-                        let value = *read_register(&registers, *src, function, pc)?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::MakeUpLink { dst } => {
-                        charge_allocation(
-                            account,
-                            logical_value_bytes(1).map_err(|native_error| {
-                                allocation_error(native_error.message, function, pc)
-                            })?,
-                            function,
-                            pc,
-                        )?;
-                        let link = RichValue::new(
-                            RuntimeValue::UpLink(
-                                current.allocate(crate::heap::Object::UpLink { value: None }),
-                            ),
-                            instruction_location(function, pc),
-                        );
-                        write_register(&mut registers, *dst, link, function, pc)?;
-                    }
-                    Opcode::ReadUpLink { dst, link } => {
-                        let RuntimeValue::UpLink(handle) =
-                            read_register(&registers, *link, function, pc)?.value
-                        else {
-                            return Err(error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                "up-link read operand is not an up-link",
-                                function,
-                                pc,
-                            ));
-                        };
-                        let value = view
-                            .up_link(handle)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                            .ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::UninitializedDefinition,
-                                    "definition was read before initialization",
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::InitializeUpLink { link, src } => {
-                        let RuntimeValue::UpLink(handle) =
-                            read_register(&registers, *link, function, pc)?.value
-                        else {
-                            return Err(error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                "up-link initialization operand is not an up-link",
-                                function,
-                                pc,
-                            ));
-                        };
-                        if view
-                            .up_link(handle)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                            .is_some()
-                        {
-                            return Err(error(
-                                RuntimeErrorKind::DuplicateDefinition,
-                                "definition was initialized more than once",
-                                function,
-                                pc,
-                            ));
-                        }
-                        let value = *read_register(&registers, *src, function, pc)?;
-                        current
-                            .initialize_up_link(handle, value)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                    }
-                    Opcode::AssertUpLinkReady { link } => {
-                        let RuntimeValue::UpLink(handle) =
-                            read_register(&registers, *link, function, pc)?.value
-                        else {
-                            return Err(error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                "up-link assertion operand is not an up-link",
-                                function,
-                                pc,
-                            ));
-                        };
-                        if view
-                            .up_link(handle)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                            .is_none()
-                        {
-                            return Err(error(
-                                RuntimeErrorKind::UninitializedDefinition,
-                                "declaration was not initialized before block completion",
-                                function,
-                                pc,
-                            ));
-                        }
-                    }
-                    Opcode::AssertFunctionArity { value, arity } => {
-                        let value = *read_register(&registers, *value, function, pc)?;
-                        let RuntimeValue::Func(handle) = value.value else {
-                            return Err(error(
-                                RuntimeErrorKind::TypeMismatch,
-                                format!(
-                                    "definition must be a function accepting {arity} arguments"
-                                ),
-                                function,
-                                pc,
-                            ));
-                        };
-                        let actual = view.function_arity(handle).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        if actual != *arity {
-                            return Err(error(
-                                RuntimeErrorKind::TypeMismatch,
-                                format!("definition must accept {arity} arguments, got {actual}"),
-                                function,
-                                pc,
-                            ));
-                        }
-                    }
-                    Opcode::Add { dst, left, right } => {
-                        let value = numeric_binary(
-                            read_register(&registers, *left, function, pc)?,
-                            read_register(&registers, *right, function, pc)?,
-                            NumericOperation::Add,
-                            &view,
-                            account,
-                            function,
-                            pc,
-                        )?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            value.with_loc(instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::Subtract { dst, left, right } => {
-                        let value = numeric_binary(
-                            read_register(&registers, *left, function, pc)?,
-                            read_register(&registers, *right, function, pc)?,
-                            NumericOperation::Subtract,
-                            &view,
-                            account,
-                            function,
-                            pc,
-                        )?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            value.with_loc(instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::Multiply { dst, left, right } => {
-                        let value = numeric_binary(
-                            read_register(&registers, *left, function, pc)?,
-                            read_register(&registers, *right, function, pc)?,
-                            NumericOperation::Multiply,
-                            &view,
-                            account,
-                            function,
-                            pc,
-                        )?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::Divide { dst, left, right } => {
-                        let value = numeric_binary(
-                            read_register(&registers, *left, function, pc)?,
-                            read_register(&registers, *right, function, pc)?,
-                            NumericOperation::Divide,
-                            &view,
-                            account,
-                            function,
-                            pc,
-                        )?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::Remainder { dst, left, right } => {
-                        let value = numeric_binary(
-                            read_register(&registers, *left, function, pc)?,
-                            read_register(&registers, *right, function, pc)?,
-                            NumericOperation::Remainder,
-                            &view,
-                            account,
-                            function,
-                            pc,
-                        )?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::Negate { dst, src } => {
-                        let input = *read_register(&registers, *src, function, pc)?;
-                        let value = match input.value {
-                            RuntimeValue::Int(value) => {
-                                RuntimeValue::Int(value.checked_neg().ok_or_else(|| {
+                    match instruction {
+                        Opcode::LoadConst { dst, value } => {
+                            let (_, values, _, _) =
+                                view.bytecode(frame.prototype).map_err(|heap_error| {
                                     error(
-                                        RuntimeErrorKind::IntegerOverflow,
-                                        "integer negation overflowed",
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
                                         function,
                                         pc,
                                     )
-                                })?)
-                            }
-                            RuntimeValue::Float(value) => RuntimeValue::Float(-value),
-                            _ => {
-                                return Err(runtime_type_error(
-                                    "numeric value",
-                                    &input,
-                                    &view,
+                                })?;
+                            let value = values.get(value.0).copied().ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    format!("value link {} is out of bounds", value.0),
                                     function,
                                     pc,
-                                ));
-                            }
-                        };
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(value, instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::Not { dst, src } => {
-                        let input = *read_register(&registers, *src, function, pc)?;
-                        let value = match input.value {
-                            RuntimeValue::Int(value) => RuntimeValue::Int(!value),
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::False)
-                            }
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::True)
-                            }
-                            _ => {
-                                return Err(runtime_type_error(
-                                    "Int or Bool",
-                                    &input,
-                                    &view,
-                                    function,
-                                    pc,
-                                ));
-                            }
-                        };
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(value, instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::LogicalNot { dst, src } => {
-                        let input = *read_register(&registers, *src, function, pc)?;
-                        let value = match input.value {
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::False)
-                            }
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::True)
-                            }
-                            _ => {
-                                return Err(runtime_type_error(
-                                    "Bool", &input, &view, function, pc,
-                                ));
-                            }
-                        };
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(value, instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::BitNot { dst, src } => {
-                        let input = *read_register(&registers, *src, function, pc)?;
-                        let RuntimeValue::Int(value) = input.value else {
-                            return Err(runtime_type_error("Int", &input, &view, function, pc));
-                        };
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(
-                                RuntimeValue::Int(!value),
-                                instruction_location(function, pc),
-                            ),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::BitAnd { dst, left, right }
-                    | Opcode::BitOr { dst, left, right }
-                    | Opcode::BitXor { dst, left, right } => {
-                        let operation = match instruction {
-                            Opcode::BitAnd { .. } => BitwiseOperation::And,
-                            Opcode::BitOr { .. } => BitwiseOperation::Or,
-                            Opcode::BitXor { .. } => BitwiseOperation::Xor,
-                            _ => unreachable!(),
-                        };
-                        let value = bitwise_binary(
-                            read_register(&registers, *left, function, pc)?,
-                            read_register(&registers, *right, function, pc)?,
-                            operation,
-                            &view,
-                            function,
-                            pc,
-                        )?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::Equal { dst, left, right } => {
-                        let left = *read_register(&registers, *left, function, pc)?;
-                        let right = *read_register(&registers, *right, function, pc)?;
-                        let equal = view.values_equal(left, right).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
+                                )
+                            })?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                value.with_loc(value.loc().or(instruction_location(function, pc))),
                                 function,
                                 pc,
-                            )
-                        })?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            runtime_bool(equal).with_loc(instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::NotEqual { dst, left, right } => {
-                        let left = *read_register(&registers, *left, function, pc)?;
-                        let right = *read_register(&registers, *right, function, pc)?;
-                        let not_equal = !view.values_equal(left, right).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
+                            )?;
+                        }
+                        Opcode::Move { dst, src } => {
+                            let value = *read_register(&registers, *src, function, pc)?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::MakeUpLink { dst } => {
+                            charge_allocation(
+                                account,
+                                logical_value_bytes(1).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?,
                                 function,
                                 pc,
-                            )
-                        })?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            runtime_bool(not_equal).with_loc(instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::LessThan { dst, left, right } => {
-                        let left = read_register(&registers, *left, function, pc)?;
-                        let right = read_register(&registers, *right, function, pc)?;
-                        let less = ordered_comparison(left, right, false, &view, function, pc)?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            runtime_bool(less).with_loc(instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::LessThanOrEqual { dst, left, right } => {
-                        let left = read_register(&registers, *left, function, pc)?;
-                        let right = read_register(&registers, *right, function, pc)?;
-                        let less_or_equal =
-                            ordered_comparison(left, right, true, &view, function, pc)?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            runtime_bool(less_or_equal)
-                                .with_loc(instruction_location(function, pc)),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::MakeArray { dst, items } => {
-                        let values = read_many(&registers, items, function, pc)?;
-                        let bytes = logical_value_bytes(values.len()).map_err(|native_error| {
-                            allocation_error(native_error.message, function, pc)
-                        })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(
-                                RuntimeValue::Array(
-                                    current.allocate(crate::heap::Object::Array(values.into())),
+                            )?;
+                            let link = RichValue::new(
+                                RuntimeValue::UpLink(
+                                    current.allocate(crate::heap::Object::UpLink { value: None }),
                                 ),
                                 instruction_location(function, pc),
-                            ),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::ConcatArrays { dst, arrays } => {
-                        let arrays = read_many(&registers, arrays, function, pc)?;
-                        let mut values = Vec::new();
-                        for array in arrays {
-                            let RuntimeValue::Array(handle) = array.value else {
+                            );
+                            write_register(&mut registers, *dst, link, function, pc)?;
+                        }
+                        Opcode::ReadUpLink { dst, link } => {
+                            let RuntimeValue::UpLink(handle) =
+                                read_register(&registers, *link, function, pc)?.value
+                            else {
                                 return Err(error(
-                                    RuntimeErrorKind::TypeMismatch,
-                                    "array spread operand must be an Array",
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "up-link read operand is not an up-link",
                                     function,
                                     pc,
                                 ));
                             };
-                            values.extend_from_slice(view.sequence(handle, false).map_err(
-                                |heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                },
-                            )?);
-                        }
-                        let bytes = logical_value_bytes(values.len()).map_err(|native_error| {
-                            allocation_error(native_error.message, function, pc)
-                        })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(
-                                RuntimeValue::Array(
-                                    current.allocate(crate::heap::Object::Array(values.into())),
-                                ),
-                                instruction_location(function, pc),
-                            ),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::MakeTuple { dst, items } => {
-                        let values = read_many(&registers, items, function, pc)?;
-                        let bytes = logical_value_bytes(values.len()).map_err(|native_error| {
-                            allocation_error(native_error.message, function, pc)
-                        })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        write_register(
-                            &mut registers,
-                            *dst,
-                            RichValue::new(
-                                RuntimeValue::Tuple(
-                                    current.allocate(crate::heap::Object::Tuple(values.into())),
-                                ),
-                                instruction_location(function, pc),
-                            ),
-                            function,
-                            pc,
-                        )?;
-                    }
-                    Opcode::InterpolateString { dst, parts } => {
-                        let values = read_many(&registers, parts, function, pc)?;
-                        let mut length = 0usize;
-                        for value in &values {
-                            length += if let RuntimeValue::Int(value) = value.value {
-                                decimal_length(value)
-                            } else if let RuntimeValue::Float(value) = value.value {
-                                value.to_string().len()
-                            } else if let Some(value) =
-                                view.string_text(*value).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                            {
-                                value.len()
-                            } else if let Some(value) =
-                                view.atom_text(*value).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                            {
-                                value.len()
-                            } else {
-                                return Err(runtime_shallow_type_error(
-                                    "String, Int, Float, or Atom interpolation value",
-                                    *value,
-                                    function,
-                                    pc,
-                                ));
-                            };
-                        }
-                        let bytes = u64::try_from(length).map_err(|_| {
-                            allocation_error("String allocation size overflowed", function, pc)
-                        })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        let mut output = String::with_capacity(length);
-                        for value in &values {
-                            if let RuntimeValue::Int(value) = value.value {
-                                write!(output, "{value}").expect("writing to String cannot fail");
-                            } else if let RuntimeValue::Float(value) = value.value {
-                                write!(output, "{value}").expect("writing to String cannot fail");
-                            } else if let Some(value) =
-                                view.string_text(*value).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                            {
-                                output.push_str(value);
-                            } else if let Some(value) =
-                                view.atom_text(*value).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                            {
-                                output.push_str(value);
-                            } else {
-                                unreachable!("interpolation values were validated");
-                            }
-                        }
-                        let value = RichValue::new(
-                            current.string(Some(background), &output),
-                            instruction_location(function, pc),
-                        );
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::MakeDict { dst, fields } => {
-                        let (_, _, text_links, _) =
-                            view.bytecode(frame.prototype).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        let mut entries = fields
-                            .iter()
-                            .map(|(field, register)| {
-                                let field = text_links.get(field.0).copied().ok_or_else(|| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        format!("text link {} is out of bounds", field.0),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                                Ok((field, *read_register(&registers, *register, function, pc)?))
-                            })
-                            .collect::<Result<Vec<_>, RuntimeError>>()?;
-                        entries.sort_by(|left, right| {
-                            view.text(left.0)
-                                .unwrap_or("")
-                                .cmp(view.text(right.0).unwrap_or(""))
-                        });
-                        if entries
-                            .windows(2)
-                            .any(|pair| view.text(pair[0].0).ok() == view.text(pair[1].0).ok())
-                        {
-                            return Err(error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                "Dict contains a duplicate field",
-                                function,
-                                pc,
-                            ));
-                        }
-                        let (fields, values): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
-                        let field_bytes = fields.iter().try_fold(0u64, |total, field| {
-                            let length = view
-                                .text(*field)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .len();
-                            total.checked_add(length as u64).ok_or_else(|| {
-                                allocation_error("Dict allocation size overflowed", function, pc)
-                            })
-                        })?;
-                        let value_bytes =
-                            logical_value_bytes(values.len()).map_err(|native_error| {
-                                allocation_error(native_error.message, function, pc)
-                            })?;
-                        let bytes = field_bytes.checked_add(value_bytes).ok_or_else(|| {
-                            allocation_error("Dict allocation size overflowed", function, pc)
-                        })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        let shape = current.intern_shape(fields);
-                        let dict = RichValue::new(
-                            RuntimeValue::Dict(current.allocate(crate::heap::Object::Dict {
-                                shape,
-                                values: values.into(),
-                            })),
-                            instruction_location(function, pc),
-                        );
-                        write_register(&mut registers, *dst, dict, function, pc)?;
-                    }
-                    Opcode::MergeDicts { dst, dicts } => {
-                        let dicts = read_many(&registers, dicts, function, pc)?;
-                        let mut merged = BTreeMap::new();
-                        for dict in dicts {
-                            let RuntimeValue::Dict(handle) = dict.value else {
-                                return Err(error(
-                                    RuntimeErrorKind::TypeMismatch,
-                                    "Dict spread operand must be a Dict",
-                                    function,
-                                    pc,
-                                ));
-                            };
-                            let (fields, values) =
-                                view.dict_parts(handle).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            for (field, value) in fields.iter().zip(values) {
-                                let field = view.text(*field).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                                merged.insert(field.to_owned(), *value);
-                            }
-                        }
-                        let field_bytes = merged.keys().try_fold(0u64, |total, field| {
-                            total.checked_add(field.len() as u64).ok_or_else(|| {
-                                allocation_error("Dict allocation size overflowed", function, pc)
-                            })
-                        })?;
-                        let value_bytes =
-                            logical_value_bytes(merged.len()).map_err(|native_error| {
-                                allocation_error(native_error.message, function, pc)
-                            })?;
-                        let bytes = field_bytes.checked_add(value_bytes).ok_or_else(|| {
-                            allocation_error("Dict allocation size overflowed", function, pc)
-                        })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        let (fields, values): (Vec<_>, Vec<_>) = merged
-                            .into_iter()
-                            .map(|(field, value)| (current.intern(&field), value))
-                            .unzip();
-                        let shape = current.intern_shape(fields);
-                        let dict = RichValue::new(
-                            RuntimeValue::Dict(current.allocate(crate::heap::Object::Dict {
-                                shape,
-                                values: values.into(),
-                            })),
-                            instruction_location(function, pc),
-                        );
-                        write_register(&mut registers, *dst, dict, function, pc)?;
-                    }
-                    Opcode::GetField { dst, dict, field } => {
-                        let (_, _, text_links, _) =
-                            view.bytecode(frame.prototype).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        let field = text_links.get(field.0).copied().ok_or_else(|| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                format!("text link {} is out of bounds", field.0),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        let dict = read_register(&registers, *dict, function, pc)?;
-                        let RuntimeValue::Dict(handle) = dict.value else {
-                            return Err(runtime_type_error("Dict", dict, &view, function, pc));
-                        };
-                        let value = view
-                            .dict_get(handle, field)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                            .ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::MissingField,
-                                    format!(
-                                        "Dict has no field {:?}",
-                                        view.text(field).unwrap_or("<invalid>")
-                                    ),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::GetArray { dst, array, index } => {
-                        let array = *read_register(&registers, *array, function, pc)?;
-                        let RuntimeValue::Array(handle) = array.value else {
-                            return Err(runtime_type_error("Array", &array, &view, function, pc));
-                        };
-                        let index = *read_register(&registers, *index, function, pc)?;
-                        let RuntimeValue::Int(index_value) = index.value else {
-                            return Err(runtime_type_error("Int", &index, &view, function, pc));
-                        };
-                        let items = view.sequence(handle, false).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        let value = usize::try_from(index_value)
-                            .ok()
-                            .and_then(|index| items.get(index).copied());
-                        let Some(value) = value else {
-                            return Err(out_of_range_error(account, function, pc));
-                        };
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::ProjectTuple { dst, tuple, index } => {
-                        let tuple = *read_register(&registers, *tuple, function, pc)?;
-                        let RuntimeValue::Tuple(handle) = tuple.value else {
-                            return Err(runtime_type_error("Tuple", &tuple, &view, function, pc));
-                        };
-                        let value = view
-                            .sequence(handle, true)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                            .get(*index)
-                            .copied();
-                        let Some(value) = value else {
-                            return Err(out_of_range_error(account, function, pc));
-                        };
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::FieldExists { dst, value, field } => {
-                        let (_, _, text_links, _) =
-                            view.bytecode(frame.prototype).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        let field = text_links.get(field.0).copied().ok_or_else(|| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                format!("text link {} is out of bounds", field.0),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        let value = read_register(&registers, *value, function, pc)?;
-                        let exists = match value.value {
-                            RuntimeValue::Dict(handle) => view
-                                .dict_get(handle, field)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .is_some(),
-                            _ => false,
-                        };
-                        write_register(&mut registers, *dst, runtime_bool(exists), function, pc)?;
-                    }
-                    Opcode::IsDict { dst, value } => {
-                        let matches = matches!(
-                            read_register(&registers, *value, function, pc)?.value,
-                            RuntimeValue::Dict(_)
-                        );
-                        write_register(&mut registers, *dst, runtime_bool(matches), function, pc)?;
-                    }
-                    Opcode::TupleLengthEquals { dst, value, length } => {
-                        let matches = matches!(
-                            read_register(&registers, *value, function, pc)?.value,
-                            RuntimeValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
-                        );
-                        write_register(&mut registers, *dst, runtime_bool(matches), function, pc)?;
-                    }
-                    Opcode::GetTuple { dst, tuple, index } => {
-                        let tuple = read_register(&registers, *tuple, function, pc)?;
-                        let RuntimeValue::Tuple(handle) = tuple.value else {
-                            return Err(runtime_type_error("Tuple", tuple, &view, function, pc));
-                        };
-                        let value = view
-                            .sequence(handle, true)
-                            .map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                            .get(*index)
-                            .copied()
-                            .ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("tuple index {index} is out of bounds"),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        write_register(&mut registers, *dst, value, function, pc)?;
-                    }
-                    Opcode::TaggedTagEquals { dst, value, tag } => {
-                        let value = read_register(&registers, *value, function, pc)?;
-                        let expected = read_register(&registers, *tag, function, pc)?;
-                        let matches = if let RuntimeValue::Tagged(handle) = value.value {
-                            let (actual, _) = view.tagged(handle).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            view.values_equal(actual, *expected).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?
-                        } else {
-                            false
-                        };
-                        write_register(&mut registers, *dst, runtime_bool(matches), function, pc)?;
-                    }
-                    Opcode::GetTaggedPayload { dst, value } => {
-                        let tagged = read_register(&registers, *value, function, pc)?;
-                        let RuntimeValue::Tagged(handle) = tagged.value else {
-                            return Err(runtime_type_error("Tagged", tagged, &view, function, pc));
-                        };
-                        let (_, payload) = view.tagged(handle).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        write_register(&mut registers, *dst, payload, function, pc)?;
-                    }
-                    Opcode::MakeClosure {
-                        dst,
-                        prototype,
-                        captures,
-                    } => {
-                        let (_, _, _, prototypes) =
-                            view.bytecode(frame.prototype).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        let closure_prototype =
-                            prototypes.get(prototype.0).copied().ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("prototype link {} is out of bounds", prototype.0),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                        let captures = read_many(&registers, captures, function, pc)?;
-                        let bytes =
-                            logical_value_bytes(captures.len()).map_err(|native_error| {
-                                allocation_error(native_error.message, function, pc)
-                            })?;
-                        charge_allocation(account, bytes, function, pc)?;
-                        let closure = RichValue::new(
-                            RuntimeValue::Func(current.allocate(crate::heap::Object::Closure {
-                                identity: Arc::new(()),
-                                prototype: closure_prototype,
-                                upvalues: captures.into(),
-                            })),
-                            instruction_location(function, pc),
-                        );
-                        write_register(&mut registers, *dst, closure, function, pc)?;
-                    }
-                    Opcode::Call {
-                        base: call_base,
-                        argument_count,
-                    } => {
-                        let callee = *read_register(&registers, *call_base, function, pc)?;
-                        let arguments = read_call_arguments(
-                            &registers,
-                            *call_base,
-                            *argument_count,
-                            function,
-                            pc,
-                        )?;
-                        frames.last_mut().expect("caller frame").pc += 1;
-                        let _ = registers;
-                        match drive_vm_action(
-                            VmAction::Call {
-                                callee,
-                                arguments,
-                                return_target: ReturnTarget::Register {
-                                    destination: *call_base,
-                                    call_site: instruction_location(function, pc),
-                                },
-                                call_function: function_arc,
-                                call_pc: pc,
-                            },
-                            &mut frames,
-                            &mut stack,
-                            &mut current,
-                            background,
-                            account,
-                        )? {
-                            DriveOutcome::Pending => continue,
-                            DriveOutcome::Root(value) => return Ok(value),
-                        }
-                    }
-                    Opcode::TailCall {
-                        base: call_base,
-                        argument_count,
-                    } => {
-                        let callee = *read_register(&registers, *call_base, function, pc)?;
-                        let arguments = read_call_arguments(
-                            &registers,
-                            *call_base,
-                            *argument_count,
-                            function,
-                            pc,
-                        )?;
-                        let completed = frames.pop().expect("tail caller frame");
-                        let _ = registers;
-                        stack.truncate(completed.base);
-                        match drive_vm_action(
-                            VmAction::Call {
-                                callee,
-                                arguments,
-                                return_target: completed.return_target,
-                                call_function: function_arc,
-                                call_pc: pc,
-                            },
-                            &mut frames,
-                            &mut stack,
-                            &mut current,
-                            background,
-                            account,
-                        )? {
-                            DriveOutcome::Pending => continue,
-                            DriveOutcome::Root(value) => return Ok(value),
-                        }
-                    }
-                    Opcode::Jump { target } => {
-                        validate_jump(*target, function, pc)?;
-                        if *target <= pc {
-                            consume_fuel(account, function, pc)?;
-                        }
-                        frames.last_mut().expect("execution frame").pc = *target;
-                        continue;
-                    }
-                    Opcode::JumpIfFalse { condition, target } => {
-                        let condition = read_register(&registers, *condition, function, pc)?;
-                        match condition.value {
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {}
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
-                                validate_jump(*target, function, pc)?;
-                                if *target <= pc {
-                                    consume_fuel(account, function, pc)?;
-                                }
-                                frames.last_mut().expect("execution frame").pc = *target;
-                                continue;
-                            }
-                            _ => {
-                                return Err(runtime_type_error(
-                                    "'True or 'False",
-                                    condition,
-                                    &view,
-                                    function,
-                                    pc,
-                                ));
-                            }
-                        }
-                    }
-                    Opcode::Return { src } => {
-                        let value = *read_register(&registers, *src, function, pc)?;
-                        let completed = frames.pop().expect("execution frame");
-                        let _ = registers;
-                        stack.truncate(completed.base);
-                        match drive_vm_action(
-                            VmAction::Return {
-                                value,
-                                return_target: completed.return_target,
-                            },
-                            &mut frames,
-                            &mut stack,
-                            &mut current,
-                            background,
-                            account,
-                        )? {
-                            DriveOutcome::Pending => continue,
-                            DriveOutcome::Root(value) => return Ok(value),
-                        }
-                    }
-                    Opcode::Fail { message } => {
-                        return Err(error(
-                            RuntimeErrorKind::NoPatternMatched,
-                            message,
-                            function,
-                            pc,
-                        ));
-                    }
-                    Opcode::Panic { message } => {
-                        let message = *read_register(&registers, *message, function, pc)?;
-                        let text = match message.value {
-                            RuntimeValue::ShortString(id) => view
-                                .text(id)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .to_owned(),
-                            RuntimeValue::String(handle) => {
-                                match view.object(handle).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })? {
-                                    Object::String(value) => value.to_string(),
-                                    _ => {
-                                        return Err(runtime_type_error(
-                                            "String", &message, &view, function, pc,
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {
-                                return Err(runtime_type_error(
-                                    "String", &message, &view, function, pc,
-                                ));
-                            }
-                        };
-                        return Err(error(RuntimeErrorKind::Panic, text, function, pc));
-                    }
-                    Opcode::Raise {
-                        error: error_register,
-                    } => {
-                        let structured = *read_register(&registers, *error_register, function, pc)?;
-                        let RuntimeValue::Dict(handle) = structured.value else {
-                            return Err(runtime_type_error(
-                                "BlameError",
-                                &structured,
-                                &view,
-                                function,
-                                pc,
-                            ));
-                        };
-                        let fields = view.dict_fields(handle).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
-                                function,
-                                pc,
-                            )
-                        })?;
-                        if fields.as_slice() != ["data", "message", "rule"] {
-                            return Err(runtime_type_error(
-                                "BlameError",
-                                &structured,
-                                &view,
-                                function,
-                                pc,
-                            ));
-                        }
-                        let get_field = |name| {
-                            view.dict_get_text(handle, name)
+                            let value = view
+                                .up_link(handle)
                                 .map_err(|heap_error| {
                                     error(
                                         RuntimeErrorKind::InvalidBytecode,
@@ -2570,76 +1556,1422 @@ impl Vm {
                                 })?
                                 .ok_or_else(|| {
                                     error(
+                                        RuntimeErrorKind::UninitializedDefinition,
+                                        "definition was read before initialization",
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::InitializeUpLink { link, src } => {
+                            let RuntimeValue::UpLink(handle) =
+                                read_register(&registers, *link, function, pc)?.value
+                            else {
+                                return Err(error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "up-link initialization operand is not an up-link",
+                                    function,
+                                    pc,
+                                ));
+                            };
+                            if view
+                                .up_link(handle)
+                                .map_err(|heap_error| {
+                                    error(
                                         RuntimeErrorKind::InvalidBytecode,
-                                        format!("BlameError is missing {name}"),
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                                .is_some()
+                            {
+                                return Err(error(
+                                    RuntimeErrorKind::DuplicateDefinition,
+                                    "definition was initialized more than once",
+                                    function,
+                                    pc,
+                                ));
+                            }
+                            let value = *read_register(&registers, *src, function, pc)?;
+                            current
+                                .initialize_up_link(handle, value)
+                                .map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                        }
+                        Opcode::AssertUpLinkReady { link } => {
+                            let RuntimeValue::UpLink(handle) =
+                                read_register(&registers, *link, function, pc)?.value
+                            else {
+                                return Err(error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "up-link assertion operand is not an up-link",
+                                    function,
+                                    pc,
+                                ));
+                            };
+                            if view
+                                .up_link(handle)
+                                .map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                                .is_none()
+                            {
+                                return Err(error(
+                                    RuntimeErrorKind::UninitializedDefinition,
+                                    "declaration was not initialized before block completion",
+                                    function,
+                                    pc,
+                                ));
+                            }
+                        }
+                        Opcode::AssertFunctionArity { value, arity } => {
+                            let value = *read_register(&registers, *value, function, pc)?;
+                            let RuntimeValue::Func(handle) = value.value else {
+                                return Err(error(
+                                    RuntimeErrorKind::TypeMismatch,
+                                    format!(
+                                        "definition must be a function accepting {arity} arguments"
+                                    ),
+                                    function,
+                                    pc,
+                                ));
+                            };
+                            let actual = view.function_arity(handle).map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            if actual != *arity {
+                                return Err(error(
+                                    RuntimeErrorKind::TypeMismatch,
+                                    format!(
+                                        "definition must accept {arity} arguments, got {actual}"
+                                    ),
+                                    function,
+                                    pc,
+                                ));
+                            }
+                        }
+                        Opcode::Add { dst, left, right } => {
+                            let value = numeric_binary(
+                                read_register(&registers, *left, function, pc)?,
+                                read_register(&registers, *right, function, pc)?,
+                                NumericOperation::Add,
+                                &view,
+                                account,
+                                function,
+                                pc,
+                            )?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                value.with_loc(instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::Subtract { dst, left, right } => {
+                            let value = numeric_binary(
+                                read_register(&registers, *left, function, pc)?,
+                                read_register(&registers, *right, function, pc)?,
+                                NumericOperation::Subtract,
+                                &view,
+                                account,
+                                function,
+                                pc,
+                            )?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                value.with_loc(instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::Multiply { dst, left, right } => {
+                            let value = numeric_binary(
+                                read_register(&registers, *left, function, pc)?,
+                                read_register(&registers, *right, function, pc)?,
+                                NumericOperation::Multiply,
+                                &view,
+                                account,
+                                function,
+                                pc,
+                            )?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::Divide { dst, left, right } => {
+                            let value = numeric_binary(
+                                read_register(&registers, *left, function, pc)?,
+                                read_register(&registers, *right, function, pc)?,
+                                NumericOperation::Divide,
+                                &view,
+                                account,
+                                function,
+                                pc,
+                            )?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::Remainder { dst, left, right } => {
+                            let value = numeric_binary(
+                                read_register(&registers, *left, function, pc)?,
+                                read_register(&registers, *right, function, pc)?,
+                                NumericOperation::Remainder,
+                                &view,
+                                account,
+                                function,
+                                pc,
+                            )?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::Negate { dst, src } => {
+                            let input = *read_register(&registers, *src, function, pc)?;
+                            let value = match input.value {
+                                RuntimeValue::Int(value) => {
+                                    RuntimeValue::Int(value.checked_neg().ok_or_else(|| {
+                                        error(
+                                            RuntimeErrorKind::IntegerOverflow,
+                                            "integer negation overflowed",
+                                            function,
+                                            pc,
+                                        )
+                                    })?)
+                                }
+                                RuntimeValue::Float(value) => RuntimeValue::Float(-value),
+                                _ => {
+                                    return Err(runtime_type_error(
+                                        "numeric value",
+                                        &input,
+                                        &view,
+                                        function,
+                                        pc,
+                                    ));
+                                }
+                            };
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(value, instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::Not { dst, src } => {
+                            let input = *read_register(&registers, *src, function, pc)?;
+                            let value = match input.value {
+                                RuntimeValue::Int(value) => RuntimeValue::Int(!value),
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
+                                    RuntimeValue::BuiltinAtom(BuiltinAtom::False)
+                                }
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
+                                    RuntimeValue::BuiltinAtom(BuiltinAtom::True)
+                                }
+                                _ => {
+                                    return Err(runtime_type_error(
+                                        "Int or Bool",
+                                        &input,
+                                        &view,
+                                        function,
+                                        pc,
+                                    ));
+                                }
+                            };
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(value, instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::LogicalNot { dst, src } => {
+                            let input = *read_register(&registers, *src, function, pc)?;
+                            let value = match input.value {
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
+                                    RuntimeValue::BuiltinAtom(BuiltinAtom::False)
+                                }
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
+                                    RuntimeValue::BuiltinAtom(BuiltinAtom::True)
+                                }
+                                _ => {
+                                    return Err(runtime_type_error(
+                                        "Bool", &input, &view, function, pc,
+                                    ));
+                                }
+                            };
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(value, instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::BitNot { dst, src } => {
+                            let input = *read_register(&registers, *src, function, pc)?;
+                            let RuntimeValue::Int(value) = input.value else {
+                                return Err(runtime_type_error("Int", &input, &view, function, pc));
+                            };
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(
+                                    RuntimeValue::Int(!value),
+                                    instruction_location(function, pc),
+                                ),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::BitAnd { dst, left, right }
+                        | Opcode::BitOr { dst, left, right }
+                        | Opcode::BitXor { dst, left, right } => {
+                            let operation = match instruction {
+                                Opcode::BitAnd { .. } => BitwiseOperation::And,
+                                Opcode::BitOr { .. } => BitwiseOperation::Or,
+                                Opcode::BitXor { .. } => BitwiseOperation::Xor,
+                                _ => unreachable!(),
+                            };
+                            let value = bitwise_binary(
+                                read_register(&registers, *left, function, pc)?,
+                                read_register(&registers, *right, function, pc)?,
+                                operation,
+                                &view,
+                                function,
+                                pc,
+                            )?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::Equal { dst, left, right } => {
+                            let left = *read_register(&registers, *left, function, pc)?;
+                            let right = *read_register(&registers, *right, function, pc)?;
+                            let equal = view.values_equal(left, right).map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(equal).with_loc(instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::NotEqual { dst, left, right } => {
+                            let left = *read_register(&registers, *left, function, pc)?;
+                            let right = *read_register(&registers, *right, function, pc)?;
+                            let not_equal =
+                                !view.values_equal(left, right).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(not_equal)
+                                    .with_loc(instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::LessThan { dst, left, right } => {
+                            let left = read_register(&registers, *left, function, pc)?;
+                            let right = read_register(&registers, *right, function, pc)?;
+                            let less = ordered_comparison(left, right, false, &view, function, pc)?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(less).with_loc(instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::LessThanOrEqual { dst, left, right } => {
+                            let left = read_register(&registers, *left, function, pc)?;
+                            let right = read_register(&registers, *right, function, pc)?;
+                            let less_or_equal =
+                                ordered_comparison(left, right, true, &view, function, pc)?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(less_or_equal)
+                                    .with_loc(instruction_location(function, pc)),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::MakeArray { dst, items } => {
+                            let values = read_many(&registers, items, function, pc)?;
+                            let bytes =
+                                logical_value_bytes(values.len()).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(
+                                    RuntimeValue::Array(
+                                        current.allocate(crate::heap::Object::Array(values.into())),
+                                    ),
+                                    instruction_location(function, pc),
+                                ),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::ConcatArrays { dst, arrays } => {
+                            let arrays = read_many(&registers, arrays, function, pc)?;
+                            let mut values = Vec::new();
+                            for array in arrays {
+                                let RuntimeValue::Array(handle) = array.value else {
+                                    return Err(error(
+                                        RuntimeErrorKind::TypeMismatch,
+                                        "array spread operand must be an Array",
+                                        function,
+                                        pc,
+                                    ));
+                                };
+                                values.extend_from_slice(view.sequence(handle, false).map_err(
+                                    |heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    },
+                                )?);
+                            }
+                            let bytes =
+                                logical_value_bytes(values.len()).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(
+                                    RuntimeValue::Array(
+                                        current.allocate(crate::heap::Object::Array(values.into())),
+                                    ),
+                                    instruction_location(function, pc),
+                                ),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::MakeTuple { dst, items } => {
+                            let values = read_many(&registers, items, function, pc)?;
+                            let bytes =
+                                logical_value_bytes(values.len()).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                RichValue::new(
+                                    RuntimeValue::Tuple(
+                                        current.allocate(crate::heap::Object::Tuple(values.into())),
+                                    ),
+                                    instruction_location(function, pc),
+                                ),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::InterpolateString { dst, parts } => {
+                            let values = read_many(&registers, parts, function, pc)?;
+                            let mut length = 0usize;
+                            for value in &values {
+                                length += if let RuntimeValue::Int(value) = value.value {
+                                    decimal_length(value)
+                                } else if let RuntimeValue::Float(value) = value.value {
+                                    value.to_string().len()
+                                } else if let Some(value) =
+                                    view.string_text(*value).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                {
+                                    value.len()
+                                } else if let Some(value) =
+                                    view.atom_text(*value).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                {
+                                    value.len()
+                                } else {
+                                    return Err(runtime_shallow_type_error(
+                                        "String, Int, Float, or Atom interpolation value",
+                                        *value,
+                                        function,
+                                        pc,
+                                    ));
+                                };
+                            }
+                            let bytes = u64::try_from(length).map_err(|_| {
+                                allocation_error("String allocation size overflowed", function, pc)
+                            })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            let mut output = String::with_capacity(length);
+                            for value in &values {
+                                if let RuntimeValue::Int(value) = value.value {
+                                    write!(output, "{value}")
+                                        .expect("writing to String cannot fail");
+                                } else if let RuntimeValue::Float(value) = value.value {
+                                    write!(output, "{value}")
+                                        .expect("writing to String cannot fail");
+                                } else if let Some(value) =
+                                    view.string_text(*value).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                {
+                                    output.push_str(value);
+                                } else if let Some(value) =
+                                    view.atom_text(*value).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                {
+                                    output.push_str(value);
+                                } else {
+                                    unreachable!("interpolation values were validated");
+                                }
+                            }
+                            let value = RichValue::new(
+                                current.string(Some(background), &output),
+                                instruction_location(function, pc),
+                            );
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::MakeDict { dst, fields } => {
+                            let (_, _, text_links, _) =
+                                view.bytecode(frame.prototype).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            let mut entries = fields
+                                .iter()
+                                .map(|(field, register)| {
+                                    let field =
+                                        text_links.get(field.0).copied().ok_or_else(|| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                format!("text link {} is out of bounds", field.0),
+                                                function,
+                                                pc,
+                                            )
+                                        })?;
+                                    Ok((
+                                        field,
+                                        *read_register(&registers, *register, function, pc)?,
+                                    ))
+                                })
+                                .collect::<Result<Vec<_>, RuntimeError>>()?;
+                            entries.sort_by(|left, right| {
+                                view.text(left.0)
+                                    .unwrap_or("")
+                                    .cmp(view.text(right.0).unwrap_or(""))
+                            });
+                            if entries
+                                .windows(2)
+                                .any(|pair| view.text(pair[0].0).ok() == view.text(pair[1].0).ok())
+                            {
+                                return Err(error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "Dict contains a duplicate field",
+                                    function,
+                                    pc,
+                                ));
+                            }
+                            let (fields, values): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+                            let field_bytes = fields.iter().try_fold(0u64, |total, field| {
+                                let length = view
+                                    .text(*field)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .len();
+                                total.checked_add(length as u64).ok_or_else(|| {
+                                    allocation_error(
+                                        "Dict allocation size overflowed",
                                         function,
                                         pc,
                                     )
                                 })
-                        };
-                        let data = get_field("data")?;
-                        let message = get_field("message")?;
-                        let rule = get_field("rule")?;
-                        let text = view.string_text(message).map_err(|heap_error| {
-                            error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
+                            })?;
+                            let value_bytes =
+                                logical_value_bytes(values.len()).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?;
+                            let bytes = field_bytes.checked_add(value_bytes).ok_or_else(|| {
+                                allocation_error("Dict allocation size overflowed", function, pc)
+                            })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            let shape = current.intern_shape(fields);
+                            let dict = RichValue::new(
+                                RuntimeValue::Dict(current.allocate(crate::heap::Object::Dict {
+                                    shape,
+                                    values: values.into(),
+                                })),
+                                instruction_location(function, pc),
+                            );
+                            write_register(&mut registers, *dst, dict, function, pc)?;
+                        }
+                        Opcode::MergeDicts { dst, dicts } => {
+                            let dicts = read_many(&registers, dicts, function, pc)?;
+                            let mut merged = BTreeMap::new();
+                            for dict in dicts {
+                                let RuntimeValue::Dict(handle) = dict.value else {
+                                    return Err(error(
+                                        RuntimeErrorKind::TypeMismatch,
+                                        "Dict spread operand must be a Dict",
+                                        function,
+                                        pc,
+                                    ));
+                                };
+                                let (fields, values) =
+                                    view.dict_parts(handle).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                for (field, value) in fields.iter().zip(values) {
+                                    let field = view.text(*field).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                    merged.insert(field.to_owned(), *value);
+                                }
+                            }
+                            let field_bytes = merged.keys().try_fold(0u64, |total, field| {
+                                total.checked_add(field.len() as u64).ok_or_else(|| {
+                                    allocation_error(
+                                        "Dict allocation size overflowed",
+                                        function,
+                                        pc,
+                                    )
+                                })
+                            })?;
+                            let value_bytes =
+                                logical_value_bytes(merged.len()).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?;
+                            let bytes = field_bytes.checked_add(value_bytes).ok_or_else(|| {
+                                allocation_error("Dict allocation size overflowed", function, pc)
+                            })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            let (fields, values): (Vec<_>, Vec<_>) = merged
+                                .into_iter()
+                                .map(|(field, value)| (current.intern(&field), value))
+                                .unzip();
+                            let shape = current.intern_shape(fields);
+                            let dict = RichValue::new(
+                                RuntimeValue::Dict(current.allocate(crate::heap::Object::Dict {
+                                    shape,
+                                    values: values.into(),
+                                })),
+                                instruction_location(function, pc),
+                            );
+                            write_register(&mut registers, *dst, dict, function, pc)?;
+                        }
+                        Opcode::GetField { dst, dict, field } => {
+                            let (_, _, text_links, _) =
+                                view.bytecode(frame.prototype).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            let field = text_links.get(field.0).copied().ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    format!("text link {} is out of bounds", field.0),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            let dict = read_register(&registers, *dict, function, pc)?;
+                            let RuntimeValue::Dict(handle) = dict.value else {
+                                return Err(runtime_type_error("Dict", dict, &view, function, pc));
+                            };
+                            let value = view
+                                .dict_get(handle, field)
+                                .map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                                .ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::MissingField,
+                                        format!(
+                                            "Dict has no field {:?}",
+                                            view.text(field).unwrap_or("<invalid>")
+                                        ),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::GetArray { dst, array, index } => {
+                            let array = *read_register(&registers, *array, function, pc)?;
+                            let RuntimeValue::Array(handle) = array.value else {
+                                return Err(runtime_type_error(
+                                    "Array", &array, &view, function, pc,
+                                ));
+                            };
+                            let index = *read_register(&registers, *index, function, pc)?;
+                            let RuntimeValue::Int(index_value) = index.value else {
+                                return Err(runtime_type_error("Int", &index, &view, function, pc));
+                            };
+                            let items = view.sequence(handle, false).map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            let value = usize::try_from(index_value)
+                                .ok()
+                                .and_then(|index| items.get(index).copied());
+                            let Some(value) = value else {
+                                return Err(out_of_range_error(account, function, pc));
+                            };
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::ProjectTuple { dst, tuple, index } => {
+                            let tuple = *read_register(&registers, *tuple, function, pc)?;
+                            let RuntimeValue::Tuple(handle) = tuple.value else {
+                                return Err(runtime_type_error(
+                                    "Tuple", &tuple, &view, function, pc,
+                                ));
+                            };
+                            let value = view
+                                .sequence(handle, true)
+                                .map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                                .get(*index)
+                                .copied();
+                            let Some(value) = value else {
+                                return Err(out_of_range_error(account, function, pc));
+                            };
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::FieldExists { dst, value, field } => {
+                            let (_, _, text_links, _) =
+                                view.bytecode(frame.prototype).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            let field = text_links.get(field.0).copied().ok_or_else(|| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    format!("text link {} is out of bounds", field.0),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            let value = read_register(&registers, *value, function, pc)?;
+                            let exists = match value.value {
+                                RuntimeValue::Dict(handle) => view
+                                    .dict_get(handle, field)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .is_some(),
+                                _ => false,
+                            };
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(exists),
                                 function,
                                 pc,
-                            )
-                        })?;
-                        let Some(text) = text else {
-                            return Err(runtime_type_error(
-                                "String", &message, &view, function, pc,
+                            )?;
+                        }
+                        Opcode::IsDict { dst, value } => {
+                            let matches = matches!(
+                                read_register(&registers, *value, function, pc)?.value,
+                                RuntimeValue::Dict(_)
+                            );
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(matches),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::TupleLengthEquals { dst, value, length } => {
+                            let matches = matches!(
+                                read_register(&registers, *value, function, pc)?.value,
+                                RuntimeValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
+                            );
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(matches),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::GetTuple { dst, tuple, index } => {
+                            let tuple = read_register(&registers, *tuple, function, pc)?;
+                            let RuntimeValue::Tuple(handle) = tuple.value else {
+                                return Err(runtime_type_error(
+                                    "Tuple", tuple, &view, function, pc,
+                                ));
+                            };
+                            let value = view
+                                .sequence(handle, true)
+                                .map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                                .get(*index)
+                                .copied()
+                                .ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        format!("tuple index {index} is out of bounds"),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            write_register(&mut registers, *dst, value, function, pc)?;
+                        }
+                        Opcode::TaggedTagEquals { dst, value, tag } => {
+                            let value = read_register(&registers, *value, function, pc)?;
+                            let expected = read_register(&registers, *tag, function, pc)?;
+                            let matches = if let RuntimeValue::Tagged(handle) = value.value {
+                                let (actual, _) = view.tagged(handle).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                view.values_equal(actual, *expected).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                            } else {
+                                false
+                            };
+                            write_register(
+                                &mut registers,
+                                *dst,
+                                runtime_bool(matches),
+                                function,
+                                pc,
+                            )?;
+                        }
+                        Opcode::GetTaggedPayload { dst, value } => {
+                            let tagged = read_register(&registers, *value, function, pc)?;
+                            let RuntimeValue::Tagged(handle) = tagged.value else {
+                                return Err(runtime_type_error(
+                                    "Tagged", tagged, &view, function, pc,
+                                ));
+                            };
+                            let (_, payload) = view.tagged(handle).map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            write_register(&mut registers, *dst, payload, function, pc)?;
+                        }
+                        Opcode::MakeClosure {
+                            dst,
+                            prototype,
+                            captures,
+                        } => {
+                            let (_, _, _, prototypes) =
+                                view.bytecode(frame.prototype).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            let closure_prototype =
+                                prototypes.get(prototype.0).copied().ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        format!("prototype link {} is out of bounds", prototype.0),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                            let captures = read_many(&registers, captures, function, pc)?;
+                            let bytes =
+                                logical_value_bytes(captures.len()).map_err(|native_error| {
+                                    allocation_error(native_error.message, function, pc)
+                                })?;
+                            charge_allocation(account, bytes, function, pc)?;
+                            let closure = RichValue::new(
+                                RuntimeValue::Func(current.allocate(
+                                    crate::heap::Object::Closure {
+                                        identity: Arc::new(()),
+                                        prototype: closure_prototype,
+                                        upvalues: captures.into(),
+                                    },
+                                )),
+                                instruction_location(function, pc),
+                            );
+                            write_register(&mut registers, *dst, closure, function, pc)?;
+                        }
+                        Opcode::Call {
+                            base: call_base,
+                            argument_count,
+                        } => {
+                            let callee = *read_register(&registers, *call_base, function, pc)?;
+                            let arguments = read_call_arguments(
+                                &registers,
+                                *call_base,
+                                *argument_count,
+                                function,
+                                pc,
+                            )?;
+                            frames.last_mut().expect("caller frame").pc += 1;
+                            let _ = registers;
+                            match drive_vm_action(
+                                VmAction::Call {
+                                    callee,
+                                    arguments,
+                                    return_target: ReturnTarget::Register {
+                                        destination: *call_base,
+                                        call_site: instruction_location(function, pc),
+                                    },
+                                    call_function: function_arc,
+                                    call_pc: pc,
+                                },
+                                &mut frames,
+                                &mut stack,
+                                &mut current,
+                                background,
+                                account,
+                            )? {
+                                DriveOutcome::Pending => continue,
+                                DriveOutcome::Root(value) => return Ok(value),
+                            }
+                        }
+                        Opcode::TailCall {
+                            base: call_base,
+                            argument_count,
+                        } => {
+                            let callee = *read_register(&registers, *call_base, function, pc)?;
+                            let arguments = read_call_arguments(
+                                &registers,
+                                *call_base,
+                                *argument_count,
+                                function,
+                                pc,
+                            )?;
+                            let completed = frames.pop().expect("tail caller frame");
+                            let _ = registers;
+                            stack.truncate(completed.base);
+                            match drive_vm_action(
+                                VmAction::Call {
+                                    callee,
+                                    arguments,
+                                    return_target: completed.return_target,
+                                    call_function: function_arc,
+                                    call_pc: pc,
+                                },
+                                &mut frames,
+                                &mut stack,
+                                &mut current,
+                                background,
+                                account,
+                            )? {
+                                DriveOutcome::Pending => continue,
+                                DriveOutcome::Root(value) => return Ok(value),
+                            }
+                        }
+                        Opcode::Jump { target } => {
+                            validate_jump(*target, function, pc)?;
+                            if *target <= pc {
+                                consume_fuel(account, function, pc)?;
+                            }
+                            frames.last_mut().expect("execution frame").pc = *target;
+                            continue;
+                        }
+                        Opcode::JumpIfFalse { condition, target } => {
+                            let condition = read_register(&registers, *condition, function, pc)?;
+                            match condition.value {
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {}
+                                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
+                                    validate_jump(*target, function, pc)?;
+                                    if *target <= pc {
+                                        consume_fuel(account, function, pc)?;
+                                    }
+                                    frames.last_mut().expect("execution frame").pc = *target;
+                                    continue;
+                                }
+                                _ => {
+                                    return Err(runtime_type_error(
+                                        "'True or 'False",
+                                        condition,
+                                        &view,
+                                        function,
+                                        pc,
+                                    ));
+                                }
+                            }
+                        }
+                        Opcode::Return { src } => {
+                            let value = *read_register(&registers, *src, function, pc)?;
+                            let completed = frames.pop().expect("execution frame");
+                            let _ = registers;
+                            stack.truncate(completed.base);
+                            match drive_vm_action(
+                                VmAction::Return {
+                                    value,
+                                    return_target: completed.return_target,
+                                },
+                                &mut frames,
+                                &mut stack,
+                                &mut current,
+                                background,
+                                account,
+                            )? {
+                                DriveOutcome::Pending => continue,
+                                DriveOutcome::Root(value) => return Ok(value),
+                            }
+                        }
+                        Opcode::Fail { message } => {
+                            return Err(error(
+                                RuntimeErrorKind::NoPatternMatched,
+                                message,
+                                function,
+                                pc,
                             ));
-                        };
-                        let mut runtime = error(RuntimeErrorKind::RaisedBlame, text, function, pc);
-                        runtime.set_locations(data.loc(), rule.loc());
-                        return Err(runtime);
-                    }
-                    Opcode::Debug {
-                        value,
-                        module,
-                        line,
-                        name,
-                        message,
-                    } => {
-                        let value = *read_register(&registers, *value, function, pc)?;
-                        if let Ok(value_text) = DebugValueFormatter::new(view).format(value) {
-                            debug_sink.emit(DebugEvent {
-                                name: name.clone(),
-                                repr: value_text,
-                                module: module.clone(),
-                                line: *line,
-                                message: message.clone(),
-                            });
+                        }
+                        Opcode::Panic { message } => {
+                            let message = *read_register(&registers, *message, function, pc)?;
+                            let text = match message.value {
+                                RuntimeValue::ShortString(id) => view
+                                    .text(id)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .to_owned(),
+                                RuntimeValue::String(handle) => {
+                                    match view.object(handle).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })? {
+                                        Object::String(value) => value.to_string(),
+                                        _ => {
+                                            return Err(runtime_type_error(
+                                                "String", &message, &view, function, pc,
+                                            ));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Err(runtime_type_error(
+                                        "String", &message, &view, function, pc,
+                                    ));
+                                }
+                            };
+                            return Err(error(RuntimeErrorKind::Panic, text, function, pc));
+                        }
+                        Opcode::Raise {
+                            error: error_register,
+                        } => {
+                            let structured =
+                                *read_register(&registers, *error_register, function, pc)?;
+                            let RuntimeValue::Dict(handle) = structured.value else {
+                                return Err(runtime_type_error(
+                                    "BlameError",
+                                    &structured,
+                                    &view,
+                                    function,
+                                    pc,
+                                ));
+                            };
+                            let fields = view.dict_fields(handle).map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            if fields.as_slice() != ["data", "message", "rule"] {
+                                return Err(runtime_type_error(
+                                    "BlameError",
+                                    &structured,
+                                    &view,
+                                    function,
+                                    pc,
+                                ));
+                            }
+                            let get_field = |name| {
+                                view.dict_get_text(handle, name)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .ok_or_else(|| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            format!("BlameError is missing {name}"),
+                                            function,
+                                            pc,
+                                        )
+                                    })
+                            };
+                            let data = get_field("data")?;
+                            let message = get_field("message")?;
+                            let rule = get_field("rule")?;
+                            let text = view.string_text(message).map_err(|heap_error| {
+                                error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    heap_error.to_string(),
+                                    function,
+                                    pc,
+                                )
+                            })?;
+                            let Some(text) = text else {
+                                return Err(runtime_type_error(
+                                    "String", &message, &view, function, pc,
+                                ));
+                            };
+                            let mut runtime =
+                                error(RuntimeErrorKind::RaisedBlame, text, function, pc);
+                            runtime.set_locations(data.loc(), rule.loc());
+                            return Err(runtime);
+                        }
+                        Opcode::Debug {
+                            value,
+                            module,
+                            line,
+                            name,
+                            message,
+                        } => {
+                            let value = *read_register(&registers, *value, function, pc)?;
+                            if let Ok(value_text) = DebugValueFormatter::new(view).format(value) {
+                                debug_sink.emit(DebugEvent {
+                                    name: name.clone(),
+                                    repr: value_text,
+                                    module: module.clone(),
+                                    line: *line,
+                                    message: message.clone(),
+                                });
+                            }
                         }
                     }
+                    frames.last_mut().expect("execution frame").pc += 1;
                 }
-                frames.last_mut().expect("execution frame").pc += 1;
-            }
-        })();
-        if let Err(runtime_error) = &mut result {
-            for (index, frame) in frames.iter().rev().enumerate() {
-                if index != 0 || !runtime_error.trace_includes_active_frame {
-                    let instruction = frame.pc.saturating_sub(1);
-                    runtime_error.trace.push(RuntimeFrame {
-                        function: frame.function.name().to_owned(),
-                        instruction,
-                        origin: frame.function.origin_at(instruction),
+            })();
+            match attempt {
+                Err(mut runtime_error)
+                    if best_effort
+                        && runtime_error.failure_class()
+                            == crate::evaluation::FailureClass::Recoverable =>
+                {
+                    let failure_location = runtime_error.data_location();
+                    let failed_instruction = runtime_error.instruction;
+                    let frame_index = frames.iter().rposition(|frame| {
+                        matches!(
+                            frame.return_target,
+                            ReturnTarget::Native(_) | ReturnTarget::Register { .. }
+                        )
                     });
+                    let current_destination = if frame_index.is_none() {
+                        frames.last().and_then(|frame| {
+                            (frame.function.name() == runtime_error.function)
+                                .then(|| {
+                                    frame
+                                        .function
+                                        .instructions()
+                                        .get(runtime_error.instruction)
+                                        .and_then(recoverable_instruction_destination)
+                                })
+                                .flatten()
+                        })
+                    } else {
+                        None
+                    };
+                    if frame_index.is_none() && current_destination.is_none() {
+                        break Err(runtime_error);
+                    }
+                    let failure_id = if let Some(failure_id) = runtime_error.propagated_failure {
+                        if failure_id as usize >= failures.len() {
+                            break Err(error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                "failed evaluation node references an unknown root",
+                                function,
+                                0,
+                            ));
+                        }
+                        failure_id
+                    } else {
+                        append_runtime_trace(&mut runtime_error, &frames);
+                        let failure_id = u32::try_from(failures.len()).map_err(|_| {
+                            error(
+                                RuntimeErrorKind::AllocationQuotaExceeded,
+                                "best-effort failure arena is full",
+                                function,
+                                0,
+                            )
+                        })?;
+                        failures.push(runtime_error);
+                        failure_id
+                    };
+                    let failure =
+                        RichValue::new(RuntimeValue::Failed(failure_id), failure_location);
+                    if let Some(frame_index) = frame_index {
+                        let stack_base = frames[frame_index].base;
+                        let completed = frames.drain(frame_index..).next().expect("failed frame");
+                        stack.truncate(stack_base);
+                        match completed.return_target {
+                            ReturnTarget::Register {
+                                destination,
+                                call_site,
+                            } => {
+                                let caller = frames.last().expect("register return has a caller");
+                                let end = caller.base + caller.function.register_count();
+                                write_register(
+                                    &mut stack[caller.base..end],
+                                    destination,
+                                    failure.rebase_generated(call_site),
+                                    &caller.function,
+                                    caller.pc.saturating_sub(1),
+                                )?;
+                                continue;
+                            }
+                            ReturnTarget::Native(continuation) => {
+                                let action = continuation.resume_failed(
+                                    failure,
+                                    &mut current,
+                                    background,
+                                    account,
+                                )?;
+                                match drive_vm_action(
+                                    action,
+                                    &mut frames,
+                                    &mut stack,
+                                    &mut current,
+                                    background,
+                                    account,
+                                )? {
+                                    DriveOutcome::Pending => continue,
+                                    DriveOutcome::Root(root) => break Ok(root),
+                                }
+                            }
+                            ReturnTarget::Root => unreachable!("root frame is not recoverable"),
+                        }
+                    } else {
+                        let destination = current_destination.expect("checked above");
+                        let frame = frames.last_mut().expect("execution frame");
+                        let end = frame.base + frame.function.register_count();
+                        write_register(
+                            &mut stack[frame.base..end],
+                            destination,
+                            failure,
+                            &frame.function,
+                            failed_instruction,
+                        )?;
+                        frame.pc = frame.pc.max(failed_instruction.saturating_add(1));
+                        continue;
+                    }
                 }
-                frame
-                    .return_target
-                    .append_native_trace(&mut runtime_error.trace);
+                outcome => break outcome,
             }
-            runtime_error.trace_includes_active_frame = false;
+        };
+        if let Err(runtime_error) = &mut result {
+            append_runtime_trace(runtime_error, &frames);
         }
-        result.map(|root| WorkWorld {
-            heap: current,
-            root,
+        result.map(|root| VmExecution {
+            world: WorkWorld {
+                heap: current,
+                root,
+            },
+            failures,
         })
     }
+}
+
+fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register> {
+    match instruction {
+        Opcode::LoadConst { dst, .. }
+        | Opcode::Move { dst, .. }
+        | Opcode::MakeUpLink { dst }
+        | Opcode::ReadUpLink { dst, .. }
+        | Opcode::Add { dst, .. }
+        | Opcode::Subtract { dst, .. }
+        | Opcode::Multiply { dst, .. }
+        | Opcode::Divide { dst, .. }
+        | Opcode::Remainder { dst, .. }
+        | Opcode::Negate { dst, .. }
+        | Opcode::Not { dst, .. }
+        | Opcode::LogicalNot { dst, .. }
+        | Opcode::BitNot { dst, .. }
+        | Opcode::BitAnd { dst, .. }
+        | Opcode::BitOr { dst, .. }
+        | Opcode::BitXor { dst, .. }
+        | Opcode::Equal { dst, .. }
+        | Opcode::NotEqual { dst, .. }
+        | Opcode::LessThan { dst, .. }
+        | Opcode::LessThanOrEqual { dst, .. }
+        | Opcode::MakeArray { dst, .. }
+        | Opcode::ConcatArrays { dst, .. }
+        | Opcode::MakeTuple { dst, .. }
+        | Opcode::InterpolateString { dst, .. }
+        | Opcode::MakeDict { dst, .. }
+        | Opcode::MergeDicts { dst, .. }
+        | Opcode::GetField { dst, .. }
+        | Opcode::GetArray { dst, .. }
+        | Opcode::ProjectTuple { dst, .. }
+        | Opcode::FieldExists { dst, .. }
+        | Opcode::IsDict { dst, .. }
+        | Opcode::TupleLengthEquals { dst, .. }
+        | Opcode::GetTuple { dst, .. }
+        | Opcode::TaggedTagEquals { dst, .. }
+        | Opcode::GetTaggedPayload { dst, .. }
+        | Opcode::MakeClosure { dst, .. } => Some(*dst),
+        Opcode::Call { base, .. } => Some(*base),
+        Opcode::Panic { message } => Some(*message),
+        Opcode::Raise { error } => Some(*error),
+        Opcode::InitializeUpLink { .. }
+        | Opcode::AssertUpLinkReady { .. }
+        | Opcode::AssertFunctionArity { .. }
+        | Opcode::TailCall { .. }
+        | Opcode::Jump { .. }
+        | Opcode::JumpIfFalse { .. }
+        | Opcode::Return { .. }
+        | Opcode::Fail { .. }
+        | Opcode::Debug { .. } => None,
+    }
+}
+
+fn append_runtime_trace(runtime_error: &mut RuntimeError, frames: &[ExecutionFrame]) {
+    for (index, frame) in frames.iter().rev().enumerate() {
+        if index != 0 || !runtime_error.trace_includes_active_frame {
+            let instruction = frame.pc.saturating_sub(1);
+            runtime_error.trace.push(RuntimeFrame {
+                function: frame.function.name().to_owned(),
+                instruction,
+                origin: frame.function.origin_at(instruction),
+            });
+        }
+        frame
+            .return_target
+            .append_native_trace(&mut runtime_error.trace);
+    }
+    runtime_error.trace_includes_active_frame = false;
 }
 
 fn make_execution_frame(
@@ -2737,6 +3069,7 @@ fn drive_vm_action(
                         locations: None,
                         rendered: None,
                         trace_includes_active_frame: false,
+                        propagated_failure: None,
                     })?;
                     let caller_function = caller.function.clone();
                     let caller_end = caller.base + caller.function.register_count();
@@ -3159,6 +3492,16 @@ impl NativeContinuation for ArrayContinuation {
     ) -> Result<VmAction, RuntimeError> {
         resume_array_continuation(*self, value, current, background, account)
     }
+
+    fn resume_failed(
+        self: Box<Self>,
+        failure: RichValue,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        resume_array_failure(*self, failure, current, background, account)
+    }
 }
 
 impl NativeContinuation for DictContinuation {
@@ -3178,6 +3521,16 @@ impl NativeContinuation for DictContinuation {
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
         resume_dict_continuation(*self, value, current, background, account)
+    }
+
+    fn resume_failed(
+        self: Box<Self>,
+        failure: RichValue,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        resume_dict_failure(*self, failure, current, background, account)
     }
 }
 
@@ -3292,6 +3645,12 @@ fn start_array_continuation(
                 return_target,
             });
         };
+        if matches!(payload.value, RuntimeValue::Failed(_)) {
+            return Ok(VmAction::Return {
+                value: payload,
+                return_target,
+            });
+        }
         charge_allocation(
             account,
             logical_value_bytes(2)
@@ -3535,6 +3894,7 @@ fn start_array_continuation(
         next_index: 0,
         accumulator,
         output: Vec::new(),
+        failed: None,
         return_target,
         trace_frame: RuntimeFrame {
             function: core_array_name(function).into(),
@@ -3728,6 +4088,38 @@ fn resume_array_continuation(
     next_array_action(continuation, current, background, account)
 }
 
+fn resume_array_failure(
+    mut continuation: ArrayContinuation,
+    failure: RichValue,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    match continuation.function {
+        CoreArrayFunction::Map => continuation.output.push(failure),
+        CoreArrayFunction::Fold | CoreArrayFunction::FoldControl => {
+            return Ok(VmAction::Return {
+                value: failure,
+                return_target: continuation.return_target,
+            });
+        }
+        CoreArrayFunction::Filter
+        | CoreArrayFunction::FlatMap
+        | CoreArrayFunction::Any
+        | CoreArrayFunction::All
+        | CoreArrayFunction::Find => {
+            continuation.failed.get_or_insert(failure);
+        }
+        CoreArrayFunction::Length
+        | CoreArrayFunction::Get
+        | CoreArrayFunction::Enumerate
+        | CoreArrayFunction::Push
+        | CoreArrayFunction::Concat
+        | CoreArrayFunction::Zip => unreachable!("non-callback operation cannot resume"),
+    }
+    next_array_action(continuation, current, background, account)
+}
+
 fn next_array_action(
     mut continuation: ArrayContinuation,
     current: &mut Heap,
@@ -3753,6 +4145,12 @@ fn next_array_action(
         })?
         .len();
     if continuation.next_index >= length {
+        if let Some(failure) = continuation.failed {
+            return Ok(VmAction::Return {
+                value: failure,
+                return_target: continuation.return_target,
+            });
+        }
         let value = match continuation.function {
             CoreArrayFunction::Fold => continuation
                 .accumulator
@@ -3829,6 +4227,9 @@ fn next_array_action(
         continuation.call_pc,
     )?;
     continuation.next_index += 1;
+    if matches!(item.value, RuntimeValue::Failed(_)) {
+        return resume_array_failure(continuation, item, current, background, account);
+    }
     let arguments = if matches!(
         continuation.function,
         CoreArrayFunction::Fold | CoreArrayFunction::FoldControl
@@ -4654,6 +5055,7 @@ fn start_dict_continuation(
             next_index: 0,
             accumulator,
             output: Vec::new(),
+            failed: None,
             return_target,
             trace_frame: RuntimeFrame {
                 function: function.name().into(),
@@ -4718,6 +5120,32 @@ fn resume_dict_continuation(
     next_dict_action(continuation, current, background, account)
 }
 
+fn resume_dict_failure(
+    mut continuation: DictContinuation,
+    failure: RichValue,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    match continuation.function {
+        CoreDictFunction::MapValues => {
+            let key = continuation.entries[continuation.next_index - 1].0.clone();
+            continuation.output.push((key, failure));
+        }
+        CoreDictFunction::Filter => {
+            continuation.failed.get_or_insert(failure);
+        }
+        CoreDictFunction::Fold => {
+            return Ok(VmAction::Return {
+                value: failure,
+                return_target: continuation.return_target,
+            });
+        }
+        _ => unreachable!("only callback Dict operations suspend"),
+    }
+    next_dict_action(continuation, current, background, account)
+}
+
 fn next_dict_action(
     mut continuation: DictContinuation,
     current: &mut Heap,
@@ -4725,6 +5153,12 @@ fn next_dict_action(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     if continuation.next_index >= continuation.entries.len() {
+        if let Some(failure) = continuation.failed {
+            return Ok(VmAction::Return {
+                value: failure,
+                return_target: continuation.return_target,
+            });
+        }
         let value = if continuation.function == CoreDictFunction::Fold {
             continuation
                 .accumulator
@@ -4744,6 +5178,9 @@ fn next_dict_action(
 
     let (key, value) = continuation.entries[continuation.next_index].clone();
     continuation.next_index += 1;
+    if matches!(value.value, RuntimeValue::Failed(_)) {
+        return resume_dict_failure(continuation, value, current, background, account);
+    }
     let arguments = if continuation.function == CoreDictFunction::Fold {
         charge_allocation(
             account,
@@ -5465,6 +5902,14 @@ fn run_core_dyn(
         }),
         CoreDynFunction::Kind => {
             let kind = match value.value {
+                RuntimeValue::Failed(_) => {
+                    return Err(error(
+                        RuntimeErrorKind::TypeMismatch,
+                        "Dyn payload evaluation failed",
+                        function,
+                        pc,
+                    ));
+                }
                 RuntimeValue::Int(_) => "Int",
                 RuntimeValue::Float(_) => "Float",
                 RuntimeValue::ShortString(_) | RuntimeValue::String(_) => "String",
@@ -6577,6 +7022,19 @@ impl NativeContinuation for JsonEncodeContinuation {
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
         resume_json_encode_continuation(*self, value, current, background, account)
+    }
+
+    fn resume_failed(
+        self: Box<Self>,
+        failure: RichValue,
+        _current: &mut Heap,
+        _background: &Heap,
+        _account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.return_target,
+        })
     }
 }
 
@@ -9773,6 +10231,9 @@ impl<'a> JsonWriter<'a> {
 
     fn value(&mut self, value: RichValue, depth: usize) -> Result<(), String> {
         match value.value {
+            RuntimeValue::Failed(_) => {
+                return Err("JSON cannot encode a failed evaluation node".into());
+            }
             RuntimeValue::Int(value) => self.output.push_str(&value.to_string()),
             RuntimeValue::Float(value) if value.is_finite() => {
                 self.output.push_str(&value.to_string())
@@ -10007,6 +10468,7 @@ impl<'a> DebugValueFormatter<'a> {
             return Ok(());
         }
         match value.value {
+            RuntimeValue::Failed(_) => self.push("<failed>"),
             RuntimeValue::Int(value) => self.push(&value.to_string()),
             RuntimeValue::Float(value) => self.push(&format!("{value:?}")),
             RuntimeValue::BuiltinAtom(atom) => {
@@ -10489,6 +10951,9 @@ fn runtime_type_error(
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
+    if let RuntimeValue::Failed(failure) = actual.value {
+        return propagated_failure_error(failure, actual.loc(), function, pc);
+    }
     let mut runtime_error = match view.export_value(*actual) {
         Ok(actual) => type_error(expected, &actual, function, pc),
         Err(heap_error) => error(
@@ -10509,7 +10974,11 @@ fn runtime_shallow_type_error(
     pc: usize,
 ) -> RuntimeError {
     let location = actual.loc();
+    if let RuntimeValue::Failed(failure) = actual.value {
+        return propagated_failure_error(failure, location, function, pc);
+    }
     let actual_kind = match actual.value {
+        RuntimeValue::Failed(_) => unreachable!(),
         RuntimeValue::Int(_) => "Int",
         RuntimeValue::Float(_) => "Float",
         RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_) => "Atom",
@@ -10542,6 +11011,15 @@ fn runtime_numeric_type_error(
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
+    if let Some(failure) = [left, right]
+        .into_iter()
+        .find_map(|value| match value.value {
+            RuntimeValue::Failed(failure) => Some(failure),
+            _ => None,
+        })
+    {
+        return propagated_failure_error(failure, left.loc().or(right.loc()), function, pc);
+    }
     let mut runtime_error = match (view.export_value(*left), view.export_value(*right)) {
         (Ok(left), Ok(right)) => numeric_type_error(&left, &right, function, pc),
         (Err(heap_error), _) | (_, Err(heap_error)) => error(
@@ -10562,6 +11040,15 @@ fn runtime_ordered_type_error(
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
+    if let Some(failure) = [left, right]
+        .into_iter()
+        .find_map(|value| match value.value {
+            RuntimeValue::Failed(failure) => Some(failure),
+            _ => None,
+        })
+    {
+        return propagated_failure_error(failure, left.loc().or(right.loc()), function, pc);
+    }
     let mut runtime_error = match (view.export_value(*left), view.export_value(*right)) {
         (Ok(left), Ok(right)) => error(
             RuntimeErrorKind::TypeMismatch,
@@ -10581,6 +11068,23 @@ fn runtime_ordered_type_error(
         ),
     };
     runtime_error.set_data_location(left.loc().or(right.loc()));
+    runtime_error
+}
+
+fn propagated_failure_error(
+    failure: u32,
+    location: Option<crate::Loc>,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> RuntimeError {
+    let mut runtime_error = error(
+        RuntimeErrorKind::TypeMismatch,
+        "dependent computation received a failed evaluation node",
+        function,
+        pc,
+    );
+    runtime_error.propagated_failure = Some(failure);
+    runtime_error.set_data_location(location);
     runtime_error
 }
 
@@ -10776,6 +11280,7 @@ fn error(
         locations: None,
         rendered: None,
         trace_includes_active_frame: true,
+        propagated_failure: None,
     }
 }
 

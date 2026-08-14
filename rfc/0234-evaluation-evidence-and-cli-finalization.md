@@ -1,6 +1,6 @@
 # RFC 0234: Evaluation evidence and CLI finalization
 
-- Status: Partially implemented
+- Status: Implemented
 - Depends on: RFC 0044, RFC 0103, RFC 0104, RFC 0233
 - Tracking issues: #55, #61
 - Supersedes: RFC 0104's prohibition on partial internal containers
@@ -85,18 +85,27 @@ recovery, then performs strict finalization:
 
 - independent work after a recoverable failure may add diagnostics;
 - warnings alone do not fail finalization;
-- syntax, type, resolution, runtime, or reachable failed-node errors produce a
-  nonzero exit and no Module value;
+- any syntax, type, resolution, or runtime error produces a nonzero exit and no
+  Module value, even if the selected root does not depend on that failure;
 - stdout is a `telora.check/v1` JSONL stream containing zero or more diagnostic
   records followed by exactly one summary record; only a complete ordinary
   Module produces `status: "ok"` and a zero exit;
 - exported closures are already-computed values; invoking one later is a
   separate computation outside this check.
 
-For identical source, dependencies, Host inputs, native implementations, and
-resource conditions, successful `check` finalization and strict module loading
-produce semantically equivalent Module values. Best-effort changes diagnostic
-coverage, never the success judgment.
+Dependency reachability controls which additional computations best-effort may
+perform, not whether its result may be delivered. A clean root can sometimes be
+computed after an unrelated internal failure, but the complete evaluation has
+already lost publication authority. Any error diagnostic makes `check`
+nonzero and discards the complete Module export. A subsequent strict load is
+the only authoritative acceptance run.
+
+Across module boundaries, recovery may retain a dependency as an internal
+`UntrustedModule` state and continue unrelated dependency work. This is not an
+ordinary Module export. The dependency's root diagnostics keep their original
+severity; the boundary state does not manufacture another copy of each error.
+Finalizing the module selected by the command treats any error in its recovered
+graph as a terminal `UntrustedModule` result and discards the root export.
 
 ## `show`
 
@@ -118,15 +127,18 @@ present that approximation as authoritative.
 5. `array.map` continues healthy slots after recoverable callback failures.
 6. shape-only operations remain usable internally when children failed;
    selecting a failed child propagates its diagnostic identity.
-7. no partial value crosses module export, codec, debug-value, or ordinary Host
-   boundaries.
-8. strict `run` behavior and successful values remain unchanged.
+7. no partial value crosses module export, codec, or ordinary Host value
+   boundaries; `dbg!` may render a bounded Host-only `<failed>` marker.
+8. a clean root computed after an internal failure remains diagnostic evidence
+   only: `check` and `run --best-effort` are nonzero and publish no value.
+9. strict `run` behavior and successful values remain unchanged.
 
 ## Implementation plan
 
 1. make `check` consume the recoverable workspace and require strict
    finalization before reporting success;
-2. retain private failed children at native continuation boundaries;
+2. retain private failed children at ordinary result registers and native
+   continuation boundaries;
 3. implement dependency rules for common Array operations and general
    structural publication blocking;
 4. project node states and diagnostic references into `show` records;
@@ -145,5 +157,20 @@ language rejection is structured stdout plus a nonzero exit, not mixed text;
 ordinary stderr remains reserved for CLI/Host faults and the separate `dbg!`
 observation channel.
 
-Private failed container children and their operation-specific propagation
-rules remain the implementation work tracked by #61.
+The #61 implementation adds crate-private failed heap nodes and a best-effort
+VM recovery loop at ordinary result-register and native callback boundaries.
+Direct structural expressions can therefore retain failed children and keep
+evaluating independent siblings. Array and Dict map operations retain failed
+slots and continue healthy slots. Filter and flat-map continue independent
+callbacks but return failure because output shape is unknown. Fold stops when
+its accumulator fails. Array length remains shape-only, and get propagates a
+selected failed slot. Root diagnostic identities propagate without creating
+new diagnostics, failed nodes may relocate only between WorkWorlds, and Main
+publication, ordinary Value export, and JSON encoding reject them.
+
+`run --best-effort` performs this diagnostic Main pass before Entry startup. It
+emits `telora.run/v1` JSONL diagnostics on stderr. Any error diagnostic makes
+the command nonzero and discards the recovered Main, even when its selected
+return root happened to compute successfully. No Entry starts and no effect is
+committed in that case. With no errors it proceeds through a fresh, unchanged
+strict Entry and Host-effect lifecycle; default `run` remains fail-fast.

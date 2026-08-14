@@ -800,8 +800,15 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 payload 和 Dict 在诊断求值图中可以暂时保留失败子节点。这类节点保持原有静态类型，
 但不是 Telora 值，源码不能构造、匹配或恢复它们。保形逐项操作可以跳过失败槽位并
 继续健康槽位；只依赖容器形状的操作不依赖子节点；选择失败槽位则传播同一根诊断。
-任何可达失败节点都会阻止普通 module、codec 或 Host value 发布。严格执行遇到未处理
+任何 error diagnostic 都会使本轮 World 导出整体失去发布意义，即使最终根值不依赖
+内部失败且能够算出。失败节点的可达性只决定 best-effort 还能继续哪些诊断计算，不决定
+结果能否交付。普通 module、codec 或 Host value 均不得发布本轮结果；严格执行遇到未处理
 失败立即失败。
+
+跨模块恢复时，依赖库可以在诊断图中保留为内部 `UntrustedModule` 状态，使其他不相关
+依赖仍可继续分析；它不是普通 Module export，也不把原始 error 降级为 warning。命令所选
+根模块在 finalization 时，只要其恢复图中存在 error，就以 `UntrustedModule` 失败并废弃
+根导出。依赖边界不重复制造根因诊断。
 
 ### 9.5 失败类别
 
@@ -902,8 +909,8 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--input <json|->] [--entry <file>]
-telora run -S <file> [--input <json|->] [--entry <file>]
+telora run <binary-name> [-C <context>] [--input <json|->] [--entry <file>] [--best-effort]
+telora run -S <file> [--input <json|->] [--entry <file>] [--best-effort]
 telora show <module> [-C <context>] [-p <substring>] [-k type,let,def,import] [--exports]
 telora show <module> [-C <context>] --at <line>[:<column>]
 telora lsp
@@ -932,9 +939,10 @@ Namespace import 的 definition record 以 `target` 给出被导入模块的稳�
 type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct 类型。
 
 `check` 用 best-effort 模式求完整模块并以严格 finalization 决定退出状态。独立计算可以
-在失败后继续，以收集更多诊断；但语法、类型、解析、运行时错误或任何可达失败节点都会
-令命令非零退出且不产生 Module value。只有完整结果与相同条件下严格加载所得 Module
-语义等价时才成功。`check` 的 stdout 完全采用 `telora.check/v1` JSONL：先按稳定顺序输出
+在失败后继续，以收集更多诊断；但任何语法、类型、解析或运行时 error 都会令整轮导出
+失去意义，命令非零退出且不产生 Module value，即使某个干净的最终根仍可算出。只有没有
+error 且严格加载也能成功时才可交付。`check` 的 stdout 完全采用 `telora.check/v1`
+JSONL：先按稳定顺序输出
 零到多条 `diagnostic` record，最后恰好一条 `summary` record；summary 包含稳定 module
 ID、dependency 数量和 `ok` 或 `error` status。Warning 本身不阻止成功；失败不伪造
 Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`dbg!` 仍是独立旁路。
@@ -942,6 +950,13 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 `show` 不执行上述 finalization。它查询由 recoverable CST、部分语义分析和诊断求值形成
 的全面证据图，因此模块不完整或求值失败时仍可返回不受影响的事实。`show` 成功只表示查询
 成功，不表示模块健康；恢复节点不得以权威 `Any` 伪装成已知值。
+
+`run --best-effort` 在启动 Entry 前对 Main 执行静默的 best-effort 诊断求值，并把
+`telora.run/v1` diagnostic records 写入 stderr。它只用于遇到问题时扩大诊断覆盖：只要
+本轮出现任何 error，恢复得到的 Main 就整体废弃，命令输出 error summary、非零退出，且
+不初始化 Entry、不解释 SystemEffect；一个不依赖失败的干净根值也不例外。没有 error 时，
+命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
+最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
 `run` 选择一个 Main application 和一个 Edge Entry。省略 `--entry` 时使用内置 Entry：
 它只在提供 `--input` 时请求把外部 JSON 安装为 Main 的 `input` binding，并从 Main 的
