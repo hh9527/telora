@@ -87,8 +87,9 @@ recovery, then performs strict finalization:
 - warnings alone do not fail finalization;
 - syntax, type, resolution, runtime, or reachable failed-node errors produce a
   nonzero exit and no Module value;
-- `ok` is printed only when every required module is known and the selected
-  module has a complete ordinary value;
+- stdout is a `telora.check/v1` JSONL stream containing zero or more diagnostic
+  records followed by exactly one summary record; only a complete ordinary
+  Module produces `status: "ok"` and a zero exit;
 - exported closures are already-computed values; invoking one later is a
   separate computation outside this check.
 
@@ -138,7 +139,11 @@ strict evaluation to obtain the authoritative success judgment, then consumes
 the recoverable workspace for diagnostics and observations. This keeps `dbg!`
 single-shot while making `fail!`, division by zero, out-of-range indexing, and
 all other strict runtime failures nonzero. Error diagnostics or any incomplete
-workspace module also prevent `ok`; warnings alone do not.
+workspace module also produce `status: "error"`; warnings alone do not. The
+summary contains the stable module ID, status, and dependency count. Expected
+language rejection is structured stdout plus a nonzero exit, not mixed text;
+ordinary stderr remains reserved for CLI/Host faults and the separate `dbg!`
+observation channel.
 
 Private failed container children and their operation-specific propagation
 rules remain the implementation work tracked by #61.

@@ -641,7 +641,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(arguments)),
-        Command::Check(arguments) => check_command(arguments).map(|()| 0),
+        Command::Check(arguments) => check_command(arguments),
         Command::Show(arguments) => show_command(arguments).map(|()| 0),
         Command::Lsp => lsp_command().map(|()| 0),
     }
@@ -707,7 +707,7 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot determine context: {error}"))
 }
 
-fn check_command(arguments: CheckArgs) -> Result<(), String> {
+fn check_command(arguments: CheckArgs) -> Result<i32, String> {
     let context = command_context(arguments.context)?;
     // Finalization is deliberately silent: the recoverable pass below owns
     // diagnostics and observations, so `dbg!` is never emitted twice.
@@ -724,35 +724,78 @@ fn check_command(arguments: CheckArgs) -> Result<(), String> {
     let workspace = engine()
         .recover_workspace_id(context, &arguments.module_id)
         .map_err(|error| error.to_string())?;
-    let errors = workspace
+    let has_error_diagnostic = workspace
         .diagnostics()
         .iter()
-        .filter(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error)
-        .map(|diagnostic| workspace.sources().render(diagnostic))
-        .collect::<Vec<_>>();
+        .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error);
+    for diagnostic in workspace.diagnostics() {
+        let severity = match diagnostic.severity {
+            telora_core::source::Severity::Error => "error",
+            telora_core::source::Severity::Warning => "warning",
+            telora_core::source::Severity::Info => "info",
+        };
+        let labels = diagnostic
+            .labels
+            .iter()
+            .map(|label| {
+                let source = workspace.sources().get(label.location.source);
+                json!({
+                    "source": source.name.as_ref(),
+                    "location": location_json(&workspace, label.location),
+                    "message": label.message,
+                    "primary": label.primary,
+                })
+            })
+            .collect::<Vec<_>>();
+        emit(json!({
+            "schema": "telora.check/v1",
+            "module": arguments.module_id,
+            "record": "diagnostic",
+            "severity": severity,
+            "message": diagnostic.message,
+            "labels": labels,
+            "notes": diagnostic.notes,
+        }))?;
+    }
     let incomplete = workspace
         .modules()
         .iter()
         .filter(|module| module.state != WorkspaceModuleState::Known)
         .map(|module| module.name.as_str())
         .collect::<Vec<_>>();
-    if strict.is_err() || !errors.is_empty() || !incomplete.is_empty() {
-        let mut details = errors;
-        if details.is_empty()
-            && let Err(error) = strict
-        {
-            details.push(error);
-        }
-        if !incomplete.is_empty() {
-            details.push(format!(
-                "module finalization is incomplete: {}",
-                incomplete.join(", ")
-            ));
-        }
-        return Err(details.join("\n"));
+    if let Err(error) = &strict
+        && !has_error_diagnostic
+    {
+        emit(json!({
+            "schema": "telora.check/v1",
+            "module": arguments.module_id,
+            "record": "diagnostic",
+            "severity": "error",
+            "message": error,
+            "labels": [],
+            "notes": [],
+        }))?;
     }
-    println!("ok ({} dependencies)", workspace.modules().len().saturating_sub(1));
-    Ok(())
+    if !incomplete.is_empty() {
+        emit(json!({
+            "schema": "telora.check/v1",
+            "module": arguments.module_id,
+            "record": "diagnostic",
+            "severity": "error",
+            "message": format!("module finalization is incomplete: {}", incomplete.join(", ")),
+            "labels": [],
+            "notes": [],
+        }))?;
+    }
+    let failed = strict.is_err() || has_error_diagnostic || !incomplete.is_empty();
+    emit(json!({
+        "schema": "telora.check/v1",
+        "module": arguments.module_id,
+        "record": "summary",
+        "status": if failed { "error" } else { "ok" },
+        "dependencies": workspace.modules().len().saturating_sub(1),
+    }))?;
+    Ok(i32::from(failed))
 }
 
 fn show_command(arguments: ShowArgs) -> Result<(), String> {

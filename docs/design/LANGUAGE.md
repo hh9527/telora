@@ -934,7 +934,10 @@ type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct �
 `check` 用 best-effort 模式求完整模块并以严格 finalization 决定退出状态。独立计算可以
 在失败后继续，以收集更多诊断；但语法、类型、解析、运行时错误或任何可达失败节点都会
 令命令非零退出且不产生 Module value。只有完整结果与相同条件下严格加载所得 Module
-语义等价时才输出 `ok`。Warning 本身不阻止成功。
+语义等价时才成功。`check` 的 stdout 完全采用 `telora.check/v1` JSONL：先按稳定顺序输出
+零到多条 `diagnostic` record，最后恰好一条 `summary` record；summary 包含稳定 module
+ID、dependency 数量和 `ok` 或 `error` status。Warning 本身不阻止成功；失败不伪造
+Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`dbg!` 仍是独立旁路。
 
 `show` 不执行上述 finalization。它查询由 recoverable CST、部分语义分析和诊断求值形成
 的全面证据图，因此模块不完整或求值失败时仍可返回不受影响的事实。`show` 成功只表示查询

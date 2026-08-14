@@ -92,7 +92,16 @@ fn check_requires_complete_runtime_finalization() {
             "{name} unexpectedly passed: {}",
             String::from_utf8_lossy(&check.stdout)
         );
-        assert!(!check.stderr.is_empty(), "{name} emitted no diagnostic");
+        let records = jsonl(&check.stdout);
+        assert!(
+            records
+                .iter()
+                .any(|record| record["record"] == "diagnostic"),
+            "{name} emitted no diagnostic"
+        );
+        assert_eq!(records.last().unwrap()["record"], "summary");
+        assert_eq!(records.last().unwrap()["status"], "error");
+        assert!(check.stderr.is_empty(), "{name} mixed text into stderr");
     }
 }
 
@@ -113,7 +122,15 @@ fn check_accepts_a_complete_module_with_warnings() {
         "{}",
         String::from_utf8_lossy(&check.stderr)
     );
-    assert!(String::from_utf8_lossy(&check.stdout).starts_with("ok ("));
+    let records = jsonl(&check.stdout);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["schema"], "telora.check/v1");
+    assert_eq!(records[0]["module"], "@src/warning.telora");
+    assert_eq!(records[0]["record"], "diagnostic");
+    assert_eq!(records[0]["severity"], "warning");
+    assert_eq!(records[1]["record"], "summary");
+    assert_eq!(records[1]["status"], "ok");
+    assert_eq!(records[1]["dependencies"], 0);
 }
 
 #[test]
