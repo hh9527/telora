@@ -4,7 +4,9 @@ use crate::compiler::{
     compile_program_analyzed_in, compile_program_with_promoted_types, function_contract_arity,
     type_link_key,
 };
-use crate::core::{PRELUDE_MODULE, entry_source, module_specs};
+use crate::core::{
+    EDGE_RUNTIME_MODULE, PRELUDE_MODULE, edge_runtime_source, module_specs, run_entry_source,
+};
 use crate::heap::{Heap, PersistentValue, publish_root, publish_value};
 use crate::json::{Provenance, SourcedValue, parse_json_registered};
 use crate::module_id::{
@@ -22,10 +24,11 @@ use crate::types::{
     analyze_partial_types_recovered_with_query, analyze_program_with_bindings_observed,
     program_references_name, recovered_reference_locations,
 };
+use crate::vm::WorkWorld;
 use crate::yaml::parse_yaml_registered;
 use crate::{
-    BytecodeFunction, Closure, DebugSink, DiscardDebugSink, Prototype, Quota, QuotaAccount, Value,
-    Vm,
+    Atom, BuiltinAtom, BytecodeFunction, Closure, DebugSink, DiscardDebugSink, Prototype, Quota,
+    QuotaAccount, Value, Vm,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -239,8 +242,7 @@ pub struct PendingModule {
 
 struct PendingModuleInner {
     path: PathBuf,
-    arguments: Arc<[String]>,
-    options: Vec<LoadedOptionAction>,
+    resolver: ModuleResolver,
     config: EngineConfig,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: Arc<[RegisteredNativeModule]>,
@@ -248,7 +250,7 @@ struct PendingModuleInner {
 }
 
 enum PendingModuleState {
-    Pending(BTreeMap<String, InjectedValueModule>),
+    Pending { bindings: BTreeMap<String, Value> },
     Initializing,
     Ready(InstantiatedModule),
     Failed(ModuleError),
@@ -271,107 +273,37 @@ impl PendingModule {
         &self.inner.path
     }
 
-    pub fn option_actions(&self) -> &[LoadedOptionAction] {
-        &self.inner.options
-    }
-
-    pub fn arguments(&self) -> &[String] {
-        &self.inner.arguments
-    }
-
-    pub fn entry_argument(&self) -> Value {
-        Value::Opaque(crate::OpaqueValue::new_identity(
-            crate::entry_runtime::handle_type(),
-            self.clone(),
-        ))
-    }
-
-    pub(crate) fn inject_module(
-        &self,
-        id: String,
-        descriptor: TypeDescriptor,
-        value: Value,
-    ) -> Result<(), ModuleError> {
-        if id.is_empty()
-            || id.starts_with(['.', '@'])
-            || id.starts_with("entry/")
-            || id.ends_with(".priv.telora")
-            || id.ends_with(".native.telora")
-        {
-            return Err(ModuleError::new(format!(
-                "invalid injected module ID {id:?}"
-            )));
-        }
-        if builtin_list(&self.inner.native_modules)
-            .iter()
-            .any(|(name, _)| name == &id)
-        {
-            return Err(ModuleError::new(format!(
-                "injected module {id:?} would shadow a built-in"
-            )));
-        }
-        let TypeDescriptor::Struct(fields) = descriptor else {
-            return Err(ModuleError::new(
-                "injected module type must be a structural record",
-            ));
-        };
-        let Value::Dict(runtime_fields) = &value else {
-            return Err(ModuleError::new(
-                "injected module value must be a structural record",
-            ));
-        };
-        if !runtime_fields.shape().fields().iter().eq(fields.keys()) {
-            return Err(ModuleError::new(
-                "injected module value does not match its type witness",
-            ));
-        }
-        let interface = ModuleInterface {
-            exports: fields
-                .into_iter()
-                .map(|(name, body)| {
-                    (
-                        name,
-                        crate::TypeScheme {
-                            parameters: Vec::new(),
-                            body,
-                        },
-                    )
-                })
-                .collect(),
-            concrete_types: BTreeMap::new(),
-            type_family_templates: BTreeMap::new(),
-        };
+    fn bind_external(&self, name: String, value: Value) -> Result<(), ModuleError> {
         let mut state = self
             .inner
             .state
             .lock()
             .expect("pending module state poisoned");
-        let PendingModuleState::Pending(modules) = &mut *state else {
+        let PendingModuleState::Pending { bindings, .. } = &mut *state else {
             return Err(ModuleError::new(
-                "cannot inject a module after initialization has started",
+                "cannot bind an external after initialization has started",
             ));
         };
-        if modules.contains_key(&id) {
+        if bindings.insert(name.clone(), value).is_some() {
             return Err(ModuleError::new(format!(
-                "injected module {id:?} is already registered"
+                "external binding {name:?} is already installed"
             )));
         }
-        modules.insert(id, InjectedValueModule { value, interface });
         Ok(())
     }
 
     pub fn initialize(&self) -> Result<InstantiatedModule, ModuleError> {
-        let modules = {
+        let bindings = {
             let mut state = self
                 .inner
                 .state
                 .lock()
                 .expect("pending module state poisoned");
             match &mut *state {
-                PendingModuleState::Pending(modules) => {
-                    let modules = std::mem::take(modules);
+                PendingModuleState::Pending { bindings } => {
+                    let bindings = std::mem::take(bindings);
                     *state = PendingModuleState::Initializing;
-                    modules
+                    bindings
                 }
                 PendingModuleState::Initializing => {
                     return Err(ModuleError::new(
@@ -382,10 +314,15 @@ impl PendingModule {
                 PendingModuleState::Failed(error) => return Err(error.clone()),
             }
         };
-        let result = load_module_with_native_modules(
-            &self.inner.path,
+        let resolver = self
+            .inner
+            .resolver
+            .clone()
+            .with_builtins(builtin_list(&self.inner.native_modules));
+        let result = load_module_with_resolver(
+            resolver,
+            bindings,
             BTreeMap::new(),
-            modules,
             self.inner.config.module_quota,
             Arc::clone(&self.inner.debug_sink),
             &self.inner.native_modules,
@@ -428,22 +365,6 @@ impl InstantiatedModule {
         exports
             .get(name)
             .zip(self.module.analysis.module_interface.exports.get(name))
-    }
-
-    pub(crate) fn export_origin(&self, name: &str) -> String {
-        let definition = self
-            .module
-            .analysis
-            .hir
-            .definitions()
-            .iter()
-            .find(|definition| definition.top_level && definition.name == name);
-        let Some(definition) = definition else {
-            return self.module.path.display().to_string();
-        };
-        let file = self.module.sources.get(definition.location.source);
-        let position = file.position(definition.location.start);
-        format!("{}:{}:{}", file.name, position.line, position.column)
     }
 }
 
@@ -971,12 +892,185 @@ impl LoadedModule {
             .export(&self.runtime.main.heap)
             .map_err(|error| ModuleError::new(error.to_string()))
     }
+
+    fn invoke_reducer_in_work(
+        &self,
+        reducer: &Value,
+        state: WorkWorld,
+        event: Value,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> Result<WorkWorld, ModuleError> {
+        let Value::Func(closure) = reducer else {
+            return Err(ModuleError::new("Entry reducer must be a function"));
+        };
+        let Prototype::Bytecode(function) = closure.prototype() else {
+            return Err(ModuleError::new(
+                "Entry reducer must be a Telora bytecode function",
+            ));
+        };
+        let mut account = QuotaAccount::new(quota);
+        let result = Vm::new()
+            .with_debug_sink(debug_sink)
+            .execute_function_with_captures_and_work_state_in_work(
+                &self.runtime.main.heap,
+                &self.runtime.externals,
+                function,
+                closure.upvalues(),
+                state,
+                &[event],
+                &mut account,
+            );
+        result.map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))
+    }
+
+    fn invoke_initialize_in_work(
+        &self,
+        initialize: &Value,
+        main: Value,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> Result<WorkWorld, ModuleError> {
+        let Value::Func(closure) = initialize else {
+            return Err(ModuleError::new("Entry.initialize must be a function"));
+        };
+        let Prototype::Bytecode(function) = closure.prototype() else {
+            return Err(ModuleError::new(
+                "Entry.initialize must be a Telora bytecode function",
+            ));
+        };
+        let mut account = QuotaAccount::new(quota);
+        Vm::new()
+            .with_debug_sink(debug_sink)
+            .execute_function_with_captures_in_work(
+                &self.runtime.main.heap,
+                &self.runtime.externals,
+                function,
+                closure.upvalues(),
+                &[main],
+                &mut account,
+            )
+            .map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngineConfig {
     pub module_quota: Quota,
     pub session_quota: Quota,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChildStdinMode {
+    Piped,
+    Inherit,
+    Null,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChildOutputMode {
+    PipedLine,
+    PipedToEnd,
+    Inherit,
+    Null,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChildOptions {
+    pub bin: String,
+    pub cwd: Option<String>,
+    pub envs: BTreeMap<String, Option<String>>,
+    pub clear_env: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChildStdio {
+    pub stdin: ChildStdinMode,
+    pub stdout: ChildOutputMode,
+    pub stderr: ChildOutputMode,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpawnStdioChild {
+    pub key: String,
+    pub opts: ChildOptions,
+    pub stdio: ChildStdio,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChildText {
+    pub key: String,
+    pub data: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChildSpawnResult {
+    pub key: String,
+    pub result: Result<i64, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChildExit {
+    Code(i64),
+    Signal(Option<i64>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SystemEvent {
+    ChildStdout(ChildText),
+    ChildStderr(ChildText),
+    ChildSpawnResult(ChildSpawnResult),
+    ChildExited { key: String, exited: ChildExit },
+}
+
+pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+
+pub trait RunHost {
+    fn spawn_stdio_child(
+        &mut self,
+        child: SpawnStdioChild,
+    ) -> RunHostFuture<'_, Result<(), String>>;
+
+    fn post_stdin(&mut self, text: ChildText) -> RunHostFuture<'_, Result<(), String>>;
+
+    fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>>;
+
+    fn finish(&mut self) -> RunHostFuture<'_, Result<(), String>>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunTermination {
+    Exit(i64),
+    Exec(ChildOptions),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunOutcome {
+    pub output: String,
+    pub termination: RunTermination,
+}
+
+struct NoProcessRunHost;
+
+impl RunHost for NoProcessRunHost {
+    fn spawn_stdio_child(
+        &mut self,
+        _child: SpawnStdioChild,
+    ) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async { Err("this Host does not provide stdio child processes".into()) })
+    }
+
+    fn post_stdin(&mut self, _text: ChildText) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async { Err("this Host does not provide stdio child processes".into()) })
+    }
+
+    fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn finish(&mut self) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 pub struct Engine {
@@ -1178,34 +1272,30 @@ impl Engine {
     }
 
     pub fn prepare_module(&self, path: impl AsRef<Path>) -> Result<PendingModule, ModuleError> {
-        self.prepare_module_with_arguments(path, Vec::new())
-    }
-
-    pub fn prepare_module_with_arguments(
-        &self,
-        path: impl AsRef<Path>,
-        arguments: Vec<String>,
-    ) -> Result<PendingModule, ModuleError> {
         let resolver = ModuleResolver::for_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        self.prepare_resolved_module(resolver, arguments)
+        self.prepare_resolved_module(resolver)
     }
 
-    pub fn prepare_module_id_with_arguments(
+    pub fn prepare_standalone(&self, path: impl AsRef<Path>) -> Result<PendingModule, ModuleError> {
+        let resolver = ModuleResolver::standalone(path.as_ref())
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        self.prepare_resolved_module(resolver)
+    }
+
+    pub fn prepare_module_id(
         &self,
         cwd: impl AsRef<Path>,
         module_id: &str,
-        arguments: Vec<String>,
     ) -> Result<PendingModule, ModuleError> {
         let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        self.prepare_resolved_module(resolver, arguments)
+        self.prepare_resolved_module(resolver)
     }
 
     fn prepare_resolved_module(
         &self,
         resolver: ModuleResolver,
-        arguments: Vec<String>,
     ) -> Result<PendingModule, ModuleError> {
         let root = resolver
             .selected_root()
@@ -1231,94 +1321,18 @@ impl Engine {
                     .join("\n"),
             ));
         }
-        let mut values = Vm::new();
-        let options = parsed
-            .options
-            .iter()
-            .map(|option| {
-                immediate_value(&option.value, &mut values)
-                    .and_then(|value| {
-                        if option.key.value == "exec.capture-envs"
-                            && !matches!(
-                                &value,
-                                Value::Array(names)
-                                    if names.iter().all(|name| matches!(name, Value::String(_)))
-                            )
-                        {
-                            return Err(crate::ResolveModuleError::Manifest(
-                                "option \"exec.capture-envs\" must contain an Array(String)".into(),
-                            ));
-                        }
-                        Ok(LoadedOptionAction {
-                            key: option.key.value.clone(),
-                            value,
-                        })
-                    })
-                    .map_err(|error| {
-                        ModuleError::new(
-                            sources.render(&Diagnostic::error(error.to_string(), option.location)),
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(PendingModule {
             inner: Arc::new(PendingModuleInner {
                 path: physical.to_owned(),
-                arguments: arguments.into(),
-                options,
+                resolver,
                 config: self.config,
                 debug_sink: Arc::clone(&self.debug_sink),
                 native_modules: Arc::clone(&self.native_modules),
-                state: Mutex::new(PendingModuleState::Pending(BTreeMap::new())),
+                state: Mutex::new(PendingModuleState::Pending {
+                    bindings: BTreeMap::new(),
+                }),
             }),
         })
-    }
-
-    pub fn load_entry(
-        &self,
-        main_path: impl AsRef<Path>,
-        entry_module: &str,
-        external_bindings: BTreeMap<String, Value>,
-    ) -> Result<LoadedModule, ModuleError> {
-        self.load_entry_with_modules(main_path, entry_module, external_bindings, BTreeMap::new())
-    }
-
-    pub fn load_entry_id(
-        &self,
-        cwd: impl AsRef<Path>,
-        module_id: &str,
-        entry_module: &str,
-        external_bindings: BTreeMap<String, Value>,
-    ) -> Result<LoadedModule, ModuleError> {
-        let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
-            .map_err(|error| ModuleError::new(error.to_string()))?;
-        load_entry_with_resolver(
-            resolver,
-            entry_module,
-            external_bindings,
-            BTreeMap::new(),
-            self.config.module_quota,
-            Arc::clone(&self.debug_sink),
-            &self.native_modules,
-        )
-    }
-
-    pub fn load_entry_with_modules(
-        &self,
-        main_path: impl AsRef<Path>,
-        entry_module: &str,
-        external_bindings: BTreeMap<String, Value>,
-        injected_modules: BTreeMap<String, String>,
-    ) -> Result<LoadedModule, ModuleError> {
-        load_entry_with_native_modules(
-            main_path,
-            entry_module,
-            external_bindings,
-            injected_modules,
-            self.config.module_quota,
-            Arc::clone(&self.debug_sink),
-            &self.native_modules,
-        )
     }
 
     pub fn execute(&self, module: &LoadedModule) -> Result<Value, crate::RuntimeError> {
@@ -1347,6 +1361,221 @@ impl Engine {
             self.config.session_quota,
             Arc::clone(&self.debug_sink),
         )
+    }
+
+    pub async fn run_pending(
+        &self,
+        pending: PendingModule,
+        input: Option<Value>,
+        entry_path: Option<&Path>,
+    ) -> Result<RunOutcome, ModuleError> {
+        self.run_pending_with_host(pending, input, entry_path, &mut NoProcessRunHost)
+            .await
+    }
+
+    pub async fn run_pending_with_host(
+        &self,
+        pending: PendingModule,
+        input: Option<Value>,
+        entry_path: Option<&Path>,
+        host: &mut dyn RunHost,
+    ) -> Result<RunOutcome, ModuleError> {
+        let result = self
+            .run_pending_with_host_inner(pending, input, entry_path, host)
+            .await;
+        let finished = host
+            .finish()
+            .await
+            .map_err(|error| ModuleError::new(format!("cannot finish run Host: {error}")));
+        match (result, finished) {
+            (Ok(outcome), Ok(())) => Ok(outcome),
+            (Err(error), Ok(())) => Err(error),
+            (_, Err(error)) => Err(error),
+        }
+    }
+
+    async fn run_pending_with_host_inner(
+        &self,
+        pending: PendingModule,
+        input: Option<Value>,
+        entry_path: Option<&Path>,
+        host: &mut dyn RunHost,
+    ) -> Result<RunOutcome, ModuleError> {
+        let resolver = pending.inner.resolver.clone();
+        let (entry_id, entry_source) = match entry_path {
+            Some(path) => {
+                if path.extension().and_then(|extension| extension.to_str()) != Some("telora") {
+                    return Err(ModuleError::new("--entry must name a .telora file"));
+                }
+                let path = fs::canonicalize(path).map_err(|error| {
+                    ModuleError::new(format!("cannot resolve entry {}: {error}", path.display()))
+                })?;
+                let source = read(&path)?;
+                (ModuleId::builtin("host/user-entry.telora"), source)
+            }
+            None => (
+                ModuleId::builtin("host/run-entry.telora"),
+                run_entry_source().to_owned(),
+            ),
+        };
+        let entry = load_selected_entry(
+            resolver,
+            entry_id,
+            &entry_source,
+            self.config.module_quota,
+            Arc::clone(&self.debug_sink),
+            &self.native_modules,
+        )?;
+        let exports = self
+            .execute(&entry)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        let Value::Dict(exports) = exports else {
+            return Err(ModuleError::new("Entry must export a module record"));
+        };
+        let expected = ["MainType", "State", "initialize", "prepare"];
+        if exports.shape().fields() != expected {
+            return Err(ModuleError::new(
+                "Entry must export exactly MainType, State, initialize, and prepare",
+            ));
+        }
+        let main_type = crate::types::decode_type(
+            exports.get("MainType").expect("field shape checked"),
+            "Entry.MainType",
+        )
+        .map_err(ModuleError::new)?;
+        let state_type = crate::types::decode_type(
+            exports.get("State").expect("field shape checked"),
+            "Entry.State",
+        )
+        .map_err(ModuleError::new)?;
+        validate_entry_interface(&entry, &main_type, &state_type)?;
+        let prepare = exports.get("prepare").expect("field shape checked");
+        require_function_arity(prepare, 1, "Entry.prepare")?;
+        let options = make_system_options(input.as_ref())?;
+        let caps = self
+            .invoke(&entry, prepare, &[options])
+            .map_err(|error| ModuleError::new(format!("Entry.prepare failed: {error}")))?;
+        let wants_input = parse_system_caps(&caps)?;
+        match (wants_input, input) {
+            (true, Some(input)) => pending.bind_external("input".into(), input)?,
+            (true, None) => {
+                return Err(ModuleError::new(
+                    "Entry requested input, but telora run received no --input",
+                ));
+            }
+            (false, _) => {}
+        }
+
+        let main = pending.initialize()?;
+        let actual_main_type = concrete_module_descriptor(&main)?;
+        let main_argument = if matches!(main_type, TypeDescriptor::Dyn) {
+            pack_dyn(
+                main.exports.clone(),
+                actual_main_type,
+                main.module.path.display().to_string(),
+            )
+        } else {
+            if !crate::types::assignable(&actual_main_type, &main_type) {
+                return Err(ModuleError::new(format!(
+                    "Main export record {} is not assignable to Entry.MainType {}",
+                    actual_main_type.display_name(),
+                    main_type.display_name()
+                )));
+            }
+            main.exports.clone()
+        };
+        let initialize = exports.get("initialize").expect("field shape checked");
+        require_function_arity(initialize, 1, "Entry.initialize")?;
+        let initialized = entry
+            .invoke_initialize_in_work(
+                initialize,
+                main_argument,
+                self.config.session_quota,
+                Arc::clone(&self.debug_sink),
+            )
+            .map_err(|error| ModuleError::new(format!("Entry.initialize failed: {error}")))?;
+        let (state, reducer) = initialized
+            .into_entry_initialization(&entry.runtime.main.heap)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        let mut state = state;
+        require_function_arity(&reducer, 2, "Entry reducer")?;
+        let mut events = std::collections::VecDeque::from([Value::atom("Initialize")]);
+        let mut output = String::new();
+        loop {
+            let event = match events.pop_front() {
+                Some(event) => event,
+                None => host
+                    .next_event()
+                    .await
+                    .map_err(|error| ModuleError::new(format!("run Host failed: {error}")))?
+                    .map(system_event_value)
+                    .transpose()?
+                    .ok_or_else(|| {
+                        ModuleError::new("Entry made no progress and the Host has no pending event")
+                    })?,
+            };
+            let transition = entry
+                .invoke_reducer_in_work(
+                    &reducer,
+                    state,
+                    event,
+                    self.config.session_quota,
+                    Arc::clone(&self.debug_sink),
+                )
+                .map_err(|error| ModuleError::new(format!("Entry reducer failed: {error}")))?;
+            let (next_state, effects) = transition
+                .into_reducer_transition(&entry.runtime.main.heap)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let Value::Array(effects) = effects else {
+                return Err(ModuleError::new("Entry reducer effects must be an Array"));
+            };
+            state = next_state;
+            let mut terminal = None;
+            for effect in effects.iter() {
+                if terminal.is_some() {
+                    return Err(ModuleError::new(
+                        "Entry returned an effect after a terminal effect",
+                    ));
+                }
+                match effect {
+                    Value::Tagged { tag, payload } if tag.name() == "SpawnStdioChild" => {
+                        let child = parse_spawn_stdio_child(payload)?;
+                        host.spawn_stdio_child(child).await.map_err(|error| {
+                            ModuleError::new(format!("cannot spawn stdio child: {error}"))
+                        })?;
+                    }
+                    Value::Tagged { tag, payload } if tag.name() == "PostStdin" => {
+                        let text = parse_child_text(payload, "PostStdin")?;
+                        host.post_stdin(text).await.map_err(|error| {
+                            ModuleError::new(format!("cannot post child stdin: {error}"))
+                        })?;
+                    }
+                    Value::Tagged { tag, payload } if tag.name() == "Exec" => {
+                        terminal =
+                            Some(RunTermination::Exec(parse_child_options(payload, "Exec")?));
+                    }
+                    Value::Tagged { tag, payload } if tag.name() == "Output" => {
+                        let Value::String(text) = payload.as_ref() else {
+                            return Err(ModuleError::new("Output payload must be String"));
+                        };
+                        output.push_str(text);
+                    }
+                    Value::Tagged { tag, payload } if tag.name() == "Exit" => {
+                        let Value::Int(code) = payload.as_ref() else {
+                            return Err(ModuleError::new("Exit payload must be Int"));
+                        };
+                        terminal = Some(RunTermination::Exit(*code));
+                    }
+                    _ => return Err(ModuleError::new("Entry returned an invalid SystemEffect")),
+                }
+            }
+            if let Some(termination) = terminal {
+                return Ok(RunOutcome {
+                    output,
+                    termination,
+                });
+            }
+        }
     }
 
     pub fn recover_workspace(
@@ -2432,40 +2661,460 @@ fn load_module_with_resolver(
     loader.load_root(root_module, external_bindings)
 }
 
-fn load_entry_with_native_modules(
-    main_path: impl AsRef<Path>,
-    entry_module: &str,
-    external_bindings: BTreeMap<String, Value>,
-    injected_modules: BTreeMap<String, String>,
-    module_quota: Quota,
-    debug_sink: Arc<dyn DebugSink>,
-    native_modules: &[RegisteredNativeModule],
-) -> Result<LoadedModule, ModuleError> {
-    let resolver = ModuleResolver::for_root(main_path.as_ref())
-        .map_err(|error| ModuleError::new(error.to_string()))?;
-    load_entry_with_resolver(
-        resolver,
-        entry_module,
-        external_bindings,
-        injected_modules,
-        module_quota,
-        debug_sink,
-        native_modules,
+fn expect_protocol_record<'a>(
+    value: &'a Value,
+    path: &str,
+    fields: &[&str],
+) -> Result<&'a crate::Dict, ModuleError> {
+    let Value::Dict(record) = value else {
+        return Err(ModuleError::new(format!(
+            "{path} must be a record, found {}",
+            value.type_name()
+        )));
+    };
+    if !record
+        .shape()
+        .fields()
+        .iter()
+        .map(String::as_str)
+        .eq(fields.iter().copied())
+    {
+        return Err(ModuleError::new(format!(
+            "{path} has an invalid field shape"
+        )));
+    }
+    Ok(record)
+}
+
+fn protocol_string(value: &Value, path: &str) -> Result<String, ModuleError> {
+    let Value::String(value) = value else {
+        return Err(ModuleError::new(format!("{path} must be String")));
+    };
+    Ok(value.to_string())
+}
+
+fn protocol_bool(value: &Value, path: &str) -> Result<bool, ModuleError> {
+    match value {
+        Value::Atom(value) if value.name() == "True" => Ok(true),
+        Value::Atom(value) if value.name() == "False" => Ok(false),
+        _ => Err(ModuleError::new(format!("{path} must be Bool"))),
+    }
+}
+
+fn protocol_option_string(value: &Value, path: &str) -> Result<Option<String>, ModuleError> {
+    match value {
+        Value::Atom(tag) if tag.name() == "None" => Ok(None),
+        Value::Tagged { tag, payload } if tag.name() == "Some" => {
+            protocol_string(payload, path).map(Some)
+        }
+        _ => Err(ModuleError::new(format!("{path} must be Option(String)"))),
+    }
+}
+
+fn parse_child_options(value: &Value, path: &str) -> Result<ChildOptions, ModuleError> {
+    let opts = expect_protocol_record(value, path, &["bin", "clear_env", "cwd", "envs"])?;
+    let Value::Dict(envs) = opts.get("envs").expect("field shape checked") else {
+        return Err(ModuleError::new(format!("{path}.envs must be a Dict")));
+    };
+    let envs = envs
+        .shape()
+        .fields()
+        .iter()
+        .zip(envs.values())
+        .map(|(name, value)| {
+            protocol_option_string(value, &format!("{path}.envs.{name}"))
+                .map(|value| (name.clone(), value))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(ChildOptions {
+        bin: protocol_string(
+            opts.get("bin").expect("field shape checked"),
+            &format!("{path}.bin"),
+        )?,
+        cwd: protocol_option_string(
+            opts.get("cwd").expect("field shape checked"),
+            &format!("{path}.cwd"),
+        )?,
+        envs,
+        clear_env: protocol_bool(
+            opts.get("clear_env").expect("field shape checked"),
+            &format!("{path}.clear_env"),
+        )?,
+    })
+}
+
+fn parse_stdin_mode(value: &Value) -> Result<ChildStdinMode, ModuleError> {
+    match value {
+        Value::Atom(tag) if tag.name() == "Piped" => Ok(ChildStdinMode::Piped),
+        Value::Atom(tag) if tag.name() == "Inherit" => Ok(ChildStdinMode::Inherit),
+        Value::Atom(tag) if tag.name() == "Null" => Ok(ChildStdinMode::Null),
+        _ => Err(ModuleError::new("SpawnStdioChild.stdio.stdin is invalid")),
+    }
+}
+
+fn parse_output_mode(value: &Value, path: &str) -> Result<ChildOutputMode, ModuleError> {
+    match value {
+        Value::Atom(tag) if tag.name() == "PipedLine" => Ok(ChildOutputMode::PipedLine),
+        Value::Atom(tag) if tag.name() == "PipedToEnd" => Ok(ChildOutputMode::PipedToEnd),
+        Value::Atom(tag) if tag.name() == "Inherit" => Ok(ChildOutputMode::Inherit),
+        Value::Atom(tag) if tag.name() == "Null" => Ok(ChildOutputMode::Null),
+        _ => Err(ModuleError::new(format!("{path} is invalid"))),
+    }
+}
+
+fn parse_spawn_stdio_child(value: &Value) -> Result<SpawnStdioChild, ModuleError> {
+    let child = expect_protocol_record(value, "SpawnStdioChild", &["key", "opts", "stdio"])?;
+    let stdio = expect_protocol_record(
+        child.get("stdio").expect("field shape checked"),
+        "SpawnStdioChild.stdio",
+        &["stderr", "stdin", "stdout"],
+    )?;
+    Ok(SpawnStdioChild {
+        key: protocol_string(
+            child.get("key").expect("field shape checked"),
+            "SpawnStdioChild.key",
+        )?,
+        opts: parse_child_options(
+            child.get("opts").expect("field shape checked"),
+            "SpawnStdioChild.opts",
+        )?,
+        stdio: ChildStdio {
+            stdin: parse_stdin_mode(stdio.get("stdin").expect("field shape checked"))?,
+            stdout: parse_output_mode(
+                stdio.get("stdout").expect("field shape checked"),
+                "SpawnStdioChild.stdio.stdout",
+            )?,
+            stderr: parse_output_mode(
+                stdio.get("stderr").expect("field shape checked"),
+                "SpawnStdioChild.stdio.stderr",
+            )?,
+        },
+    })
+}
+
+fn parse_child_text(value: &Value, path: &str) -> Result<ChildText, ModuleError> {
+    let text = expect_protocol_record(value, path, &["data", "key"])?;
+    Ok(ChildText {
+        key: protocol_string(
+            text.get("key").expect("field shape checked"),
+            &format!("{path}.key"),
+        )?,
+        data: protocol_option_string(
+            text.get("data").expect("field shape checked"),
+            &format!("{path}.data"),
+        )?,
+    })
+}
+
+fn protocol_record(fields: Vec<(String, Value)>) -> Result<Value, ModuleError> {
+    Vm::new()
+        .make_dict(fields)
+        .map_err(|error| ModuleError::new(error.to_string()))
+}
+
+fn option_string_value(value: Option<String>) -> Value {
+    value.map_or_else(Value::none, |value| {
+        Value::tagged(Atom::builtin(BuiltinAtom::Some), Value::string(value))
+    })
+}
+
+fn child_text_value(text: ChildText) -> Result<Value, ModuleError> {
+    protocol_record(vec![
+        ("key".into(), Value::string(text.key)),
+        ("data".into(), option_string_value(text.data)),
+    ])
+}
+
+fn system_event_value(event: SystemEvent) -> Result<Value, ModuleError> {
+    let (tag, payload) = match event {
+        SystemEvent::ChildStdout(text) => ("ChildStdout", child_text_value(text)?),
+        SystemEvent::ChildStderr(text) => ("ChildStderr", child_text_value(text)?),
+        SystemEvent::ChildSpawnResult(result) => (
+            "ChildSpawnResult",
+            protocol_record(vec![
+                ("key".into(), Value::string(result.key)),
+                (
+                    "result".into(),
+                    match result.result {
+                        Ok(pid) => Value::tagged(Atom::builtin(BuiltinAtom::Ok), Value::Int(pid)),
+                        Err(error) => {
+                            Value::tagged(Atom::builtin(BuiltinAtom::Err), Value::string(error))
+                        }
+                    },
+                ),
+            ])?,
+        ),
+        SystemEvent::ChildExited { key, exited } => {
+            let exited = match exited {
+                ChildExit::Code(code) => {
+                    Value::tagged(Atom::builtin(BuiltinAtom::Ok), Value::Int(code))
+                }
+                ChildExit::Signal(signal) => Value::tagged(
+                    Atom::builtin(BuiltinAtom::Err),
+                    signal.map_or_else(Value::none, |signal| {
+                        Value::tagged(Atom::builtin(BuiltinAtom::Some), Value::Int(signal))
+                    }),
+                ),
+            };
+            (
+                "ChildExited",
+                protocol_record(vec![
+                    ("key".into(), Value::string(key)),
+                    ("exited".into(), exited),
+                ])?,
+            )
+        }
+    };
+    Ok(Value::tagged(Atom::named(tag), payload))
+}
+
+fn require_function_arity(value: &Value, arity: usize, name: &str) -> Result<(), ModuleError> {
+    let Value::Func(function) = value else {
+        return Err(ModuleError::new(format!("{name} must be a function")));
+    };
+    let actual = match function.prototype() {
+        Prototype::Bytecode(function) => function.parameter_count(),
+        Prototype::Native(function) => function.arity(),
+    };
+    if actual != arity {
+        return Err(ModuleError::new(format!(
+            "{name} must accept {arity} arguments, found {actual}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_entry_interface(
+    entry: &LoadedModule,
+    main_type: &TypeDescriptor,
+    state_type: &TypeDescriptor,
+) -> Result<(), ModuleError> {
+    let unit_enum = |names: &[&str]| {
+        TypeDescriptor::Enum(
+            names
+                .iter()
+                .map(|name| ((*name).to_owned(), None))
+                .collect(),
+        )
+    };
+    let bool_type = unit_enum(&["False", "True"]);
+    let options_type = TypeDescriptor::Struct(BTreeMap::from([(
+        "input".into(),
+        TypeDescriptor::Enum(BTreeMap::from([
+            ("None".into(), None),
+            ("Some".into(), Some(Box::new(TypeDescriptor::Dyn))),
+        ])),
+    )]));
+    let caps_type = TypeDescriptor::Struct(BTreeMap::from([("input".into(), bool_type)]));
+    let option_string = TypeDescriptor::Enum(BTreeMap::from([
+        ("None".into(), None),
+        ("Some".into(), Some(Box::new(TypeDescriptor::String))),
+    ]));
+    let child_text = TypeDescriptor::Struct(BTreeMap::from([
+        ("data".into(), option_string.clone()),
+        ("key".into(), TypeDescriptor::String),
+    ]));
+    let child_opts = TypeDescriptor::Struct(BTreeMap::from([
+        ("bin".into(), TypeDescriptor::String),
+        ("clear_env".into(), unit_enum(&["False", "True"])),
+        (
+            "cwd".into(),
+            TypeDescriptor::Enum(BTreeMap::from([
+                ("None".into(), None),
+                ("Some".into(), Some(Box::new(TypeDescriptor::String))),
+            ])),
+        ),
+        (
+            "envs".into(),
+            TypeDescriptor::Dict(Box::new(option_string.clone())),
+        ),
+    ]));
+    let stdin_type = unit_enum(&["Inherit", "Null", "Piped"]);
+    let stdout_type = unit_enum(&["Inherit", "Null", "PipedLine", "PipedToEnd"]);
+    let stdio_type = TypeDescriptor::Struct(BTreeMap::from([
+        ("stderr".into(), stdout_type.clone()),
+        ("stdin".into(), stdin_type),
+        ("stdout".into(), stdout_type),
+    ]));
+    let spawn_child = TypeDescriptor::Struct(BTreeMap::from([
+        ("key".into(), TypeDescriptor::String),
+        ("opts".into(), child_opts.clone()),
+        ("stdio".into(), stdio_type),
+    ]));
+    let child_spawn_result = TypeDescriptor::Struct(BTreeMap::from([
+        ("key".into(), TypeDescriptor::String),
+        (
+            "result".into(),
+            TypeDescriptor::Enum(BTreeMap::from([
+                ("Ok".into(), Some(Box::new(TypeDescriptor::Int))),
+                ("Err".into(), Some(Box::new(TypeDescriptor::String))),
+            ])),
+        ),
+    ]));
+    let child_exited = TypeDescriptor::Struct(BTreeMap::from([
+        (
+            "exited".into(),
+            TypeDescriptor::Enum(BTreeMap::from([
+                ("Ok".into(), Some(Box::new(TypeDescriptor::Int))),
+                (
+                    "Err".into(),
+                    Some(Box::new(TypeDescriptor::Enum(BTreeMap::from([
+                        ("None".into(), None),
+                        ("Some".into(), Some(Box::new(TypeDescriptor::Int))),
+                    ])))),
+                ),
+            ])),
+        ),
+        ("key".into(), TypeDescriptor::String),
+    ]));
+    let event_type = TypeDescriptor::Enum(BTreeMap::from([
+        ("Initialize".into(), None),
+        ("ChildStdout".into(), Some(Box::new(child_text.clone()))),
+        ("ChildStderr".into(), Some(Box::new(child_text.clone()))),
+        (
+            "ChildSpawnResult".into(),
+            Some(Box::new(child_spawn_result)),
+        ),
+        ("ChildExited".into(), Some(Box::new(child_exited))),
+    ]));
+    let effect_type = TypeDescriptor::Enum(BTreeMap::from([
+        ("Exec".into(), Some(Box::new(child_opts))),
+        ("Exit".into(), Some(Box::new(TypeDescriptor::Int))),
+        ("Output".into(), Some(Box::new(TypeDescriptor::String))),
+        ("PostStdin".into(), Some(Box::new(child_text))),
+        ("SpawnStdioChild".into(), Some(Box::new(spawn_child))),
+    ]));
+    let transition_type = TypeDescriptor::Tuple(vec![
+        state_type.clone(),
+        TypeDescriptor::Array(Box::new(effect_type)),
+    ]);
+    let reducer_type = TypeDescriptor::Function {
+        parameters: vec![state_type.clone(), event_type],
+        result: Box::new(transition_type),
+    };
+    let expected = BTreeMap::from([
+        (
+            "MainType",
+            TypeDescriptor::TypeOf(Box::new(main_type.clone())),
+        ),
+        (
+            "State",
+            TypeDescriptor::TypeOf(Box::new(state_type.clone())),
+        ),
+        (
+            "initialize",
+            TypeDescriptor::Function {
+                parameters: vec![main_type.clone()],
+                result: Box::new(TypeDescriptor::Tuple(vec![
+                    state_type.clone(),
+                    reducer_type,
+                ])),
+            },
+        ),
+        (
+            "prepare",
+            TypeDescriptor::Function {
+                parameters: vec![options_type],
+                result: Box::new(caps_type),
+            },
+        ),
+    ]);
+    for (name, expected) in expected {
+        let scheme = entry
+            .analysis
+            .module_interface
+            .exports
+            .get(name)
+            .ok_or_else(|| ModuleError::new(format!("Entry interface omitted {name}")))?;
+        if !scheme.parameters.is_empty()
+            || !crate::types::assignable(&scheme.body, &expected)
+            || !crate::types::assignable(&expected, &scheme.body)
+        {
+            return Err(ModuleError::new(format!(
+                "Entry.{name} has type {}, expected {}",
+                scheme.body.display_name(),
+                expected.display_name()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn pack_dyn(value: Value, descriptor: TypeDescriptor, origin: String) -> Value {
+    let mut values = Vm::new();
+    let descriptor_value = descriptor.to_value(&mut values);
+    Value::Dyn(
+        crate::value::DynValue::from_module_export(
+            descriptor_value,
+            value,
+            crate::TypeScheme {
+                parameters: Vec::new(),
+                body: descriptor,
+            },
+            origin,
+        )
+        .into(),
     )
 }
 
-fn load_entry_with_resolver(
+fn make_system_options(input: Option<&Value>) -> Result<Value, ModuleError> {
+    let input = match input {
+        Some(input) => Value::tagged(
+            Atom::builtin(BuiltinAtom::Some),
+            pack_dyn(
+                input.clone(),
+                crate::types::infer_value(input),
+                "telora run --input".into(),
+            ),
+        ),
+        None => Value::none(),
+    };
+    Vm::new()
+        .make_dict(vec![("input".into(), input)])
+        .map_err(|error| ModuleError::new(error.to_string()))
+}
+
+fn parse_system_caps(value: &Value) -> Result<bool, ModuleError> {
+    let Value::Dict(caps) = value else {
+        return Err(ModuleError::new("Entry.prepare must return SystemCaps"));
+    };
+    if caps.shape().fields() != ["input"] {
+        return Err(ModuleError::new(
+            "Entry.prepare returned an invalid SystemCaps field shape",
+        ));
+    }
+    match caps.get("input") {
+        Some(Value::Atom(value)) if value.name() == "True" => Ok(true),
+        Some(Value::Atom(value)) if value.name() == "False" => Ok(false),
+        _ => Err(ModuleError::new("SystemCaps.input must be Bool")),
+    }
+}
+
+fn concrete_module_descriptor(module: &InstantiatedModule) -> Result<TypeDescriptor, ModuleError> {
+    let mut fields = BTreeMap::new();
+    for (name, scheme) in &module.module.analysis.module_interface.exports {
+        if !scheme.parameters.is_empty() {
+            return Err(ModuleError::new(format!(
+                "Main export {name:?} is generic and has no concrete Entry boundary type"
+            )));
+        }
+        fields.insert(name.clone(), scheme.body.clone());
+    }
+    Ok(TypeDescriptor::Struct(fields))
+}
+
+fn load_selected_entry(
     resolver: ModuleResolver,
-    entry_module: &str,
-    external_bindings: BTreeMap<String, Value>,
-    injected_modules: BTreeMap<String, String>,
+    entry_id: ModuleId,
+    source: &str,
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
 ) -> Result<LoadedModule, ModuleError> {
-    let source = entry_source(entry_module)
-        .ok_or_else(|| ModuleError::new(format!("unknown Host entry module {entry_module:?}")))?;
-    let entry_id = ModuleId::builtin(entry_module);
+    let injected_modules = BTreeMap::from([(
+        EDGE_RUNTIME_MODULE.to_owned(),
+        edge_runtime_source().to_owned(),
+    )]);
     let resolver = resolver
         .with_builtins(builtin_list(native_modules))
         .with_entry_context(entry_id.clone(), injected_modules.keys().cloned());
@@ -2499,7 +3148,7 @@ fn load_entry_with_resolver(
         source_policy: ModuleSourcePolicy::ExplicitExports,
     };
     loader.install_injected_modules(&main_path, injected_modules)?;
-    loader.load_entry(main_path, entry_id, source, external_bindings)
+    loader.load_entry(main_path, entry_id, source, BTreeMap::new())
 }
 
 struct ModuleLoader {
@@ -2885,22 +3534,9 @@ impl ModuleLoader {
             .iter()
             .map(|option| {
                 immediate_value(&option.value, &mut option_vm)
-                    .and_then(|value| {
-                        if option.key.value == "exec.capture-envs"
-                            && !matches!(
-                                &value,
-                                Value::Array(names)
-                                    if names.iter().all(|name| matches!(name, Value::String(_)))
-                            )
-                        {
-                            return Err(crate::ResolveModuleError::Manifest(
-                                "option \"exec.capture-envs\" must contain an Array(String)".into(),
-                            ));
-                        }
-                        Ok(LoadedOptionAction {
-                            key: option.key.value.clone(),
-                            value,
-                        })
+                    .map(|value| LoadedOptionAction {
+                        key: option.key.value.clone(),
+                        value,
                     })
                     .map_err(|error| {
                         ModuleError::new(
@@ -4020,6 +4656,78 @@ export let output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
             .unwrap_err();
         assert!(isolated.to_string().contains("unknown dependency"));
         assert!(isolated.to_string().contains("main.telora:1:8"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn selected_entry_runs_graph_visible_registered_native_modules() {
+        let config = EngineConfig {
+            module_quota: Quota::with_fuel(500_000),
+            session_quota: Quota::with_fuel(500_000),
+        };
+        let native_source = "native answer: Fn() -> Int; export { answer };";
+        let mut builder = Engine::builder(config);
+        builder
+            .register_native_module(
+                Some(1_500),
+                NativeModuleSpec::new(
+                    "dep/service.native.telora",
+                    native_source,
+                    vec![(
+                        "answer",
+                        crate::NativeFunction::new(
+                            "dep/service.answer",
+                            0,
+                            fixture_answer_callback,
+                        ),
+                    )],
+                ),
+            )
+            .unwrap();
+        let engine = builder.build();
+        let directory = fixture_dir();
+        fs::create_dir_all(directory.join("src/bin")).unwrap();
+        fs::create_dir_all(directory.join("dependency/src")).unwrap();
+        fs::write(
+            directory.join("telora-deps.json"),
+            r#"{"dependencies":{"dep":{"path":"dependency"}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("dependency/src/service.native.telora"),
+            native_source,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("src/bin/main.telora"),
+            "export let marker = 0;",
+        )
+        .unwrap();
+        let entry = directory.join("entry.telora");
+        fs::write(
+            &entry,
+            r#"import "std/rt.priv.telora" as rt;
+import "dep/service.native.telora" as service;
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (service.answer(), fn(state, event) {
+        match event {
+            'Initialize => (state, ['Output("42"), 'Exit(0)]),
+            _ => fail!("unexpected event", event),
+        }
+    })
+};"#,
+        )
+        .unwrap();
+        let pending = engine
+            .prepare_module_id(&directory, "@bin/main.telora")
+            .unwrap();
+        let outcome = block_on_recovery(engine.run_pending(pending, None, Some(&entry))).unwrap();
+        assert_eq!(outcome.output, "42");
+        assert_eq!(outcome.termination, RunTermination::Exit(0));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -9742,21 +10450,6 @@ unchanged", "|"),
     }
 
     #[test]
-    fn unknown_host_entry_selection_fails_before_loading() {
-        let directory = fixture_dir();
-        let main = directory.join("main.telora");
-        fs::write(&main, "export let value = 1;").unwrap();
-        let error = recovery_engine()
-            .load_entry(&main, "entry/missing.telora", BTreeMap::new())
-            .unwrap_err();
-        assert!(
-            error.message().contains("unknown Host entry module"),
-            "{error}"
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn pending_modules_defer_imports_and_cache_initialization_outcomes() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
@@ -9771,14 +10464,6 @@ unchanged", "|"),
         let engine = recovery_engine();
         let pending = engine.prepare_module(&main).unwrap();
         assert_eq!(pending.path(), main);
-        assert_eq!(
-            pending
-                .option_actions()
-                .iter()
-                .map(|action| action.value.to_string())
-                .collect::<Vec<_>>(),
-            ["1", "2"]
-        );
         let first = pending.initialize().unwrap_err().to_string();
         let second = pending.initialize().unwrap_err().to_string();
         assert_eq!(first, second);
@@ -9793,59 +10478,6 @@ unchanged", "|"),
             named_output(engine.execute(first.module()).unwrap()).to_string(),
             "42"
         );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn pending_modules_freeze_isolated_typed_value_modules() {
-        let directory = fixture_dir();
-        let main = directory.join("main.telora");
-        fs::write(
-            &main,
-            r#"import "runtime/config" { answer, bump };
-               export let output = bump(answer);"#,
-        )
-        .unwrap();
-        let engine = recovery_engine();
-        let pending = engine.prepare_module(&main).unwrap();
-        let value = crate::run_source(
-            "injected",
-            "{ answer: 41, bump: fn(value: Int) { value + 1 } }",
-            100_000,
-        )
-        .unwrap();
-        let descriptor = TypeDescriptor::Struct(BTreeMap::from([
-            ("answer".into(), TypeDescriptor::Int),
-            (
-                "bump".into(),
-                TypeDescriptor::Function {
-                    parameters: vec![TypeDescriptor::Int],
-                    result: Box::new(TypeDescriptor::Int),
-                },
-            ),
-        ]));
-        pending
-            .inject_module("runtime/config".into(), descriptor.clone(), value.clone())
-            .unwrap();
-        assert!(
-            pending
-                .inject_module("runtime/config".into(), descriptor.clone(), value.clone())
-                .unwrap_err()
-                .to_string()
-                .contains("already registered")
-        );
-        let initialized = pending.initialize().unwrap();
-        assert_eq!(initialized.export("output").unwrap().0.to_string(), "42");
-        assert!(
-            pending
-                .inject_module("runtime/late".into(), descriptor, value)
-                .unwrap_err()
-                .to_string()
-                .contains("after initialization")
-        );
-
-        let isolated = engine.prepare_module(&main).unwrap();
-        assert!(isolated.initialize().is_err());
         fs::remove_dir_all(directory).unwrap();
     }
 

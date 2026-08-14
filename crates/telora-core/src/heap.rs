@@ -1519,7 +1519,7 @@ fn copy_roots(
     source: HeapView<'_>,
     roots: &[RichValue],
 ) -> Result<Vec<RichValue>, HeapError> {
-    let mut pending = PendingCopy::new(target);
+    let mut pending = PendingCopy::new(target, &source);
     let roots = roots
         .iter()
         .map(|root| pending.copy_value(target, &source, *root))
@@ -1527,6 +1527,30 @@ fn copy_roots(
     pending.validate()?;
     pending.commit(target);
     Ok(roots)
+}
+
+pub(crate) fn relocate_work_roots(
+    target: &mut Heap,
+    main: &Heap,
+    source: &Heap,
+    roots: &[RichValue],
+) -> Result<Vec<RichValue>, HeapError> {
+    if target.storage != Storage::Work
+        || source.storage != Storage::Work
+        || main.storage != Storage::Main
+    {
+        return Err(HeapError(
+            "work relocation requires two Work worlds and one Main world",
+        ));
+    }
+    copy_roots(
+        target,
+        HeapView {
+            current: source,
+            background: Some(main),
+        },
+        roots,
+    )
 }
 
 pub(crate) fn publish_root(
@@ -1561,6 +1585,8 @@ pub(crate) fn publish_value(
 
 struct PendingCopy {
     target_storage: Storage,
+    source_storage: Storage,
+    background_storage: Option<Storage>,
     object_base: u32,
     objects: Vec<Object>,
     text_base: u32,
@@ -1573,9 +1599,11 @@ struct PendingCopy {
 }
 
 impl PendingCopy {
-    fn new(target: &Heap) -> Self {
+    fn new(target: &Heap, source: &HeapView<'_>) -> Self {
         Self {
             target_storage: target.storage,
+            source_storage: source.current.storage,
+            background_storage: source.background.map(|heap| heap.storage),
             object_base: target.objects.len() as u32,
             objects: Vec::new(),
             text_base: target.text.values.len() as u32,
@@ -1645,8 +1673,12 @@ impl PendingCopy {
         source: &HeapView<'_>,
         handle: Handle,
     ) -> Result<Handle, HeapError> {
-        if handle.storage == self.target_storage {
-            target.object(handle)?;
+        if handle.storage != self.source_storage {
+            if handle.storage == self.target_storage {
+                target.object(handle)?;
+            } else {
+                source.object(handle)?;
+            }
             return Ok(handle);
         }
         if let Some(forwarded) = self.objects_forwarded.get(&handle) {
@@ -1764,8 +1796,12 @@ impl PendingCopy {
         source: &HeapView<'_>,
         id: InternId,
     ) -> Result<InternId, HeapError> {
-        if id.storage == self.target_storage {
-            target.resolve_text(id)?;
+        if id.storage != self.source_storage {
+            if id.storage == self.target_storage {
+                target.resolve_text(id)?;
+            } else {
+                source.text(id)?;
+            }
             return Ok(id);
         }
         if let Some(forwarded) = self.text_forwarded.get(&id) {
@@ -1796,8 +1832,12 @@ impl PendingCopy {
         source: &HeapView<'_>,
         id: ShapeId,
     ) -> Result<ShapeId, HeapError> {
-        if id.storage == self.target_storage {
-            target.shape(id)?;
+        if id.storage != self.source_storage {
+            if id.storage == self.target_storage {
+                target.shape(id)?;
+            } else {
+                source.shape(id)?;
+            }
             return Ok(id);
         }
         if let Some(forwarded) = self.shapes_forwarded.get(&id) {
@@ -1831,11 +1871,9 @@ impl PendingCopy {
     }
 
     fn validate(&self) -> Result<(), HeapError> {
-        if self
-            .objects
-            .iter()
-            .any(|object| object_contains_foreign(object, self.target_storage))
-        {
+        if self.objects.iter().any(|object| {
+            object_contains_disallowed(object, self.target_storage, self.background_storage)
+        }) {
             return Err(HeapError(
                 "copied object graph is not target-self-contained",
             ));
@@ -1854,6 +1892,7 @@ impl PendingCopy {
     }
 }
 
+#[cfg(test)]
 fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
     match value {
         RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => id.storage != target,
@@ -1872,50 +1911,56 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
     }
 }
 
+#[cfg(test)]
 fn rich_value_contains_foreign(value: RichValue, target: Storage) -> bool {
     value_contains_foreign(value.value, target)
 }
 
-fn object_contains_foreign(object: &Object, target: Storage) -> bool {
+fn object_contains_disallowed(
+    object: &Object,
+    target: Storage,
+    background: Option<Storage>,
+) -> bool {
+    let foreign = |storage| storage != target && Some(storage) != background;
+    let value_foreign = |value: RichValue| match value.value {
+        RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => foreign(id.storage),
+        RuntimeValue::String(handle)
+        | RuntimeValue::Bytes(handle)
+        | RuntimeValue::Opaque(handle)
+        | RuntimeValue::NativeType(handle)
+        | RuntimeValue::Array(handle)
+        | RuntimeValue::Tuple(handle)
+        | RuntimeValue::Tagged(handle)
+        | RuntimeValue::Dict(handle)
+        | RuntimeValue::Func(handle)
+        | RuntimeValue::Dyn(handle)
+        | RuntimeValue::UpLink(handle) => foreign(handle.storage),
+        RuntimeValue::Int(_) | RuntimeValue::Float(_) | RuntimeValue::BuiltinAtom(_) => false,
+    };
     match object {
         Object::Reserved => true,
-        Object::Array(values) | Object::Tuple(values) => values
-            .iter()
-            .any(|value| rich_value_contains_foreign(*value, target)),
-        Object::Tagged { tag, payload } => {
-            rich_value_contains_foreign(*tag, target)
-                || rich_value_contains_foreign(*payload, target)
+        Object::Array(values) | Object::Tuple(values) => {
+            values.iter().any(|value| value_foreign(*value))
         }
+        Object::Tagged { tag, payload } => value_foreign(*tag) || value_foreign(*payload),
         Object::Dict { shape, values } => {
-            shape.storage != target
-                || values
-                    .iter()
-                    .any(|value| rich_value_contains_foreign(*value, target))
+            foreign(shape.storage) || values.iter().any(|value| value_foreign(*value))
         }
-        Object::Closure { upvalues, .. } => upvalues
-            .iter()
-            .any(|value| rich_value_contains_foreign(*value, target)),
+        Object::Closure { upvalues, .. } => upvalues.iter().any(|value| value_foreign(*value)),
         Object::Dyn {
             descriptor, value, ..
-        } => {
-            rich_value_contains_foreign(*descriptor, target)
-                || rich_value_contains_foreign(*value, target)
-        }
-        Object::UpLink { value } => {
-            value.is_none_or(|value| rich_value_contains_foreign(value, target))
-        }
+        } => value_foreign(*descriptor) || value_foreign(*value),
+        Object::UpLink { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,
             text,
             prototypes,
             ..
         } => {
-            values
-                .iter()
-                .any(|value| rich_value_contains_foreign(*value, target))
-                || text.iter().any(|id| id.storage != target)
+            values.iter().any(|value| value_foreign(*value))
+                || text.iter().any(|id| foreign(id.storage))
                 || prototypes.iter().any(|prototype| match prototype {
-                    RuntimePrototype::Bytecode(handle) => handle.storage != target,
+                    RuntimePrototype::Bytecode(handle) => foreign(handle.storage),
                     RuntimePrototype::Native(_) => false,
                 })
         }
@@ -2150,6 +2195,59 @@ mod tests {
         .unwrap();
         assert_eq!(roots[0], roots[1]);
         assert_eq!(target.counts().0, 1);
+    }
+
+    #[test]
+    fn work_relocation_copies_work_edges_and_retains_main_edges() {
+        let mut main = Heap::main();
+        let stable = main.allocate(Object::Bytes(vec![9].into()));
+        let mut source = Heap::work();
+        let shared = source.allocate(Object::Bytes(vec![1, 2, 3].into()));
+        let cycle = source.reserve();
+        source
+            .initialize(
+                cycle,
+                Object::Array(vec![rv(RuntimeValue::Array(cycle))].into()),
+            )
+            .unwrap();
+        let root = source.allocate(Object::Tuple(
+            vec![
+                rv(RuntimeValue::Bytes(shared)),
+                rv(RuntimeValue::Bytes(shared)),
+                rv(RuntimeValue::Bytes(stable)),
+                rv(RuntimeValue::Array(cycle)),
+            ]
+            .into(),
+        ));
+        source.allocate(Object::Bytes(vec![4, 5, 6].into()));
+        let mut target = Heap::work();
+        target.allocate(Object::String("existing".into()));
+
+        let relocated = relocate_work_roots(
+            &mut target,
+            &main,
+            &source,
+            &[rv(RuntimeValue::Tuple(root))],
+        )
+        .unwrap();
+
+        assert_eq!(target.counts().0, 4);
+        let RuntimeValue::Tuple(root) = relocated[0].value else {
+            panic!("expected relocated tuple")
+        };
+        let Object::Tuple(values) = target.object(root).unwrap() else {
+            panic!("expected relocated tuple object")
+        };
+        assert_eq!(values[0], values[1]);
+        assert_eq!(values[2], rv(RuntimeValue::Bytes(stable)));
+        let RuntimeValue::Array(cycle) = values[3].value else {
+            panic!("expected relocated cycle")
+        };
+        let Object::Array(cycle_values) = target.object(cycle).unwrap() else {
+            panic!("expected relocated cycle object")
+        };
+        assert_eq!(cycle_values[0], rv(RuntimeValue::Array(cycle)));
+        assert_ne!(root.slot, 0);
     }
 
     #[test]

@@ -47,7 +47,7 @@ fn help_is_clap_owned_and_types_is_removed() {
 #[test]
 fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export let output = 41 + 1;").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "export let output = \"42\";").unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
         "import \"@src/lib.telora\" {output}; export {output};",
@@ -77,7 +77,7 @@ fn run_writes_contextual_debug_as_stderr_jsonl() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "let var = 3; export let output = var.dbg!(\"observed\");",
+        "let var = 3; let observed = var.dbg!(\"observed\"); export let output = \"3\";",
     )
     .unwrap();
     let run = telora(&cwd).args(["run", "main"]).output().unwrap();
@@ -259,8 +259,12 @@ fn test_roots_are_selectable_but_not_importable() {
 #[test]
 fn run_accepts_external_json() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export {input as output};").unwrap();
-    fs::write(cwd.join("input.json"), "[1,2,3]").unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        "export let output: String = input;",
+    )
+    .unwrap();
+    fs::write(cwd.join("input.json"), r#""accepted""#).unwrap();
     let run = telora(&cwd)
         .args(["run", "main", "--input", "input.json"])
         .output()
@@ -270,14 +274,18 @@ fn run_accepts_external_json() {
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "[1, 2, 3]");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "accepted");
 }
 
 #[test]
 fn run_context_selects_the_manifest_discovery_start() {
     let cwd = fixture();
     let other = fixture();
-    fs::write(other.join("src/bin/tool.telora"), "export let output = 9;").unwrap();
+    fs::write(
+        other.join("src/bin/tool.telora"),
+        "export let output = \"9\";",
+    )
+    .unwrap();
     let run = telora(&cwd)
         .args(["run", "tool", "-C", other.to_str().unwrap()])
         .output()
@@ -337,7 +345,7 @@ fn standalone_run_uses_only_embedded_dependency_options() {
     fs::create_dir_all(dependency.join("src")).unwrap();
     fs::write(
         dependency.join("src/value.telora"),
-        "export let value = 12;",
+        "export let value = \"12\";",
     )
     .unwrap();
     let standalone = cwd.join("standalone.telora");
@@ -370,21 +378,574 @@ fn standalone_run_uses_only_embedded_dependency_options() {
 }
 
 #[test]
-fn build_dry_run_keeps_the_pure_output_protocol() {
+fn exec_and_build_are_unknown_subcommands() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/build.telora"), r#"let build = fn() { {files: ['TextFile({content: "ok", path: "out.txt"})]} }; export {build};"#).unwrap();
-    let build = telora(&cwd)
-        .args(["build", "--dry-run", "@bin/build.telora"])
+    for command in ["exec", "build"] {
+        let output = telora(&cwd).arg(command).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
+    }
+}
+
+#[test]
+fn run_accepts_a_pure_custom_entry() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let answer = 42;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {answer: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+type Transition = Tuple([State, Array(rt.SystemEffect)]);
+type Reducer = Fn(State, rt.SystemEvent) -> Transition;
+export def initialize: Fn(MainType) -> Tuple([State, Reducer]) = fn(main) {
+    let reduce: Reducer = fn(state, event) {
+        match event {
+            'Initialize => (state, ['Output("42"), 'Exit(0)]),
+            _ => fail!("unexpected event", event),
+        }
+    };
+    (main.answer, reduce)
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
         .output()
         .unwrap();
     assert!(
-        build.status.success(),
+        run.status.success(),
         "{}",
-        String::from_utf8_lossy(&build.stderr)
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+}
+
+#[test]
+fn custom_entry_can_choose_a_dynamic_main_contract() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let answer = 42;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+export type MainType = Dyn;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (0, fn(state, event) { (state, ['Output("dynamic"), 'Exit(0)]) })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "dynamic");
+}
+
+#[test]
+fn custom_entry_rejects_a_mismatched_main_contract() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        "export let answer = \"no\";",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {answer: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (main.answer, fn(state, event) { (state, ['Exit(1)]) })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("not assignable to Entry.MainType"));
+}
+
+#[test]
+fn selected_entry_alone_can_import_dependency_private_modules() {
+    let cwd = fixture();
+    let dependency = cwd.join("dependency");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::write(
+        cwd.join("telora-deps.json"),
+        r#"{"dependencies":{"dep":{"path":"dependency"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("src/secret.priv.telora"),
+        "export let value = 42;",
+    )
+    .unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+import "dep/secret.priv.telora" {value};
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (value, fn(state, event) {
+        match event {
+            'Initialize => (state, ['Output("42"), 'Exit(0)]),
+            _ => fail!("unexpected event", event),
+        }
+    })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        "import \"dep/secret.priv.telora\" {value}; export {value as output};",
+    )
+    .unwrap();
+    let ordinary = telora(&cwd).args(["run", "main"]).output().unwrap();
+    assert!(!ordinary.status.success());
+    assert!(String::from_utf8_lossy(&ordinary.stderr).contains("private module"));
+}
+
+#[test]
+fn entry_input_capability_is_required_before_main_initialization() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export {input as output};").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {output: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'True} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (0, fn(state, event) { (state, ['Exit(1)]) })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("received no --input"));
+}
+
+#[test]
+fn entry_drives_a_stdio_child_through_host_events() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = String;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    ("", fn(state, event) {
+        match event {
+            'Initialize => (state, ['SpawnStdioChild({
+                key: "cat",
+                opts: {bin: "/bin/cat", cwd: 'None, envs: {}, clear_env: 'False},
+                stdio: {stdin: 'Piped, stdout: 'PipedToEnd, stderr: 'Null},
+            })]),
+            'ChildSpawnResult(spawned) => match spawned.result {
+                'Ok(_) => (state, [
+                    'PostStdin({key: "cat", data: 'Some("hello from child")}),
+                    'PostStdin({key: "cat", data: 'None}),
+                ]),
+                'Err(error) => fail!("cannot spawn cat", error),
+            },
+            'ChildStdout(text) => match text.data {
+                'Some(data) => (data, []),
+                'None => (state, []),
+            },
+            'ChildStderr(_) => (state, []),
+            'ChildExited(_) => (state, ['Output(state), 'Exit(0)]),
+        }
+    })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "hello from child");
+}
+
+#[test]
+fn child_spawn_failure_is_a_reducible_result_event() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (main.marker, fn(state, event) {
+        match event {
+            'Initialize => (state, ['SpawnStdioChild({
+                key: "missing",
+                opts: {bin: "/telora/does/not/exist", cwd: 'None, envs: {}, clear_env: 'False},
+                stdio: {stdin: 'Null, stdout: 'Null, stderr: 'Null},
+            })]),
+            'ChildSpawnResult({result: 'Err(error), key: _}) => (
+                state,
+                ['Output("spawn failure handled"), 'Exit(0)],
+            ),
+            'ChildSpawnResult({result: 'Ok(pid), key: _}) => fail!("unexpected spawn", pid),
+            _ => fail!("unexpected event", event),
+        }
+    })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&build.stdout).trim(),
-        r#"{"files":[{"TextFile":{"content":"ok","path":"out.txt"}}]}"#
+        String::from_utf8_lossy(&run.stdout),
+        "spawn failure handled"
     );
-    assert!(!cwd.join("out.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn entry_receives_line_stderr_eof_and_nonzero_child_exit_events() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    let child = cwd.join("child.sh");
+    fs::write(
+        &child,
+        "#!/bin/sh\nprintf 'one\\ntwo\\n'\nprintf 'problem\\n' >&2\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&child).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&child, permissions).unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        format!(
+            r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {{marker: Int}};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) {{ {{input: 'False}} }};
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {{
+    (main.marker, fn(state, event) {{
+        match event {{
+            'Initialize => (state, ['SpawnStdioChild({{
+                key: "worker",
+                opts: {{bin: {child:?}, cwd: 'None, envs: {{}}, clear_env: 'False}},
+                stdio: {{stdin: 'Null, stdout: 'PipedLine, stderr: 'PipedLine}},
+            }})]),
+            'ChildSpawnResult(spawned) => match spawned.result {{
+                'Ok(_) => (state, []),
+                'Err(error) => fail!("cannot spawn worker", error),
+            }},
+            'ChildStdout(text) => match text.data {{
+                'Some(data) => (state, ['Output(`out:\{{data}}\\n`)]),
+                'None => (state, []),
+            }},
+            'ChildStderr(text) => match text.data {{
+                'Some(data) => (state, ['Output(`err:\{{data}}\\n`)]),
+                'None => (state, []),
+            }},
+            'ChildExited(status) => (state, ['Output("exited"), 'Exit(0)]),
+        }}
+    }})
+}};"#,
+            child = child.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let output = String::from_utf8_lossy(&run.stdout);
+    assert!(output.contains("out:one\\n"), "{output:?}");
+    assert!(output.contains("out:two\\n"), "{output:?}");
+    assert!(output.contains("err:problem\\n"), "{output:?}");
+    assert!(output.ends_with("exited"), "{output:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn exec_effect_replaces_the_telora_process() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (main.marker, fn(state, event) {
+        (state, ['Exec({bin: "/bin/true", cwd: 'None, envs: {}, clear_env: 'False})])
+    })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(run.stdout.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn exit_waits_all_active_children_before_returning_the_status() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    let child = cwd.join("long-child.sh");
+    fs::write(&child, "#!/bin/sh\nprintf '%s\\n' \"$$\"\nsleep 30\n").unwrap();
+    let mut permissions = fs::metadata(&child).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&child, permissions).unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        format!(
+            r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {{marker: Int}};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) {{ {{input: 'False}} }};
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {{
+    (main.marker, fn(state, event) {{
+        match event {{
+            'Initialize => (state, ['SpawnStdioChild({{
+                key: "long",
+                opts: {{bin: {child:?}, cwd: 'None, envs: {{}}, clear_env: 'False}},
+                stdio: {{stdin: 'Null, stdout: 'PipedLine, stderr: 'Null}},
+            }})]),
+            'ChildSpawnResult(spawned) => match spawned.result {{
+                'Ok(_) => (state, []),
+                'Err(error) => fail!("cannot spawn long child", error),
+            }},
+            'ChildStdout(text) => match text.data {{
+                'Some(pid) => (state, ['Output(pid), 'Exit(7)]),
+                'None => fail!("child ended before reporting its pid"),
+            }},
+            'ChildStderr(_) => (state, []),
+            'ChildExited(_) => fail!("child exited before Entry requested Exit"),
+        }}
+    }})
+}};"#,
+            child = child.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let started = Instant::now();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert_eq!(run.status.code(), Some(7));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let pid = String::from_utf8(run.stdout).unwrap();
+    assert!(!pid.is_empty());
+    let alive = Command::new("kill").args(["-0", &pid]).output().unwrap();
+    assert!(
+        !alive.status.success(),
+        "child {pid} remained alive after Exit(7)"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn blocked_child_stdin_does_not_block_unrelated_events_or_exit() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    let blocked = cwd.join("blocked.sh");
+    let reporter = cwd.join("reporter.sh");
+    fs::write(&blocked, "#!/bin/sh\nsleep 30\n").unwrap();
+    fs::write(&reporter, "#!/bin/sh\nprintf 'ready\\n'\n").unwrap();
+    for child in [&blocked, &reporter] {
+        let mut permissions = fs::metadata(child).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(child, permissions).unwrap();
+    }
+    let payload = "x".repeat(256 * 1024);
+    fs::write(
+        cwd.join("entry.telora"),
+        format!(
+            r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {{marker: Int}};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) {{ {{input: 'False}} }};
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {{
+    (main.marker, fn(state, event) {{
+        match event {{
+            'Initialize => (state, [
+                'SpawnStdioChild({{
+                    key: "blocked",
+                    opts: {{bin: {blocked:?}, cwd: 'None, envs: {{}}, clear_env: 'False}},
+                    stdio: {{stdin: 'Piped, stdout: 'Null, stderr: 'Null}},
+                }}),
+                'SpawnStdioChild({{
+                    key: "reporter",
+                    opts: {{bin: {reporter:?}, cwd: 'None, envs: {{}}, clear_env: 'False}},
+                    stdio: {{stdin: 'Null, stdout: 'PipedLine, stderr: 'Null}},
+                }}),
+            ]),
+            'ChildSpawnResult({{key: "blocked", result: 'Ok(_)}}) => (
+                state,
+                ['PostStdin({{key: "blocked", data: 'Some({payload:?})}})],
+            ),
+            'ChildSpawnResult({{result: 'Err(error), key: _}}) => fail!("spawn failed", error),
+            'ChildSpawnResult(_) => (state, []),
+            'ChildStdout(text) => match text.data {{
+                'Some("ready") => (state, ['Output("ready"), 'Exit(0)]),
+                _ => (state, []),
+            }},
+            'ChildStderr(_) => (state, []),
+            'ChildExited(_) => (state, []),
+        }}
+    }})
+}};"#,
+            blocked = blocked.to_string_lossy(),
+            reporter = reporter.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+    let started = Instant::now();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "ready");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn entry_protocol_failures_commit_no_buffered_output() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    let template = r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = Int;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (main.marker, fn(state, event) { (state, EFFECTS) })
+};"#;
+    for (effects, message) in [
+        (
+            "['Output(\"partial\"), 'Exit(0), 'Output(\"late\")]",
+            "effect after a terminal effect",
+        ),
+        ("['Output(\"partial\")]", "made no progress"),
+    ] {
+        fs::write(
+            cwd.join("entry.telora"),
+            template.replace("EFFECTS", effects),
+        )
+        .unwrap();
+        let run = telora(&cwd)
+            .args(["run", "main", "--entry", "entry.telora"])
+            .output()
+            .unwrap();
+        assert!(!run.status.success(), "{effects}");
+        assert!(run.stdout.is_empty(), "{effects}");
+        assert!(
+            String::from_utf8_lossy(&run.stderr).contains(message),
+            "{effects}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+#[test]
+fn entry_rejects_extra_public_protocol_members() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(
+        cwd.join("entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+@struct type Main = {marker: Int};
+export type MainType = Main;
+export type State = Int;
+export let typo = 1;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
+export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
+    (main.marker, fn(state, event) { (state, ['Exit(1)]) })
+};"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--entry", "entry.telora"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("must export exactly"));
 }

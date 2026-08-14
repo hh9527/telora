@@ -155,11 +155,13 @@ Host 是权限边界，不只是 foreign-function interface。
 
 ### Entry
 
-**Entry** 是面向特定协议、由 Host 信任的 orchestration。它可以准备显式输入、
-初始化 Main、选择命名 export，并依据 protocol type 校验该 export。Main 不能
-import entry runtime。
+**Entry** 是面向特定协议、由 Host 显式选择的纯 orchestration。它先在准备
+WorkWorld 中声明环境诉求与 Main 类型，再由 Host 初始化、校验并冻结 MainWorld；
+随后在新的 WorkWorld 中以 opaque State、SystemEvent 和 SystemEffect 驱动运行。
+Main 不能 import Entry 的私有协议面，Entry 描述 effect 但不执行 effect。
 
-`run`、`exec` 和 `build` 是 Host entry protocol，不是语言级 effect。
+`run` 可以选择内置或用户 Entry；`check`、`show` 和 LSP 使用 Host 固定的 tooling
+Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect。
 
 ### Freeze 与 Publication
 

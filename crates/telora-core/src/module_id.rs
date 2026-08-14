@@ -443,11 +443,10 @@ impl ModuleResolver {
             });
         }
         if !target.starts_with(['.', '@'])
-            && let Some(_registration_id) = self.builtins.get(target)
+            && self.builtins.contains_key(target)
+            && target.ends_with(".native.telora")
         {
-            if target.starts_with("entry/") && !privileged {
-                return Err(ResolveModuleError::InvalidImport(target.into()));
-            }
+            self.resolve_dependency(target, target, privileged)?;
             return Ok(ResolvedModule {
                 id: ModuleId::builtin(target),
                 format: ModuleFormat::Telora,
@@ -455,8 +454,13 @@ impl ModuleResolver {
                 physical_path: None,
             });
         }
-        if target.starts_with("entry/") {
-            return Err(ResolveModuleError::InvalidImport(target.into()));
+        if !target.starts_with(['.', '@']) && self.builtins.contains_key(target) {
+            return Ok(ResolvedModule {
+                id: ModuleId::builtin(target),
+                format: ModuleFormat::Telora,
+                authority: ModuleAuthority::RuntimeSystem,
+                physical_path: None,
+            });
         }
         if target == self.root_id.to_string() {
             if !privileged {
@@ -1125,6 +1129,7 @@ mod tests {
         std::fs::write(app.join("src/host.native.telora"), "0").unwrap();
         std::fs::write(dependency.join("src/public.telora"), "0").unwrap();
         std::fs::write(dependency.join("src/internal.priv.telora"), "0").unwrap();
+        std::fs::write(dependency.join("src/service.native.telora"), "0").unwrap();
         std::fs::write(dependency.join("src/value.priv.json"), "0").unwrap();
         std::fs::write(dependency.join("src/bad.native.json"), "0").unwrap();
         std::fs::write(shadow.join("src/array"), "0").unwrap();
@@ -1134,10 +1139,13 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ModuleId::builtin("entry/exec.telora");
+        let entry = ModuleId::builtin("host/run-entry.telora");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
-            .with_builtins([("std/array".to_owned(), 5)])
+            .with_builtins([
+                ("std/array".to_owned(), 5),
+                ("dep/service.native.telora".to_owned(), 1_500),
+            ])
             .with_entry_context(entry.clone(), std::iter::empty());
         let root = resolver.resolve_root(&main).unwrap();
         let builtin = resolver.resolve_import(&root.id, "std/array").unwrap();
@@ -1171,6 +1179,15 @@ mod tests {
                 path: "internal.priv.telora".into(),
             }
         );
+        assert!(matches!(
+            resolver.resolve_import(&root.id, "dep/service.native.telora"),
+            Err(ResolveModuleError::PrivateModuleAccess(_))
+        ));
+        let entry_native = resolver
+            .resolve_import(&entry, "dep/service.native.telora")
+            .unwrap();
+        assert_eq!(entry_native.authority, ModuleAuthority::RuntimeSystem);
+        assert_eq!(entry_native.to_string(), "dep/service.native.telora");
         assert!(matches!(
             resolver.resolve_import(&root.id, "dep/bad.native.json"),
             Err(ResolveModuleError::InvalidModuleSuffix(_))
@@ -1213,10 +1230,10 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ModuleId::builtin("entry/exec.telora");
+        let entry = ModuleId::builtin("host/run-entry.telora");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
-            .with_entry_context(entry.clone(), ["entry/opts.priv.telora".to_owned()]);
+            .with_entry_context(entry.clone(), ["std/rt.priv.telora".to_owned()]);
         let root = resolver.resolve_root(&main).unwrap();
         assert_eq!(root.id, ModuleId::Binary(PathBuf::from("tool.telora")));
         assert_eq!(root.to_string(), "@bin/tool.telora");
@@ -1246,7 +1263,7 @@ mod tests {
             resolver.resolve_import(&local.id, "@bin/tool.telora"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
-        assert_eq!(entry.to_string(), "entry/exec.telora");
+        assert_eq!(entry.to_string(), "host/run-entry.telora");
         assert_eq!(
             resolver
                 .resolve_import(&entry, "@bin/tool.telora")
@@ -1256,21 +1273,17 @@ mod tests {
         );
         assert_eq!(
             resolver
-                .resolve_import(&entry, "entry/opts.priv.telora")
+                .resolve_import(&entry, "std/rt.priv.telora")
                 .unwrap()
                 .id,
-            ModuleId::builtin("entry/opts.priv.telora")
+            ModuleId::builtin("std/rt.priv.telora")
         );
         assert!(matches!(
-            resolver.resolve_import(&root.id, "entry/opts.priv.telora"),
+            resolver.resolve_import(&root.id, "std/rt.priv.telora"),
             Err(ResolveModuleError::PrivateModuleAccess(_))
         ));
         assert!(matches!(
             resolver.resolve_import(&root.id, "@entry"),
-            Err(ResolveModuleError::InvalidImport(_))
-        ));
-        assert!(matches!(
-            resolver.resolve_import(&root.id, "entry/exec.telora"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
         std::fs::remove_dir_all(temporary).unwrap();

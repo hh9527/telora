@@ -2,16 +2,23 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::env;
-use std::fmt::Write as _;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio as ProcessStdio};
 use std::sync::Arc;
 use telora_core::{
-    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, LoadedModule, Location,
-    Quota, Value, WorkspaceModuleState, WorkspaceSnapshot, parse_json,
+    ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
+    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location, Quota,
+    RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent, Value,
+    WorkspaceModuleState, WorkspaceSnapshot, parse_json,
 };
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command as TokioCommand;
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinSet;
 
 const EVALUATION_FUEL: usize = 1_000_000;
 const STACK_SLOTS: usize = 65_536;
@@ -56,9 +63,447 @@ impl DebugSink for StderrDebugSink {
 }
 
 fn main() {
-    if let Err(error) = run_cli(Cli::parse()) {
-        eprintln!("error: {error}");
-        std::process::exit(1);
+    match run_cli(Cli::parse()) {
+        Ok(0) => {}
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            eprintln!("error: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+enum ReaderEvent {
+    Event(SystemEvent),
+    Error(String),
+}
+
+struct ProcessRunHost {
+    children: HashMap<String, Option<mpsc::UnboundedSender<Option<String>>>>,
+    sender: mpsc::UnboundedSender<ReaderEvent>,
+    receiver: mpsc::UnboundedReceiver<ReaderEvent>,
+    cancel: watch::Sender<bool>,
+    tasks: JoinSet<(String, Result<(), String>)>,
+    finished: bool,
+}
+
+impl ProcessRunHost {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let (cancel, _) = watch::channel(false);
+        Self {
+            children: HashMap::new(),
+            sender,
+            receiver,
+            cancel,
+            tasks: JoinSet::new(),
+            finished: false,
+        }
+    }
+
+    fn command(options: &ChildOptions) -> ProcessCommand {
+        let mut command = ProcessCommand::new(&options.bin);
+        if let Some(cwd) = &options.cwd {
+            command.current_dir(cwd);
+        }
+        if options.clear_env {
+            command.env_clear();
+        }
+        for (name, value) in &options.envs {
+            match value {
+                Some(value) => {
+                    command.env(name, value);
+                }
+                None => {
+                    command.env_remove(name);
+                }
+            }
+        }
+        command
+    }
+
+    fn output_stdio(mode: ChildOutputMode) -> ProcessStdio {
+        match mode {
+            ChildOutputMode::PipedLine | ChildOutputMode::PipedToEnd => ProcessStdio::piped(),
+            ChildOutputMode::Inherit => ProcessStdio::inherit(),
+            ChildOutputMode::Null => ProcessStdio::null(),
+        }
+    }
+
+    async fn read_stream(
+        key: String,
+        reader: impl AsyncRead + Unpin,
+        mode: ChildOutputMode,
+        stderr: bool,
+        sender: mpsc::UnboundedSender<ReaderEvent>,
+    ) -> Result<(), String> {
+        let make_event = |data| {
+            let text = ChildText {
+                key: key.clone(),
+                data,
+            };
+            if stderr {
+                SystemEvent::ChildStderr(text)
+            } else {
+                SystemEvent::ChildStdout(text)
+            }
+        };
+        match mode {
+            ChildOutputMode::PipedLine => {
+                let mut lines = BufReader::new(reader).lines();
+                while let Some(line) = lines.next_line().await.map_err(|error| {
+                    format!("cannot read child {key:?} stream as UTF-8 text: {error}")
+                })? {
+                    if sender
+                        .send(ReaderEvent::Event(make_event(Some(line))))
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+            ChildOutputMode::PipedToEnd => {
+                let mut reader = BufReader::new(reader);
+                let mut text = String::new();
+                reader.read_to_string(&mut text).await.map_err(|error| {
+                    format!("cannot read child {key:?} stream as UTF-8 text: {error}")
+                })?;
+                if !text.is_empty()
+                    && sender
+                        .send(ReaderEvent::Event(make_event(Some(text))))
+                        .is_err()
+                {
+                    return Ok(());
+                }
+            }
+            ChildOutputMode::Inherit | ChildOutputMode::Null => unreachable!(),
+        }
+        let _ = sender.send(ReaderEvent::Event(make_event(None)));
+        Ok(())
+    }
+
+    async fn supervise_child(
+        request: SpawnStdioChild,
+        mut stdin_messages: mpsc::UnboundedReceiver<Option<String>>,
+        mut cancel: watch::Receiver<bool>,
+        sender: mpsc::UnboundedSender<ReaderEvent>,
+    ) -> Result<(), String> {
+        let key = request.key.clone();
+        let mut command = TokioCommand::from(Self::command(&request.opts));
+        command.kill_on_drop(true);
+        command.stdin(match request.stdio.stdin {
+            ChildStdinMode::Piped => ProcessStdio::piped(),
+            ChildStdinMode::Inherit => ProcessStdio::inherit(),
+            ChildStdinMode::Null => ProcessStdio::null(),
+        });
+        command.stdout(Self::output_stdio(request.stdio.stdout));
+        command.stderr(Self::output_stdio(request.stdio.stderr));
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = sender.send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
+                    ChildSpawnResult {
+                        key,
+                        result: Err(format!("cannot spawn {:?}: {error}", request.opts.bin)),
+                    },
+                )));
+                return Ok(());
+            }
+        };
+        let pid = i64::from(child.id().expect("a spawned child has a process id"));
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        if *cancel.borrow() {
+            let _ = child.start_kill();
+            child
+                .wait()
+                .await
+                .map_err(|error| format!("cannot wait for child {key:?}: {error}"))?;
+            return Ok(());
+        }
+
+        let _ = sender.send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
+            ChildSpawnResult {
+                key: key.clone(),
+                result: Ok(pid),
+            },
+        )));
+
+        let mut stream_tasks = JoinSet::new();
+        if let Some(stdout) = stdout {
+            let stream_sender = sender.clone();
+            let stream_key = key.clone();
+            stream_tasks.spawn(async move {
+                let result = Self::read_stream(
+                    stream_key,
+                    stdout,
+                    request.stdio.stdout,
+                    false,
+                    stream_sender.clone(),
+                )
+                .await;
+                if let Err(error) = &result {
+                    let _ = stream_sender.send(ReaderEvent::Error(error.clone()));
+                }
+                result
+            });
+        }
+        if let Some(stderr) = stderr {
+            let stream_sender = sender.clone();
+            let stream_key = key.clone();
+            stream_tasks.spawn(async move {
+                let result = Self::read_stream(
+                    stream_key,
+                    stderr,
+                    request.stdio.stderr,
+                    true,
+                    stream_sender.clone(),
+                )
+                .await;
+                if let Err(error) = &result {
+                    let _ = stream_sender.send(ReaderEvent::Error(error.clone()));
+                }
+                result
+            });
+        }
+
+        let mut stdin_tasks = JoinSet::new();
+        if let Some(mut stdin) = stdin {
+            let error_sender = sender.clone();
+            let stdin_key = key.clone();
+            stdin_tasks.spawn(async move {
+                while let Some(data) = stdin_messages.recv().await {
+                    let Some(data) = data else {
+                        return Ok(());
+                    };
+                    let result = stdin.write_all(data.as_bytes()).await;
+                    let result = match result {
+                        Ok(()) => stdin.flush().await,
+                        Err(error) => Err(error),
+                    };
+                    if let Err(error) = result {
+                        let message = format!("cannot write child {stdin_key:?} stdin: {error}");
+                        let _ = error_sender.send(ReaderEvent::Error(message.clone()));
+                        return Err(message);
+                    }
+                }
+                Ok(())
+            });
+        }
+
+        let status = tokio::select! {
+            biased;
+            changed = cancel.changed() => {
+                if changed.is_ok() && *cancel.borrow() {
+                    let _ = child.start_kill();
+                    child.wait().await.map_err(|error| {
+                        format!("cannot wait for child {key:?}: {error}")
+                    })?;
+                }
+                None
+            },
+            result = child.wait() => Some(result.map_err(|error| {
+                format!("cannot wait for child {key:?}: {error}")
+            })?),
+        };
+
+        stdin_tasks.abort_all();
+        while stdin_tasks.join_next().await.is_some() {}
+
+        let mut cancelled = status.is_none() || *cancel.borrow();
+        if cancelled {
+            stream_tasks.abort_all();
+        }
+        while !stream_tasks.is_empty() {
+            tokio::select! {
+                biased;
+                changed = cancel.changed(), if !cancelled => {
+                    if changed.is_ok() && *cancel.borrow() {
+                        cancelled = true;
+                        stream_tasks.abort_all();
+                    }
+                }
+                result = stream_tasks.join_next() => {
+                    let Some(result) = result else { continue };
+                    if !cancelled {
+                        result.map_err(|error| {
+                            format!("child {key:?} stream task failed: {error}")
+                        })??;
+                    }
+                }
+            }
+        }
+
+        if let Some(status) = status {
+            let exited = match status.code() {
+                Some(code) => ChildExit::Code(i64::from(code)),
+                None => ChildExit::Signal(exit_signal(&status)),
+            };
+            let _ = sender.send(ReaderEvent::Event(SystemEvent::ChildExited { key, exited }));
+        }
+        Ok(())
+    }
+
+    fn receive_event(&mut self, event: ReaderEvent) -> Result<Option<SystemEvent>, String> {
+        match event {
+            ReaderEvent::Error(error) => Err(error),
+            ReaderEvent::Event(event) => {
+                match &event {
+                    SystemEvent::ChildSpawnResult(ChildSpawnResult {
+                        key,
+                        result: Err(_),
+                    })
+                    | SystemEvent::ChildExited { key, .. } => {
+                        self.children.remove(key);
+                    }
+                    _ => {}
+                }
+                Ok(Some(event))
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn exit_signal(status: &std::process::ExitStatus) -> Option<i64> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal().map(i64::from)
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: &std::process::ExitStatus) -> Option<i64> {
+    None
+}
+
+impl RunHost for ProcessRunHost {
+    fn spawn_stdio_child(
+        &mut self,
+        request: SpawnStdioChild,
+    ) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            if request.key.is_empty() {
+                let _ = self
+                    .sender
+                    .send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
+                        ChildSpawnResult {
+                            key: request.key,
+                            result: Err("child key must not be empty".into()),
+                        },
+                    )));
+                return Ok(());
+            }
+            if self.children.contains_key(&request.key) {
+                let _ = self
+                    .sender
+                    .send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
+                        ChildSpawnResult {
+                            key: request.key.clone(),
+                            result: Err(format!("child key {:?} is already active", request.key)),
+                        },
+                    )));
+                return Ok(());
+            }
+            let key = request.key.clone();
+            let (stdin_sender, stdin_receiver) = mpsc::unbounded_channel();
+            let stdin_sender =
+                (request.stdio.stdin == ChildStdinMode::Piped).then_some(stdin_sender);
+            self.children.insert(key.clone(), stdin_sender);
+            let cancel = self.cancel.subscribe();
+            let sender = self.sender.clone();
+            self.tasks.spawn(async move {
+                let result = Self::supervise_child(request, stdin_receiver, cancel, sender).await;
+                (key, result)
+            });
+            Ok(())
+        })
+    }
+
+    fn post_stdin(&mut self, text: ChildText) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            let stdin = self
+                .children
+                .get_mut(&text.key)
+                .ok_or_else(|| format!("unknown active child {:?}", text.key))?
+                .as_ref()
+                .ok_or_else(|| format!("child {:?} has no open piped stdin", text.key))?
+                .clone();
+            let close = text.data.is_none();
+            stdin
+                .send(text.data)
+                .map_err(|_| format!("child {:?} has no open piped stdin", text.key))
+                .map(|()| {
+                    if close {
+                        self.children
+                            .get_mut(&text.key)
+                            .expect("child was resolved above")
+                            .take();
+                    }
+                })
+        })
+    }
+
+    fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>> {
+        Box::pin(async move {
+            loop {
+                if let Ok(event) = self.receiver.try_recv() {
+                    return self.receive_event(event);
+                }
+                if self.children.is_empty() && self.tasks.is_empty() {
+                    return Ok(None);
+                }
+                tokio::select! {
+                    event = self.receiver.recv() => {
+                        let event = event.ok_or_else(|| {
+                            "child event channel disconnected".to_owned()
+                        })?;
+                        return self.receive_event(event);
+                    }
+                    joined = self.tasks.join_next(), if !self.tasks.is_empty() => {
+                        let Some(joined) = joined else { continue };
+                        let (key, result) = joined.map_err(|error| {
+                            format!("child supervisor task failed: {error}")
+                        })?;
+                        if let Err(error) = result {
+                            self.children.remove(&key);
+                            return Err(error);
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    fn finish(&mut self) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            if self.finished {
+                return Ok(());
+            }
+            self.finished = true;
+            let _ = self.cancel.send(true);
+            self.children.clear();
+            let mut first_error = None;
+            while let Some(joined) = self.tasks.join_next().await {
+                match joined {
+                    Ok((_, Ok(()))) => {}
+                    Ok((_, Err(error))) if first_error.is_none() => first_error = Some(error),
+                    Err(error) if first_error.is_none() => {
+                        first_error = Some(format!("child supervisor task failed: {error}"));
+                    }
+                    _ => {}
+                }
+            }
+            first_error.map_or(Ok(()), Err)
+        })
+    }
+}
+
+impl Drop for ProcessRunHost {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(true);
+        self.children.clear();
+        self.tasks.abort_all();
     }
 }
 
@@ -72,18 +517,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Run(RunArgs),
-    Exec {
-        #[arg(long, required = true)]
-        dry_run: bool,
-        module_id: String,
-        #[arg(last = true)]
-        arguments: Vec<String>,
-    },
-    Build {
-        #[arg(long, required = true)]
-        dry_run: bool,
-        module_id: String,
-    },
     Check(CheckArgs),
     Show(ShowArgs),
     Lsp,
@@ -99,6 +532,8 @@ struct RunArgs {
     standalone: Option<PathBuf>,
     #[arg(long)]
     input: Option<String>,
+    #[arg(long, value_name = "FILE")]
+    entry: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -199,21 +634,16 @@ fn parse_position(value: &str) -> Result<ShowPosition, String> {
     Ok(ShowPosition { line, column })
 }
 
-fn run_cli(cli: Cli) -> Result<(), String> {
+fn run_cli(cli: Cli) -> Result<i32, String> {
     match cli.command {
-        Command::Run(arguments) => run_command(arguments),
-        Command::Exec {
-            dry_run: _,
-            module_id,
-            arguments,
-        } => exec_command(&module_id, arguments),
-        Command::Build {
-            dry_run: _,
-            module_id,
-        } => build_command(&module_id),
-        Command::Check(arguments) => check_command(arguments),
-        Command::Show(arguments) => show_command(arguments),
-        Command::Lsp => lsp_command(),
+        Command::Run(arguments) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("cannot start the run Host: {error}"))?
+            .block_on(run_command(arguments)),
+        Command::Check(arguments) => check_command(arguments).map(|()| 0),
+        Command::Show(arguments) => show_command(arguments).map(|()| 0),
+        Command::Lsp => lsp_command().map(|()| 0),
     }
 }
 
@@ -223,14 +653,11 @@ fn lsp_command() -> Result<(), String> {
     telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
 }
 
-fn run_command(arguments: RunArgs) -> Result<(), String> {
-    let mut bindings = BTreeMap::new();
-    if let Some(input) = arguments.input.as_deref() {
-        bindings.insert("input".into(), read_input(input)?);
-    }
+async fn run_command(arguments: RunArgs) -> Result<i32, String> {
+    let input = arguments.input.as_deref().map(read_input).transpose()?;
     let engine = engine();
-    let module = if let Some(path) = arguments.standalone {
-        engine.load_standalone(path, bindings)
+    let pending = if let Some(path) = arguments.standalone {
+        engine.prepare_standalone(path)
     } else {
         let context = arguments
             .context
@@ -240,198 +667,38 @@ fn run_command(arguments: RunArgs) -> Result<(), String> {
             "@bin/{}.telora",
             arguments.binary.expect("required by clap")
         );
-        engine.load_module_id(context, &module_id, bindings)
+        engine.prepare_module_id(context, &module_id)
     }
     .map_err(|error| error.to_string())?;
-    let exports = engine.execute(&module).map_err(|error| error.to_string())?;
-    let result = select_host_entry(&module, exports, "run", "output")?;
-    println!("{result}");
-    Ok(())
-}
-
-fn select_host_entry(
-    module: &LoadedModule,
-    module_value: Value,
-    mode: &str,
-    name: &str,
-) -> Result<Value, String> {
-    if !module.uses_explicit_exports() {
-        return Ok(module_value);
-    }
-    let Value::Dict(exports) = module_value else {
-        return Err(format!(
-            "telora {mode} expected an explicit export record, found {}",
-            module_value.type_name()
-        ));
-    };
-    exports.get(name).cloned().ok_or_else(|| {
-        format!("telora {mode} requires the explicit export {name:?} in the selected root")
-    })
-}
-
-fn exec_command(module_id: &str, request_args: Vec<String>) -> Result<(), String> {
-    let engine = engine();
-    let cwd = env::current_dir().map_err(|error| error.to_string())?;
-    let pending = engine
-        .prepare_module_id_with_arguments(&cwd, module_id, request_args)
+    let mut host = ProcessRunHost::new();
+    let outcome = engine
+        .run_pending_with_host(pending, input, arguments.entry.as_deref(), &mut host)
+        .await
         .map_err(|error| error.to_string())?;
-    let argument = pending.entry_argument();
-    let entry = engine
-        .load_entry_id(&cwd, module_id, "entry/exec.telora", BTreeMap::new())
-        .map_err(|error| format!("cannot load exec entry: {error}"))?;
-    let exports = engine.execute(&entry).map_err(|error| error.to_string())?;
-    let entry_function = select_host_entry(&entry, exports, "exec", "entry")?;
-    let result = engine
-        .invoke(&entry, &entry_function, &[argument])
-        .map_err(|error| format!("exec entry failed: {error}"))?;
-    let Value::Dict(result) = result else {
-        return Err("exec entry result must be a record".into());
-    };
-    if result.shape().fields() != ["exec_opts", "install"] {
-        return Err("exec entry result must contain exactly exec_opts and install".into());
-    }
-    let install = expect_string_export(&result, "install")?;
-    let exec_opts = expect_string_export(&result, "exec_opts")?;
-    println!(r#"{{"install":{install},"exec_opts":{exec_opts}}}"#);
-    Ok(())
-}
-
-fn expect_string_export<'a>(exports: &'a telora_core::Dict, name: &str) -> Result<&'a str, String> {
-    match exports.get(name) {
-        Some(Value::String(value)) => Ok(value),
-        Some(value) => Err(format!(
-            "exec entry export {name:?} must be a String, found {}",
-            value.type_name()
-        )),
-        None => Err(format!("exec entry omitted export {name:?}")),
+    io::stdout()
+        .write_all(outcome.output.as_bytes())
+        .and_then(|()| io::stdout().flush())
+        .map_err(|error| format!("cannot write Entry output: {error}"))?;
+    match outcome.termination {
+        RunTermination::Exit(code) => i32::try_from(code)
+            .map_err(|_| format!("Entry exit status {code} is outside the Host range")),
+        RunTermination::Exec(options) => exec_process(options),
     }
 }
 
-fn build_command(module_id: &str) -> Result<(), String> {
-    let engine = engine();
-    let cwd = env::current_dir().map_err(|error| error.to_string())?;
-    let module = engine
-        .load_module_id(cwd, module_id, BTreeMap::new())
-        .map_err(|error| error.to_string())?;
-    let exports = engine.execute(&module).map_err(|error| error.to_string())?;
-    let entry = select_host_entry(&module, exports, "build", "build")?;
-    let plan = engine
-        .invoke(&module, &entry, &[])
-        .map_err(|error| error.to_string())?;
-    println!("{}", canonical_build_json(&plan)?);
-    Ok(())
+#[cfg(unix)]
+fn exec_process(options: ChildOptions) -> Result<i32, String> {
+    use std::os::unix::process::CommandExt;
+    let error = ProcessRunHost::command(&options).exec();
+    Err(format!("cannot exec {:?}: {error}", options.bin))
 }
 
-fn canonical_build_json(value: &Value) -> Result<String, String> {
-    fn expect_dict<'a>(
-        value: &'a Value,
-        path: &str,
-        fields: &[&str],
-    ) -> Result<&'a telora_core::Dict, String> {
-        let Value::Dict(dict) = value else {
-            return Err(format!(
-                "{path} must be a Dict, found {}",
-                value.type_name()
-            ));
-        };
-        if !dict
-            .shape()
-            .fields()
-            .iter()
-            .map(String::as_str)
-            .eq(fields.iter().copied())
-        {
-            return Err(format!("{path} has an invalid field shape"));
-        }
-        Ok(dict)
-    }
-
-    fn expect_string<'a>(value: &'a Value, path: &str) -> Result<&'a str, String> {
-        let Value::String(value) = value else {
-            return Err(format!(
-                "{path} must be a String, found {}",
-                value.type_name()
-            ));
-        };
-        Ok(value)
-    }
-
-    fn write_string(output: &mut String, value: &str) {
-        output.push('"');
-        for character in value.chars() {
-            match character {
-                '"' => output.push_str("\\\""),
-                '\\' => output.push_str("\\\\"),
-                '\n' => output.push_str("\\n"),
-                '\r' => output.push_str("\\r"),
-                '\t' => output.push_str("\\t"),
-                character if character.is_control() => {
-                    write!(output, "\\u{:04x}", u32::from(character)).unwrap();
-                }
-                character => output.push(character),
-            }
-        }
-        output.push('"');
-    }
-
-    fn validate_path(path: &str, location: &str) -> Result<(), String> {
-        if path.is_empty()
-            || path.starts_with('/')
-            || path.contains('\\')
-            || path
-                .split('/')
-                .any(|component| matches!(component, "" | "." | ".."))
-        {
-            return Err(format!(
-                "{location} must be a normalized relative path using / separators"
-            ));
-        }
-        Ok(())
-    }
-
-    let plan = expect_dict(value, "OutputPlan", &["files"])?;
-    let Value::Array(files) = plan.get("files").expect("field checked") else {
-        return Err("OutputPlan.files must be an Array".into());
-    };
-    let mut seen = std::collections::BTreeSet::new();
-    let mut output = String::from("{\"files\":[");
-    for (index, artifact) in files.iter().enumerate() {
-        if index > 0 {
-            output.push(',');
-        }
-        let Value::Tagged { tag, payload } = artifact else {
-            return Err(format!(
-                "OutputPlan.files[{index}] must be an Artifact Tagged value"
-            ));
-        };
-        if tag.name() != "TextFile" {
-            return Err(format!(
-                "OutputPlan.files[{index}] has unknown Artifact variant {:?}",
-                tag.name()
-            ));
-        }
-        let location = format!("OutputPlan.files[{index}].TextFile");
-        let file = expect_dict(payload, &location, &["content", "path"])?;
-        let content = expect_string(
-            file.get("content").expect("field checked"),
-            &format!("{location}.content"),
-        )?;
-        let path = expect_string(
-            file.get("path").expect("field checked"),
-            &format!("{location}.path"),
-        )?;
-        validate_path(path, &format!("{location}.path"))?;
-        if !seen.insert(path) {
-            return Err(format!("OutputPlan contains duplicate path {path:?}"));
-        }
-        output.push_str("{\"TextFile\":{\"content\":");
-        write_string(&mut output, content);
-        output.push_str(",\"path\":");
-        write_string(&mut output, path);
-        output.push_str("}}");
-    }
-    output.push_str("]}");
-    Ok(output)
+#[cfg(not(unix))]
+fn exec_process(options: ChildOptions) -> Result<i32, String> {
+    let status = ProcessRunHost::command(&options)
+        .status()
+        .map_err(|error| format!("cannot execute {:?}: {error}", options.bin))?;
+    Ok(status.code().unwrap_or(1))
 }
 
 fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {

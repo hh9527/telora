@@ -628,7 +628,7 @@ export { User, compile };
 ```
 
 模块没有由“最后一个表达式”定义的公共默认结果。Source module 的公共接口由
-export record 定义，Host adapter 再从该 record 选择协议规定的 entry。
+export record 定义，Host 再按所选协议校验或选择其中的值。
 
 ### 8.1 模块身份和依赖
 
@@ -785,8 +785,8 @@ CLI 把每个事件作为一行紧凑 JSON 写入 stderr：
 ```
 
 `name` 是首个参数的 authored expression text，`repr` 是有界 debug 表示。stderr 事件
-不进入模块 export、stdout、诊断集合或 `output` entry 协议。语言不提供 `std/debug`
-模块或 context-free `dbg` 函数。
+不进入模块 export、stdout、诊断集合或内置 run Entry 的 `output` 发布协议。语言不
+提供 `std/debug` 模块或 context-free `dbg` 函数。
 
 ### 9.4 Host-observed diagnostic
 
@@ -877,14 +877,14 @@ Host 负责所有开放世界行为：文件和 package 解析、环境捕获、
 持久化、重试、事务以及真实效果。典型调用顺序为：
 
 ```text
-Host 选择根模块和 entry 协议
+Host 选择 Main 和 Entry
   -> 固定依赖与 source snapshot
-  -> 注册 typed native/virtual module 和显式输入
-  -> 初始化并冻结 Main world
-  -> 取得命名 export
-  -> 用协议 TypeMetadata 校验、调用或投影
-  -> 检查诊断和结果
-  -> 授权、解释或拒绝普通值
+  -> 在准备 WorkWorld 调用 Entry.prepare，取得环境诉求
+  -> 注册显式输入，初始化 Main，并按 Entry.MainType 校验完整 export record
+  -> 冻结 MainWorld
+  -> 在新的运行 WorkWorld 调用 Entry.initialize(main)
+  -> 以 SystemEvent 驱动纯 reducer，解释返回的 SystemEffect
+  -> 原子发布成功结果，或丢弃失败过程的候选结果
 ```
 
 Host virtual input 属于一次调用，在 Main 执行前冻结。Main 不能反向 import Host entry
@@ -899,12 +899,10 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--input <json|->]
-telora run -S <file> [--input <json|->]
+telora run <binary-name> [-C <context>] [--input <json|->] [--entry <file>]
+telora run -S <file> [--input <json|->] [--entry <file>]
 telora show <module> [-C <context>] [-p <substring>] [-k type,let,def,import] [--exports]
 telora show <module> [-C <context>] --at <line>[:<column>]
-telora exec --dry-run <module> [-- <arguments>...]
-telora build --dry-run <module>
 telora lsp
 ```
 
@@ -930,12 +928,111 @@ Namespace import 的 definition record 以 `target` 给出被导入模块的稳�
 记录定义。Selective import 仍在本地 definition record 中直接携带所选成员的精确
 type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct 类型。
 
-`run` 从显式 export record 选择 `output`。外部 JSON 输入以显式 `input` binding 进入。
-`exec` 和 `build` 是具体协议，不是通用 action ABI：前者通过受信 entry module 调用
-应用 `exec`，后者调用 `build`，随后校验并输出规范 JSON。
+`run` 选择一个 Main application 和一个 Edge Entry。省略 `--entry` 时使用内置 Entry：
+它只在提供 `--input` 时请求把外部 JSON 安装为 Main 的 `input` binding，并从 Main 的
+完整显式 export record 中选择 String `output`。`--entry file.telora` 是 Host 的显式授权动作；
+该物理源码获得保留的 Entry 身份，可以访问依赖图内任意 `.priv.*`、
+`.native.telora` 和已注册 native module。特权仅属于这个 requester，不传递给它导入
+的普通模块。Entry 不能使用相对、`@src`、`@bin` 或 `@test` import；依赖必须使用
+manifest 中的稳定 module ID。
 
-当前 `exec` 和 `build` 强制 `--dry-run`。它们不会下载、启动进程或写出构建文件；
-现实效果执行尚未由这个 CLI 实现。
+Entry 在纯 Telora 中实现以下 ABI：
+
+```telora
+import "std/rt.priv.telora" as rt;
+
+export type MainType = ...;
+export type State = ...;
+export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = ...;
+export def initialize:
+    Fn(MainType) -> Tuple([
+        State,
+        Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]),
+    ])
+    = ...;
+```
+
+准备 WorkWorld 只能返回经 Host 校验的 `SystemCaps`。Host 随后准备并初始化 Main，按
+`MainType` 校验完整 export record，再冻结 MainWorld。运行阶段使用一系列 WorkWorld；
+`MainType` 没有系统约定的形状，它完全由所选 Entry 定义。内置 Entry 使用 `Dyn`
+边界只是该 Entry 自己的适配策略。
+`State` 对 Host 不透明，也不会物化为 Host-owned Value。每轮结束时，runtime 只把
+`SystemEffect` 导出给 Host；它从下一 State root 开始 trace，保留 MainWorld edge，借助
+同一个 forwarding table 把可达 Work object 直接复制到新的 WorkWorld，再释放旧
+WorkWorld。共享、循环、身份和 provenance 在迁移后保持，reducer 临时垃圾不迁移。
+当前每轮均执行一次这种迁移；未来可以在确定性阈值内复用 WorkWorld，再用相同机制做
+周期性 copying GC，但这不是当前语义。
+
+Entry reducer 接受单个
+`SystemEvent`，返回下一 State 和 `SystemEffect` 数组。Effect 没有同步返回值；新的
+外部信息只能在后续 turn 作为 Event 注入。当前固定协议为：
+
+```text
+Stdin  = Piped | Inherit | Null
+Stdout = PipedLine | PipedToEnd | Inherit | Null
+Stdio  = { stdin: Stdin, stdout: Stdout, stderr: Stdout }
+
+ChildOpts = {
+    bin: String,
+    cwd: Option(String),
+    envs: Dict(Option(String)),
+    clear_env: Bool,
+}
+SpawnStdioChild = { key: String, opts: ChildOpts, stdio: Stdio }
+ChildText       = { key: String, data: Option(String) }
+ChildSpawnResult = { key: String, result: Result(Int, String) }
+ChildExited     = { key: String, exited: Result(Int, Option(Int)) }
+
+SystemEvent = Initialize
+            | ChildStdout(ChildText)
+            | ChildStderr(ChildText)
+            | ChildSpawnResult(ChildSpawnResult)
+            | ChildExited(ChildExited)
+
+SystemEffect = SpawnStdioChild(SpawnStdioChild)
+             | PostStdin(ChildText)
+             | Exec(ChildOpts)
+             | Output(String)
+             | Exit(Int)
+```
+
+`SpawnStdioChild` 使用 Entry 给出的稳定 `key` 启动进程，并始终产生对应的
+`ChildSpawnResult`：成功分支携带 pid，失败分支携带可由 reducer 处理的错误文本。stdin 可为
+`Piped | Inherit | Null`；stdout/stderr 可为
+`PipedLine | PipedToEnd | Inherit | Null`。`PostStdin` 的 `Some(text)` 写入 UTF-8
+文本，`None` 关闭管道。PipedLine 逐行产生不含行终止符的 `Some`，PipedToEnd 在 EOF
+后至多产生一个完整 `Some`，二者均再以 `None` 明确表示 EOF；`ChildExited` 在管道
+EOF 后产生。
+
+Host 在单个异步事件循环中并发执行 effect。每个 child 的监督、stdin 写入、stdout
+读取和 stderr 读取都是独立调度的任务；某个管道发生背压或等待数据时，不得阻塞其他
+effect 或 event。这里保证并发而不保证并行。reducer 调用始终串行：Host 每次只注入一个
+已排队的 `SystemEvent`，不会并发调用 reducer。
+
+每个成功 Spawn 的 child 都必须由 Host 回收。正常完成时，Host 取得并回收退出状态后
+才发送 `ChildExited`；Entry 发出 `Exit` 或 `Exec`、reducer 失败、协议失败或 Host
+管道处理失败时，Host 必须终止并 wait 所有仍活动的 child。Entry 不承担防止 zombie
+process 的责任。具体地，`Exit(code)` 的 terminal barrier 顺序是：停止剩余 child，
+wait/reap 所有 child，提交已缓冲 Output，最后才允许 CLI 调用
+`std::process::exit(code)`；任一 wait 失败都会阻止该 exit code 生效。
+Host 必须以结构化任务集合持有全部 effect 与 child supervisor；supervisor 同样持有其
+stdin/stdout/stderr 任务。terminal、reducer 失败、协议失败或 Host 失败时，Host 先发出
+取消信号并关闭输入邮箱，再 join 全部任务；这些任务不得脱离所有权树继续运行。
+
+`Output(String)` 是 Entry reducer 的输出效果，不是 Main 返回类型，也不要求 Host
+编码 Telora 值。Entry 可以用自己的 `MainType`、codec 和 formatter 生成任意多个
+String chunk。CLI 在 terminal effect 前缓冲它们；协议失败不暴露部分输出。
+`Exit(Int)` 和 `Exec(ChildOpts)` 是 terminal effect，必须位于 effects 尾部；Exec 在
+支持进程替换的 Host 上替换 Telora 进程。没有内部 Wake 或任意 turn 上限；无队列
+事件且无活动 child 时才判定无进展。每次 reducer 调用仍受普通 VM quota 约束。
+
+`check`、`show` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
+把目标当作 module。`check` 给出严格 module load/compile verdict，但不等价于一次
+`run`：它不选择 application output，也不承诺执行期成功。`show` 和 LSP 可以使用
+recovery snapshot 展示仍有证据的语义事实。
+
+CLI 不提供领域专用的 `exec` 或 `build` adapter。Exec plan、build plan、SQL plan 等
+都是普通应用值；是否解释它们以及是否产生现实效果，由显式的外部 Host 决定。
 
 ## 12. Workspace 和语言工具
 
@@ -1010,7 +1107,7 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 - 任意 binding 的无限制 polymorphic generalization；
 - 全局 termination proof；
 - 通用 package registry、获取和版本求解；
-- 生产级 exec/build effect executor；
+- 生产级领域 effect executor；
 - 对外部生态或未来版本的长期兼容性保证。
 
 此外，下列能力具有明确的当前限制：

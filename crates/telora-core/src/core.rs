@@ -24,13 +24,14 @@ pub(crate) const DYN_MODULE: &str = "std/dyn";
 pub(crate) const EQ_MODULE: &str = "std/eq";
 pub(crate) const REGEX_MODULE: &str = "std/regex";
 pub(crate) const FMT_MODULE: &str = "std/fmt";
-pub(crate) const EXEC_ENTRY_MODULE: &str = "entry/exec.telora";
+pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/rt.priv.telora";
 
-pub(crate) fn entry_source(name: &str) -> Option<&'static str> {
-    match name {
-        EXEC_ENTRY_MODULE => Some(include_str!("../modules/entry/exec.telora")),
-        _ => None,
-    }
+pub(crate) fn run_entry_source() -> &'static str {
+    include_str!("../modules/run-entry.telora")
+}
+
+pub(crate) fn edge_runtime_source() -> &'static str {
+    include_str!("../modules/std/rt.priv.telora")
 }
 
 pub(crate) struct CoreModuleSpec {
@@ -541,127 +542,6 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             name: ARGV_MODULE,
             source: include_str!("../modules/std/argv.telora"),
             functions: vec![],
-        },
-        CoreModuleSpec {
-            native_id: crate::entry_runtime::MODULE_ID,
-            name: crate::entry_runtime::MODULE_NAME,
-            source: include_str!("../modules/entry/rt.native.telora"),
-            functions: vec![
-                (
-                    "module_options",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.module_options",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_options,
-                    ),
-                ),
-                (
-                    "option_names",
-                    NativeFunction::new(
-                        "entry/rt.option_names",
-                        1,
-                        crate::entry_runtime::native_option_names,
-                    ),
-                ),
-                (
-                    "capture_vars",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.capture_vars",
-                        2,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_capture_vars,
-                    ),
-                ),
-                (
-                    "args",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.args",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_args,
-                    ),
-                ),
-                (
-                    "cwd",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.cwd",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_cwd,
-                    ),
-                ),
-                (
-                    "var",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.var",
-                        2,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_var,
-                    ),
-                ),
-                (
-                    "platform",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.platform",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_platform,
-                    ),
-                ),
-                (
-                    "download_prefix",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.download_prefix",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_download_prefix,
-                    ),
-                ),
-                (
-                    "install_prefix",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.install_prefix",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_install_prefix,
-                    ),
-                ),
-                (
-                    "inject_module",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.inject_module",
-                        4,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_inject_module,
-                    ),
-                ),
-                (
-                    "initialize_module",
-                    NativeFunction::new_with_native_type(
-                        "entry/rt.initialize_module",
-                        1,
-                        crate::entry_runtime::HANDLE_LOCAL,
-                        crate::entry_runtime::native_initialize,
-                    ),
-                ),
-                (
-                    "module_export",
-                    NativeFunction::new(
-                        "entry/rt.module_export",
-                        2,
-                        crate::entry_runtime::native_module_export,
-                    ),
-                ),
-                (
-                    "check_type",
-                    NativeFunction::new(
-                        "entry/rt.check_type",
-                        2,
-                        crate::entry_runtime::native_check_type,
-                    ),
-                ),
-            ],
         },
     ]
 }

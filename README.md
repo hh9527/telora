@@ -119,9 +119,10 @@ Kubernetes controller, or agent runtime defines its own types and interprets
 only the values it recognizes. Permissions, IO, retries, transactions, clocks,
 and observation remain host concerns.
 
-`telora run`, `telora exec`, and `telora build` are concrete host adapters, not a
-language-level effect system. Today the exec and build adapters validate and
-print canonical plans without performing their described effects.
+`telora run` uses a pure Edge Entry selected by the host. The Entry declares
+its input needs, validates the Main export record, and reduces explicit system
+events into effect descriptions. `check`, `show`, and LSP use fixed tooling
+entries. Domain plans remain ordinary values interpreted by external hosts.
 
 ## What This Enables
 
@@ -200,36 +201,21 @@ JSON Schema describes `Endpoint` as a string even when nested. The two bridge
 declarations are paired and currently apply only to a type container; field
 overrides are intentionally deferred.
 
-### Deterministic executable and output plans
+### Deterministic plans and Edge entries
 
-A module has no default result. It explicitly exports named values, and the
-host selects an entry for its mode. An executable entry is an ordinary
-function:
+A module has no ambient authority. It exports ordinary values, including any
+application-defined executable, build, query, or deployment plan. An external
+host decides which plan type it accepts and how to interpret it.
 
-```telora
-export def exec: Fn(ExecSettings, ExecRequest) -> ExecEnv = fn(settings, request) {
-    let plan = make_exec(settings, request);
-    {
-        ...plan,
-        env: { clear: 'False, update: {} },
-    }
-};
-```
-
-The host supplies the platform, download and install prefixes, captured input
-environment, arguments, and working directory. Capture only determines what
-Telora may observe; it does not implicitly forward variables to the target
-process. Telora explicitly returns a `{ clear, update }` environment policy and
-computes both the download file and installation directory for each action.
-The host derives no cache address, expands no templates, and reinterprets no
-policy.
-
-`telora run` reads the named export `output`; `telora exec` invokes `exec`; and
-`telora build` invokes `build`. A build entry can be written as
-`export def build: Fn() -> build.OutputPlan = ...;`. The adapter
-validates normalized relative paths, rejects duplicate targets, and emits
-canonical JSON. Text generation uses ordinary strings and functions rather
-than a second template language.
+`telora run app` selects `@bin/app.telora`. By default its built-in Entry emits
+the explicit String `output` export. `--entry path/to/entry.telora` instead
+authorizes a pure user Entry, whose `MainType` and output encoding are entirely
+its own. The Entry runs outside MainWorld, may access the private/native modules
+visible in the selected dependency graph, and exchanges only explicit
+`SystemEvent` and `SystemEffect` values with the host. The initial effects cover
+stdio child processes, process replacement, String output, and exit. Entry code
+cannot perform IO itself: it reduces later child observations as events and
+uses ordinary Telora codecs and formatters to produce output text.
 
 ### Static data as source
 

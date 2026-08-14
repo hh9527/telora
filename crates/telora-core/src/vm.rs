@@ -1,6 +1,7 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
     Handle, Heap, HeapView, Object, PersistentValue, RichValue, RuntimeValue, publish_root,
+    relocate_work_roots,
 };
 use crate::lir::RegisterId;
 use crate::value::{
@@ -1071,6 +1072,51 @@ impl WorkWorld {
     ) -> Result<PersistentValue, crate::heap::HeapError> {
         publish_root(world, &self.heap, self.root)
     }
+
+    pub(crate) fn into_reducer_transition(
+        self,
+        world: &Heap,
+    ) -> Result<(Self, Value), crate::heap::HeapError> {
+        self.into_pair(
+            world,
+            "Entry reducer must return Tuple([State, Array(SystemEffect)])",
+            "Entry reducer transition must contain exactly State and effects",
+        )
+    }
+
+    pub(crate) fn into_entry_initialization(
+        self,
+        world: &Heap,
+    ) -> Result<(Self, Value), crate::heap::HeapError> {
+        self.into_pair(
+            world,
+            "Entry.initialize must return Tuple([State, Reducer])",
+            "Entry.initialize must return exactly State and Reducer",
+        )
+    }
+
+    fn into_pair(
+        mut self,
+        world: &Heap,
+        root_error: &'static str,
+        length_error: &'static str,
+    ) -> Result<(Self, Value), crate::heap::HeapError> {
+        let view = HeapView {
+            current: &self.heap,
+            background: Some(world),
+        };
+        let RuntimeValue::Tuple(handle) = self.root.value else {
+            return Err(crate::heap::HeapError::new(root_error));
+        };
+        let values = view.sequence(handle, true)?;
+        let [state, exported] = values else {
+            return Err(crate::heap::HeapError::new(length_error));
+        };
+        let state = *state;
+        let exported = view.export_value(*exported)?;
+        self.root = state;
+        Ok((self, exported))
+    }
 }
 
 impl Vm {
@@ -1144,6 +1190,7 @@ impl Vm {
             &background,
             &HashMap::new(),
             function,
+            None,
             arguments,
             &[],
             account,
@@ -1168,7 +1215,15 @@ impl Vm {
         account: &mut QuotaAccount,
     ) -> Result<WorkWorld, RuntimeError> {
         let diagnostic_start = account.diagnostics.len();
-        let arena = self.execute_frame(background, externals, function, arguments, &[], account)?;
+        let arena = self.execute_frame(
+            background,
+            externals,
+            function,
+            None,
+            arguments,
+            &[],
+            account,
+        )?;
         fail_on_reported_error(account, diagnostic_start, function)?;
         Ok(arena)
     }
@@ -1184,18 +1239,44 @@ impl Vm {
     ) -> Result<WorkWorld, RuntimeError> {
         let diagnostic_start = account.diagnostics.len();
         let arena = self.execute_frame(
-            background, externals, function, arguments, captures, account,
+            background, externals, function, None, arguments, captures, account,
         )?;
         fail_on_reported_error(account, diagnostic_start, function)?;
         Ok(arena)
     }
 
-    #[allow(clippy::needless_borrow)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_function_with_captures_and_work_state_in_work(
+        &mut self,
+        background: &Heap,
+        externals: &HashMap<String, PersistentValue>,
+        function: &BytecodeFunction,
+        captures: &[Value],
+        state: WorkWorld,
+        arguments: &[Value],
+        account: &mut QuotaAccount,
+    ) -> Result<WorkWorld, RuntimeError> {
+        let diagnostic_start = account.diagnostics.len();
+        let arena = self.execute_frame(
+            background,
+            externals,
+            function,
+            Some(state),
+            arguments,
+            captures,
+            account,
+        )?;
+        fail_on_reported_error(account, diagnostic_start, function)?;
+        Ok(arena)
+    }
+
+    #[allow(clippy::needless_borrow, clippy::too_many_arguments)]
     fn execute_frame(
         &mut self,
         background: &Heap,
         externals: &HashMap<String, PersistentValue>,
         function: &BytecodeFunction,
+        work_state: Option<WorkWorld>,
         arguments: &[Value],
         captures: &[Value],
         account: &mut QuotaAccount,
@@ -1225,18 +1306,35 @@ impl Vm {
                 0,
             )
         })?;
-        let arguments = arguments
-            .iter()
-            .map(|value| current.import_value(Some(background), value))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|heap_error| {
-                error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    heap_error.to_string(),
-                    function,
-                    0,
-                )
-            })?;
+        let mut runtime_arguments =
+            Vec::with_capacity(arguments.len() + usize::from(work_state.is_some()));
+        if let Some(WorkWorld { heap, root }) = work_state {
+            let relocated = relocate_work_roots(&mut current, background, &heap, &[root]).map_err(
+                |heap_error| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        0,
+                    )
+                },
+            )?;
+            runtime_arguments.extend(relocated);
+        }
+        runtime_arguments.extend(
+            arguments
+                .iter()
+                .map(|value| current.import_value(Some(background), value))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|heap_error| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        0,
+                    )
+                })?,
+        );
         let captures = captures
             .iter()
             .map(|value| current.import_value(Some(background), value))
@@ -1253,7 +1351,7 @@ impl Vm {
         let mut frames = vec![make_execution_frame(
             Arc::new(function.clone()),
             prototype,
-            &arguments,
+            &runtime_arguments,
             &captures,
             ReturnTarget::Root,
             &mut stack,

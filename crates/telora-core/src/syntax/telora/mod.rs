@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn cst_preserves_interleaved_module_options() {
-        let source = r#"#!/usr/bin/env -S telora exec
+        let source = r#"#!/usr/bin/env -S telora run tool
 option "module.documentation" {name: "tool"};
 export def run = fn(settings, request) { {args: request.args} };
 option "module.documentation" {stability: "experimental"};"#;

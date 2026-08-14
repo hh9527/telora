@@ -1,0 +1,97 @@
+@struct
+type SystemOptions = {
+    input: Option(Dyn),
+};
+
+@struct
+type SystemCaps = {
+    input: Bool,
+};
+
+@enum
+type Stdin = {
+    Piped: 'None,
+    Inherit: 'None,
+    Null: 'None,
+};
+
+@enum
+type Stdout = {
+    PipedLine: 'None,
+    PipedToEnd: 'None,
+    Inherit: 'None,
+    Null: 'None,
+};
+
+@struct
+type Stdio = {
+    stdin: Stdin,
+    stdout: Stdout,
+    stderr: Stdout,
+};
+
+@struct
+type ChildOpts = {
+    bin: String,
+    cwd: Option(String),
+    envs: Dict(Option(String)),
+    clear_env: Bool,
+};
+
+@struct
+type SpawnStdioChild = {
+    key: String,
+    opts: ChildOpts,
+    stdio: Stdio,
+};
+
+@struct
+type ChildText = {
+    key: String,
+    data: Option(String),
+};
+
+@struct
+type ChildExited = {
+    key: String,
+    exited: Result(Int, Option(Int)),
+};
+
+@struct
+type ChildSpawnResult = {
+    key: String,
+    result: Result(Int, String),
+};
+
+@enum
+type SystemEvent = {
+    Initialize: 'None,
+    ChildStdout: ChildText,
+    ChildStderr: ChildText,
+    ChildSpawnResult: ChildSpawnResult,
+    ChildExited: ChildExited,
+};
+
+@enum
+type SystemEffect = {
+    SpawnStdioChild: SpawnStdioChild,
+    PostStdin: ChildText,
+    Exec: ChildOpts,
+    Output: String,
+    Exit: Int,
+};
+
+export {
+    SystemOptions,
+    SystemCaps,
+    Stdin,
+    Stdout,
+    Stdio,
+    ChildOpts,
+    SpawnStdioChild,
+    ChildText,
+    ChildExited,
+    ChildSpawnResult,
+    SystemEvent,
+    SystemEffect,
+};

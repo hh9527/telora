@@ -4,7 +4,6 @@ pub mod compiler;
 mod core;
 pub mod document;
 mod elaboration;
-mod entry_runtime;
 mod evaluation;
 mod fmt;
 mod heap;
@@ -47,8 +46,10 @@ pub use json::{
 };
 pub use lexer::{FrontendError, SourceLocation};
 pub use module::{
-    Engine, EngineBuilder, EngineConfig, InstantiatedModule, LoadedModule, LoadedOptionAction,
-    ModuleError, NativeModuleSpec, PendingModule, evaluate_expression_module,
+    ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildStdio,
+    ChildText, Engine, EngineBuilder, EngineConfig, InstantiatedModule, LoadedModule,
+    LoadedOptionAction, ModuleError, NativeModuleSpec, PendingModule, RunHost, RunHostFuture,
+    RunOutcome, RunTermination, SpawnStdioChild, SystemEvent, evaluate_expression_module,
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
