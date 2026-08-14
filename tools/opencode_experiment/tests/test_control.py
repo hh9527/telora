@@ -102,7 +102,7 @@ class ConfigStateTest(unittest.TestCase):
         })
         self.assertEqual(
             [item["name"] for item in manifest.validation],
-            ["ontology", "ontology-test", "enterprise", "enterprise-test"],
+            ["ontology", "ontology-verify", "enterprise", "enterprise-verify"],
         )
 
         plan = repo / "experiments" / "ontology-edsl"
