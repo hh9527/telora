@@ -194,6 +194,52 @@ export let output = if array.length(broken) > 0 { "unexpected" } else { "empty" 
 }
 
 #[test]
+fn recursive_type_metadata_does_not_add_recovery_errors() {
+    let cwd = fixture();
+    let source = r#"@struct type CallExpr = { args: Array(Expr) };
+@enum type Expr = { Call: CallExpr, Text: String };
+def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
+let failed = reject(1);
+export let output = "unreachable";"#;
+    fs::write(cwd.join("src/bin/main.telora"), source).unwrap();
+
+    let check = telora(&cwd)
+        .args(["check", "@bin/main.telora"])
+        .output()
+        .unwrap();
+    assert!(!check.status.success());
+    let check_records = jsonl(&check.stdout);
+    assert!(
+        check_records
+            .iter()
+            .any(|record| record["message"] == "expected failure")
+    );
+    assert!(!check_records.iter().any(|record| {
+        record["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("cannot be partially evaluated"))
+    }));
+
+    let run = telora(&cwd)
+        .args(["run", "main", "--best-effort"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(run.stdout.is_empty());
+    let run_records = jsonl(&run.stderr);
+    assert!(
+        run_records
+            .iter()
+            .any(|record| record["message"] == "expected failure")
+    );
+    assert!(!run_records.iter().any(|record| {
+        record["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("cannot be partially evaluated"))
+    }));
+}
+
+#[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export let output = 1;").unwrap();

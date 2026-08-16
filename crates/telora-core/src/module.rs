@@ -2185,6 +2185,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                 },
             );
             let mut runtime_diagnostics = Vec::new();
+            let mut recovered_analysis = None;
             let strict = if self.cycle_members.contains(&module_id)
                 || !invalid_scoped_options.is_empty()
                 || missing_exports
@@ -2203,10 +2204,14 @@ impl RecoverableWorkspaceBuilder<'_> {
                             runtime_diagnostics.extend(emitted);
                             Some((analysis, value, root))
                         }
-                        Err(RecoveryEvaluationError::Runtime(error, emitted))
-                            if error.failure_class()
-                                == crate::evaluation::FailureClass::Recoverable =>
+                        Err(RecoveryEvaluationError::Runtime {
+                            analysis,
+                            error,
+                            emitted,
+                        }) if error.failure_class()
+                            == crate::evaluation::FailureClass::Recoverable =>
                         {
+                            recovered_analysis = Some(analysis);
                             if emitted.is_empty() {
                                 if let Some(diagnostic) = error.diagnostic() {
                                     runtime_diagnostics.push(diagnostic);
@@ -2227,14 +2232,19 @@ impl RecoverableWorkspaceBuilder<'_> {
                 })
             };
             diagnostics.extend(runtime_diagnostics);
+            let partial_empty =
+                partial.hir.definitions().is_empty() && partial.hir.expressions().is_empty();
+            let analysis = strict
+                .as_ref()
+                .map(|(analysis, _, _)| analysis.clone())
+                .or(recovered_analysis);
+            let partial = analysis.is_none().then_some(partial);
             let strict_value = strict.as_ref().map(|(_, value, _)| value);
             let state = if missing_exports {
                 WorkspaceModuleState::Unavailable
             } else if strict_value.is_some() {
                 WorkspaceModuleState::Known
-            } else if self.cycle_members.contains(&module_id)
-                || partial.hir.definitions().is_empty() && partial.hir.expressions().is_empty()
-            {
+            } else if self.cycle_members.contains(&module_id) || partial_empty {
                 WorkspaceModuleState::Unavailable
             } else {
                 WorkspaceModuleState::Partial
@@ -2247,8 +2257,8 @@ impl RecoverableWorkspaceBuilder<'_> {
                     kind: WorkspaceModuleKind::Telora,
                     source: Some(source_id),
                     program,
-                    analysis: strict.as_ref().map(|(analysis, _, _)| analysis.clone()),
-                    partial: Some(partial),
+                    analysis,
+                    partial,
                     state,
                     imports: semantic_imports,
                     diagnostics,
@@ -2378,10 +2388,11 @@ impl RecoverableWorkspaceBuilder<'_> {
             ) {
             Ok(arena) => arena,
             Err(error) => {
-                return Err(RecoveryEvaluationError::Runtime(
-                    Box::new(error),
-                    account.take_diagnostics(),
-                ));
+                return Err(RecoveryEvaluationError::Runtime {
+                    analysis,
+                    error: Box::new(error),
+                    emitted: account.take_diagnostics(),
+                });
             }
         };
         let root = arena
@@ -2529,7 +2540,11 @@ fn same_runtime_diagnostic(left: &Diagnostic, right: &Diagnostic) -> bool {
 
 enum RecoveryEvaluationError {
     Module,
-    Runtime(Box<crate::RuntimeError>, Vec<Diagnostic>),
+    Runtime {
+        analysis: crate::Analysis,
+        error: Box<crate::RuntimeError>,
+        emitted: Vec<Diagnostic>,
+    },
 }
 
 fn block_on_recovery<F: std::future::Future>(future: F) -> F::Output {
@@ -10797,6 +10812,63 @@ export let output = "unreachable";"#
             assert_eq!(messages, ["diagnostic A", "diagnostic B"], "{annotation}");
             fs::remove_dir_all(directory).unwrap();
         }
+    }
+
+    #[test]
+    fn recoverable_workspace_keeps_strict_recursive_types_after_runtime_failure() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"@struct type CallExpr = { args: Array(Expr) };
+@enum type Expr = { Call: CallExpr, Text: String };
+def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
+let failed = reject(1);
+export let output = "unreachable";"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        let messages = snapshot
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(messages, ["expected failure"]);
+        for name in ["CallExpr", "Expr"] {
+            let definition = snapshot
+                .definitions()
+                .iter()
+                .find(|definition| definition.module == root.id && definition.name == name)
+                .unwrap();
+            assert_eq!(definition.ty.state, crate::FactState::Known, "{name}");
+        }
+
+        let dependency = directory.join("dependency.telora");
+        fs::rename(&main, &dependency).unwrap();
+        fs::write(
+            &main,
+            "import \"./dependency.telora\" as dependency; export let output = \"root\";",
+        )
+        .unwrap();
+        let dependent = recovery_engine().recover_workspace(&main).unwrap();
+        assert!(
+            dependent
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message == "expected failure")
+        );
+        assert!(
+            !dependent
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| { diagnostic.message.contains("cannot be partially evaluated") })
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
