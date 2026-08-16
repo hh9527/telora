@@ -4350,34 +4350,6 @@ fn run_core_string(
             })?;
             RichValue::new(RuntimeValue::Int(length), call_loc)
         }
-        CoreStringFunction::Chars => {
-            let source = argument(0)?;
-            let scalar_count = source.chars().count();
-            let slot_bytes = logical_value_bytes(scalar_count)
-                .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
-            charge_allocation(
-                account,
-                (source.len() as u64)
-                    .checked_add(slot_bytes)
-                    .ok_or_else(|| {
-                        allocation_error("String chars allocation size overflowed", function, pc)
-                    })?,
-                function,
-                pc,
-            )?;
-            let values = source
-                .chars()
-                .map(|scalar| {
-                    let mut encoded = [0; 4];
-                    let text = scalar.encode_utf8(&mut encoded);
-                    RichValue::new(current.string(Some(background), text), call_loc)
-                })
-                .collect::<Box<[_]>>();
-            RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(values))),
-                call_loc,
-            )
-        }
         CoreStringFunction::Join | CoreStringFunction::JoinLines => {
             let RuntimeValue::Array(handle) = arguments[0].value else {
                 let view = HeapView {

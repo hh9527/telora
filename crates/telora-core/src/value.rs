@@ -280,7 +280,6 @@ pub(crate) enum CoreDictFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreStringFunction {
     Length,
-    Chars,
     Join,
     JoinLines,
     Split,
@@ -608,7 +607,6 @@ impl CoreStringFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Length => "std/string.length",
-            Self::Chars => "std/string.chars",
             Self::Join => "std/string.join",
             Self::JoinLines => "std/string.join_lines",
             Self::Split => "std/string.split",
@@ -625,11 +623,7 @@ impl CoreStringFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Length
-            | Self::Chars
-            | Self::JoinLines
-            | Self::Lines
-            | Self::EnsureTrailingNewline => 1,
+            Self::Length | Self::JoinLines | Self::Lines | Self::EnsureTrailingNewline => 1,
             Self::Join
             | Self::Split
             | Self::StartsWith
