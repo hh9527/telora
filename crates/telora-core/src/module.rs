@@ -3939,11 +3939,7 @@ impl ModuleLoader {
             .bindings
             .iter()
             .any(|binding| binding.value.kind == BindingKind::Type);
-        let bootstrap_sink: Arc<dyn DebugSink> = if has_type_bindings {
-            Arc::new(DiscardDebugSink)
-        } else {
-            Arc::clone(&self.debug_sink)
-        };
+        let bootstrap_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
         let mut bootstrap_account;
         let analysis_account = if has_type_bindings {
             bootstrap_account = QuotaAccount::new(account.quota());
@@ -4896,25 +4892,23 @@ type Independent = String;
             "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
         );
         let events = sink.events.lock().unwrap();
-        assert_eq!(events.len(), 10);
-        for phase in events.chunks_exact(5) {
-            assert_eq!(phase[0].message.as_deref(), Some("loaded\nvalue"));
-            assert_eq!(phase[0].name, "data");
-            assert!(phase[0].module.ends_with("main.telora"));
-            assert_eq!(phase[0].line, 3);
-            assert_eq!(
-                phase[0].repr,
-                "{\"items\": [1, 'Ok, (2,)], \"text\": \"line\\nnext\"}"
-            );
-            assert_eq!(phase[1].name, "identity");
-            assert!(phase[1].repr.starts_with("<fn "));
-            assert_eq!(phase[2].name, "observed");
-            assert_eq!(phase[2].repr, phase[0].repr);
-            assert_eq!(phase[3].name, "3.0");
-            assert_eq!(phase[3].repr, "3.0");
-            assert_eq!(phase[4].name, "-0.0");
-            assert_eq!(phase[4].repr, "-0.0");
-        }
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0].message.as_deref(), Some("loaded\nvalue"));
+        assert_eq!(events[0].name, "data");
+        assert!(events[0].module.ends_with("main.telora"));
+        assert_eq!(events[0].line, 3);
+        assert_eq!(
+            events[0].repr,
+            "{\"items\": [1, 'Ok, (2,)], \"text\": \"line\\nnext\"}"
+        );
+        assert_eq!(events[1].name, "identity");
+        assert!(events[1].repr.starts_with("<fn "));
+        assert_eq!(events[2].name, "observed");
+        assert_eq!(events[2].repr, events[0].repr);
+        assert_eq!(events[3].name, "3.0");
+        assert_eq!(events[3].repr, "3.0");
+        assert_eq!(events[4].name, "-0.0");
+        assert_eq!(events[4].repr, "-0.0");
         drop(events);
 
         fs::write(
@@ -4926,6 +4920,40 @@ type Independent = String;
             .load_module(directory.join("bad-message.telora"), BTreeMap::new())
             .unwrap_err();
         assert!(bad.to_string().contains("String literal"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn runtime_debug_does_not_emit_during_bootstrap_analysis() {
+        let directory = fixture_dir();
+        let sink = Arc::new(CapturingDebugSink::default());
+        let engine = Engine::new(EngineConfig {
+            module_quota: Quota::with_fuel(100_000),
+            session_quota: Quota::with_fuel(100_000),
+        })
+        .with_debug_sink(sink.clone());
+
+        for (name, type_binding) in [
+            ("without-type.telora", ""),
+            ("with-type.telora", "type Number = Int;"),
+        ] {
+            let path = directory.join(name);
+            fs::write(
+                &path,
+                format!(
+                    "{type_binding}\nlet value = 1;\nlet observed = dbg!(value);\nexport let output = \"ok\";"
+                ),
+            )
+            .unwrap();
+            let before = sink.events.lock().unwrap().len();
+            let module = engine.load_module(path, BTreeMap::new()).unwrap();
+            assert_eq!(sink.events.lock().unwrap().len(), before, "{name}");
+            assert_eq!(
+                named_output(engine.execute(&module).unwrap()).to_string(),
+                "\"ok\""
+            );
+            assert_eq!(sink.events.lock().unwrap().len(), before + 1, "{name}");
+        }
         fs::remove_dir_all(directory).unwrap();
     }
 
