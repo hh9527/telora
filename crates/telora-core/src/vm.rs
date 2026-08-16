@@ -1861,6 +1861,7 @@ impl Vm {
                         Opcode::Equal { dst, left, right } => {
                             let left = *read_register(&registers, *left, function, pc)?;
                             let right = *read_register(&registers, *right, function, pc)?;
+                            propagate_data_failures(&[left, right], &view, function, pc)?;
                             let equal = view.values_equal(left, right).map_err(|heap_error| {
                                 error(
                                     RuntimeErrorKind::InvalidBytecode,
@@ -1880,6 +1881,7 @@ impl Vm {
                         Opcode::NotEqual { dst, left, right } => {
                             let left = *read_register(&registers, *left, function, pc)?;
                             let right = *read_register(&registers, *right, function, pc)?;
+                            propagate_data_failures(&[left, right], &view, function, pc)?;
                             let not_equal =
                                 !view.values_equal(left, right).map_err(|heap_error| {
                                     error(
@@ -1949,9 +1951,10 @@ impl Vm {
                             let mut values = Vec::new();
                             for array in arrays {
                                 let RuntimeValue::Array(handle) = array.value else {
-                                    return Err(error(
-                                        RuntimeErrorKind::TypeMismatch,
-                                        "array spread operand must be an Array",
+                                    return Err(runtime_type_error(
+                                        "Array spread operand",
+                                        &array,
+                                        &view,
                                         function,
                                         pc,
                                     ));
@@ -2176,9 +2179,10 @@ impl Vm {
                             let mut merged = BTreeMap::new();
                             for dict in dicts {
                                 let RuntimeValue::Dict(handle) = dict.value else {
-                                    return Err(error(
-                                        RuntimeErrorKind::TypeMismatch,
-                                        "Dict spread operand must be a Dict",
+                                    return Err(runtime_type_error(
+                                        "Dict spread operand",
+                                        &dict,
+                                        &view,
                                         function,
                                         pc,
                                     ));
@@ -2350,6 +2354,7 @@ impl Vm {
                                 )
                             })?;
                             let value = read_register(&registers, *value, function, pc)?;
+                            propagate_direct_failure(value, function, pc)?;
                             let exists = match value.value {
                                 RuntimeValue::Dict(handle) => view
                                     .dict_get(handle, field)
@@ -2373,10 +2378,9 @@ impl Vm {
                             )?;
                         }
                         Opcode::IsDict { dst, value } => {
-                            let matches = matches!(
-                                read_register(&registers, *value, function, pc)?.value,
-                                RuntimeValue::Dict(_)
-                            );
+                            let value = read_register(&registers, *value, function, pc)?;
+                            propagate_direct_failure(value, function, pc)?;
+                            let matches = matches!(value.value, RuntimeValue::Dict(_));
                             write_register(
                                 &mut registers,
                                 *dst,
@@ -2386,8 +2390,10 @@ impl Vm {
                             )?;
                         }
                         Opcode::TupleLengthEquals { dst, value, length } => {
+                            let value = read_register(&registers, *value, function, pc)?;
+                            propagate_direct_failure(value, function, pc)?;
                             let matches = matches!(
-                                read_register(&registers, *value, function, pc)?.value,
+                                value.value,
                                 RuntimeValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
                             );
                             write_register(
@@ -2429,6 +2435,7 @@ impl Vm {
                         }
                         Opcode::TaggedTagEquals { dst, value, tag } => {
                             let value = read_register(&registers, *value, function, pc)?;
+                            propagate_direct_failure(value, function, pc)?;
                             let expected = read_register(&registers, *tag, function, pc)?;
                             let matches = if let RuntimeValue::Tagged(handle) = value.value {
                                 let (actual, _) = view.tagged(handle).map_err(|heap_error| {
@@ -3084,12 +3091,15 @@ fn drive_vm_action(
                 }
                 ReturnTarget::Native(continuation) => {
                     let trace_frame = continuation.trace_frame().clone();
-                    continuation
-                        .resume(value, current, background, account)
-                        .map_err(|mut runtime_error| {
-                            runtime_error.trace.push(trace_frame);
-                            runtime_error
-                        })?
+                    let resumed = if matches!(value.value, RuntimeValue::Failed(_)) {
+                        continuation.resume_failed(value, current, background, account)
+                    } else {
+                        continuation.resume(value, current, background, account)
+                    };
+                    resumed.map_err(|mut runtime_error| {
+                        runtime_error.trace.push(trace_frame);
+                        runtime_error
+                    })?
                 }
             },
             VmAction::Call {
@@ -3163,6 +3173,20 @@ fn drive_vm_action(
                             call_pc,
                         ));
                     };
+                    if let Some(failure) = arguments.iter().find_map(|argument| {
+                        if let RuntimeValue::Failed(failure) = argument.value {
+                            Some((failure, argument.loc()))
+                        } else {
+                            None
+                        }
+                    }) {
+                        return Err(propagated_failure_error(
+                            failure.0,
+                            failure.1,
+                            &call_function,
+                            call_pc,
+                        ));
+                    }
                     let view = HeapView {
                         current,
                         background: Some(background),
@@ -3754,6 +3778,14 @@ fn start_array_continuation(
         let mut output = Vec::new();
         for (index, array) in arrays.iter().copied().enumerate() {
             let RuntimeValue::Array(handle) = array.value else {
+                if let RuntimeValue::Failed(failure) = array.value {
+                    return Err(propagated_failure_error(
+                        failure,
+                        array.loc(),
+                        &call_function,
+                        call_pc,
+                    ));
+                }
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
                     format!("std/array.concat item {index} must be an Array"),
@@ -4057,6 +4089,12 @@ fn resume_array_continuation(
                 });
             }
             if continuation.function == CoreArrayFunction::Find && matched {
+                if let Some(failure) = continuation.failed {
+                    return Ok(VmAction::Return {
+                        value: failure,
+                        return_target: continuation.return_target,
+                    });
+                }
                 let item = array_item(
                     continuation.source,
                     continuation.next_index - 1,
@@ -4377,6 +4415,7 @@ fn run_core_string(
                 .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
             let mut strings = Vec::with_capacity(items.len());
             for (index, item) in items.iter().copied().enumerate() {
+                propagate_direct_failure(&item, function, pc)?;
                 let text = view
                     .string_text(item)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
@@ -4602,6 +4641,7 @@ fn run_core_path(
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
         let mut joined = String::new();
         for (index, item) in items.iter().copied().enumerate() {
+            propagate_direct_failure(&item, function, pc)?;
             let part = view
                 .string_text(item)
                 .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
@@ -4899,6 +4939,9 @@ fn run_core_dict(
             let mut entries = Vec::with_capacity(items.len());
             for (index, item) in items.iter().copied().enumerate() {
                 let RuntimeValue::Tuple(pair) = item.value else {
+                    if let RuntimeValue::Failed(failure) = item.value {
+                        return Err(propagated_failure_error(failure, item.loc(), function, pc));
+                    }
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
                         format!("std/dict.from_pairs item {index} must be a two-element Tuple"),
@@ -4921,6 +4964,7 @@ fn run_core_dict(
                     .string_text(pair[0])
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                 else {
+                    propagate_direct_failure(&pair[0], function, pc)?;
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
                         format!("std/dict.from_pairs item {index} key must be a String"),
@@ -5902,13 +5946,8 @@ fn run_core_dyn(
         }),
         CoreDynFunction::Kind => {
             let kind = match value.value {
-                RuntimeValue::Failed(_) => {
-                    return Err(error(
-                        RuntimeErrorKind::TypeMismatch,
-                        "Dyn payload evaluation failed",
-                        function,
-                        pc,
-                    ));
+                RuntimeValue::Failed(failure) => {
+                    return Err(propagated_failure_error(failure, value.loc(), function, pc));
                 }
                 RuntimeValue::Int(_) => "Int",
                 RuntimeValue::Float(_) => "Float",
@@ -6037,19 +6076,21 @@ fn run_core_eq(
 ) -> Result<VmAction, RuntimeError> {
     match operation {
         CoreEqFunction::Equal => {
-            let equal = HeapView {
+            let view = HeapView {
                 current,
                 background: Some(background),
-            }
-            .values_equal(arguments[0], arguments[1])
-            .map_err(|heap_error| {
-                error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    heap_error.to_string(),
-                    function,
-                    pc,
-                )
-            })?;
+            };
+            propagate_data_failures(arguments, &view, function, pc)?;
+            let equal = view
+                .values_equal(arguments[0], arguments[1])
+                .map_err(|heap_error| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        pc,
+                    )
+                })?;
             Ok(VmAction::Return {
                 value: RichValue::new(
                     RuntimeValue::BuiltinAtom(if equal {
@@ -7049,6 +7090,11 @@ fn run_core_codec(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
+    let view = HeapView {
+        current,
+        background: Some(background),
+    };
+    propagate_data_failures(&[arguments[1]], &view, function, pc)?;
     let schema = decode_runtime_type(arguments[0], current, background)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
     assert_codec_graph_ready(&schema, current, background).map_err(
@@ -9681,9 +9727,10 @@ fn run_core_result(
         background: Some(background),
     };
     let RuntimeValue::Tagged(handle) = arguments[0].value else {
-        return Err(error(
-            RuntimeErrorKind::TypeMismatch,
-            "std/result.unwrap expects 'Ok(value) or 'Err(message)",
+        return Err(runtime_type_error(
+            "'Ok(value) or 'Err(message)",
+            &arguments[0],
+            &view,
             function,
             pc,
         ));
@@ -10134,6 +10181,7 @@ fn run_core_json(
         current,
         background: Some(background),
     };
+    propagate_data_failures(&[arguments[0]], &view, function, pc)?;
     let mut writer = JsonWriter::new(view, indent);
     writer
         .value(arguments[0], 0)
@@ -10965,6 +11013,38 @@ fn runtime_type_error(
     };
     runtime_error.set_data_location(actual.loc());
     runtime_error
+}
+
+fn propagate_direct_failure(
+    value: &RichValue,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<(), RuntimeError> {
+    if let RuntimeValue::Failed(failure) = value.value {
+        return Err(propagated_failure_error(failure, value.loc(), function, pc));
+    }
+    Ok(())
+}
+
+fn propagate_data_failures(
+    values: &[RichValue],
+    view: &HeapView<'_>,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<(), RuntimeError> {
+    for value in values {
+        if let Some(failure) = view.first_data_failure(*value).map_err(|heap_error| {
+            error(
+                RuntimeErrorKind::InvalidBytecode,
+                heap_error.to_string(),
+                function,
+                pc,
+            )
+        })? {
+            return Err(propagated_failure_error(failure, value.loc(), function, pc));
+        }
+    }
+    Ok(())
 }
 
 fn runtime_shallow_type_error(

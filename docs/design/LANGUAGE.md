@@ -807,6 +807,30 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 payload 和 Dict 在诊断求值图中可以暂时保留失败子节点。这类节点保持原有静态类型，
 但不是 Telora 值，源码不能构造、匹配或恢复它们。保形逐项操作可以跳过失败槽位并
 继续健康槽位；只依赖容器形状的操作不依赖子节点；选择失败槽位则传播同一根诊断。
+
+Fail 传播按操作实际读取的数据确定：
+
+- 标量一元/二元运算、比较、插值、条件、match 判别、字段/索引/tuple 投影，以及
+  普通 Func 的 callee 或任一实参直接为 Fail 时，结果传播该 Fail；被阻断的 Func
+  body 不执行。tag constructor 属于复合值构造，可以保留失败 payload。
+- Array、Tuple、Struct/Dict 和 tagged 构造只确定外层形状，可以保留失败子节点。
+  `array.length`、`enumerate`、`push`、`zip` 以及 Dict 的 keys/values/pairs 等仅依赖
+  已知形状或保形搬运的操作可以继续；选中失败子节点时才传播。
+- `array.map` 和 `dict.map_values` 保留原位置的失败节点，并继续处理健康成员。
+  `filter`、`flat_map`、`concat`、spread 和 fold 一类输出形状或 accumulator 依赖
+  失败节点的操作，其最终值传播 Fail。filter/flat_map 可以先继续彼此独立的健康
+  callback 以收集诊断；fold 的 accumulator 失败后立即停止依赖它的 reducer。
+- `any` 找到健康的 True、`all` 找到健康的 False 时，短路结果不依赖其他槽位；否则
+  任一失败 predicate 令结果为 Fail。`find` 只有在所选成员之前没有失败 predicate
+  时才能产生 Some；先前失败会令成员身份不确定并传播 Fail。
+- 结构相等、codec、JSON、Host value 和 World 固化会读取完整可达数据图；任一可达
+  Fail 都传播原根因或拒绝边界，不能把内部节点渲染成普通类型错误。
+
+传播节点不是新的根因诊断。实现可以保存有界的传播 lineage，但同一 Fail 穿过 callback、
+native 函数、模块或边界时不得产生诸如“expected Func/Array”之类的二次类型错误。
+非保形操作不提供源码可观察的“健康投影”；为收集诊断而暂存的健康成员也不能被下游
+代码、codec、Entry 或 Host 当作结果使用。
+
 任何 error diagnostic 都会使本轮 World 导出整体失去发布意义，即使最终根值不依赖
 内部失败且能够算出。失败节点的可达性只决定 best-effort 还能继续哪些诊断计算，不决定
 结果能否交付。普通 module、codec 或 Host value 均不得发布本轮结果；严格执行遇到未处理

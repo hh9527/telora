@@ -1039,6 +1039,66 @@ impl<'a> HeapView<'a> {
         self.values_equal_with(left.value, right.value, &mut HashSet::new())
     }
 
+    /// Returns the first failed node reachable through data containers.
+    ///
+    /// Closures and opaque/native values are intentionally atomic here: an
+    /// operation only depends on their identity, not on captured internals.
+    pub(crate) fn first_data_failure(&self, root: RichValue) -> Result<Option<u32>, HeapError> {
+        let mut pending = vec![root.value];
+        let mut visited = HashSet::new();
+        while let Some(value) = pending.pop() {
+            let handle = match value {
+                RuntimeValue::Failed(failure) => return Ok(Some(failure)),
+                RuntimeValue::Array(handle)
+                | RuntimeValue::Tuple(handle)
+                | RuntimeValue::Tagged(handle)
+                | RuntimeValue::Dict(handle)
+                | RuntimeValue::Dyn(handle) => handle,
+                RuntimeValue::Int(_)
+                | RuntimeValue::Float(_)
+                | RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::Atom(_)
+                | RuntimeValue::ShortString(_)
+                | RuntimeValue::String(_)
+                | RuntimeValue::Bytes(_)
+                | RuntimeValue::Opaque(_)
+                | RuntimeValue::NativeType(_)
+                | RuntimeValue::Func(_)
+                | RuntimeValue::UpLink(_) => continue,
+            };
+            if !visited.insert(handle) {
+                continue;
+            }
+            match self.object(handle)? {
+                Object::Array(values) | Object::Tuple(values) => {
+                    pending.extend(values.iter().rev().map(|value| value.value));
+                }
+                Object::Tagged { tag, payload } => {
+                    pending.push(payload.value);
+                    pending.push(tag.value);
+                }
+                Object::Dict { values, .. } => {
+                    pending.extend(values.iter().rev().map(|value| value.value));
+                }
+                Object::Dyn {
+                    descriptor, value, ..
+                } => {
+                    pending.push(value.value);
+                    pending.push(descriptor.value);
+                }
+                Object::String(_)
+                | Object::Bytes(_)
+                | Object::Opaque(_)
+                | Object::NativeType(_)
+                | Object::Closure { .. }
+                | Object::UpLink { .. }
+                | Object::ByteCodeProto { .. }
+                | Object::Reserved => {}
+            }
+        }
+        Ok(None)
+    }
+
     fn values_equal_with(
         &self,
         left: RuntimeValue,
