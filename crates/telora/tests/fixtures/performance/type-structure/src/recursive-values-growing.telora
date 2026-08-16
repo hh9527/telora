@@ -1,0 +1,26 @@
+@struct type Leaf = { value: String };
+@struct type AndExpr = { items: Array(Expr) };
+@enum type Expr = { Leaf: Leaf, And: AndExpr };
+
+let e00: Expr = 'Leaf({ value: "x" });
+let e01: Expr = 'And({ items: [e00, e00] });
+let e02: Expr = 'And({ items: [e01, e01] });
+let e03: Expr = 'And({ items: [e02, e02] });
+let e04: Expr = 'And({ items: [e03, e03] });
+let e05: Expr = 'And({ items: [e04, e04] });
+let e06: Expr = 'And({ items: [e05, e05] });
+let e07: Expr = 'And({ items: [e06, e06] });
+let e08: Expr = 'And({ items: [e07, e07] });
+let e09: Expr = 'And({ items: [e08, e08] });
+let e10: Expr = 'And({ items: [e09, e09] });
+let e11: Expr = 'And({ items: [e10, e10] });
+let e12: Expr = 'And({ items: [e11, e11] });
+let e13: Expr = 'And({ items: [e12, e12] });
+let e14: Expr = 'And({ items: [e13, e13] });
+let e15: Expr = 'And({ items: [e14, e14] });
+let e16: Expr = 'And({ items: [e15, e15] });
+let e17: Expr = 'And({ items: [e16, e16] });
+let e18: Expr = 'And({ items: [e17, e17] });
+let e19: Expr = 'And({ items: [e18, e18] });
+
+export let output = "ok";
