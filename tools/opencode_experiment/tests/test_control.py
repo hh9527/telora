@@ -16,7 +16,7 @@ from tools.opencode_experiment.observe import failures, latest_assistant, normal
 from tools.opencode_experiment.query import select_engine
 from tools.opencode_experiment.external import probe_direct, probe_mise, resolve_capabilities, resolve_cli, resolve_command
 from tools.opencode_experiment.state import atomic_json, load_state, save_state, SCHEMA
-from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare
+from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare, request_start, reserve, start_requested
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
@@ -163,6 +163,30 @@ class ConfigStateTest(unittest.TestCase):
             self.assertEqual(state["opencode_environment"], {})
             self.assertEqual(state["permission_preflight"], {})
             self.assertEqual(state["reporting"], {"sinks": []})
+
+    def test_reserve_waits_for_start_request_before_preparing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
+            artifact = repo / "tool"; artifact.write_text("tool")
+            subprocess.run(["git", "init", "--quiet"], cwd=plan, check=True)
+            subprocess.run(["git", "add", "."], cwd=plan, check=True)
+            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "plan"], cwd=plan, check=True)
+            with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo):
+                root, state = reserve("demo", "run", 4567)
+                self.assertEqual(state["phase"], "waiting")
+                self.assertIsNone(state["workspace"])
+                self.assertFalse(start_requested(root))
+                request_start(root)
+                first = (root / "start-request.json").read_text()
+                request_start(root)
+                self.assertEqual((root / "start-request.json").read_text(), first)
+                self.assertTrue(start_requested(root))
+                with mock.patch("tools.opencode_experiment.lifecycle.git_metadata", return_value=("repo-rev", False)):
+                    _root, prepared, created = prepare("demo", "run", 4567)
+                self.assertTrue(created)
+                self.assertEqual(prepared["phase"], "preparing")
+                self.assertTrue(Path(prepared["workspace"]).is_dir())
+                self.assertEqual((Path(prepared["workspace"]) / "bin/tool").read_text(), "tool")
 
     def test_prepare_rejects_dirty_plan(self):
         with tempfile.TemporaryDirectory() as temporary:

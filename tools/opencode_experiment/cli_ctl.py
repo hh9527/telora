@@ -5,12 +5,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .config import ControlError, repository_root, validate_identifier
 from .context import Context, resolve
 from .external import resolve_capabilities, resolve_cli
-from .lifecycle import finish, live_boundary, reconcile, run_validation, safe_cleanup, send_round, verify_prepared
+from .lifecycle import finish, live_boundary, reconcile, request_start, run_validation, safe_cleanup, send_round, verify_prepared
 from .observe import failures, latest_assistant, normalized, recent, text_parts, timeline
 from .query import run_query, select_engine
 from .reporting import submit_report
@@ -96,12 +97,30 @@ def main(argv: list[str] | None = None) -> int:
             emit({"exec_name": exec_name, "session_id": args.session_id, "agent": agent, "text": text}); return 0
         if args.command == "workspace": print(context.state["workspace"]); return 0
         if args.command == "start":
+            request_start(context.root)
+            deadline = time.monotonic() + 600
+            while True:
+                context.state = load_state(context.root)
+                if context.state["phase"] == "failed": raise ControlError("oc-run failed while preparing the execution")
+                if context.state["phase"] in ("ready", "active", "idle"):
+                    try:
+                        context.client().health()
+                        break
+                    except ControlError:
+                        pass
+                if time.monotonic() >= deadline: raise ControlError("timed out waiting for oc-run to enter the TUI", 75)
+                time.sleep(.1)
             verify_prepared(context.manifest, context.state)
             initial = [record for record in context.rounds() if record.get("kind") == "initial"]
             if initial and initial[0].get("user_message_id"):
                 emit(initial[0]); return 0
             emit(send_round(context, "initial", context.manifest.prompts["start"], require_empty=True)); return 0
         if args.command in ("status", "snapshot", "recent", "timeline", "files", "failures", "audit", "answer", "query", "children", "tree", "child-recent"):
+            if context.state["phase"] in ("waiting", "preparing"):
+                if args.command != "status": raise ControlError(f"execution is {context.state['phase']}; only status and start are available", 75)
+                emit({"workspace": context.state.get("workspace"), "session_id": context.state.get("session_id"),
+                      "phase": context.state["phase"], "status": {"type": context.state["phase"]}})
+                return 0
             if context.state["phase"] in ("finished", "retired") or not Path(context.state["workspace"]).exists():
                 document = json.loads((context.root / "result" / "query.json").read_text(encoding="utf-8")); messages = document["messages"]
                 document["state"] = context.state

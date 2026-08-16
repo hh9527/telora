@@ -4,12 +4,13 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .client import Client
 from .config import ControlError
 from .external import resolve_cli
-from .lifecycle import create_empty_session, opencode_environment, prepare, safe_cleanup
+from .lifecycle import create_empty_session, opencode_environment, prepare, reserve, safe_cleanup, start_requested
 from .state import load_state
 
 
@@ -30,6 +31,11 @@ def main(argv: list[str] | None = None) -> int:
             name, path = value.split("=", 1)
             if not name or not path or name in artifacts: raise ControlError(f"invalid artifact override: {value}", 64)
             artifacts[name] = path
+        root, state = reserve(args.plan_id, args.exec_name, args.port, artifacts)
+        if state["phase"] == "waiting":
+            print(f"Execution {args.exec_name} is waiting for: ./oc-ctl start {args.exec_name}", flush=True)
+            while not start_requested(root):
+                time.sleep(.25)
         root, state, _ = prepare(args.plan_id, args.exec_name, args.port, artifacts)
         state = create_empty_session(root, state, f"{args.plan_id} / {args.exec_name} (ready)")
         workspace, server_url, session_id = state["workspace"], state["server_url"], state["session_id"]

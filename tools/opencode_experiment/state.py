@@ -12,7 +12,7 @@ from typing import Any, Iterator
 from .config import ControlError, validate_identifier
 
 SCHEMA = "telora.opencode-execution/v1"
-PHASES = {"preparing", "ready", "active", "idle", "finishing", "finished", "failed", "retired"}
+PHASES = {"waiting", "preparing", "ready", "active", "idle", "finishing", "finished", "failed", "retired"}
 
 
 def now() -> str:

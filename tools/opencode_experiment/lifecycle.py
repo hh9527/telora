@@ -62,6 +62,75 @@ def _port_free(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) != 0
 
 
+def reserve(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None) -> tuple[Path, dict[str, Any]]:
+    repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
+    if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
+    # Validate that the plan exists, but deliberately defer cloning, builds and
+    # permission preflight until oc-ctl start releases this execution.
+    load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
+    overrides = dict(artifacts or {})
+    with locked(root):
+        if (root / "state.json").exists():
+            state = load_state(root)
+            if state["plan_id"] != plan_id: raise ControlError("execution plan mismatch")
+            if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"execution {exec_name} is {state['phase']}")
+            if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError("execution already uses another port", 64)
+            if state.get("artifact_overrides", {}) != overrides: raise ControlError("execution already uses other artifact overrides", 64)
+            return root, state
+        selected_port = port or 4096
+        state = {
+            "schema": SCHEMA,
+            "plan_id": plan_id,
+            "exec_name": exec_name,
+            "run_id": uuid.uuid4().hex,
+            "phase": "waiting",
+            "workspace": None,
+            "run_root": None,
+            "session_id": None,
+            "server_url": f"http://127.0.0.1:{selected_port}",
+            "artifact_overrides": overrides,
+            "next_round": 0,
+            "active_round": None,
+            "created_at": now(),
+            "start_requested_at": None,
+            "started_at": None,
+            "finished_at": None,
+        }
+        save_state(root, state)
+        return root, state
+
+
+def request_start(root: Path) -> dict[str, Any]:
+    with locked(root):
+        state = load_state(root)
+        path = root / "start-request.json"
+        if state["phase"] == "waiting":
+            if not path.exists():
+                requested_at = now()
+                atomic_json(path, {
+                    "schema": "telora.opencode-start-request/v1",
+                    "plan_id": state["plan_id"],
+                    "exec_name": state["exec_name"],
+                    "requested_at": requested_at,
+                })
+                state["start_requested_at"] = requested_at
+                save_state(root, state)
+        elif state["phase"] == "preparing":
+            if not path.is_file(): raise ControlError("preparing execution has no start request")
+        elif state["phase"] not in ("ready", "active", "idle"):
+            raise ControlError(f"execution cannot start in phase {state['phase']}")
+        return state
+
+
+def start_requested(root: Path) -> bool:
+    path = root / "start-request.json"
+    if not path.is_file(): return False
+    try: value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc: raise ControlError(f"invalid start request: {exc}") from None
+    if value.get("schema") != "telora.opencode-start-request/v1": raise ControlError("unsupported start request schema")
+    return True
+
+
 def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
     workspace = Path(state["workspace"])
     if state.get("opencode_environment", {}) != manifest.environment:
@@ -84,14 +153,20 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
     repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
     if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
     manifest = load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
+    reserved_state: dict[str, Any] | None = None
     with locked(root):
         if (root / "state.json").exists():
             state = load_state(root)
             if state["plan_id"] != plan_id: raise ControlError("execution plan mismatch")
             if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"execution {exec_name} is {state['phase']}")
             if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError("execution already uses another port", 64)
-            if not Path(state["workspace"]).is_dir(): raise ControlError("recorded workspace is missing", 66)
-            verify_prepared(manifest, state); return root, state, False
+            if state["phase"] != "waiting":
+                if not Path(state["workspace"]).is_dir(): raise ControlError("recorded workspace is missing", 66)
+                verify_prepared(manifest, state); return root, state, False
+            if not start_requested(root): raise ControlError("execution is waiting for oc-ctl start", 75)
+            artifacts = state.get("artifact_overrides", {})
+            port = int(state["server_url"].rsplit(":", 1)[1])
+            reserved_state = state
         port = port or 4096
         revision, dirty = git_metadata(repo); plan_revision, plan_source = plan_git_metadata(manifest)
         run_root = Path(tempfile.mkdtemp(prefix=f"oc-exp-{exec_name}-", dir="/tmp")).resolve(); workspace = run_root / "ws"
@@ -101,7 +176,10 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             "plan_revision": plan_revision, "plan_source": plan_source,
             "opencode_environment": manifest.environment,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
-            "created_at": now(), "started_at": None, "finished_at": None}
+            "artifact_overrides": dict(artifacts or {}),
+            "created_at": reserved_state.get("created_at", now()) if reserved_state else now(),
+            "start_requested_at": reserved_state.get("start_requested_at") if reserved_state else None,
+            "started_at": None, "finished_at": None}
         save_state(root, state)
         try:
             git = resolve_cli("git")
