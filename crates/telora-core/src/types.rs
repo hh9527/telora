@@ -1858,10 +1858,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .cloned();
         let tool_value = authoritative_imported_value(value, interface, name, &mut tool_vm);
         tool_values.insert(name.clone(), tool_value);
-        let inferred = scheme.as_ref().map_or_else(
-            || infer_value(value),
-            |scheme| erase_type_variables(&scheme.body),
-        );
+        let inferred = imported_static_descriptor(value, interface, name);
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
         if let Some(scheme) = scheme {
@@ -2544,10 +2541,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 let scheme = interface
                     .and_then(|interface| interface.exports.get(&binding.value.name.value))
                     .cloned();
-                let inferred = scheme.as_ref().map_or_else(
-                    || infer_value(&value),
-                    |scheme| erase_type_variables(&scheme.body),
-                );
+                let inferred =
+                    imported_static_descriptor(&value, interface, &binding.value.name.value);
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
@@ -3218,6 +3213,27 @@ fn authoritative_imported_metadata(
         Ok(actual) if actual == **expected => value.clone(),
         _ => expected.to_value(vm),
     }
+}
+
+fn imported_static_descriptor(
+    value: &Value,
+    interface: Option<&ModuleInterface>,
+    local: &str,
+) -> TypeDescriptor {
+    let Some(interface) = interface.filter(|interface| !interface.exports.is_empty()) else {
+        return infer_value(value);
+    };
+    if let Some(scheme) = interface.exports.get(local) {
+        return erase_type_variables(&scheme.body);
+    }
+    let mut fields = match infer_value(value) {
+        TypeDescriptor::Struct(fields) => fields,
+        _ => BTreeMap::new(),
+    };
+    for (name, scheme) in &interface.exports {
+        fields.insert(name.clone(), erase_type_variables(&scheme.body));
+    }
+    TypeDescriptor::Struct(fields)
 }
 
 fn authoritative_imported_value(

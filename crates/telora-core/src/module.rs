@@ -7017,6 +7017,69 @@ unchanged", "|"),
     }
 
     #[test]
+    fn reexported_recursive_generic_calls_accept_equivalent_result_annotations() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("expr.telora"),
+            r#"@struct type CallExpr = {name: String, args: Array(Expr)};
+               @enum type Expr = {Literal: Int, Call: CallExpr};
+               export {Expr};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("plan.telora"),
+            r#"import "./expr.telora" {Expr};
+               @struct type Plan(A) = {value: A, expr: Expr};
+               @struct type Output = {text: String};
+               def render: Fn(Expr) -> String = fn(expr) {
+                   match expr {
+                       'Literal(value) => `\{value}`,
+                       'Call(call) => render(call.args[0]),
+                   }
+               };
+               export def transform: for(A) Fn(Plan(A)) -> Output = fn(plan) {
+                   {text: render(plan.expr)}
+               };
+               export {Plan, Output};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("facade.telora"),
+            r#"import "./plan.telora" {Plan, Output, transform};
+               export {Plan, Output, transform};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./facade.telora" as api;
+               @struct type Item = {id: Int};
+               type ItemPlan = api.Plan(Item);
+               type OutputAlias = api.Output;
+               let plan: ItemPlan = {
+                   value: {id: 1},
+                   expr: 'Call({name: "f", args: ['Literal(1)]}),
+               };
+               let direct: api.Output = api.transform(plan);
+               let alias: OutputAlias = api.transform(plan);
+               export {direct, alias};"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{alias: {text: \"1\"}, direct: {text: \"1\"}}"
+        );
+        for name in ["direct", "alias"] {
+            assert_eq!(
+                module.analysis.display(module.analysis.binding_types[name]),
+                "{text: String}"
+            );
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_family_aliases_preserve_provider_local_concrete_arguments() {
         let directory = fixture_dir();
         fs::write(
