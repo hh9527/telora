@@ -464,6 +464,16 @@ fn install_native_modules(
     debug_sink: &Arc<dyn DebugSink>,
     host_modules: &[RegisteredNativeModule],
 ) -> Result<HashMap<String, (Value, PersistentValue, ModuleInterface)>, ModuleError> {
+    install_native_modules_observed(main, sources, debug_sink, host_modules, None)
+}
+
+fn install_native_modules_observed(
+    main: &mut MainWorld,
+    sources: &mut SourceDatabase,
+    debug_sink: &Arc<dyn DebugSink>,
+    host_modules: &[RegisteredNativeModule],
+    mut semantic_inputs: Option<&mut BTreeMap<String, SemanticModuleInput>>,
+) -> Result<HashMap<String, (Value, PersistentValue, ModuleInterface)>, ModuleError> {
     let mut modules: HashMap<String, (Value, PersistentValue, ModuleInterface)> = HashMap::new();
     let mut specs = module_specs()
         .into_iter()
@@ -677,7 +687,54 @@ fn install_native_modules(
                 .map_err(ModuleError::new)?;
             default_prelude = Some(default_prelude_exports(&value, &analysis.module_interface)?);
         }
-        modules.insert(spec.name, (value, root, analysis.module_interface));
+        let interface = analysis.module_interface.clone();
+        if let Some(inputs) = semantic_inputs.as_deref_mut() {
+            let imports = program
+                .value
+                .body
+                .value
+                .bindings
+                .iter()
+                .filter(|binding| {
+                    matches!(
+                        binding.value.kind,
+                        BindingKind::Import | BindingKind::OpenImport
+                    )
+                })
+                .filter_map(|binding| {
+                    let ExprKind::String(target) = &binding.value.value.value else {
+                        return None;
+                    };
+                    Some(SemanticImport {
+                        name: if binding.value.kind == BindingKind::OpenImport {
+                            "*".into()
+                        } else {
+                            binding.value.name.value.clone()
+                        },
+                        location: binding.value.name.location,
+                        target: ModuleId::builtin(target),
+                        namespace: binding.value.kind != BindingKind::OpenImport
+                            && binding.value.imported_name.is_none(),
+                    })
+                })
+                .collect();
+            inputs.insert(
+                spec.name.clone(),
+                SemanticModuleInput {
+                    key: spec.name.clone(),
+                    path: None,
+                    kind: WorkspaceModuleKind::Core,
+                    source: Some(source_id),
+                    program: Some(program),
+                    analysis: Some(analysis),
+                    partial: None,
+                    state: WorkspaceModuleState::Known,
+                    imports,
+                    diagnostics: Vec::new(),
+                },
+            );
+        }
+        modules.insert(spec.name, (value, root, interface));
     }
     Ok(modules)
 }
@@ -1683,6 +1740,34 @@ impl Engine {
             .map_err(|error| ModuleError::new(error.to_string()))?
             .with_builtins(builtin_list(&self.native_modules));
         self.recover_with_resolver(resolver)
+    }
+
+    pub fn recover_builtin_workspace(
+        &self,
+        module_id: &str,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
+        if !builtin_list(&self.native_modules)
+            .iter()
+            .any(|(name, _)| name == module_id)
+        {
+            return Err(ModuleError::new(format!(
+                "unknown built-in module {module_id:?}"
+            )));
+        }
+        let mut main = MainWorld::building();
+        let mut sources = SourceDatabase::default();
+        let mut inputs = BTreeMap::new();
+        install_native_modules_observed(
+            &mut main,
+            &mut sources,
+            &self.debug_sink,
+            &self.native_modules,
+            Some(&mut inputs),
+        )?;
+        Ok(WorkspaceSnapshot::build(
+            sources,
+            inputs.into_values().collect(),
+        ))
     }
 
     pub fn recover_standalone(

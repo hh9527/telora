@@ -73,6 +73,56 @@ fn run_and_check_select_logical_roots_from_cwd() {
 }
 
 #[test]
+fn show_selects_registered_standard_library_modules() {
+    let cwd = fixture();
+    let string = telora(&cwd)
+        .args(["show", "std/string", "--exports"])
+        .output()
+        .unwrap();
+    assert!(
+        string.status.success(),
+        "{}",
+        String::from_utf8_lossy(&string.stderr)
+    );
+    let records = jsonl(&string.stdout);
+    assert!(
+        records
+            .iter()
+            .all(|record| record["module"] == "std/string")
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| { record["record"] == "export" && record["name"] == "length" })
+    );
+
+    let array = telora(&cwd)
+        .args(["show", "std/array", "-p", "flat_map"])
+        .output()
+        .unwrap();
+    assert!(
+        array.status.success(),
+        "{}",
+        String::from_utf8_lossy(&array.stderr)
+    );
+    let records = jsonl(&array.stdout);
+    assert!(
+        records
+            .iter()
+            .any(|record| { record["record"] == "definition" && record["name"] == "flat_map" })
+    );
+
+    let missing = telora(&cwd)
+        .args(["show", "std/not-present", "--exports"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("unknown built-in module \"std/not-present\""));
+    assert!(!stderr.contains("unknown dependency"));
+}
+
+#[test]
 fn check_requires_complete_runtime_finalization() {
     let cwd = fixture();
     let cases = [
@@ -149,11 +199,7 @@ fn run_writes_contextual_debug_as_stderr_jsonl() {
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3");
     let records = jsonl(&run.stderr);
-    assert_eq!(
-        records.len(),
-        2,
-        "module initialization and execution observe once each"
-    );
+    assert_eq!(records.len(), 1, "finalization must not repeat dbg! events");
     for record in records {
         assert_eq!(record["name"], "var");
         assert_eq!(record["repr"], "3");
