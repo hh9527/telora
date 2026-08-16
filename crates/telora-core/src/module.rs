@@ -2246,7 +2246,6 @@ impl RecoverableWorkspaceBuilder<'_> {
                         }) if error.failure_class()
                             == crate::evaluation::FailureClass::Recoverable =>
                         {
-                            recovered_analysis = Some(analysis);
                             if emitted.is_empty() {
                                 if let Some(diagnostic) = error.diagnostic() {
                                     runtime_diagnostics.push(diagnostic);
@@ -2257,9 +2256,12 @@ impl RecoverableWorkspaceBuilder<'_> {
                             self.evaluate_independent_bindings(
                                 source_id,
                                 program,
+                                &analysis,
                                 &external_values,
+                                &external_roots,
                                 &mut runtime_diagnostics,
                             );
+                            recovered_analysis = Some(analysis);
                             None
                         }
                         Err(_) => None,
@@ -2454,10 +2456,31 @@ impl RecoverableWorkspaceBuilder<'_> {
         &self,
         source_id: crate::SourceId,
         program: &Program,
+        analysis: &crate::Analysis,
         external_values: &BTreeMap<String, Value>,
+        external_roots: &HashMap<String, PersistentValue>,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         let source = self.sources.get(source_id);
+        let mut graph_account = QuotaAccount::new(self.engine.config.module_quota);
+        if let Some(query) = self.query {
+            graph_account = graph_account.with_query(query.clone());
+        }
+        if let Ok(function) = compile_program_analyzed_in(source, program, analysis) {
+            if let Ok(execution) = Vm::new()
+                .with_debug_sink(Arc::clone(&self.engine.debug_sink))
+                .execute_in_work_best_effort(
+                    &self.main.heap,
+                    external_roots,
+                    &function,
+                    &[],
+                    &mut graph_account,
+                )
+            {
+                merge_runtime_diagnostics(diagnostics, graph_account.take_diagnostics());
+                merge_runtime_errors(diagnostics, execution.failures);
+            }
+        }
         let mut values = external_values.clone();
         let mut failed = HashSet::new();
         let mut account = QuotaAccount::new(self.engine.config.module_quota);
@@ -2492,32 +2515,8 @@ impl RecoverableWorkspaceBuilder<'_> {
                 .with_debug_sink(Arc::clone(&self.engine.debug_sink))
                 .execute_with_account_best_effort(&function, &[], &mut account);
             let emitted = account.take_diagnostics();
-            for diagnostic in emitted {
-                if let Some(existing) = diagnostics
-                    .iter_mut()
-                    .find(|existing| same_runtime_diagnostic(existing, &diagnostic))
-                {
-                    if existing.labels.len() < diagnostic.labels.len() {
-                        *existing = diagnostic;
-                    }
-                } else {
-                    diagnostics.push(diagnostic);
-                }
-            }
-            for error in failures {
-                if let Some(diagnostic) = error.diagnostic() {
-                    if let Some(existing) = diagnostics
-                        .iter_mut()
-                        .find(|existing| same_runtime_diagnostic(existing, &diagnostic))
-                    {
-                        if existing.labels.len() < diagnostic.labels.len() {
-                            *existing = diagnostic;
-                        }
-                    } else {
-                        diagnostics.push(diagnostic);
-                    }
-                }
-            }
+            merge_runtime_diagnostics(diagnostics, emitted);
+            merge_runtime_errors(diagnostics, failures);
             match result {
                 Ok(value) => {
                     values.insert(binding.value.name.value.clone(), value);
@@ -2541,6 +2540,31 @@ impl RecoverableWorkspaceBuilder<'_> {
                 }
                 Err(_) => break,
             }
+        }
+    }
+}
+
+fn merge_runtime_errors(diagnostics: &mut Vec<Diagnostic>, errors: Vec<crate::RuntimeError>) {
+    merge_runtime_diagnostics(
+        diagnostics,
+        errors.into_iter().filter_map(|error| error.diagnostic()),
+    );
+}
+
+fn merge_runtime_diagnostics(
+    diagnostics: &mut Vec<Diagnostic>,
+    emitted: impl IntoIterator<Item = Diagnostic>,
+) {
+    for diagnostic in emitted {
+        if let Some(existing) = diagnostics
+            .iter_mut()
+            .find(|existing| same_runtime_diagnostic(existing, &diagnostic))
+        {
+            if existing.labels.len() < diagnostic.labels.len() {
+                *existing = diagnostic;
+            }
+        } else {
+            diagnostics.push(diagnostic);
         }
     }
 }
@@ -10825,6 +10849,39 @@ export { CallExpr, Expr };"#,
         assert!(
             division_errors[0].labels[0].location.start
                 < division_errors[1].labels[0].location.start
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_workspace_preserves_partial_arrays_across_bindings() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+let first = array.map([1, 2], fn(item) {
+    if item == 1 { fail!("first", item) } else { item }
+});
+let second = array.map(first, fn(item) {
+    if item == 2 { fail!("second", item) } else { item }
+});
+export let output = `unexpected \{array.length(second)}`;"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let messages = snapshot
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .filter(|message| matches!(*message, "first" | "second"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            ["first", "second"],
+            "{:#?}",
+            snapshot.diagnostics()
         );
         fs::remove_dir_all(directory).unwrap();
     }
