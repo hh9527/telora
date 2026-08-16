@@ -848,9 +848,15 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
 
 fn show_command(arguments: ShowArgs) -> Result<(), String> {
     let context = command_context(arguments.context)?;
-    let workspace = engine()
-        .recover_workspace_id(context, &arguments.module_id)
-        .map_err(|error| error.to_string())?;
+    let workspace = if arguments.module_id.starts_with("std/") {
+        engine()
+            .recover_builtin_workspace(&arguments.module_id)
+            .map_err(|error| error.to_string())?
+    } else {
+        engine()
+            .recover_workspace_id(context, &arguments.module_id)
+            .map_err(|error| error.to_string())?
+    };
     let root = workspace
         .modules()
         .iter()
@@ -885,7 +891,8 @@ fn kind_of(kind: DefinitionKind) -> Option<ShowKind> {
     match kind {
         DefinitionKind::Type => Some(ShowKind::Type),
         DefinitionKind::Let => Some(ShowKind::Let),
-        DefinitionKind::DefinitionSlot => Some(ShowKind::Def),
+        DefinitionKind::DefinitionSlot | DefinitionKind::Native => Some(ShowKind::Def),
+        DefinitionKind::NativeType => Some(ShowKind::Type),
         DefinitionKind::Import => Some(ShowKind::Import),
         _ => None,
     }

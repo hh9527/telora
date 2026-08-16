@@ -30,6 +30,7 @@ pub enum HirDefinitionKind {
     Type,
     Import,
     Native,
+    NativeType,
     Parameter,
     Pattern,
 }
@@ -263,7 +264,8 @@ impl Resolver {
             BindingKind::Import => HirDefinitionKind::Import,
             BindingKind::OpenImport => HirDefinitionKind::Import,
             BindingKind::Export => HirDefinitionKind::Import,
-            BindingKind::Native | BindingKind::NativeType => HirDefinitionKind::Native,
+            BindingKind::Native => HirDefinitionKind::Native,
+            BindingKind::NativeType => HirDefinitionKind::NativeType,
         };
         let id = self.define_name(name, kind, binding.value.name.location, scope, top_level);
         self.hir.definitions[id.index()].type_parameters = binding

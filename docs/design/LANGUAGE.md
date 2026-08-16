@@ -925,8 +925,11 @@ telora lsp
 文件所在目录解析。只有 standalone 根文件可以声明这些 resolver options。`-S` 与
 binary name、`-C` 互斥。
 
-其他命令的 `<module>` 是 `@src/...`、`@bin/...`、`@test/...` 或依赖模块 ID，不是物理
-文件名。`show` 以稳定 `telora.show/v1` JSONL 输出语义事实，默认查询选中模块的顶层
+其他命令的 `<module>` 是 `@src/...`、`@bin/...`、`@test/...`、依赖模块 ID，或
+Host 注册的公开 `std/...` 模块 ID，不是物理文件名。`show std/string --exports` 与
+源码中的 `import "std/string"` 选择同一个内置模块身份；不存在的 `std/...` 得到
+明确的 built-in module-not-found 错误，不按 workspace dependency 解析。`show` 以
+稳定 `telora.show/v1` JSONL 输出语义事实，默认查询选中模块的顶层
 local definitions。`-p` 执行大小写敏感的字面子串匹配，不解释 glob 或正则表达式；
 `-k` 接受由逗号分隔的 `type`、`let`、`def`、`import`。`--exports` 改查公共接口并与
 `-k` 互斥。`--at` 接受从一开始计数的 `line[:column]`：只有行号时选择与该行相交的
