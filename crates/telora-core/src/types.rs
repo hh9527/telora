@@ -2693,10 +2693,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
     );
     let mut local_annotations = HashMap::new();
     for binding in &program.value.body.value.bindings {
+        let mut annotation_values = tool_values.clone();
+        for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
+            annotation_values.insert(
+                parameter.value.clone(),
+                TypeDescriptor::Bound(TypeParameterId(index as u32)).to_value(&mut tool_vm),
+            );
+        }
         collect_nested_annotation_types(
             source_name,
             &binding.value.value,
-            &tool_values,
+            &annotation_values,
             account,
             sources,
             debug_sink,
@@ -11914,6 +11921,46 @@ mod tests {
         assert_eq!(
             rigid_capture.definition_schemes[&pair.id].display_name(),
             "for(A) Fn(A) -> (T0, A)"
+        );
+    }
+
+    #[test]
+    fn generic_contract_parameters_are_available_in_implementation_annotations() {
+        let analysis = analyze_with_natives(
+            "@struct type Pair(Left, Right) = {left: Left, right: Right};\
+             @struct type Box(Content) = {value: Content};\
+             def collect: for(N, M) Fn(Array(Box(Pair(N, M)))) -> Array(Box(Pair(N, M))) = fn(items) {\
+                 let result: Array(Box(Pair(N, M))) = items;\
+                 let retain = fn(values: Array(Box(Pair(N, M)))) -> Array(Box(Pair(N, M))) { values };\
+                 retain(result)\
+             };\
+             collect",
+            &[],
+        )
+        .unwrap();
+        let collect = analysis
+            .hir
+            .definitions()
+            .iter()
+            .find(|definition| definition.name == "collect")
+            .unwrap();
+        assert_eq!(
+            analysis.definition_schemes[&collect.id].display_name(),
+            "for(N, M) Fn(Array<{value: {left: N, right: M}}>) -> Array<{value: {left: N, right: M}}>"
+        );
+
+        let leaked = analyze_with_natives(
+            "def identity: for(N) Fn(N) -> N = fn(value) {\
+                 let result: N = value; result\
+             };\
+             let unrelated: N = 1; unrelated",
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            leaked.message.contains("unknown binding \"N\""),
+            "{}",
+            leaked.message
         );
     }
 
