@@ -217,6 +217,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             source: include_str!("../modules/std/string.native.telora"),
             functions: vec![
                 (
+                    "chars",
+                    NativeFunction::core_string(CoreStringFunction::Chars),
+                ),
+                (
                     "contains",
                     NativeFunction::core_string(CoreStringFunction::Contains),
                 ),

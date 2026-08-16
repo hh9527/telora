@@ -1,4 +1,5 @@
 native length: Fn(String) -> Int;
+native chars: Fn(String) -> Array(String);
 native join: Fn(Array(String), String) -> String;
 native join_lines: Fn(Array(String)) -> String;
 native split: Fn(String, String) -> Array(String);
@@ -14,4 +15,4 @@ native parse: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError);
 native decode_by_parse: Fn(Any, Any) -> Any;
 native encode_by_display: Fn(Any, Any) -> Any;
 
-export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, decode_by_parse, encode_by_display };
+export { length, chars, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, decode_by_parse, encode_by_display };

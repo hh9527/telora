@@ -6235,6 +6235,8 @@ name = "rustc"
                    empty_any: arrays.any([], fn(value) { value / 0 < 1 }),
                    empty_all: arrays.all([], fn(value) { value / 0 < 1 }),
                    chars: strings.length("形态a"),
+                   scalars: strings.chars("a形e\u{301}"),
+                   empty_scalars: strings.chars(""),
                    joined: strings.join(["a", "形", "c"], ":"),
                    split: strings.split("a::形", ":"),
                    scalar_split: strings.split("a形", ""),
@@ -6272,6 +6274,11 @@ unchanged", "|"),
         assert_eq!(result.get("empty_any").unwrap().to_string(), "'False");
         assert_eq!(result.get("empty_all").unwrap().to_string(), "'True");
         assert_eq!(result.get("chars").unwrap().to_string(), "3");
+        assert_eq!(
+            result.get("scalars").unwrap().to_string(),
+            r#"["a", "形", "e", "\u{301}"]"#
+        );
+        assert_eq!(result.get("empty_scalars").unwrap().to_string(), "[]");
         assert_eq!(result.get("joined").unwrap().to_string(), r#""a:形:c""#);
         assert_eq!(
             result.get("split").unwrap().to_string(),
