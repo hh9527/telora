@@ -521,6 +521,13 @@ capability、policy 或 dialect。
 递归类型使用有限图和受控 reference 表示，而不是无限展开的树。成功初始化的递归
 root 在冻结后发布；未初始化 reference 不能进入 persistent world。
 
+严格模块分析与 `check`/`show` 的恢复分析对非参数化递归 concrete type 使用相同的
+component sealing：先为同一递归 component 的全部 root 建立具名 reference，再整体
+求值并安装有限图。旁支 binding 的语法、类型或运行时失败不会把该 component 误报为
+不可部分求值，也不会迫使库作者把递归类型、引用它的 family 和多个函数契约拆到不同
+模块。裸 type alias 环和包含 family 的递归 component 不满足这一规则，仍按第 7.2 节
+拒绝。
+
 用户态 descriptor observer 可以识别 Ref 并显式解析。遍历不伴随具体值时，解释器
 必须自行处理循环；遍历有限、无环的运行时数据时，可以让普通值递归提供终止进度。
 

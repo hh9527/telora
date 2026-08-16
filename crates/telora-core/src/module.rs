@@ -11112,8 +11112,19 @@ export let output = "unreachable";"#
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"@struct type CallExpr = { args: Array(Expr) };
-@enum type Expr = { Call: CallExpr, Text: String };
+            r#"@struct type CallExpr = {args: Array(Expr)};
+@struct type BinExpr = {left: Expr, right: Expr};
+@enum type Expr = {Call: CallExpr, Bin: BinExpr, Text: String};
+@struct type Plan(A) = {root: Expr, value: A};
+def render: Fn(Expr) -> String = fn(expr) {
+    match expr {
+        'Call(call) => render(call.args[0]),
+        'Bin(bin) => `\{render(bin.left)}\{render(bin.right)}`,
+        'Text(text) => text,
+    }
+};
+def transform: for(A) Fn(Plan(A)) -> String = fn(plan) { render(plan.root) };
+def duplicate: Fn(Array(Expr)) -> Array(Expr) = fn(items) { items };
 def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
 let failed = reject(1);
 export let output = "unreachable";"#,
@@ -11131,7 +11142,7 @@ export let output = "unreachable";"#,
             .map(|diagnostic| diagnostic.message.as_str())
             .collect::<Vec<_>>();
         assert_eq!(messages, ["expected failure"]);
-        for name in ["CallExpr", "Expr"] {
+        for name in ["CallExpr", "BinExpr", "Expr", "Plan"] {
             let definition = snapshot
                 .definitions()
                 .iter()
