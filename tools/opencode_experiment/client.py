@@ -57,14 +57,16 @@ class Client:
     def abort_session(self, session_id: str) -> Any:
         return self._request(f"/session/{session_id}/abort", "POST", {})
 
-    def events(self) -> Iterator[dict[str, Any]]:
+    def events(self, timeout: float | None = None) -> Iterator[dict[str, Any]]:
         query = urllib.parse.urlencode({"directory": self.workspace})
         request = urllib.request.Request(f"{self.url}/event?{query}")
         try:
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=None) as response:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as response:
                 for raw in response:
                     if raw.startswith(b"data: "):
                         try: yield json.loads(raw[6:])
                         except json.JSONDecodeError: continue
+        except TimeoutError:
+            return
         except (urllib.error.URLError, OSError) as exc:
             raise ControlError(f"event stream unavailable: {exc}", 69) from None

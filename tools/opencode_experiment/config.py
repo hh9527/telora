@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -69,6 +69,8 @@ class Manifest:
     observe: tuple[str, ...]
     artifacts: tuple[dict[str, Any], ...]
     environment: dict[str, str]
+    permission_preflight: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    reporting: dict[str, Any] = field(default_factory=lambda: {"sinks": []})
     manifest_name: str = "experiment.json"
 
 def _string_array(value: Any, where: str) -> list[str]:
@@ -89,7 +91,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         raise ControlError(f"invalid experiment plan manifest: {exc}") from None
     if not isinstance(data, dict):
         raise ControlError("experiment manifest must be an object")
-    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment"}, "manifest")
+    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment", "permission_preflight", "reporting"}, "manifest")
     if data.get("schema") != "telora.opencode-cloned-plan/v1":
         raise ControlError("unsupported experiment manifest schema")
 
@@ -99,12 +101,40 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     validation = data.get("validation", [])
     artifacts = data.get("artifacts", [])
     environment = data.get("environment", {})
+    permission_preflight = data.get("permission_preflight", {})
+    reporting = data.get("reporting", {"sinks": []})
     archive = _string_array(data.get("archive", []), "archive")
     observe = _string_array(data.get("observe", []), "observe")
     if not isinstance(validation, list) or not isinstance(artifacts, list):
         raise ControlError("validation and artifacts must be arrays")
     if not isinstance(environment, dict):
         raise ControlError("environment must be an object")
+    if not isinstance(permission_preflight, dict):
+        raise ControlError("permission_preflight must be an object")
+    normalized_preflight = {}
+    for role, commands in permission_preflight.items():
+        validate_identifier(role, "permission preflight role")
+        normalized_preflight[role] = tuple(_string_array(commands, f"permission_preflight.{role}"))
+    if not isinstance(reporting, dict):
+        raise ControlError("reporting must be an object")
+    _keys(reporting, {"sinks"}, "reporting")
+    sinks = reporting.get("sinks", [])
+    if not isinstance(sinks, list):
+        raise ControlError("reporting.sinks must be an array")
+    normalized_sinks = []
+    for sink in sinks:
+        if not isinstance(sink, dict):
+            raise ControlError("reporting sink must be an object")
+        _keys(sink, {"kind", "repository", "issue"}, "reporting sink")
+        if sink.get("kind") != "github_issue_comment":
+            raise ControlError(f"unsupported reporting sink: {sink.get('kind')!r}")
+        repository = sink.get("repository")
+        issue = sink.get("issue")
+        if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+            raise ControlError("invalid GitHub reporting repository")
+        if not isinstance(issue, int) or issue <= 0:
+            raise ControlError("invalid GitHub reporting issue")
+        normalized_sinks.append(dict(sink))
     for name, value in environment.items():
         validator = OPENCODE_ENVIRONMENT.get(name)
         if validator is None:
@@ -134,4 +164,5 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     for item in (*archive, *observe):
         safe_relative(item)
     return Manifest(plan_id, root, dict(prompts), tuple(validation), tuple(archive),
-                    tuple(observe), tuple(artifacts), dict(environment))
+                    tuple(observe), tuple(artifacts), dict(environment), normalized_preflight,
+                    {"sinks": normalized_sinks})

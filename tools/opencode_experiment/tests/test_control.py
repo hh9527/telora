@@ -18,6 +18,9 @@ from tools.opencode_experiment.external import probe_direct, probe_mise, resolve
 from tools.opencode_experiment.state import atomic_json, load_state, save_state, SCHEMA
 from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare
 from tools.opencode_experiment.context import Context
+from tools.opencode_experiment.permissions import preflight_permissions
+from tools.opencode_experiment.reporting import submit_report
+from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -78,7 +81,7 @@ class ConfigStateTest(unittest.TestCase):
             "validation": [], "observe": ["bin"], "archive": ["bin", "opencode.json", "experiment.json"],
             "environment": environment or {},
         }))
-        (plan / "opencode.json").write_text(json.dumps({"default_agent": "main"}))
+        (plan / "opencode.json").write_text(json.dumps({"default_agent": "main", "permission": "deny"}))
 
     def test_identifiers_and_paths(self):
         self.assertEqual(validate_identifier("a2-001", "exec"), "a2-001")
@@ -104,6 +107,8 @@ class ConfigStateTest(unittest.TestCase):
             [item["name"] for item in manifest.validation],
             ["ontology", "ontology-verify", "enterprise", "enterprise-verify"],
         )
+        self.assertEqual(manifest.reporting["sinks"][0]["issue"], 63)
+        self.assertIn("./bin/telora run invalid -C ontology --best-effort", manifest.permission_preflight["a2"])
 
         plan = repo / "experiments" / "ontology-edsl"
         a2 = (plan / ".opencode" / "agents" / "a2.md").read_text(encoding="utf-8")
@@ -156,6 +161,8 @@ class ConfigStateTest(unittest.TestCase):
             self.assertTrue((Path(state["workspace"]) / "experiment.json").is_file())
             self.assertEqual((Path(state["workspace"]) / "bin/tool").read_text(), "tool")
             self.assertEqual(state["opencode_environment"], {})
+            self.assertEqual(state["permission_preflight"], {})
+            self.assertEqual(state["reporting"], {"sinks": []})
 
     def test_prepare_rejects_dirty_plan(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -244,6 +251,124 @@ class ArchiveExportTest(unittest.TestCase):
             with self.assertRaisesRegex(ControlError, "bad export"):
                 export_session(context, "ses_test")
             self.assertEqual(run.call_count, 3)
+
+
+class PermissionPreflightTest(unittest.TestCase):
+    def manifest(self, root: Path, commands: tuple[str, ...]) -> Manifest:
+        return Manifest("demo", root, {"start": "s", "continue": "c"}, (), (), (), (), {},
+                        {"worker": commands})
+
+    def workspace(self, root: Path, permission: object) -> Path:
+        workspace = root / "ws"; agents = workspace / ".opencode" / "agents"
+        agents.mkdir(parents=True)
+        (workspace / "opencode.json").write_text(json.dumps({"permission": "deny"}))
+        (agents / "worker.md").write_text(
+            f"---\npermission: {json.dumps(permission, separators=(',', ':'))}\n---\nWorker.\n"
+        )
+        return workspace
+
+    def test_accepts_declared_best_effort_command(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = self.workspace(root, {"bash": {
+                "*": "deny", "./bin/telora run * -C ontology *": "allow",
+            }})
+            command = "./bin/telora run invalid -C ontology --best-effort"
+            result = preflight_permissions(self.manifest(root, (command,)), workspace)
+            self.assertEqual(result["worker"], [{"command": command, "decision": "allow"}])
+
+    def test_rejects_deny_and_ask(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = self.workspace(root, {"bash": {"*": "deny"}})
+            with self.assertRaisesRegex(ControlError, "rejected worker command"):
+                preflight_permissions(self.manifest(root, ("./bin/telora run main",)), workspace)
+            workspace = self.workspace(root / "ask", {"bash": {"*": "ask"}})
+            with self.assertRaisesRegex(ControlError, "interactive permission"):
+                preflight_permissions(self.manifest(root, ()), workspace)
+
+
+class WatchTest(unittest.TestCase):
+    def test_window_debounce_timeout_and_finish(self):
+        empty = WatchWindow(10, 30, 300)
+        self.assertIsNone(empty.reason(309))
+        self.assertEqual(empty.reason(310), "timeout")
+        active = WatchWindow(10, 30, 300); active.add("one", {"kind": "file_start"}, 20)
+        self.assertIsNone(active.reason(49))
+        self.assertEqual(active.reason(50), "debounced")
+        self.assertEqual(active.reason(21, finished=True), "experiment_finished")
+
+    def test_reasoning_is_ignored_and_tool_states_are_distinct(self):
+        messages = [{"info": {"id": "msg", "role": "assistant"}, "parts": [
+            {"type": "reasoning", "text": "secret"},
+            {"id": "tool", "type": "tool", "tool": "bash",
+             "state": {"status": "running", "input": {"command": "echo ok"}}},
+        ]}]
+        started = message_events("ses", "a2", messages)
+        self.assertEqual([event[1]["kind"] for event in started], ["command_start"])
+        messages[0]["parts"][1]["state"] = {
+            "status": "completed", "input": {"command": "echo ok"}, "metadata": {"exit": 0},
+        }
+        completed = message_events("ses", "a2", messages)
+        self.assertEqual([event[1]["kind"] for event in completed], ["command_result"])
+        self.assertNotEqual(started[0][0], completed[0][0])
+
+    def test_permission_event_is_infrastructure_error(self):
+        events = acp_events({"type": "permission.asked", "properties": {"sessionID": "ses"}}, {})
+        self.assertEqual(events[0][1]["kind"], "infrastructure_permission_error")
+
+    def test_persisted_cursor_deduplicates_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); (root / "plan").write_text("demo\n")
+            save_state(root, {"schema": SCHEMA, "plan_id": "demo", "exec_name": "run",
+                               "phase": "finished", "workspace": "/tmp/ws",
+                               "server_url": "http://127.0.0.1:1", "session_id": "ses"})
+            manifest = Manifest("demo", root, {"start": "s", "continue": "c"}, (), (), (), (), {})
+            context = Context(root, root, load_state(root), manifest)
+            client = mock.Mock()
+            client.messages.return_value = [{"info": {"id": "msg", "role": "assistant"}, "parts": [
+                {"id": "tool", "type": "tool", "tool": "read",
+                 "state": {"status": "completed", "input": {"filePath": "GOAL.md"}}},
+            ]}]
+            client.children.return_value = []
+            with mock.patch.object(Context, "client", return_value=client):
+                first = watch_progress(context, 30, 300)
+                second = watch_progress(context, 30, 300)
+            self.assertEqual(len(first["events"]), 1)
+            self.assertEqual(second["events"], [])
+            self.assertEqual(first["next_cursor"], "1")
+            self.assertEqual(second["next_cursor"], "2")
+
+
+class ReportingTest(unittest.TestCase):
+    def context(self, root: Path, sinks: list[dict]) -> Context:
+        manifest = Manifest("demo", root, {"start": "s", "continue": "c"}, (), (), (), (), {})
+        state = {"exec_name": "run", "reporting": {"sinks": sinks}}
+        return Context(root, root / "execution", state, manifest)
+
+    def test_without_sink_only_persists_locally(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); body = root / "body.md"; body.write_text("Working.")
+            with mock.patch("tools.opencode_experiment.reporting.resolve_cli") as resolve:
+                record = submit_report(self.context(root, []), body)
+            resolve.assert_not_called()
+            self.assertEqual(record["status"], "ok")
+            stored = root / "execution" / "reports" / "000.md"
+            self.assertIn("未经 Host 验收", stored.read_text())
+
+    def test_github_sink_uses_body_file_and_records_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); body = root / "body.md"; body.write_text("Working.")
+            sink = {"kind": "github_issue_comment", "repository": "owner/repo", "issue": 7}
+            failed = subprocess.CompletedProcess([], 1, "", "offline")
+            with mock.patch("tools.opencode_experiment.reporting.resolve_cli", return_value=("gh",)), \
+                 mock.patch("tools.opencode_experiment.reporting.subprocess.run", return_value=failed) as run:
+                record = submit_report(self.context(root, [sink]), body)
+            self.assertEqual(record["status"], "error")
+            command = run.call_args.args[0]
+            self.assertIn("--body-file", command)
+            self.assertNotIn("--body", command)
+            self.assertEqual(record["sinks"][0]["error"], "offline")
 
 
 if __name__ == "__main__": unittest.main()

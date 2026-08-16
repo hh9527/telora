@@ -17,6 +17,7 @@ from .config import ControlError, Manifest, load_manifest, repository_root, sha2
 from .context import Context
 from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
+from .permissions import preflight_permissions
 from .state import SCHEMA, atomic_json, atomic_write, bind_plan, load_state, locked, now, save_state
 
 
@@ -115,6 +116,8 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
                     result = subprocess.run(resolve_command(item["build"], repo), cwd=repo)
                     if result.returncode: raise ControlError(f"artifact build failed: {name}", 70)
                 target = workspace / str(item["to"]); _copy_file(source.resolve(), target, int(str(item.get("mode", "0555")), 8)); state["binary_hashes"][name] = sha256(target)
+            state["permission_preflight"] = preflight_permissions(manifest, workspace)
+            state["reporting"] = manifest.reporting
             state["input_hashes"][manifest.manifest_name] = sha256(manifest.root / manifest.manifest_name)
             state["input_hashes"]["opencode.json"] = sha256(manifest.root / "opencode.json"); save_state(root, state)
         except Exception:

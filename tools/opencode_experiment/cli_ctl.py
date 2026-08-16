@@ -13,7 +13,9 @@ from .external import resolve_capabilities, resolve_cli
 from .lifecycle import finish, live_boundary, reconcile, run_validation, safe_cleanup, send_round, verify_prepared
 from .observe import failures, latest_assistant, normalized, recent, text_parts, timeline
 from .query import run_query, select_engine
+from .reporting import submit_report
 from .state import atomic_json, load_state, locked, save_state
+from .watch import watch_progress
 
 
 def emit(value: object) -> None:
@@ -42,6 +44,8 @@ def parser() -> argparse.ArgumentParser:
     child_ask = commands.add_parser("child-ask"); child_ask.add_argument("exec_name"); child_ask.add_argument("session_id"); child_ask.add_argument("--agent", required=True); group = child_ask.add_mutually_exclusive_group(required=True); group.add_argument("message", nargs="?"); group.add_argument("--file")
     child_abort = commands.add_parser("child-abort"); child_abort.add_argument("exec_name"); child_abort.add_argument("session_id")
     query = commands.add_parser("query"); query.add_argument("exec_name"); group = query.add_mutually_exclusive_group(required=True); group.add_argument("expression", nargs="?"); group.add_argument("--file"); query.add_argument("--raw-output", action="store_true")
+    watch = commands.add_parser("watch"); watch.add_argument("exec_name"); watch.add_argument("--debounce", type=lambda x: count(x, 3600), default=30); watch.add_argument("--timeout", type=lambda x: count(x, 86400), default=300)
+    report = commands.add_parser("report"); report.add_argument("exec_name"); report.add_argument("--body-file", required=True, type=Path)
     return root
 
 
@@ -72,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor": emit(doctor()); return 0
         context = resolve(args.exec_name)
         exec_name = args.exec_name
+        if args.command == "watch":
+            emit(watch_progress(context, args.debounce, args.timeout)); return 0
+        if args.command == "report":
+            value = submit_report(context, args.body_file)
+            emit({"exec_name": exec_name, "report": value["number"], "status": value["status"]})
+            return 1 if value["status"] == "error" else 0
         if args.command in ("child-continue", "child-ask", "child-abort"):
             children = context.client().children()
             if not any(child.get("id") == args.session_id for child in children):
