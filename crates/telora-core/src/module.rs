@@ -11353,6 +11353,82 @@ export let output = array.fold([1, 2, 3], 0, fn(acc, item) {
     }
 
     #[test]
+    fn recoverable_non_shape_array_operations_propagate_without_type_cascades() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+def pieces: Fn(Int) -> Array(Int) = fn(item) {
+    if item == 2 { fail!("piece-two", item) } else { [item] }
+};
+let flattened = array.flat_map([1, 2, 3], pieces);
+let concatenated = array.concat([[0], flattened, [4]]);
+let independent = array.map([5, 6], fn(item) {
+    if item == 6 { fail!("independent-six", item) } else { item }
+});
+export let output = array.length(concatenated) + array.length(independent);"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let messages = snapshot
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&"piece-two"), "{messages:#?}");
+        assert!(messages.contains(&"independent-six"), "{messages:#?}");
+        assert!(
+            !messages.iter().any(|message| {
+                message.contains("concat item")
+                    || message.contains("flat_map callback")
+                    || message.contains("expected Func")
+            }),
+            "{messages:#?}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_data_consumers_do_not_observe_failed_children_as_values() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+def reject: Fn(Int) -> Int = fn(item) { fail!("nested", item) };
+let failed: Array(Int) = array.map([1], reject);
+let compared = failed == [1];
+let selected = failed[0] == 1;
+export let output = (compared, selected);"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let messages = snapshot
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| **message == "nested")
+                .count(),
+            1,
+            "{messages:#?}"
+        );
+        assert!(
+            !messages.iter().any(|message| {
+                message.contains("expected") || message.contains("non-exhaustive")
+            }),
+            "{messages:#?}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn recoverable_workspace_records_panic_and_continues_independent_bindings() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
