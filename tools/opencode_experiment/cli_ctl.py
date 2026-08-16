@@ -12,6 +12,7 @@ from .config import ControlError, repository_root, validate_identifier
 from .context import Context, resolve
 from .external import resolve_capabilities, resolve_cli
 from .lifecycle import finish, live_boundary, reconcile, request_start, run_validation, safe_cleanup, send_round, verify_prepared
+from .metrics import collect_metrics
 from .observe import failures, latest_assistant, normalized, recent, text_parts, timeline
 from .query import run_query, select_engine
 from .reporting import submit_report
@@ -34,7 +35,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control and observe named opencode experiments.")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
-    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "iterate", "validate", "export", "finish", "retire", "children", "tree"):
+    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "iterate", "validate", "export", "finish", "retire", "children", "tree", "stats"):
         item = commands.add_parser(name); item.add_argument("exec_name")
         if name == "answer": item.add_argument("--json", action="store_true", dest="as_json")
     for name, default, maximum in (("recent", 3, 20), ("timeline", 8, 50)):
@@ -120,13 +121,38 @@ def main(argv: list[str] | None = None) -> int:
             if initial and initial[0].get("user_message_id"):
                 emit(initial[0]); return 0
             emit(send_round(context, "initial", context.manifest.prompts["start"], require_empty=True)); return 0
-        if args.command in ("status", "snapshot", "recent", "timeline", "files", "failures", "audit", "answer", "query", "children", "tree", "child-recent"):
+        if args.command in ("status", "snapshot", "recent", "timeline", "files", "failures", "audit", "answer", "query", "children", "tree", "child-recent", "stats"):
             if context.state["phase"] in ("waiting", "preparing"):
                 if args.command != "status": raise ControlError(f"execution is {context.state['phase']}; only status and start are available", 75)
                 emit({"workspace": context.state.get("workspace"), "session_id": context.state.get("session_id"),
                       "phase": context.state["phase"], "status": {"type": context.state["phase"]}})
                 return 0
-            if context.state["phase"] in ("finished", "retired") or not Path(context.state["workspace"]).exists():
+            frozen = context.state["phase"] in ("finished", "retired") or not Path(context.state["workspace"]).exists()
+            if args.command == "stats":
+                if frozen:
+                    child_records = json.loads((context.root / "result" / "children.json").read_text(encoding="utf-8"))
+                    children = []
+                    child_messages = {}
+                    for record in child_records:
+                        session_id = record["session_id"]
+                        exported = json.loads((context.root / "result" / "children" / f"{session_id}.json").read_text(encoding="utf-8"))
+                        info = dict(exported.get("info", {}))
+                        info.setdefault("id", session_id)
+                        info.setdefault("title", record.get("title"))
+                        children.append(info)
+                        messages_path = context.root / "result" / "children" / f"{session_id}.messages.json"
+                        child_messages[session_id] = json.loads(messages_path.read_text(encoding="utf-8"))
+                    workspace = context.root / "result" / "workspace"
+                    load_messages = child_messages.__getitem__
+                else:
+                    client = context.client()
+                    children = client.children()
+                    workspace = Path(context.state["workspace"])
+                    load_messages = client.session_messages
+                emit(collect_metrics(exec_name, context.state["phase"], workspace, children,
+                                     load_messages, context.state.get("metrics", context.manifest.metrics)))
+                return 0
+            if frozen:
                 document = json.loads((context.root / "result" / "query.json").read_text(encoding="utf-8")); messages = document["messages"]
                 document["state"] = context.state
             else: document, messages = live_document(context)

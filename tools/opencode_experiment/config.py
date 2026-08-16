@@ -72,6 +72,7 @@ class Manifest:
     permission_preflight: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reporting: dict[str, Any] = field(default_factory=lambda: {"sinks": []})
     manifest_name: str = "experiment.json"
+    metrics: dict[str, Any] = field(default_factory=lambda: {"roles": {}})
 
 def _string_array(value: Any, where: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
@@ -91,7 +92,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         raise ControlError(f"invalid experiment plan manifest: {exc}") from None
     if not isinstance(data, dict):
         raise ControlError("experiment manifest must be an object")
-    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment", "permission_preflight", "reporting"}, "manifest")
+    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment", "permission_preflight", "reporting", "metrics"}, "manifest")
     if data.get("schema") != "telora.opencode-cloned-plan/v1":
         raise ControlError("unsupported experiment manifest schema")
 
@@ -103,6 +104,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     environment = data.get("environment", {})
     permission_preflight = data.get("permission_preflight", {})
     reporting = data.get("reporting", {"sinks": []})
+    metrics = data.get("metrics", {"roles": {}})
     archive = _string_array(data.get("archive", []), "archive")
     observe = _string_array(data.get("observe", []), "observe")
     if not isinstance(validation, list) or not isinstance(artifacts, list):
@@ -135,6 +137,50 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         if not isinstance(issue, int) or issue <= 0:
             raise ControlError("invalid GitHub reporting issue")
         normalized_sinks.append(dict(sink))
+    if not isinstance(metrics, dict):
+        raise ControlError("metrics must be an object")
+    _keys(metrics, {"roles"}, "metrics")
+    metric_roles = metrics.get("roles", {})
+    if not isinstance(metric_roles, dict):
+        raise ControlError("metrics.roles must be an object")
+    normalized_metric_roles: dict[str, Any] = {}
+    for role, definition in metric_roles.items():
+        validate_identifier(role, "metrics role")
+        if not isinstance(definition, dict):
+            raise ControlError(f"metrics.roles.{role} must be an object")
+        _keys(definition, {"learning_phases", "work_phase", "work_files", "artifacts"}, f"metrics.roles.{role}")
+        learning_phases = _string_array(definition.get("learning_phases", []), f"metrics.roles.{role}.learning_phases")
+        for phase in learning_phases:
+            validate_identifier(phase, "metrics learning phase")
+        work_phase = definition.get("work_phase", "work")
+        if not isinstance(work_phase, str):
+            raise ControlError(f"metrics.roles.{role}.work_phase must be a string")
+        validate_identifier(work_phase, "metrics work phase")
+        work_files = _string_array(definition.get("work_files", []), f"metrics.roles.{role}.work_files")
+        for pattern in work_files:
+            safe_relative(pattern, "metrics work file pattern")
+        artifact_kinds = definition.get("artifacts", {})
+        if not isinstance(artifact_kinds, dict):
+            raise ControlError(f"metrics.roles.{role}.artifacts must be an object")
+        _keys(artifact_kinds, {"code", "documents"}, f"metrics.roles.{role}.artifacts")
+        normalized_artifacts: dict[str, dict[str, list[str]]] = {}
+        for kind, categories in artifact_kinds.items():
+            if not isinstance(categories, dict):
+                raise ControlError(f"metrics.roles.{role}.artifacts.{kind} must be an object")
+            normalized_categories = {}
+            for category, patterns in categories.items():
+                validate_identifier(category, "metrics artifact category")
+                values = _string_array(patterns, f"metrics.roles.{role}.artifacts.{kind}.{category}")
+                for pattern in values:
+                    safe_relative(pattern, "metrics artifact pattern")
+                normalized_categories[category] = values
+            normalized_artifacts[kind] = normalized_categories
+        normalized_metric_roles[role] = {
+            "learning_phases": learning_phases,
+            "work_phase": work_phase,
+            "work_files": work_files,
+            "artifacts": normalized_artifacts,
+        }
     for name, value in environment.items():
         validator = OPENCODE_ENVIRONMENT.get(name)
         if validator is None:
@@ -165,4 +211,4 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         safe_relative(item)
     return Manifest(plan_id, root, dict(prompts), tuple(validation), tuple(archive),
                     tuple(observe), tuple(artifacts), dict(environment), normalized_preflight,
-                    {"sinks": normalized_sinks})
+                    {"sinks": normalized_sinks}, metrics={"roles": normalized_metric_roles})

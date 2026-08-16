@@ -6,7 +6,9 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -17,11 +19,12 @@ from tools.opencode_experiment.query import select_engine
 from tools.opencode_experiment.external import probe_direct, probe_mise, resolve_capabilities, resolve_cli, resolve_command
 from tools.opencode_experiment.state import atomic_json, load_state, save_state, SCHEMA
 from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare, request_start, reserve, start_requested
+from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
-from tools.opencode_experiment.cli_ctl import parser as control_parser, require_iteration_available
+from tools.opencode_experiment.cli_ctl import main as control_main, parser as control_parser, require_iteration_available
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -98,6 +101,10 @@ class ConfigStateTest(unittest.TestCase):
         with self.assertRaisesRegex(ControlError, "already used"):
             require_iteration_available([{"kind": "initial"}, {"kind": "iteration"}])
 
+    def test_stats_command_is_available(self):
+        args = control_parser().parse_args(["stats", "run"])
+        self.assertEqual((args.command, args.exec_name), ("stats", "run"))
+
     def test_atomic_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); (root / "plan").write_text("plan\n")
@@ -152,6 +159,26 @@ class ConfigStateTest(unittest.TestCase):
                 with self.assertRaises(ControlError):
                     load_manifest(repo, "demo")
 
+    def test_manifest_validates_metrics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary); plan = repo / "experiments" / "demo"
+            self.write_plan(plan)
+            path = plan / "experiment.json"
+            data = json.loads(path.read_text())
+            data["metrics"] = {"roles": {"worker": {
+                "learning_phases": ["language_learning"],
+                "work_phase": "implementation",
+                "work_files": ["output/src/main.telora"],
+                "artifacts": {
+                    "code": {"core": ["output/src/*.telora"]},
+                    "documents": {"docs": ["output/NOTES.md"]},
+                },
+            }}}
+            path.write_text(json.dumps(data))
+            metrics = load_manifest(repo, "demo").metrics
+            self.assertEqual(metrics["roles"]["worker"]["work_phase"], "implementation")
+            self.assertEqual(metrics["roles"]["worker"]["artifacts"]["code"]["core"], ["output/src/*.telora"])
+
     def test_prepare_clones_committed_plan_revision(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
@@ -173,6 +200,7 @@ class ConfigStateTest(unittest.TestCase):
             self.assertEqual(state["opencode_environment"], {})
             self.assertEqual(state["permission_preflight"], {})
             self.assertEqual(state["reporting"], {"sinks": []})
+            self.assertEqual(state["metrics"], {"roles": {}})
 
     def test_reserve_waits_for_start_request_before_preparing(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -247,6 +275,98 @@ class ObserveQueryTest(unittest.TestCase):
     def test_query_prefers_direct_jq_over_mise_jaq(self):
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch("tools.opencode_experiment.external.probe_direct", side_effect=lambda cli: (cli,) if cli == "jq" else None), mock.patch("tools.opencode_experiment.external.probe_mise", return_value=None):
             self.assertEqual(select_engine(), ("jq", ["jq"]))
+
+
+class MetricsTest(unittest.TestCase):
+    def test_collects_phases_tokens_waiting_and_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            source = workspace / "output" / "src" / "main.telora"
+            source.parent.mkdir(parents=True)
+            source.write_text("let x = 1;\nexport { x };\n")
+            notes = workspace / "output" / "NOTES.md"
+            notes.write_text("# Notes\n\nDone.\n")
+            messages = [
+                {"info": {"role": "user", "time": {"created": 0}}, "parts": []},
+                {"info": {"role": "assistant", "time": {"created": 1, "completed": 5},
+                          "tokens": {"input": 10, "output": 2, "reasoning": 3, "cache": {"read": 7}}}, "parts": []},
+                {"info": {"role": "user", "time": {"created": 10}}, "parts": []},
+                {"info": {"role": "assistant", "time": {"created": 11, "completed": 15},
+                          "tokens": {"input": 20, "output": 3, "reasoning": 4}}, "parts": []},
+                {"info": {"role": "assistant", "time": {"created": 16, "completed": 20},
+                          "tokens": {"input": 30, "output": 5, "reasoning": 6}},
+                 "parts": [{"type": "tool", "tool": "write", "state": {"input": {"filePath": str(source)}}}]},
+                {"info": {"role": "assistant", "time": {"created": 21, "completed": 25},
+                          "tokens": {"input": 40, "output": 7, "reasoning": 8}}, "parts": []},
+            ]
+            definition = {"roles": {"worker": {
+                "learning_phases": ["language_learning", "api_learning"],
+                "work_phase": "implementation",
+                "work_files": ["output/src/main.telora"],
+                "artifacts": {
+                    "code": {"core": ["output/src/*.telora"]},
+                    "documents": {"docs": ["output/NOTES.md"]},
+                },
+            }}}
+            children = [{"id": "ses_worker", "agent": "worker", "title": "Worker",
+                         "model": {"providerID": "provider", "id": "model", "variant": "v"}}]
+            result = collect_metrics("run", "idle", workspace, children, lambda _session: messages, definition)
+            role = result["roles"][0]
+            self.assertEqual([phase["name"] for phase in role["phases"]],
+                             ["language_learning", "api_learning", "implementation"])
+            self.assertEqual(role["tokens"]["fresh"], 138)
+            self.assertEqual(role["time"], {"first_created": 1, "last_completed": 25,
+                                             "active_ms": 16, "span_ms": 24, "waiting_ms": 8})
+            self.assertEqual(role["artifacts"]["code"]["total"], {"files": 1, "lines": 2, "bytes": 25})
+            self.assertEqual(role["artifacts"]["documents"]["total"]["lines"], 3)
+            self.assertEqual(role["productivity"]["code_lines_per_1k_work_fresh_tokens"], 20.833)
+            self.assertEqual(result["aggregate"]["phases"]["learning"]["tokens"]["fresh"], 42)
+            self.assertEqual(result["aggregate"]["phases"]["work"]["tokens"]["fresh"], 96)
+            self.assertEqual(result["aggregate"]["time"]["span_ms"], 24)
+
+    def test_unconfigured_role_is_not_mislabeled_as_learning(self):
+        messages = [{"info": {"role": "assistant", "time": {"created": 1, "completed": 2},
+                              "tokens": {"input": 3}}, "parts": []}]
+        children = [{"id": "ses_worker", "agent": "worker"}]
+        result = collect_metrics("run", "idle", Path("/tmp"), children, lambda _session: messages,
+                                 {"roles": {}})
+        role = result["roles"][0]
+        self.assertEqual(role["classification"], {"configured": False, "work_boundary_observed": None})
+        self.assertEqual([(phase["name"], phase["kind"]) for phase in role["phases"]],
+                         [("unclassified", "unclassified")])
+        self.assertEqual(result["aggregate"]["phases"]["unclassified"]["tokens"]["fresh"], 3)
+
+    def test_stats_reads_frozen_child_messages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result_dir = root / "result"
+            child_dir = result_dir / "children"
+            workspace = result_dir / "workspace"
+            child_dir.mkdir(parents=True)
+            workspace.mkdir()
+            session_id = "ses_worker"
+            (result_dir / "children.json").write_text(json.dumps([
+                {"session_id": session_id, "title": "Worker"},
+            ]))
+            (child_dir / f"{session_id}.json").write_text(json.dumps({
+                "info": {"id": session_id, "agent": "worker",
+                         "model": {"providerID": "provider", "id": "model"}},
+                "messages": [{"info": {"role": "assistant", "tokens": {"input": 999}}, "parts": []}],
+            }))
+            (child_dir / f"{session_id}.messages.json").write_text(json.dumps([
+                {"info": {"role": "assistant", "time": {"created": 1, "completed": 2},
+                          "tokens": {"input": 7}}, "parts": []},
+            ]))
+            context = Context(Path(temporary), root, {
+                "exec_name": "run", "phase": "finished", "workspace": "/tmp/missing",
+                "metrics": {"roles": {}},
+            }, mock.Mock(metrics={"roles": {}}))
+            output = StringIO()
+            with mock.patch("tools.opencode_experiment.cli_ctl.resolve", return_value=context), redirect_stdout(output):
+                self.assertEqual(control_main(["stats", "run"]), 0)
+            document = json.loads(output.getvalue())
+            self.assertEqual(document["execution_phase"], "finished")
+            self.assertEqual(document["roles"][0]["tokens"]["fresh"], 7)
 
 
 class ArchiveExportTest(unittest.TestCase):
