@@ -324,6 +324,64 @@ export { CallExpr, Expr };"#,
 }
 
 #[test]
+fn recursive_modules_are_consistent_across_check_show_and_run_modes() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/tree.telora"),
+        r#"import "std/array" as array;
+@struct type Node = {value: Int, children: Array(Node)};
+def total: Fn(Node) -> Int = fn(node) {
+    node.value + match array.get(node.children, 0) {
+        'None => 0,
+        'Some(child) => total(child),
+    }
+};
+let root: Node = {value: 1, children: [{value: 2, children: []}]};
+export {Node, root, total};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "@src/tree.telora" as tree;
+export let output = `\{tree.total(tree.root)}`;"#,
+    )
+    .unwrap();
+
+    let check = telora(&cwd)
+        .args(["check", "@src/tree.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stdout)
+    );
+    let records = jsonl(&check.stdout);
+    assert_eq!(records.last().unwrap()["status"], "ok");
+
+    let show = telora(&cwd)
+        .args(["show", "@src/tree.telora", "--exports"])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let exports = jsonl(&show.stdout);
+    assert_eq!(exports.len(), 3);
+    assert!(exports.iter().all(|record| {
+        record["authority"] == "authoritative" && !record["type"].as_str().unwrap().contains("Any")
+    }));
+
+    for arguments in [vec!["run", "main"], vec!["run", "main", "--best-effort"]] {
+        let run = telora(&cwd).args(arguments).output().unwrap();
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3");
+    }
+}
+
+#[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export let output = 1;").unwrap();

@@ -9776,6 +9776,105 @@ unchanged", "|"),
     }
 
     #[test]
+    fn recursive_values_cross_builtin_boundaries_without_losing_sealed_types() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+               import "std/codec" as codec;
+               import "std/dict" as dict;
+               import "std/dyn" as dyn;
+               import "std/fmt" as fmt;
+               import "std/json" as json;
+               import "std/option" as option;
+               import "std/result" as result;
+
+               @fmt.display_by("{value}")
+               @struct type Node = {value: Int, children: Array(Node)};
+               type NodeResult = Result(Node, String);
+               def identity: Fn(Node) -> Node = fn(node) { node };
+               let leaf: Node = {value: 2, children: []};
+               let root: Node = {value: 1, children: [leaf]};
+               let nodes: Array(Node) = [root, leaf];
+               let mapped: Array(Node) = array.map(nodes, identity);
+               let filtered: Array(Node) = array.filter(mapped, fn(node) { node.value > 0 });
+               let flattened: Array(Node) = array.flat_map(filtered, fn(node) { [node] });
+               let sum: Int = array.fold(flattened, 0, fn(total, node) {
+                   total + node.value
+               });
+               let indexed: Dict(Node) = {root: root, leaf: leaf};
+               let mapped_dict: Dict(Node) = dict.map_values(indexed, identity);
+               let maybe: Option(Node) = option.map('Some(root), identity);
+               let outcome: NodeResult = result.map('Ok(root), identity);
+               let packed = dyn.pack(Node, root);
+               let decoded: Node = codec.decode(
+                   Node,
+                   codec.encode(Node, root) |> result.unwrap,
+               ) |> result.unwrap;
+               export let output = {
+                   sum,
+                   mapped: mapped[0],
+                   dict_root: dict.get(mapped_dict, "root"),
+                   maybe,
+                   outcome,
+                   dyn_kind: dyn.kind(packed),
+                   decoded,
+                   display: fmt.display(Node, root),
+                   schema: json.schema(Node),
+               };"#,
+        )
+        .unwrap();
+
+        let module = load_module(&main, BTreeMap::new(), 1_000_000).unwrap();
+        for name in [
+            "NodeResult",
+            "identity",
+            "nodes",
+            "mapped",
+            "filtered",
+            "flattened",
+            "indexed",
+            "mapped_dict",
+            "maybe",
+            "outcome",
+            "decoded",
+        ] {
+            let ty = module
+                .analysis
+                .declared_types
+                .get(name)
+                .or_else(|| module.analysis.binding_types.get(name))
+                .copied()
+                .expect("audited binding has a type");
+            assert!(!module.analysis.display(ty).contains("Any"), "{name}");
+        }
+        let output = module.execute(1_000_000).unwrap().to_string();
+        assert!(output.contains("sum: 3"), "{output}");
+        assert!(output.contains("display: \"1\""), "{output}");
+        assert!(output.contains("dyn_kind: 'Dict"), "{output}");
+        assert!(output.contains("$defs"), "{output}");
+        assert!(output.contains("$ref"), "{output}");
+
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{next}")
+               @struct type Loop = {next: Loop};
+               export {Loop};"#,
+        )
+        .unwrap();
+        let error = load_module(&main, BTreeMap::new(), 1_000_000).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("type has no std/fmt.display capability"),
+            "{error}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_nested_type_families_preserve_recursive_codec_metadata() {
         let directory = fixture_dir();
         fs::write(
@@ -11867,12 +11966,14 @@ export let output = (compared, selected);"#,
             directory.join("main.telora"),
             r#"import "./reference-show.telora" as show;
                @struct type User = {name: String, scores: Array(Int)};
+               @struct type Node = {value: Int, children: Array(Node)};
                @enum type Choice = {None: 'None, Some: String};
                type Pair = Tuple([Int, String]);
                type Unary = Fn(Int) -> Int;
                let user: User = {name: "Ada", scores: [2, 3]};
                let none: Choice = 'None;
                let some: Choice = 'Some("x");
+               let node: Node = {value: 1, children: [{value: 2, children: []}]};
                {
                    inferred: show.my_show(Int)(42),
                    explicit: show.my_show@[Int](Int)(42),
@@ -11882,6 +11983,7 @@ export let output = (compared, selected);"#,
                    record: show.my_show(User)(user),
                    atom: show.my_show(Choice)(none),
                    tagged: show.my_show(Choice)(some),
+                   recursive: show.my_show(Node)(node),
                    function_error: show.my_show(Unary)(fn(value) { value }),
                }"#,
         )
@@ -11899,6 +12001,10 @@ export let output = (compared, selected);"#,
             ("record", "'Ok(\"{name: \\\"Ada\\\", scores: [2, 3]}\")"),
             ("atom", "'Ok(\"'None\")"),
             ("tagged", "'Ok(\"'Some(\\\"x\\\")\")"),
+            (
+                "recursive",
+                "'Ok(\"{children: [{children: [], value: 2}], value: 1}\")",
+            ),
         ] {
             assert_eq!(output.get(field).unwrap().to_string(), expected, "{field}");
         }
@@ -11927,12 +12033,15 @@ export let output = (compared, selected);"#,
                import "std/hash" as hash;
                @struct type User = {name: String, scores: Array(Int)};
                @struct type Renamed = {label: String, scores: Array(Int)};
+               @struct type Node = {value: Int, children: Array(Node)};
                @enum type Choice = {None: 'None, Some: String};
                type Pair = Tuple([Int, Int]);
                type Unary = Fn(Int) -> Int;
                let user: User = {name: "Ada", scores: [2, 3]};
                let changed: User = {name: "Ada", scores: [2, 4]};
                let renamed: Renamed = {label: "Ada", scores: [2, 3]};
+               let node: Node = {value: 1, children: [{value: 2, children: []}]};
+               let changed_node: Node = {value: 1, children: [{value: 3, children: []}]};
                let state = hash.new();
                let first = reference.my_hash(User)(user, state);
                {
@@ -11944,6 +12053,10 @@ export let output = (compared, selected);"#,
                    tag_payload: reference.my_hash(Choice)('None, state) ==
                        reference.my_hash(Choice)('Some(""), state),
                    alias_unchanged: hash.finish(state) == hash.finish(hash.new()),
+                   recursive_equal: reference.my_hash(Node)(node, state) ==
+                       reference.my_hash(Node)(node, state),
+                   recursive_different: reference.my_hash(Node)(node, state) ==
+                       reference.my_hash(Node)(changed_node, state),
                    function_error: reference.my_hash(Unary)(fn(value) { value }, state),
                    float_error: reference.my_hash(Float)(1.5, state),
                    opaque_error: reference.my_hash(hash.HashState)(state, state),
@@ -11956,10 +12069,16 @@ export let output = (compared, selected);"#,
         let Value::Dict(output) = module.execute(1_000_000).unwrap() else {
             panic!("hash interpreter test must return a Dict")
         };
-        for field in ["equal", "alias_unchanged"] {
+        for field in ["equal", "alias_unchanged", "recursive_equal"] {
             assert_eq!(output.get(field).unwrap().to_string(), "'True", "{field}");
         }
-        for field in ["changed", "field_name", "array_tuple", "tag_payload"] {
+        for field in [
+            "changed",
+            "field_name",
+            "array_tuple",
+            "tag_payload",
+            "recursive_different",
+        ] {
             assert_eq!(output.get(field).unwrap().to_string(), "'False", "{field}");
         }
         for field in [
