@@ -34,7 +34,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control and observe named opencode experiments.")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
-    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "validate", "export", "finish", "retire", "children", "tree"):
+    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "iterate", "validate", "export", "finish", "retire", "children", "tree"):
         item = commands.add_parser(name); item.add_argument("exec_name")
         if name == "answer": item.add_argument("--json", action="store_true", dest="as_json")
     for name, default, maximum in (("recent", 3, 20), ("timeline", 8, 50)):
@@ -53,6 +53,11 @@ def parser() -> argparse.ArgumentParser:
 def live_document(context: Context) -> tuple[dict, list]:
     state, messages = reconcile(context); context.state = state
     return normalized(state, messages, context.client().status(), context.rounds(), context.manifest.observe), messages
+
+
+def require_iteration_available(rounds: list[dict]) -> None:
+    if any(record.get("kind") == "iteration" for record in rounds):
+        raise ControlError("this execution has already used its single A2-A3 iteration", 75)
 
 
 def doctor() -> dict:
@@ -166,6 +171,9 @@ def main(argv: list[str] | None = None) -> int:
             _, latest = live_boundary(context, allow_length=True)
             if latest.get("info", {}).get("finish") != "length": raise ControlError("latest assistant message did not finish at length")
             emit(send_round(context, "continue", context.manifest.prompts["continue"], require_finish="length")); return 0
+        if args.command == "iterate":
+            require_iteration_available(context.rounds())
+            emit(send_round(context, "iteration", context.manifest.prompts["continue"])); return 0
         if args.command == "validate":
             values = run_validation(context); emit(values); return 1 if any(v["exit"] for v in values) else 0
         if args.command == "export":

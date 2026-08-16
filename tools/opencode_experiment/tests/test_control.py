@@ -21,6 +21,7 @@ from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
+from tools.opencode_experiment.cli_ctl import parser as control_parser, require_iteration_available
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -90,6 +91,13 @@ class ConfigStateTest(unittest.TestCase):
         for value in ("A", "a/b", ".hidden", "a b"):
             with self.assertRaises(ControlError): validate_identifier(value, "id")
 
+    def test_iteration_command_has_a_single_round_budget(self):
+        args = control_parser().parse_args(["iterate", "run"])
+        self.assertEqual((args.command, args.exec_name), ("iterate", "run"))
+        require_iteration_available([{"kind": "initial"}])
+        with self.assertRaisesRegex(ControlError, "already used"):
+            require_iteration_available([{"kind": "initial"}, {"kind": "iteration"}])
+
     def test_atomic_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); (root / "plan").write_text("plan\n")
@@ -107,7 +115,7 @@ class ConfigStateTest(unittest.TestCase):
             [item["name"] for item in manifest.validation],
             ["ontology", "ontology-verify", "enterprise", "enterprise-verify"],
         )
-        self.assertEqual(manifest.reporting["sinks"][0]["issue"], 63)
+        self.assertEqual(manifest.reporting, {"sinks": []})
         self.assertIn("./bin/telora run invalid -C ontology --best-effort", manifest.permission_preflight["a2"])
 
         plan = repo / "experiments" / "ontology-edsl"
@@ -124,6 +132,8 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("bindings: Array(Val)", design)
         self.assertIn("完整内容", coordinator)
         self.assertIn("当前反馈完整内容", coordinator)
+        self.assertIn("整个 execution 不存在第二轮修订", coordinator)
+        self.assertIn("./oc-ctl iterate", (plan / "README.md").read_text(encoding="utf-8"))
         self.assertEqual([item["cwd"] for item in manifest.validation], ["ontology", "ontology", "ent-1", "ent-1"])
 
     def test_manifest_validates_opencode_environment(self):
