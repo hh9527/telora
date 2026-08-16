@@ -1385,6 +1385,16 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     for binding in bindings.values() {
         tool_values.insert(binding.value.name.value.clone(), any_metadata.clone());
     }
+    for node in &dependencies.nodes {
+        let binding = bindings[&node.definition];
+        if binding.value.type_parameters.is_empty()
+            && !binding.value.decorators.is_empty()
+            && dependency_reaches(&dependencies, node.definition, node.definition)
+        {
+            let name = binding.value.name.value.clone();
+            tool_values.insert(name.clone(), TypeDescriptor::Named(name).to_value(&mut vm));
+        }
+    }
     let mut account = QuotaAccount::new(quota);
     if let Some(query) = control.query {
         account = account.with_query(query.clone());
@@ -1572,19 +1582,111 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .map(|node| node.definition)
             .collect::<Vec<_>>();
         let had_cycle = !cyclic.is_empty();
-        for definition in cyclic {
-            let binding = bindings[&definition];
-            let diagnostic = DiagnosticId::from_index(diagnostics.len());
-            diagnostics.push(Diagnostic::error(
-                format!(
-                    "recursive type component containing {:?} cannot be partially evaluated",
-                    binding.value.name.value
-                ),
-                binding.value.name.location,
-            ));
-            let mut fact = SemanticFact::incomputable(None, IncomputableReason::CyclicEvaluation);
-            fact.diagnostics.push(diagnostic);
-            facts.insert(definition, fact);
+        let mut handled = HashSet::new();
+        for root in cyclic {
+            if !handled.insert(root) {
+                continue;
+            }
+            let component = dependencies
+                .nodes
+                .iter()
+                .map(|node| node.definition)
+                .filter(|definition| !facts.contains_key(definition))
+                .filter(|definition| {
+                    dependency_reaches(&dependencies, root, *definition)
+                        && dependency_reaches(&dependencies, *definition, root)
+                })
+                .collect::<Vec<_>>();
+            handled.extend(component.iter().copied());
+            let concrete_decorated = component.iter().all(|definition| {
+                let binding = bindings[definition];
+                binding.value.type_parameters.is_empty() && !binding.value.decorators.is_empty()
+            });
+            if concrete_decorated {
+                let mut descriptors = BTreeMap::new();
+                let mut values = BTreeMap::new();
+                let mut failed = false;
+                for definition in &component {
+                    let binding = bindings[definition];
+                    let outcome = evaluate_tool_expression(
+                        &source_name,
+                        &binding.value.value,
+                        &tool_values,
+                        &mut account,
+                        sources,
+                        &debug_sink,
+                    )
+                    .and_then(|value| {
+                        TypeDescriptor::from_value(&value)
+                            .map(|descriptor| (value, descriptor))
+                            .map_err(|message| {
+                                FrontendError::from_diagnostic(
+                                    sources,
+                                    Diagnostic::error(
+                                        format!(
+                                            "type {} produced invalid metadata: {message}",
+                                            binding.value.name.value
+                                        ),
+                                        binding.value.value.location,
+                                    ),
+                                )
+                            })
+                    });
+                    match outcome {
+                        Ok((value, descriptor)) => {
+                            descriptors.insert(binding.value.name.value.clone(), descriptor);
+                            values.insert(binding.value.name.value.clone(), value);
+                        }
+                        Err(error) => {
+                            let diagnostic = DiagnosticId::from_index(diagnostics.len());
+                            diagnostics.push(error.diagnostic.map_or_else(
+                                || Diagnostic::error(error.message, binding.value.value.location),
+                                |diagnostic| *diagnostic,
+                            ));
+                            let mut fact = SemanticFact::incomputable(
+                                None,
+                                IncomputableReason::UnsupportedOperation,
+                            );
+                            fact.diagnostics.push(diagnostic);
+                            facts.insert(*definition, fact);
+                            failed = true;
+                        }
+                    }
+                }
+                if !failed {
+                    let roots = types.install_named_descriptors(&descriptors);
+                    for definition in &component {
+                        let binding = bindings[definition];
+                        let name = &binding.value.name.value;
+                        facts.insert(*definition, SemanticFact::known(roots[name]));
+                        tool_values.insert(name.clone(), values[name].clone());
+                    }
+                } else {
+                    for definition in &component {
+                        facts.entry(*definition).or_insert_with(|| {
+                            SemanticFact::unknown(UnknownReason::BlockedBy(
+                                FactIdentity::HirDefinition(root),
+                            ))
+                        });
+                    }
+                }
+                continue;
+            }
+            for definition in component {
+                let binding = bindings[&definition];
+                let diagnostic = DiagnosticId::from_index(diagnostics.len());
+                diagnostics.push(Diagnostic::error(
+                    format!(
+                        "recursive type component containing {:?} cannot be partially evaluated",
+                        binding.value.name.value
+                    ),
+                    binding.value.name.location,
+                ));
+                let mut fact =
+                    SemanticFact::incomputable(None, IncomputableReason::CyclicEvaluation);
+                fact.diagnostics.push(diagnostic);
+                facts.insert(definition, fact);
+            }
         }
         if had_cycle {
             continue;
@@ -12892,7 +12994,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_type_evaluation_marks_recursive_components_explicitly() {
+    fn partial_type_evaluation_seals_decorated_recursive_components() {
         let partial = analyze_partial_types(
             "recursive.telora",
             "@struct type Node = {children: Array(Node)}; 0",
@@ -12904,11 +13006,82 @@ mod tests {
             .iter()
             .find(|definition| definition.name == "Node")
             .unwrap();
-        assert_eq!(
-            partial.definition_facts[&node.id].state,
-            FactState::Incomputable(IncomputableReason::CyclicEvaluation)
-        );
+        assert_eq!(partial.definition_facts[&node.id].state, FactState::Known);
         assert_eq!(partial.dependencies.nodes[0].dependencies, vec![node.id]);
+        assert!(partial.diagnostics.is_empty());
+        assert_eq!(
+            partial
+                .types
+                .display(partial.definition_facts[&node.id].value.unwrap()),
+            "{children: Array<Node>}"
+        );
+    }
+
+    #[test]
+    fn partial_type_evaluation_seals_multi_node_expr_components_and_dependents() {
+        let partial = analyze_partial_types(
+            "recursive-expr.telora",
+            "@struct type CallNode = {args: Array(Expr)};\
+             @struct type BinNode = {left: Expr, right: Expr};\
+             @enum type Expr = {Literal: Int, Call: CallNode, Bin: BinNode};\
+             @struct type Plan(A) = {root: Expr, value: A};\
+             def render: Fn(Expr) -> String = fn(expr) { \"ok\" };\
+             def transform: for(A) Fn(Plan(A)) -> String = fn(plan) { render(plan.root) };\
+             def duplicate: Fn(Array(Expr)) -> Array(Expr) = fn(items) { items };\
+             0",
+            Quota::with_fuel(1_000),
+        );
+        let definition = |name: &str| {
+            partial
+                .hir
+                .definitions()
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap()
+                .id
+        };
+        for name in ["CallNode", "BinNode", "Expr", "Plan"] {
+            assert_eq!(
+                partial.definition_facts[&definition(name)].state,
+                FactState::Known,
+                "{name}"
+            );
+        }
+        assert!(partial.diagnostics.is_empty());
+        let plan = partial
+            .definition_schemes
+            .get(&definition("Plan"))
+            .expect("dependent family keeps its scheme");
+        assert!(
+            plan.display_name().contains("root: enum"),
+            "{}",
+            plan.display_name()
+        );
+        assert!(
+            !plan.display_name().contains("Any"),
+            "{}",
+            plan.display_name()
+        );
+    }
+
+    #[test]
+    fn partial_type_evaluation_rejects_recursive_aliases_and_families() {
+        for (name, source) in [
+            ("alias", "type Left = Right; type Right = Left; 0"),
+            ("family", "@struct type Loop(A) = {next: Loop(A)}; 0"),
+        ] {
+            let partial = analyze_partial_types(
+                &format!("recursive-{name}.telora"),
+                source,
+                Quota::with_fuel(100),
+            );
+            assert!(partial.definition_facts.values().all(|fact| {
+                fact.state == FactState::Incomputable(IncomputableReason::CyclicEvaluation)
+            }));
+            assert!(partial.diagnostics.iter().all(|diagnostic| {
+                diagnostic.message.contains("cannot be partially evaluated")
+            }));
+        }
     }
 
     #[test]
