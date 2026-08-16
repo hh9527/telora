@@ -1,8 +1,7 @@
 use crate::ast::{BindingKind, Expr, ExprKind, Program, StringPartKind, TypeArgumentKind};
 use crate::compiler::{
-    collect_runtime_names, compile_expression_with_bindings, compile_metadata_initializer,
-    compile_program_analyzed_in, compile_program_with_promoted_types, function_contract_arity,
-    type_link_key,
+    compile_metadata_initializer, compile_program_analyzed_in, compile_program_with_promoted_types,
+    function_contract_arity, type_link_key,
 };
 use crate::core::{
     EDGE_RUNTIME_MODULE, PRELUDE_MODULE, edge_runtime_source, module_specs, run_entry_source,
@@ -2338,11 +2337,10 @@ impl RecoverableWorkspaceBuilder<'_> {
                             } else {
                                 runtime_diagnostics.extend(emitted);
                             }
-                            self.evaluate_independent_bindings(
+                            self.evaluate_best_effort_module(
                                 source_id,
                                 program,
                                 &analysis,
-                                &external_values,
                                 &external_roots,
                                 &mut runtime_diagnostics,
                             );
@@ -2537,12 +2535,11 @@ impl RecoverableWorkspaceBuilder<'_> {
         Ok((analysis, value, root, account.take_diagnostics()))
     }
 
-    fn evaluate_independent_bindings(
+    fn evaluate_best_effort_module(
         &self,
         source_id: crate::SourceId,
         program: &Program,
         analysis: &crate::Analysis,
-        external_values: &BTreeMap<String, Value>,
         external_roots: &HashMap<String, PersistentValue>,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
@@ -2564,66 +2561,6 @@ impl RecoverableWorkspaceBuilder<'_> {
             {
                 merge_runtime_diagnostics(diagnostics, graph_account.take_diagnostics());
                 merge_runtime_errors(diagnostics, execution.failures);
-            }
-        }
-        let mut values = external_values.clone();
-        let mut failed = HashSet::new();
-        let mut account = QuotaAccount::new(self.engine.config.module_quota);
-        if let Some(query) = self.query {
-            account = account.with_query(query.clone());
-        }
-        const MAX_RUNTIME_DIAGNOSTICS: usize = 16;
-        for binding in &program.value.body.value.bindings {
-            if !matches!(binding.value.kind, BindingKind::Let | BindingKind::Def) {
-                continue;
-            }
-            if diagnostics.len() >= MAX_RUNTIME_DIAGNOSTICS {
-                return;
-            }
-            let mut dependencies = HashSet::new();
-            collect_runtime_names(&binding.value.value, &mut dependencies);
-            if dependencies.iter().any(|name| failed.contains(name)) {
-                failed.insert(binding.value.name.value.clone());
-                continue;
-            }
-            let Ok(function) = compile_expression_with_bindings(
-                &source.name,
-                &format!("<best-effort:{}>", binding.value.name.value),
-                &binding.value.value,
-                &values,
-                source,
-            ) else {
-                failed.insert(binding.value.name.value.clone());
-                continue;
-            };
-            let (result, failures) = Vm::new()
-                .with_debug_sink(Arc::clone(&self.engine.debug_sink))
-                .execute_with_account_best_effort(&function, &[], &mut account);
-            let emitted = account.take_diagnostics();
-            merge_runtime_diagnostics(diagnostics, emitted);
-            merge_runtime_errors(diagnostics, failures);
-            match result {
-                Ok(value) => {
-                    values.insert(binding.value.name.value.clone(), value);
-                }
-                Err(error)
-                    if error.failure_class() == crate::evaluation::FailureClass::Recoverable =>
-                {
-                    failed.insert(binding.value.name.value.clone());
-                    if let Some(diagnostic) = error.diagnostic() {
-                        if let Some(existing) = diagnostics
-                            .iter_mut()
-                            .find(|existing| same_runtime_diagnostic(existing, &diagnostic))
-                        {
-                            if existing.labels.len() < diagnostic.labels.len() {
-                                *existing = diagnostic;
-                            }
-                        } else {
-                            diagnostics.push(diagnostic);
-                        }
-                    }
-                }
-                Err(_) => break,
             }
         }
     }
@@ -11483,6 +11420,73 @@ export let output = array.length(concatenated) + array.length(independent);"#,
                 message.contains("concat item")
                     || message.contains("flat_map callback")
                     || message.contains("expected Func")
+            }),
+            "{messages:#?}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_function_failure_matrix_has_no_call_cascade() {
+        let directory = fixture_dir();
+        let dependency = directory.join("dependency.telora");
+        let main = directory.join("main.telora");
+        fs::write(
+            &dependency,
+            r#"@struct type Plan(Revision) = { revision: Revision };
+def ensure_plan: for(Revision) Fn(Plan(Revision), Plan(Revision)) -> Plan(Revision) = fn(left, right) {
+    fail!("cross polymorphic", left)
+};
+def ensure_int: Fn(Int, Int) -> Int = fn(left, right) {
+    fail!("cross monomorphic", left)
+};
+export { Plan, ensure_plan, ensure_int };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./dependency.telora" as dependency;
+def local_poly: for(Item) Fn(Item, Item) -> Item = fn(left, right) {
+    fail!("local polymorphic", left)
+};
+def local_int: Fn(Int, Int) -> Int = fn(left, right) {
+    fail!("local monomorphic", left)
+};
+let plan: dependency.Plan(Int) = { revision: 1 };
+let cross_poly = dependency.ensure_plan(plan, plan);
+let cross_mono = dependency.ensure_int(1, 2);
+let own_poly = local_poly(plan, plan);
+let own_mono = local_int(1, 2);
+export let output = (cross_poly, cross_mono, own_poly, own_mono);"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let messages = snapshot
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        for expected in [
+            "cross polymorphic",
+            "cross monomorphic",
+            "local polymorphic",
+            "local monomorphic",
+        ] {
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|message| **message == expected)
+                    .count(),
+                1,
+                "{messages:#?}"
+            );
+        }
+        assert!(
+            !messages.iter().any(|message| {
+                message.contains("tag constructor")
+                    || message.contains("expected Func")
+                    || message.contains("expected Dict")
             }),
             "{messages:#?}"
         );

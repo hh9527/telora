@@ -1228,43 +1228,6 @@ impl Vm {
         })
     }
 
-    pub(crate) fn execute_with_account_best_effort(
-        &mut self,
-        function: &BytecodeFunction,
-        arguments: &[Value],
-        account: &mut QuotaAccount,
-    ) -> (Result<Value, RuntimeError>, Vec<RuntimeError>) {
-        let diagnostic_start = account.diagnostics.len();
-        let background = Heap::main();
-        match self.execute_in_work_best_effort(
-            &background,
-            &HashMap::new(),
-            function,
-            arguments,
-            account,
-        ) {
-            Ok(execution) => {
-                let result =
-                    fail_on_reported_error(account, diagnostic_start, function).and_then(|()| {
-                        match execution.world.export(&background) {
-                            Ok(value) => Ok(value),
-                            Err(_) if !execution.failures.is_empty() => {
-                                Err(execution.failures[0].clone())
-                            }
-                            Err(heap_error) => Err(error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                heap_error.to_string(),
-                                function,
-                                0,
-                            )),
-                        }
-                    });
-                (result, execution.failures)
-            }
-            Err(error) => (Err(error), Vec::new()),
-        }
-    }
-
     pub(crate) fn execute_in_work(
         &mut self,
         background: &Heap,

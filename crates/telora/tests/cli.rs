@@ -240,6 +240,66 @@ export let output = if array.length(broken) > 0 { "unexpected" } else { "empty" 
 }
 
 #[test]
+fn check_and_best_effort_run_do_not_repeat_cross_module_polymorphic_failures() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/dependency.telora"),
+        r#"@struct type Plan(Revision) = { revision: Revision };
+def ensure_plan: for(Revision) Fn(Plan(Revision), Plan(Revision)) -> Plan(Revision) = fn(left, right) {
+    fail!("plan rejected", left)
+};
+export { Plan, ensure_plan };"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "@src/dependency.telora" as dependency;
+let plan: dependency.Plan(Int) = { revision: 1 };
+export let output = dependency.ensure_plan(plan, plan);"#,
+    )
+    .unwrap();
+
+    let check = telora(&cwd)
+        .args(["check", "@bin/main.telora"])
+        .output()
+        .unwrap();
+    assert!(!check.status.success());
+    let check_records = jsonl(&check.stdout);
+    assert_eq!(
+        check_records
+            .iter()
+            .filter(|record| record["message"] == "plan rejected")
+            .count(),
+        1
+    );
+    assert!(!check_records.iter().any(call_cascade));
+
+    let run = telora(&cwd)
+        .args(["run", "main", "--best-effort"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(run.stdout.is_empty());
+    let run_records = jsonl(&run.stderr);
+    assert_eq!(
+        run_records
+            .iter()
+            .filter(|record| record["message"] == "plan rejected")
+            .count(),
+        1
+    );
+    assert!(!run_records.iter().any(call_cascade));
+}
+
+fn call_cascade(record: &Value) -> bool {
+    record["message"].as_str().is_some_and(|message| {
+        message.contains("tag constructor")
+            || message.contains("expected Func")
+            || message.contains("expected Dict")
+    })
+}
+
+#[test]
 fn recursive_type_metadata_does_not_add_recovery_errors() {
     let cwd = fixture();
     let source = r#"@struct type CallExpr = { args: Array(Expr) };
