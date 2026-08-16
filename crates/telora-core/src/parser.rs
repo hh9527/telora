@@ -842,7 +842,7 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             Rule::TypeBinding => {
-                let decorators = self.decorators(node)?;
+                let mut decorators = self.decorators(node)?;
                 let type_parameters = self
                     .rule_children(node)
                     .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
@@ -856,13 +856,25 @@ impl<'a> Lowerer<'a> {
                     .unwrap_or_default();
                 let equal = self.first_token(node, Token::Equal)?;
                 let start = self.cst.span(equal).start;
-                let value = self.expression(
-                    self.children(node)
-                        .find(|child| {
-                            self.is_expression(*child) && self.cst.span(*child).start > start
-                        })
-                        .ok_or_else(|| self.error(node, "type has no value"))?,
-                )?;
+                let initializer = self.children(node).find(|child| {
+                    matches!(
+                        self.rule(*child),
+                        Some(Rule::StructInitializer | Rule::EnumInitializer)
+                    ) && self.cst.span(*child).start > start
+                });
+                let value = if let Some(initializer) = initializer {
+                    let (value, model) = self.declared_type_initializer(initializer)?;
+                    decorators.push(model);
+                    value
+                } else {
+                    self.expression(
+                        self.children(node)
+                            .find(|child| {
+                                self.is_expression(*child) && self.cst.span(*child).start > start
+                            })
+                            .ok_or_else(|| self.error(node, "type has no value"))?,
+                    )?
+                };
                 let value =
                     self.apply_decorators(&decorators, "Type", &name, value, self.location(node));
                 Ok(located(
@@ -2421,6 +2433,128 @@ impl<'a> Lowerer<'a> {
             .collect()
     }
 
+    fn declared_type_initializer(&self, node: NodeRef) -> Result<(Expr, Decorator), Diagnostic> {
+        let (operation, members) = match self.rule(node) {
+            Some(Rule::StructInitializer) => {
+                let mut fields = Vec::new();
+                let mut names = std::collections::HashSet::new();
+                for field in self
+                    .rule_children(node)
+                    .filter(|child| self.rule(*child) == Some(Rule::StructInitializerField))
+                {
+                    let name_node = self.first_token(field, Token::Identifier)?;
+                    let name = self.identifier(name_node);
+                    if !names.insert(name.value.clone()) {
+                        return Err(self.error(
+                            name_node,
+                            format!("duplicate Struct field {:?}", name.value),
+                        ));
+                    }
+                    let colon = self.first_token(field, Token::Colon)?;
+                    let value_node = self
+                        .children(field)
+                        .find(|child| {
+                            self.is_expression(*child)
+                                && self.cst.span(*child).start > self.cst.span(colon).start
+                        })
+                        .ok_or_else(|| self.error(field, "Struct field has no type"))?;
+                    let decorators = self.decorators(field)?;
+                    let value = self.apply_decorators(
+                        &decorators,
+                        "Field",
+                        &name,
+                        self.expression(value_node)?,
+                        self.location(field),
+                    );
+                    fields.push(located(
+                        DictFieldKind {
+                            decorators,
+                            name: Some(name),
+                            value,
+                        },
+                        self.location(field),
+                    ));
+                }
+                ("struct", fields)
+            }
+            Some(Rule::EnumInitializer) => {
+                let mut variants = Vec::new();
+                let mut names = std::collections::HashSet::new();
+                for variant in self
+                    .rule_children(node)
+                    .filter(|child| self.rule(*child) == Some(Rule::EnumInitializerVariant))
+                {
+                    let tag_node = self.first_token(variant, Token::Atom)?;
+                    let name = located(
+                        self.text(tag_node).trim_start_matches('\'').to_owned(),
+                        self.location(tag_node),
+                    );
+                    if !names.insert(name.value.clone()) {
+                        return Err(self
+                            .error(tag_node, format!("duplicate Enum variant {:?}", name.value)));
+                    }
+                    let payload = if let Ok(left_paren) = self.first_token(variant, Token::LParen) {
+                        let payload = self
+                            .children(variant)
+                            .find(|child| {
+                                self.is_expression(*child)
+                                    && self.cst.span(*child).start > self.cst.span(left_paren).start
+                            })
+                            .ok_or_else(|| {
+                                self.error(variant, "Enum variant has no payload type")
+                            })?;
+                        self.expression(payload)?
+                    } else {
+                        located(ExprKind::Atom("None".to_owned()), self.location(tag_node))
+                    };
+                    let decorators = self.decorators(variant)?;
+                    let value = self.apply_decorators(
+                        &decorators,
+                        "Field",
+                        &name,
+                        payload,
+                        self.location(variant),
+                    );
+                    variants.push(located(
+                        DictFieldKind {
+                            decorators,
+                            name: Some(name),
+                            value,
+                        },
+                        self.location(variant),
+                    ));
+                }
+                ("enum", variants)
+            }
+            _ => return Err(self.error(node, "invalid type initializer")),
+        };
+        let location = self.location(node);
+        let callee_token = self
+            .children(node)
+            .find(|child| {
+                matches!(
+                    self.cst.get(*child),
+                    Node::Token(Token::StructInitializer | Token::EnumInitializer, _)
+                )
+            })
+            .unwrap_or(node);
+        let operation_location = self.location(callee_token);
+        Ok((
+            located(ExprKind::Dict(members), location),
+            located(
+                DecoratorKind {
+                    callee: located(
+                        ExprKind::Variable(located(operation.to_owned(), operation_location)),
+                        operation_location,
+                    ),
+                    arguments: Vec::new(),
+                    configured: false,
+                },
+                operation_location,
+            ),
+        ))
+    }
+
     fn apply_decorators(
         &self,
         decorators: &[Decorator],
@@ -2429,27 +2563,7 @@ impl<'a> Lowerer<'a> {
         mut value: Expr,
         target_location: Location,
     ) -> Expr {
-        let context = located(
-            ExprKind::Dict(vec![
-                located(
-                    DictFieldKind {
-                        decorators: Vec::new(),
-                        name: Some(located("kind".to_owned(), target_location)),
-                        value: located(ExprKind::Atom(kind.to_owned()), target_location),
-                    },
-                    target_location,
-                ),
-                located(
-                    DictFieldKind {
-                        decorators: Vec::new(),
-                        name: Some(located("name".to_owned(), name.location)),
-                        value: located(ExprKind::String(name.value.clone()), name.location),
-                    },
-                    name.location,
-                ),
-            ]),
-            target_location,
-        );
+        let context = self.decorator_context(kind, name, target_location);
         for decorator in decorators.iter().rev() {
             let callee = if decorator.value.configured {
                 located(
@@ -2471,6 +2585,30 @@ impl<'a> Lowerer<'a> {
             );
         }
         value
+    }
+
+    fn decorator_context(&self, kind: &str, name: &Identifier, target_location: Location) -> Expr {
+        located(
+            ExprKind::Dict(vec![
+                located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located("kind".to_owned(), target_location)),
+                        value: located(ExprKind::Atom(kind.to_owned()), target_location),
+                    },
+                    target_location,
+                ),
+                located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located("name".to_owned(), name.location)),
+                        value: located(ExprKind::String(name.value.clone()), name.location),
+                    },
+                    name.location,
+                ),
+            ]),
+            target_location,
+        )
     }
 
     fn expression_children(&self, node: NodeRef) -> Result<Vec<Expr>, Diagnostic> {
@@ -3818,6 +3956,91 @@ export { private as visible, identity as map };"#,
         assert_eq!(binding.value.type_parameters[0].location.range(), 18..22);
         assert_eq!(binding.value.type_parameters[1].location.range(), 24..29);
         assert!(matches!(binding.value.value.value, ExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn lowers_struct_and_enum_initializers_to_model_calls() {
+        let program = parse(
+            "declared.telora",
+            "type User = struct {name: String}; type Maybe(A) = enum {'None, 'Some(A)}; Maybe",
+        )
+        .unwrap();
+        let user = &program.value.body.value.bindings[0];
+        let ExprKind::Call { callee, arguments } = &user.value.value.value else {
+            panic!("expected Struct model call");
+        };
+        assert!(matches!(&callee.value, ExprKind::Variable(name) if name.value == "struct"));
+        assert_eq!(arguments.len(), 2);
+        assert!(matches!(&arguments[1].value, ExprKind::Dict(fields) if fields.len() == 1));
+
+        let maybe = &program.value.body.value.bindings[1];
+        let ExprKind::Call { callee, arguments } = &maybe.value.value.value else {
+            panic!("expected Enum model call");
+        };
+        assert!(matches!(&callee.value, ExprKind::Variable(name) if name.value == "enum"));
+        assert!(matches!(&arguments[1].value, ExprKind::Dict(variants) if variants.len() == 2));
+    }
+
+    #[test]
+    fn rejects_duplicate_declared_type_members() {
+        for (source, expected) in [
+            (
+                "type T = struct {value: Int, value: String};",
+                "duplicate Struct field",
+            ),
+            (
+                "type T = enum {'Value, 'Value(Int)};",
+                "duplicate Enum variant",
+            ),
+        ] {
+            let error = parse("duplicate.telora", source).unwrap_err();
+            assert!(error.message.contains(expected), "{}", error.message);
+        }
+    }
+
+    #[test]
+    fn declaration_initializers_preserve_root_and_member_decorator_order() {
+        let program = parse(
+            "decorated.telora",
+            "@outer type T = struct {@inner value: Int}; T",
+        )
+        .unwrap();
+        let binding = &program.value.body.value.bindings[0];
+        assert_eq!(binding.value.decorators.len(), 2);
+        let ExprKind::Call {
+            callee: outer,
+            arguments: outer_arguments,
+        } = &binding.value.value.value
+        else {
+            panic!("expected outer decorator call");
+        };
+        assert!(matches!(&outer.value, ExprKind::Variable(name) if name.value == "outer"));
+        let ExprKind::Call {
+            callee: model,
+            arguments: model_arguments,
+        } = &outer_arguments[1].value
+        else {
+            panic!("expected Struct model call");
+        };
+        assert!(matches!(&model.value, ExprKind::Variable(name) if name.value == "struct"));
+        let ExprKind::Dict(fields) = &model_arguments[1].value else {
+            panic!("expected Struct fields");
+        };
+        assert!(matches!(fields[0].value.value.value, ExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn declaration_initializers_are_not_general_expressions_or_variadic_variants() {
+        for source in [
+            "let value = struct {field: Int}; value",
+            "fn() { enum {'None} }",
+            "type Event = enum {'Moved(Int, Int)}; Event",
+        ] {
+            assert!(
+                parse("invalid.telora", source).is_err(),
+                "accepted {source}"
+            );
+        }
     }
 
     #[test]

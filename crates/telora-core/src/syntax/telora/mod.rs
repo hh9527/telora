@@ -54,7 +54,7 @@ fn finish_parse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ast::{AstNode, Binding, ExpectedSyntax, Program, StringLiteral};
+    use ast::{AstNode, Binding, ExpectedSyntax, Program, StringLiteral, TypeInitializer};
     use lexer::Token;
     use parser::{Node, NodeRef};
 
@@ -155,6 +155,56 @@ option "module.documentation" {stability: "experimental"};"#;
                 .bindings()
                 .any(|binding| matches!(binding, Binding::Export(_)))
         );
+    }
+
+    #[test]
+    fn cst_exposes_declared_struct_and_enum_initializers() {
+        let source = "type User = struct {name: String}; type Maybe(A) = enum {'None, 'Some(A)};";
+        let mut sources = crate::source::SourceDatabase::default();
+        let id = sources.add("declared.telora", source);
+        let parsed = parse(id, source);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let bindings = Program::cast(&parsed.syntax, NodeRef::ROOT)
+            .unwrap()
+            .body()
+            .unwrap()
+            .bindings()
+            .collect::<Vec<_>>();
+        let Binding::Type(user) = bindings[0] else {
+            panic!("expected User type binding");
+        };
+        let Some(TypeInitializer::Struct(initializer)) = user.initializer() else {
+            panic!("expected Struct initializer");
+        };
+        assert_eq!(initializer.fields().count(), 1);
+        let Binding::Type(maybe) = bindings[1] else {
+            panic!("expected Maybe type binding");
+        };
+        let Some(TypeInitializer::Enum(initializer)) = maybe.initializer() else {
+            panic!("expected Enum initializer");
+        };
+        assert_eq!(initializer.variants().count(), 2);
+    }
+
+    #[test]
+    fn damaged_declaration_initializers_recover_later_bindings() {
+        let source = "type Broken = struct {value: }; let after = 2; after";
+        let mut sources = crate::source::SourceDatabase::default();
+        let id = sources.add("broken-declared.telora", source);
+        let parsed = parse(id, source);
+        assert!(parsed.has_errors());
+        let names = Program::cast(&parsed.syntax, NodeRef::ROOT)
+            .unwrap()
+            .body()
+            .unwrap()
+            .bindings()
+            .filter_map(Binding::name)
+            .map(|name| {
+                let range = name.range();
+                source[range.start as usize..range.end as usize].to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|name| name == "after"), "{names:?}");
     }
 
     #[test]

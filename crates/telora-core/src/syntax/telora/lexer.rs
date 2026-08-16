@@ -89,6 +89,8 @@ pub enum Token {
     Placeholder,
     IndexedPlaceholder,
     Identifier,
+    StructInitializer,
+    EnumInitializer,
     Whitespace,
     Comment,
     Error,
@@ -446,6 +448,13 @@ fn tokenize_internal(
     if contextualize {
         contextualize_projection_tokens(source, &mut tokens, &mut spans, None);
         contextualize_option_tokens(&mut tokens);
+        contextualize_declared_type_tokens(&mut tokens, |index| {
+            match &source[spans[index].clone()] {
+                "struct" => Some(Token::StructInitializer),
+                "enum" => Some(Token::EnumInitializer),
+                _ => None,
+            }
+        });
     }
     (tokens, spans)
 }
@@ -500,14 +509,74 @@ fn contextualize_option_tokens(tokens: &mut [Token]) {
     }
 }
 
+fn contextualize_declared_type_tokens(
+    tokens: &mut [Token],
+    mut classify: impl FnMut(usize) -> Option<Token>,
+) {
+    let significant = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| {
+            (!matches!(token, Token::Whitespace | Token::Comment)).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let mut cursor = 0usize;
+    while cursor < significant.len() {
+        if tokens[significant[cursor]] != Token::Type {
+            cursor += 1;
+            continue;
+        }
+        let Some(&name) = significant.get(cursor + 1) else {
+            break;
+        };
+        if tokens[name] != Token::Identifier {
+            cursor += 1;
+            continue;
+        }
+        let mut next = cursor + 2;
+        if significant
+            .get(next)
+            .is_some_and(|index| tokens[*index] == Token::LParen)
+        {
+            next += 1;
+            while significant
+                .get(next)
+                .is_some_and(|index| tokens[*index] != Token::RParen)
+            {
+                next += 1;
+            }
+            if significant.get(next).is_none() {
+                break;
+            }
+            next += 1;
+        }
+        let (Some(&equal), Some(&initializer), Some(&brace)) = (
+            significant.get(next),
+            significant.get(next + 1),
+            significant.get(next + 2),
+        ) else {
+            break;
+        };
+        if tokens[equal] == Token::Equal
+            && tokens[initializer] == Token::Identifier
+            && tokens[brace] == Token::LBrace
+            && let Some(kind) = classify(initializer)
+        {
+            tokens[initializer] = kind;
+        }
+        cursor += 1;
+    }
+}
+
 pub fn tokenize_document(
     source: &crate::document::DocumentText,
     diags: &mut Vec<Diagnostic>,
 ) -> (Vec<Token>, Vec<Span>) {
-    tokenize_fragments(source.chunks(), diags)
+    tokenize_fragments(source, source.chunks(), diags)
 }
 
 fn tokenize_fragments<'a>(
+    source: &crate::document::DocumentText,
     fragments: impl IntoIterator<Item = &'a str>,
     diags: &mut Vec<Diagnostic>,
 ) -> (Vec<Token>, Vec<Span>) {
@@ -583,6 +652,19 @@ fn tokenize_fragments<'a>(
     }
 
     contextualize_option_tokens(&mut tokens);
+    contextualize_declared_type_tokens(&mut tokens, |index| {
+        let range = crate::source::TextRange::from_usize(spans[index].clone())
+            .expect("lexer span fits document");
+        match source
+            .slice(range)
+            .expect("lexer span is a document slice")
+            .as_ref()
+        {
+            "struct" => Some(Token::StructInitializer),
+            "enum" => Some(Token::EnumInitializer),
+            _ => None,
+        }
+    });
     (tokens, spans)
 }
 
@@ -916,6 +998,39 @@ mod tests {
     }
 
     #[test]
+    fn contextualizes_only_direct_struct_and_enum_type_initializers() {
+        let source = "type User = struct {name: String}; type Maybe(A) = enum {'None, 'Some(A)}; struct('None, {}); @struct type Legacy = {}";
+        let mut diagnostics = Vec::new();
+        let (tokens, spans) = tokenize(source, &mut diagnostics);
+        let significant = tokens
+            .iter()
+            .copied()
+            .zip(spans.iter())
+            .filter(|(token, _)| !matches!(token, Token::Whitespace | Token::Comment))
+            .filter(|(_, span)| matches!(&source[(*span).clone()], "struct" | "enum"))
+            .map(|(token, span)| (token, &source[span.clone()]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            significant,
+            vec![
+                (Token::StructInitializer, "struct"),
+                (Token::EnumInitializer, "enum"),
+                (Token::Identifier, "struct"),
+                (Token::Identifier, "struct"),
+            ]
+        );
+        assert!(diagnostics.is_empty());
+
+        let document = crate::document::DocumentText::new(source);
+        let mut document_diagnostics = Vec::new();
+        assert_eq!(
+            tokenize_document(&document, &mut document_diagnostics),
+            (tokens, spans)
+        );
+        assert!(document_diagnostics.is_empty());
+    }
+
+    #[test]
     fn chunk_bridge_matches_contiguous_lexing() {
         let samples = [
             "#!/usr/bin/env -S telora run\nlet identifier = 123.456 # comment\nidentifier",
@@ -938,6 +1053,7 @@ mod tests {
             {
                 let mut actual_diags = Vec::new();
                 let actual = tokenize_fragments(
+                    &crate::document::DocumentText::new(sample),
                     [sample.get(..split).unwrap(), sample.get(split..).unwrap()],
                     &mut actual_diags,
                 );

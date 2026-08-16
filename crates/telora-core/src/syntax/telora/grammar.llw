@@ -10,6 +10,7 @@ token DoubleQuote='"' Backtick='`' RawString='<raw string>' StringText='<string 
 token UnknownEscapeSequence='<unknown escape>' UnterminatedEscapeSequence='<unterminated escape>';
 token InterpolationStart='<interpolation start>';
 token Atom='<atom>' Placeholder='_' IndexedPlaceholder='<indexed placeholder>' Identifier='<identifier>';
+token StructInitializer='<struct initializer>' EnumInitializer='<enum initializer>';
 token Whitespace Comment;
 
 skip Whitespace Comment;
@@ -31,7 +32,12 @@ native_binding: 'native' Identifier ':' type_scheme ';';
 native_type_binding: 'native' 'type' Identifier '@' Int ';';
 type_scheme: ['for' type_parameters] contract;
 type_parameters: '(' Identifier (?1 ',' Identifier)* [','] ')';
-type_binding: decorator* 'type' Identifier [type_parameters] '=' expression ';';
+type_binding: decorator* 'type' Identifier [type_parameters] '=' type_initializer ';';
+type_initializer^: struct_initializer | enum_initializer | expression;
+struct_initializer: StructInitializer '{' [struct_initializer_field (?1 ',' struct_initializer_field)* [',']] '}';
+struct_initializer_field: decorator* Identifier ':' expression;
+enum_initializer: EnumInitializer '{' [enum_initializer_variant (?1 ',' enum_initializer_variant)* [',']] '}';
+enum_initializer_variant: decorator* Atom ['(' expression ')'];
 import_binding: 'import' string_literal import_selector ';';
 import_selector: 'as' Identifier [',' ('*' | import_items)] | '*' | import_items;
 import_items: '{' import_item (?1 ',' import_item)* [','] '}';

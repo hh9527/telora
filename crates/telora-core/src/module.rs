@@ -6770,6 +6770,34 @@ unchanged", "|"),
     }
 
     #[test]
+    fn declaration_initializers_preserve_structural_family_and_recursive_behavior() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"type Box(A) = struct {value: A};
+               type Maybe(A) = enum {'None, 'Some(A)};
+               type Node = struct {value: Int, children: Array(Node)};
+               let boxed: Box(String) = {value: "ready"};
+               let maybe: Maybe(Int) = 'Some(3);
+               let node: Node = {value: 1, children: [{value: 2, children: []}]};
+               (boxed.value, maybe, node.children[0].value)"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let node = module
+            .analysis
+            .display(module.analysis.declared_types["Node"]);
+        assert!(node.contains("Array<Node>"), "{node}");
+        assert!(!node.contains("Any"), "{node}");
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "(\"ready\", 'Some(3), 2)"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_generic_struct_families_construct_nested_array_tuple_fields() {
         let directory = fixture_dir();
         fs::write(

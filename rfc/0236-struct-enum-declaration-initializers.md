@@ -1,6 +1,6 @@
 # RFC 0236: Struct and Enum declaration initializers
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #85
 - Depends on: RFC 0027, RFC 0028, RFC 0218, RFC 0235
 

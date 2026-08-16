@@ -313,8 +313,74 @@ impl<'tree> TypeBinding<'tree> {
         expression_slots(self.syntax).first().copied().flatten()
     }
 
+    pub fn initializer(self) -> Option<TypeInitializer<'tree>> {
+        self.syntax
+            .children()
+            .find_map(TypeInitializer::from_syntax)
+    }
+
     fn value_slot(self) -> Option<SyntaxNode<'tree>> {
-        expression_slot_nodes(self.syntax).first().copied()
+        expression_slot_nodes(self.syntax)
+            .first()
+            .copied()
+            .or_else(|| self.initializer().map(TypeInitializer::syntax))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum TypeInitializer<'tree> {
+    Struct(StructInitializer<'tree>),
+    Enum(EnumInitializer<'tree>),
+}
+
+impl<'tree> TypeInitializer<'tree> {
+    fn from_syntax(syntax: SyntaxNode<'tree>) -> Option<Self> {
+        match syntax.rule()? {
+            Rule::StructInitializer => Some(Self::Struct(StructInitializer { syntax })),
+            Rule::EnumInitializer => Some(Self::Enum(EnumInitializer { syntax })),
+            _ => None,
+        }
+    }
+
+    pub fn syntax(self) -> SyntaxNode<'tree> {
+        match self {
+            Self::Struct(initializer) => initializer.syntax,
+            Self::Enum(initializer) => initializer.syntax,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct StructInitializer<'tree> {
+    syntax: SyntaxNode<'tree>,
+}
+
+impl<'tree> StructInitializer<'tree> {
+    pub fn syntax(self) -> SyntaxNode<'tree> {
+        self.syntax
+    }
+
+    pub fn fields(self) -> impl Iterator<Item = SyntaxNode<'tree>> {
+        self.syntax
+            .children()
+            .filter(|child| child.rule() == Some(Rule::StructInitializerField))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct EnumInitializer<'tree> {
+    syntax: SyntaxNode<'tree>,
+}
+
+impl<'tree> EnumInitializer<'tree> {
+    pub fn syntax(self) -> SyntaxNode<'tree> {
+        self.syntax
+    }
+
+    pub fn variants(self) -> impl Iterator<Item = SyntaxNode<'tree>> {
+        self.syntax
+            .children()
+            .filter(|child| child.rule() == Some(Rule::EnumInitializerVariant))
     }
 }
 
@@ -449,13 +515,14 @@ pub fn validate(source: SourceId, tree: &CstData) -> Vec<SyntaxIssue> {
                 Some(Token::Semicolon),
                 ExpectedSyntax::BindingValue,
             )),
-            Binding::Type(node) if node.value().is_none() => issues.push(missing_slot(
-                source,
-                node.value_slot(),
-                node.syntax,
-                Some(Token::Semicolon),
-                ExpectedSyntax::BindingValue,
-            )),
+            Binding::Type(node) if node.value().is_none() && node.initializer().is_none() => issues
+                .push(missing_slot(
+                    source,
+                    node.value_slot(),
+                    node.syntax,
+                    Some(Token::Semicolon),
+                    ExpectedSyntax::BindingValue,
+                )),
             Binding::Import(node) if node.path().is_none() => {
                 issues.push(missing_at(source, node.syntax, ExpectedSyntax::ImportPath))
             }
