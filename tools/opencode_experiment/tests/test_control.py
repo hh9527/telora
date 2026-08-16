@@ -143,6 +143,24 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("./oc-ctl iterate", (plan / "README.md").read_text(encoding="utf-8"))
         self.assertEqual([item["cwd"] for item in manifest.validation], ["ontology", "ontology", "ent-1", "ent-1"])
 
+    def test_ontology_3_pins_model_and_requires_query_builder_review(self):
+        repo = Path(__file__).resolve().parents[3]
+        plan = repo / "experiments" / "ontology-3"
+        model = "deepseek/deepseek-v4-flash"
+        self.assertEqual(json.loads((plan / "opencode.json").read_text())["model"], model)
+        for role in ("coordinator", "a1", "a2", "a3"):
+            text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
+            self.assertIn(f'model: "{model}"', text)
+        coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
+        self.assertIn("GNNN-QUERY-BUILDER-DRAFT-READY", coordinator)
+        self.assertIn("GNNN-QUERY-BUILDER-REVIEW-READY", coordinator)
+        self.assertEqual((plan / "ontology" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
+        self.assertEqual((plan / "ent-1" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
+        domain = (plan / "ent-1" / "DOMAIN.md").read_text(encoding="utf-8")
+        ontology_goal = (plan / "ontology" / "GOAL.md").read_text(encoding="utf-8")
+        self.assertNotIn("一次结果必须同时保留", domain)
+        self.assertNotIn("多个非法意图产生诊断", ontology_goal)
+
     def test_manifest_validates_opencode_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary); plan = repo / "experiments" / "demo"
