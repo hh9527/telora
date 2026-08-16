@@ -88,6 +88,7 @@ impl HirProgram {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
             expression_stack: Vec::new(),
+            static_expressions: true,
         };
         let mut scopes = Vec::new();
         resolver.index_block(&program.value.body, &mut scopes, true);
@@ -103,6 +104,22 @@ impl HirProgram {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
             expression_stack: Vec::new(),
+            static_expressions: true,
+        };
+        resolver.index_expr(expression, &mut Vec::new());
+        resolver.hir.normalize_order();
+        resolver.hir
+    }
+
+    pub(crate) fn resolve_runtime_expression(
+        expression: &Expr,
+        external_names: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut resolver = Resolver {
+            hir: Self::default(),
+            external_names: external_names.into_iter().collect(),
+            expression_stack: Vec::new(),
+            static_expressions: false,
         };
         resolver.index_expr(expression, &mut Vec::new());
         resolver.hir.normalize_order();
@@ -117,6 +134,7 @@ impl HirProgram {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
             expression_stack: Vec::new(),
+            static_expressions: true,
         };
         resolver.index_block_parts(
             &program.bindings,
@@ -232,6 +250,7 @@ struct Resolver {
     hir: HirProgram,
     external_names: HashSet<String>,
     expression_stack: Vec<HirExpressionId>,
+    static_expressions: bool,
 }
 
 impl Resolver {
@@ -325,7 +344,9 @@ impl Resolver {
             ) {
                 continue;
             }
-            if let Some(annotation) = &binding.value.annotation {
+            if self.static_expressions
+                && let Some(annotation) = &binding.value.annotation
+            {
                 self.index_binding_expr(binding, annotation, scopes);
             }
             match binding.value.kind {
@@ -509,19 +530,21 @@ impl Resolver {
             }
             ExprKind::TypeApply { callee, arguments } => {
                 self.index_expr(callee, scopes);
-                for argument in arguments {
-                    match &argument.value {
-                        TypeArgumentKind::Explicit(argument) => {
-                            self.index_expr(argument, scopes);
-                        }
-                        TypeArgumentKind::Infer => {
-                            let id = HirExpressionId(self.hir.expressions.len() as u32);
-                            self.hir.expressions.push(HirExpression {
-                                id,
-                                location: argument.location,
-                                parent: self.expression_stack.last().copied(),
-                                reference: None,
-                            });
+                if self.static_expressions {
+                    for argument in arguments {
+                        match &argument.value {
+                            TypeArgumentKind::Explicit(argument) => {
+                                self.index_expr(argument, scopes);
+                            }
+                            TypeArgumentKind::Infer => {
+                                let id = HirExpressionId(self.hir.expressions.len() as u32);
+                                self.hir.expressions.push(HirExpression {
+                                    id,
+                                    location: argument.location,
+                                    parent: self.expression_stack.last().copied(),
+                                    reference: None,
+                                });
+                            }
                         }
                     }
                 }
@@ -536,13 +559,15 @@ impl Resolver {
                 result_annotation,
                 body,
             } => {
-                for parameter in parameters {
-                    if let Some(annotation) = &parameter.annotation {
+                if self.static_expressions {
+                    for parameter in parameters {
+                        if let Some(annotation) = &parameter.annotation {
+                            self.index_expr(annotation, scopes);
+                        }
+                    }
+                    if let Some(annotation) = result_annotation {
                         self.index_expr(annotation, scopes);
                     }
-                }
-                if let Some(annotation) = result_annotation {
-                    self.index_expr(annotation, scopes);
                 }
                 scopes.push(Scope::new());
                 for parameter in parameters {

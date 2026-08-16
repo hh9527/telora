@@ -260,7 +260,7 @@ pub(crate) fn compile_expression_with_bindings(
     bindings: &BTreeMap<String, Value>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {
-    let hir = HirProgram::resolve_expression(expression, bindings.keys().cloned());
+    let hir = HirProgram::resolve_runtime_expression(expression, bindings.keys().cloned());
     validate_hir(source_file, &hir)?;
     let mut compiler = Compiler {
         source_name,

@@ -10756,6 +10756,50 @@ unchanged", "|"),
     }
 
     #[test]
+    fn recoverable_workspace_local_annotations_do_not_reduce_diagnostic_coverage() {
+        for (annotation, prelude) in [
+            ("", "1"),
+            (": Int", "1"),
+            (": Tuple([Int, String])", "(1, \"one\")"),
+            (": Pair", "{left: 1, right: \"two\"}"),
+            (": Array(Tuple([Int, String]))", "[(1, \"one\")]"),
+        ] {
+            let directory = fixture_dir();
+            let main = directory.join("main.telora");
+            fs::write(
+                &main,
+                format!(
+                    r#"import "std/array" as array;
+@enum type A = {{ Bad: 'None }};
+@enum type B = {{ Bad: 'None }};
+@struct type Pair = {{ left: Int, right: String }};
+def fail_a: Fn(A) -> Int = fn(value) {{ fail!("diagnostic A", value) }};
+def fail_b: Fn(B) -> Int = fn(value) {{ fail!("diagnostic B", value) }};
+def run_both: Fn(Array(A), Array(B)) -> Int = fn(values_a, values_b) {{
+    let pre{annotation} = {prelude};
+    let first = array.map(values_a, fail_a);
+    let second = array.map(values_b, fail_b);
+    array.length(first) + array.length(second)
+}};
+let result = run_both(['Bad], ['Bad]);
+export let output = "unreachable";"#
+                ),
+            )
+            .unwrap();
+
+            let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+            let messages = snapshot
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .filter(|message| matches!(*message, "diagnostic A" | "diagnostic B"))
+                .collect::<Vec<_>>();
+            assert_eq!(messages, ["diagnostic A", "diagnostic B"], "{annotation}");
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
     fn recoverable_workspace_continues_healthy_array_slots_and_skips_failed_slots() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
