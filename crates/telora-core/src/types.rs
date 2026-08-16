@@ -10320,21 +10320,35 @@ mod tests {
 
     #[test]
     fn contract_reachable_concrete_type_cycles_are_diagnosed_deterministically() {
-        let error = analyze_source(
-            "contract-type-cycle.telora",
-            "type Left = Right;\
-             type Right = Left;\
-             def use: Fn(Left) -> Int = fn(value) { 0 };\
-             use",
-        )
-        .unwrap_err();
-        assert!(
-            error
-                .message
-                .contains("recursive type component required by a definition contract"),
-            "{error}"
-        );
-        assert!(error.message.contains("Left") && error.message.contains("Right"));
+        for (name, source, participants) in [
+            (
+                "direct",
+                "type Loop = Loop;\
+                 def use: Fn(Loop) -> Int = fn(value) { 0 };\
+                 use",
+                &["Loop"][..],
+            ),
+            (
+                "mutual",
+                "type Left = Right;\
+                 type Right = Left;\
+                 def use: Fn(Left) -> Int = fn(value) { 0 };\
+                 use",
+                &["Left", "Right"][..],
+            ),
+        ] {
+            let error =
+                analyze_source(&format!("contract-type-{name}-cycle.telora"), source).unwrap_err();
+            assert!(
+                error
+                    .message
+                    .contains("recursive type component required by a definition contract"),
+                "{error}"
+            );
+            for participant in participants {
+                assert!(error.message.contains(participant), "{error}");
+            }
+        }
 
         let recursive = analyze_source(
             "recursive-contract-type.telora",
