@@ -940,8 +940,10 @@ type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct �
 
 `check` 用 best-effort 模式求完整模块并以严格 finalization 决定退出状态。独立计算可以
 在失败后继续，以收集更多诊断；但任何语法、类型、解析或运行时 error 都会令整轮导出
-失去意义，命令非零退出且不产生 Module value，即使某个干净的最终根仍可算出。只有没有
-error 且严格加载也能成功时才可交付。`check` 的 stdout 完全采用 `telora.check/v1`
+失去意义，命令非零退出且不交付 Module graph，即使某个干净的最终根仍可算出。只有没有
+error 且严格加载也能成功时才可交付。成功的 finalization 保留在内部 semantic module
+graph 边界；它不把导出图物化为 legacy Host `Value`，因此合法的递归 TypeMetadata 和
+递归函数闭包不会因 Host value 边界而失败。`check` 的 stdout 完全采用 `telora.check/v1`
 JSONL：先按稳定顺序输出
 零到多条 `diagnostic` record，最后恰好一条 `summary` record；summary 包含稳定 module
 ID、dependency 数量和 `ok` 或 `error` status。Warning 本身不阻止成功；失败不伪造

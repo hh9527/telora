@@ -240,6 +240,44 @@ export let output = "unreachable";"#;
 }
 
 #[test]
+fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/recursive.telora"),
+        r#"@struct type CallExpr = { args: Array(Expr) };
+@enum type Expr = { Call: CallExpr, Text: String };
+export { CallExpr, Expr };"#,
+    )
+    .unwrap();
+
+    let check = telora(&cwd)
+        .args(["check", "@src/recursive.telora"])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stdout)
+    );
+    let records = jsonl(&check.stdout);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["record"], "summary");
+    assert_eq!(records[0]["status"], "ok");
+    assert!(check.stderr.is_empty());
+
+    let show = telora(&cwd)
+        .args(["show", "@src/recursive.telora", "--exports"])
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let exports = jsonl(&show.stdout);
+    assert_eq!(exports.len(), 2);
+    assert!(exports.iter().all(|record| {
+        record["authority"] == "authoritative" && !record["type"].as_str().unwrap().contains("Any")
+    }));
+}
+
+#[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export let output = 1;").unwrap();

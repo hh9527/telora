@@ -766,8 +766,7 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
         .map_err(|error| error.to_string())
         .and_then(|module| {
             strict_engine
-                .execute(&module)
-                .map(|_| ())
+                .check(&module)
                 .map_err(|error| error.to_string())
         });
     let workspace = engine()

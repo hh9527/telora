@@ -834,6 +834,34 @@ impl LoadedModule {
         self.execute_observed(quota, debug_sink).0
     }
 
+    fn check_with_quota_and_debug_sink(
+        &self,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> Result<(), crate::RuntimeError> {
+        self.check_observed(quota, debug_sink).0
+    }
+
+    fn check_observed(
+        &self,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> (Result<(), crate::RuntimeError>, Vec<Diagnostic>) {
+        let mut account = QuotaAccount::new(quota);
+        let result = Vm::new()
+            .with_debug_sink(debug_sink)
+            .execute_in_work(
+                &self.runtime.main.heap,
+                &self.runtime.externals,
+                &self.function,
+                &[],
+                &mut account,
+            )
+            .map(|_| ())
+            .map_err(|error| error.with_sources(&self.sources));
+        (result, account.take_diagnostics())
+    }
+
     fn execute_observed(
         &self,
         quota: Quota,
@@ -1342,11 +1370,18 @@ impl Engine {
         )
     }
 
-    fn execute_observed(
+    pub fn check(&self, module: &LoadedModule) -> Result<(), crate::RuntimeError> {
+        module.check_with_quota_and_debug_sink(
+            self.config.session_quota,
+            Arc::clone(&self.debug_sink),
+        )
+    }
+
+    fn check_observed(
         &self,
         module: &LoadedModule,
-    ) -> (Result<Value, crate::RuntimeError>, Vec<Diagnostic>) {
-        module.execute_observed(self.config.session_quota, Arc::clone(&self.debug_sink))
+    ) -> (Result<(), crate::RuntimeError>, Vec<Diagnostic>) {
+        module.check_observed(self.config.session_quota, Arc::clone(&self.debug_sink))
     }
 
     pub fn invoke(
@@ -1593,7 +1628,7 @@ impl Engine {
             .expect("local root has a path")
             .to_owned();
         if let Ok(mut module) = self.load_module(&root, BTreeMap::new()) {
-            let (result, diagnostics) = self.execute_observed(&module);
+            let (result, diagnostics) = self.check_observed(&module);
             match result {
                 Ok(_) => {
                     module.workspace.extend_diagnostics(diagnostics);
@@ -1676,7 +1711,7 @@ impl Engine {
             &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         ) {
-            let (result, diagnostics) = self.execute_observed(&module);
+            let (result, diagnostics) = self.check_observed(&module);
             module.workspace.extend_diagnostics(diagnostics);
             match result {
                 Ok(_) => return Ok(module.workspace),
@@ -9660,6 +9695,30 @@ unchanged", "|"),
             .unwrap_err()
             .to_string();
         assert!(error.contains("String") && error.contains("Int"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn check_keeps_recursive_metadata_before_the_legacy_value_boundary() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"@struct type CallExpr = { args: Array(Expr) };
+@enum type Expr = { Call: CallExpr, Text: String };
+export { CallExpr, Expr };"#,
+        )
+        .unwrap();
+
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        engine.check(&module).unwrap();
+        let legacy = engine.execute(&module).unwrap_err();
+        assert!(
+            legacy
+                .message
+                .contains("cyclic heap values cannot cross the legacy Value boundary")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
