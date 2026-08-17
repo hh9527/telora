@@ -2599,6 +2599,16 @@ fn bound_type_replacements(
             continue;
         }
         let object = source.object(handle)?;
+        if let Object::DeclaredType { id, .. } = object
+            && id
+                .arguments()
+                .iter()
+                .any(crate::types::type_identity_contains_bound_parameter)
+        {
+            // Nominal identity retains phantom arguments even when the
+            // structural body contains no corresponding Bound metadata.
+            forced_objects.insert(handle);
+        }
         if let Object::Dict { shape, values } = object {
             let fields = source.shape(*shape)?;
             let mut kind = None;

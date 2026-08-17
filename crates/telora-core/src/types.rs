@@ -10151,6 +10151,50 @@ pub(crate) fn apply_declared_type_arguments(
     id.reapply(&applied)
 }
 
+pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor) -> bool {
+    match descriptor {
+        TypeDescriptor::Bound(_) => true,
+        TypeDescriptor::Declared(declared) => declared
+            .id
+            .arguments()
+            .iter()
+            .any(type_identity_contains_bound_parameter),
+        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+            type_identity_contains_bound_parameter(item)
+        }
+        TypeDescriptor::Tagged { payload, .. } => type_identity_contains_bound_parameter(payload),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            items.iter().any(type_identity_contains_bound_parameter)
+        }
+        TypeDescriptor::Struct(fields) => {
+            fields.values().any(type_identity_contains_bound_parameter)
+        }
+        TypeDescriptor::Enum(variants) => variants.values().any(|payload| {
+            payload
+                .as_deref()
+                .is_some_and(type_identity_contains_bound_parameter)
+        }),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters
+                .iter()
+                .any(type_identity_contains_bound_parameter)
+                || type_identity_contains_bound_parameter(result)
+        }
+        TypeDescriptor::Named(_)
+        | TypeDescriptor::Inference(_)
+        | TypeDescriptor::Any
+        | TypeDescriptor::Never
+        | TypeDescriptor::Type
+        | TypeDescriptor::Dyn
+        | TypeDescriptor::Int
+        | TypeDescriptor::Float
+        | TypeDescriptor::String
+        | TypeDescriptor::Bytes
+        | TypeDescriptor::Opaque(_)
+        | TypeDescriptor::Atom(_) => false,
+    }
+}
+
 fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
     match descriptor {
         TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) => TypeDescriptor::Any,
@@ -13080,6 +13124,20 @@ mod tests {
         assert_ne!(
             declared_id("Nested").identity_key(),
             declared_id("Optional").identity_key()
+        );
+
+        let error = analyze_source(
+            "phantom-mismatch.telora",
+            "type Phantom(A) = struct {value: Int};\
+             let int_value: Phantom(Int) = {value: 1};\
+             let text_value: Phantom(String) = int_value;\
+             text_value",
+        )
+        .unwrap_err();
+        assert!(
+            error.message.contains("not assignable"),
+            "{}",
+            error.message
         );
     }
 
