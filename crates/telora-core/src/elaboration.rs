@@ -321,6 +321,7 @@ impl Elaborator<'_> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Let,
+                        declared_initializer: None,
                         imported_name: None,
                         name: identifier(&subject),
                         type_parameters: Vec::new(),

@@ -1,6 +1,6 @@
-@struct type Leaf = { value: String };
-@struct type AndExpr = { items: Array(Expr) };
-@enum type Expr = { Leaf: Leaf, And: AndExpr };
+type Leaf = struct { value: String };
+type AndExpr = struct { items: Array(Expr) };
+type Expr = enum { Leaf: Leaf, And: AndExpr };
 
 let e00: Expr = 'Leaf({ value: "x" });
 let e01: Expr = 'And({ items: [e00, e00] });

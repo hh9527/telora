@@ -245,6 +245,10 @@ pub enum WorkspaceTypeNode {
     Pending,
     Ref(WorkspaceTypeId),
     Bound(u32),
+    Declared {
+        name: String,
+        body: WorkspaceTypeId,
+    },
     Any,
     Never,
     Type,
@@ -308,6 +312,7 @@ impl WorkspaceTypeGraph {
             }
             match self.node(current) {
                 Some(WorkspaceTypeNode::Ref(target)) => current = *target,
+                Some(WorkspaceTypeNode::Declared { body, .. }) => current = *body,
                 Some(WorkspaceTypeNode::Struct(fields)) => {
                     return fields
                         .iter()
@@ -334,6 +339,7 @@ impl WorkspaceTypeGraph {
             WorkspaceTypeNode::Pending => "<pending>".into(),
             WorkspaceTypeNode::Ref(target) => self.display_with(*target, active),
             WorkspaceTypeNode::Bound(parameter) => format!("T{parameter}"),
+            WorkspaceTypeNode::Declared { name, .. } => name.clone(),
             WorkspaceTypeNode::Any => "Any".into(),
             WorkspaceTypeNode::Never => "Never".into(),
             WorkspaceTypeNode::Type => "Type".into(),
@@ -1351,6 +1357,10 @@ fn merge_type_node(
         TypeNode::Ref(child) => WorkspaceTypeNode::Ref(map(*child, target, mapped)),
         TypeNode::Bound(parameter) => WorkspaceTypeNode::Bound(parameter.index()),
         TypeNode::Named(name) => WorkspaceTypeNode::Opaque(format!("type-ref:{name}")),
+        TypeNode::Declared { name, body, .. } => WorkspaceTypeNode::Declared {
+            name: name.clone(),
+            body: map(*body, target, mapped),
+        },
         TypeNode::Any => WorkspaceTypeNode::Any,
         TypeNode::Never => WorkspaceTypeNode::Never,
         TypeNode::Type => WorkspaceTypeNode::Type,
@@ -1573,7 +1583,7 @@ mod tests {
         let main = directory.join("main.telora");
         fs::write(
             &model,
-            "@struct type Node = {children: Array(Node)}; export { Node };",
+            "type Node = struct {children: Array(Node)}; export { Node };",
         )
         .unwrap();
         fs::write(&data, "{\"value\":1}").unwrap();

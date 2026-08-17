@@ -99,6 +99,132 @@ pub struct NativeType {
     qualified_name: Arc<str>,
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DeclaredTypeId {
+    module: Arc<str>,
+    declaration: u32,
+    arguments: Arc<[String]>,
+}
+
+impl DeclaredTypeId {
+    pub(crate) fn concrete(module: impl Into<Arc<str>>, declaration: u32) -> Self {
+        Self {
+            module: module.into(),
+            declaration,
+            arguments: Arc::new([]),
+        }
+    }
+
+    pub(crate) fn applied(
+        module: impl Into<Arc<str>>,
+        declaration: u32,
+        arguments: &[crate::types::TypeDescriptor],
+    ) -> Self {
+        Self {
+            module: module.into(),
+            declaration,
+            arguments: arguments
+                .iter()
+                .map(|argument| format!("{argument:?}"))
+                .collect::<Vec<_>>()
+                .into(),
+        }
+    }
+
+    pub(crate) fn reapply(&self, arguments: &[crate::types::TypeDescriptor]) -> Self {
+        Self::applied(Arc::clone(&self.module), self.declaration, arguments)
+    }
+
+    pub(crate) fn argument_count(&self) -> usize {
+        self.arguments.len()
+    }
+}
+
+#[derive(Clone)]
+pub struct DeclaredType {
+    pub(crate) id: DeclaredTypeId,
+    pub(crate) name: Arc<str>,
+    pub(crate) body: Box<Value>,
+}
+
+impl DeclaredType {
+    pub(crate) fn bind(
+        module: impl Into<Arc<str>>,
+        declaration: u32,
+        name: impl Into<Arc<str>>,
+        body: Value,
+    ) -> Self {
+        Self {
+            id: DeclaredTypeId::concrete(module, declaration),
+            name: name.into(),
+            body: Box::new(body),
+        }
+    }
+
+    pub(crate) fn bind_application(
+        module: impl Into<Arc<str>>,
+        declaration: u32,
+        name: impl Into<Arc<str>>,
+        arguments: &[crate::types::TypeDescriptor],
+        body: Value,
+    ) -> Self {
+        Self {
+            id: DeclaredTypeId::applied(module, declaration, arguments),
+            name: name.into(),
+            body: Box::new(body),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn id(&self) -> &DeclaredTypeId {
+        &self.id
+    }
+
+    pub(crate) fn body(&self) -> &Value {
+        &self.body
+    }
+}
+
+impl PartialEq for DeclaredType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for DeclaredType {}
+
+impl std::hash::Hash for DeclaredType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+#[derive(Clone)]
+pub struct DeclaredValue {
+    pub(crate) owner: DeclaredType,
+    pub(crate) payload: Box<Value>,
+}
+
+impl DeclaredValue {
+    pub(crate) fn new(owner: DeclaredType, payload: Value) -> Self {
+        Self {
+            owner,
+            payload: Box::new(payload),
+        }
+    }
+
+    pub fn owner(&self) -> &DeclaredType {
+        &self.owner
+    }
+
+    pub fn payload(&self) -> &Value {
+        &self.payload
+    }
+}
+
 impl NativeType {
     pub(crate) fn bind(id: NativeTypeId, qualified_name: impl Into<Arc<str>>) -> Self {
         Self {
@@ -336,14 +462,16 @@ pub(crate) enum CoreModelFunction {
     Struct,
     Enum,
     Union,
+    Own,
 }
 
 impl CoreModelFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
-            Self::Struct => "struct",
-            Self::Enum => "enum",
+            Self::Struct => "\0telora_struct",
+            Self::Enum => "\0telora_enum",
             Self::Union => "union",
+            Self::Own => "<own-declared>",
         }
     }
 
@@ -1075,6 +1203,8 @@ pub enum Value {
     String(Arc<str>),
     Bytes(Arc<[u8]>),
     NativeType(NativeType),
+    DeclaredType(DeclaredType),
+    Declared(DeclaredValue),
     Opaque(OpaqueValue),
     Dict(Dict),
     Array(Arc<[Value]>),
@@ -1120,6 +1250,8 @@ impl Value {
             Self::String(_) => "String",
             Self::Bytes(_) => "Bytes",
             Self::NativeType(_) => "Type",
+            Self::DeclaredType(_) => "Type",
+            Self::Declared(value) => value.payload().type_name(),
             Self::Opaque(_) => "Opaque",
             Self::Dict(_) => "Dict",
             Self::Array(_) => "Array",
@@ -1189,7 +1321,12 @@ impl Value {
                     output.push(')');
                 }
                 Value::Tuple(values) => render_values("(", ")", values, output)?,
-                Value::NativeType(_) | Value::Opaque(_) | Value::Func(_) | Value::Dyn(_) => {
+                Value::Declared(value) => render(value.payload(), output)?,
+                Value::NativeType(_)
+                | Value::DeclaredType(_)
+                | Value::Opaque(_)
+                | Value::Func(_)
+                | Value::Dyn(_) => {
                     return Err(format!(
                         "{} cannot be represented as a Telora literal",
                         value.type_name()
@@ -1254,6 +1391,8 @@ impl fmt::Display for Value {
             }
             Self::Opaque(value) => write!(formatter, "{value:?}"),
             Self::NativeType(value) => write!(formatter, "<type {}>", value.qualified_name()),
+            Self::DeclaredType(value) => write!(formatter, "<type {}>", value.name()),
+            Self::Declared(value) => write!(formatter, "{}", value.payload()),
             Self::Dict(dict) => {
                 write!(formatter, "{{")?;
                 for (index, (field, value)) in

@@ -1,84 +1,72 @@
-@struct
-type SystemOptions = {
+type SystemOptions = struct {
     input: Option(Dyn),
 };
 
-@struct
-type SystemCaps = {
+type SystemCaps = struct {
     input: Bool,
 };
 
-@enum
-type Stdin = {
-    Piped: 'None,
-    Inherit: 'None,
-    Null: 'None,
+type Stdin = enum {
+    'Piped,
+    'Inherit,
+    'Null,
 };
 
-@enum
-type Stdout = {
-    PipedLine: 'None,
-    PipedToEnd: 'None,
-    Inherit: 'None,
-    Null: 'None,
+type Stdout = enum {
+    'PipedLine,
+    'PipedToEnd,
+    'Inherit,
+    'Null,
 };
 
-@struct
-type Stdio = {
+type Stdio = struct {
     stdin: Stdin,
     stdout: Stdout,
     stderr: Stdout,
 };
 
-@struct
-type ChildOpts = {
+type ChildOpts = struct {
     bin: String,
     cwd: Option(String),
     envs: Dict(Option(String)),
     clear_env: Bool,
 };
 
-@struct
-type SpawnStdioChild = {
+type SpawnStdioChild = struct {
     key: String,
     opts: ChildOpts,
     stdio: Stdio,
 };
 
-@struct
-type ChildText = {
+type ChildText = struct {
     key: String,
     data: Option(String),
 };
 
-@struct
-type ChildExited = {
+type ChildExited = struct {
     key: String,
     exited: Result(Int, Option(Int)),
 };
 
-@struct
-type ChildSpawnResult = {
+type ChildSpawnResult = struct {
     key: String,
     result: Result(Int, String),
 };
 
-@enum
-type SystemEvent = {
-    Initialize: 'None,
-    ChildStdout: ChildText,
-    ChildStderr: ChildText,
-    ChildSpawnResult: ChildSpawnResult,
-    ChildExited: ChildExited,
+type SystemEvent = enum {
+    'Initialize,
+    'ChildStdout(ChildText),
+    'ChildStderr(ChildText),
+    'ChildSpawnResult(ChildSpawnResult),
+    'ChildExited(ChildExited),
 };
 
-@enum
-type SystemEffect = {
-    SpawnStdioChild: SpawnStdioChild,
-    PostStdin: ChildText,
-    Exec: ChildOpts,
-    Output: String,
-    Exit: Int,
+type SystemEffect = enum {
+    'SpawnStdioChild(SpawnStdioChild),
+    'PostStdin(ChildText),
+    'Exec(ChildOpts),
+    'Output(String),
+    'Exit(Int),
 };
 
 export {

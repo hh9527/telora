@@ -41,11 +41,18 @@ pub struct BlockKind {
 pub struct BindingData {
     pub decorators: Vec<Decorator>,
     pub kind: BindingKind,
+    pub declared_initializer: Option<DeclaredInitializerKind>,
     pub imported_name: Option<Box<Identifier>>,
     pub name: Identifier,
     pub type_parameters: Vec<Identifier>,
     pub annotation: Option<Expr>,
     pub value: Expr,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeclaredInitializerKind {
+    Struct,
+    Enum,
 }
 
 #[derive(Clone, Debug)]

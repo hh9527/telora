@@ -1,9 +1,9 @@
-@enum type TypeDescKind = {
-    Any: 'None, Never: 'None, Type: 'None, TypeOf: 'None,
-    Int: 'None, Float: 'None, String: 'None, Bytes: 'None,
-    Atom: 'None, Array: 'None, Dict: 'None, Tagged: 'None,
-    Tuple: 'None, Struct: 'None, Enum: 'None, Union: 'None,
-    Func: 'None, Opaque: 'None, WithAttributes: 'None, Bound: 'None, Dyn: 'None, Ref: 'None,
+type TypeDescKind = enum {
+    'Any, 'Never, 'Type, 'TypeOf,
+    'Int, 'Float, 'String, 'Bytes,
+    'Atom, 'Array, 'Dict, 'Tagged,
+    'Tuple, 'Struct, 'Enum, 'Union,
+    'Func, 'Opaque, 'WithAttributes, 'Bound, 'Dyn, 'Ref,
 };
 native kind: Fn(Type) -> TypeDescKind;
 native children: Fn(Type) -> Array(Type);

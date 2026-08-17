@@ -1,6 +1,6 @@
 use crate::json::{SourcedValue, ValuePath, ValuePathSegment};
 use crate::source::Loc;
-use crate::value::DynValue;
+use crate::value::{DeclaredType, DeclaredValue, DynValue};
 use crate::{
     Atom, BuiltinAtom, BytecodeFunction, Closure, Dict, FuncByteCode, NativeFunction, Prototype,
     Shape, Value,
@@ -47,6 +47,8 @@ pub(crate) enum RuntimeValue {
     String(Handle),
     Bytes(Handle),
     NativeType(Handle),
+    DeclaredType(Handle),
+    Declared(Handle),
     Opaque(Handle),
     Array(Handle),
     Tuple(Handle),
@@ -162,6 +164,111 @@ impl PersistentValue {
     }
 }
 
+impl Heap {
+    pub(crate) fn declare_persistent_type(
+        &mut self,
+        body: PersistentValue,
+        module: impl Into<Arc<str>>,
+        declaration: u32,
+        name: impl Into<Arc<str>>,
+    ) -> Result<PersistentValue, HeapError> {
+        if self.storage != Storage::Main {
+            return Err(HeapError("declared type roots require a Main world"));
+        }
+        let body = body.runtime();
+        let handle = self.allocate(Object::DeclaredType {
+            id: crate::value::DeclaredTypeId::concrete(module, declaration),
+            name: name.into(),
+            body,
+        });
+        Ok(PersistentValue(RichValue::unknown(
+            RuntimeValue::DeclaredType(handle),
+        )))
+    }
+
+    pub(crate) fn rewrite_declared_type_references(
+        &mut self,
+        replacements: &[(PersistentValue, PersistentValue)],
+    ) -> Result<(), HeapError> {
+        if self.storage != Storage::Main {
+            return Err(HeapError("declared type rewriting requires a Main world"));
+        }
+        let replace = |value: &mut RichValue| {
+            if let Some((_, replacement)) = replacements
+                .iter()
+                .find(|(candidate, _)| candidate.runtime().value == value.value)
+            {
+                *value = replacement.runtime().with_loc(value.loc());
+            }
+        };
+        for object in &mut self.objects {
+            match object {
+                Object::Array(values) | Object::Tuple(values) => {
+                    for value in values.iter_mut() {
+                        replace(value);
+                    }
+                }
+                Object::Tagged { tag, payload } => {
+                    replace(tag);
+                    replace(payload);
+                }
+                Object::Dict { values, .. } => {
+                    for value in values.iter_mut() {
+                        replace(value);
+                    }
+                }
+                Object::Closure { upvalues, .. } => {
+                    for value in upvalues.iter_mut() {
+                        replace(value);
+                    }
+                }
+                Object::Dyn {
+                    descriptor, value, ..
+                } => {
+                    replace(descriptor);
+                    replace(value);
+                }
+                Object::Declared { owner, payload } => {
+                    replace(owner);
+                    replace(payload);
+                }
+                Object::UpLink { value } => {
+                    if let Some(value) = value {
+                        replace(value);
+                    }
+                }
+                Object::ByteCodeProto { values, .. } => {
+                    for value in values.iter_mut() {
+                        replace(value);
+                    }
+                }
+                // The body edge owns the structural definition and must not become
+                // a self-reference to its own declaration wrapper.
+                Object::DeclaredType { .. }
+                | Object::Reserved
+                | Object::String(_)
+                | Object::Bytes(_)
+                | Object::NativeType(_)
+                | Object::Opaque(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn canonical_declared_root(
+        &self,
+        value: PersistentValue,
+        replacements: &[(PersistentValue, PersistentValue)],
+    ) -> PersistentValue {
+        replacements
+            .iter()
+            .find_map(|(candidate, replacement)| {
+                (candidate.runtime().value == value.runtime().value).then_some(*replacement)
+            })
+            .unwrap_or(value)
+    }
+}
+
 impl PersistentValue {
     pub(crate) const fn runtime(self) -> RichValue {
         self.0
@@ -180,6 +287,15 @@ pub(crate) enum Object {
     String(Box<str>),
     Bytes(Box<[u8]>),
     NativeType(crate::NativeType),
+    DeclaredType {
+        id: crate::value::DeclaredTypeId,
+        name: Arc<str>,
+        body: RichValue,
+    },
+    Declared {
+        owner: RichValue,
+        payload: RichValue,
+    },
     Opaque(crate::value::OpaqueValue),
     Array(Box<[RichValue]>),
     Tuple(Box<[RichValue]>),
@@ -343,6 +459,8 @@ impl Heap {
                 RuntimeValue::String(handle)
                 | RuntimeValue::Bytes(handle)
                 | RuntimeValue::NativeType(handle)
+                | RuntimeValue::DeclaredType(handle)
+                | RuntimeValue::Declared(handle)
                 | RuntimeValue::Opaque(handle)
                 | RuntimeValue::Array(handle)
                 | RuntimeValue::Tuple(handle)
@@ -385,6 +503,11 @@ impl Heap {
                 } => {
                     pending.push(descriptor.value);
                     pending.push(value.value);
+                }
+                Object::DeclaredType { body, .. } => pending.push(body.value),
+                Object::Declared { owner, payload } => {
+                    pending.push(owner.value);
+                    pending.push(payload.value);
                 }
                 Object::ByteCodeProto {
                     values, prototypes, ..
@@ -567,6 +690,25 @@ impl Heap {
             Value::NativeType(value) => {
                 RuntimeValue::NativeType(self.allocate(Object::NativeType(value.clone())))
             }
+            Value::DeclaredType(value) => {
+                let body = self.import_sourced_at(background, value.body(), provenance, path)?;
+                RuntimeValue::DeclaredType(self.allocate(Object::DeclaredType {
+                    id: value.id().clone(),
+                    name: Arc::from(value.name()),
+                    body,
+                }))
+            }
+            Value::Declared(value) => {
+                let owner = self.import_sourced_at(
+                    background,
+                    &Value::DeclaredType(value.owner().clone()),
+                    provenance,
+                    path,
+                )?;
+                let payload =
+                    self.import_sourced_at(background, value.payload(), provenance, path)?;
+                RuntimeValue::Declared(self.allocate(Object::Declared { owner, payload }))
+            }
             Value::Opaque(value) => {
                 RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
             }
@@ -651,6 +793,37 @@ impl Heap {
                 }
                 Value::NativeType(value) => {
                     RuntimeValue::NativeType(self.allocate(Object::NativeType(value.clone())))
+                }
+                Value::DeclaredType(value) => {
+                    let body = self.import_value_with(
+                        background,
+                        value.body(),
+                        externals,
+                        prototypes,
+                        location,
+                    )?;
+                    RuntimeValue::DeclaredType(self.allocate(Object::DeclaredType {
+                        id: value.id().clone(),
+                        name: Arc::from(value.name()),
+                        body,
+                    }))
+                }
+                Value::Declared(value) => {
+                    let owner = self.import_value_with(
+                        background,
+                        &Value::DeclaredType(value.owner().clone()),
+                        externals,
+                        prototypes,
+                        location,
+                    )?;
+                    let payload = self.import_value_with(
+                        background,
+                        value.payload(),
+                        externals,
+                        prototypes,
+                        location,
+                    )?;
+                    RuntimeValue::Declared(self.allocate(Object::Declared { owner, payload }))
                 }
                 Value::Opaque(value) => {
                     RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
@@ -864,6 +1037,18 @@ impl<'a> HeapView<'a> {
         self.heap(handle.storage)?.object(handle)
     }
 
+    pub(crate) fn unwrap_declared(&self, mut value: RichValue) -> Result<RichValue, HeapError> {
+        loop {
+            let RuntimeValue::Declared(handle) = value.value else {
+                return Ok(value);
+            };
+            let Object::Declared { payload, .. } = self.object(handle)? else {
+                return Err(HeapError("Declared handle refers to another object kind"));
+            };
+            value = *payload;
+        }
+    }
+
     pub(crate) fn text(&self, id: InternId) -> Result<&'a str, HeapError> {
         self.heap(id.storage)?.resolve_text(id)
     }
@@ -1053,7 +1238,8 @@ impl<'a> HeapView<'a> {
                 | RuntimeValue::Tuple(handle)
                 | RuntimeValue::Tagged(handle)
                 | RuntimeValue::Dict(handle)
-                | RuntimeValue::Dyn(handle) => handle,
+                | RuntimeValue::Dyn(handle)
+                | RuntimeValue::Declared(handle) => handle,
                 RuntimeValue::Int(_)
                 | RuntimeValue::Float(_)
                 | RuntimeValue::BuiltinAtom(_)
@@ -1063,6 +1249,7 @@ impl<'a> HeapView<'a> {
                 | RuntimeValue::Bytes(_)
                 | RuntimeValue::Opaque(_)
                 | RuntimeValue::NativeType(_)
+                | RuntimeValue::DeclaredType(_)
                 | RuntimeValue::Func(_)
                 | RuntimeValue::UpLink(_) => continue,
             };
@@ -1086,10 +1273,12 @@ impl<'a> HeapView<'a> {
                     pending.push(value.value);
                     pending.push(descriptor.value);
                 }
+                Object::Declared { payload, .. } => pending.push(payload.value),
                 Object::String(_)
                 | Object::Bytes(_)
                 | Object::Opaque(_)
                 | Object::NativeType(_)
+                | Object::DeclaredType { .. }
                 | Object::Closure { .. }
                 | Object::UpLink { .. }
                 | Object::ByteCodeProto { .. }
@@ -1189,6 +1378,59 @@ impl<'a> HeapView<'a> {
                     return Err(HeapError("NativeType handle refers to another object kind"));
                 };
                 Ok(left == right)
+            }
+            (RuntimeValue::DeclaredType(left), RuntimeValue::DeclaredType(right)) => {
+                let Object::DeclaredType { id: left, .. } = self.object(left)? else {
+                    return Err(HeapError(
+                        "DeclaredType handle refers to another object kind",
+                    ));
+                };
+                let Object::DeclaredType { id: right, .. } = self.object(right)? else {
+                    return Err(HeapError(
+                        "DeclaredType handle refers to another object kind",
+                    ));
+                };
+                Ok(left == right)
+            }
+            (RuntimeValue::Declared(left), RuntimeValue::Declared(right)) => {
+                if left == right || !visited.insert((left, right)) {
+                    return Ok(true);
+                }
+                let Object::Declared {
+                    owner: left_owner,
+                    payload: left_payload,
+                } = self.object(left)?
+                else {
+                    return Err(HeapError("Declared handle refers to another object kind"));
+                };
+                let Object::Declared {
+                    owner: right_owner,
+                    payload: right_payload,
+                } = self.object(right)?
+                else {
+                    return Err(HeapError("Declared handle refers to another object kind"));
+                };
+                Ok(
+                    self.values_equal_with(left_owner.value, right_owner.value, visited)?
+                        && self.values_equal_with(
+                            left_payload.value,
+                            right_payload.value,
+                            visited,
+                        )?,
+                )
+            }
+            (
+                RuntimeValue::Declared(declared),
+                atom @ (RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_)),
+            )
+            | (
+                atom @ (RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_)),
+                RuntimeValue::Declared(declared),
+            ) => {
+                let Object::Declared { payload, .. } = self.object(declared)? else {
+                    return Err(HeapError("Declared handle refers to another object kind"));
+                };
+                self.values_equal_with(payload.value, atom, visited)
             }
             (RuntimeValue::Array(left), RuntimeValue::Array(right))
             | (RuntimeValue::Tuple(left), RuntimeValue::Tuple(right)) => {
@@ -1356,6 +1598,38 @@ impl<'a> HeapView<'a> {
                 let value = Value::NativeType(value.clone());
                 visiting.remove(&handle);
                 value
+            }
+            RuntimeValue::DeclaredType(handle) => {
+                let Object::DeclaredType { id, name, body } =
+                    self.enter_object(handle, visiting)?
+                else {
+                    return Err(HeapError(
+                        "DeclaredType handle refers to another object kind",
+                    ));
+                };
+                let body = self.export_value_with(body.value, visiting, up_link_projection)?;
+                let value = Value::DeclaredType(DeclaredType {
+                    id: id.clone(),
+                    name: Arc::clone(name),
+                    body: Box::new(body),
+                });
+                visiting.remove(&handle);
+                value
+            }
+            RuntimeValue::Declared(handle) => {
+                let Object::Declared { owner, payload } = self.enter_object(handle, visiting)?
+                else {
+                    return Err(HeapError("Declared handle refers to another object kind"));
+                };
+                let Value::DeclaredType(owner) =
+                    self.export_value_with(owner.value, visiting, up_link_projection)?
+                else {
+                    return Err(HeapError("Declared owner is not a DeclaredType"));
+                };
+                let payload =
+                    self.export_value_with(payload.value, visiting, up_link_projection)?;
+                visiting.remove(&handle);
+                Value::Declared(DeclaredValue::new(owner, payload))
             }
             RuntimeValue::Array(handle) | RuntimeValue::Tuple(handle) => {
                 let tuple = matches!(value, RuntimeValue::Tuple(_));
@@ -1715,6 +1989,12 @@ impl PendingCopy {
             RuntimeValue::NativeType(handle) => {
                 RuntimeValue::NativeType(self.copy_object(target, source, handle)?)
             }
+            RuntimeValue::DeclaredType(handle) => {
+                RuntimeValue::DeclaredType(self.copy_object(target, source, handle)?)
+            }
+            RuntimeValue::Declared(handle) => {
+                RuntimeValue::Declared(self.copy_object(target, source, handle)?)
+            }
             RuntimeValue::Array(handle) => {
                 RuntimeValue::Array(self.copy_object(target, source, handle)?)
             }
@@ -1790,6 +2070,15 @@ impl PendingCopy {
             Object::Bytes(value) => Object::Bytes(value.clone()),
             Object::Opaque(value) => Object::Opaque(value.clone()),
             Object::NativeType(value) => Object::NativeType(value.clone()),
+            Object::DeclaredType { id, name, body } => Object::DeclaredType {
+                id: id.clone(),
+                name: Arc::clone(name),
+                body: self.copy_value(target, source, *body)?,
+            },
+            Object::Declared { owner, payload } => Object::Declared {
+                owner: self.copy_value(target, source, *owner)?,
+                payload: self.copy_value(target, source, *payload)?,
+            },
             Object::Array(values) => Object::Array(copy_values(self, values)?),
             Object::Tuple(values) => Object::Tuple(copy_values(self, values)?),
             Object::Tagged { tag, payload } => Object::Tagged {
@@ -1973,6 +2262,8 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
         | RuntimeValue::Bytes(handle)
         | RuntimeValue::Opaque(handle)
         | RuntimeValue::NativeType(handle)
+        | RuntimeValue::DeclaredType(handle)
+        | RuntimeValue::Declared(handle)
         | RuntimeValue::Array(handle)
         | RuntimeValue::Tuple(handle)
         | RuntimeValue::Tagged(handle)
@@ -2004,6 +2295,8 @@ fn object_contains_disallowed(
         | RuntimeValue::Bytes(handle)
         | RuntimeValue::Opaque(handle)
         | RuntimeValue::NativeType(handle)
+        | RuntimeValue::DeclaredType(handle)
+        | RuntimeValue::Declared(handle)
         | RuntimeValue::Array(handle)
         | RuntimeValue::Tuple(handle)
         | RuntimeValue::Tagged(handle)
@@ -2029,6 +2322,8 @@ fn object_contains_disallowed(
         Object::Dyn {
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
+        Object::DeclaredType { body, .. } => value_foreign(*body),
+        Object::Declared { owner, payload } => value_foreign(*owner) || value_foreign(*payload),
         Object::UpLink { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,

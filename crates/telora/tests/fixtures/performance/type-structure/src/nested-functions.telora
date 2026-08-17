@@ -1,7 +1,7 @@
-@struct type L1 = { value: String };
-@struct type L2 = { a: L1, b: L1 };
-@struct type L3 = { a: L2, b: L2 };
-@struct type Big = { a: L3, b: L3 };
+type L1 = struct { value: String };
+type L2 = struct { a: L1, b: L1 };
+type L3 = struct { a: L2, b: L2 };
+type Big = struct { a: L3, b: L3 };
 def f000: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } }, b: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } } } };
 def f001: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } }, b: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } } } };
 def f002: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } }, b: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } } } };

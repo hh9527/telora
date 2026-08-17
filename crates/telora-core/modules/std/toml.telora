@@ -1,7 +1,7 @@
-@enum type DateTime = {
-    OffsetDateTime: String,
-    LocalDateTime: String,
-    LocalDate: String,
-    LocalTime: String,
+type DateTime = enum {
+    'OffsetDateTime(String),
+    'LocalDateTime(String),
+    'LocalDate(String),
+    'LocalTime(String),
 };
 export { DateTime };

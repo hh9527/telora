@@ -1,22 +1,22 @@
-@struct type Platform = {
+type Platform = struct {
     os: String,
     arch: String,
 };
-@struct type ExecSettings = {
+type ExecSettings = struct {
     platform: Platform,
     download_prefix: String,
     install_prefix: String,
 };
-@struct type ExecRequest = {
+type ExecRequest = struct {
     args: Array(String),
     env: Dict(String),
     cwd: String,
 };
-@enum type UnpackType = {
-    TarGzip: 'None,
-    Tar: 'None,
+type UnpackType = enum {
+    'TarGzip,
+    'Tar,
 };
-@struct type UnpackOpt = {
+type UnpackOpt = struct {
     file: String,
     dest: String,
     ty: UnpackType,
@@ -24,14 +24,14 @@
     strip: Int,
     digest: Option(String),
 };
-@struct type ExecEnvironment = {
+type ExecEnvironment = struct {
     clear: Bool,
     update: Dict(Option(String)),
 };
-@enum type Install = {
-    Unpack: UnpackOpt,
+type Install = enum {
+    'Unpack(UnpackOpt),
 };
-@struct type ExecEnv = {
+type ExecEnv = struct {
     install: Array(Install),
     cwd: Option(String),
     bin: String,

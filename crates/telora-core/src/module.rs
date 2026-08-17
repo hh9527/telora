@@ -1566,7 +1566,10 @@ impl Engine {
                 main.module.path.display().to_string(),
             )
         } else {
-            if !crate::types::assignable(&actual_main_type, &main_type) {
+            if !crate::types::assignable(
+                &crate::types::erase_declared_identity(&actual_main_type),
+                &crate::types::erase_declared_identity(&main_type),
+            ) {
                 return Err(ModuleError::new(format!(
                     "Main export record {} is not assignable to Entry.MainType {}",
                     actual_main_type.display_name(),
@@ -1623,6 +1626,7 @@ impl Engine {
             state = next_state;
             let mut terminal = None;
             for effect in effects.iter() {
+                let effect = protocol_value(effect);
                 if terminal.is_some() {
                     return Err(ModuleError::new(
                         "Entry returned an effect after a terminal effect",
@@ -2796,6 +2800,7 @@ fn expect_protocol_record<'a>(
     path: &str,
     fields: &[&str],
 ) -> Result<&'a crate::Dict, ModuleError> {
+    let value = protocol_value(value);
     let Value::Dict(record) = value else {
         return Err(ModuleError::new(format!(
             "{path} must be a record, found {}",
@@ -2816,7 +2821,15 @@ fn expect_protocol_record<'a>(
     Ok(record)
 }
 
+fn protocol_value(mut value: &Value) -> &Value {
+    while let Value::Declared(declared) = value {
+        value = declared.payload();
+    }
+    value
+}
+
 fn protocol_string(value: &Value, path: &str) -> Result<String, ModuleError> {
+    let value = protocol_value(value);
     let Value::String(value) = value else {
         return Err(ModuleError::new(format!("{path} must be String")));
     };
@@ -2824,6 +2837,7 @@ fn protocol_string(value: &Value, path: &str) -> Result<String, ModuleError> {
 }
 
 fn protocol_bool(value: &Value, path: &str) -> Result<bool, ModuleError> {
+    let value = protocol_value(value);
     match value {
         Value::Atom(value) if value.name() == "True" => Ok(true),
         Value::Atom(value) if value.name() == "False" => Ok(false),
@@ -2832,6 +2846,7 @@ fn protocol_bool(value: &Value, path: &str) -> Result<bool, ModuleError> {
 }
 
 fn protocol_option_string(value: &Value, path: &str) -> Result<Option<String>, ModuleError> {
+    let value = protocol_value(value);
     match value {
         Value::Atom(tag) if tag.name() == "None" => Ok(None),
         Value::Tagged { tag, payload } if tag.name() == "Some" => {
@@ -2843,7 +2858,7 @@ fn protocol_option_string(value: &Value, path: &str) -> Result<Option<String>, M
 
 fn parse_child_options(value: &Value, path: &str) -> Result<ChildOptions, ModuleError> {
     let opts = expect_protocol_record(value, path, &["bin", "clear_env", "cwd", "envs"])?;
-    let Value::Dict(envs) = opts.get("envs").expect("field shape checked") else {
+    let Value::Dict(envs) = protocol_value(opts.get("envs").expect("field shape checked")) else {
         return Err(ModuleError::new(format!("{path}.envs must be a Dict")));
     };
     let envs = envs
@@ -2874,6 +2889,7 @@ fn parse_child_options(value: &Value, path: &str) -> Result<ChildOptions, Module
 }
 
 fn parse_stdin_mode(value: &Value) -> Result<ChildStdinMode, ModuleError> {
+    let value = protocol_value(value);
     match value {
         Value::Atom(tag) if tag.name() == "Piped" => Ok(ChildStdinMode::Piped),
         Value::Atom(tag) if tag.name() == "Inherit" => Ok(ChildStdinMode::Inherit),
@@ -2883,6 +2899,7 @@ fn parse_stdin_mode(value: &Value) -> Result<ChildStdinMode, ModuleError> {
 }
 
 fn parse_output_mode(value: &Value, path: &str) -> Result<ChildOutputMode, ModuleError> {
+    let value = protocol_value(value);
     match value {
         Value::Atom(tag) if tag.name() == "PipedLine" => Ok(ChildOutputMode::PipedLine),
         Value::Atom(tag) if tag.name() == "PipedToEnd" => Ok(ChildOutputMode::PipedToEnd),
@@ -3156,9 +3173,11 @@ fn validate_entry_interface(
             .exports
             .get(name)
             .ok_or_else(|| ModuleError::new(format!("Entry interface omitted {name}")))?;
+        let actual = crate::types::erase_declared_identity(&scheme.body);
+        let expected = crate::types::erase_declared_identity(&expected);
         if !scheme.parameters.is_empty()
-            || !crate::types::assignable(&scheme.body, &expected)
-            || !crate::types::assignable(&expected, &scheme.body)
+            || !crate::types::assignable(&actual, &expected)
+            || !crate::types::assignable(&expected, &actual)
         {
             return Err(ModuleError::new(format!(
                 "Entry.{name} has type {}, expected {}",
@@ -3205,19 +3224,11 @@ fn make_system_options(input: Option<&Value>) -> Result<Value, ModuleError> {
 }
 
 fn parse_system_caps(value: &Value) -> Result<bool, ModuleError> {
-    let Value::Dict(caps) = value else {
-        return Err(ModuleError::new("Entry.prepare must return SystemCaps"));
-    };
-    if caps.shape().fields() != ["input"] {
-        return Err(ModuleError::new(
-            "Entry.prepare returned an invalid SystemCaps field shape",
-        ));
-    }
-    match caps.get("input") {
-        Some(Value::Atom(value)) if value.name() == "True" => Ok(true),
-        Some(Value::Atom(value)) if value.name() == "False" => Ok(false),
-        _ => Err(ModuleError::new("SystemCaps.input must be Bool")),
-    }
+    let caps = expect_protocol_record(value, "Entry.prepare result", &["input"])?;
+    protocol_bool(
+        caps.get("input").expect("field shape checked"),
+        "SystemCaps.input",
+    )
 }
 
 fn concrete_module_descriptor(module: &InstantiatedModule) -> Result<TypeDescriptor, ModuleError> {
@@ -3994,6 +4005,16 @@ impl ModuleLoader {
         let mut promoted_types = HashSet::new();
         let mut promoted_type_roots = BTreeMap::new();
         let mut erased_metadata_bindings = HashSet::new();
+        let declared_initializer_slots = program
+            .value
+            .body
+            .value
+            .bindings
+            .iter()
+            .filter(|binding| binding.value.declared_initializer.is_some())
+            .enumerate()
+            .map(|(slot, binding)| (binding.value.name.value.clone(), slot as u32))
+            .collect::<HashMap<_, _>>();
         if let Some(metadata) = compile_metadata_initializer(source_file, &program, &analysis)
             .map_err(|error| ModuleError::new(error.to_string()))?
         {
@@ -4011,13 +4032,41 @@ impl ModuleLoader {
             let metadata_root = arena
                 .publish(&mut self.main.heap)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            for name in metadata.type_names {
-                let root = metadata_root
-                    .dict_get(&self.main.heap, &name)
-                    .map_err(|error| ModuleError::new(error.to_string()))?
-                    .ok_or_else(|| {
-                        ModuleError::new(format!("metadata initializer omitted type root {name:?}"))
-                    })?;
+            let roots = metadata
+                .type_names
+                .into_iter()
+                .map(|name| {
+                    let root = metadata_root
+                        .dict_get(&self.main.heap, &name)
+                        .map_err(|error| ModuleError::new(error.to_string()))?
+                        .ok_or_else(|| {
+                            ModuleError::new(format!(
+                                "metadata initializer omitted type root {name:?}"
+                            ))
+                        })?;
+                    Ok((name, root))
+                })
+                .collect::<Result<Vec<_>, ModuleError>>()?;
+            let mut declared_replacements = Vec::new();
+            for (name, root) in &roots {
+                if let Some(slot) = declared_initializer_slots.get(name.as_str()) {
+                    let declared = self
+                        .main
+                        .heap
+                        .declare_persistent_type(*root, source_name.as_str(), *slot, name.as_str())
+                        .map_err(|error| ModuleError::new(error.to_string()))?;
+                    declared_replacements.push((*root, declared));
+                }
+            }
+            self.main
+                .heap
+                .rewrite_declared_type_references(&declared_replacements)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            for (name, root) in roots {
+                let root = self
+                    .main
+                    .heap
+                    .canonical_declared_root(root, &declared_replacements);
                 external_roots.insert(type_link_key(&name), root);
                 promoted_type_roots.insert(name.clone(), root);
                 promoted_types.insert(name);
@@ -4834,7 +4883,7 @@ export let output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
             &entry,
             r#"import "std/rt.priv.telora" as rt;
 import "dep/service.native.telora" as service;
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -5098,7 +5147,7 @@ type Independent = String;
             directory.join("User.telora"),
             r#"import "std/codec" as codec;
                import "std/result" as result;
-               @struct type User = {v: Option(String)};
+               type User = struct {v: Option(String)};
                let decode = fn(value) { codec.decode(User, value) };
                let encode = fn(value) {
                    codec.encode(User, value) |> result.unwrap
@@ -5225,14 +5274,14 @@ type Independent = String;
             (
                 r#"import "std/codec" as codec;
                    import "std/result" as result;
-                   @struct type T = {name: String};
+                   type T = struct {name: String};
                    codec.decode(T, {}) |> result.unwrap"#,
                 "$.name: missing required field",
             ),
             (
                 r#"import "std/codec" as codec;
                    import "std/result" as result;
-                   @struct type T = {name: String};
+                   type T = struct {name: String};
                    codec.decode(T, {name: "Ada", extra: 1}) |> result.unwrap"#,
                 "$.extra: unknown field",
             ),
@@ -5284,7 +5333,7 @@ type Independent = String;
             directory.join("main.telora"),
             "import \"./user.json\" as user;\
              import \"./answer.telora\" as answer;\
-             @struct type User = {name: String, age: Int};\
+             type User = struct {name: String, age: Int};\
              let checked: User = user;\
              (checked.name, answer)",
         )
@@ -5321,8 +5370,8 @@ name = "rustc"
                import "./sub/../config.toml" as same;
                import "std/toml" as toml;
                type TomlDate = toml.DateTime;
-               @struct type Tool = {name: String};
-               @struct type Config = {
+               type Tool = struct {name: String};
+               type Config = struct {
                    title: String,
                    released: TomlDate,
                    environment: Dict(String),
@@ -5359,7 +5408,7 @@ name = "rustc"
         fs::write(
             directory.join("main.telora"),
             "import \"./user.toml\" as user;\n\
-             @struct type User = {name: String, age: Int};\n\
+             type User = struct {name: String, age: Int};\n\
              let checked: User = user;\n\
              checked",
         )
@@ -5381,7 +5430,7 @@ name = "rustc"
             r#"import "std/codec" as codec;
                import "std/result" as result;
                import "./user.toml" as user;
-               @struct type User = {name: String, age: Int};
+               type User = struct {name: String, age: Int};
                codec.decode(User, user) |> result.unwrap"#,
         )
         .unwrap();
@@ -5611,7 +5660,7 @@ name = "rustc"
         fs::write(
             directory.join("main.telora"),
             "import \"./user.json\" as user;\n\
-             @struct type User = {name: String, age: Int};\n\
+             type User = struct {name: String, age: Int};\n\
              let checked: User = user;\n\
              checked",
         )
@@ -5856,11 +5905,11 @@ name = "rustc"
         fs::write(
             directory.join("main.telora"),
             r#"import "std/array" as array;
-               @enum type Kind = {
+               type Kind = enum {
                    Missing: 'None,
                    Unauthorized: 'None,
                };
-               @struct type Rejection = {kind: Kind};
+               type Rejection = struct {kind: Kind};
                let initial: Array(Rejection) = [];
                array.fold([1, 2], initial, fn(rejections, value) {
                    let rejection = if value == 1 {
@@ -5916,7 +5965,7 @@ name = "rustc"
 
         fs::write(
             directory.join("types.telora"),
-            r#"@enum type Kind = {
+            r#"type Kind = enum {
                    Missing: 'None,
                    Unauthorized: 'None,
                };
@@ -5927,7 +5976,7 @@ name = "rustc"
             directory.join("records.telora"),
             r#"import "std/array" as array;
                import "./types.telora" { Kind };
-               @struct type Rejection(Subject) = {kind: Kind, subject: Subject};
+               type Rejection(Subject) = struct {kind: Kind, subject: Subject};
                def reject_all: for(Subject)
                    Fn(Array(Int), Subject) -> Array(Rejection(Subject)) =
                    fn(values, subject) {
@@ -5981,8 +6030,8 @@ name = "rustc"
     fn core_array_fold_infers_anonymous_state_from_computed_array_fields() {
         let directory = fixture_dir();
         let source = r#"import "std/array" as array;
-               @struct type Report(A) = {value: A, accepted: Bool};
-               @struct type CollectResult(A) = {
+               type Report(A) = struct {value: A, accepted: Bool};
+               type CollectResult(A) = struct {
                    reports: Array(Report(A)),
                    diagnostics: Array(String),
                };
@@ -6047,9 +6096,9 @@ name = "rustc"
         let directory = fixture_dir();
         fs::write(
             directory.join("types.telora"),
-            r#"@struct type Input = {value: Int};
-               @struct type Item = {name: String};
-               @struct type Output = {count: Int};
+            r#"type Input = struct {value: Int};
+               type Item = struct {name: String};
+               type Output = struct {count: Int};
                export { Input, Item, Output };"#,
         )
         .unwrap();
@@ -6164,7 +6213,7 @@ name = "rustc"
         fs::write(
             directory.join("main.telora"),
             r#"import "std/array" as array;
-               @struct type Capability(Id, Output) = {
+               type Capability(Id, Output) = struct {
                    id: Id,
                    lower: Fn(Id) -> Option(Output),
                };
@@ -6193,7 +6242,7 @@ name = "rustc"
                        });
                        array.map(steps, fn(step) { step.evidence })
                    };
-               @enum type Id = { A: 'None, B: 'None };
+               type Id = enum { A: 'None, B: 'None };
                def lower_a: Fn(Id) -> Option(Int) = fn(id) {
                    if id == 'A { 'Some(1) } else { 'None }
                };
@@ -6405,7 +6454,7 @@ unchanged", "|"),
 
         fs::write(
             &main,
-            r#"@struct type Fixed = {a: String};
+            r#"type Fixed = struct {a: String};
                let dynamic: Dict(String) = {a: "value"};
                let fixed: Fixed = dynamic;
                fixed"#,
@@ -6417,7 +6466,7 @@ unchanged", "|"),
 
         fs::write(
             &main,
-            r#"@struct type Fixed = {a: String};
+            r#"type Fixed = struct {a: String};
                let read: Fn(Fixed) -> String = fn(value) { value.a };
                let dynamic: Dict(String) = {a: "value"};
                read(dynamic)"#,
@@ -6438,7 +6487,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "std/json" as json;
-               @struct type Node = {children: Dict(Node)};
+               type Node = struct {children: Dict(Node)};
                json.schema(Node)"#,
         )
         .unwrap();
@@ -6695,8 +6744,8 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("families.telora"),
-            r#"@enum type Status = {Ready: 'None};
-               @struct type Box(A) = {status: Status, value: A};
+            r#"type Status = enum {Ready: 'None};
+               type Box(A) = struct {status: Status, value: A};
                {Box: Box}"#,
         )
         .unwrap();
@@ -6750,7 +6799,7 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"@struct type Box(A) = {value: A};
+            r#"type Box(A) = struct {value: A};
                type StringBox = Box(String);
                let value: StringBox = {value: "ready"};
                value"#,
@@ -6788,11 +6837,93 @@ unchanged", "|"),
         let node = module
             .analysis
             .display(module.analysis.declared_types["Node"]);
-        assert!(node.contains("Array<Node>"), "{node}");
-        assert!(!node.contains("Any"), "{node}");
+        assert_eq!(node, "Node");
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
             "(\"ready\", 'Some(3), 2)"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn concrete_declared_types_preserve_identity_across_values_dyn_and_codec() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/dyn" as dyn;
+               import "std/result" as result;
+               type Left = struct {value: Int};
+               type Right = struct {value: Int};
+               type State = enum {'Idle, 'Ready(Int)};
+               let left: Left = {value: 1};
+               let state: State = 'Ready(2);
+               let decoded = codec.decode(Left, {value: 3}) |> result.unwrap;
+               let packed = dyn.pack(Left, decoded);
+               {
+                   left: left,
+                   state: state,
+                   decoded: decoded,
+                   encoded: codec.encode(Left, decoded) |> result.unwrap,
+                   dyn_desc: dyn.desc(packed),
+               }"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module
+                .analysis
+                .display(module.analysis.binding_types["left"]),
+            "Left"
+        );
+        assert_eq!(
+            module
+                .analysis
+                .display(module.analysis.binding_types["state"]),
+            "State"
+        );
+        let Value::Dict(output) = module.execute(100_000).unwrap() else {
+            panic!("declared boundary test must return a Dict")
+        };
+        assert!(matches!(output.get("left"), Some(Value::Declared(_))));
+        assert!(matches!(output.get("state"), Some(Value::Declared(_))));
+        assert!(matches!(output.get("decoded"), Some(Value::Declared(_))));
+        assert!(matches!(
+            output.get("dyn_desc"),
+            Some(Value::DeclaredType(_))
+        ));
+        assert_eq!(output.get("encoded").unwrap().to_string(), "{value: 3}");
+
+        fs::write(
+            directory.join("wrong.telora"),
+            r#"type Left = struct {value: Int};
+               type Right = struct {value: Int};
+               let left: Left = {value: 1};
+               let right: Right = left;
+               right"#,
+        )
+        .unwrap();
+        let wrong =
+            load_module(directory.join("wrong.telora"), BTreeMap::new(), 100_000).unwrap_err();
+        assert!(wrong.to_string().contains("Left"));
+        assert!(wrong.to_string().contains("Right"));
+
+        fs::write(
+            directory.join("erased.telora"),
+            r#"import "std/codec" as codec;
+               type Left = struct {value: Int};
+               let raw: Any = {value: 1};
+               codec.encode(Left, raw)"#,
+        )
+        .unwrap();
+        let erased =
+            load_module(directory.join("erased.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert!(
+            erased
+                .execute(100_000)
+                .unwrap()
+                .to_string()
+                .contains("'Err")
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -6802,7 +6933,7 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("families.telora"),
-            r#"@struct type Box(A) = {value: Array(Tuple([A, Int]))};
+            r#"type Box(A) = struct {value: Array(Tuple([A, Int]))};
                def make: for(A) Fn(Array(Tuple([A, Int]))) -> Box(A) =
                    fn(value) { {value} };
                {Box, make}"#,
@@ -6832,14 +6963,14 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("families.telora"),
-            r#"@struct type Box(A) = {value: A}; export { Box };"#,
+            r#"type Box(A) = struct {value: A}; export { Box };"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
             r#"import "./families.telora" {Box};
-               @struct type Branch = {children: Array(Tree)};
-               @enum type Tree = {Leaf: Int, Branch: Branch};
+               type Branch = struct {children: Array(Tree)};
+               type Tree = enum {Leaf: Int, Branch: Branch};
                type TreeBox = Box(Tree);
                def identity: Fn(TreeBox) -> TreeBox = fn(value) { value };
                identity({value: 'Branch({children: ['Leaf(1)]})})"#,
@@ -6862,10 +6993,10 @@ unchanged", "|"),
     #[test]
     fn imported_families_preserve_provider_recursive_fields_regardless_of_declaration_order() {
         let recursive_orders = [
-            r#"@struct type CallExpr = {name: String, args: Array(Expr)};
-               @enum type Expr = {Literal: Literal, Column: ColumnRef, Call: CallExpr};"#,
-            r#"@enum type Expr = {Literal: Literal, Column: ColumnRef, Call: CallExpr};
-               @struct type CallExpr = {name: String, args: Array(Expr)};"#,
+            r#"type CallExpr = struct {name: String, args: Array(Expr)};
+               type Expr = enum {Literal: Literal, Column: ColumnRef, Call: CallExpr};"#,
+            r#"type Expr = enum {Literal: Literal, Column: ColumnRef, Call: CallExpr};
+               type CallExpr = struct {name: String, args: Array(Expr)};"#,
         ];
         let imports = [
             (
@@ -6884,10 +7015,10 @@ unchanged", "|"),
         for recursive_types in recursive_orders {
             for (import, expr, definition) in imports {
                 let directory = fixture_dir();
-                let provider = r#"@struct type Literal = {value: Int};
-                   @struct type ColumnRef = {alias: String, column: String};
+                let provider = r#"type Literal = struct {value: Int};
+                   type ColumnRef = struct {alias: String, column: String};
                    $RECURSIVE_TYPES
-                   @struct type Definition(Id, Output, Input) = {
+                   type Definition(Id, Output, Input) = struct {
                        id: Id,
                        expr: Expr,
                        lower: Fn(Id, Input) -> Output,
@@ -6896,9 +7027,9 @@ unchanged", "|"),
                     .replace("$RECURSIVE_TYPES", recursive_types);
                 fs::write(directory.join("types.telora"), provider).unwrap();
                 let consumer = r#"$IMPORT
-                   @enum type Id = {Name: 'None};
-                   @struct type Output = {value: String};
-                   @enum type Input = {All: 'None};
+                   type Id = enum {Name: 'None};
+                   type Output = struct {value: String};
+                   type Input = enum {All: 'None};
                    def column: Fn(String, String) -> $EXPR = fn(alias, name) {
                        'Column({alias: alias, column: name})
                    };
@@ -6942,9 +7073,9 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("types.telora"),
-            r#"@struct type Call = {args: Array(Expr)};
-               @enum type Expr = {Literal: Int, Call: Call};
-               @struct type Family(A) = {expr: Expr, value: A};
+            r#"type Call = struct {args: Array(Expr)};
+               type Expr = enum {Literal: Int, Call: Call};
+               type Family(A) = struct {expr: Expr, value: A};
                export {Expr, Family};"#,
         )
         .unwrap();
@@ -6986,16 +7117,16 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("expr.telora"),
-            r#"@struct type CallExpr = {name: String, args: Array(Expr)};
-               @enum type Expr = {Literal: Int, Call: CallExpr};
+            r#"type CallExpr = struct {name: String, args: Array(Expr)};
+               type Expr = enum {Literal: Int, Call: CallExpr};
                export {Expr};"#,
         )
         .unwrap();
         fs::write(
             directory.join("plan.telora"),
             r#"import "./expr.telora" {Expr};
-               @struct type Plan(A) = {value: A, expr: Expr};
-               @struct type Output = {text: String};
+               type Plan(A) = struct {value: A, expr: Expr};
+               type Output = struct {text: String};
                def render: Fn(Expr) -> String = fn(expr) {
                    match expr {
                        'Literal(value) => `\{value}`,
@@ -7017,7 +7148,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "./facade.telora" as api;
-               @struct type Item = {id: Int};
+               type Item = struct {id: Int};
                type ItemPlan = api.Plan(Item);
                type OutputAlias = api.Output;
                let plan: ItemPlan = {
@@ -7049,13 +7180,13 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("provider.telora"),
-            r#"@struct type Box(A) = {value: A}; export {Box};"#,
+            r#"type Box(A) = struct {value: A}; export {Box};"#,
         )
         .unwrap();
         fs::write(
             directory.join("alias.telora"),
             r#"import "./provider.telora" {Box};
-               @enum type Local = {A: 'None};
+               type Local = enum {A: 'None};
                type LocalBox = Box(Local);
                export {LocalBox, Local};"#,
         )
@@ -7104,7 +7235,7 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("factory.telora"),
-            r#"@struct type Model(Subject, Output) = {subject: Subject, output: Output};
+            r#"type Model(Subject, Output) = struct {subject: Subject, output: Output};
                def apply: for(Input, Output) Fn(Input, Fn(Input) -> Output) -> Output =
                    fn(input, callback) { callback(input) };
                export def make_creator:
@@ -7123,9 +7254,9 @@ unchanged", "|"),
         fs::write(
             directory.join("domain.telora"),
             r#"import "./factory.telora" {Model, make_creator, make_composed_creator};
-               @enum type Subject = {Order: 'None};
-               @struct type CallExpr = {name: String, args: Array(Expr)};
-               @enum type Expr = {Subject: Subject, Call: CallExpr};
+               type Subject = enum {Order: 'None};
+               type CallExpr = struct {name: String, args: Array(Expr)};
+               type Expr = enum {Subject: Subject, Call: CallExpr};
                let model: Model(Subject, Expr) = {
                    subject: 'Order,
                    output: 'Call({name: "root", args: ['Subject('Order)]}),
@@ -7157,9 +7288,9 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("origin.telora"),
-            r#"@struct type Box(A) = {value: A};
-               @struct type Branch = {children: Array(Tree)};
-               @enum type Tree = {Leaf: Int, Branch: Branch};
+            r#"type Box(A) = struct {value: A};
+               type Branch = struct {children: Array(Tree)};
+               type Tree = enum {Leaf: Int, Branch: Branch};
                export def identity: for(A) Fn(A) -> A = fn(value) { value };
                export {Box, Tree};"#,
         )
@@ -7213,7 +7344,7 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("origin.telora"),
-            r#"@struct type Box(A) = {value: A};
+            r#"type Box(A) = struct {value: A};
                export def identity: for(A) Fn(A) -> A = fn(value) { value };
                export {Box};"#,
         )
@@ -7321,8 +7452,8 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "./api.telora" as api;
-               @enum type Node = {A: 'None, B: 'None};
-               @struct type Requirement = {target: Node};
+               type Node = enum {A: 'None, B: 'None};
+               type Requirement = struct {target: Node};
                def target_of: Fn(Requirement) -> Node = fn(req) { req.target };
                api.use([{target: 'B}], target_of)"#,
         )
@@ -7501,20 +7632,20 @@ unchanged", "|"),
 
         fs::write(
             directory.join("base.telora"),
-            "@enum type Status = {Ready: 'None}; {Status: Status}",
+            "type Status = enum {Ready: 'None}; {Status: Status}",
         )
         .unwrap();
         fs::write(
             directory.join("local.telora"),
-            "@enum type Status = {Ready: 'None};\
-             @struct type Box(A) = {status: Status, value: A};\
+            "type Status = enum {Ready: 'None};\
+             type Box(A) = struct {status: Status, value: A};\
              {Box: Box}",
         )
         .unwrap();
         fs::write(
             directory.join("imported.telora"),
             "import \"./base.telora\" {Status};\
-             @struct type Box(A) = {status: Status, value: A};\
+             type Box(A) = struct {status: Status, value: A};\
              {Box: Box}",
         )
         .unwrap();
@@ -7545,7 +7676,7 @@ unchanged", "|"),
             r#"import "./data.json" as data;
                import "std/codec" as codec;
                import "std/result" as result;
-               @struct type Box(Item) = {value: Item};
+               type Box(Item) = struct {value: Item};
                codec.decode(Box(String), data) |> result.unwrap"#,
         )
         .unwrap();
@@ -8100,7 +8231,7 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/result" as result;
-               @struct type User = {name: String};
+               type User = struct {name: String};
                let decoded = codec.decode(User, {name: "Ada"});
                let encoded = codec.encode(User, {name: "Lin"});
                let checked = validate(User, {name: "Grace"});
@@ -8196,7 +8327,7 @@ unchanged", "|"),
         fs::write(
             directory.join("wrong-encode.telora"),
             r#"import "std/codec" as codec;
-               @struct type User = {name: String};
+               type User = struct {name: String};
                codec.encode(User, {name: 1})"#,
         )
         .unwrap();
@@ -8342,7 +8473,7 @@ unchanged", "|"),
             r#"import "std/type-desc" as desc;
                import "std/attributes" as attributes;
                import "std/array" as arrays;
-               @struct type Node = {children: Array(Node)};
+               type Node = struct {children: Array(Node)};
                let struct_nodes = desc.children(Node);
                let field_nodes = arrays.flat_map(struct_nodes, desc.children);
                let array_nodes = arrays.flat_map(field_nodes, desc.children);
@@ -8589,9 +8720,9 @@ unchanged", "|"),
             r#"import "std/dyn" as dyn;
                import "std/result" as result;
                import "std/array" as arrays;
-               @struct type User = {name: String, pair: Tuple([Int, String])};
-               @struct type Node = {value: Int, children: Array(Node)};
-               @enum type Maybe = {None: 'None, Some: Int};
+               type User = struct {name: String, pair: Tuple([Int, String])};
+               type Node = struct {value: Int, children: Array(Node)};
+               type Maybe = enum {'None, 'Some(Int)};
                let user = dyn.pack(User, {name: "Ada", pair: (1, "one")});
                let name = result.unwrap(dyn.field(user, "name"));
                let pair = result.unwrap(dyn.field(user, "pair"));
@@ -8791,8 +8922,8 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "./reference-equality.telora" as equality;
                import "std/eq" as eq;
-               @struct type Node = {value: Int, children: Array(Node)};
-               @enum type Choice = {None: 'None, Some: String};
+               type Node = struct {value: Int, children: Array(Node)};
+               type Choice = enum {None: 'None, Some: String};
                type Pair = Tuple([Int, String]);
                type Unary = Fn(Int) -> Int;
                let left: Node = {value: 1, children: [{value: 2, children: []}]};
@@ -9213,16 +9344,14 @@ unchanged", "|"),
                };
 
                @annotate("model", 1)
-               @struct
-               type User = {
+               type User = struct {
                    name: String,
                    @annotate("field", 2)
                    role: String,
                };
 
                @annotate("enum", 3)
-               @enum
-               type Choice = {
+               type Choice = enum {
                    None: 'None,
                    User: User,
                };
@@ -9355,8 +9484,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
-               @enum
-               type Choice = { None: 'None, Number: Int };
+               type Choice = enum { None: 'None, Number: Int };
                {
                    unknown: validate(Choice, 'Other),
                    missing: validate(Choice, 'Number),
@@ -9385,16 +9513,16 @@ unchanged", "|"),
             r#"import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               @struct type User = {name: String};
+               type User = struct {name: String};
                @json.rename_all('CamelCase)
-               @enum type Event = {
+               type Event = enum {
                    Idle: 'None,
                    UserJoined: User,
                    @json.rename("fatal") FatalError: String,
                };
                @json.untagged
-               @enum type Scalar = {Text: String, Count: Int};
-               @struct type Envelope = {event: Event};
+               type Scalar = enum {Text: String, Count: Int};
+               type Envelope = struct {event: Event};
                {
                    idle: codec.decode(Event, "idle") |> result.unwrap,
                    joined: codec.decode(Event, {userJoined: {name: "Ada"}}) |> result.unwrap,
@@ -9434,8 +9562,8 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/json" as json;
-               @json.untagged @enum type Scalar = {Text: String, Count: Int};
-               @json.untagged @enum type Ambiguous = {Anything: Any, Text: String};
+               @json.untagged type Scalar = enum {Text: String, Count: Int};
+               @json.untagged type Ambiguous = enum {Anything: Any, Text: String};
                {
                    no_match: codec.decode(Scalar, []),
                    ambiguous: codec.decode(Ambiguous, "text"),
@@ -9477,13 +9605,13 @@ unchanged", "|"),
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               @struct type User = {name: String};
-               @struct type Details = {city_name: String};
+               type User = struct {name: String};
+               type Details = struct {city_name: String};
                @json.rename_all('CamelCase)
-               @enum type Event = {Idle: 'None, UserJoined: User};
-               @json.untagged @enum type Scalar = {Text: String, Count: Int};
+               type Event = enum {Idle: 'None, UserJoined: User};
+               @json.untagged type Scalar = enum {Text: String, Count: Int};
                @json.rename_all('CamelCase)
-               @struct type Model = {
+               type Model = struct {
                    user_id: Int,
                    @json.flatten details: Details,
                    @json.default('None) nickname: Option(String),
@@ -9638,12 +9766,12 @@ unchanged", "|"),
         fs::write(
             directory.join("Types.telora"),
             r#"import "std/json" as json;
-               @struct type Node = {
+               type Node = struct {
                    value: Int,
                    children: Array(Node),
                };
-               @struct type Left = {@json.rename("rightValue") right: Option(Right)};
-               @struct type Right = {left: Option(Left)};
+               type Left = struct {@json.rename("rightValue") right: Option(Right)};
+               type Right = struct {left: Option(Left)};
                {Node: Node, Left: Left, Right: Right}"#,
         )
         .unwrap();
@@ -9756,7 +9884,7 @@ unchanged", "|"),
                import "std/result" as result;
 
                @fmt.display_by("{value}")
-               @struct type Node = {value: Int, children: Array(Node)};
+               type Node = struct {value: Int, children: Array(Node)};
                type NodeResult = Result(Node, String);
                def identity: Fn(Node) -> Node = fn(node) { node };
                let leaf: Node = {value: 2, children: []};
@@ -9825,7 +9953,7 @@ unchanged", "|"),
             &main,
             r#"import "std/fmt" as fmt;
                @fmt.display_by("{next}")
-               @struct type Loop = {next: Loop};
+               type Loop = struct {next: Loop};
                export {Loop};"#,
         )
         .unwrap();
@@ -9844,19 +9972,19 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("types.telora"),
-            r#"@struct type IntValue = {value: Int};
-               @struct type StringValue = {value: String};
-               @enum type Val = {Int: IntValue, Str: StringValue};
-               @struct type BinaryNode = {left: Expr, right: Expr};
-               @struct type ColumnRef = {alias: String, column: String};
-               @enum type Expr = {
+            r#"type IntValue = struct {value: Int};
+               type StringValue = struct {value: String};
+               type Val = enum {Int: IntValue, Str: StringValue};
+               type BinaryNode = struct {left: Expr, right: Expr};
+               type ColumnRef = struct {alias: String, column: String};
+               type Expr = enum {
                    Value: Val,
                    Add: BinaryNode,
                    Column: ColumnRef,
                };
-               @struct type Mapping = {predicate: Expr};
-               @struct type Relation(M) = {mapping: M};
-               @struct type RelationUse(Entity) = {
+               type Mapping = struct {predicate: Expr};
+               type Relation(M) = struct {mapping: M};
+               type RelationUse(Entity) = struct {
                    entity: Entity,
                    relation: Relation(Mapping),
                };
@@ -9869,7 +9997,7 @@ unchanged", "|"),
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               @enum type Entity = {Order: 'None};
+               type Entity = enum {Order: 'None};
                type Use = types.RelationUse(Entity);
                let relation: Use = {
                    entity: 'Order,
@@ -9902,9 +10030,9 @@ unchanged", "|"),
         fs::write(
             directory.join("types.telora"),
             r#"import "std/codec" as codec;
-               @struct type Binary = {left: Expr, right: Expr};
-               @enum type Expr = {Lit: Int, Add: Binary};
-               @struct type Payload(A, B, C, D, E, F, G) = {
+               type Binary = struct {left: Expr, right: Expr};
+               type Expr = enum {Lit: Int, Add: Binary};
+               type Payload(A, B, C, D, E, F, G) = struct {
                    a: A, b: B, c: C, d: D, e: E, f: F, g: G,
                };
                type Rejection = Payload(
@@ -9968,8 +10096,8 @@ unchanged", "|"),
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"@struct type CallExpr = { args: Array(Expr) };
-@enum type Expr = { Call: CallExpr, Text: String };
+            r#"type CallExpr = struct { args: Array(Expr) };
+type Expr = enum { Call: CallExpr, Text: String };
 export { CallExpr, Expr };"#,
         )
         .unwrap();
@@ -9991,8 +10119,8 @@ export { CallExpr, Expr };"#,
         let directory = fixture_dir();
         fs::write(
             directory.join("expr.telora"),
-            r#"@struct type Binary = {left: Expr, right: Expr};
-               @enum type Expr = {Lit: Int, Add: Binary};
+            r#"type Binary = struct {left: Expr, right: Expr};
+               type Expr = enum {Lit: Int, Add: Binary};
                def lit: Fn(Int) -> Expr = fn(value) { 'Lit(value) };
                def add: Fn(Expr, Expr) -> Expr = fn(left, right) {
                    'Add({left, right})
@@ -10081,7 +10209,7 @@ export { CallExpr, Expr };"#,
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
-               @struct type Forward = {next: Later};
+               type Forward = struct {next: Later};
                let premature = codec.decode(Forward, {next: 1});
                type Later = Int;
                premature"#,
@@ -10319,8 +10447,7 @@ export { CallExpr, Expr };"#,
             directory.join("main.telora"),
             r#"import "std/json" as json;
                @json.rename_all('CamelCase)
-               @struct
-               type Model = {
+               type Model = struct {
                    @json.rename("outerName")
                    @json.rename("innerName")
                    @json.default(7)
@@ -10399,15 +10526,15 @@ export { CallExpr, Expr };"#,
                import "std/json" as json;
                import "std/result" as result;
 
-               @struct type Coordinates = {
+               type Coordinates = struct {
                    latitude: Int,
                };
-               @struct type Address = {
+               type Address = struct {
                    city_name: String,
                    @json.flatten coordinates: Coordinates,
                };
                @json.rename_all('CamelCase)
-               @struct type User = {
+               type User = struct {
                    user_id: Int,
                    @json.rename("display") display_name: String,
                    @json.flatten address: Address,
@@ -10456,7 +10583,7 @@ export { CallExpr, Expr };"#,
                import "std/json" as json;
                let zero = 0;
                def is_zero: Fn(Int) -> Bool = fn(value) { value == zero };
-               @struct type Model = {
+               type Model = struct {
                    @json.skip_serializing_if(is_zero) omitted: Int,
                    @json.skip_serializing_if(is_zero) retained: Int,
                    @json.skip_serializing_if('False) native_omitted: Bool,
@@ -10489,7 +10616,7 @@ export { CallExpr, Expr };"#,
             directory.join("arity.telora"),
             r#"import "std/json" as json;
                def wrong: Fn(Any, Any) -> Bool = fn(left, right) { 'False };
-               @struct type Model = {
+               type Model = struct {
                    @json.skip_serializing_if(wrong) value: Int,
                };
                0"#,
@@ -10504,7 +10631,7 @@ export { CallExpr, Expr };"#,
             r#"import "std/codec" as codec;
                import "std/json" as json;
                def identity: Fn(Any) -> Any = fn(value) { value };
-               @struct type Model = {
+               type Model = struct {
                    @json.skip_serializing_if(identity) value: Int,
                };
                codec.encode(Model, {value: 1})"#,
@@ -10527,7 +10654,7 @@ export { CallExpr, Expr };"#,
             r#"import "std/codec" as codec;
                import "std/json" as json;
                def fails: Fn(Any) -> Int = fn(value) { 1 / 0 };
-               @struct type Model = {
+               type Model = struct {
                    @json.skip_serializing_if(fails) value: Int,
                };
                codec.encode(Model, {value: 1})"#,
@@ -10561,11 +10688,11 @@ export { CallExpr, Expr };"#,
                import "std/json" as json;
                def is_zero: Fn(Int) -> Bool = fn(value) { value == 0 };
                def always: Fn(Any) -> Bool = fn(value) { 'True };
-               @struct type Item = {
+               type Item = struct {
                    @json.skip_serializing_if(is_zero) value: Int,
                };
-               @struct type Nested = {required: String};
-               @struct type Model = {
+               type Nested = struct {required: String};
+               type Model = struct {
                    items: Array(Item),
                    @json.skip_serializing_if(always)
                    @json.flatten nested: Nested,
@@ -10592,7 +10719,7 @@ export { CallExpr, Expr };"#,
                 "collision.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
-                   @struct type T = {
+                   type T = struct {
                        @json.rename("same") first: Int,
                        @json.rename("same") second: Int,
                    };
@@ -10603,7 +10730,7 @@ export { CallExpr, Expr };"#,
                 "flatten-type.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
-                   @struct type T = {@json.flatten value: Int};
+                   type T = struct {@json.flatten value: Int};
                    codec.decode(T, {})"#,
                 "flatten requires Struct metadata",
             ),
@@ -10611,8 +10738,8 @@ export { CallExpr, Expr };"#,
                 "flatten-rename.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
-                   @struct type Inner = {value: Int};
-                   @struct type T = {
+                   type Inner = struct {value: Int};
+                   type T = struct {
                        @json.flatten @json.rename("x") inner: Inner,
                    };
                    codec.decode(T, {value: 1})"#,
@@ -10622,7 +10749,7 @@ export { CallExpr, Expr };"#,
                 "default.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
-                   @struct type T = {@json.default("wrong") value: Int};
+                   type T = struct {@json.default("wrong") value: Int};
                    codec.decode(T, {})"#,
                 "expected Int",
             ),
@@ -10751,8 +10878,8 @@ export { CallExpr, Expr };"#,
                type ExecSettings = exec_types.ExecSettings;
                type ExecRequest = exec_types.ExecRequest;
                type ExecEnv = exec_types.ExecEnv;
-               @struct type Platform = {os: String, arch: String};
-               @struct type Config = {platform: Platform, offset: Int};
+               type Platform = struct {os: String, arch: String};
+               type Config = struct {platform: Platform, offset: Int};
                def helper = fn(value) { value + 1 };
                def helper2 = fn(value) { helper(value) + 1 };
                def select = fn(platform) {
@@ -10972,7 +11099,7 @@ export { CallExpr, Expr };"#,
     fn recoverable_workspace_publishes_precise_type_family_schemes() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
-        fs::write(&main, "@struct type Box(A) = {value: A}; export { Box };").unwrap();
+        fs::write(&main, "type Box(A) = struct {value: A}; export { Box };").unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
@@ -10997,7 +11124,7 @@ export { CallExpr, Expr };"#,
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            "@struct type Box(A) = {value: A}; let broken = missing; export { Box };",
+            "type Box(A) = struct {value: A}; let broken = missing; export { Box };",
         )
         .unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
@@ -11141,9 +11268,9 @@ export let output = `unexpected \{array.length(second)}`;"#,
                 &main,
                 format!(
                     r#"import "std/array" as array;
-@enum type A = {{ Bad: 'None }};
-@enum type B = {{ Bad: 'None }};
-@struct type Pair = {{ left: Int, right: String }};
+type A = enum {{ Bad: 'None }};
+type B = enum {{ Bad: 'None }};
+type Pair = struct {{ left: Int, right: String }};
 def fail_a: Fn(A) -> Int = fn(value) {{ fail!("diagnostic A", value) }};
 def fail_b: Fn(B) -> Int = fn(value) {{ fail!("diagnostic B", value) }};
 def run_both: Fn(Array(A), Array(B)) -> Int = fn(values_a, values_b) {{
@@ -11176,10 +11303,10 @@ export let output = "unreachable";"#
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"@struct type CallExpr = {args: Array(Expr)};
-@struct type BinExpr = {left: Expr, right: Expr};
-@enum type Expr = {Call: CallExpr, Bin: BinExpr, Text: String};
-@struct type Plan(A) = {root: Expr, value: A};
+            r#"type CallExpr = struct {args: Array(Expr)};
+type BinExpr = struct {left: Expr, right: Expr};
+type Expr = enum {Call: CallExpr, Bin: BinExpr, Text: String};
+type Plan(A) = struct {root: Expr, value: A};
 def render: Fn(Expr) -> String = fn(expr) {
     match expr {
         'Call(call) => render(call.args[0]),
@@ -11461,7 +11588,7 @@ export let output = array.length(concatenated) + array.length(independent);"#,
         let main = directory.join("main.telora");
         fs::write(
             &dependency,
-            r#"@struct type Plan(Revision) = { revision: Revision };
+            r#"type Plan(Revision) = struct { revision: Revision };
 def ensure_plan: for(Revision) Fn(Plan(Revision), Plan(Revision)) -> Plan(Revision) = fn(left, right) {
     fail!("cross polymorphic", left)
 };
@@ -11723,7 +11850,7 @@ export let output = (compared, selected);"#,
                import "std/string" as string;
                let pattern = re.compile(r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$");
                @re.parse_by(pattern)
-               @struct type Rec = {
+               type Rec = struct {
                    name: String,
                    value: Int,
                    unit: Option(String),
@@ -11765,7 +11892,7 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/regex" as re;
                @re.parse_by(re.compile(r"(?P<name>\w+)"))
-               @struct type Bad = { value: Int };
+               type Bad = struct { value: Int };
                { Bad }"#,
         )
         .unwrap();
@@ -11787,9 +11914,9 @@ export let output = (compared, selected);"#,
                import "std/result" as result;
                import "std/string" as string;
                @re.parse_by(re.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
-               @struct type Endpoint = { host: String, port: Int };
+               type Endpoint = struct { host: String, port: Int };
                @re.parse_by(re.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
-               @struct type Service = { name: String, endpoint: Endpoint };
+               type Service = struct { name: String, endpoint: Endpoint };
                export let output = result.unwrap(string.parse(Service, "api@localhost:8080"));"#,
         )
         .unwrap();
@@ -11812,9 +11939,9 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/fmt" as fmt;
                @fmt.display_by("{host}:{port}")
-               @struct type Endpoint = { host: String, port: Int };
+               type Endpoint = struct { host: String, port: Int };
                @fmt.display_by("{name}@{endpoint} {{ready}} {ratio} {name}")
-               @struct type Service = { name: String, endpoint: Endpoint, ratio: Float };
+               type Service = struct { name: String, endpoint: Endpoint, ratio: Float };
                export let output = fmt.display(Service, {
                    name: "api",
                    endpoint: { host: "localhost", port: 8080 },
@@ -11833,7 +11960,7 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/fmt" as fmt;
                @fmt.display_by("{missing}")
-               @struct type Bad = { value: Int };
+               type Bad = struct { value: Int };
                export { Bad };"#,
         )
         .unwrap();
@@ -11846,7 +11973,7 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/fmt" as fmt;
                @fmt.display_by("{value")
-               @struct type Bad = { value: Int };
+               type Bad = struct { value: Int };
                export { Bad };"#,
         )
         .unwrap();
@@ -11874,9 +12001,9 @@ export let output = (compared, selected);"#,
                @string.encode_by_display
                @fmt.display_by("{host}:{port}")
                @re.parse_by(re.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
-               @struct type Endpoint = { host: String, port: Int };
+               type Endpoint = struct { host: String, port: Int };
 
-               @struct type Config = { endpoint: Endpoint, name: String };
+               type Config = struct { endpoint: Endpoint, name: String };
                let decoded = result.unwrap(codec.decode(Config, {
                    endpoint: "localhost:8080",
                    name: "dev",
@@ -11914,7 +12041,7 @@ export let output = (compared, selected);"#,
                import "std/string" as string;
                @string.decode_by_parse
                @re.parse_by(re.compile(r"^(?P<value>\d+)$"))
-               @struct type Bad = { value: Int };
+               type Bad = struct { value: Int };
                export let output = codec.decode(Bad, "42");"#,
         )
         .unwrap();
@@ -11926,7 +12053,7 @@ export let output = (compared, selected);"#,
         fs::write(
             &main,
             r#"import "std/string" as string;
-               @struct type Bad = {
+               type Bad = struct {
                    @string.decode_by_parse
                    value: String,
                };
@@ -11997,9 +12124,9 @@ export let output = (compared, selected);"#,
         fs::write(
             directory.join("main.telora"),
             r#"import "./reference-show.telora" as show;
-               @struct type User = {name: String, scores: Array(Int)};
-               @struct type Node = {value: Int, children: Array(Node)};
-               @enum type Choice = {None: 'None, Some: String};
+               type User = struct {name: String, scores: Array(Int)};
+               type Node = struct {value: Int, children: Array(Node)};
+               type Choice = enum {None: 'None, Some: String};
                type Pair = Tuple([Int, String]);
                type Unary = Fn(Int) -> Int;
                let user: User = {name: "Ada", scores: [2, 3]};
@@ -12063,10 +12190,10 @@ export let output = (compared, selected);"#,
             directory.join("main.telora"),
             r#"import "./reference-hash.telora" as reference;
                import "std/hash" as hash;
-               @struct type User = {name: String, scores: Array(Int)};
-               @struct type Renamed = {label: String, scores: Array(Int)};
-               @struct type Node = {value: Int, children: Array(Node)};
-               @enum type Choice = {None: 'None, Some: String};
+               type User = struct {name: String, scores: Array(Int)};
+               type Renamed = struct {label: String, scores: Array(Int)};
+               type Node = struct {value: Int, children: Array(Node)};
+               type Choice = enum {None: 'None, Some: String};
                type Pair = Tuple([Int, Int]);
                type Unary = Fn(Int) -> Int;
                let user: User = {name: "Ada", scores: [2, 3]};
@@ -12192,7 +12319,7 @@ export { output };"#,
         let source = r#"import "./user.json" as user;
 import "std/result" as result;
 import "std/dyn" as dyn;
-@struct type User = {age: Int};
+type User = struct {age: Int};
 def inspect_i: Fn(Dyn) -> Int = fn(value) {
     match dyn.field(value, "age") {
         'Ok(age) => fail!("age rejected", age),

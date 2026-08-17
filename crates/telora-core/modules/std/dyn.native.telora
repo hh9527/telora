@@ -1,7 +1,7 @@
-@enum type ValueKind = {
-    Int: 'None, Float: 'None, String: 'None, Bytes: 'None, Type: 'None, Opaque: 'None,
-    Dict: 'None, Array: 'None, Atom: 'None, Tagged: 'None,
-    Tuple: 'None, Func: 'None, Dyn: 'None,
+type ValueKind = enum {
+    'Int, 'Float, 'String, 'Bytes, 'Type, 'Opaque,
+    'Dict, 'Array, 'Atom, 'Tagged,
+    'Tuple, 'Func, 'Dyn,
 };
 native pack: for(A) Fn(TypeOf(A), A) -> Dyn;
 native desc: Fn(Dyn) -> Type;

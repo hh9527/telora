@@ -1,6 +1,6 @@
 # RFC 0237: Concrete declared identity and value boundaries
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #85
 - Depends on: RFC 0035, RFC 0090, RFC 0157, RFC 0218, RFC 0235, RFC 0236
 

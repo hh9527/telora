@@ -458,11 +458,6 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             source: include_str!("../modules/core/prelude.native.telora"),
             functions: vec![
                 (
-                    "struct",
-                    NativeFunction::core_model(CoreModelFunction::Struct),
-                ),
-                ("enum", NativeFunction::core_model(CoreModelFunction::Enum)),
-                (
                     "union",
                     NativeFunction::core_model(CoreModelFunction::Union),
                 ),

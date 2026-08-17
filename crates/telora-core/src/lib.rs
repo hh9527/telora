@@ -71,14 +71,14 @@ pub use source::{
 };
 pub use toml::{TomlParse, parse_toml_registered};
 pub use types::{
-    Analysis, ModuleInterface, PartialAnalysis, SemanticDependencyGraph, SemanticDependencyNode,
-    TypeGraph, TypeId, TypeNode, TypeParameter, TypeParameterId, TypeScheme, analyze_partial_types,
-    analyze_partial_types_with_bindings, analyze_source, analyze_source_with_fuel,
-    analyze_source_with_quota,
+    Analysis, DeclaredTypeDescriptor, ModuleInterface, PartialAnalysis, SemanticDependencyGraph,
+    SemanticDependencyNode, TypeGraph, TypeId, TypeNode, TypeParameter, TypeParameterId,
+    TypeScheme, analyze_partial_types, analyze_partial_types_with_bindings, analyze_source,
+    analyze_source_with_fuel, analyze_source_with_quota,
 };
 pub use value::{
-    Atom, BuiltinAtom, Callable, Closure, Dict, NativeError, NativeFunction, NativeType,
-    OpaqueValue, Prototype, Shape, Value,
+    Atom, BuiltinAtom, Callable, Closure, DeclaredType, DeclaredValue, Dict, NativeError,
+    NativeFunction, NativeType, OpaqueValue, Prototype, Shape, Value,
 };
 pub use vm::{
     CallContext, DebugEvent, DebugSink, DiscardDebugSink, Quota, QuotaAccount, RuntimeError,

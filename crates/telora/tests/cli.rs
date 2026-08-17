@@ -244,7 +244,7 @@ fn check_and_best_effort_run_do_not_repeat_cross_module_polymorphic_failures() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/dependency.telora"),
-        r#"@struct type Plan(Revision) = { revision: Revision };
+        r#"type Plan(Revision) = struct { revision: Revision };
 def ensure_plan: for(Revision) Fn(Plan(Revision), Plan(Revision)) -> Plan(Revision) = fn(left, right) {
     fail!("plan rejected", left)
 };
@@ -302,8 +302,8 @@ fn call_cascade(record: &Value) -> bool {
 #[test]
 fn recursive_type_metadata_does_not_add_recovery_errors() {
     let cwd = fixture();
-    let source = r#"@struct type CallExpr = { args: Array(Expr) };
-@enum type Expr = { Call: CallExpr, Text: String };
+    let source = r#"type CallExpr = struct { args: Array(Expr) };
+type Expr = enum { Call: CallExpr, Text: String };
 def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
 let failed = reject(1);
 export let output = "unreachable";"#;
@@ -350,8 +350,8 @@ fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/recursive.telora"),
-        r#"@struct type CallExpr = { args: Array(Expr) };
-@enum type Expr = { Call: CallExpr, Text: String };
+        r#"type CallExpr = struct { args: Array(Expr) };
+type Expr = enum { Call: CallExpr, Text: String };
 export { CallExpr, Expr };"#,
     )
     .unwrap();
@@ -389,7 +389,7 @@ fn recursive_modules_are_consistent_across_check_show_and_run_modes() {
     fs::write(
         cwd.join("src/tree.telora"),
         r#"import "std/array" as array;
-@struct type Node = {value: Int, children: Array(Node)};
+type Node = struct {value: Int, children: Array(Node)};
 def total: Fn(Node) -> Int = fn(node) {
     node.value + match array.get(node.children, 0) {
         'None => 0,
@@ -500,7 +500,7 @@ fn show_namespace_imports_reference_exact_module_interfaces() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/types.telora"),
-        "@struct type CallExpr = {args: Array(Expr)};\n@enum type Expr = {Text: String, Call: CallExpr};\n@struct type Box(A) = {value: A};\nexport {CallExpr, Expr, Box};\n",
+        "type CallExpr = struct {args: Array(Expr)};\ntype Expr = enum {Text: String, Call: CallExpr};\ntype Box(A) = struct {value: A};\nexport {CallExpr, Expr, Box};\n",
     )
     .unwrap();
     fs::write(
@@ -733,7 +733,7 @@ fn run_accepts_a_pure_custom_entry() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {answer: Int};
+type Main = struct {answer: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -800,7 +800,7 @@ fn custom_entry_rejects_a_mismatched_main_contract() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {answer: Int};
+type Main = struct {answer: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -837,7 +837,7 @@ fn selected_entry_alone_can_import_dependency_private_modules() {
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
 import "dep/secret.priv.telora" {value};
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -879,7 +879,7 @@ fn entry_input_capability_is_required_before_main_initialization() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {output: Int};
+type Main = struct {output: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'True} };
@@ -903,7 +903,7 @@ fn entry_drives_a_stdio_child_through_host_events() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = String;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -952,7 +952,7 @@ fn child_spawn_failure_is_a_reducible_result_event() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -1010,7 +1010,7 @@ fn entry_receives_line_stderr_eof_and_nonzero_child_exit_events() {
         cwd.join("entry.telora"),
         format!(
             r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {{marker: Int}};
+type Main = struct {{marker: Int}};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) {{ {{input: 'False}} }};
@@ -1066,7 +1066,7 @@ fn exec_effect_replaces_the_telora_process() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -1106,7 +1106,7 @@ fn exit_waits_all_active_children_before_returning_the_status() {
         cwd.join("entry.telora"),
         format!(
             r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {{marker: Int}};
+type Main = struct {{marker: Int}};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) {{ {{input: 'False}} }};
@@ -1173,7 +1173,7 @@ fn blocked_child_stdin_does_not_block_unrelated_events_or_exit() {
         cwd.join("entry.telora"),
         format!(
             r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {{marker: Int}};
+type Main = struct {{marker: Int}};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) {{ {{input: 'False}} }};
@@ -1231,7 +1231,7 @@ fn entry_protocol_failures_commit_no_buffered_output() {
     let cwd = fixture();
     fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
     let template = r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
@@ -1271,7 +1271,7 @@ fn entry_rejects_extra_public_protocol_members() {
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-@struct type Main = {marker: Int};
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 export let typo = 1;

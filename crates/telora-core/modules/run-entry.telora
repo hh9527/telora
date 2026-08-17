@@ -3,8 +3,7 @@ import "std/dyn" as dyn;
 
 export type MainType = Dyn;
 
-@struct
-type State = {
+type State = struct {
     main: Dyn,
     completed: Bool,
 };

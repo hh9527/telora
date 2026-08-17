@@ -1,8 +1,8 @@
 use crate::ast::{
     BinaryOperator, Binding, BindingData, BindingKind, Block, BlockKind, ClosureParameter,
-    Decorator, DecoratorKind, DictFieldKind, Expr, ExprKind, Identifier, MatchArm, MatchArmKind,
-    OptionAction, Pattern, PatternKind, Program, ProgramKind, StringPartKind, StructPatternField,
-    TypeArgument, TypeArgumentKind, UnaryOperator, located,
+    DeclaredInitializerKind, Decorator, DecoratorKind, DictFieldKind, Expr, ExprKind, Identifier,
+    MatchArm, MatchArmKind, OptionAction, Pattern, PatternKind, Program, ProgramKind,
+    StringPartKind, StructPatternField, TypeArgument, TypeArgumentKind, UnaryOperator, located,
 };
 use crate::lexer::{FrontendError, SourceLocation};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
@@ -666,6 +666,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Let,
+                        declared_initializer: None,
                         imported_name: None,
                         name,
                         type_parameters: Vec::new(),
@@ -705,6 +706,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Decl,
+                        declared_initializer: None,
                         imported_name: None,
                         name,
                         type_parameters,
@@ -744,6 +746,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Native,
+                        declared_initializer: None,
                         imported_name: None,
                         name,
                         type_parameters,
@@ -759,6 +762,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::NativeType,
+                        declared_initializer: None,
                         imported_name: None,
                         name,
                         type_parameters: Vec::new(),
@@ -832,6 +836,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Def,
+                        declared_initializer: None,
                         imported_name: None,
                         name,
                         type_parameters,
@@ -862,6 +867,12 @@ impl<'a> Lowerer<'a> {
                         Some(Rule::StructInitializer | Rule::EnumInitializer)
                     ) && self.cst.span(*child).start > start
                 });
+                let declared_initializer =
+                    initializer.and_then(|initializer| match self.rule(initializer) {
+                        Some(Rule::StructInitializer) => Some(DeclaredInitializerKind::Struct),
+                        Some(Rule::EnumInitializer) => Some(DeclaredInitializerKind::Enum),
+                        _ => None,
+                    });
                 let value = if let Some(initializer) = initializer {
                     let (value, model) = self.declared_type_initializer(initializer)?;
                     decorators.push(model);
@@ -881,6 +892,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators,
                         kind: BindingKind::Type,
+                        declared_initializer,
                         imported_name: None,
                         name,
                         type_parameters,
@@ -899,6 +911,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Import,
+                        declared_initializer: None,
                         imported_name: None,
                         name,
                         type_parameters: Vec::new(),
@@ -938,6 +951,7 @@ impl<'a> Lowerer<'a> {
                 BindingData {
                     decorators: Vec::new(),
                     kind: BindingKind::Import,
+                    declared_initializer: None,
                     imported_name: None,
                     name: self.identifier(name_node),
                     type_parameters: Vec::new(),
@@ -952,6 +966,7 @@ impl<'a> Lowerer<'a> {
                 BindingData {
                     decorators: Vec::new(),
                     kind: BindingKind::OpenImport,
+                    declared_initializer: None,
                     imported_name: None,
                     name: located(
                         format!("\0open:{}", self.cst.span(node).start),
@@ -990,6 +1005,7 @@ impl<'a> Lowerer<'a> {
                         BindingData {
                             decorators: Vec::new(),
                             kind: BindingKind::Import,
+                            declared_initializer: None,
                             imported_name: Some(Box::new(imported_name)),
                             name,
                             type_parameters: Vec::new(),
@@ -1017,6 +1033,7 @@ impl<'a> Lowerer<'a> {
                 BindingData {
                     decorators: Vec::new(),
                     kind: BindingKind::Export,
+                    declared_initializer: None,
                     imported_name: Some(Box::new(local.clone())),
                     name: local.clone(),
                     type_parameters: Vec::new(),
@@ -1047,6 +1064,7 @@ impl<'a> Lowerer<'a> {
                     BindingData {
                         decorators: Vec::new(),
                         kind: BindingKind::Export,
+                        declared_initializer: None,
                         imported_name: Some(Box::new(local.clone())),
                         name: public,
                         type_parameters: Vec::new(),
@@ -1788,6 +1806,7 @@ impl<'a> Lowerer<'a> {
                 BindingData {
                     decorators: Vec::new(),
                     kind: BindingKind::Let,
+                    declared_initializer: None,
                     imported_name: None,
                     name: identifier(suffix),
                     type_parameters: Vec::new(),
@@ -1946,6 +1965,7 @@ impl<'a> Lowerer<'a> {
                 BindingData {
                     decorators: Vec::new(),
                     kind: BindingKind::Let,
+                    declared_initializer: None,
                     imported_name: None,
                     name: identifier(suffix),
                     type_parameters: Vec::new(),
@@ -2475,7 +2495,7 @@ impl<'a> Lowerer<'a> {
                         self.location(field),
                     ));
                 }
-                ("struct", fields)
+                ("\0telora_struct", fields)
             }
             Some(Rule::EnumInitializer) => {
                 let mut variants = Vec::new();
@@ -2524,7 +2544,7 @@ impl<'a> Lowerer<'a> {
                         self.location(variant),
                     ));
                 }
-                ("enum", variants)
+                ("\0telora_enum", variants)
             }
             _ => return Err(self.error(node, "invalid type initializer")),
         };
@@ -3458,7 +3478,7 @@ mod tests {
             "exports.telora",
             r#"export let value = 1;
 export def identity = fn(item) { item };
-export @struct type User = { name: String };
+export type User = struct { name: String };
 let private = 2;
 export { private as visible, identity as map };"#,
         )
@@ -3938,7 +3958,7 @@ export { private as visible, identity as map };"#,
     fn lowers_parameterized_type_declarations_with_located_parameters() {
         let program = parse(
             "family.telora",
-            "@struct type Pair(Left, Right) = {left: Left, right: Right}; Pair",
+            "type Pair(Left, Right) = struct {left: Left, right: Right}; Pair",
         )
         .unwrap();
         let binding = &program.value.body.value.bindings[0];

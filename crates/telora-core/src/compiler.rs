@@ -10,7 +10,7 @@ use crate::lir::{self, ConstantId, Item, LabelId, Operation, RegisterId};
 use crate::parser::parse_registered;
 use crate::source::{Diagnostic, Location, Origin, SourceDatabase, SourceFile, WithOrigin};
 use crate::types::{Analysis, TypeDescriptor, analyze_program_registered, contains_named_type};
-use crate::value::{Atom, BuiltinAtom, Value};
+use crate::value::{Atom, BuiltinAtom, Closure, CoreModelFunction, NativeFunction, Value};
 use crate::{RuntimeError, Vm};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -232,7 +232,11 @@ pub(crate) fn compile_metadata_initializer(
             .collect::<Vec<_>>(),
     );
     validate_hir(source_file, &metadata_hir)?;
-    let function = compile_program_analyzed_in(source_file, &metadata_program, analysis)?;
+    // Metadata initializers construct Type values, not ordinary values of those
+    // types. Runtime ownership wrappers therefore do not apply in this phase.
+    let mut metadata_analysis = analysis.clone();
+    metadata_analysis.declared_value_owners.clear();
+    let function = compile_program_analyzed_in(source_file, &metadata_program, &metadata_analysis)?;
     Ok(Some(MetadataInitializer {
         function,
         type_names,
@@ -283,6 +287,7 @@ pub(crate) fn compile_expression_with_bindings(
         promoted_types: HashSet::new(),
         external_values: BTreeMap::new(),
         type_family_values: BTreeMap::new(),
+        declared_value_owners: HashMap::new(),
         source_file: Some(source_file),
     };
     for (name, value) in bindings {
@@ -332,6 +337,7 @@ struct Compiler<'a> {
     promoted_types: HashSet<String>,
     external_values: BTreeMap<String, Value>,
     type_family_values: BTreeMap<String, Value>,
+    declared_value_owners: HashMap<Location, Value>,
     source_file: Option<&'a SourceFile>,
 }
 
@@ -399,6 +405,7 @@ impl<'a> Compiler<'a> {
             promoted_types,
             external_values: analysis.external_values.clone(),
             type_family_values: analysis.type_family_values.clone(),
+            declared_value_owners: analysis.declared_value_owners.clone(),
             source_file,
         };
         for (name, value) in &analysis.prelude {
@@ -460,6 +467,7 @@ impl<'a> Compiler<'a> {
         captures: &[String],
         captured_up_links: &HashSet<String>,
         captured_definitions: &HashSet<String>,
+        declared_value_owners: &HashMap<Location, Value>,
     ) -> Result<Self, FrontendError> {
         let mut environment = HashMap::new();
         for (index, parameter) in parameters.iter().enumerate() {
@@ -519,6 +527,7 @@ impl<'a> Compiler<'a> {
             promoted_types: HashSet::new(),
             external_values: BTreeMap::new(),
             type_family_values: BTreeMap::new(),
+            declared_value_owners: declared_value_owners.clone(),
             source_file,
         })
     }
@@ -856,6 +865,55 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_expr(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
+        let payload = self.compile_expr_unowned(expression)?;
+        let constructible = matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_))
+            || matches!(
+                &expression.value,
+                ExprKind::Call { callee, .. } if matches!(callee.value, ExprKind::Atom(_))
+            );
+        let Some(owner) = constructible
+            .then(|| self.declared_value_owners.get(&expression.location))
+            .flatten()
+            .cloned()
+        else {
+            return Ok(payload);
+        };
+        let callee = self.load_constant(
+            Value::Func(std::sync::Arc::new(Closure::native(
+                NativeFunction::core_model(CoreModelFunction::Own),
+            ))),
+            expression.location,
+        );
+        let owner = self.load_constant(owner, expression.location);
+        let base = self.allocate();
+        self.emit(
+            Operation::Move {
+                dst: base,
+                src: callee,
+            },
+            expression.location,
+        );
+        for source in [owner, payload] {
+            let destination = self.allocate();
+            self.emit(
+                Operation::Move {
+                    dst: destination,
+                    src: source,
+                },
+                expression.location,
+            );
+        }
+        self.emit(
+            Operation::Call {
+                base,
+                argument_count: 2,
+            },
+            expression.location,
+        );
+        Ok(base)
+    }
+
+    fn compile_expr_unowned(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
         match &expression.value {
             ExprKind::Int(value) => Ok(self.load_constant(Value::Int(*value), expression.location)),
             ExprKind::Float(value) => {
@@ -1353,6 +1411,7 @@ impl<'a> Compiler<'a> {
             &captures,
             &captured_up_links,
             &captured_definitions,
+            &self.declared_value_owners,
         )?;
         nested.compile_tail_block(body)?;
         let function = Box::new(nested.finish_lir());
@@ -3020,7 +3079,7 @@ let decorators = {
         .unwrap_err();
         assert!(non_never.message.contains("must have type Never"));
 
-        let irrefutable = compile_source("test", "@struct type Pair = {a: Int, b: Int}; let f = fn(pair: Pair) { let {a, b} = pair else { panic!(\"never\") }; a + b }; f").unwrap_err();
+        let irrefutable = compile_source("test", "type Pair = struct {a: Int, b: Int}; let f = fn(pair: Pair) { let {a, b} = pair else { panic!(\"never\") }; a + b }; f").unwrap_err();
         assert!(
             irrefutable.message.contains("irrefutable"),
             "{}",

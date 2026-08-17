@@ -46,6 +46,11 @@ pub enum TypeNode {
     Ref(TypeId),
     Bound(TypeParameterId),
     Named(String),
+    Declared {
+        id: crate::value::DeclaredTypeId,
+        name: String,
+        body: TypeId,
+    },
     Any,
     Never,
     Type,
@@ -121,6 +126,11 @@ impl TypeGraph {
                 .get(name)
                 .copied()
                 .map_or_else(|| TypeNode::Named(name.clone()), TypeNode::Ref),
+            TypeDescriptor::Declared(declared) => TypeNode::Declared {
+                id: declared.id.clone(),
+                name: declared.name.clone(),
+                body: self.intern_descriptor(&declared.body),
+            },
             TypeDescriptor::Inference(_) => {
                 unreachable!("solver descriptors must be explicitly erased before interning")
             }
@@ -244,6 +254,13 @@ impl TypeGraph {
         if let Some(native_type) = value.as_native_type() {
             return Ok(TypeNode::Opaque(native_type.clone()));
         }
+        if let Some((id, name, body)) = value.declared_type_parts() {
+            return Ok(TypeNode::Declared {
+                id: id.clone(),
+                name: name.to_owned(),
+                body: self.decode_persistent(body, path, links)?,
+            });
+        }
         loop {
             let fields = value
                 .dict_fields()
@@ -263,7 +280,10 @@ impl TypeGraph {
                 return Err(format!("{path}.attributes must be a Dict"));
             }
             value = value.dict_get("inner").expect("wrapper field exists");
-            if value.is_hidden_up_link() {
+            if value.is_hidden_up_link()
+                || value.as_native_type().is_some()
+                || value.declared_type_parts().is_some()
+            {
                 let id = self.decode_persistent(value, path, links)?;
                 return Ok(TypeNode::Ref(id));
             }
@@ -493,6 +513,7 @@ impl TypeGraph {
             TypeNode::Ref(target) => self.display_with(*target, active),
             TypeNode::Bound(parameter) => format!("T{}", parameter.0),
             TypeNode::Named(name) => display_named_type(name).to_owned(),
+            TypeNode::Declared { name, .. } => name.clone(),
             TypeNode::Any => "Any".into(),
             TypeNode::Never => "Never".into(),
             TypeNode::Type => "Type".into(),
@@ -573,6 +594,9 @@ impl TypeGraph {
             (_, TypeNode::Ref(expected)) => self.assignable_with(actual, *expected, visited),
             (TypeNode::Bound(actual), TypeNode::Bound(expected)) => actual == expected,
             (TypeNode::Named(actual), TypeNode::Named(expected)) => actual == expected,
+            (TypeNode::Declared { id: actual, .. }, TypeNode::Declared { id: expected, .. }) => {
+                actual == expected
+            }
             (TypeNode::Never, _) => true,
             (TypeNode::Any, _) | (_, TypeNode::Any) => true,
             (TypeNode::TypeOf(_), TypeNode::Type) => true,
@@ -841,6 +865,7 @@ pub enum TypeDescriptor {
     /// metadata continues to use heap up-links; this variant preserves the
     /// declaration identity while contracts are analyzed.
     Named(String),
+    Declared(DeclaredTypeDescriptor),
     Inference(InferenceVariableId),
     Any,
     Never,
@@ -869,6 +894,23 @@ pub enum TypeDescriptor {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeclaredTypeDescriptor {
+    pub(crate) id: crate::value::DeclaredTypeId,
+    pub(crate) name: String,
+    pub(crate) body: Box<TypeDescriptor>,
+}
+
+impl DeclaredTypeDescriptor {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn body(&self) -> &TypeDescriptor {
+        &self.body
+    }
+}
+
 impl TypeDescriptor {
     pub fn to_value(&self, vm: &mut Vm) -> Value {
         let entries = match self {
@@ -880,6 +922,13 @@ impl TypeDescriptor {
                 kind_entry("Named"),
                 ("name".into(), Value::string(name.as_str())),
             ],
+            Self::Declared(declared) => {
+                return Value::DeclaredType(crate::DeclaredType {
+                    id: declared.id.clone(),
+                    name: Arc::from(declared.name.as_str()),
+                    body: Box::new(declared.body.to_value(vm)),
+                });
+            }
             Self::Inference(_) => panic!("inference variables are not runtime type metadata"),
             Self::Any => vec![kind_entry("Any")],
             Self::Never => vec![kind_entry("Never")],
@@ -984,6 +1033,7 @@ impl TypeDescriptor {
         match self {
             Self::Bound(parameter) => format!("T{}", parameter.0),
             Self::Named(name) => display_named_type(name).to_owned(),
+            Self::Declared(declared) => declared.name.clone(),
             Self::Inference(variable) => format!("?{}", variable.0),
             Self::Any => "Any".into(),
             Self::Never => "Never".into(),
@@ -1055,6 +1105,7 @@ fn display_scheme_descriptor(
             .get(parameter)
             .map_or_else(|| format!("T{}", parameter.0), |name| (*name).to_owned()),
         TypeDescriptor::Named(name) => display_named_type(name).to_owned(),
+        TypeDescriptor::Declared(declared) => declared.name.clone(),
         TypeDescriptor::Inference(variable) => format!("?{}", variable.0),
         TypeDescriptor::Any => "Any".into(),
         TypeDescriptor::Never => "Never".into(),
@@ -1146,6 +1197,7 @@ pub struct Analysis {
     pub(crate) external_values: BTreeMap<String, Value>,
     pub(crate) dynamic_bindings: HashSet<String>,
     pub(crate) type_family_values: BTreeMap<String, Value>,
+    pub(crate) declared_value_owners: HashMap<crate::Location, Value>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1931,6 +1983,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut binding_types = BTreeMap::new();
     let mut declared_type_spans = HashMap::new();
     let mut expression_descriptors = HashMap::new();
+    let declared_initializer_slots = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| binding.value.declared_initializer.is_some())
+        .enumerate()
+        .map(|(slot, binding)| (binding.value.name.location, slot as u32))
+        .collect::<HashMap<_, _>>();
     let qualified_external_interfaces = external_interfaces
         .iter()
         .map(|(name, interface)| (name.clone(), interface.qualified(name)))
@@ -2107,6 +2169,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     sources,
                     debug_sink,
                 )?;
+                let value = declare_metadata_value(
+                    source_name,
+                    binding,
+                    &declared_initializer_slots,
+                    value,
+                )?;
                 let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
                     FrontendError::from_diagnostic(
                         sources,
@@ -2175,6 +2243,21 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 sources,
                 debug_sink,
             )?;
+            let value = if binding.value.declared_initializer.is_some() {
+                let arguments = parameters
+                    .iter()
+                    .map(|parameter| TypeDescriptor::Bound(parameter.id))
+                    .collect::<Vec<_>>();
+                Value::DeclaredType(crate::DeclaredType::bind_application(
+                    source_name,
+                    declared_initializer_slots[&binding.value.name.location],
+                    binding.value.name.value.as_str(),
+                    &arguments,
+                    value,
+                ))
+            } else {
+                value
+            };
             let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
                 FrontendError::from_diagnostic(
                     sources,
@@ -2271,6 +2354,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         sources,
                         debug_sink,
                     )?;
+                    let value = declare_metadata_value(
+                        source_name,
+                        binding,
+                        &declared_initializer_slots,
+                        value,
+                    )?;
                     let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
                         frontend_error(
                             source_name,
@@ -2284,8 +2373,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     declared_types.insert(name.clone(), descriptor.clone());
                     declared_type_spans.insert(name.clone(), binding.location);
                     tool_values.insert(name.clone(), value);
-                    let witness =
-                        TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Named(name.clone())));
+                    let witness = TypeDescriptor::TypeOf(Box::new(descriptor));
                     static_environment.insert(name.clone(), witness.clone());
                     binding_types.insert(name.clone(), witness.clone());
                     binding_schemes.insert(
@@ -2507,6 +2595,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     sources,
                     debug_sink,
                 )?;
+                let value = declare_metadata_value(
+                    source_name,
+                    binding,
+                    &declared_initializer_slots,
+                    value,
+                )?;
                 let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
                     FrontendError::from_diagnostic(
                         sources,
@@ -2555,7 +2649,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
-                    if !contains_named_type(&expected) && !assignable(&inferred, &expected) {
+                    if !contains_named_type(&expected)
+                        && !assignable(&inferred, &expected)
+                        && !is_declared_literal_construction(
+                            &binding.value.value,
+                            &inferred,
+                            &expected,
+                        )
+                    {
                         let message = format!(
                             "binding {} has type {}, which is not assignable to {}",
                             binding.value.name.value,
@@ -3284,6 +3385,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let propagation_families = std::mem::take(&mut inference.propagation_families);
     let not_families = std::mem::take(&mut inference.not_families);
+    let declared_value_owners = expression_descriptors
+        .iter()
+        .filter_map(|(location, descriptor)| {
+            matches!(descriptor, TypeDescriptor::Declared(_))
+                .then(|| (*location, descriptor.to_value(&mut tool_vm)))
+        })
+        .collect();
     Ok(Analysis {
         types,
         declared_types,
@@ -3307,6 +3415,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         external_values: external_values.clone(),
         dynamic_bindings: dynamic_bindings.clone(),
         type_family_values,
+        declared_value_owners,
     })
 }
 
@@ -3488,6 +3597,14 @@ pub(crate) fn infer_value(value: &Value) -> TypeDescriptor {
         Value::NativeType(native_type) => {
             TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Opaque(native_type.clone())))
         }
+        Value::DeclaredType(value) => TypeDescriptor::TypeOf(Box::new(
+            TypeDescriptor::from_value(&Value::DeclaredType(value.clone()))
+                .unwrap_or(TypeDescriptor::Any),
+        )),
+        Value::Declared(value) => {
+            TypeDescriptor::from_value(&Value::DeclaredType(value.owner().clone()))
+                .unwrap_or_else(|_| infer_value(value.payload()))
+        }
         Value::Opaque(value) => TypeDescriptor::Opaque(value.native_type().clone()),
         Value::Atom(atom) => TypeDescriptor::Atom(atom.clone()),
         Value::Array(items) => {
@@ -3520,6 +3637,77 @@ pub(crate) fn infer_value(value: &Value) -> TypeDescriptor {
             }
         }
         Value::Dyn(_) => TypeDescriptor::Dyn,
+    }
+}
+
+fn declare_metadata_value(
+    source_name: &str,
+    binding: &Binding,
+    slots: &HashMap<crate::Location, u32>,
+    value: Value,
+) -> Result<Value, FrontendError> {
+    let Some(kind) = binding.value.declared_initializer else {
+        return Ok(value);
+    };
+    let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+        frontend_error(
+            source_name,
+            format!(
+                "declared type {} produced invalid metadata: {message}",
+                binding.value.name.value
+            ),
+        )
+    })?;
+    let valid = matches!(
+        (kind, &descriptor),
+        (
+            crate::ast::DeclaredInitializerKind::Struct,
+            TypeDescriptor::Struct(_)
+        ) | (
+            crate::ast::DeclaredInitializerKind::Enum,
+            TypeDescriptor::Enum(_)
+        )
+    );
+    if !valid {
+        return Err(frontend_error(
+            source_name,
+            format!(
+                "declared type {} initializer changed its root model kind",
+                binding.value.name.value
+            ),
+        ));
+    }
+    let slot = slots
+        .get(&binding.value.name.location)
+        .copied()
+        .expect("direct declared initializer has a declaration slot");
+    Ok(Value::DeclaredType(crate::DeclaredType::bind(
+        source_name,
+        slot,
+        binding.value.name.value.as_str(),
+        value,
+    )))
+}
+
+fn is_declared_literal_construction(
+    expression: &Expr,
+    _actual: &TypeDescriptor,
+    expected: &TypeDescriptor,
+) -> bool {
+    let TypeDescriptor::Declared(declared) = expected else {
+        return false;
+    };
+    declared_body_accepts_expression(&declared.body, expression)
+}
+
+fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) -> bool {
+    match (body, &expression.value) {
+        (TypeDescriptor::Struct(_), ExprKind::Dict(_))
+        | (TypeDescriptor::Enum(_), ExprKind::Atom(_)) => true,
+        (TypeDescriptor::Enum(_), ExprKind::Call { callee, .. }) => {
+            matches!(callee.value, ExprKind::Atom(_))
+        }
+        _ => false,
     }
 }
 
@@ -3563,7 +3751,7 @@ pub(crate) fn type_family_value(family: &TypeFamilyTemplate) -> Value {
 
 fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let template = context.export_value(context.upvalue(0)?)?;
-    TypeDescriptor::from_value(&template)
+    let template_descriptor = TypeDescriptor::from_value(&template)
         .map_err(|message| NativeError::new(format!("invalid type-family template: {message}")))?;
     let arity = context
         .value(context.upvalue(1)?)?
@@ -3580,122 +3768,24 @@ fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), Nat
                 error.message
             ))
         })?;
-        replacements.insert(
-            TypeParameterId(
-                u32::try_from(index)
-                    .map_err(|_| NativeError::new("type-family argument index exceeds u32"))?,
-            ),
-            register,
+        let parameter = TypeParameterId(
+            u32::try_from(index)
+                .map_err(|_| NativeError::new("type-family argument index exceeds u32"))?,
         );
-    }
-    let result = context.result();
-    substitute_type_metadata_rich(&template, &replacements, context, result)
-}
-
-fn substitute_type_metadata_rich(
-    metadata: &Value,
-    replacements: &HashMap<TypeParameterId, RegisterId>,
-    context: &mut CallContext<'_, '_>,
-    destination: RegisterId,
-) -> Result<(), NativeError> {
-    let Value::Dict(fields) = metadata else {
-        return context.set_value(destination, metadata);
-    };
-    let Some(Value::Atom(kind)) = fields.get("kind") else {
-        return Err(NativeError::new(
-            "type-family template kind must be an Atom",
-        ));
-    };
-
-    if matches!(kind.name(), "Bound" | "'Bound") {
-        let Some(Value::Int(parameter)) = fields.get("parameter") else {
-            return Err(NativeError::new(
-                "type-family Bound parameter must be an Int",
-            ));
-        };
-        let parameter = u32::try_from(*parameter)
-            .map(TypeParameterId)
-            .map_err(|_| NativeError::new("type-family Bound parameter must be non-negative"))?;
-        let replacement = replacements.get(&parameter).copied().ok_or_else(|| {
-            NativeError::new(format!("type-family template has unbound T{}", parameter.0))
+        let argument = context.export_value(register)?;
+        let argument = TypeDescriptor::from_value(&argument).map_err(|message| {
+            NativeError::new(format!(
+                "invalid type-family argument {}: {message}",
+                index + 1
+            ))
         })?;
-        context.copy(destination, replacement)?;
-        return context.mark_at_call_site(destination);
+        replacements.insert(parameter, argument);
     }
-
-    let mut output_fields = Vec::with_capacity(fields.values().len());
-    for (field, value) in fields.shape().fields().iter().zip(fields.values()) {
-        let register = context.scratch()?;
-        match (kind.name(), field.as_str()) {
-            ("WithAttributes", "inner")
-            | ("TypeOf", "instance")
-            | ("Array" | "Dict", "item")
-            | ("Tagged", "payload")
-            | ("Func", "result") => {
-                substitute_type_metadata_rich(value, replacements, context, register)?;
-            }
-            ("Tuple", "items") | ("Union", "variants") | ("Func", "parameters") => {
-                substitute_type_metadata_array(value, replacements, context, register)?;
-            }
-            ("Struct", "fields") => {
-                substitute_type_metadata_dict(value, false, replacements, context, register)?;
-            }
-            ("Enum", "variants") => {
-                substitute_type_metadata_dict(value, true, replacements, context, register)?;
-            }
-            _ => context.set_value(register, value)?,
-        }
-        output_fields.push((field.clone(), register));
-    }
-    context.make_dict(destination, &output_fields)?;
-    context.mark_at_call_site(destination)
-}
-
-fn substitute_type_metadata_array(
-    metadata: &Value,
-    replacements: &HashMap<TypeParameterId, RegisterId>,
-    context: &mut CallContext<'_, '_>,
-    destination: RegisterId,
-) -> Result<(), NativeError> {
-    let Value::Array(values) = metadata else {
-        return Err(NativeError::new(
-            "type-family template field must be an Array",
-        ));
-    };
-    let mut output = Vec::with_capacity(values.len());
-    for value in values.iter() {
-        let register = context.scratch()?;
-        substitute_type_metadata_rich(value, replacements, context, register)?;
-        output.push(register);
-    }
-    context.make_array(destination, &output)?;
-    context.mark_at_call_site(destination)
-}
-
-fn substitute_type_metadata_dict(
-    metadata: &Value,
-    optional: bool,
-    replacements: &HashMap<TypeParameterId, RegisterId>,
-    context: &mut CallContext<'_, '_>,
-    destination: RegisterId,
-) -> Result<(), NativeError> {
-    let Value::Dict(values) = metadata else {
-        return Err(NativeError::new(
-            "type-family template field must be a Dict",
-        ));
-    };
-    let mut output = Vec::with_capacity(values.values().len());
-    for (field, value) in values.shape().fields().iter().zip(values.values()) {
-        let register = context.scratch()?;
-        if optional && optional_type_metadata_is_none(value) {
-            context.set_value(register, value)?;
-        } else {
-            substitute_type_metadata_rich(value, replacements, context, register)?;
-        }
-        output.push((field.clone(), register));
-    }
-    context.make_dict(destination, &output)?;
-    context.mark_at_call_site(destination)
+    let descriptor = substitute_bound_parameters(&template_descriptor, &replacements);
+    let value = descriptor.to_value(&mut Vm::new());
+    let result = context.result();
+    context.set_value(result, &value)?;
+    context.mark_at_call_site(result)
 }
 
 fn optional_type_metadata_is_none(metadata: &Value) -> bool {
@@ -4384,16 +4474,14 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["enum", "struct", "union", "validate"]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let expected = ["union", "validate"].into_iter().collect::<BTreeSet<_>>();
     let actual = interface
         .exports
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("core/prelude must export exactly enum, struct, union, and validate".into());
+        return Err("core/prelude must export exactly union and validate".into());
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];
@@ -4642,6 +4730,13 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
     let value = value.resolve_hidden_up_link()?;
     if let Some(native_type) = value.as_native_type() {
         return Ok(TypeDescriptor::Opaque(native_type.clone()));
+    }
+    if let Some((id, name, body)) = value.declared_type_parts() {
+        return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: id.clone(),
+            name: name.to_owned(),
+            body: Box::new(decode_type_ref(body, path)?),
+        }));
     }
     let fields = value
         .dict_fields()
@@ -4906,6 +5001,18 @@ fn validate_value_ref(
     path: &str,
 ) -> Result<(), String> {
     match descriptor {
+        TypeDescriptor::Declared(expected) => {
+            let (owner, payload) = value
+                .declared_value_parts()
+                .ok_or_else(|| format!("{path} must carry declared type {}", expected.name))?;
+            let Some((actual, _, _)) = owner.declared_type_parts() else {
+                return Err(format!("{path} has an invalid declared owner"));
+            };
+            if actual != &expected.id {
+                return Err(format!("{path} has a different declared type identity"));
+            }
+            validate_value_ref(&expected.body, payload, path)
+        }
         TypeDescriptor::Any => Ok(()),
         TypeDescriptor::Never => Err(format!("{path} cannot have type Never")),
         TypeDescriptor::Type => decode_type_ref(value, path).map(|_| ()),
@@ -5062,6 +5169,13 @@ fn kind_entry(kind: &str) -> (String, Value) {
 pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, String> {
     if let Value::NativeType(native_type) = value {
         return Ok(TypeDescriptor::Opaque(native_type.clone()));
+    }
+    if let Value::DeclaredType(declared) = value {
+        return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: declared.id().clone(),
+            name: declared.name().to_owned(),
+            body: Box::new(decode_type(declared.body(), path)?),
+        }));
     }
     let Value::Dict(metadata) = value else {
         return Err(format!("{path} must be a Dict"));
@@ -6806,6 +6920,7 @@ impl<'a> GenericInference<'a> {
         field: &str,
     ) -> Result<TypeDescriptor, String> {
         match self.expose_named(receiver) {
+            TypeDescriptor::Declared(declared) => self.project_field(&declared.body, field),
             TypeDescriptor::Struct(fields) => fields
                 .get(field)
                 .cloned()
@@ -6837,6 +6952,13 @@ impl<'a> GenericInference<'a> {
                 "cannot access field {field:?} on {}",
                 descriptor.display_name()
             )),
+        }
+    }
+
+    fn expose_pattern_type(&self, descriptor: &TypeDescriptor) -> TypeDescriptor {
+        match self.expose_named(descriptor) {
+            TypeDescriptor::Declared(declared) => self.expose_pattern_type(&declared.body),
+            descriptor => descriptor,
         }
     }
 
@@ -6889,7 +7011,24 @@ impl<'a> GenericInference<'a> {
         environment: &HashMap<String, TypeDescriptor>,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
-        let result = self.infer_inner(expression, environment, expected);
+        let declared_construction = expected.and_then(|expected| {
+            let TypeDescriptor::Declared(declared) = self.expose_named(expected) else {
+                return None;
+            };
+            let constructible = declared_body_accepts_expression(&declared.body, expression);
+            constructible.then_some(declared)
+        });
+        let structural_expected = declared_construction
+            .as_ref()
+            .map(|declared| declared.body.as_ref());
+        let result = self.infer_inner(expression, environment, structural_expected.or(expected));
+        let result = result.map(|inferred| {
+            declared_construction.map_or(inferred, |declared| {
+                let declared = TypeDescriptor::Declared(declared);
+                self.records.insert(expression.location, declared.clone());
+                declared
+            })
+        });
         if result.is_err() && self.failure_location.is_none() {
             self.failure_location = Some(expression.location);
         }
@@ -7369,7 +7508,16 @@ impl<'a> GenericInference<'a> {
                                 arguments.len()
                             ));
                         }
-                        let payload = self.infer(&arguments[0], environment, None)?;
+                        let payload_expected = expected
+                            .map(|expected| self.resolve(expected))
+                            .and_then(|expected| match expected {
+                                TypeDescriptor::Enum(variants) => {
+                                    variants.get(tag.name()).and_then(|payload| payload.clone())
+                                }
+                                _ => None,
+                            });
+                        let payload =
+                            self.infer(&arguments[0], environment, payload_expected.as_deref())?;
                         let result = TypeDescriptor::Tagged {
                             tag,
                             payload: Box::new(payload),
@@ -7638,7 +7786,7 @@ impl<'a> GenericInference<'a> {
                 else_branch,
             } => {
                 let value_type = self.infer(value, environment, None)?;
-                let resolved_value_type = self.expose_named(&value_type);
+                let resolved_value_type = self.expose_pattern_type(&value_type);
                 let analysis = crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                 if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                     && analysis.problems.is_empty()
@@ -7680,7 +7828,7 @@ impl<'a> GenericInference<'a> {
                 body,
             } => {
                 let value_type = self.infer(value, environment, None)?;
-                let resolved_value_type = self.expose_named(&value_type);
+                let resolved_value_type = self.expose_pattern_type(&value_type);
                 let analysis = crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                 if analysis.irrefutable {
                     self.pattern_diagnostics
@@ -7725,7 +7873,7 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Match { value, arms } => {
                 let value_type = self.infer(value, environment, None)?;
-                let resolved_value_type = self.expose_named(&value_type);
+                let resolved_value_type = self.expose_pattern_type(&value_type);
                 let mut arm_types = Vec::with_capacity(arms.len());
                 let mut arm_evidence = Vec::new();
                 let mut covered_variants = BTreeSet::new();
@@ -8148,6 +8296,9 @@ fn collect_inference_variables(
         | TypeDescriptor::Tagged { payload: item, .. } => {
             collect_inference_variables(item, variables);
         }
+        TypeDescriptor::Declared(declared) => {
+            collect_inference_variables(&declared.body, variables);
+        }
         TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
             for item in items {
                 collect_inference_variables(item, variables);
@@ -8193,6 +8344,11 @@ fn replace_inference_variables(
             || descriptor.clone(),
             |fresh| TypeDescriptor::Inference(*fresh),
         ),
+        TypeDescriptor::Declared(declared) => TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: declared.id.clone(),
+            name: declared.name.clone(),
+            body: Box::new(replace_inference_variables(&declared.body, replacements)),
+        }),
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(replace_inference_variables(item, replacements)))
         }
@@ -8274,6 +8430,11 @@ fn rename_named_types(
             .cloned()
             .map(TypeDescriptor::Named)
             .unwrap_or_else(|| descriptor.clone()),
+        TypeDescriptor::Declared(declared) => TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: declared.id.clone(),
+            name: declared.name.clone(),
+            body: Box::new(rename_named_types(&declared.body, names)),
+        }),
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(rename_named_types(item, names)))
         }
@@ -8340,6 +8501,7 @@ fn collect_named_names(descriptor: &TypeDescriptor, names: &mut HashMap<String, 
         TypeDescriptor::Named(name) => {
             names.insert(name.clone(), display_named_type(name).to_owned());
         }
+        TypeDescriptor::Declared(declared) => collect_named_names(&declared.body, names),
         TypeDescriptor::Array(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
@@ -8381,6 +8543,9 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => {
             collect_bound_parameters(item, parameters);
+        }
+        TypeDescriptor::Declared(declared) => {
+            collect_bound_parameters(&declared.body, parameters);
         }
         TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
             for item in items {
@@ -8569,6 +8734,7 @@ pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
 fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Never => true,
+        TypeDescriptor::Declared(declared) => contains_runtime_never_leaf(&declared.body),
         TypeDescriptor::Array(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_runtime_never_leaf(item),
@@ -9336,6 +9502,7 @@ fn check_block_interpolations(
 fn interpolation_type_supported(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) | TypeDescriptor::Named(_) => false,
+        TypeDescriptor::Declared(declared) => interpolation_type_supported(&declared.body),
         TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Int
@@ -9423,6 +9590,23 @@ fn substitute_bound_parameters(
             .get(parameter)
             .cloned()
             .unwrap_or_else(|| descriptor.clone()),
+        TypeDescriptor::Declared(declared) => {
+            let body = substitute_bound_parameters(&declared.body, replacements);
+            let arguments = declared.id.argument_count();
+            let arguments = (0..arguments)
+                .map(|index| {
+                    replacements
+                        .get(&TypeParameterId(index as u32))
+                        .cloned()
+                        .unwrap_or(TypeDescriptor::Any)
+                })
+                .collect::<Vec<_>>();
+            TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                id: declared.id.reapply(&arguments),
+                name: declared.name.clone(),
+                body: Box::new(body),
+            })
+        }
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(substitute_bound_parameters(item, replacements)))
         }
@@ -9630,6 +9814,9 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
         (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
             assignable(actual, expected)
         }
+        (TypeDescriptor::Declared(actual), TypeDescriptor::Declared(expected)) => {
+            actual.id == expected.id
+        }
         (TypeDescriptor::Enum(actual), TypeDescriptor::Enum(expected)) => {
             actual.len() == expected.len()
                 && expected.iter().all(|(name, expected)| {
@@ -9712,6 +9899,53 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
                 && assignable(actual_result, expected_result)
         }
         _ => actual == expected,
+    }
+}
+
+pub(crate) fn erase_declared_identity(descriptor: &TypeDescriptor) -> TypeDescriptor {
+    match descriptor {
+        TypeDescriptor::Declared(declared) => erase_declared_identity(&declared.body),
+        TypeDescriptor::Array(item) => {
+            TypeDescriptor::Array(Box::new(erase_declared_identity(item)))
+        }
+        TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(erase_declared_identity(item))),
+        TypeDescriptor::TypeOf(instance) => {
+            TypeDescriptor::TypeOf(Box::new(erase_declared_identity(instance)))
+        }
+        TypeDescriptor::Tagged { tag, payload } => TypeDescriptor::Tagged {
+            tag: tag.clone(),
+            payload: Box::new(erase_declared_identity(payload)),
+        },
+        TypeDescriptor::Tuple(items) => {
+            TypeDescriptor::Tuple(items.iter().map(erase_declared_identity).collect())
+        }
+        TypeDescriptor::Struct(fields) => TypeDescriptor::Struct(
+            fields
+                .iter()
+                .map(|(name, field)| (name.clone(), erase_declared_identity(field)))
+                .collect(),
+        ),
+        TypeDescriptor::Enum(variants) => TypeDescriptor::Enum(
+            variants
+                .iter()
+                .map(|(name, payload)| {
+                    (
+                        name.clone(),
+                        payload
+                            .as_ref()
+                            .map(|payload| Box::new(erase_declared_identity(payload))),
+                    )
+                })
+                .collect(),
+        ),
+        TypeDescriptor::Union(variants) => {
+            TypeDescriptor::Union(variants.iter().map(erase_declared_identity).collect())
+        }
+        TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
+            parameters: parameters.iter().map(erase_declared_identity).collect(),
+            result: Box::new(erase_declared_identity(result)),
+        },
+        descriptor => descriptor.clone(),
     }
 }
 
@@ -10140,7 +10374,7 @@ mod tests {
         assert_eq!(deferred.display(deferred.result_type), "(Int, String)");
 
         let shadowed = analyze_with_natives(
-            "@struct type Holder = {value: Int};\
+            "type Holder = struct {value: Int};\
              let value = fn(input) { input };\
              let read: Fn(Holder) -> Int = fn(value) { value.value };\
              read({value: 1})",
@@ -10245,27 +10479,27 @@ mod tests {
         for (name, source) in [
             (
                 "earlier-contract-type.telora",
-                "@struct type Plan = {name: String};\
+                "type Plan = struct {name: String};\
                  def builder: Fn(Int) -> Plan = fn(value) { {name: `plan \\{value}`} };\
                  builder(1)",
             ),
             (
                 "later-contract-type.telora",
                 "def builder: Fn(Int) -> Plan = fn(value) { {name: `plan \\{value}`} };\
-                 @struct type Plan = {name: String};\
+                 type Plan = struct {name: String};\
                  builder(1)",
             ),
             (
                 "parameter-and-result-contract-types.telora",
-                "@struct type Input = {value: Int};\
-                 @struct type Output = {text: String};\
+                "type Input = struct {value: Int};\
+                 type Output = struct {text: String};\
                  def convert: Fn(Input) -> Output = fn(input) { {text: `value \\{input.value}`} };\
                  convert({value: 1})",
             ),
             (
                 "transitive-contract-types.telora",
                 "type Plan = NamedPlan;\
-                 @struct type NamedPlan = {name: String};\
+                 type NamedPlan = struct {name: String};\
                  def builder: Fn(Int) -> Plan = fn(value) { {name: `plan \\{value}`} };\
                  builder(1)",
             ),
@@ -10282,8 +10516,8 @@ mod tests {
 
     #[test]
     fn contracted_definitions_preserve_generic_callback_result_precision() {
-        let source = "@struct type Box(T) = {value: T};\
-                      @struct type Plan = {name: String};\
+        let source = "type Box(T) = struct {value: T};\
+                      type Plan = struct {name: String};\
                       def invoke: for(P) Fn(Fn(Int) -> P) -> Box(P) = fn(build) {\
                           {value: build(1)}\
                       };\
@@ -10305,8 +10539,8 @@ mod tests {
 
         let with_unused_family = analyze_source(
             "callback-contract-unused-family.telora",
-            "@struct type Box(T) = {value: T};\
-             @struct type Plan = {name: String};\
+            "type Box(T) = struct {value: T};\
+             type Plan = struct {name: String};\
              type Unused(T) = Tuple([Plan, T]);\
              def invoke: for(P) Fn(Fn(Int) -> P) -> Box(P) = fn(build) {\
                  {value: build(1)}\
@@ -10359,7 +10593,7 @@ mod tests {
 
         let recursive = analyze_source(
             "recursive-contract-type.telora",
-            "@struct type Node = {value: Int, children: Array(Node)};\
+            "type Node = struct {value: Int, children: Array(Node)};\
              def leaf: Fn(Int) -> Node = fn(value) { {value, children: []} };\
              leaf(1)",
         )
@@ -10371,7 +10605,7 @@ mod tests {
     fn recursive_concrete_types_remain_strict_in_definition_contracts_and_families() {
         let recursive = analyze_source(
             "recursive-node.telora",
-            "@struct type Node = {value: Int, children: Array(Node)};\
+            "type Node = struct {value: Int, children: Array(Node)};\
              def value_of: Fn(Node) -> Int = fn(node) { node.value };\
              let node: Node = {value: 1, children: []};\
              value_of(node)",
@@ -10386,7 +10620,7 @@ mod tests {
 
         let invalid = analyze_source(
             "recursive-node-invalid.telora",
-            "@struct type Node = {value: Int, children: Array(Node)};\
+            "type Node = struct {value: Int, children: Array(Node)};\
              def value_of: Fn(Node) -> Int = fn(node) { node.value };\
              value_of(\"bad\")",
         )
@@ -10395,10 +10629,10 @@ mod tests {
 
         let mutual = analyze_source(
             "recursive-expr.telora",
-            "@enum type Expr = {Value: Int, Call: CallExpr};\
-             @struct type CallExpr = {name: String, args: Array(Expr)};\
-             @struct type Renderer(Context) = {render: Fn(Context, Expr) -> String};\
-             @struct type Context = {prefix: String};\
+            "type Expr = enum {Value: Int, Call: CallExpr};\
+             type CallExpr = struct {name: String, args: Array(Expr)};\
+             type Renderer(Context) = struct {render: Fn(Context, Expr) -> String};\
+             type Context = struct {prefix: String};\
              def inspect: Fn(Expr) -> Int = fn(expr) {\
                  match expr {'Value(value) => value, 'Call(call) => 0}\
              };\
@@ -10476,7 +10710,7 @@ mod tests {
 
         let struct_source = [
             helpers,
-            "@struct type Batch(A) = {\
+            "type Batch(A) = struct {\
                  complete: Option(Array(A)),\
                  results: Array(Option(A)),\
                  values: Array(A),\
@@ -10500,7 +10734,7 @@ mod tests {
 
         let invalid_source = [
             helpers,
-            "@struct type Batch(A) = {results: Array(Option(A)), values: Array(A)};\
+            "type Batch(A) = struct {results: Array(Option(A)), values: Array(A)};\
              export def collect: for(Input, Output)\
                  Fn(Array(Input), Fn(Input) -> Option(Output)) -> Batch(Output) =\
                  fn(inputs, lower) {\
@@ -10694,7 +10928,7 @@ mod tests {
 
     #[test]
     fn generic_calls_combine_singleton_atoms_with_closed_enum_evidence() {
-        let prelude = "@enum type NodeId = {Base: 'None, Other: 'None};\
+        let prelude = "type NodeId = enum {Base: 'None, Other: 'None};\
              let nodes: Array(NodeId) = ['Other];";
         for call in [
             "def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };\
@@ -10709,8 +10943,8 @@ mod tests {
         }
 
         let conflict = analyze_with_natives(
-            "@enum type NodeId = {Base: 'None, Other: 'None};\
-             @enum type ForeignId = {Foreign: 'None};\
+            "type NodeId = enum {Base: 'None, Other: 'None};\
+             type ForeignId = enum {Foreign: 'None};\
              def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };\
              let foreign: Array(ForeignId) = ['Foreign];\
              choose('Base, foreign)",
@@ -11927,8 +12161,8 @@ mod tests {
     #[test]
     fn generic_contract_parameters_are_available_in_implementation_annotations() {
         let analysis = analyze_with_natives(
-            "@struct type Pair(Left, Right) = {left: Left, right: Right};\
-             @struct type Box(Content) = {value: Content};\
+            "type Pair(Left, Right) = struct {left: Left, right: Right};\
+             type Box(Content) = struct {value: Content};\
              def collect: for(N, M) Fn(Array(Box(Pair(N, M)))) -> Array(Box(Pair(N, M))) = fn(items) {\
                  let result: Array(Box(Pair(N, M))) = items;\
                  let retain = fn(values: Array(Box(Pair(N, M)))) -> Array(Box(Pair(N, M))) { values };\
@@ -12257,7 +12491,7 @@ mod tests {
     fn parameterized_type_family_publishes_a_precise_constructor_scheme() {
         let analysis = analyze_source(
             "family.telora",
-            "@struct type Box(A) = {value: A};\
+            "type Box(A) = struct {value: A};\
              type IntBox = Box(Int);\
              def wrap: for(A) Fn(A) -> Box(A) = fn(value) { {value} };\
              wrap(1)",
@@ -12284,7 +12518,7 @@ mod tests {
     fn generic_calls_infer_parameters_through_struct_family_arguments() {
         let analysis = analyze_source(
             "family-argument.telora",
-            "@struct type Box(Content) = {value: Content};\
+            "type Box(Content) = struct {value: Content};\
              def unbox: for(Content) Fn(Box(Content)) -> Content = fn(boxed) { boxed.value };\
              let boxed: Box(Int) = {value: 7};\
              let value: Int = unbox(boxed);\
@@ -12307,8 +12541,8 @@ mod tests {
 
     #[test]
     fn generic_call_context_widens_singleton_fields_in_anonymous_records() {
-        let prelude = "@enum type Node = {A: 'None, B: 'None};\
-             @struct type Requirement = {target: Node};\
+        let prelude = "type Node = enum {A: 'None, B: 'None};\
+             type Requirement = struct {target: Node};\
              def target_of: Fn(Requirement) -> Node = fn(req) { req.target };\
              def use: for(Req) Fn(Array(Req), Fn(Req) -> Node) -> Node =\
                  fn(requirements, selector) { selector(requirements[0]) };";
@@ -12335,7 +12569,7 @@ mod tests {
         let conflicting_enum = analyze_source(
             "generic-record-enum-conflict.telora",
             &format!(
-                "{prelude} @enum type Foreign = {{Foreign: 'None}};\
+                "{prelude} type Foreign = enum {{Foreign: 'None}};\
                  let foreign: Foreign = 'Foreign;\
                  use([{{target: foreign}}], target_of)"
             ),
@@ -12353,7 +12587,7 @@ mod tests {
     fn generic_struct_families_construct_nested_array_tuple_fields() {
         let analysis = analyze_source(
             "nested-family-field.telora",
-            "@struct type Box(A) = {value: Array(Tuple([A, Int]))};\
+            "type Box(A) = struct {value: Array(Tuple([A, Int]))};\
              def make: for(A) Fn(Array(Tuple([A, Int]))) -> Box(A) =\
                  fn(value) { {value} };\
              make([(1, 2)]).value",
@@ -12362,11 +12596,11 @@ mod tests {
         assert_eq!(analysis.display(analysis.result_type), "Array<(Int, Int)>");
 
         for source in [
-            "@struct type Box(A) = {value: Array(Tuple([Int, A]))};\
+            "type Box(A) = struct {value: Array(Tuple([Int, A]))};\
              def make: for(A) Fn(Array(Tuple([Int, A]))) -> Box(A) =\
                  fn(value) { {value} };\
              make([(1, \"two\")]).value",
-            "@struct type Box(A) = {value: Array(Tuple([Int, A, String]))};\
+            "type Box(A) = struct {value: Array(Tuple([Int, A, String]))};\
              def make: for(A) Fn(Array(Tuple([Int, A, String]))) -> Box(A) =\
                  fn(value) { {value} };\
              make([(1, 2.0, \"three\")]).value",
@@ -12376,7 +12610,7 @@ mod tests {
 
         let incompatible = analyze_source(
             "incompatible-nested-family-field.telora",
-            "@struct type Box(A) = {value: Array(Tuple([A, Int]))};\
+            "type Box(A) = struct {value: Array(Tuple([A, Int]))};\
              def make: for(A) Fn(Array(Tuple([A, String]))) -> Box(A) =\
                  fn(value) { {value} };\
              make([(1, \"wrong\")])",
@@ -12398,9 +12632,9 @@ mod tests {
 
     #[test]
     fn explicit_array_context_checks_anonymous_concrete_family_catalogs() {
-        let definitions = "@enum type Id = {First: 'None, Second: 'None};\
-             @enum type Mode = {Direct: 'None, Derived: 'None};\
-             @struct type Capability(IdType, Input, Output) = {\
+        let definitions = "type Id = enum {First: 'None, Second: 'None};\
+             type Mode = enum {Direct: 'None, Derived: 'None};\
+             type Capability(IdType, Input, Output) = struct {\
                  id: IdType,\
                  mode: Mode,\
                  lower: Fn(Input) -> Option(Output),\
@@ -12456,8 +12690,8 @@ mod tests {
     fn parameterized_type_families_compose_symbolic_templates() {
         let analysis = analyze_source(
             "families.telora",
-            "@struct type Box(A) = {value: A};\
-             @struct type Envelope(Payload, Error) = {\
+            "type Box(A) = struct {value: A};\
+             type Envelope(Payload, Error) = struct {\
                  payload: Option(Box(Payload)),\
                  error: Option(Error),\
              };\
@@ -12531,9 +12765,9 @@ mod tests {
     fn concrete_types_schedule_family_applications_with_later_concrete_arguments() {
         let analysis = analyze_source(
             "decorated-concrete-family-chain.telora",
-            "@struct type Requirement(E) = {target: E, reason: String};\
-             @struct type Output = {requirements: Array(Requirement(Entity))};\
-             @enum type Entity = {Order: 'None};\
+            "type Requirement(E) = struct {target: E, reason: String};\
+             type Output = struct {requirements: Array(Requirement(Entity))};\
+             type Entity = enum {Order: 'None};\
              Output",
         )
         .unwrap();
@@ -12549,16 +12783,16 @@ mod tests {
         for (name, source) in [
             (
                 "earlier-concrete-argument.telora",
-                "@enum type Entity = {Order: 'None};\
-                 @struct type Requirement(E) = {target: E, reason: String};\
-                 @struct type Output = {requirements: Array(Requirement(Entity))}; Output",
+                "type Entity = enum {Order: 'None};\
+                 type Requirement(E) = struct {target: E, reason: String};\
+                 type Output = struct {requirements: Array(Requirement(Entity))}; Output",
             ),
             (
                 "multilevel-concrete-family-chain.telora",
-                "@struct type Requirement(E) = {target: E, reason: String};\
+                "type Requirement(E) = struct {target: E, reason: String};\
                  type Requirements(E) = Array(Requirement(E));\
-                 @struct type Output = {requirements: Requirements(Entity)};\
-                 @enum type Entity = {Order: 'None}; Output",
+                 type Output = struct {requirements: Requirements(Entity)};\
+                 type Entity = enum {Order: 'None}; Output",
             ),
         ] {
             let analysis = analyze_source(name, source).unwrap();
@@ -12571,9 +12805,9 @@ mod tests {
     fn type_aliases_preserve_recursive_concrete_family_arguments() {
         let analysis = analyze_source(
             "recursive-family-alias.telora",
-            "@struct type Box(A) = {value: A};\
-             @struct type Branch = {children: Array(Tree)};\
-             @enum type Tree = {Leaf: Int, Branch: Branch};\
+            "type Box(A) = struct {value: A};\
+             type Branch = struct {children: Array(Tree)};\
+             type Tree = enum {Leaf: Int, Branch: Branch};\
              type TreeBox = Box(Tree);\
              def identity: Fn(TreeBox) -> TreeBox = fn(value) { value };\
              identity({value: 'Leaf(1)})",
@@ -12679,7 +12913,7 @@ mod tests {
     fn reports_structural_annotation_mismatch() {
         let error = analyze_source(
             "test",
-            "@struct type User = {name: String, age: Int};\
+            "type User = struct {name: String, age: Int};\
              let user: User = {name: \"Ada\", age: \"old\"};\
              user",
         )
@@ -12729,7 +12963,7 @@ mod tests {
     fn struct_patterns_bind_field_types_and_reject_unknown_fields() {
         let analysis = analyze_source(
             "pattern.telora",
-            "@struct type User = {name: String, age: Int};\
+            "type User = struct {name: String, age: Int};\
              let user: User = {name: \"Ada\", age: 36};\
              match user { {age} => age + 1 }",
         )
@@ -12747,7 +12981,7 @@ mod tests {
 
         let error = analyze_source(
             "pattern.telora",
-            "@struct type User = {name: String};\
+            "type User = struct {name: String};\
              let user: User = {name: \"Ada\"};\
              match user { {age} => age }",
         )
@@ -13058,7 +13292,7 @@ mod tests {
     fn partial_type_evaluation_seals_decorated_recursive_components() {
         let partial = analyze_partial_types(
             "recursive.telora",
-            "@struct type Node = {children: Array(Node)}; 0",
+            "type Node = struct {children: Array(Node)}; 0",
             Quota::with_fuel(100),
         );
         let node = partial
@@ -13082,10 +13316,10 @@ mod tests {
     fn partial_type_evaluation_seals_multi_node_expr_components_and_dependents() {
         let partial = analyze_partial_types(
             "recursive-expr.telora",
-            "@struct type CallNode = {args: Array(Expr)};\
-             @struct type BinNode = {left: Expr, right: Expr};\
-             @enum type Expr = {Literal: Int, Call: CallNode, Bin: BinNode};\
-             @struct type Plan(A) = {root: Expr, value: A};\
+            "type CallNode = struct {args: Array(Expr)};\
+             type BinNode = struct {left: Expr, right: Expr};\
+             type Expr = enum {Literal: Int, Call: CallNode, Bin: BinNode};\
+             type Plan(A) = struct {root: Expr, value: A};\
              def render: Fn(Expr) -> String = fn(expr) { \"ok\" };\
              def transform: for(A) Fn(Plan(A)) -> String = fn(plan) { render(plan.root) };\
              def duplicate: Fn(Array(Expr)) -> Array(Expr) = fn(items) { items };\
@@ -13129,7 +13363,7 @@ mod tests {
     fn partial_type_evaluation_rejects_recursive_aliases_and_families() {
         for (name, source) in [
             ("alias", "type Left = Right; type Right = Left; 0"),
-            ("family", "@struct type Loop(A) = {next: Loop(A)}; 0"),
+            ("family", "type Loop(A) = struct {next: Loop(A)}; 0"),
         ] {
             let partial = analyze_partial_types(
                 &format!("recursive-{name}.telora"),
@@ -13223,7 +13457,7 @@ mod tests {
     fn runtime_validation_uses_computed_metadata() {
         let accepted = crate::run_source(
             "test",
-            "@struct type User = {name: String, age: Int};\
+            "type User = struct {name: String, age: Int};\
              validate(User, {age: 36, name: \"Ada\"})",
             100_000,
         )
@@ -13235,7 +13469,7 @@ mod tests {
 
         let rejected = crate::run_source(
             "test",
-            "@struct type User = {name: String, age: Int};\
+            "type User = struct {name: String, age: Int};\
              validate(User, {age: \"old\", name: \"Ada\"})",
             100_000,
         )
@@ -13247,7 +13481,7 @@ mod tests {
 
         let family = crate::run_source(
             "test",
-            "@struct type Box(A) = {value: A};\
+            "type Box(A) = struct {value: A};\
              validate(Box(Int), {value: 42})",
             100_000,
         )
@@ -13275,13 +13509,13 @@ mod tests {
     fn program_bytecode_erases_or_retains_type_metadata_by_use() {
         let erased = crate::compile_source(
             "test",
-            "@struct type User = {name: String}; let user: User = {name: \"Ada\"}; user.name",
+            "type User = struct {name: String}; let user: User = {name: \"Ada\"}; user.name",
         )
         .unwrap();
         assert!(!erased.constants().iter().any(is_type_metadata));
 
         let retained =
-            crate::compile_source("test", "@struct type User = {name: String}; User").unwrap();
+            crate::compile_source("test", "type User = struct {name: String}; User").unwrap();
         assert!(retained.constants().iter().any(is_type_metadata));
     }
 

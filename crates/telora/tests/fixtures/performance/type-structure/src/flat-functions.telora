@@ -1,4 +1,4 @@
-@struct type Leaf = { value: String };
+type Leaf = struct { value: String };
 def f000: Fn(Int) -> Int = fn(x) { x };
 def f001: Fn(Int) -> Int = fn(x) { x };
 def f002: Fn(Int) -> Int = fn(x) { x };

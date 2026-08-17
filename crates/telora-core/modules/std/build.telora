@@ -1,11 +1,11 @@
-@struct type TextFile = {
+type TextFile = struct {
     path: String,
     content: String,
 };
-@enum type Artifact = {
-    TextFile,
+type Artifact = enum {
+    'TextFile(TextFile),
 };
-@struct type OutputPlan = {
+type OutputPlan = struct {
     files: Array(Artifact),
 };
 export {

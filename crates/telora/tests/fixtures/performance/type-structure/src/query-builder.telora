@@ -13,22 +13,22 @@ import "std/string" as string;
 
 # ---------------------------------------------------------------- Values
 
-@enum type Val = {
+type Val = enum {
   String: String,
   Int: Int,
   Float: Float,
   Bool: Bool,
 };
 
-@struct type SqlIdentifier = { name: String };
+type SqlIdentifier = struct { name: String };
 
 # ---------------------------------------------------------------- Plan model
 
-@enum type JoinKind = { Inner: 'None, Left: 'None };
+type JoinKind = enum { Inner: 'None, Left: 'None };
 
-@enum type CompareOp = { Eq: 'None, Ne: 'None, Lt: 'None, Le: 'None, Gt: 'None, Ge: 'None };
+type CompareOp = enum { Eq: 'None, Ne: 'None, Lt: 'None, Le: 'None, Gt: 'None, Ge: 'None };
 
-@enum type ScalarFunction = {
+type ScalarFunction = enum {
   Lower: 'None,
   Upper: 'None,
   Abs: 'None,
@@ -37,7 +37,7 @@ import "std/string" as string;
   Substr: 'None,
 };
 
-@enum type AggregateFunction = {
+type AggregateFunction = enum {
   Count: 'None,
   Sum: 'None,
   Avg: 'None,
@@ -45,19 +45,19 @@ import "std/string" as string;
   Max: 'None,
 };
 
-@enum type OrderDirection = { Asc: 'None, Desc: 'None };
+type OrderDirection = enum { Asc: 'None, Desc: 'None };
 
-@struct type ColumnRef = { alias: SqlIdentifier, column: SqlIdentifier };
+type ColumnRef = struct { alias: SqlIdentifier, column: SqlIdentifier };
 
-@struct type ScalarCall = { function: ScalarFunction, args: Array(Expr) };
+type ScalarCall = struct { function: ScalarFunction, args: Array(Expr) };
 
-@struct type AggregateCall = { function: AggregateFunction, argument: Option(Expr) };
+type AggregateCall = struct { function: AggregateFunction, argument: Option(Expr) };
 
-@struct type CompareCall = { op: CompareOp, left: Expr, right: Expr };
+type CompareCall = struct { op: CompareOp, left: Expr, right: Expr };
 
-@struct type Conjunction = { items: Array(Expr) };
+type Conjunction = struct { items: Array(Expr) };
 
-@enum type Expr = {
+type Expr = enum {
   Column: ColumnRef,
   Value: Val,
   Scalar: ScalarCall,
@@ -66,21 +66,21 @@ import "std/string" as string;
   And: Conjunction,
 };
 
-@struct type TableRef = {
+type TableRef = struct {
   table: SqlIdentifier,
   alias: SqlIdentifier,
   columns: Array(SqlIdentifier),
 };
 
-@struct type EquiCondition = { left: ColumnRef, right: ColumnRef };
+type EquiCondition = struct { left: ColumnRef, right: ColumnRef };
 
-@struct type Join = { kind: JoinKind, right: TableRef, condition: EquiCondition };
+type Join = struct { kind: JoinKind, right: TableRef, condition: EquiCondition };
 
-@struct type ProjectionItem = { expr: Expr, alias: SqlIdentifier };
+type ProjectionItem = struct { expr: Expr, alias: SqlIdentifier };
 
-@struct type OrderingItem = { column: ColumnRef, direction: OrderDirection };
+type OrderingItem = struct { column: ColumnRef, direction: OrderDirection };
 
-@struct type Plan = {
+type Plan = struct {
   revision: String,
   source: TableRef,
   projections: Array(ProjectionItem),
@@ -93,7 +93,7 @@ import "std/string" as string;
 
 # ---------------------------------------------------------------- Operator vocabulary
 
-@enum type Operator = {
+type Operator = enum {
   Scan: 'None,
   Column: 'None,
   Binding: 'None,
@@ -107,7 +107,7 @@ import "std/string" as string;
   Limit: 'None,
 };
 
-@struct type PlanProfile = {
+type PlanProfile = struct {
   operators: Array(Operator),
   join_kinds: Array(JoinKind),
   scalar_functions: Array(ScalarFunction),
@@ -116,7 +116,7 @@ import "std/string" as string;
 
 # ---------------------------------------------------------------- Query
 
-@struct type Query = {
+type Query = struct {
   sql: String,
   bindings: Array(Val),
 };

@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn contextualizes_only_direct_struct_and_enum_type_initializers() {
-        let source = "type User = struct {name: String}; type Maybe(A) = enum {'None, 'Some(A)}; struct('None, {}); @struct type Legacy = {}";
+        let source = "type User = struct {name: String}; type Maybe(A) = enum {'None, 'Some(A)}; struct('None, {}); type Legacy = struct {}";
         let mut diagnostics = Vec::new();
         let (tokens, spans) = tokenize(source, &mut diagnostics);
         let significant = tokens
