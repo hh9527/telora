@@ -223,11 +223,11 @@ impl<'a> ValueRef<'a> {
                 else {
                     unreachable!("Declared handle has another object kind")
                 };
-                return ValueRef {
+                ValueRef {
                     value: *payload,
                     view: self.view,
                 }
-                .kind();
+                .kind()
             }
             RuntimeValue::Opaque(_) => ValueKind::Opaque,
             RuntimeValue::Dict(_) => ValueKind::Dict,

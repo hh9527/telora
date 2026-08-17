@@ -14,38 +14,38 @@ import "std/string" as string;
 # ---------------------------------------------------------------- Values
 
 type Val = enum {
-  String: String,
-  Int: Int,
-  Float: Float,
-  Bool: Bool,
+  'String(String),
+  'Int(Int),
+  'Float(Float),
+  'Bool(Bool),
 };
 
 type SqlIdentifier = struct { name: String };
 
 # ---------------------------------------------------------------- Plan model
 
-type JoinKind = enum { Inner: 'None, Left: 'None };
+type JoinKind = enum { 'Inner, 'Left };
 
-type CompareOp = enum { Eq: 'None, Ne: 'None, Lt: 'None, Le: 'None, Gt: 'None, Ge: 'None };
+type CompareOp = enum { 'Eq, 'Ne, 'Lt, 'Le, 'Gt, 'Ge };
 
 type ScalarFunction = enum {
-  Lower: 'None,
-  Upper: 'None,
-  Abs: 'None,
-  Length: 'None,
-  Coalesce: 'None,
-  Substr: 'None,
+  'Lower,
+  'Upper,
+  'Abs,
+  'Length,
+  'Coalesce,
+  'Substr,
 };
 
 type AggregateFunction = enum {
-  Count: 'None,
-  Sum: 'None,
-  Avg: 'None,
-  Min: 'None,
-  Max: 'None,
+  'Count,
+  'Sum,
+  'Avg,
+  'Min,
+  'Max,
 };
 
-type OrderDirection = enum { Asc: 'None, Desc: 'None };
+type OrderDirection = enum { 'Asc, 'Desc };
 
 type ColumnRef = struct { alias: SqlIdentifier, column: SqlIdentifier };
 
@@ -58,12 +58,12 @@ type CompareCall = struct { op: CompareOp, left: Expr, right: Expr };
 type Conjunction = struct { items: Array(Expr) };
 
 type Expr = enum {
-  Column: ColumnRef,
-  Value: Val,
-  Scalar: ScalarCall,
-  Aggregate: AggregateCall,
-  Compare: CompareCall,
-  And: Conjunction,
+  'Column(ColumnRef),
+  'Value(Val),
+  'Scalar(ScalarCall),
+  'Aggregate(AggregateCall),
+  'Compare(CompareCall),
+  'And(Conjunction),
 };
 
 type TableRef = struct {
@@ -94,17 +94,17 @@ type Plan = struct {
 # ---------------------------------------------------------------- Operator vocabulary
 
 type Operator = enum {
-  Scan: 'None,
-  Column: 'None,
-  Binding: 'None,
-  Scalar: 'None,
-  Aggregate: 'None,
-  Project: 'None,
-  Filter: 'None,
-  EquiJoin: 'None,
-  Group: 'None,
-  Order: 'None,
-  Limit: 'None,
+  'Scan,
+  'Column,
+  'Binding,
+  'Scalar,
+  'Aggregate,
+  'Project,
+  'Filter,
+  'EquiJoin,
+  'Group,
+  'Order,
+  'Limit,
 };
 
 type PlanProfile = struct {
@@ -933,4 +933,3 @@ export {
   profile_allows, validate_plan, transform_sqlite, compile,
   operator_display, val_display, query_display,
 };
-

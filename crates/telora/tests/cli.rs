@@ -500,7 +500,7 @@ fn show_namespace_imports_reference_exact_module_interfaces() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/types.telora"),
-        "type CallExpr = struct {args: Array(Expr)};\ntype Expr = enum {Text: String, Call: CallExpr};\ntype Box(A) = struct {value: A};\nexport {CallExpr, Expr, Box};\n",
+        "type CallExpr = struct {args: Array(Expr)};\ntype Expr = enum {'Text(String), 'Call(CallExpr)};\ntype Box(A) = struct {value: A};\nexport {CallExpr, Expr, Box};\n",
     )
     .unwrap();
     fs::write(
@@ -532,7 +532,7 @@ fn show_namespace_imports_reference_exact_module_interfaces() {
         .find(|record| record["name"] == "Expr")
         .unwrap();
     let ty = selective["type"].as_str().unwrap();
-    assert!(ty.contains("TypeOf(enum"), "{ty}");
+    assert!(ty.contains("TypeOf(Expr)"), "{ty}");
     assert!(!ty.contains("Any"), "{ty}");
 }
 

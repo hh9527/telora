@@ -3496,10 +3496,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let not_families = std::mem::take(&mut inference.not_families);
     let declared_value_owners = expression_descriptors
         .iter()
-        .filter_map(|(location, descriptor)| {
-            matches!(descriptor, TypeDescriptor::Declared(_))
-                .then(|| (*location, descriptor.to_value(&mut tool_vm)))
-        })
+        .filter(|(_, descriptor)| matches!(descriptor, TypeDescriptor::Declared(_)))
+        .map(|(location, descriptor)| (*location, descriptor.to_value(&mut tool_vm)))
         .collect();
     Ok(Analysis {
         types,

@@ -15,6 +15,13 @@ use crate::{RuntimeError, Vm};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
+struct NestedEnvironment<'a> {
+    captures: &'a [String],
+    up_links: &'a HashSet<String>,
+    definitions: &'a HashSet<String>,
+    declared_value_owners: &'a HashMap<Location, Value>,
+}
+
 #[derive(Debug)]
 pub enum ExecutionError {
     Frontend(FrontendError),
@@ -464,11 +471,14 @@ impl<'a> Compiler<'a> {
         source_file: Option<&'a SourceFile>,
         function_name: String,
         parameters: &[Identifier],
-        captures: &[String],
-        captured_up_links: &HashSet<String>,
-        captured_definitions: &HashSet<String>,
-        declared_value_owners: &HashMap<Location, Value>,
+        nested_environment: NestedEnvironment<'_>,
     ) -> Result<Self, FrontendError> {
+        let NestedEnvironment {
+            captures,
+            up_links: captured_up_links,
+            definitions: captured_definitions,
+            declared_value_owners,
+        } = nested_environment;
         let mut environment = HashMap::new();
         for (index, parameter) in parameters.iter().enumerate() {
             if environment
@@ -1427,10 +1437,12 @@ impl<'a> Compiler<'a> {
             self.source_file,
             name,
             parameters,
-            &captures,
-            &captured_up_links,
-            &captured_definitions,
-            &self.declared_value_owners,
+            NestedEnvironment {
+                captures: &captures,
+                up_links: &captured_up_links,
+                definitions: &captured_definitions,
+                declared_value_owners: &self.declared_value_owners,
+            },
         )?;
         if let Some(template) = declared_template {
             let structural = nested.compile_block(body)?;

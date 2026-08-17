@@ -2348,7 +2348,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                                 &external_roots,
                                 &mut runtime_diagnostics,
                             );
-                            recovered_analysis = Some(analysis);
+                            recovered_analysis = Some(*analysis);
                             None
                         }
                         Err(_) => None,
@@ -2513,7 +2513,7 @@ impl RecoverableWorkspaceBuilder<'_> {
             Ok(arena) => arena,
             Err(error) => {
                 return Err(RecoveryEvaluationError::Runtime {
-                    analysis,
+                    analysis: Box::new(analysis),
                     error: Box::new(error),
                     emitted: account.take_diagnostics(),
                 });
@@ -2552,8 +2552,8 @@ impl RecoverableWorkspaceBuilder<'_> {
         if let Some(query) = self.query {
             graph_account = graph_account.with_query(query.clone());
         }
-        if let Ok(function) = compile_program_analyzed_in(source, program, analysis) {
-            if let Ok(execution) = Vm::new()
+        if let Ok(function) = compile_program_analyzed_in(source, program, analysis)
+            && let Ok(execution) = Vm::new()
                 .with_debug_sink(Arc::clone(&self.engine.debug_sink))
                 .execute_in_work_best_effort(
                     &self.main.heap,
@@ -2562,10 +2562,9 @@ impl RecoverableWorkspaceBuilder<'_> {
                     &[],
                     &mut graph_account,
                 )
-            {
-                merge_runtime_diagnostics(diagnostics, graph_account.take_diagnostics());
-                merge_runtime_errors(diagnostics, execution.failures);
-            }
+        {
+            merge_runtime_diagnostics(diagnostics, graph_account.take_diagnostics());
+            merge_runtime_errors(diagnostics, execution.failures);
         }
     }
 }
@@ -2626,7 +2625,7 @@ fn same_runtime_diagnostic(left: &Diagnostic, right: &Diagnostic) -> bool {
 enum RecoveryEvaluationError {
     Module,
     Runtime {
-        analysis: crate::Analysis,
+        analysis: Box<crate::Analysis>,
         error: Box<crate::RuntimeError>,
         emitted: Vec<Diagnostic>,
     },

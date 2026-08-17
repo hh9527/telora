@@ -1,6 +1,6 @@
 type Leaf = struct { value: String };
 type AndExpr = struct { items: Array(Expr) };
-type Expr = enum { Leaf: Leaf, And: AndExpr };
+type Expr = enum { 'Leaf(Leaf), 'And(AndExpr) };
 def f000: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f001: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f002: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
@@ -102,5 +102,4 @@ def f097: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f098: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f099: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 export let output = "ok";
-
 
