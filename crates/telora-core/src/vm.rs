@@ -1,6 +1,6 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
-    Handle, Heap, HeapView, Object, PersistentValue, RichValue, RuntimeValue, publish_root,
+    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, Val, publish_root,
     relocate_work_roots,
 };
 use crate::lir::RegisterId;
@@ -146,7 +146,7 @@ pub enum ValueKind {
 
 #[derive(Clone, Copy)]
 pub struct ValueRef<'a> {
-    value: RichValue,
+    value: Val,
     view: HeapView<'a>,
 }
 
@@ -162,7 +162,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub(crate) fn hidden_up_link_handle(self) -> Option<Handle> {
-        let RuntimeValue::UpLink(handle) = self.value.value() else {
+        let DecodedValue::UpLink(handle) = self.value.value() else {
             return None;
         };
         Some(handle)
@@ -170,25 +170,25 @@ impl<'a> ValueRef<'a> {
 
     pub(crate) fn object_handle(self) -> Option<Handle> {
         match self.value.value() {
-            RuntimeValue::Bytes(handle)
-            | RuntimeValue::Opaque(handle)
-            | RuntimeValue::DeclaredType(handle)
-            | RuntimeValue::Array(handle)
-            | RuntimeValue::Tagged(handle)
-            | RuntimeValue::Tuple(handle)
-            | RuntimeValue::Dict(handle)
-            | RuntimeValue::Func(handle)
-            | RuntimeValue::Dyn(handle) => Some(handle),
+            DecodedValue::Bytes(handle)
+            | DecodedValue::Opaque(handle)
+            | DecodedValue::DeclaredType(handle)
+            | DecodedValue::Array(handle)
+            | DecodedValue::Tagged(handle)
+            | DecodedValue::Tuple(handle)
+            | DecodedValue::Dict(handle)
+            | DecodedValue::Func(handle)
+            | DecodedValue::Dyn(handle) => Some(handle),
             _ => None,
         }
     }
 
     pub(crate) fn is_hidden_up_link(self) -> bool {
-        matches!(self.value.value(), RuntimeValue::UpLink(_))
+        matches!(self.value.value(), DecodedValue::UpLink(_))
     }
 
     pub(crate) fn resolve_hidden_up_link(self) -> Result<Self, String> {
-        let RuntimeValue::UpLink(handle) = self.value.value() else {
+        let DecodedValue::UpLink(handle) = self.value.value() else {
             return Ok(self);
         };
         let value = self
@@ -204,26 +204,26 @@ impl<'a> ValueRef<'a> {
 
     pub fn kind(self) -> ValueKind {
         match self.value.value() {
-            RuntimeValue::Failed(_) => {
+            DecodedValue::Failed(_) => {
                 unreachable!("failed nodes are private best-effort values")
             }
-            RuntimeValue::Int(_) => ValueKind::Int,
-            RuntimeValue::Float(_) => ValueKind::Float,
-            RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => ValueKind::String,
-            RuntimeValue::Bytes(_) => ValueKind::Bytes,
-            RuntimeValue::NativeType(_) => ValueKind::Type,
-            RuntimeValue::DeclaredType(_) => ValueKind::Type,
-            RuntimeValue::Opaque(_) => ValueKind::Opaque,
-            RuntimeValue::Dict(_) => ValueKind::Dict,
-            RuntimeValue::Array(_) => ValueKind::Array,
-            RuntimeValue::BuiltinAtom(_) | RuntimeValue::InlineAtom(_) | RuntimeValue::Atom(_) => {
+            DecodedValue::Int(_) => ValueKind::Int,
+            DecodedValue::Float(_) => ValueKind::Float,
+            DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => ValueKind::String,
+            DecodedValue::Bytes(_) => ValueKind::Bytes,
+            DecodedValue::NativeType(_) => ValueKind::Type,
+            DecodedValue::DeclaredType(_) => ValueKind::Type,
+            DecodedValue::Opaque(_) => ValueKind::Opaque,
+            DecodedValue::Dict(_) => ValueKind::Dict,
+            DecodedValue::Array(_) => ValueKind::Array,
+            DecodedValue::BuiltinAtom(_) | DecodedValue::InlineAtom(_) | DecodedValue::Atom(_) => {
                 ValueKind::Atom
             }
-            RuntimeValue::Tagged(_) => ValueKind::Tagged,
-            RuntimeValue::Tuple(_) => ValueKind::Tuple,
-            RuntimeValue::Func(_) => ValueKind::Func,
-            RuntimeValue::Dyn(_) => ValueKind::Dyn,
-            RuntimeValue::UpLink(_) => {
+            DecodedValue::Tagged(_) => ValueKind::Tagged,
+            DecodedValue::Tuple(_) => ValueKind::Tuple,
+            DecodedValue::Func(_) => ValueKind::Func,
+            DecodedValue::Dyn(_) => ValueKind::Dyn,
+            DecodedValue::UpLink(_) => {
                 unreachable!("up-links are private VM values")
             }
         }
@@ -231,31 +231,31 @@ impl<'a> ValueRef<'a> {
 
     pub fn as_atom(self) -> Option<crate::TextRef<'a>> {
         match self.value.value() {
-            RuntimeValue::BuiltinAtom(atom) => Some(crate::heap::TextRef::borrowed(atom.name())),
-            RuntimeValue::InlineAtom(text) => Some(crate::heap::TextRef::inline(text)),
-            RuntimeValue::Atom(id) => self.view.text(id).ok().map(crate::heap::TextRef::borrowed),
+            DecodedValue::BuiltinAtom(atom) => Some(crate::heap::TextRef::borrowed(atom.name())),
+            DecodedValue::InlineAtom(text) => Some(crate::heap::TextRef::inline(text)),
+            DecodedValue::Atom(id) => self.view.text(id).ok().map(crate::heap::TextRef::borrowed),
             _ => None,
         }
     }
 
     pub fn as_int(self) -> Option<i64> {
         match self.value.value() {
-            RuntimeValue::Int(value) => Some(value),
+            DecodedValue::Int(value) => Some(value),
             _ => None,
         }
     }
 
     pub fn as_float(self) -> Option<f64> {
         match self.value.value() {
-            RuntimeValue::Float(value) => Some(value),
+            DecodedValue::Float(value) => Some(value),
             _ => None,
         }
     }
 
     pub fn as_str(self) -> Option<crate::TextRef<'a>> {
         match self.value.value() {
-            RuntimeValue::InlineString(text) => Some(crate::heap::TextRef::inline(text)),
-            RuntimeValue::ShortString(id) => {
+            DecodedValue::InlineString(text) => Some(crate::heap::TextRef::inline(text)),
+            DecodedValue::ShortString(id) => {
                 self.view.text(id).ok().map(crate::heap::TextRef::borrowed)
             }
             _ => None,
@@ -263,7 +263,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub fn as_bytes(self) -> Option<&'a [u8]> {
-        let RuntimeValue::Bytes(handle) = self.value.value() else {
+        let DecodedValue::Bytes(handle) = self.value.value() else {
             return None;
         };
         match self.view.object(handle).ok()? {
@@ -273,7 +273,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub fn as_native_type(self) -> Option<&'a crate::NativeType> {
-        let RuntimeValue::NativeType(id) = self.value.value() else {
+        let DecodedValue::NativeType(id) = self.value.value() else {
             return None;
         };
         self.view.native_type(id).ok()
@@ -282,7 +282,7 @@ impl<'a> ValueRef<'a> {
     pub(crate) fn declared_type_parts(
         self,
     ) -> Option<(&'a crate::value::DeclaredTypeId, &'a str, ValueRef<'a>)> {
-        let RuntimeValue::DeclaredType(handle) = self.value.value() else {
+        let DecodedValue::DeclaredType(handle) = self.value.value() else {
             return None;
         };
         let Object::DeclaredType { id, name, body, .. } = self.view.object(handle).ok()? else {
@@ -325,7 +325,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub fn as_opaque<T: std::any::Any>(self, expected_type: &crate::NativeType) -> Option<&'a T> {
-        let RuntimeValue::Opaque(handle) = self.value.value() else {
+        let DecodedValue::Opaque(handle) = self.value.value() else {
             return None;
         };
         match self.view.object(handle).ok()? {
@@ -335,7 +335,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub(crate) fn opaque_native_type(self) -> Option<&'a crate::NativeType> {
-        let RuntimeValue::Opaque(handle) = self.value.value() else {
+        let DecodedValue::Opaque(handle) = self.value.value() else {
             return None;
         };
         match self.view.object(handle).ok()? {
@@ -346,16 +346,16 @@ impl<'a> ValueRef<'a> {
 
     pub fn sequence_len(self) -> Option<usize> {
         match self.value.value() {
-            RuntimeValue::Array(handle) => self.view.sequence(handle, false).ok().map(<[_]>::len),
-            RuntimeValue::Tuple(handle) => self.view.sequence(handle, true).ok().map(<[_]>::len),
+            DecodedValue::Array(handle) => self.view.sequence(handle, false).ok().map(<[_]>::len),
+            DecodedValue::Tuple(handle) => self.view.sequence(handle, true).ok().map(<[_]>::len),
             _ => None,
         }
     }
 
     pub fn sequence_get(self, index: usize) -> Option<ValueRef<'a>> {
         let values = match self.value.value() {
-            RuntimeValue::Array(handle) => self.view.sequence(handle, false).ok()?,
-            RuntimeValue::Tuple(handle) => self.view.sequence(handle, true).ok()?,
+            DecodedValue::Array(handle) => self.view.sequence(handle, false).ok()?,
+            DecodedValue::Tuple(handle) => self.view.sequence(handle, true).ok()?,
             _ => return None,
         };
         values.get(index).copied().map(|value| ValueRef {
@@ -365,7 +365,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub fn tagged_parts(self) -> Option<(ValueRef<'a>, ValueRef<'a>)> {
-        let RuntimeValue::Tagged(handle) = self.value.value() else {
+        let DecodedValue::Tagged(handle) = self.value.value() else {
             return None;
         };
         let (tag, payload) = self.view.tagged(handle).ok()?;
@@ -383,13 +383,13 @@ impl<'a> ValueRef<'a> {
 
     pub fn dict_fields(self) -> Option<Vec<&'a str>> {
         match self.value.value() {
-            RuntimeValue::Dict(handle) => self.view.dict_fields(handle).ok(),
+            DecodedValue::Dict(handle) => self.view.dict_fields(handle).ok(),
             _ => None,
         }
     }
 
     pub fn dict_get(self, field: &str) -> Option<ValueRef<'a>> {
-        let RuntimeValue::Dict(handle) = self.value.value() else {
+        let DecodedValue::Dict(handle) = self.value.value() else {
             return None;
         };
         self.view
@@ -403,7 +403,7 @@ impl<'a> ValueRef<'a> {
     }
 
     pub fn function_arity(self) -> Option<usize> {
-        let RuntimeValue::Func(handle) = self.value.value() else {
+        let DecodedValue::Func(handle) = self.value.value() else {
             return None;
         };
         self.view.function_arity(handle).ok()
@@ -431,7 +431,7 @@ pub(crate) fn with_legacy_value_ref<R>(
 pub struct CallContext<'vm, 'stack> {
     current: &'vm mut Heap,
     background: Option<&'vm Heap>,
-    stack: &'stack mut Vec<Option<RichValue>>,
+    stack: &'stack mut Vec<Option<Val>>,
     account: &'stack mut QuotaAccount,
     base: usize,
     argument_count: usize,
@@ -445,10 +445,10 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
     fn new(
         current: &'vm mut Heap,
         background: Option<&'vm Heap>,
-        stack: &'stack mut Vec<Option<RichValue>>,
+        stack: &'stack mut Vec<Option<Val>>,
         account: &'stack mut QuotaAccount,
-        arguments: Vec<RichValue>,
-        upvalues: &[RichValue],
+        arguments: Vec<Val>,
+        upvalues: &[Val],
         call_site: Option<crate::Loc>,
     ) -> Result<Self, NativeError> {
         let base = stack.len();
@@ -556,7 +556,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
     }
 
     pub fn set_int(&mut self, destination: RegisterId, value: i64) -> Result<(), NativeError> {
-        self.set(destination, RuntimeValue::Int(value).into())
+        self.set(destination, DecodedValue::Int(value).into())
     }
 
     pub fn set_float(&mut self, destination: RegisterId, value: f64) -> Result<(), NativeError> {
@@ -573,13 +573,13 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
                 .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))?;
             return Err(NativeError::non_finite_float());
         }
-        self.set(destination, RuntimeValue::Float(value).into())
+        self.set(destination, DecodedValue::Float(value).into())
     }
 
     pub fn set_none(&mut self, destination: RegisterId) -> Result<(), NativeError> {
         self.set(
             destination,
-            RuntimeValue::BuiltinAtom(BuiltinAtom::None).into(),
+            DecodedValue::BuiltinAtom(BuiltinAtom::None).into(),
         )
     }
 
@@ -602,7 +602,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         let value = value.into();
         self.charge_allocation(value.len())?;
         let handle = self.current.allocate(Object::Bytes(value));
-        self.set(destination, RuntimeValue::Bytes(handle).into())
+        self.set(destination, DecodedValue::Bytes(handle).into())
     }
 
     pub fn set_opaque<T>(
@@ -617,7 +617,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.charge_sequence(1)?;
         let value = crate::OpaqueValue::new(native_type, payload);
         let handle = self.current.allocate(Object::Opaque(value));
-        self.set(destination, RuntimeValue::Opaque(handle).into())
+        self.set(destination, DecodedValue::Opaque(handle).into())
     }
 
     pub fn set_identity_opaque<T>(
@@ -632,7 +632,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.charge_sequence(1)?;
         let value = crate::OpaqueValue::new_identity(native_type, payload);
         let handle = self.current.allocate(Object::Opaque(value));
-        self.set(destination, RuntimeValue::Opaque(handle).into())
+        self.set(destination, DecodedValue::Opaque(handle).into())
     }
 
     pub fn set_value(
@@ -729,7 +729,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         });
         self.set(
             destination,
-            RichValue::unknown(RuntimeValue::DeclaredType(handle)),
+            Val::unknown(DecodedValue::DeclaredType(handle)),
         )
     }
 
@@ -740,7 +740,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         payload: RegisterId,
     ) -> Result<(), NativeError> {
         let owner = self.owned(owner)?;
-        if !matches!(owner.value(), RuntimeValue::DeclaredType(_)) {
+        if !matches!(owner.value(), DecodedValue::DeclaredType(_)) {
             return Err(NativeError::new(
                 "declared value owner is not a declared Type",
             ));
@@ -769,7 +769,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map(|item| self.owned(*item))
             .collect::<Result<Vec<_>, _>>()?;
         self.charge_sequence(values.len())?;
-        let value = RichValue::unknown(RuntimeValue::Array(
+        let value = Val::unknown(DecodedValue::Array(
             self.current.allocate(Object::Array(values.into())),
         ));
         self.set(destination, value)
@@ -785,7 +785,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map(|item| self.owned(*item))
             .collect::<Result<Vec<_>, _>>()?;
         self.charge_sequence(values.len())?;
-        let value = RichValue::unknown(RuntimeValue::Tuple(
+        let value = Val::unknown(DecodedValue::Tuple(
             self.current.allocate(Object::Tuple(values.into())),
         ));
         self.set(destination, value)
@@ -800,7 +800,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         let tag = self.owned(tag)?;
         let payload = self.owned(payload)?;
         self.charge_sequence(2)?;
-        let value = RichValue::unknown(RuntimeValue::Tagged(
+        let value = Val::unknown(DecodedValue::Tagged(
             self.current.allocate(Object::Tagged { tag, payload }),
         ));
         self.set(destination, value)
@@ -825,7 +825,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map(|(field, value)| (self.current.intern(field), value))
             .unzip();
         let shape = self.current.intern_shape(fields);
-        let value = RichValue::unknown(RuntimeValue::Dict(self.current.allocate(Object::Dict {
+        let value = Val::unknown(DecodedValue::Dict(self.current.allocate(Object::Dict {
             shape,
             values: values.into(),
         })));
@@ -839,7 +839,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))
     }
 
-    fn charge_dict(&mut self, entries: &[(&str, RichValue)]) -> Result<(), NativeError> {
+    fn charge_dict(&mut self, entries: &[(&str, Val)]) -> Result<(), NativeError> {
         let field_bytes = entries.iter().try_fold(0u64, |total, (field, _)| {
             total.checked_add(field.len() as u64).ok_or_else(|| {
                 NativeError::allocation_limit("native Dict allocation size overflowed")
@@ -862,7 +862,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))
     }
 
-    fn owned(&self, register: RegisterId) -> Result<RichValue, NativeError> {
+    fn owned(&self, register: RegisterId) -> Result<Val, NativeError> {
         let index = usize::try_from(register.0)
             .map_err(|_| NativeError::new("register does not fit this platform"))?;
         self.stack
@@ -872,7 +872,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .ok_or_else(|| NativeError::new(format!("register {} is not initialized", register.0)))
     }
 
-    fn set(&mut self, register: RegisterId, value: RichValue) -> Result<(), NativeError> {
+    fn set(&mut self, register: RegisterId, value: Val) -> Result<(), NativeError> {
         let index = usize::try_from(register.0)
             .map_err(|_| NativeError::new("register does not fit this platform"))?;
         let slot = self
@@ -883,7 +883,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         Ok(())
     }
 
-    fn take_result(self) -> Result<RichValue, NativeError> {
+    fn take_result(self) -> Result<Val, NativeError> {
         let index = usize::try_from(self.result.0)
             .map_err(|_| NativeError::stack_limit("result register does not fit usize"))?;
         let slot = self
@@ -1140,7 +1140,7 @@ trait NativeContinuation: fmt::Debug {
 
     fn resume(
         self: Box<Self>,
-        value: RichValue,
+        value: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -1148,7 +1148,7 @@ trait NativeContinuation: fmt::Debug {
 
     fn resume_failed(
         self: Box<Self>,
-        failure: RichValue,
+        failure: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -1158,12 +1158,12 @@ trait NativeContinuation: fmt::Debug {
 #[derive(Debug)]
 struct ArrayContinuation {
     function: CoreArrayFunction,
-    source: RichValue,
-    callback: RichValue,
+    source: Val,
+    callback: Val,
     next_index: usize,
-    accumulator: Option<RichValue>,
-    output: Vec<RichValue>,
-    failed: Option<RichValue>,
+    accumulator: Option<Val>,
+    output: Vec<Val>,
+    failed: Option<Val>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -1173,12 +1173,12 @@ struct ArrayContinuation {
 #[derive(Debug)]
 struct DictContinuation {
     function: CoreDictFunction,
-    entries: Vec<(String, RichValue)>,
-    callback: RichValue,
+    entries: Vec<(String, Val)>,
+    callback: Val,
     next_index: usize,
-    accumulator: Option<RichValue>,
-    output: Vec<(String, RichValue)>,
-    failed: Option<RichValue>,
+    accumulator: Option<Val>,
+    output: Vec<(String, Val)>,
+    failed: Option<Val>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -1187,26 +1187,26 @@ struct DictContinuation {
 
 enum VmAction {
     Call {
-        callee: RichValue,
-        arguments: Vec<RichValue>,
+        callee: Val,
+        arguments: Vec<Val>,
         return_target: ReturnTarget,
         call_function: Arc<BytecodeFunction>,
         call_pc: usize,
     },
     Return {
-        value: RichValue,
+        value: Val,
         return_target: ReturnTarget,
     },
 }
 
 enum DriveOutcome {
     Pending,
-    Root(RichValue),
+    Root(Val),
 }
 
 pub(crate) struct WorkWorld {
     heap: Heap,
-    root: RichValue,
+    root: Val,
 }
 
 pub(crate) struct VmExecution {
@@ -1277,7 +1277,7 @@ impl WorkWorld {
             current: &self.heap,
             background: Some(world),
         };
-        let RuntimeValue::Tuple(handle) = self.root.value() else {
+        let DecodedValue::Tuple(handle) = self.root.value() else {
             return Err(crate::heap::HeapError::new(root_error));
         };
         let values = view.sequence(handle, true)?;
@@ -1557,7 +1557,7 @@ impl Vm {
                     0,
                 )
             })?;
-        let mut stack: Vec<Option<RichValue>> = Vec::new();
+        let mut stack: Vec<Option<Val>> = Vec::new();
         let mut frames = vec![make_execution_frame(
             Arc::new(function.clone()),
             prototype,
@@ -1571,7 +1571,7 @@ impl Vm {
 
         let mut failures = Vec::new();
         let mut result = loop {
-            let attempt = (|| -> Result<RichValue, RuntimeError> {
+            let attempt = (|| -> Result<Val, RuntimeError> {
                 loop {
                     let function_arc = frames
                         .last()
@@ -1638,8 +1638,8 @@ impl Vm {
                                 function,
                                 pc,
                             )?;
-                            let link = RichValue::new(
-                                RuntimeValue::UpLink(
+                            let link = Val::new(
+                                DecodedValue::UpLink(
                                     current.allocate(crate::heap::Object::UpLink { value: None }),
                                 ),
                                 instruction_location(function, pc),
@@ -1647,7 +1647,7 @@ impl Vm {
                             write_register(&mut registers, *dst, link, function, pc)?;
                         }
                         Opcode::ReadUpLink { dst, link } => {
-                            let RuntimeValue::UpLink(handle) =
+                            let DecodedValue::UpLink(handle) =
                                 read_register(&registers, *link, function, pc)?.value()
                             else {
                                 return Err(error(
@@ -1678,7 +1678,7 @@ impl Vm {
                             write_register(&mut registers, *dst, value, function, pc)?;
                         }
                         Opcode::InitializeUpLink { link, src } => {
-                            let RuntimeValue::UpLink(handle) =
+                            let DecodedValue::UpLink(handle) =
                                 read_register(&registers, *link, function, pc)?.value()
                             else {
                                 return Err(error(
@@ -1720,7 +1720,7 @@ impl Vm {
                                 })?;
                         }
                         Opcode::AssertUpLinkReady { link } => {
-                            let RuntimeValue::UpLink(handle) =
+                            let DecodedValue::UpLink(handle) =
                                 read_register(&registers, *link, function, pc)?.value()
                             else {
                                 return Err(error(
@@ -1752,7 +1752,7 @@ impl Vm {
                         }
                         Opcode::AssertFunctionArity { value, arity } => {
                             let value = *read_register(&registers, *value, function, pc)?;
-                            let RuntimeValue::Func(handle) = value.value() else {
+                            let DecodedValue::Func(handle) = value.value() else {
                                 return Err(error(
                                     RuntimeErrorKind::TypeMismatch,
                                     format!(
@@ -1856,8 +1856,8 @@ impl Vm {
                         Opcode::Negate { dst, src } => {
                             let input = *read_register(&registers, *src, function, pc)?;
                             let value = match input.value() {
-                                RuntimeValue::Int(value) => {
-                                    RuntimeValue::Int(value.checked_neg().ok_or_else(|| {
+                                DecodedValue::Int(value) => {
+                                    DecodedValue::Int(value.checked_neg().ok_or_else(|| {
                                         error(
                                             RuntimeErrorKind::IntegerOverflow,
                                             "integer negation overflowed",
@@ -1866,7 +1866,7 @@ impl Vm {
                                         )
                                     })?)
                                 }
-                                RuntimeValue::Float(value) => RuntimeValue::Float(-value),
+                                DecodedValue::Float(value) => DecodedValue::Float(-value),
                                 _ => {
                                     return Err(runtime_type_error(
                                         "numeric value",
@@ -1880,7 +1880,7 @@ impl Vm {
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(value, instruction_location(function, pc)),
+                                Val::new(value, instruction_location(function, pc)),
                                 function,
                                 pc,
                             )?;
@@ -1888,12 +1888,12 @@ impl Vm {
                         Opcode::Not { dst, src } => {
                             let input = *read_register(&registers, *src, function, pc)?;
                             let value = match input.value() {
-                                RuntimeValue::Int(value) => RuntimeValue::Int(!value),
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
-                                    RuntimeValue::BuiltinAtom(BuiltinAtom::False)
+                                DecodedValue::Int(value) => DecodedValue::Int(!value),
+                                DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::False)
                                 }
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
-                                    RuntimeValue::BuiltinAtom(BuiltinAtom::True)
+                                DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::True)
                                 }
                                 _ => {
                                     return Err(runtime_type_error(
@@ -1908,7 +1908,7 @@ impl Vm {
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(value, instruction_location(function, pc)),
+                                Val::new(value, instruction_location(function, pc)),
                                 function,
                                 pc,
                             )?;
@@ -1916,11 +1916,11 @@ impl Vm {
                         Opcode::LogicalNot { dst, src } => {
                             let input = *read_register(&registers, *src, function, pc)?;
                             let value = match input.value() {
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
-                                    RuntimeValue::BuiltinAtom(BuiltinAtom::False)
+                                DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::False)
                                 }
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
-                                    RuntimeValue::BuiltinAtom(BuiltinAtom::True)
+                                DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::True)
                                 }
                                 _ => {
                                     return Err(runtime_type_error(
@@ -1931,21 +1931,21 @@ impl Vm {
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(value, instruction_location(function, pc)),
+                                Val::new(value, instruction_location(function, pc)),
                                 function,
                                 pc,
                             )?;
                         }
                         Opcode::BitNot { dst, src } => {
                             let input = *read_register(&registers, *src, function, pc)?;
-                            let RuntimeValue::Int(value) = input.value() else {
+                            let DecodedValue::Int(value) = input.value() else {
                                 return Err(runtime_type_error("Int", &input, &view, function, pc));
                             };
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(
-                                    RuntimeValue::Int(!value),
+                                Val::new(
+                                    DecodedValue::Int(!value),
                                     instruction_location(function, pc),
                                 ),
                                 function,
@@ -2049,8 +2049,8 @@ impl Vm {
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(
-                                    RuntimeValue::Array(
+                                Val::new(
+                                    DecodedValue::Array(
                                         current.allocate(crate::heap::Object::Array(values.into())),
                                     ),
                                     instruction_location(function, pc),
@@ -2063,7 +2063,7 @@ impl Vm {
                             let arrays = read_many(&registers, arrays, function, pc)?;
                             let mut values = Vec::new();
                             for array in arrays {
-                                let RuntimeValue::Array(handle) = array.value() else {
+                                let DecodedValue::Array(handle) = array.value() else {
                                     return Err(runtime_type_error(
                                         "Array spread operand",
                                         &array,
@@ -2091,8 +2091,8 @@ impl Vm {
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(
-                                    RuntimeValue::Array(
+                                Val::new(
+                                    DecodedValue::Array(
                                         current.allocate(crate::heap::Object::Array(values.into())),
                                     ),
                                     instruction_location(function, pc),
@@ -2111,8 +2111,8 @@ impl Vm {
                             write_register(
                                 &mut registers,
                                 *dst,
-                                RichValue::new(
-                                    RuntimeValue::Tuple(
+                                Val::new(
+                                    DecodedValue::Tuple(
                                         current.allocate(crate::heap::Object::Tuple(values.into())),
                                     ),
                                     instruction_location(function, pc),
@@ -2137,9 +2137,9 @@ impl Vm {
                                 .collect::<Result<Vec<_>, _>>()?;
                             let mut length = 0usize;
                             for value in &values {
-                                length += if let RuntimeValue::Int(value) = value.value() {
+                                length += if let DecodedValue::Int(value) = value.value() {
                                     decimal_length(value)
-                                } else if let RuntimeValue::Float(value) = value.value() {
+                                } else if let DecodedValue::Float(value) = value.value() {
                                     value.to_string().len()
                                 } else if let Some(value) =
                                     view.string_text(*value).map_err(|heap_error| {
@@ -2178,10 +2178,10 @@ impl Vm {
                             charge_allocation(account, bytes, function, pc)?;
                             let mut output = String::with_capacity(length);
                             for value in &values {
-                                if let RuntimeValue::Int(value) = value.value() {
+                                if let DecodedValue::Int(value) = value.value() {
                                     write!(output, "{value}")
                                         .expect("writing to String cannot fail");
-                                } else if let RuntimeValue::Float(value) = value.value() {
+                                } else if let DecodedValue::Float(value) = value.value() {
                                     write!(output, "{value}")
                                         .expect("writing to String cannot fail");
                                 } else if let Some(value) =
@@ -2210,7 +2210,7 @@ impl Vm {
                                     unreachable!("interpolation values were validated");
                                 }
                             }
-                            let value = RichValue::new(
+                            let value = Val::new(
                                 current.string(Some(background), &output),
                                 instruction_location(function, pc),
                             );
@@ -2290,8 +2290,8 @@ impl Vm {
                             })?;
                             charge_allocation(account, bytes, function, pc)?;
                             let shape = current.intern_shape(fields);
-                            let dict = RichValue::new(
-                                RuntimeValue::Dict(current.allocate(crate::heap::Object::Dict {
+                            let dict = Val::new(
+                                DecodedValue::Dict(current.allocate(crate::heap::Object::Dict {
                                     shape,
                                     values: values.into(),
                                 })),
@@ -2303,7 +2303,7 @@ impl Vm {
                             let dicts = read_many(&registers, dicts, function, pc)?;
                             let mut merged = BTreeMap::new();
                             for dict in dicts {
-                                let RuntimeValue::Dict(handle) = dict.value() else {
+                                let DecodedValue::Dict(handle) = dict.value() else {
                                     return Err(runtime_type_error(
                                         "Dict spread operand",
                                         &dict,
@@ -2355,8 +2355,8 @@ impl Vm {
                                 .map(|(field, value)| (current.intern(&field), value))
                                 .unzip();
                             let shape = current.intern_shape(fields);
-                            let dict = RichValue::new(
-                                RuntimeValue::Dict(current.allocate(crate::heap::Object::Dict {
+                            let dict = Val::new(
+                                DecodedValue::Dict(current.allocate(crate::heap::Object::Dict {
                                     shape,
                                     values: values.into(),
                                 })),
@@ -2391,7 +2391,7 @@ impl Vm {
                                     pc,
                                 )
                             })?;
-                            let RuntimeValue::Dict(handle) = dict.value() else {
+                            let DecodedValue::Dict(handle) = dict.value() else {
                                 return Err(runtime_type_error("Dict", &dict, &view, function, pc));
                             };
                             let value = view
@@ -2419,13 +2419,13 @@ impl Vm {
                         }
                         Opcode::GetArray { dst, array, index } => {
                             let array = *read_register(&registers, *array, function, pc)?;
-                            let RuntimeValue::Array(handle) = array.value() else {
+                            let DecodedValue::Array(handle) = array.value() else {
                                 return Err(runtime_type_error(
                                     "Array", &array, &view, function, pc,
                                 ));
                             };
                             let index = *read_register(&registers, *index, function, pc)?;
-                            let RuntimeValue::Int(index_value) = index.value() else {
+                            let DecodedValue::Int(index_value) = index.value() else {
                                 return Err(runtime_type_error("Int", &index, &view, function, pc));
                             };
                             let items = view.sequence(handle, false).map_err(|heap_error| {
@@ -2446,7 +2446,7 @@ impl Vm {
                         }
                         Opcode::ProjectTuple { dst, tuple, index } => {
                             let tuple = *read_register(&registers, *tuple, function, pc)?;
-                            let RuntimeValue::Tuple(handle) = tuple.value() else {
+                            let DecodedValue::Tuple(handle) = tuple.value() else {
                                 return Err(runtime_type_error(
                                     "Tuple", &tuple, &view, function, pc,
                                 ));
@@ -2497,7 +2497,7 @@ impl Vm {
                                 )
                             })?;
                             let exists = match value.value() {
-                                RuntimeValue::Dict(handle) => view
+                                DecodedValue::Dict(handle) => view
                                     .dict_get(handle, field)
                                     .map_err(|heap_error| {
                                         error(
@@ -2529,7 +2529,7 @@ impl Vm {
                                     pc,
                                 )
                             })?;
-                            let matches = matches!(value.value(), RuntimeValue::Dict(_));
+                            let matches = matches!(value.value(), DecodedValue::Dict(_));
                             write_register(
                                 &mut registers,
                                 *dst,
@@ -2551,7 +2551,7 @@ impl Vm {
                             })?;
                             let matches = matches!(
                                 value.value(),
-                                RuntimeValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
+                                DecodedValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
                             );
                             write_register(
                                 &mut registers,
@@ -2563,7 +2563,7 @@ impl Vm {
                         }
                         Opcode::GetTuple { dst, tuple, index } => {
                             let tuple = read_register(&registers, *tuple, function, pc)?;
-                            let RuntimeValue::Tuple(handle) = tuple.value() else {
+                            let DecodedValue::Tuple(handle) = tuple.value() else {
                                 return Err(runtime_type_error(
                                     "Tuple", tuple, &view, function, pc,
                                 ));
@@ -2602,7 +2602,7 @@ impl Vm {
                                 )
                             })?;
                             let expected = read_register(&registers, *tag, function, pc)?;
-                            let matches = if let RuntimeValue::Tagged(handle) = value.value() {
+                            let matches = if let DecodedValue::Tagged(handle) = value.value() {
                                 let (actual, _) = view.tagged(handle).map_err(|heap_error| {
                                     error(
                                         RuntimeErrorKind::InvalidBytecode,
@@ -2640,7 +2640,7 @@ impl Vm {
                                     pc,
                                 )
                             })?;
-                            let RuntimeValue::Tagged(handle) = tagged.value() else {
+                            let DecodedValue::Tagged(handle) = tagged.value() else {
                                 return Err(runtime_type_error(
                                     "Tagged", &tagged, &view, function, pc,
                                 ));
@@ -2684,8 +2684,8 @@ impl Vm {
                                     allocation_error(native_error.message, function, pc)
                                 })?;
                             charge_allocation(account, bytes, function, pc)?;
-                            let closure = RichValue::new(
-                                RuntimeValue::Func(current.allocate(
+                            let closure = Val::new(
+                                DecodedValue::Func(current.allocate(
                                     crate::heap::Object::Closure {
                                         identity: Arc::new(()),
                                         prototype: closure_prototype,
@@ -2775,8 +2775,8 @@ impl Vm {
                         Opcode::JumpIfFalse { condition, target } => {
                             let condition = read_register(&registers, *condition, function, pc)?;
                             match condition.value() {
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {}
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {
+                                DecodedValue::BuiltinAtom(BuiltinAtom::True) => {}
+                                DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
                                     validate_jump(*target, function, pc)?;
                                     if *target <= pc {
                                         consume_fuel(account, function, pc)?;
@@ -2847,7 +2847,7 @@ impl Vm {
                         } => {
                             let structured =
                                 *read_register(&registers, *error_register, function, pc)?;
-                            let RuntimeValue::Dict(handle) = structured.value() else {
+                            let DecodedValue::Dict(handle) = structured.value() else {
                                 return Err(runtime_type_error(
                                     "BlameError",
                                     &structured,
@@ -2990,8 +2990,7 @@ impl Vm {
                         failures.push(runtime_error);
                         failure_id
                     };
-                    let failure =
-                        RichValue::new(RuntimeValue::Failed(failure_id), failure_location);
+                    let failure = Val::new(DecodedValue::Failed(failure_id), failure_location);
                     if let Some(frame_index) = frame_index {
                         let stack_base = frames[frame_index].base;
                         let completed = frames.drain(frame_index..).next().expect("failed frame");
@@ -3137,10 +3136,10 @@ fn append_runtime_trace(runtime_error: &mut RuntimeError, frames: &[ExecutionFra
 fn make_execution_frame(
     function: Arc<BytecodeFunction>,
     prototype: Handle,
-    arguments: &[RichValue],
-    captures: &[RichValue],
+    arguments: &[Val],
+    captures: &[Val],
     return_target: ReturnTarget,
-    stack: &mut Vec<Option<RichValue>>,
+    stack: &mut Vec<Option<Val>>,
     stack_limit: usize,
 ) -> Result<ExecutionFrame, RuntimeError> {
     if arguments.len() != function.parameter_count() {
@@ -3204,7 +3203,7 @@ fn make_execution_frame(
 fn drive_vm_action(
     mut action: VmAction,
     frames: &mut Vec<ExecutionFrame>,
-    stack: &mut Vec<Option<RichValue>>,
+    stack: &mut Vec<Option<Val>>,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
@@ -3244,7 +3243,7 @@ fn drive_vm_action(
                 }
                 ReturnTarget::Native(continuation) => {
                     let trace_frame = continuation.trace_frame().clone();
-                    let resumed = if matches!(value.value(), RuntimeValue::Failed(_)) {
+                    let resumed = if matches!(value.value(), DecodedValue::Failed(_)) {
                         continuation.resume_failed(value, current, background, account)
                     } else {
                         continuation.resume(value, current, background, account)
@@ -3282,9 +3281,9 @@ fn drive_vm_action(
                 }
                 if matches!(
                     callee.value(),
-                    RuntimeValue::BuiltinAtom(_)
-                        | RuntimeValue::InlineAtom(_)
-                        | RuntimeValue::Atom(_)
+                    DecodedValue::BuiltinAtom(_)
+                        | DecodedValue::InlineAtom(_)
+                        | DecodedValue::Atom(_)
                 ) {
                     if arguments.len() != 1 {
                         return Err(error(
@@ -3299,12 +3298,12 @@ fn drive_vm_action(
                     }
                     charge_allocation(
                         account,
-                        (std::mem::size_of::<RichValue>() * 2) as u64,
+                        (std::mem::size_of::<Val>() * 2) as u64,
                         &call_function,
                         call_pc,
                     )?;
-                    let value = RichValue::new(
-                        RuntimeValue::Tagged(current.allocate(Object::Tagged {
+                    let value = Val::new(
+                        DecodedValue::Tagged(current.allocate(Object::Tagged {
                             tag: callee,
                             payload: arguments[0],
                         })),
@@ -3315,7 +3314,7 @@ fn drive_vm_action(
                         return_target,
                     }
                 } else {
-                    let RuntimeValue::Func(closure_handle) = callee.value() else {
+                    let DecodedValue::Func(closure_handle) = callee.value() else {
                         let view = HeapView {
                             current,
                             background: Some(background),
@@ -3329,7 +3328,7 @@ fn drive_vm_action(
                         ));
                     };
                     if let Some(failure) = arguments.iter().find_map(|argument| {
-                        if let RuntimeValue::Failed(failure) = argument.value() {
+                        if let DecodedValue::Failed(failure) = argument.value() {
                             Some((failure, argument.loc()))
                         } else {
                             None
@@ -3664,7 +3663,7 @@ impl NativeContinuation for ArrayContinuation {
 
     fn resume(
         self: Box<Self>,
-        value: RichValue,
+        value: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -3674,7 +3673,7 @@ impl NativeContinuation for ArrayContinuation {
 
     fn resume_failed(
         self: Box<Self>,
-        failure: RichValue,
+        failure: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -3694,7 +3693,7 @@ impl NativeContinuation for DictContinuation {
 
     fn resume(
         self: Box<Self>,
-        value: RichValue,
+        value: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -3704,7 +3703,7 @@ impl NativeContinuation for DictContinuation {
 
     fn resume_failed(
         self: Box<Self>,
-        failure: RichValue,
+        failure: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -3745,7 +3744,7 @@ fn native_runtime_error(
 #[allow(clippy::too_many_arguments)]
 fn start_array_continuation(
     function: CoreArrayFunction,
-    arguments: Vec<RichValue>,
+    arguments: Vec<Val>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -3754,7 +3753,7 @@ fn start_array_continuation(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let source = arguments[0];
-    let RuntimeValue::Array(source_handle) = source.value() else {
+    let DecodedValue::Array(source_handle) = source.value() else {
         let view = HeapView {
             current,
             background: Some(background),
@@ -3792,15 +3791,15 @@ fn start_array_continuation(
             )
         })?;
         return Ok(VmAction::Return {
-            value: RichValue::new(
-                RuntimeValue::Int(length),
+            value: Val::new(
+                DecodedValue::Int(length),
                 instruction_location(&call_function, call_pc),
             ),
             return_target,
         });
     }
     if function == CoreArrayFunction::Get {
-        let RuntimeValue::Int(index) = arguments[1].value() else {
+        let DecodedValue::Int(index) = arguments[1].value() else {
             return Err(runtime_type_error(
                 "Int",
                 &arguments[1],
@@ -3817,14 +3816,14 @@ fn start_array_continuation(
             .and_then(|index| values.get(index).copied());
         let Some(payload) = value else {
             return Ok(VmAction::Return {
-                value: RichValue::new(
-                    RuntimeValue::BuiltinAtom(BuiltinAtom::None),
+                value: Val::new(
+                    DecodedValue::BuiltinAtom(BuiltinAtom::None),
                     instruction_location(&call_function, call_pc),
                 ),
                 return_target,
             });
         };
-        if matches!(payload.value(), RuntimeValue::Failed(_)) {
+        if matches!(payload.value(), DecodedValue::Failed(_)) {
             return Ok(VmAction::Return {
                 value: payload,
                 return_target,
@@ -3839,9 +3838,9 @@ fn start_array_continuation(
         )?;
         let location = instruction_location(&call_function, call_pc);
         return Ok(VmAction::Return {
-            value: RichValue::new(
-                RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Some), location),
+            value: Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), location),
                     payload,
                 })),
                 location,
@@ -3878,17 +3877,17 @@ fn start_array_continuation(
             .enumerate()
             .map(|(index, value)| {
                 let index = i64::try_from(index).expect("enumeration length checked above");
-                RichValue::new(
-                    RuntimeValue::Tuple(current.allocate(Object::Tuple(
-                        vec![RichValue::new(RuntimeValue::Int(index), location), value].into(),
+                Val::new(
+                    DecodedValue::Tuple(current.allocate(Object::Tuple(
+                        vec![Val::new(DecodedValue::Int(index), location), value].into(),
                     ))),
                     location,
                 )
             })
             .collect();
         return Ok(VmAction::Return {
-            value: RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(output))),
+            value: Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(output))),
                 location,
             ),
             return_target,
@@ -3914,8 +3913,8 @@ fn start_array_continuation(
         output.extend_from_slice(source_values);
         output.push(arguments[1]);
         return Ok(VmAction::Return {
-            value: RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(output.into()))),
+            value: Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(output.into()))),
                 instruction_location(&call_function, call_pc),
             ),
             return_target,
@@ -3932,8 +3931,8 @@ fn start_array_continuation(
         })?;
         let mut output = Vec::new();
         for (index, array) in arrays.iter().copied().enumerate() {
-            let RuntimeValue::Array(handle) = array.value() else {
-                if let RuntimeValue::Failed(failure) = array.value() {
+            let DecodedValue::Array(handle) = array.value() else {
+                if let DecodedValue::Failed(failure) = array.value() {
                     return Err(propagated_failure_error(
                         failure,
                         array.loc(),
@@ -3962,15 +3961,15 @@ fn start_array_continuation(
         })?;
         charge_allocation(account, bytes, &call_function, call_pc)?;
         return Ok(VmAction::Return {
-            value: RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(output.into()))),
+            value: Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(output.into()))),
                 instruction_location(&call_function, call_pc),
             ),
             return_target,
         });
     }
     if function == CoreArrayFunction::Zip {
-        let RuntimeValue::Array(right_handle) = arguments[1].value() else {
+        let DecodedValue::Array(right_handle) = arguments[1].value() else {
             return Err(runtime_type_error(
                 "Array",
                 &arguments[1],
@@ -3987,8 +3986,8 @@ fn start_array_continuation(
             .map_err(|heap_error| core_dict_heap_error(heap_error, &call_function, call_pc))?;
         if left.len() != right.len() {
             return Ok(VmAction::Return {
-                value: RichValue::new(
-                    RuntimeValue::BuiltinAtom(BuiltinAtom::None),
+                value: Val::new(
+                    DecodedValue::BuiltinAtom(BuiltinAtom::None),
                     instruction_location(&call_function, call_pc),
                 ),
                 return_target,
@@ -4009,20 +4008,20 @@ fn start_array_continuation(
         let pairs = pairs
             .into_iter()
             .map(|(left, right)| {
-                RichValue::new(
-                    RuntimeValue::Tuple(current.allocate(Object::Tuple(vec![left, right].into()))),
+                Val::new(
+                    DecodedValue::Tuple(current.allocate(Object::Tuple(vec![left, right].into()))),
                     left.loc(),
                 )
             })
             .collect();
-        let pairs = RichValue::new(
-            RuntimeValue::Array(current.allocate(Object::Array(pairs))),
+        let pairs = Val::new(
+            DecodedValue::Array(current.allocate(Object::Array(pairs))),
             source.loc(),
         );
         return Ok(VmAction::Return {
-            value: RichValue::new(
-                RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Some), source.loc()),
+            value: Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), source.loc()),
                     payload: pairs,
                 })),
                 source.loc(),
@@ -4038,7 +4037,7 @@ fn start_array_continuation(
         1
     };
     let callback = arguments[callback_index];
-    let RuntimeValue::Func(callback_handle) = callback.value() else {
+    let DecodedValue::Func(callback_handle) = callback.value() else {
         return Err(runtime_type_error(
             "Func",
             &callback,
@@ -4096,7 +4095,7 @@ fn start_array_continuation(
 
 fn resume_array_continuation(
     mut continuation: ArrayContinuation,
-    value: RichValue,
+    value: Val,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
@@ -4115,7 +4114,7 @@ fn resume_array_continuation(
             continuation.output.push(value);
         }
         CoreArrayFunction::Filter => match value.value() {
-            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
+            DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
                 let item = array_item(
                     continuation.source,
                     continuation.next_index - 1,
@@ -4127,7 +4126,7 @@ fn resume_array_continuation(
                 charge_array_output(&continuation, account, 1)?;
                 continuation.output.push(item);
             }
-            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {}
+            DecodedValue::BuiltinAtom(BuiltinAtom::False) => {}
             _ => {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
@@ -4138,7 +4137,7 @@ fn resume_array_continuation(
             }
         },
         CoreArrayFunction::FlatMap => {
-            let RuntimeValue::Array(handle) = value.value() else {
+            let DecodedValue::Array(handle) = value.value() else {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
                     "std/array.flat_map callback must return an Array",
@@ -4166,7 +4165,7 @@ fn resume_array_continuation(
         }
         CoreArrayFunction::Fold => continuation.accumulator = Some(value),
         CoreArrayFunction::FoldControl => {
-            let RuntimeValue::Tagged(handle) = value.value() else {
+            let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
                     "std/array.fold_control callback must return 'Continue(value) or 'Break(value)",
@@ -4212,8 +4211,8 @@ fn resume_array_continuation(
         }
         CoreArrayFunction::Any | CoreArrayFunction::All | CoreArrayFunction::Find => {
             let matched = match value.value() {
-                RuntimeValue::BuiltinAtom(BuiltinAtom::True) => true,
-                RuntimeValue::BuiltinAtom(BuiltinAtom::False) => false,
+                DecodedValue::BuiltinAtom(BuiltinAtom::True) => true,
+                DecodedValue::BuiltinAtom(BuiltinAtom::False) => false,
                 _ => {
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
@@ -4228,8 +4227,8 @@ fn resume_array_continuation(
             };
             if continuation.function == CoreArrayFunction::Any && matched {
                 return Ok(VmAction::Return {
-                    value: RichValue::new(
-                        RuntimeValue::BuiltinAtom(BuiltinAtom::True),
+                    value: Val::new(
+                        DecodedValue::BuiltinAtom(BuiltinAtom::True),
                         instruction_location(&continuation.call_function, continuation.call_pc),
                     ),
                     return_target: continuation.return_target,
@@ -4237,8 +4236,8 @@ fn resume_array_continuation(
             }
             if continuation.function == CoreArrayFunction::All && !matched {
                 return Ok(VmAction::Return {
-                    value: RichValue::new(
-                        RuntimeValue::BuiltinAtom(BuiltinAtom::False),
+                    value: Val::new(
+                        DecodedValue::BuiltinAtom(BuiltinAtom::False),
                         instruction_location(&continuation.call_function, continuation.call_pc),
                     ),
                     return_target: continuation.return_target,
@@ -4261,10 +4260,10 @@ fn resume_array_continuation(
                 )?;
                 charge_array_output(&continuation, account, 2)?;
                 return Ok(VmAction::Return {
-                    value: RichValue::new(
-                        RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                            tag: RichValue::new(
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::Some),
+                    value: Val::new(
+                        DecodedValue::Tagged(current.allocate(Object::Tagged {
+                            tag: Val::new(
+                                DecodedValue::BuiltinAtom(BuiltinAtom::Some),
                                 instruction_location(
                                     &continuation.call_function,
                                     continuation.call_pc,
@@ -4284,7 +4283,7 @@ fn resume_array_continuation(
 
 fn resume_array_failure(
     mut continuation: ArrayContinuation,
-    failure: RichValue,
+    failure: Val,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
@@ -4320,7 +4319,7 @@ fn next_array_action(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    let RuntimeValue::Array(handle) = continuation.source.value() else {
+    let DecodedValue::Array(handle) = continuation.source.value() else {
         unreachable!("validated Array continuation source")
     };
     let view = HeapView {
@@ -4366,10 +4365,10 @@ fn next_array_action(
                     continuation.call_pc,
                 )?;
                 let continue_tag = current.intern("Continue");
-                RichValue::new(
-                    RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                        tag: RichValue::new(
-                            RuntimeValue::Atom(continue_tag),
+                Val::new(
+                    DecodedValue::Tagged(current.allocate(Object::Tagged {
+                        tag: Val::new(
+                            DecodedValue::Atom(continue_tag),
                             instruction_location(&continuation.call_function, continuation.call_pc),
                         ),
                         payload: accumulator,
@@ -4377,21 +4376,21 @@ fn next_array_action(
                     instruction_location(&continuation.call_function, continuation.call_pc),
                 )
             }
-            CoreArrayFunction::Any => RichValue::new(
-                RuntimeValue::BuiltinAtom(BuiltinAtom::False),
+            CoreArrayFunction::Any => Val::new(
+                DecodedValue::BuiltinAtom(BuiltinAtom::False),
                 instruction_location(&continuation.call_function, continuation.call_pc),
             ),
-            CoreArrayFunction::All => RichValue::new(
-                RuntimeValue::BuiltinAtom(BuiltinAtom::True),
+            CoreArrayFunction::All => Val::new(
+                DecodedValue::BuiltinAtom(BuiltinAtom::True),
                 instruction_location(&continuation.call_function, continuation.call_pc),
             ),
-            CoreArrayFunction::Find => RichValue::new(
-                RuntimeValue::BuiltinAtom(BuiltinAtom::None),
+            CoreArrayFunction::Find => Val::new(
+                DecodedValue::BuiltinAtom(BuiltinAtom::None),
                 instruction_location(&continuation.call_function, continuation.call_pc),
             ),
             CoreArrayFunction::Map | CoreArrayFunction::Filter | CoreArrayFunction::FlatMap => {
-                RichValue::new(
-                    RuntimeValue::Array(
+                Val::new(
+                    DecodedValue::Array(
                         current.allocate(Object::Array(continuation.output.into())),
                     ),
                     instruction_location(&continuation.call_function, continuation.call_pc),
@@ -4421,7 +4420,7 @@ fn next_array_action(
         continuation.call_pc,
     )?;
     continuation.next_index += 1;
-    if matches!(item.value(), RuntimeValue::Failed(_)) {
+    if matches!(item.value(), DecodedValue::Failed(_)) {
         return resume_array_failure(continuation, item, current, background, account);
     }
     let arguments = if matches!(
@@ -4450,14 +4449,14 @@ fn next_array_action(
 }
 
 fn array_item(
-    source: RichValue,
+    source: Val,
     index: usize,
     current: &Heap,
     background: &Heap,
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<RichValue, RuntimeError> {
-    let RuntimeValue::Array(handle) = source.value() else {
+) -> Result<Val, RuntimeError> {
+    let DecodedValue::Array(handle) = source.value() else {
         unreachable!("validated Array source")
     };
     HeapView {
@@ -4512,7 +4511,7 @@ const fn core_array_name(function: CoreArrayFunction) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 fn run_core_string(
     operation: CoreStringFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -4541,10 +4540,10 @@ fn run_core_string(
                     pc,
                 )
             })?;
-            RichValue::new(RuntimeValue::Int(length), call_loc)
+            Val::new(DecodedValue::Int(length), call_loc)
         }
         CoreStringFunction::Join | CoreStringFunction::JoinLines => {
-            let RuntimeValue::Array(handle) = arguments[0].value() else {
+            let DecodedValue::Array(handle) = arguments[0].value() else {
                 let view = HeapView {
                     current,
                     background: Some(background),
@@ -4587,7 +4586,7 @@ fn run_core_string(
             }
             let output = strings.join(&separator);
             charge_allocation(account, output.len() as u64, function, pc)?;
-            RichValue::new(current.string(Some(background), &output), call_loc)
+            Val::new(current.string(Some(background), &output), call_loc)
         }
         CoreStringFunction::Split | CoreStringFunction::Lines => {
             let source = argument(0)?;
@@ -4617,10 +4616,10 @@ fn run_core_string(
             )?;
             let values = pieces
                 .into_iter()
-                .map(|piece| RichValue::new(current.string(Some(background), piece), call_loc))
+                .map(|piece| Val::new(current.string(Some(background), piece), call_loc))
                 .collect::<Box<[_]>>();
-            RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(values))),
+            Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(values))),
                 call_loc,
             )
         }
@@ -4635,8 +4634,8 @@ fn run_core_string(
                 CoreStringFunction::Contains => source.contains(&needle),
                 _ => unreachable!(),
             };
-            RichValue::new(
-                RuntimeValue::BuiltinAtom(if result {
+            Val::new(
+                DecodedValue::BuiltinAtom(if result {
                     BuiltinAtom::True
                 } else {
                     BuiltinAtom::False
@@ -4647,11 +4646,11 @@ fn run_core_string(
         CoreStringFunction::Replace => {
             let output = argument(0)?.replace(&argument(1)?, &argument(2)?);
             charge_allocation(account, output.len() as u64, function, pc)?;
-            RichValue::new(current.string(Some(background), &output), call_loc)
+            Val::new(current.string(Some(background), &output), call_loc)
         }
         CoreStringFunction::Indent => {
             let source = argument(0)?;
-            let RuntimeValue::Int(width) = arguments[1].value() else {
+            let DecodedValue::Int(width) = arguments[1].value() else {
                 let view = HeapView {
                     current,
                     background: Some(background),
@@ -4692,7 +4691,7 @@ fn run_core_string(
                 }
                 output.push_str(line);
             }
-            RichValue::new(current.string(Some(background), &output), call_loc)
+            Val::new(current.string(Some(background), &output), call_loc)
         }
         CoreStringFunction::EnsureTrailingNewline => {
             let mut output = argument(0)?;
@@ -4700,7 +4699,7 @@ fn run_core_string(
                 output.push('\n');
             }
             charge_allocation(account, output.len() as u64, function, pc)?;
-            RichValue::new(current.string(Some(background), &output), call_loc)
+            Val::new(current.string(Some(background), &output), call_loc)
         }
         CoreStringFunction::TrimMargin => {
             let source = argument(0)?;
@@ -4726,7 +4725,7 @@ fn run_core_string(
                 output.push_str(newline);
             }
             charge_allocation(account, output.len() as u64, function, pc)?;
-            RichValue::new(current.string(Some(background), &output), call_loc)
+            Val::new(current.string(Some(background), &output), call_loc)
         }
     };
     Ok(VmAction::Return {
@@ -4765,7 +4764,7 @@ fn normalize_lexical_path(path: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 fn run_core_path(
     operation: CorePathFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -4775,7 +4774,7 @@ fn run_core_path(
 ) -> Result<VmAction, RuntimeError> {
     let call_loc = instruction_location(function, pc);
     let input = if operation == CorePathFunction::Join {
-        let RuntimeValue::Array(handle) = arguments[0].value() else {
+        let DecodedValue::Array(handle) = arguments[0].value() else {
             let view = HeapView {
                 current,
                 background: Some(background),
@@ -4864,21 +4863,21 @@ fn run_core_path(
                 )
                 .ok_or_else(|| allocation_error("Path allocation size overflowed", function, pc))?;
             charge_allocation(account, bytes, function, pc)?;
-            let payload = RichValue::new(current.string(Some(background), &result), call_loc);
-            RichValue::new(
-                RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Some), call_loc),
+            let payload = Val::new(current.string(Some(background), &result), call_loc);
+            Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), call_loc),
                     payload,
                 })),
                 call_loc,
             )
         } else {
-            RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::None), call_loc)
+            Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), call_loc)
         }
     } else {
         let result = result.expect("path String operation returns a value");
         charge_allocation(account, result.len() as u64, function, pc)?;
-        RichValue::new(current.string(Some(background), &result), call_loc)
+        Val::new(current.string(Some(background), &result), call_loc)
     };
     Ok(VmAction::Return {
         value,
@@ -4889,7 +4888,7 @@ fn run_core_path(
 #[allow(clippy::too_many_arguments)]
 fn run_core_hash(
     operation: CoreHashFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -4924,7 +4923,7 @@ fn run_core_hash(
     };
     charge_allocation(account, digest.len() as u64, function, pc)?;
     Ok(VmAction::Return {
-        value: RichValue::new(
+        value: Val::new(
             current.string(Some(background), &digest),
             instruction_location(function, pc),
         ),
@@ -4935,7 +4934,7 @@ fn run_core_hash(
 #[allow(clippy::too_many_arguments)]
 fn run_core_dict(
     operation: CoreDictFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -4945,7 +4944,7 @@ fn run_core_dict(
 ) -> Result<VmAction, RuntimeError> {
     let value = match operation {
         CoreDictFunction::Get => {
-            let RuntimeValue::Dict(handle) = arguments[0].value() else {
+            let DecodedValue::Dict(handle) = arguments[0].value() else {
                 let view = HeapView {
                     current,
                     background: Some(background),
@@ -4987,10 +4986,10 @@ fn run_core_dict(
                         function,
                         pc,
                     )?;
-                    RichValue::new(
-                        RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                            tag: RichValue::new(
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::Some),
+                    Val::new(
+                        DecodedValue::Tagged(current.allocate(Object::Tagged {
+                            tag: Val::new(
+                                DecodedValue::BuiltinAtom(BuiltinAtom::Some),
                                 arguments[0].loc(),
                             ),
                             payload,
@@ -4998,8 +4997,8 @@ fn run_core_dict(
                         arguments[0].loc(),
                     )
                 }
-                None => RichValue::new(
-                    RuntimeValue::BuiltinAtom(BuiltinAtom::None),
+                None => Val::new(
+                    DecodedValue::BuiltinAtom(BuiltinAtom::None),
                     arguments[0].loc(),
                 ),
             }
@@ -5017,11 +5016,11 @@ fn run_core_dict(
             let values = entries
                 .into_iter()
                 .map(|(field, _)| {
-                    RichValue::new(current.string(Some(background), &field), arguments[0].loc())
+                    Val::new(current.string(Some(background), &field), arguments[0].loc())
                 })
                 .collect::<Box<[_]>>();
-            RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(values))),
+            Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(values))),
                 instruction_location(function, pc),
             )
         }
@@ -5033,8 +5032,8 @@ fn run_core_dict(
                 .into_iter()
                 .map(|(_, value)| value)
                 .collect::<Box<[_]>>();
-            RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(values))),
+            Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(values))),
                 instruction_location(function, pc),
             )
         }
@@ -5054,25 +5053,23 @@ fn run_core_dict(
             let pairs = entries
                 .into_iter()
                 .map(|(field, value)| {
-                    let field = RichValue::new(
-                        current.string(Some(background), &field),
-                        arguments[0].loc(),
-                    );
-                    RichValue::new(
-                        RuntimeValue::Tuple(
+                    let field =
+                        Val::new(current.string(Some(background), &field), arguments[0].loc());
+                    Val::new(
+                        DecodedValue::Tuple(
                             current.allocate(Object::Tuple(vec![field, value].into())),
                         ),
                         arguments[0].loc(),
                     )
                 })
                 .collect::<Box<[_]>>();
-            RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(pairs))),
+            Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(pairs))),
                 instruction_location(function, pc),
             )
         }
         CoreDictFunction::FromPairs => {
-            let RuntimeValue::Array(handle) = arguments[0].value() else {
+            let DecodedValue::Array(handle) = arguments[0].value() else {
                 let view = HeapView {
                     current,
                     background: Some(background),
@@ -5094,8 +5091,8 @@ fn run_core_dict(
                 .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
             let mut entries = Vec::with_capacity(items.len());
             for (index, item) in items.iter().copied().enumerate() {
-                let RuntimeValue::Tuple(pair) = item.value() else {
-                    if let RuntimeValue::Failed(failure) = item.value() {
+                let DecodedValue::Tuple(pair) = item.value() else {
+                    if let DecodedValue::Failed(failure) = item.value() {
                         return Err(propagated_failure_error(failure, item.loc(), function, pc));
                     }
                     return Err(error(
@@ -5192,7 +5189,7 @@ fn run_core_dict(
 #[allow(clippy::too_many_arguments)]
 fn start_dict_continuation(
     function: CoreDictFunction,
-    arguments: Vec<RichValue>,
+    arguments: Vec<Val>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -5218,7 +5215,7 @@ fn start_dict_continuation(
         current,
         background: Some(background),
     };
-    let RuntimeValue::Func(callback_handle) = callback.value() else {
+    let DecodedValue::Func(callback_handle) = callback.value() else {
         return Err(runtime_type_error(
             "Func",
             &callback,
@@ -5273,7 +5270,7 @@ fn start_dict_continuation(
 
 fn resume_dict_continuation(
     mut continuation: DictContinuation,
-    value: RichValue,
+    value: Val,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
@@ -5292,7 +5289,7 @@ fn resume_dict_continuation(
             continuation.output.push((key, value));
         }
         CoreDictFunction::Filter => match value.value() {
-            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => {
+            DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
                 charge_core_dict_output(
                     1,
                     std::iter::once(continuation.entries[entry_index].0.len()),
@@ -5304,7 +5301,7 @@ fn resume_dict_continuation(
                     .output
                     .push(continuation.entries[entry_index].clone());
             }
-            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => {}
+            DecodedValue::BuiltinAtom(BuiltinAtom::False) => {}
             _ => {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
@@ -5322,7 +5319,7 @@ fn resume_dict_continuation(
 
 fn resume_dict_failure(
     mut continuation: DictContinuation,
-    failure: RichValue,
+    failure: Val,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
@@ -5378,7 +5375,7 @@ fn next_dict_action(
 
     let (key, value) = continuation.entries[continuation.next_index].clone();
     continuation.next_index += 1;
-    if matches!(value.value(), RuntimeValue::Failed(_)) {
+    if matches!(value.value(), DecodedValue::Failed(_)) {
         return resume_dict_failure(continuation, value, current, background, account);
     }
     let arguments = if continuation.function == CoreDictFunction::Fold {
@@ -5392,7 +5389,7 @@ fn next_dict_action(
             continuation
                 .accumulator
                 .expect("fold continuation has an accumulator"),
-            RichValue::new(current.string(Some(background), &key), value.loc()),
+            Val::new(current.string(Some(background), &key), value.loc()),
             value,
         ]
     } else {
@@ -5411,18 +5408,18 @@ fn next_dict_action(
 }
 
 fn core_dict_entries(
-    value: RichValue,
+    value: Val,
     expected: &str,
     function: &BytecodeFunction,
     pc: usize,
     current: &Heap,
     background: &Heap,
-) -> Result<Vec<(String, RichValue)>, RuntimeError> {
+) -> Result<Vec<(String, Val)>, RuntimeError> {
     let view = HeapView {
         current,
         background: Some(background),
     };
-    let RuntimeValue::Dict(handle) = value.value() else {
+    let DecodedValue::Dict(handle) = value.value() else {
         return Err(runtime_type_error(expected, &value, &view, function, pc));
     };
     let (fields, values) = view
@@ -5443,12 +5440,12 @@ fn core_dict_entries(
 }
 
 fn allocate_core_dict(
-    entries: Vec<(String, RichValue)>,
+    entries: Vec<(String, Val)>,
     function: &BytecodeFunction,
     pc: usize,
     current: &mut Heap,
     account: &mut QuotaAccount,
-) -> Result<RichValue, RuntimeError> {
+) -> Result<Val, RuntimeError> {
     charge_core_dict_output(
         entries.len(),
         entries.iter().map(|(field, _)| field.len()),
@@ -5464,17 +5461,17 @@ fn allocate_core_dict(
 }
 
 fn allocate_core_dict_unchecked(
-    entries: Vec<(String, RichValue)>,
+    entries: Vec<(String, Val)>,
     current: &mut Heap,
     loc: Option<crate::Loc>,
-) -> RichValue {
+) -> Val {
     let (fields, values): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .map(|(field, value)| (current.intern(&field), value))
         .unzip();
     let shape = current.intern_shape(fields);
-    RichValue::new(
-        RuntimeValue::Dict(current.allocate(Object::Dict {
+    Val::new(
+        DecodedValue::Dict(current.allocate(Object::Dict {
             shape,
             values: values.into(),
         })),
@@ -5518,7 +5515,7 @@ fn core_dict_heap_error(
 #[allow(clippy::too_many_arguments)]
 fn run_core_attributes(
     operation: CoreAttributesFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -5562,8 +5559,8 @@ fn run_core_attributes(
                 })?;
             let found = attributes.get(key.as_str()).copied();
             if operation == CoreAttributesFunction::Has {
-                RichValue::new(
-                    RuntimeValue::BuiltinAtom(if found.is_some() {
+                Val::new(
+                    DecodedValue::BuiltinAtom(if found.is_some() {
                         BuiltinAtom::True
                     } else {
                         BuiltinAtom::False
@@ -5578,15 +5575,15 @@ fn run_core_attributes(
                     function,
                     pc,
                 )?;
-                RichValue::new(
-                    RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                        tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Some), call_loc),
+                Val::new(
+                    DecodedValue::Tagged(current.allocate(Object::Tagged {
+                        tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), call_loc),
                         payload,
                     })),
                     call_loc,
                 )
             } else {
-                RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::None), call_loc)
+                Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), call_loc)
             }
         }
         CoreAttributesFunction::All => allocate_core_dict(
@@ -5605,19 +5602,19 @@ fn run_core_attributes(
 }
 
 fn flatten_attributes(
-    mut value: RichValue,
+    mut value: Val,
     path: &str,
     function: &BytecodeFunction,
     pc: usize,
     current: &Heap,
     background: &Heap,
-) -> Result<(RichValue, BTreeMap<String, RichValue>), RuntimeError> {
+) -> Result<(Val, BTreeMap<String, Val>), RuntimeError> {
     let view = HeapView {
         current,
         background: Some(background),
     };
     let mut layers = Vec::new();
-    while let RuntimeValue::Dict(handle) = value.value() {
+    while let DecodedValue::Dict(handle) = value.value() {
         let Some(kind) = view
             .dict_get_text(handle, "kind")
             .map_err(|error| core_dict_heap_error(error, function, pc))?
@@ -5654,7 +5651,7 @@ fn flatten_attributes(
             .dict_get_text(handle, "attributes")
             .map_err(|error| core_dict_heap_error(error, function, pc))?
             .expect("validated wrapper field");
-        let RuntimeValue::Dict(attributes) = attributes.value() else {
+        let DecodedValue::Dict(attributes) = attributes.value() else {
             return Err(error(
                 RuntimeErrorKind::TypeMismatch,
                 format!("{path}.attributes must be a Dict"),
@@ -5689,14 +5686,14 @@ fn flatten_attributes(
 
 #[allow(clippy::too_many_arguments)]
 fn allocate_attributes_wrapper(
-    inner: RichValue,
-    attributes: BTreeMap<String, RichValue>,
+    inner: Val,
+    attributes: BTreeMap<String, Val>,
     loc: Option<crate::Loc>,
     function: &BytecodeFunction,
     pc: usize,
     current: &mut Heap,
     account: &mut QuotaAccount,
-) -> Result<RichValue, RuntimeError> {
+) -> Result<Val, RuntimeError> {
     let attributes = allocate_core_dict(
         attributes.into_iter().collect(),
         function,
@@ -5710,7 +5707,7 @@ fn allocate_attributes_wrapper(
             ("inner".into(), inner),
             (
                 "kind".into(),
-                RichValue::new(RuntimeValue::Atom(current.intern("WithAttributes")), loc),
+                Val::new(DecodedValue::Atom(current.intern("WithAttributes")), loc),
             ),
         ],
         function,
@@ -5723,7 +5720,7 @@ fn allocate_attributes_wrapper(
 #[allow(clippy::too_many_arguments)]
 fn run_core_model(
     operation: CoreModelFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -5732,7 +5729,7 @@ fn run_core_model(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     if operation == CoreModelFunction::Own {
-        let RuntimeValue::DeclaredType(_) = arguments[0].value() else {
+        let DecodedValue::DeclaredType(_) = arguments[0].value() else {
             return Err(runtime_shallow_type_error(
                 "declared Type",
                 arguments[0],
@@ -5789,7 +5786,7 @@ fn run_core_model(
             flatten_attributes(member, &path, function, pc, current, background)?;
         match operation {
             CoreModelFunction::Struct => {
-                if !matches!(inner.value(), RuntimeValue::UpLink(_)) {
+                if !matches!(inner.value(), DecodedValue::UpLink(_)) {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
                     )?;
@@ -5804,7 +5801,7 @@ fn run_core_model(
                     .atom_text(inner)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                     .is_some_and(|atom| atom == "None");
-                if !unit && !matches!(inner.value(), RuntimeValue::UpLink(_)) {
+                if !unit && !matches!(inner.value(), DecodedValue::UpLink(_)) {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
                     )?;
@@ -5836,8 +5833,8 @@ fn run_core_model(
         BTreeMap::from([
             (
                 "kind".to_owned(),
-                RichValue::new(
-                    RuntimeValue::Atom(current.intern(kind_name)),
+                Val::new(
+                    DecodedValue::Atom(current.intern(kind_name)),
                     instruction_location(function, pc),
                 ),
             ),
@@ -5868,7 +5865,7 @@ fn run_core_model(
 #[allow(clippy::too_many_arguments)]
 fn run_core_type_desc(
     operation: CoreTypeDescFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -5885,12 +5882,12 @@ fn run_core_type_desc(
         CoreTypeDescFunction::Kind => {
             let observable = declared_type_body(input, &view)
                 .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-            let kind = if matches!(observable.value(), RuntimeValue::NativeType(_)) {
+            let kind = if matches!(observable.value(), DecodedValue::NativeType(_)) {
                 "Opaque".to_owned()
-            } else if matches!(observable.value(), RuntimeValue::UpLink(_)) {
+            } else if matches!(observable.value(), DecodedValue::UpLink(_)) {
                 "Ref".to_owned()
             } else {
-                let RuntimeValue::Dict(handle) = observable.value() else {
+                let DecodedValue::Dict(handle) = observable.value() else {
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
                         "std/type-desc.kind expects Type metadata",
@@ -5945,7 +5942,7 @@ fn run_core_type_desc(
                 kind.as_str().to_owned()
             };
             Ok(VmAction::Return {
-                value: RichValue::new(RuntimeValue::Atom(current.intern(&kind)), input.loc()),
+                value: Val::new(DecodedValue::Atom(current.intern(&kind)), input.loc()),
                 return_target,
             })
         }
@@ -5960,22 +5957,22 @@ fn run_core_type_desc(
                 pc,
             )?;
             Ok(VmAction::Return {
-                value: RichValue::new(
-                    RuntimeValue::Array(current.allocate(Object::Array(children.into()))),
+                value: Val::new(
+                    DecodedValue::Array(current.allocate(Object::Array(children.into()))),
                     input.loc(),
                 ),
                 return_target,
             })
         }
         CoreTypeDescFunction::OpaqueName => {
-            let name = if let RuntimeValue::NativeType(id) = input.value() {
+            let name = if let DecodedValue::NativeType(id) = input.value() {
                 Some(
                     view.native_type(id)
                         .map_err(|error| core_dict_heap_error(error, function, pc))?
                         .qualified_name()
                         .to_owned(),
                 )
-            } else if let RuntimeValue::Dict(handle) = input.value() {
+            } else if let DecodedValue::Dict(handle) = input.value() {
                 let kind = view
                     .dict_get_text(handle, "kind")
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
@@ -6000,21 +5997,21 @@ fn run_core_type_desc(
                     function,
                     pc,
                 )?;
-                let payload = RichValue::new(current.string(Some(background), &name), input.loc());
-                RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Some), input.loc()),
+                let payload = Val::new(current.string(Some(background), &name), input.loc());
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), input.loc()),
                     payload,
                 }))
             } else {
-                RuntimeValue::BuiltinAtom(BuiltinAtom::None)
+                DecodedValue::BuiltinAtom(BuiltinAtom::None)
             };
             Ok(VmAction::Return {
-                value: RichValue::new(value, input.loc()),
+                value: Val::new(value, input.loc()),
                 return_target,
             })
         }
         CoreTypeDescFunction::Resolve => {
-            let result = if let RuntimeValue::UpLink(handle) = input.value() {
+            let result = if let DecodedValue::UpLink(handle) = input.value() {
                 view.up_link(handle)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                     .ok_or_else(|| {
@@ -6044,12 +6041,9 @@ fn run_core_type_desc(
                 pc,
             )?;
             Ok(VmAction::Return {
-                value: RichValue::new(
-                    RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                        tag: RichValue::new(
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::Ok),
-                            input.loc(),
-                        ),
+                value: Val::new(
+                    DecodedValue::Tagged(current.allocate(Object::Tagged {
+                        tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Ok), input.loc()),
                         payload: result,
                     })),
                     input.loc(),
@@ -6063,7 +6057,7 @@ fn run_core_type_desc(
 #[allow(clippy::too_many_arguments)]
 fn run_core_dyn(
     operation: CoreDynFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -6088,7 +6082,7 @@ fn run_core_dyn(
             pc,
         )?;
         return Ok(VmAction::Return {
-            value: arguments[1].with_value(RuntimeValue::Dyn(current.allocate(Object::Dyn {
+            value: arguments[1].with_value(DecodedValue::Dyn(current.allocate(Object::Dyn {
                 identity: Arc::new(()),
                 descriptor: arguments[0],
                 value: arguments[1],
@@ -6099,7 +6093,7 @@ fn run_core_dyn(
         });
     }
 
-    let RuntimeValue::Dyn(handle) = arguments[0].value() else {
+    let DecodedValue::Dyn(handle) = arguments[0].value() else {
         return Err(runtime_shallow_type_error(
             "Dyn",
             arguments[0],
@@ -6122,26 +6116,26 @@ fn run_core_dyn(
         }),
         CoreDynFunction::Kind => {
             let kind = match value.value() {
-                RuntimeValue::Failed(failure) => {
+                DecodedValue::Failed(failure) => {
                     return Err(propagated_failure_error(failure, value.loc(), function, pc));
                 }
-                RuntimeValue::Int(_) => "Int",
-                RuntimeValue::Float(_) => "Float",
-                RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => "String",
-                RuntimeValue::Bytes(_) => "Bytes",
-                RuntimeValue::Opaque(_) => "Opaque",
-                RuntimeValue::NativeType(_) => "Type",
-                RuntimeValue::DeclaredType(_) => "Type",
-                RuntimeValue::Dict(_) => "Dict",
-                RuntimeValue::Array(_) => "Array",
-                RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_) => "Atom",
-                RuntimeValue::Tagged(_) => "Tagged",
-                RuntimeValue::Tuple(_) => "Tuple",
-                RuntimeValue::Func(_) => "Func",
-                RuntimeValue::Dyn(_) => "Dyn",
-                RuntimeValue::UpLink(_) => {
+                DecodedValue::Int(_) => "Int",
+                DecodedValue::Float(_) => "Float",
+                DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => "String",
+                DecodedValue::Bytes(_) => "Bytes",
+                DecodedValue::Opaque(_) => "Opaque",
+                DecodedValue::NativeType(_) => "Type",
+                DecodedValue::DeclaredType(_) => "Type",
+                DecodedValue::Dict(_) => "Dict",
+                DecodedValue::Array(_) => "Array",
+                DecodedValue::BuiltinAtom(_)
+                | DecodedValue::InlineAtom(_)
+                | DecodedValue::Atom(_) => "Atom",
+                DecodedValue::Tagged(_) => "Tagged",
+                DecodedValue::Tuple(_) => "Tuple",
+                DecodedValue::Func(_) => "Func",
+                DecodedValue::Dyn(_) => "Dyn",
+                DecodedValue::UpLink(_) => {
                     return Err(error(
                         RuntimeErrorKind::InvalidBytecode,
                         "Dyn payload cannot be an internal up-link",
@@ -6151,7 +6145,7 @@ fn run_core_dyn(
                 }
             };
             Ok(VmAction::Return {
-                value: RichValue::new(RuntimeValue::Atom(current.intern(kind)), value.loc()),
+                value: Val::new(DecodedValue::Atom(current.intern(kind)), value.loc()),
                 return_target,
             })
         }
@@ -6169,21 +6163,18 @@ fn run_core_dyn(
             let descriptor_kind = dyn_descriptor_leaf_kind(descriptor, &view)
                 .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
             let value_matches = match operation {
-                CoreDynFunction::CheckInt => matches!(value.value(), RuntimeValue::Int(_)),
-                CoreDynFunction::CheckFloat => matches!(value.value(), RuntimeValue::Float(_)),
+                CoreDynFunction::CheckInt => matches!(value.value(), DecodedValue::Int(_)),
+                CoreDynFunction::CheckFloat => matches!(value.value(), DecodedValue::Float(_)),
                 CoreDynFunction::CheckString => matches!(
                     value.value(),
-                    RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_)
+                    DecodedValue::InlineString(_) | DecodedValue::ShortString(_)
                 ),
-                CoreDynFunction::CheckBytes => matches!(value.value(), RuntimeValue::Bytes(_)),
+                CoreDynFunction::CheckBytes => matches!(value.value(), DecodedValue::Bytes(_)),
                 _ => unreachable!(),
             };
             if descriptor_kind != expected || !value_matches {
                 return Ok(VmAction::Return {
-                    value: RichValue::new(
-                        RuntimeValue::BuiltinAtom(BuiltinAtom::None),
-                        value.loc(),
-                    ),
+                    value: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), value.loc()),
                     return_target,
                 });
             }
@@ -6195,12 +6186,9 @@ fn run_core_dyn(
                 pc,
             )?;
             Ok(VmAction::Return {
-                value: RichValue::new(
-                    RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                        tag: RichValue::new(
-                            RuntimeValue::BuiltinAtom(BuiltinAtom::Some),
-                            value.loc(),
-                        ),
+                value: Val::new(
+                    DecodedValue::Tagged(current.allocate(Object::Tagged {
+                        tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), value.loc()),
                         payload: value,
                     })),
                     value.loc(),
@@ -6246,7 +6234,7 @@ fn run_core_dyn(
 #[allow(clippy::too_many_arguments)]
 fn run_core_eq(
     operation: CoreEqFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -6271,8 +6259,8 @@ fn run_core_eq(
                     )
                 })?;
             Ok(VmAction::Return {
-                value: RichValue::new(
-                    RuntimeValue::BuiltinAtom(if equal {
+                value: Val::new(
+                    DecodedValue::BuiltinAtom(if equal {
                         BuiltinAtom::True
                     } else {
                         BuiltinAtom::False
@@ -6286,17 +6274,17 @@ fn run_core_eq(
 }
 
 enum DynObservation {
-    Child(RichValue, RichValue),
-    Children(Vec<(RichValue, RichValue)>),
-    NamedChildren(Vec<(String, RichValue, RichValue)>),
+    Child(Val, Val),
+    Children(Vec<(Val, Val)>),
+    NamedChildren(Vec<(String, Val, Val)>),
     Tag(String),
-    Payload(Option<(RichValue, RichValue)>),
+    Payload(Option<(Val, Val)>),
 }
 
 fn observe_dyn_structure(
     operation: CoreDynFunction,
-    descriptor: RichValue,
-    value: RichValue,
+    descriptor: Val,
+    value: Val,
     field: Option<&str>,
     view: &HeapView<'_>,
 ) -> Result<DynObservation, String> {
@@ -6304,7 +6292,7 @@ fn observe_dyn_structure(
     let value = view
         .unwrap_declared(value)
         .map_err(|error| error.to_string())?;
-    let RuntimeValue::Dict(type_handle) = descriptor.value() else {
+    let DecodedValue::Dict(type_handle) = descriptor.value() else {
         return Err("Dyn descriptor is not Type metadata".into());
     };
     let kind = view
@@ -6320,7 +6308,7 @@ fn observe_dyn_structure(
     match operation {
         CoreDynFunction::Field => {
             let name = field.expect("field operation has a name");
-            let RuntimeValue::Dict(value_handle) = value.value() else {
+            let DecodedValue::Dict(value_handle) = value.value() else {
                 return Err(format!("dyn.field expected {kind} runtime Dict"));
             };
             let child_value = view
@@ -6329,7 +6317,7 @@ fn observe_dyn_structure(
                 .ok_or_else(|| format!("dyn.field could not find field {name:?}"))?;
             let child_desc = match kind.as_str() {
                 "Struct" => {
-                    let RuntimeValue::Dict(fields) = type_field("fields")?.value() else {
+                    let DecodedValue::Dict(fields) = type_field("fields")?.value() else {
                         return Err("Struct.fields descriptor must be a Dict".into());
                     };
                     view.dict_get_text(fields, name)
@@ -6342,7 +6330,7 @@ fn observe_dyn_structure(
             Ok(DynObservation::Child(child_desc, child_value))
         }
         CoreDynFunction::Fields => {
-            let RuntimeValue::Dict(value_handle) = value.value() else {
+            let DecodedValue::Dict(value_handle) = value.value() else {
                 return Err(format!("dyn.fields expected {kind} runtime Dict"));
             };
             let (value_fields, values) = view
@@ -6350,7 +6338,7 @@ fn observe_dyn_structure(
                 .map_err(|error| error.to_string())?;
             let descriptors = match kind.as_str() {
                 "Struct" => {
-                    let RuntimeValue::Dict(fields) = type_field("fields")?.value() else {
+                    let DecodedValue::Dict(fields) = type_field("fields")?.value() else {
                         return Err("Struct.fields descriptor must be a Dict".into());
                     };
                     let (names, descriptors) =
@@ -6389,7 +6377,7 @@ fn observe_dyn_structure(
             if kind != "Array" {
                 return Err(format!("dyn.array_items expected Array, got {kind}"));
             }
-            let RuntimeValue::Array(handle) = value.value() else {
+            let DecodedValue::Array(handle) = value.value() else {
                 return Err("dyn.array_items expected runtime Array".into());
             };
             let item = type_field("item")?;
@@ -6404,10 +6392,10 @@ fn observe_dyn_structure(
             if kind != "Tuple" {
                 return Err(format!("dyn.tuple_items expected Tuple, got {kind}"));
             }
-            let RuntimeValue::Tuple(handle) = value.value() else {
+            let DecodedValue::Tuple(handle) = value.value() else {
                 return Err("dyn.tuple_items expected runtime Tuple".into());
             };
-            let RuntimeValue::Array(items) = type_field("items")?.value() else {
+            let DecodedValue::Array(items) = type_field("items")?.value() else {
                 return Err("Tuple.items descriptor must be an Array".into());
             };
             let descriptors = view
@@ -6439,20 +6427,17 @@ fn observe_dyn_structure(
     }
 }
 
-fn normalize_dyn_descriptor(
-    mut descriptor: RichValue,
-    view: &HeapView<'_>,
-) -> Result<RichValue, String> {
+fn normalize_dyn_descriptor(mut descriptor: Val, view: &HeapView<'_>) -> Result<Val, String> {
     loop {
         descriptor = declared_type_body(descriptor, view)?;
-        if let RuntimeValue::UpLink(handle) = descriptor.value() {
+        if let DecodedValue::UpLink(handle) = descriptor.value() {
             descriptor = view
                 .up_link(handle)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "Dyn descriptor reference is not initialized".to_owned())?;
             continue;
         }
-        let RuntimeValue::Dict(handle) = descriptor.value() else {
+        let DecodedValue::Dict(handle) = descriptor.value() else {
             return Err("Dyn descriptor is not canonical Type metadata".into());
         };
         let kind = view
@@ -6473,11 +6458,11 @@ fn normalize_dyn_descriptor(
 fn dyn_tagged_parts(
     kind: &str,
     type_handle: Handle,
-    value: RichValue,
+    value: Val,
     view: &HeapView<'_>,
-) -> Result<(String, Option<(RichValue, RichValue)>), String> {
+) -> Result<(String, Option<(Val, Val)>), String> {
     let runtime = match value.value() {
-        RuntimeValue::BuiltinAtom(_) | RuntimeValue::InlineAtom(_) | RuntimeValue::Atom(_) => {
+        DecodedValue::BuiltinAtom(_) | DecodedValue::InlineAtom(_) | DecodedValue::Atom(_) => {
             let tag = view
                 .atom_text(value)
                 .map_err(|error| error.to_string())?
@@ -6486,7 +6471,7 @@ fn dyn_tagged_parts(
                 .to_owned();
             (tag, None)
         }
-        RuntimeValue::Tagged(handle) => {
+        DecodedValue::Tagged(handle) => {
             let (tag, payload) = view.tagged(handle).map_err(|error| error.to_string())?;
             let tag = view
                 .atom_text(tag)
@@ -6533,7 +6518,7 @@ fn dyn_tagged_parts(
             Ok((runtime.0, Some((payload_desc, payload))))
         }
         "Enum" => {
-            let RuntimeValue::Dict(variants) = view
+            let DecodedValue::Dict(variants) = view
                 .dict_get_text(type_handle, "variants")
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "Enum descriptor has no variants".to_owned())?
@@ -6567,7 +6552,7 @@ fn dyn_tagged_parts(
 #[allow(clippy::too_many_arguments)]
 fn finish_dyn_observation(
     operation: CoreDynFunction,
-    input: RichValue,
+    input: Val,
     observation: Result<DynObservation, String>,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
@@ -6600,7 +6585,7 @@ fn finish_dyn_observation(
             )?;
             let value = match observation {
                 DynObservation::Child(descriptor, value) => {
-                    value.with_value(RuntimeValue::Dyn(current.allocate(Object::Dyn {
+                    value.with_value(DecodedValue::Dyn(current.allocate(Object::Dyn {
                         identity: Arc::new(()),
                         descriptor,
                         value,
@@ -6612,7 +6597,7 @@ fn finish_dyn_observation(
                     let children = children
                         .into_iter()
                         .map(|(descriptor, value)| {
-                            value.with_value(RuntimeValue::Dyn(current.allocate(Object::Dyn {
+                            value.with_value(DecodedValue::Dyn(current.allocate(Object::Dyn {
                                 identity: Arc::new(()),
                                 descriptor,
                                 value,
@@ -6621,8 +6606,8 @@ fn finish_dyn_observation(
                             })))
                         })
                         .collect();
-                    RichValue::new(
-                        RuntimeValue::Array(current.allocate(Object::Array(children))),
+                    Val::new(
+                        DecodedValue::Array(current.allocate(Object::Array(children))),
                         input.loc(),
                     )
                 }
@@ -6630,11 +6615,9 @@ fn finish_dyn_observation(
                     let children = children
                         .into_iter()
                         .map(|(name, descriptor, value)| {
-                            let name = RichValue::new(
-                                current.string(Some(background), &name),
-                                input.loc(),
-                            );
-                            let child = value.with_value(RuntimeValue::Dyn(current.allocate(
+                            let name =
+                                Val::new(current.string(Some(background), &name), input.loc());
+                            let child = value.with_value(DecodedValue::Dyn(current.allocate(
                                 Object::Dyn {
                                     identity: Arc::new(()),
                                     descriptor,
@@ -6643,38 +6626,38 @@ fn finish_dyn_observation(
                                     origin: None,
                                 },
                             )));
-                            RichValue::new(
-                                RuntimeValue::Tuple(
+                            Val::new(
+                                DecodedValue::Tuple(
                                     current.allocate(Object::Tuple(vec![name, child].into())),
                                 ),
                                 value.loc(),
                             )
                         })
                         .collect();
-                    RichValue::new(
-                        RuntimeValue::Array(current.allocate(Object::Array(children))),
+                    Val::new(
+                        DecodedValue::Array(current.allocate(Object::Array(children))),
                         input.loc(),
                     )
                 }
                 DynObservation::Tag(tag) => {
-                    RichValue::new(current.string(Some(background), &tag), input.loc())
+                    Val::new(current.string(Some(background), &tag), input.loc())
                 }
                 DynObservation::Payload(None) => {
-                    RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::None), input.loc())
+                    Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), input.loc())
                 }
                 DynObservation::Payload(Some((descriptor, value))) => {
                     let child =
-                        value.with_value(RuntimeValue::Dyn(current.allocate(Object::Dyn {
+                        value.with_value(DecodedValue::Dyn(current.allocate(Object::Dyn {
                             identity: Arc::new(()),
                             descriptor,
                             value,
                             scheme: None,
                             origin: None,
                         })));
-                    RichValue::new(
-                        RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                            tag: RichValue::new(
-                                RuntimeValue::BuiltinAtom(BuiltinAtom::Some),
+                    Val::new(
+                        DecodedValue::Tagged(current.allocate(Object::Tagged {
+                            tag: Val::new(
+                                DecodedValue::BuiltinAtom(BuiltinAtom::Some),
                                 input.loc(),
                             ),
                             payload: child,
@@ -6683,9 +6666,9 @@ fn finish_dyn_observation(
                     )
                 }
             };
-            RichValue::new(
-                RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Ok), input.loc()),
+            Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Ok), input.loc()),
                     payload: value,
                 })),
                 input.loc(),
@@ -6703,23 +6686,23 @@ fn finish_dyn_observation(
                 })
                 .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
             charge_allocation(account, bytes, function, pc)?;
-            let message = RichValue::new(current.string(Some(background), &message), input.loc());
-            let rule = RichValue::new(current.string(Some(background), rule), input.loc());
+            let message = Val::new(current.string(Some(background), &message), input.loc());
+            let rule = Val::new(current.string(Some(background), rule), input.loc());
             let fields = ["data", "message", "rule"]
                 .into_iter()
                 .map(|field| current.intern(field))
                 .collect();
             let shape = current.intern_shape(fields);
-            let blame = RichValue::new(
-                RuntimeValue::Dict(current.allocate(Object::Dict {
+            let blame = Val::new(
+                DecodedValue::Dict(current.allocate(Object::Dict {
                     shape,
                     values: vec![input, message, rule].into(),
                 })),
                 input.loc(),
             );
-            RichValue::new(
-                RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                    tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Err), input.loc()),
+            Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Err), input.loc()),
                     payload: blame,
                 })),
                 input.loc(),
@@ -6732,20 +6715,17 @@ fn finish_dyn_observation(
     })
 }
 
-fn dyn_descriptor_leaf_kind(
-    mut descriptor: RichValue,
-    view: &HeapView<'_>,
-) -> Result<String, String> {
+fn dyn_descriptor_leaf_kind(mut descriptor: Val, view: &HeapView<'_>) -> Result<String, String> {
     loop {
         descriptor = declared_type_body(descriptor, view)?;
-        if let RuntimeValue::UpLink(handle) = descriptor.value() {
+        if let DecodedValue::UpLink(handle) = descriptor.value() {
             descriptor = view
                 .up_link(handle)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "Dyn descriptor reference is not initialized".to_owned())?;
             continue;
         }
-        let RuntimeValue::Dict(handle) = descriptor.value() else {
+        let DecodedValue::Dict(handle) = descriptor.value() else {
             return Err("Dyn descriptor is not canonical Type metadata".into());
         };
         let kind = view
@@ -6763,8 +6743,8 @@ fn dyn_descriptor_leaf_kind(
     }
 }
 
-fn declared_type_body(value: RichValue, view: &HeapView<'_>) -> Result<RichValue, String> {
-    let RuntimeValue::DeclaredType(handle) = value.value() else {
+fn declared_type_body(value: Val, view: &HeapView<'_>) -> Result<Val, String> {
+    let DecodedValue::DeclaredType(handle) = value.value() else {
         return Ok(value);
     };
     let Object::DeclaredType { body, .. } =
@@ -6775,15 +6755,15 @@ fn declared_type_body(value: RichValue, view: &HeapView<'_>) -> Result<RichValue
     Ok(*body)
 }
 
-fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichValue>, String> {
+fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, String> {
     let input = declared_type_body(input, view)?;
-    if matches!(input.value(), RuntimeValue::NativeType(_)) {
+    if matches!(input.value(), DecodedValue::NativeType(_)) {
         return Ok(Vec::new());
     }
-    if matches!(input.value(), RuntimeValue::UpLink(_)) {
+    if matches!(input.value(), DecodedValue::UpLink(_)) {
         return Ok(Vec::new());
     }
-    let RuntimeValue::Dict(handle) = input.value() else {
+    let DecodedValue::Dict(handle) = input.value() else {
         return Err("std/type-desc.children expects Type metadata".into());
     };
     let kind = view
@@ -6803,7 +6783,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
         "WithAttributes" => Ok(vec![get("inner")?]),
         "Tuple" | "Union" => {
             let field = if kind == "Tuple" { "items" } else { "variants" };
-            let RuntimeValue::Array(items) = get(field)?.value() else {
+            let DecodedValue::Array(items) = get(field)?.value() else {
                 return Err(format!("{kind}.{field} must be an Array"));
             };
             view.sequence(items, false)
@@ -6811,7 +6791,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
                 .map_err(|error| error.to_string())
         }
         "Struct" => {
-            let RuntimeValue::Dict(fields) = get("fields")?.value() else {
+            let DecodedValue::Dict(fields) = get("fields")?.value() else {
                 return Err("Struct.fields must be a Dict".into());
             };
             view.dict_parts(fields)
@@ -6819,7 +6799,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
                 .map_err(|error| error.to_string())
         }
         "Enum" => {
-            let RuntimeValue::Dict(variants) = get("variants")?.value() else {
+            let DecodedValue::Dict(variants) = get("variants")?.value() else {
                 return Err("Enum.variants must be a Dict".into());
             };
             let (_, values) = view
@@ -6853,7 +6833,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
 
 #[allow(clippy::too_many_arguments)]
 fn type_desc_resolve_error(
-    input: RichValue,
+    input: Val,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -6871,24 +6851,24 @@ fn type_desc_resolve_error(
         })
         .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
     charge_allocation(account, bytes, function, pc)?;
-    let message = RichValue::new(current.string(Some(background), message), input.loc());
-    let rule = RichValue::new(current.string(Some(background), rule), input.loc());
+    let message = Val::new(current.string(Some(background), message), input.loc());
+    let rule = Val::new(current.string(Some(background), rule), input.loc());
     let fields = ["data", "message", "rule"]
         .into_iter()
         .map(|field| current.intern(field))
         .collect();
     let shape = current.intern_shape(fields);
-    let blame = RichValue::new(
-        RuntimeValue::Dict(current.allocate(Object::Dict {
+    let blame = Val::new(
+        DecodedValue::Dict(current.allocate(Object::Dict {
             shape,
             values: vec![input, message, rule].into(),
         })),
         input.loc(),
     );
     Ok(VmAction::Return {
-        value: RichValue::new(
-            RuntimeValue::Tagged(current.allocate(Object::Tagged {
-                tag: RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::Err), input.loc()),
+        value: Val::new(
+            DecodedValue::Tagged(current.allocate(Object::Tagged {
+                tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Err), input.loc()),
                 payload: blame,
             })),
             input.loc(),
@@ -6899,7 +6879,7 @@ fn type_desc_resolve_error(
 
 #[allow(clippy::too_many_arguments)]
 fn run_core_union_model(
-    variants: RichValue,
+    variants: Val,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -6907,7 +6887,7 @@ fn run_core_union_model(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    let RuntimeValue::Array(handle) = variants.value() else {
+    let DecodedValue::Array(handle) = variants.value() else {
         let view = HeapView {
             current,
             background: Some(background),
@@ -6941,7 +6921,7 @@ fn run_core_union_model(
         let path = format!("variants[{index}]");
         let (inner, attributes) =
             flatten_attributes(variant, &path, function, pc, current, background)?;
-        if !matches!(inner.value(), RuntimeValue::UpLink(_)) {
+        if !matches!(inner.value(), DecodedValue::UpLink(_)) {
             decode_runtime_type_at(inner, &path, current, background)
                 .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
         }
@@ -6962,16 +6942,16 @@ fn run_core_union_model(
         function,
         pc,
     )?;
-    let variants = RichValue::new(
-        RuntimeValue::Array(current.allocate(Object::Array(normalized.into()))),
+    let variants = Val::new(
+        DecodedValue::Array(current.allocate(Object::Array(normalized.into()))),
         instruction_location(function, pc),
     );
     let metadata = allocate_core_dict(
         vec![
             (
                 "kind".into(),
-                RichValue::new(
-                    RuntimeValue::Atom(current.intern("Union")),
+                Val::new(
+                    DecodedValue::Atom(current.intern("Union")),
                     instruction_location(function, pc),
                 ),
             ),
@@ -7000,7 +6980,7 @@ fn run_core_union_model(
 #[allow(clippy::too_many_arguments)]
 fn run_core_builtin_type(
     operation: CoreBuiltinTypeFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -7031,13 +7011,13 @@ fn run_core_builtin_type(
 
 #[allow(clippy::too_many_arguments)]
 fn allocate_builtin_enum(
-    variants: Vec<(String, Option<RichValue>)>,
+    variants: Vec<(String, Option<Val>)>,
     function: &BytecodeFunction,
     pc: usize,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
-) -> Result<RichValue, RuntimeError> {
+) -> Result<Val, RuntimeError> {
     let loc = instruction_location(function, pc);
     let mut normalized = Vec::with_capacity(variants.len());
     for (name, payload) in variants {
@@ -7045,7 +7025,7 @@ fn allocate_builtin_enum(
         let (inner, attributes) = if let Some(payload) = payload {
             let (inner, attributes) =
                 flatten_attributes(payload, &path, function, pc, current, background)?;
-            if !matches!(inner.value(), RuntimeValue::UpLink(_)) {
+            if !matches!(inner.value(), DecodedValue::UpLink(_)) {
                 decode_runtime_type_at(inner, &path, current, background).map_err(|message| {
                     error(RuntimeErrorKind::TypeMismatch, message, function, pc)
                 })?;
@@ -7053,7 +7033,7 @@ fn allocate_builtin_enum(
             (inner, attributes)
         } else {
             (
-                RichValue::new(RuntimeValue::BuiltinAtom(BuiltinAtom::None), loc),
+                Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), loc),
                 BTreeMap::new(),
             )
         };
@@ -7073,7 +7053,7 @@ fn allocate_builtin_enum(
         vec![
             (
                 "kind".into(),
-                RichValue::new(RuntimeValue::Atom(current.intern("Enum")), loc),
+                Val::new(DecodedValue::Atom(current.intern("Enum")), loc),
             ),
             ("variants".into(), variants),
         ],
@@ -7094,7 +7074,7 @@ fn allocate_builtin_enum(
 }
 
 fn validate_model_context(
-    context: RichValue,
+    context: Val,
     function: &BytecodeFunction,
     pc: usize,
     current: &Heap,
@@ -7111,7 +7091,7 @@ fn validate_model_context(
     {
         return Ok(());
     }
-    let RuntimeValue::Dict(handle) = context.value() else {
+    let DecodedValue::Dict(handle) = context.value() else {
         return Err(error(
             RuntimeErrorKind::TypeMismatch,
             "model context must be 'None or a Type context",
@@ -7145,9 +7125,9 @@ fn validate_model_context(
 #[derive(Clone, Debug)]
 struct CodecType {
     kind: CodecKind,
-    rule: RichValue,
-    attributes: BTreeMap<String, RichValue>,
-    declared_owner: Option<RichValue>,
+    rule: Val,
+    attributes: BTreeMap<String, Val>,
+    declared_owner: Option<Val>,
 }
 
 #[derive(Clone, Debug)]
@@ -7178,15 +7158,15 @@ enum CodecKind {
 #[derive(Clone, Debug)]
 struct CodecEnumVariant {
     payload: Option<Box<CodecType>>,
-    attributes: BTreeMap<String, RichValue>,
-    rule: RichValue,
+    attributes: BTreeMap<String, Val>,
+    rule: Val,
 }
 
 #[derive(Clone, Debug)]
 enum CodecNode {
-    Existing(RichValue),
+    Existing(Val),
     Declared {
-        owner: RichValue,
+        owner: Val,
         payload: Box<Self>,
         loc: Option<crate::Loc>,
     },
@@ -7212,13 +7192,13 @@ enum CodecDirection {
 #[derive(Clone, Debug)]
 struct CodecFailure {
     message: String,
-    data: RichValue,
-    rule: RichValue,
+    data: Val,
+    rule: Val,
     predicate: Option<Box<PredicateRequest>>,
 }
 
 impl CodecFailure {
-    fn new(message: impl Into<String>, data: RichValue, rule: RichValue) -> Self {
+    fn new(message: impl Into<String>, data: Val, rule: Val) -> Self {
         Self {
             message: message.into(),
             data,
@@ -7227,7 +7207,7 @@ impl CodecFailure {
         }
     }
 
-    fn predicate(path: String, callee: RichValue, value: RichValue, rule: RichValue) -> Self {
+    fn predicate(path: String, callee: Val, value: Val, rule: Val) -> Self {
         Self {
             message: "JSON skip predicate requires evaluation".into(),
             data: value,
@@ -7244,17 +7224,17 @@ impl CodecFailure {
 #[derive(Clone, Debug)]
 struct PredicateRequest {
     path: String,
-    callee: RichValue,
-    value: RichValue,
+    callee: Val,
+    value: Val,
 }
 
 #[derive(Debug)]
 struct JsonEncodeContinuation {
     schema: CodecType,
-    input: RichValue,
+    input: Val,
     decisions: BTreeMap<String, bool>,
     pending_path: String,
-    pending_rule: RichValue,
+    pending_rule: Val,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -7272,7 +7252,7 @@ impl NativeContinuation for JsonEncodeContinuation {
 
     fn resume(
         self: Box<Self>,
-        value: RichValue,
+        value: Val,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
@@ -7282,7 +7262,7 @@ impl NativeContinuation for JsonEncodeContinuation {
 
     fn resume_failed(
         self: Box<Self>,
-        failure: RichValue,
+        failure: Val,
         _current: &mut Heap,
         _background: &Heap,
         _account: &mut QuotaAccount,
@@ -7297,7 +7277,7 @@ impl NativeContinuation for JsonEncodeContinuation {
 #[allow(clippy::too_many_arguments)]
 fn run_core_codec(
     operation: CoreCodecFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -7366,7 +7346,7 @@ fn run_core_codec(
 #[allow(clippy::too_many_arguments)]
 fn continue_json_encode(
     schema: CodecType,
-    input: RichValue,
+    input: Val,
     decisions: BTreeMap<String, bool>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
@@ -7424,14 +7404,14 @@ fn continue_json_encode(
 
 fn resume_json_encode_continuation(
     mut continuation: JsonEncodeContinuation,
-    value: RichValue,
+    value: Val,
     current: &mut Heap,
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let decision = match value.value() {
-        RuntimeValue::BuiltinAtom(BuiltinAtom::True) => true,
-        RuntimeValue::BuiltinAtom(BuiltinAtom::False) => false,
+        DecodedValue::BuiltinAtom(BuiltinAtom::True) => true,
+        DecodedValue::BuiltinAtom(BuiltinAtom::False) => false,
         _ => {
             let mut runtime = error(
                 RuntimeErrorKind::TypeMismatch,
@@ -7462,7 +7442,7 @@ fn resume_json_encode_continuation(
 #[allow(clippy::too_many_arguments)]
 fn finish_codec_result(
     result: Result<CodecNode, CodecFailure>,
-    input: RichValue,
+    input: Val,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -7496,9 +7476,9 @@ fn finish_codec_result(
         .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
     charge_allocation(account, bytes, function, pc)?;
     let payload = materialize_codec_node(payload, current, background);
-    let value = RichValue::new(
-        RuntimeValue::Tagged(current.allocate(Object::Tagged {
-            tag: RichValue::new(RuntimeValue::BuiltinAtom(tag), input.loc()),
+    let value = Val::new(
+        DecodedValue::Tagged(current.allocate(Object::Tagged {
+            tag: Val::new(DecodedValue::BuiltinAtom(tag), input.loc()),
             payload,
         })),
         input.loc(),
@@ -7509,11 +7489,7 @@ fn finish_codec_result(
     })
 }
 
-fn decode_runtime_type(
-    value: RichValue,
-    current: &Heap,
-    background: &Heap,
-) -> Result<CodecType, String> {
+fn decode_runtime_type(value: Val, current: &Heap, background: &Heap) -> Result<CodecType, String> {
     decode_runtime_type_at(value, "Type", current, background)
 }
 
@@ -7584,12 +7560,12 @@ fn assert_codec_graph_ready(
 }
 
 fn decode_runtime_type_at(
-    value: RichValue,
+    value: Val,
     path: &str,
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecType, String> {
-    if matches!(value.value(), RuntimeValue::NativeType(_)) {
+    if matches!(value.value(), DecodedValue::NativeType(_)) {
         return Ok(CodecType {
             kind: CodecKind::Opaque,
             rule: value,
@@ -7597,7 +7573,7 @@ fn decode_runtime_type_at(
             declared_owner: None,
         });
     }
-    if let RuntimeValue::UpLink(handle) = value.value() {
+    if let DecodedValue::UpLink(handle) = value.value() {
         return Ok(CodecType {
             kind: CodecKind::UpLink(handle),
             rule: value,
@@ -7609,7 +7585,7 @@ fn decode_runtime_type_at(
         current,
         background: Some(background),
     };
-    if let RuntimeValue::DeclaredType(handle) = value.value() {
+    if let DecodedValue::DeclaredType(handle) = value.value() {
         let Object::DeclaredType { body, .. } = view.object(handle).map_err(|e| e.to_string())?
         else {
             return Err(format!("{path} has an invalid declared Type handle"));
@@ -7621,7 +7597,7 @@ fn decode_runtime_type_at(
         }
         return Ok(decoded);
     }
-    let RuntimeValue::Dict(handle) = value.value() else {
+    let DecodedValue::Dict(handle) = value.value() else {
         return Err(format!("{path} must be Type metadata"));
     };
     let kind = view
@@ -7642,7 +7618,7 @@ fn decode_runtime_type_at(
             .dict_get_text(handle, "attributes")
             .map_err(|error| error.to_string())?
             .expect("validated wrapper field");
-        let RuntimeValue::Dict(attribute_handle) = attributes.value() else {
+        let DecodedValue::Dict(attribute_handle) = attributes.value() else {
             return Err(format!("{path}.attributes must be a Dict"));
         };
         let inner = view
@@ -7733,7 +7709,7 @@ fn decode_runtime_type_at(
                 .dict_get_text(handle, field)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{path}.{field} is missing"))?;
-            let RuntimeValue::Array(items) = items.value() else {
+            let DecodedValue::Array(items) = items.value() else {
                 return Err(format!("{path}.{field} must be an Array"));
             };
             let items = view
@@ -7763,7 +7739,7 @@ fn decode_runtime_type_at(
                 .dict_get_text(handle, "fields")
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{path}.fields is missing"))?;
-            let RuntimeValue::Dict(fields) = fields.value() else {
+            let DecodedValue::Dict(fields) = fields.value() else {
                 return Err(format!("{path}.fields must be a Dict"));
             };
             let (names, values) = view.dict_parts(fields).map_err(|error| error.to_string())?;
@@ -7793,7 +7769,7 @@ fn decode_runtime_type_at(
                 .dict_get_text(handle, "variants")
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{path}.variants is missing"))?;
-            let RuntimeValue::Dict(variants) = variants.value() else {
+            let DecodedValue::Dict(variants) = variants.value() else {
                 return Err(format!("{path}.variants must be a Dict"));
             };
             let (names, values) = view
@@ -7844,12 +7820,12 @@ fn decode_runtime_type_at(
 }
 
 fn strip_runtime_attributes(
-    mut value: RichValue,
+    mut value: Val,
     path: &str,
     view: &HeapView<'_>,
-) -> Result<(RichValue, BTreeMap<String, RichValue>), String> {
+) -> Result<(Val, BTreeMap<String, Val>), String> {
     let mut collected = BTreeMap::new();
-    while let RuntimeValue::Dict(handle) = value.value() {
+    while let DecodedValue::Dict(handle) = value.value() {
         let kind = view
             .dict_get_text(handle, "kind")
             .map_err(|error| error.to_string())?
@@ -7869,7 +7845,7 @@ fn strip_runtime_attributes(
             .dict_get_text(handle, "attributes")
             .map_err(|error| error.to_string())?
             .expect("validated wrapper field");
-        let RuntimeValue::Dict(attributes) = attributes.value() else {
+        let DecodedValue::Dict(attributes) = attributes.value() else {
             return Err(format!("{path}.attributes must be a Dict"));
         };
         let (names, values) = view
@@ -7965,10 +7941,10 @@ fn parsed_codec_node(value: crate::regex::ParsedValue, loc: Option<crate::Loc>) 
     match value {
         crate::regex::ParsedValue::String(value) => CodecNode::String(value, loc),
         crate::regex::ParsedValue::Int(value) => {
-            CodecNode::Existing(RichValue::new(RuntimeValue::Int(value), loc))
+            CodecNode::Existing(Val::new(DecodedValue::Int(value), loc))
         }
         crate::regex::ParsedValue::Float(value) => {
-            CodecNode::Existing(RichValue::new(RuntimeValue::Float(value), loc))
+            CodecNode::Existing(Val::new(DecodedValue::Float(value), loc))
         }
         crate::regex::ParsedValue::None => CodecNode::Atom(BuiltinAtom::None, loc),
         crate::regex::ParsedValue::Some(value) => CodecNode::Tagged {
@@ -7988,7 +7964,7 @@ fn parsed_codec_node(value: crate::regex::ParsedValue, loc: Option<crate::Loc>) 
 
 fn transform_codec(
     schema: &CodecType,
-    value: RichValue,
+    value: Val,
     direction: CodecDirection,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
@@ -8130,13 +8106,13 @@ fn transform_codec(
         CodecKind::Type => decode_runtime_type(value, current, background)
             .map(|_| CodecNode::Existing(value))
             .map_err(|message| CodecFailure::new(message, value, schema.rule)),
-        CodecKind::Dyn if matches!(value.value(), RuntimeValue::Dyn(_)) => {
+        CodecKind::Dyn if matches!(value.value(), DecodedValue::Dyn(_)) => {
             Ok(CodecNode::Existing(value))
         }
-        CodecKind::Int if matches!(value.value(), RuntimeValue::Int(_)) => {
+        CodecKind::Int if matches!(value.value(), DecodedValue::Int(_)) => {
             Ok(CodecNode::Existing(value))
         }
-        CodecKind::Float if matches!(value.value(), RuntimeValue::Float(_)) => {
+        CodecKind::Float if matches!(value.value(), DecodedValue::Float(_)) => {
             Ok(CodecNode::Existing(value))
         }
         CodecKind::String
@@ -8162,7 +8138,7 @@ fn transform_codec(
             }
         }
         CodecKind::Array(item) => {
-            let RuntimeValue::Array(handle) = value.value() else {
+            let DecodedValue::Array(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected Array"),
                     value,
@@ -8191,7 +8167,7 @@ fn transform_codec(
                 .map(|items| CodecNode::Array(items, value.loc()))
         }
         CodecKind::Dict(item) => {
-            let RuntimeValue::Dict(handle) = value.value() else {
+            let DecodedValue::Dict(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected Dict"),
                     value,
@@ -8224,7 +8200,7 @@ fn transform_codec(
                 .map(|fields| CodecNode::Dict(fields, value.loc()))
         }
         CodecKind::Tagged { tag, payload } => {
-            let RuntimeValue::Tagged(handle) = value.value() else {
+            let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected '{tag}(payload)"),
                     value,
@@ -8261,8 +8237,8 @@ fn transform_codec(
         }
         CodecKind::Tuple(items) => {
             let (handle, input_is_tuple) = match (direction, value.value()) {
-                (CodecDirection::Decode, RuntimeValue::Array(handle)) => (handle, false),
-                (CodecDirection::Encode, RuntimeValue::Tuple(handle)) => (handle, true),
+                (CodecDirection::Decode, DecodedValue::Array(handle)) => (handle, false),
+                (CodecDirection::Encode, DecodedValue::Tuple(handle)) => (handle, true),
                 (CodecDirection::Decode, _) => {
                     return Err(CodecFailure::new(
                         format!("{path}: expected Array"),
@@ -8349,7 +8325,7 @@ fn transform_codec(
         CodecKind::Enum(variants) if is_bool_enum(variants) => {
             if matches!(
                 value.value(),
-                RuntimeValue::BuiltinAtom(BuiltinAtom::True | BuiltinAtom::False)
+                DecodedValue::BuiltinAtom(BuiltinAtom::True | BuiltinAtom::False)
             ) {
                 Ok(CodecNode::Existing(value))
             } else {
@@ -8395,7 +8371,7 @@ fn transform_codec(
 
 fn validate_codec_value_without_skipping(
     schema: &CodecType,
-    value: RichValue,
+    value: Val,
     path: &str,
     current: &Heap,
     background: &Heap,
@@ -8426,14 +8402,14 @@ fn validate_codec_value_without_skipping(
 fn transform_codec_struct(
     schema: &CodecType,
     fields: &BTreeMap<String, CodecType>,
-    value: RichValue,
+    value: Val,
     direction: CodecDirection,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecNode, CodecFailure> {
-    let RuntimeValue::Dict(handle) = value.value() else {
+    let DecodedValue::Dict(handle) = value.value() else {
         return Err(CodecFailure::new(
             format!("{path}: expected Dict"),
             value,
@@ -8498,7 +8474,7 @@ enum SkipPolicy {
     None,
     False,
     Empty,
-    Function(RichValue),
+    Function(Val),
 }
 
 #[derive(Clone, Debug)]
@@ -8507,9 +8483,9 @@ struct StructFieldPlan {
     external_name: Option<String>,
     schema: CodecType,
     flattened: Option<Box<StructPlan>>,
-    default: Option<RichValue>,
+    default: Option<Val>,
     skip: Option<SkipPolicy>,
-    config_rule: RichValue,
+    config_rule: Val,
 }
 
 #[derive(Clone, Debug)]
@@ -8520,7 +8496,7 @@ struct StructPlan {
 fn plan_struct(
     schema: &CodecType,
     fields: &BTreeMap<String, CodecType>,
-    data: RichValue,
+    data: Val,
     path: &str,
     view: &HeapView<'_>,
 ) -> Result<StructPlan, CodecFailure> {
@@ -8542,7 +8518,7 @@ fn plan_struct(
         None => false,
     };
     let mut planned = Vec::with_capacity(fields.len());
-    let mut external_names: BTreeMap<String, RichValue> = BTreeMap::new();
+    let mut external_names: BTreeMap<String, Val> = BTreeMap::new();
     for (internal_name, field) in fields {
         let mut field_schema = resolve_codec_type_once(field, data, view)?;
         if field_schema.rule.loc().is_none() {
@@ -8607,7 +8583,7 @@ fn plan_struct(
                     Some("False") => Ok(SkipPolicy::False),
                     Some("Empty") => Ok(SkipPolicy::Empty),
                     _ => {
-                        let RuntimeValue::Func(handle) = rule.value() else {
+                        let DecodedValue::Func(handle) = rule.value() else {
                             return Err(CodecFailure::new(
                                 format!("{path}.{internal_name}: invalid skip_serializing_if policy"),
                                 data,
@@ -8692,7 +8668,7 @@ fn plan_struct(
 
 fn resolve_codec_type_once(
     schema: &CodecType,
-    data: RichValue,
+    data: Val,
     view: &HeapView<'_>,
 ) -> Result<CodecType, CodecFailure> {
     let CodecKind::UpLink(handle) = schema.kind else {
@@ -8714,7 +8690,7 @@ fn resolve_codec_type_once(
     Ok(resolved)
 }
 
-fn struct_plan_external_names(plan: &StructPlan) -> Vec<(String, RichValue)> {
+fn struct_plan_external_names(plan: &StructPlan) -> Vec<(String, Val)> {
     plan.fields
         .iter()
         .flat_map(|field| {
@@ -8753,7 +8729,7 @@ struct EnumVariantPlan {
     internal_name: String,
     external_name: String,
     payload: Option<CodecType>,
-    rule: RichValue,
+    rule: Val,
 }
 
 #[derive(Clone, Debug)]
@@ -8765,7 +8741,7 @@ struct EnumPlan {
 fn plan_enum(
     schema: &CodecType,
     variants: &BTreeMap<String, CodecEnumVariant>,
-    data: RichValue,
+    data: Val,
     path: &str,
     view: &HeapView<'_>,
 ) -> Result<EnumPlan, CodecFailure> {
@@ -8868,7 +8844,7 @@ fn plan_enum(
 fn transform_codec_enum(
     schema: &CodecType,
     variants: &BTreeMap<String, CodecEnumVariant>,
-    value: RichValue,
+    value: Val,
     direction: CodecDirection,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
@@ -8920,7 +8896,7 @@ fn transform_codec_enum(
                     value.loc(),
                 ));
             }
-            let RuntimeValue::Dict(handle) = value.value() else {
+            let DecodedValue::Dict(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected an Enum tag String or single-entry Dict"),
                     value,
@@ -9003,7 +8979,7 @@ fn transform_codec_enum(
                     value.loc(),
                 ));
             }
-            let RuntimeValue::Tagged(handle) = value.value() else {
+            let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected canonical Enum value"),
                     value,
@@ -9062,7 +9038,7 @@ fn transform_codec_enum(
 
 fn transform_untagged_enum(
     plan: &EnumPlan,
-    value: RichValue,
+    value: Val,
     direction: CodecDirection,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
@@ -9121,7 +9097,7 @@ fn transform_untagged_enum(
                 current,
                 background: Some(background),
             };
-            let RuntimeValue::Tagged(handle) = value.value() else {
+            let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected ('Variant, payload)"),
                     value,
@@ -9167,9 +9143,9 @@ fn transform_untagged_enum(
 #[allow(clippy::too_many_arguments)]
 fn decode_struct_fields(
     plan: &StructPlan,
-    input: &BTreeMap<String, RichValue>,
+    input: &BTreeMap<String, Val>,
     consumed: &mut HashSet<String>,
-    container: RichValue,
+    container: Val,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
     current: &Heap,
@@ -9242,9 +9218,9 @@ fn decode_struct_fields(
 #[allow(clippy::too_many_arguments)]
 fn encode_struct_fields(
     plan: &StructPlan,
-    input: &BTreeMap<String, RichValue>,
+    input: &BTreeMap<String, Val>,
     emitted: &mut BTreeMap<String, CodecNode>,
-    container: RichValue,
+    container: Val,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
     current: &Heap,
@@ -9294,7 +9270,7 @@ fn encode_struct_fields(
             }
         }
         if let Some(nested) = &field.flattened {
-            let RuntimeValue::Dict(handle) = value.value() else {
+            let DecodedValue::Dict(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{field_path}: expected Dict"),
                     value,
@@ -9349,7 +9325,7 @@ fn encode_struct_fields(
 
 fn transform_codec_field(
     schema: &CodecType,
-    value: RichValue,
+    value: Val,
     direction: CodecDirection,
     path: &str,
     predicate_decisions: &BTreeMap<String, bool>,
@@ -9367,7 +9343,7 @@ fn transform_codec_field(
             background,
         );
     };
-    if value.value() == RuntimeValue::BuiltinAtom(BuiltinAtom::None) {
+    if value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::None) {
         return Ok(CodecNode::Atom(BuiltinAtom::None, value.loc()));
     }
     match direction {
@@ -9385,7 +9361,7 @@ fn transform_codec_field(
             loc: value.loc(),
         }),
         CodecDirection::Encode => {
-            let RuntimeValue::Tagged(handle) = value.value() else {
+            let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected Option"),
                     value,
@@ -9423,30 +9399,25 @@ fn transform_codec_field(
     }
 }
 
-fn codec_should_skip(
-    policy: SkipPolicy,
-    value: RichValue,
-    current: &Heap,
-    background: &Heap,
-) -> bool {
+fn codec_should_skip(policy: SkipPolicy, value: Val, current: &Heap, background: &Heap) -> bool {
     match policy {
-        SkipPolicy::None => value.value() == RuntimeValue::BuiltinAtom(BuiltinAtom::None),
-        SkipPolicy::False => value.value() == RuntimeValue::BuiltinAtom(BuiltinAtom::False),
+        SkipPolicy::None => value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::None),
+        SkipPolicy::False => value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::False),
         SkipPolicy::Empty => {
             let view = HeapView {
                 current,
                 background: Some(background),
             };
             match value.value() {
-                RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => view
+                DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => view
                     .string_text(value)
                     .ok()
                     .flatten()
                     .is_some_and(|text| text.as_str().is_empty()),
-                RuntimeValue::Array(handle) => view
+                DecodedValue::Array(handle) => view
                     .sequence(handle, false)
                     .is_ok_and(|values| values.is_empty()),
-                RuntimeValue::Dict(handle) => view
+                DecodedValue::Dict(handle) => view
                     .dict_parts(handle)
                     .is_ok_and(|(names, _)| names.is_empty()),
                 _ => false,
@@ -9474,7 +9445,7 @@ type SchemaProperties = Vec<(String, CodecNode)>;
 
 fn generate_json_schema(
     schema: &CodecType,
-    data: RichValue,
+    data: Val,
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecNode, CodecFailure> {
@@ -9503,7 +9474,7 @@ fn generate_json_schema(
 #[allow(clippy::too_many_arguments)]
 fn generate_json_schema_node(
     schema: &CodecType,
-    data: RichValue,
+    data: Val,
     current: &Heap,
     background: &Heap,
     links: &mut HashMap<Handle, String>,
@@ -9638,7 +9609,7 @@ fn generate_json_schema_node(
                     generate_json_schema_node(item, data, current, background, links, definitions)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let length = RichValue::unknown(RuntimeValue::Int(items.len() as i64));
+            let length = Val::unknown(DecodedValue::Int(items.len() as i64));
             Ok(schema_dict(
                 vec![
                     ("type", schema_string("array", loc)),
@@ -9801,7 +9772,7 @@ fn generate_json_schema_node(
 
 fn generate_struct_schema_fields(
     plan: &StructPlan,
-    data: RichValue,
+    data: Val,
     current: &Heap,
     background: &Heap,
     links: &mut HashMap<Handle, String>,
@@ -9950,7 +9921,7 @@ fn legacy_value_bytes(value: &Value) -> Result<u64, NativeError> {
     }
 }
 
-fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap) -> RichValue {
+fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap) -> Val {
     match node {
         CodecNode::Existing(value) => value,
         CodecNode::Declared {
@@ -9964,20 +9935,16 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
                 .expect("codec declared owner was decoded as a declared Type")
                 .with_loc(loc)
         }
-        CodecNode::Atom(atom, loc) => RichValue::new(RuntimeValue::BuiltinAtom(atom), loc),
-        CodecNode::NamedAtom(value, loc) => {
-            RichValue::new(current.atom(Some(background), &value), loc)
-        }
-        CodecNode::String(value, loc) => {
-            RichValue::new(current.string(Some(background), &value), loc)
-        }
+        CodecNode::Atom(atom, loc) => Val::new(DecodedValue::BuiltinAtom(atom), loc),
+        CodecNode::NamedAtom(value, loc) => Val::new(current.atom(Some(background), &value), loc),
+        CodecNode::String(value, loc) => Val::new(current.string(Some(background), &value), loc),
         CodecNode::Array(items, loc) => {
             let items = items
                 .into_iter()
                 .map(|item| materialize_codec_node(item, current, background))
                 .collect::<Box<_>>();
-            RichValue::new(
-                RuntimeValue::Array(current.allocate(Object::Array(items))),
+            Val::new(
+                DecodedValue::Array(current.allocate(Object::Array(items))),
                 loc,
             )
         }
@@ -9986,16 +9953,16 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
                 .into_iter()
                 .map(|item| materialize_codec_node(item, current, background))
                 .collect::<Box<_>>();
-            RichValue::new(
-                RuntimeValue::Tuple(current.allocate(Object::Tuple(items))),
+            Val::new(
+                DecodedValue::Tuple(current.allocate(Object::Tuple(items))),
                 loc,
             )
         }
         CodecNode::Tagged { tag, payload, loc } => {
             let tag = materialize_codec_node(*tag, current, background);
             let payload = materialize_codec_node(*payload, current, background);
-            RichValue::new(
-                RuntimeValue::Tagged(current.allocate(Object::Tagged { tag, payload })),
+            Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged { tag, payload })),
                 loc,
             )
         }
@@ -10012,8 +9979,8 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
                 })
                 .unzip();
             let shape = current.intern_shape(fields);
-            RichValue::new(
-                RuntimeValue::Dict(current.allocate(Object::Dict {
+            Val::new(
+                DecodedValue::Dict(current.allocate(Object::Dict {
                     shape,
                     values: values.into(),
                 })),
@@ -10025,7 +9992,7 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
 
 fn run_core_result(
     _operation: CoreResultFunction,
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -10036,7 +10003,7 @@ fn run_core_result(
         current,
         background: Some(background),
     };
-    let RuntimeValue::Tagged(handle) = arguments[0].value() else {
+    let DecodedValue::Tagged(handle) = arguments[0].value() else {
         return Err(runtime_type_error(
             "'Ok(value) or 'Err(message)",
             &arguments[0],
@@ -10072,7 +10039,7 @@ fn run_core_result(
                     )
                 })? {
                 (message.as_str().to_owned(), payload.loc(), None)
-            } else if let RuntimeValue::Dict(handle) = payload.value() {
+            } else if let DecodedValue::Dict(handle) = payload.value() {
                 let message = view
                     .dict_get_text(handle, "message")
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
@@ -10134,8 +10101,8 @@ fn run_core_result(
 #[allow(clippy::too_many_arguments)]
 fn run_core_json(
     operation: CoreJsonFunction,
-    arguments: &[RichValue],
-    upvalues: &[RichValue],
+    arguments: &[Val],
+    upvalues: &[Val],
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -10183,7 +10150,7 @@ fn run_core_json(
                     })?
             }
             Err(parse_error) => {
-                let rule = RichValue::new(
+                let rule = Val::new(
                     current.atom(Some(background), "Json"),
                     arguments[input_index].loc(),
                 );
@@ -10280,8 +10247,8 @@ fn run_core_json(
             function,
             pc,
         )?;
-        let value = RichValue::new(
-            RuntimeValue::Func(current.allocate(Object::Closure {
+        let value = Val::new(
+            DecodedValue::Func(current.allocate(Object::Closure {
                 identity: Arc::new(()),
                 prototype: crate::heap::RuntimePrototype::Native(crate::NativeFunction::core_json(
                     configured,
@@ -10354,15 +10321,15 @@ fn run_core_json(
         let (key, payload) = match operation {
             CoreJsonFunction::Flatten => (
                 "std/json.flatten",
-                RichValue::new(
-                    RuntimeValue::BuiltinAtom(BuiltinAtom::True),
+                Val::new(
+                    DecodedValue::BuiltinAtom(BuiltinAtom::True),
                     instruction_location(function, pc),
                 ),
             ),
             CoreJsonFunction::Untagged => (
                 "std/json.untagged",
-                RichValue::new(
-                    RuntimeValue::BuiltinAtom(BuiltinAtom::True),
+                Val::new(
+                    DecodedValue::BuiltinAtom(BuiltinAtom::True),
                     instruction_location(function, pc),
                 ),
             ),
@@ -10408,7 +10375,7 @@ fn run_core_json(
         });
     }
     if operation == CoreJsonFunction::StringifyPretty {
-        let RuntimeValue::Int(indent) = arguments[0].value() else {
+        let DecodedValue::Int(indent) = arguments[0].value() else {
             let view = HeapView {
                 current,
                 background: Some(background),
@@ -10435,20 +10402,14 @@ fn run_core_json(
             function,
             pc,
         )?;
-        let closure = RichValue::new(
-            RuntimeValue::Func(
-                current.allocate(Object::Closure {
-                    identity: Arc::new(()),
-                    prototype: crate::heap::RuntimePrototype::Native(
-                        crate::NativeFunction::core_json(CoreJsonFunction::StringifyPrettyValue),
-                    ),
-                    upvalues: vec![RichValue::new(
-                        RuntimeValue::Int(indent),
-                        arguments[0].loc(),
-                    )]
-                    .into(),
-                }),
-            ),
+        let closure = Val::new(
+            DecodedValue::Func(current.allocate(Object::Closure {
+                identity: Arc::new(()),
+                prototype: crate::heap::RuntimePrototype::Native(crate::NativeFunction::core_json(
+                    CoreJsonFunction::StringifyPrettyValue,
+                )),
+                upvalues: vec![Val::new(DecodedValue::Int(indent), arguments[0].loc())].into(),
+            })),
             instruction_location(function, pc),
         );
         return Ok(VmAction::Return {
@@ -10459,8 +10420,8 @@ fn run_core_json(
     let indent = match operation {
         CoreJsonFunction::Stringify => None,
         CoreJsonFunction::StringifyPrettyValue => match upvalues {
-            [value] if matches!(value.value(), RuntimeValue::Int(_)) => {
-                let RuntimeValue::Int(indent) = value.value() else {
+            [value] if matches!(value.value(), DecodedValue::Int(_)) => {
+                let DecodedValue::Int(indent) = value.value() else {
                     unreachable!()
                 };
                 Some(indent as usize)
@@ -10500,7 +10461,7 @@ fn run_core_json(
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
     let output = writer.output;
     charge_allocation(account, output.len() as u64, function, pc)?;
-    let value = RichValue::new(
+    let value = Val::new(
         current.string(Some(background), &output),
         instruction_location(function, pc),
     );
@@ -10511,10 +10472,10 @@ fn run_core_json(
 }
 
 fn configured_json_attribute(
-    upvalues: &[RichValue],
+    upvalues: &[Val],
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<RichValue, RuntimeError> {
+) -> Result<Val, RuntimeError> {
     match upvalues {
         [payload] => Ok(*payload),
         _ => Err(error(
@@ -10528,7 +10489,7 @@ fn configured_json_attribute(
 
 fn validate_json_attribute_configuration(
     operation: CoreJsonFunction,
-    payload: RichValue,
+    payload: Val,
     function: &BytecodeFunction,
     pc: usize,
     current: &Heap,
@@ -10552,7 +10513,7 @@ fn validate_json_attribute_configuration(
             view.atom_text(payload)
                 .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                 .is_some_and(|atom| matches!(atom.as_str(), "None" | "False" | "Empty"))
-                || matches!(payload.value(), RuntimeValue::Func(handle) if view.function_arity(handle).is_ok_and(|arity| arity == 1))
+                || matches!(payload.value(), DecodedValue::Func(handle) if view.function_arity(handle).is_ok_and(|arity| arity == 1))
         }
         _ => unreachable!(),
     };
@@ -10587,50 +10548,50 @@ impl<'a> JsonWriter<'a> {
         }
     }
 
-    fn value(&mut self, value: RichValue, depth: usize) -> Result<(), String> {
+    fn value(&mut self, value: Val, depth: usize) -> Result<(), String> {
         match value.value() {
-            RuntimeValue::Failed(_) => {
+            DecodedValue::Failed(_) => {
                 return Err("JSON cannot encode a failed evaluation node".into());
             }
-            RuntimeValue::Int(value) => self.output.push_str(&value.to_string()),
-            RuntimeValue::Float(value) if value.is_finite() => {
+            DecodedValue::Int(value) => self.output.push_str(&value.to_string()),
+            DecodedValue::Float(value) if value.is_finite() => {
                 self.output.push_str(&value.to_string())
             }
-            RuntimeValue::Float(_) => return Err("JSON cannot encode a non-finite Float".into()),
-            RuntimeValue::BuiltinAtom(BuiltinAtom::None) => self.output.push_str("null"),
-            RuntimeValue::BuiltinAtom(BuiltinAtom::True) => self.output.push_str("true"),
-            RuntimeValue::BuiltinAtom(BuiltinAtom::False) => self.output.push_str("false"),
-            RuntimeValue::InlineString(text) => self.string(text.as_str()),
-            RuntimeValue::ShortString(id) => {
+            DecodedValue::Float(_) => return Err("JSON cannot encode a non-finite Float".into()),
+            DecodedValue::BuiltinAtom(BuiltinAtom::None) => self.output.push_str("null"),
+            DecodedValue::BuiltinAtom(BuiltinAtom::True) => self.output.push_str("true"),
+            DecodedValue::BuiltinAtom(BuiltinAtom::False) => self.output.push_str("false"),
+            DecodedValue::InlineString(text) => self.string(text.as_str()),
+            DecodedValue::ShortString(id) => {
                 self.string(self.view.text(id).map_err(|e| e.to_string())?)
             }
-            RuntimeValue::Array(handle) => self.array(handle, depth)?,
-            RuntimeValue::Dict(handle) => self.dict(handle, depth)?,
-            RuntimeValue::BuiltinAtom(atom) => {
+            DecodedValue::Array(handle) => self.array(handle, depth)?,
+            DecodedValue::Dict(handle) => self.dict(handle, depth)?,
+            DecodedValue::BuiltinAtom(atom) => {
                 return Err(format!("JSON cannot encode '{}", atom.name()));
             }
-            RuntimeValue::InlineAtom(text) => {
+            DecodedValue::InlineAtom(text) => {
                 return Err(format!("JSON cannot encode '{}", text.as_str()));
             }
-            RuntimeValue::Atom(id) => {
+            DecodedValue::Atom(id) => {
                 return Err(format!(
                     "JSON cannot encode '{}",
                     self.view.text(id).map_err(|e| e.to_string())?
                 ));
             }
-            RuntimeValue::Bytes(_) => return Err("JSON cannot encode Bytes".into()),
-            RuntimeValue::Opaque(_) => return Err("JSON cannot encode Opaque values".into()),
-            RuntimeValue::NativeType(_) => return Err("JSON cannot encode Type values".into()),
-            RuntimeValue::DeclaredType(_) => return Err("JSON cannot encode Type values".into()),
-            RuntimeValue::Tuple(_) => {
+            DecodedValue::Bytes(_) => return Err("JSON cannot encode Bytes".into()),
+            DecodedValue::Opaque(_) => return Err("JSON cannot encode Opaque values".into()),
+            DecodedValue::NativeType(_) => return Err("JSON cannot encode Type values".into()),
+            DecodedValue::DeclaredType(_) => return Err("JSON cannot encode Type values".into()),
+            DecodedValue::Tuple(_) => {
                 return Err("JSON cannot encode Tuple; use a codec first".into());
             }
-            RuntimeValue::Tagged(_) => {
+            DecodedValue::Tagged(_) => {
                 return Err("JSON cannot encode Tagged; use a codec first".into());
             }
-            RuntimeValue::Func(_) => return Err("JSON cannot encode Func".into()),
-            RuntimeValue::Dyn(_) => return Err("JSON cannot encode Dyn".into()),
-            RuntimeValue::UpLink(_) => return Err("JSON cannot encode an internal up-link".into()),
+            DecodedValue::Func(_) => return Err("JSON cannot encode Func".into()),
+            DecodedValue::Dyn(_) => return Err("JSON cannot encode Dyn".into()),
+            DecodedValue::UpLink(_) => return Err("JSON cannot encode an internal up-link".into()),
         }
         Ok(())
     }
@@ -10733,7 +10694,7 @@ const DEBUG_MAX_DEPTH: usize = 8;
 const DEBUG_MAX_ITEMS: usize = 32;
 const DEBUG_MAX_BYTES: usize = 4_096;
 fn run_core_diagnostic(
-    arguments: &[RichValue],
+    arguments: &[Val],
     return_target: ReturnTarget,
     function: &Arc<BytecodeFunction>,
     pc: usize,
@@ -10758,7 +10719,7 @@ fn run_core_diagnostic(
         .ok_or_else(|| runtime_type_error("String", &arguments[0], &view, function, pc))?;
     let message = message.as_str().to_owned();
     let subjects = match arguments[1].value() {
-        RuntimeValue::Tuple(handle) => view
+        DecodedValue::Tuple(handle) => view
             .sequence(handle, true)
             .map_err(|heap_error| {
                 error(
@@ -10791,7 +10752,7 @@ fn run_core_diagnostic(
     }
     account.diagnostics.push(diagnostic);
     Ok(VmAction::Return {
-        value: RichValue::unknown(RuntimeValue::BuiltinAtom(BuiltinAtom::None)),
+        value: Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
         return_target,
     })
 }
@@ -10813,7 +10774,7 @@ impl<'a> DebugValueFormatter<'a> {
         }
     }
 
-    fn format(mut self, value: RichValue) -> Result<String, crate::heap::HeapError> {
+    fn format(mut self, value: Val) -> Result<String, crate::heap::HeapError> {
         self.value(value, 0)?;
         if self.truncated {
             self.output.push_str("...");
@@ -10821,29 +10782,29 @@ impl<'a> DebugValueFormatter<'a> {
         Ok(self.output)
     }
 
-    fn value(&mut self, value: RichValue, depth: usize) -> Result<(), crate::heap::HeapError> {
+    fn value(&mut self, value: Val, depth: usize) -> Result<(), crate::heap::HeapError> {
         if self.truncated {
             return Ok(());
         }
         match value.value() {
-            RuntimeValue::Failed(_) => self.push("<failed>"),
-            RuntimeValue::Int(value) => self.push(&value.to_string()),
-            RuntimeValue::Float(value) => self.push(&format!("{value:?}")),
-            RuntimeValue::BuiltinAtom(atom) => {
+            DecodedValue::Failed(_) => self.push("<failed>"),
+            DecodedValue::Int(value) => self.push(&value.to_string()),
+            DecodedValue::Float(value) => self.push(&format!("{value:?}")),
+            DecodedValue::BuiltinAtom(atom) => {
                 self.push("'");
                 self.push(atom.name());
             }
-            RuntimeValue::InlineAtom(text) => {
+            DecodedValue::InlineAtom(text) => {
                 self.push("'");
                 self.push(text.as_str());
             }
-            RuntimeValue::Atom(id) => {
+            DecodedValue::Atom(id) => {
                 self.push("'");
                 self.push(self.view.text(id)?);
             }
-            RuntimeValue::InlineString(text) => self.quoted(text.as_str()),
-            RuntimeValue::ShortString(id) => self.quoted(self.view.text(id)?),
-            RuntimeValue::Bytes(handle) => match self.view.object(handle)? {
+            DecodedValue::InlineString(text) => self.quoted(text.as_str()),
+            DecodedValue::ShortString(id) => self.quoted(self.view.text(id)?),
+            DecodedValue::Bytes(handle) => match self.view.object(handle)? {
                 Object::Bytes(value) => {
                     self.push("b\"");
                     for byte in value.iter().take(DEBUG_MAX_ITEMS) {
@@ -10856,16 +10817,16 @@ impl<'a> DebugValueFormatter<'a> {
                 }
                 _ => return Err(crate::heap::HeapError::new("invalid Bytes handle")),
             },
-            RuntimeValue::Opaque(handle) => match self.view.object(handle)? {
+            DecodedValue::Opaque(handle) => match self.view.object(handle)? {
                 Object::Opaque(value) => self.push(&format!("{value:?}")),
                 _ => return Err(crate::heap::HeapError::new("invalid Opaque handle")),
             },
-            RuntimeValue::NativeType(id) => {
+            DecodedValue::NativeType(id) => {
                 self.push("<type ");
                 self.push(self.view.native_type(id)?.qualified_name());
                 self.push(">");
             }
-            RuntimeValue::DeclaredType(handle) => match self.view.object(handle)? {
+            DecodedValue::DeclaredType(handle) => match self.view.object(handle)? {
                 Object::DeclaredType { name, .. } => {
                     self.push("<type ");
                     self.push(name);
@@ -10873,9 +10834,9 @@ impl<'a> DebugValueFormatter<'a> {
                 }
                 _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
             },
-            RuntimeValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
-            RuntimeValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
-            RuntimeValue::Tagged(handle) => {
+            DecodedValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
+            DecodedValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
+            DecodedValue::Tagged(handle) => {
                 if !self.enter(handle, depth) {
                     return Ok(());
                 }
@@ -10891,8 +10852,8 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(")");
                 self.active.remove(&handle);
             }
-            RuntimeValue::Dict(handle) => self.dict(handle, depth)?,
-            RuntimeValue::Func(handle) => {
+            DecodedValue::Dict(handle) => self.dict(handle, depth)?,
+            DecodedValue::Func(handle) => {
                 let (prototype, _) = self.view.closure(handle)?;
                 let name = match prototype {
                     crate::heap::RuntimePrototype::Native(function) => function.name(),
@@ -10904,8 +10865,8 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(name);
                 self.push(">");
             }
-            RuntimeValue::Dyn(_) => self.push("<dyn>"),
-            RuntimeValue::UpLink(handle) => {
+            DecodedValue::Dyn(_) => self.push("<dyn>"),
+            DecodedValue::UpLink(handle) => {
                 if !self.enter(handle, depth) {
                     return Ok(());
                 }
@@ -11042,11 +11003,11 @@ fn decimal_length(value: i64) -> usize {
 }
 
 fn read_register<'a>(
-    registers: &'a [Option<RichValue>],
+    registers: &'a [Option<Val>],
     register: Register,
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<&'a RichValue, RuntimeError> {
+) -> Result<&'a Val, RuntimeError> {
     registers
         .get(register.0)
         .ok_or_else(|| {
@@ -11069,9 +11030,9 @@ fn read_register<'a>(
 }
 
 fn write_register(
-    registers: &mut [Option<RichValue>],
+    registers: &mut [Option<Val>],
     register: Register,
-    value: RichValue,
+    value: Val,
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<(), RuntimeError> {
@@ -11088,11 +11049,11 @@ fn write_register(
 }
 
 fn read_many(
-    registers: &[Option<RichValue>],
+    registers: &[Option<Val>],
     items: &[Register],
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<Vec<RichValue>, RuntimeError> {
+) -> Result<Vec<Val>, RuntimeError> {
     items
         .iter()
         .map(|register| read_register(registers, *register, function, pc).copied())
@@ -11100,12 +11061,12 @@ fn read_many(
 }
 
 fn read_call_arguments(
-    registers: &[Option<RichValue>],
+    registers: &[Option<Val>],
     base: Register,
     argument_count: usize,
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<Vec<RichValue>, RuntimeError> {
+) -> Result<Vec<Val>, RuntimeError> {
     let start = base.0.checked_add(1).ok_or_else(|| {
         error(
             RuntimeErrorKind::InvalidBytecode,
@@ -11163,15 +11124,15 @@ enum BitwiseOperation {
 }
 
 fn bitwise_binary(
-    left: &RichValue,
-    right: &RichValue,
+    left: &Val,
+    right: &Val,
     operation: BitwiseOperation,
     view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<RichValue, RuntimeError> {
-    let (RuntimeValue::Int(left), RuntimeValue::Int(right)) = (left.value(), right.value()) else {
-        let invalid = if !matches!(left.value(), RuntimeValue::Int(_)) {
+) -> Result<Val, RuntimeError> {
+    let (DecodedValue::Int(left), DecodedValue::Int(right)) = (left.value(), right.value()) else {
+        let invalid = if !matches!(left.value(), DecodedValue::Int(_)) {
             left
         } else {
             right
@@ -11183,20 +11144,20 @@ fn bitwise_binary(
         BitwiseOperation::Or => left | right,
         BitwiseOperation::Xor => left ^ right,
     };
-    Ok(RuntimeValue::Int(value).into())
+    Ok(DecodedValue::Int(value).into())
 }
 
 fn numeric_binary(
-    left: &RichValue,
-    right: &RichValue,
+    left: &Val,
+    right: &Val,
     operation: NumericOperation,
     view: &HeapView<'_>,
     account: &mut QuotaAccount,
     function: &BytecodeFunction,
     pc: usize,
-) -> Result<RichValue, RuntimeError> {
+) -> Result<Val, RuntimeError> {
     match (left.value(), right.value()) {
-        (RuntimeValue::Int(left), RuntimeValue::Int(right)) => {
+        (DecodedValue::Int(left), DecodedValue::Int(right)) => {
             let value = match operation {
                 NumericOperation::Add => left.checked_add(right),
                 NumericOperation::Subtract => left.checked_sub(right),
@@ -11220,9 +11181,9 @@ fn numeric_binary(
                 };
                 return Err(error(kind, message, function, pc));
             };
-            Ok(RuntimeValue::Int(value).into())
+            Ok(DecodedValue::Int(value).into())
         }
-        (RuntimeValue::Float(left_value), RuntimeValue::Float(right_value)) => {
+        (DecodedValue::Float(left_value), DecodedValue::Float(right_value)) => {
             let value = match operation {
                 NumericOperation::Add => left_value + right_value,
                 NumericOperation::Subtract => left_value - right_value,
@@ -11233,34 +11194,34 @@ fn numeric_binary(
             if !value.is_finite() {
                 return Err(non_finite_float_error(account, left, right, function, pc));
             }
-            Ok(RuntimeValue::Float(value).into())
+            Ok(DecodedValue::Float(value).into())
         }
         _ => Err(runtime_numeric_type_error(left, right, view, function, pc)),
     }
 }
 
 fn ordered_comparison(
-    left: &RichValue,
-    right: &RichValue,
+    left: &Val,
+    right: &Val,
     inclusive: bool,
     view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<bool, RuntimeError> {
     match (left.value(), right.value()) {
-        (RuntimeValue::Int(left), RuntimeValue::Int(right)) => Ok(if inclusive {
+        (DecodedValue::Int(left), DecodedValue::Int(right)) => Ok(if inclusive {
             left <= right
         } else {
             left < right
         }),
-        (RuntimeValue::Float(left), RuntimeValue::Float(right)) => Ok(if inclusive {
+        (DecodedValue::Float(left), DecodedValue::Float(right)) => Ok(if inclusive {
             left <= right
         } else {
             left < right
         }),
         (
-            RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_),
-            RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_),
+            DecodedValue::InlineString(_) | DecodedValue::ShortString(_),
+            DecodedValue::InlineString(_) | DecodedValue::ShortString(_),
         ) => {
             let left = view.string_text(*left).map_err(|heap_error| {
                 error(
@@ -11291,8 +11252,8 @@ fn ordered_comparison(
     }
 }
 
-fn runtime_bool(value: bool) -> RichValue {
-    RuntimeValue::BuiltinAtom(if value {
+fn runtime_bool(value: bool) -> Val {
+    DecodedValue::BuiltinAtom(if value {
         BuiltinAtom::True
     } else {
         BuiltinAtom::False
@@ -11310,12 +11271,12 @@ fn instruction_location(function: &BytecodeFunction, pc: usize) -> Option<crate:
 
 fn runtime_type_error(
     expected: &str,
-    actual: &RichValue,
+    actual: &Val,
     view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
-    if let RuntimeValue::Failed(failure) = actual.value() {
+    if let DecodedValue::Failed(failure) = actual.value() {
         return propagated_failure_error(failure, actual.loc(), function, pc);
     }
     let mut runtime_error = match view.export_value(*actual) {
@@ -11332,18 +11293,18 @@ fn runtime_type_error(
 }
 
 fn propagate_direct_failure(
-    value: &RichValue,
+    value: &Val,
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<(), RuntimeError> {
-    if let RuntimeValue::Failed(failure) = value.value() {
+    if let DecodedValue::Failed(failure) = value.value() {
         return Err(propagated_failure_error(failure, value.loc(), function, pc));
     }
     Ok(())
 }
 
 fn propagate_data_failures(
-    values: &[RichValue],
+    values: &[Val],
     view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
@@ -11365,33 +11326,33 @@ fn propagate_data_failures(
 
 fn runtime_shallow_type_error(
     expected: &str,
-    actual: RichValue,
+    actual: Val,
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
     let location = actual.loc();
-    if let RuntimeValue::Failed(failure) = actual.value() {
+    if let DecodedValue::Failed(failure) = actual.value() {
         return propagated_failure_error(failure, location, function, pc);
     }
     let actual_kind = match actual.value() {
-        RuntimeValue::Failed(_) => unreachable!(),
-        RuntimeValue::Int(_) => "Int",
-        RuntimeValue::Float(_) => "Float",
-        RuntimeValue::BuiltinAtom(_) | RuntimeValue::InlineAtom(_) | RuntimeValue::Atom(_) => {
+        DecodedValue::Failed(_) => unreachable!(),
+        DecodedValue::Int(_) => "Int",
+        DecodedValue::Float(_) => "Float",
+        DecodedValue::BuiltinAtom(_) | DecodedValue::InlineAtom(_) | DecodedValue::Atom(_) => {
             "Atom"
         }
-        RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => "String",
-        RuntimeValue::Bytes(_) => "Bytes",
-        RuntimeValue::Opaque(_) => "Opaque",
-        RuntimeValue::NativeType(_) => "Type",
-        RuntimeValue::DeclaredType(_) => "Type",
-        RuntimeValue::Array(_) => "Array",
-        RuntimeValue::Tuple(_) => "Tuple",
-        RuntimeValue::Tagged(_) => "Tagged",
-        RuntimeValue::Dict(_) => "Dict",
-        RuntimeValue::Func(_) => "Func",
-        RuntimeValue::Dyn(_) => "Dyn",
-        RuntimeValue::UpLink(_) => "internal up-link",
+        DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => "String",
+        DecodedValue::Bytes(_) => "Bytes",
+        DecodedValue::Opaque(_) => "Opaque",
+        DecodedValue::NativeType(_) => "Type",
+        DecodedValue::DeclaredType(_) => "Type",
+        DecodedValue::Array(_) => "Array",
+        DecodedValue::Tuple(_) => "Tuple",
+        DecodedValue::Tagged(_) => "Tagged",
+        DecodedValue::Dict(_) => "Dict",
+        DecodedValue::Func(_) => "Func",
+        DecodedValue::Dyn(_) => "Dyn",
+        DecodedValue::UpLink(_) => "internal up-link",
     };
     let mut runtime_error = error(
         RuntimeErrorKind::TypeMismatch,
@@ -11404,8 +11365,8 @@ fn runtime_shallow_type_error(
 }
 
 fn runtime_numeric_type_error(
-    left: &RichValue,
-    right: &RichValue,
+    left: &Val,
+    right: &Val,
     view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
@@ -11413,7 +11374,7 @@ fn runtime_numeric_type_error(
     if let Some(failure) = [left, right]
         .into_iter()
         .find_map(|value| match value.value() {
-            RuntimeValue::Failed(failure) => Some(failure),
+            DecodedValue::Failed(failure) => Some(failure),
             _ => None,
         })
     {
@@ -11433,8 +11394,8 @@ fn runtime_numeric_type_error(
 }
 
 fn runtime_ordered_type_error(
-    left: &RichValue,
-    right: &RichValue,
+    left: &Val,
+    right: &Val,
     view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
@@ -11442,7 +11403,7 @@ fn runtime_ordered_type_error(
     if let Some(failure) = [left, right]
         .into_iter()
         .find_map(|value| match value.value() {
-            RuntimeValue::Failed(failure) => Some(failure),
+            DecodedValue::Failed(failure) => Some(failure),
             _ => None,
         })
     {
@@ -11554,8 +11515,8 @@ fn out_of_range_error(
 
 fn non_finite_float_error(
     account: &mut QuotaAccount,
-    left: &RichValue,
-    right: &RichValue,
+    left: &Val,
+    right: &Val,
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
@@ -12460,14 +12421,14 @@ mod tests {
         current
             .initialize(
                 cycle,
-                Object::Array(vec![RichValue::unknown(RuntimeValue::Array(cycle))].into()),
+                Object::Array(vec![Val::unknown(DecodedValue::Array(cycle))].into()),
             )
             .unwrap();
         let cycle_text = DebugValueFormatter::new(HeapView {
             current: &current,
             background: Some(&background),
         })
-        .format(RuntimeValue::Array(cycle).into())
+        .format(DecodedValue::Array(cycle).into())
         .unwrap();
         assert_eq!(cycle_text, "[<cycle>]");
 
@@ -12481,7 +12442,7 @@ mod tests {
         assert_eq!(long_text.len(), DEBUG_MAX_BYTES);
         assert!(long_text.ends_with("..."));
 
-        let bytes = RuntimeValue::Bytes(current.allocate(Object::Bytes(
+        let bytes = DecodedValue::Bytes(current.allocate(Object::Bytes(
             (0..64).map(|value| value as u8).collect::<Vec<_>>().into(),
         )));
         let bytes_text = DebugValueFormatter::new(HeapView {
@@ -12502,7 +12463,7 @@ mod tests {
         current
             .initialize(
                 cycle,
-                Object::Array(vec![RichValue::unknown(RuntimeValue::Array(cycle))].into()),
+                Object::Array(vec![Val::unknown(DecodedValue::Array(cycle))].into()),
             )
             .unwrap();
         let mut writer = JsonWriter::new(
@@ -12514,7 +12475,7 @@ mod tests {
         );
         assert_eq!(
             writer
-                .value(RuntimeValue::Array(cycle).into(), 0)
+                .value(DecodedValue::Array(cycle).into(), 0)
                 .unwrap_err(),
             "JSON cannot encode cyclic values"
         );

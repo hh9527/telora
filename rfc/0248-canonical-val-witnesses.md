@@ -62,3 +62,17 @@ the canonical registry but are not interchangeable representations.
 6. copying a Val preserves or relocates its witness according to context
    lifetime without structural revalidation; and
 7. declared Struct/Enum, codec, Dyn, formatting, and Host-boundary tests pass.
+
+## Outcome
+
+Declared payload wrappers were removed. `Val.ty` now stores an optional scoped
+reference to a `DeclaredType` witness while the payload remains directly in
+`Val.meta` and `Val.raw`. Narrowing preserves the payload and source location,
+Host export reconstructs `Value::Declared` only at that explicit boundary,
+and copy collection relocates Work witnesses through the same object graph as
+ordinary Heap references.
+
+Logical equality resolves witness slots to declared identities before
+comparing raw payloads. This also handles equivalent identities represented by
+different transient metadata handles and preserves the existing declared-Atom
+comparison with its corresponding raw Atom.

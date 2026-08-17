@@ -387,7 +387,7 @@ pub(crate) struct ShapeId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum RuntimeValue {
+pub(crate) enum DecodedValue {
     Failed(u32),
     Int(i64),
     Float(f64),
@@ -409,7 +409,7 @@ pub(crate) enum RuntimeValue {
     UpLink(Handle),
 }
 
-impl RuntimeValue {
+impl DecodedValue {
     fn encode(self) -> (Meta, u64) {
         let (kind, sub_kind, raw) = match self {
             Self::Failed(id) => (FlatKind::Never, HeapKind::None, ((id as u64) << 1) | 1),
@@ -468,7 +468,7 @@ fn heap_parts(handle: Handle, sub_kind: HeapKind) -> (FlatKind, HeapKind, u64) {
 
 #[repr(C, align(8))]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct RichValue {
+pub(crate) struct Val {
     loc: PackedLoc,
     meta: Meta,
     ty: u32,
@@ -476,8 +476,8 @@ pub(crate) struct RichValue {
     raw: u64,
 }
 
-const _: [(); 32] = [(); std::mem::size_of::<RichValue>()];
-const _: [(); 8] = [(); std::mem::align_of::<RichValue>()];
+const _: [(); 32] = [(); std::mem::size_of::<Val>()];
+const _: [(); 8] = [(); std::mem::align_of::<Val>()];
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -487,8 +487,8 @@ enum Provenance {
     Generated,
 }
 
-impl RichValue {
-    pub(crate) fn new(value: RuntimeValue, loc: Option<Loc>) -> Self {
+impl Val {
+    pub(crate) fn new(value: DecodedValue, loc: Option<Loc>) -> Self {
         let (meta, raw) = value.encode();
         Self {
             loc: PackedLoc::new(loc),
@@ -503,7 +503,7 @@ impl RichValue {
         }
     }
 
-    pub(crate) fn original(value: RuntimeValue, loc: Option<Loc>) -> Self {
+    pub(crate) fn original(value: DecodedValue, loc: Option<Loc>) -> Self {
         let (meta, raw) = value.encode();
         Self {
             loc: PackedLoc::new(loc),
@@ -518,7 +518,7 @@ impl RichValue {
         }
     }
 
-    pub(crate) fn unknown(value: RuntimeValue) -> Self {
+    pub(crate) fn unknown(value: DecodedValue) -> Self {
         Self::new(value, None)
     }
 
@@ -552,7 +552,7 @@ impl RichValue {
         }
     }
 
-    pub(crate) fn value(self) -> RuntimeValue {
+    pub(crate) fn value(self) -> DecodedValue {
         debug_assert_eq!(self.narrow, 0, "narrowing evidence is not implemented");
         debug_assert_eq!(
             self.meta.traits(),
@@ -565,40 +565,40 @@ impl RichValue {
             slot: scoped_id().slot(),
         };
         match (self.meta.kind(), self.meta.sub_kind()) {
-            (FlatKind::Never, _) => RuntimeValue::Failed((self.raw >> 1) as u32),
-            (FlatKind::Int, _) => RuntimeValue::Int(self.raw as i64),
-            (FlatKind::Float, _) => RuntimeValue::Float(f64::from_bits(self.raw)),
+            (FlatKind::Never, _) => DecodedValue::Failed((self.raw >> 1) as u32),
+            (FlatKind::Int, _) => DecodedValue::Int(self.raw as i64),
+            (FlatKind::Float, _) => DecodedValue::Float(f64::from_bits(self.raw)),
             (FlatKind::InlineAtom, _) => {
                 let text = InlineText::from_raw(self.raw);
                 builtin_atom(text.as_str())
-                    .map(RuntimeValue::BuiltinAtom)
-                    .unwrap_or(RuntimeValue::InlineAtom(text))
+                    .map(DecodedValue::BuiltinAtom)
+                    .unwrap_or(DecodedValue::InlineAtom(text))
             }
             (FlatKind::InlineString, _) => {
-                RuntimeValue::InlineString(InlineText::from_raw(self.raw))
+                DecodedValue::InlineString(InlineText::from_raw(self.raw))
             }
-            (FlatKind::Atom, _) => RuntimeValue::Atom(InternId {
+            (FlatKind::Atom, _) => DecodedValue::Atom(InternId {
                 storage: scoped_id().storage(),
                 slot: scoped_id().slot(),
             }),
-            (FlatKind::String, _) => RuntimeValue::ShortString(InternId {
+            (FlatKind::String, _) => DecodedValue::ShortString(InternId {
                 storage: scoped_id().storage(),
                 slot: scoped_id().slot(),
             }),
-            (FlatKind::Heap, HeapKind::Bytes) => RuntimeValue::Bytes(handle()),
-            (FlatKind::NativeType, _) => RuntimeValue::NativeType(crate::value::NativeTypeId {
+            (FlatKind::Heap, HeapKind::Bytes) => DecodedValue::Bytes(handle()),
+            (FlatKind::NativeType, _) => DecodedValue::NativeType(crate::value::NativeTypeId {
                 module: crate::value::NativeModuleId(self.raw as u32),
                 local: (self.raw >> 32) as u32,
             }),
-            (FlatKind::Heap, HeapKind::DeclaredType) => RuntimeValue::DeclaredType(handle()),
-            (FlatKind::Heap, HeapKind::Opaque) => RuntimeValue::Opaque(handle()),
-            (FlatKind::Heap, HeapKind::Array) => RuntimeValue::Array(handle()),
-            (FlatKind::Heap, HeapKind::Tuple) => RuntimeValue::Tuple(handle()),
-            (FlatKind::Heap, HeapKind::Tagged) => RuntimeValue::Tagged(handle()),
-            (FlatKind::Heap, HeapKind::Dict) => RuntimeValue::Dict(handle()),
-            (FlatKind::Heap, HeapKind::Func) => RuntimeValue::Func(handle()),
-            (FlatKind::Heap, HeapKind::Dyn) => RuntimeValue::Dyn(handle()),
-            (FlatKind::UpLink, _) => RuntimeValue::UpLink(handle()),
+            (FlatKind::Heap, HeapKind::DeclaredType) => DecodedValue::DeclaredType(handle()),
+            (FlatKind::Heap, HeapKind::Opaque) => DecodedValue::Opaque(handle()),
+            (FlatKind::Heap, HeapKind::Array) => DecodedValue::Array(handle()),
+            (FlatKind::Heap, HeapKind::Tuple) => DecodedValue::Tuple(handle()),
+            (FlatKind::Heap, HeapKind::Tagged) => DecodedValue::Tagged(handle()),
+            (FlatKind::Heap, HeapKind::Dict) => DecodedValue::Dict(handle()),
+            (FlatKind::Heap, HeapKind::Func) => DecodedValue::Func(handle()),
+            (FlatKind::Heap, HeapKind::Dyn) => DecodedValue::Dyn(handle()),
+            (FlatKind::UpLink, _) => DecodedValue::UpLink(handle()),
             _ => unreachable!("invalid runtime Meta combination"),
         }
     }
@@ -607,8 +607,8 @@ impl RichValue {
         ScopedId::optional_handle(self.ty)
     }
 
-    pub(crate) fn with_type_witness(self, owner: RichValue) -> Result<Self, HeapError> {
-        let RuntimeValue::DeclaredType(handle) = owner.value() else {
+    pub(crate) fn with_type_witness(self, owner: Val) -> Result<Self, HeapError> {
+        let DecodedValue::DeclaredType(handle) = owner.value() else {
             return Err(HeapError("declared value owner is not a declared Type"));
         };
         Ok(Self {
@@ -621,7 +621,7 @@ impl RichValue {
         Self { ty: 0, ..self }
     }
 
-    pub(crate) fn with_value(self, value: RuntimeValue) -> Self {
+    pub(crate) fn with_value(self, value: DecodedValue) -> Self {
         let (meta, raw) = value.encode();
         Self {
             meta: meta.with_provenance(self.meta.provenance()),
@@ -636,7 +636,7 @@ impl RichValue {
     }
 }
 
-impl PartialEq for RichValue {
+impl PartialEq for Val {
     fn eq(&self, other: &Self) -> bool {
         self.meta.kind() == other.meta.kind()
             && self.meta.sub_kind() == other.meta.sub_kind()
@@ -646,21 +646,21 @@ impl PartialEq for RichValue {
     }
 }
 
-impl From<RuntimeValue> for RichValue {
-    fn from(value: RuntimeValue) -> Self {
+impl From<DecodedValue> for Val {
+    fn from(value: DecodedValue) -> Self {
         Self::unknown(value)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PersistentValue(RichValue);
+pub(crate) struct PersistentValue(Val);
 
 impl PersistentValue {
     pub(crate) fn dict_get(self, heap: &Heap, name: &str) -> Result<Option<Self>, HeapError> {
         if heap.storage != Storage::Main {
             return Err(HeapError("persistent values require a Main world"));
         }
-        let RuntimeValue::Dict(handle) = self.0.value() else {
+        let DecodedValue::Dict(handle) = self.0.value() else {
             return Err(HeapError("persistent value is not a Dict"));
         };
         let Object::Dict { shape, values } = heap.object(handle)? else {
@@ -693,9 +693,9 @@ impl Heap {
             body,
             application_arguments: None,
         });
-        Ok(PersistentValue(RichValue::unknown(
-            RuntimeValue::DeclaredType(handle),
-        )))
+        Ok(PersistentValue(Val::unknown(DecodedValue::DeclaredType(
+            handle,
+        ))))
     }
 
     pub(crate) fn declare_persistent_type_application(
@@ -715,9 +715,9 @@ impl Heap {
             body: body.runtime(),
             application_arguments: None,
         });
-        Ok(PersistentValue(RichValue::unknown(
-            RuntimeValue::DeclaredType(handle),
-        )))
+        Ok(PersistentValue(Val::unknown(DecodedValue::DeclaredType(
+            handle,
+        ))))
     }
 
     pub(crate) fn rewrite_declared_type_references(
@@ -727,7 +727,7 @@ impl Heap {
         if self.storage != Storage::Main {
             return Err(HeapError("declared type rewriting requires a Main world"));
         }
-        let replace = |value: &mut RichValue| {
+        let replace = |value: &mut Val| {
             if let Some((_, replacement)) = replacements
                 .iter()
                 .find(|(candidate, _)| candidate.runtime().value() == value.value())
@@ -739,7 +739,7 @@ impl Heap {
             .iter()
             .filter_map(|(candidate, replacement)| {
                 let candidate = runtime_object_handle(candidate.runtime().value())?;
-                let RuntimeValue::DeclaredType(handle) = replacement.runtime().value() else {
+                let DecodedValue::DeclaredType(handle) = replacement.runtime().value() else {
                     return None;
                 };
                 let Object::DeclaredType { id, name, body, .. } = self.object(handle).ok()? else {
@@ -828,7 +828,7 @@ impl Heap {
                     let mut applied = id.arguments().to_vec();
                     for (index, argument) in arguments.iter().enumerate() {
                         let value = match argument.value() {
-                            RuntimeValue::UpLink(handle) => {
+                            DecodedValue::UpLink(handle) => {
                                 up_links.get(&handle).copied().unwrap_or(argument.value())
                             }
                             value => value,
@@ -868,7 +868,7 @@ impl Heap {
 }
 
 impl PersistentValue {
-    pub(crate) const fn runtime(self) -> RichValue {
+    pub(crate) const fn runtime(self) -> Val {
         self.0
     }
 }
@@ -886,38 +886,38 @@ pub(crate) enum Object {
     DeclaredType {
         id: crate::value::DeclaredTypeId,
         name: Arc<str>,
-        body: RichValue,
-        application_arguments: Option<Box<[RichValue]>>,
+        body: Val,
+        application_arguments: Option<Box<[Val]>>,
     },
     Opaque(crate::value::OpaqueValue),
-    Array(Box<[RichValue]>),
-    Tuple(Box<[RichValue]>),
+    Array(Box<[Val]>),
+    Tuple(Box<[Val]>),
     Tagged {
-        tag: RichValue,
-        payload: RichValue,
+        tag: Val,
+        payload: Val,
     },
     Dict {
         shape: ShapeId,
-        values: Box<[RichValue]>,
+        values: Box<[Val]>,
     },
     Closure {
         identity: Arc<()>,
         prototype: RuntimePrototype,
-        upvalues: Box<[RichValue]>,
+        upvalues: Box<[Val]>,
     },
     Dyn {
         identity: Arc<()>,
-        descriptor: RichValue,
-        value: RichValue,
+        descriptor: Val,
+        value: Val,
         scheme: Option<crate::TypeScheme>,
         origin: Option<Arc<str>>,
     },
     UpLink {
-        value: Option<RichValue>,
+        value: Option<Val>,
     },
     ByteCodeProto {
         code: Arc<FuncByteCode>,
-        values: Box<[RichValue]>,
+        values: Box<[Val]>,
         text: Box<[InternId]>,
         prototypes: Box<[RuntimePrototype]>,
     },
@@ -1061,28 +1061,28 @@ impl Heap {
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
             if let Some(witness) = value.type_witness() {
-                pending.push(RichValue::unknown(RuntimeValue::DeclaredType(witness)));
+                pending.push(Val::unknown(DecodedValue::DeclaredType(witness)));
             }
             let handle = match value.value() {
-                RuntimeValue::Failed(_) => continue,
-                RuntimeValue::UpLink(_) => return Ok(true),
-                RuntimeValue::NativeType(_) => continue,
-                RuntimeValue::Bytes(handle)
-                | RuntimeValue::DeclaredType(handle)
-                | RuntimeValue::Opaque(handle)
-                | RuntimeValue::Array(handle)
-                | RuntimeValue::Tuple(handle)
-                | RuntimeValue::Tagged(handle)
-                | RuntimeValue::Dict(handle)
-                | RuntimeValue::Func(handle)
-                | RuntimeValue::Dyn(handle) => handle,
-                RuntimeValue::Int(_)
-                | RuntimeValue::Float(_)
-                | RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_)
-                | RuntimeValue::InlineString(_)
-                | RuntimeValue::ShortString(_) => continue,
+                DecodedValue::Failed(_) => continue,
+                DecodedValue::UpLink(_) => return Ok(true),
+                DecodedValue::NativeType(_) => continue,
+                DecodedValue::Bytes(handle)
+                | DecodedValue::DeclaredType(handle)
+                | DecodedValue::Opaque(handle)
+                | DecodedValue::Array(handle)
+                | DecodedValue::Tuple(handle)
+                | DecodedValue::Tagged(handle)
+                | DecodedValue::Dict(handle)
+                | DecodedValue::Func(handle)
+                | DecodedValue::Dyn(handle) => handle,
+                DecodedValue::Int(_)
+                | DecodedValue::Float(_)
+                | DecodedValue::BuiltinAtom(_)
+                | DecodedValue::InlineAtom(_)
+                | DecodedValue::Atom(_)
+                | DecodedValue::InlineString(_)
+                | DecodedValue::ShortString(_) => continue,
             };
             if !visited.insert(handle) {
                 continue;
@@ -1105,7 +1105,7 @@ impl Heap {
                 } => {
                     pending.extend(upvalues.iter().copied());
                     if let RuntimePrototype::Bytecode(handle) = prototype {
-                        pending.push(RichValue::unknown(RuntimeValue::Func(*handle)));
+                        pending.push(Val::unknown(DecodedValue::Func(*handle)));
                     }
                 }
                 Object::Dyn {
@@ -1121,7 +1121,7 @@ impl Heap {
                     pending.extend(values.iter().copied());
                     pending.extend(prototypes.iter().filter_map(|prototype| match prototype {
                         RuntimePrototype::Bytecode(handle) => {
-                            Some(RichValue::unknown(RuntimeValue::Func(*handle)))
+                            Some(Val::unknown(DecodedValue::Func(*handle)))
                         }
                         RuntimePrototype::Native(_) => None,
                     }));
@@ -1150,7 +1150,7 @@ impl Heap {
     pub(crate) fn initialize_up_link(
         &mut self,
         handle: Handle,
-        value: RichValue,
+        value: Val,
     ) -> Result<(), HeapError> {
         if handle.storage != Storage::Work {
             return Err(HeapError("Main up-links are read-only"));
@@ -1206,27 +1206,27 @@ impl Heap {
             .ok_or(HeapError("intern ID is out of bounds"))
     }
 
-    pub(crate) fn string(&mut self, background: Option<&Heap>, text: &str) -> RuntimeValue {
+    pub(crate) fn string(&mut self, background: Option<&Heap>, text: &str) -> DecodedValue {
         if let Some(text) = InlineText::new(text) {
-            RuntimeValue::InlineString(text)
+            DecodedValue::InlineString(text)
         } else {
             if let Some(id) = background.and_then(|heap| heap.find_text(text)) {
-                RuntimeValue::ShortString(id)
+                DecodedValue::ShortString(id)
             } else {
-                RuntimeValue::ShortString(self.intern(text))
+                DecodedValue::ShortString(self.intern(text))
             }
         }
     }
 
-    pub(crate) fn atom(&mut self, background: Option<&Heap>, text: &str) -> RuntimeValue {
+    pub(crate) fn atom(&mut self, background: Option<&Heap>, text: &str) -> DecodedValue {
         if let Some(builtin) = builtin_atom(text) {
-            RuntimeValue::BuiltinAtom(builtin)
+            DecodedValue::BuiltinAtom(builtin)
         } else if let Some(text) = InlineText::new(text) {
-            RuntimeValue::InlineAtom(text)
+            DecodedValue::InlineAtom(text)
         } else if let Some(id) = background.and_then(|heap| heap.find_text(text)) {
-            RuntimeValue::Atom(id)
+            DecodedValue::Atom(id)
         } else {
-            RuntimeValue::Atom(self.intern(text))
+            DecodedValue::Atom(self.intern(text))
         }
     }
 
@@ -1260,7 +1260,7 @@ impl Heap {
         &mut self,
         background: Option<&Heap>,
         value: &Value,
-    ) -> Result<RichValue, HeapError> {
+    ) -> Result<Val, HeapError> {
         let mut prototypes = HashMap::new();
         self.import_value_with(background, value, &HashMap::new(), &mut prototypes, None)
     }
@@ -1269,7 +1269,7 @@ impl Heap {
         &mut self,
         background: Option<&Heap>,
         sourced: &SourcedValue,
-    ) -> Result<RichValue, HeapError> {
+    ) -> Result<Val, HeapError> {
         self.import_sourced_at(
             background,
             &sourced.value,
@@ -1284,22 +1284,22 @@ impl Heap {
         value: &Value,
         provenance: &crate::json::Provenance,
         path: &mut ValuePath,
-    ) -> Result<RichValue, HeapError> {
+    ) -> Result<Val, HeapError> {
         let loc = provenance.values.get(path).copied();
         let value = match value {
-            Value::Int(value) => RuntimeValue::Int(*value),
-            Value::Float(value) if value.is_finite() => RuntimeValue::Float(*value),
+            Value::Int(value) => DecodedValue::Int(*value),
+            Value::Float(value) if value.is_finite() => DecodedValue::Float(*value),
             Value::Float(_) => return Err(HeapError("Telora Float must be finite")),
             Value::String(value) => self.string(background, value),
             Value::Bytes(value) => {
-                RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
+                DecodedValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
             }
             Value::NativeType(value) => {
-                RuntimeValue::NativeType(self.intern_native_type(value.clone()))
+                DecodedValue::NativeType(self.intern_native_type(value.clone()))
             }
             Value::DeclaredType(value) => {
                 let body = self.import_sourced_at(background, value.body(), provenance, path)?;
-                RuntimeValue::DeclaredType(self.allocate(Object::DeclaredType {
+                DecodedValue::DeclaredType(self.allocate(Object::DeclaredType {
                     id: value.id().clone(),
                     name: Arc::from(value.name()),
                     body,
@@ -1318,20 +1318,20 @@ impl Heap {
                 return Ok(payload.with_type_witness(owner)?.with_loc(loc));
             }
             Value::Opaque(value) => {
-                RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
+                DecodedValue::Opaque(self.allocate(Object::Opaque(value.clone())))
             }
-            Value::Atom(Atom::Builtin(atom)) => RuntimeValue::BuiltinAtom(*atom),
+            Value::Atom(Atom::Builtin(atom)) => DecodedValue::BuiltinAtom(*atom),
             Value::Atom(Atom::Named(name)) => self.atom(background, name),
             Value::Tagged { tag, payload } => {
                 let tag = match tag {
-                    Atom::Builtin(atom) => RuntimeValue::BuiltinAtom(*atom),
+                    Atom::Builtin(atom) => DecodedValue::BuiltinAtom(*atom),
                     Atom::Named(name) => self.atom(background, name),
                 };
                 path.push(ValuePathSegment::Index(0));
                 let payload = self.import_sourced_at(background, payload, provenance, path)?;
                 path.pop();
-                RuntimeValue::Tagged(self.allocate(Object::Tagged {
-                    tag: RichValue::original(tag, loc),
+                DecodedValue::Tagged(self.allocate(Object::Tagged {
+                    tag: Val::original(tag, loc),
                     payload,
                 }))
             }
@@ -1342,7 +1342,7 @@ impl Heap {
                     imported.push(self.import_sourced_at(background, value, provenance, path)?);
                     path.pop();
                 }
-                RuntimeValue::Array(self.allocate(Object::Array(imported.into())))
+                DecodedValue::Array(self.allocate(Object::Array(imported.into())))
             }
             Value::Tuple(values) => {
                 let mut imported = Vec::with_capacity(values.len());
@@ -1351,7 +1351,7 @@ impl Heap {
                     imported.push(self.import_sourced_at(background, value, provenance, path)?);
                     path.pop();
                 }
-                RuntimeValue::Tuple(self.allocate(Object::Tuple(imported.into())))
+                DecodedValue::Tuple(self.allocate(Object::Tuple(imported.into())))
             }
             Value::Dict(dict) => {
                 let mut fields = Vec::with_capacity(dict.values().len());
@@ -1367,7 +1367,7 @@ impl Heap {
                     path.pop();
                 }
                 let shape = self.intern_shape(fields);
-                RuntimeValue::Dict(self.allocate(Object::Dict {
+                DecodedValue::Dict(self.allocate(Object::Dict {
                     shape,
                     values: values.into(),
                 }))
@@ -1379,7 +1379,7 @@ impl Heap {
                 return Err(HeapError("sourced data cannot contain Dyn"));
             }
         };
-        Ok(RichValue::original(value, loc))
+        Ok(Val::original(value, loc))
     }
 
     fn import_value_with(
@@ -1389,18 +1389,18 @@ impl Heap {
         externals: &HashMap<String, PersistentValue>,
         prototypes: &mut HashMap<*const BytecodeFunction, Handle>,
         location: Option<crate::Loc>,
-    ) -> Result<RichValue, HeapError> {
-        Ok(RichValue::new(
+    ) -> Result<Val, HeapError> {
+        Ok(Val::new(
             match value {
-                Value::Int(value) => RuntimeValue::Int(*value),
-                Value::Float(value) if value.is_finite() => RuntimeValue::Float(*value),
+                Value::Int(value) => DecodedValue::Int(*value),
+                Value::Float(value) if value.is_finite() => DecodedValue::Float(*value),
                 Value::Float(_) => return Err(HeapError("Telora Float must be finite")),
                 Value::String(value) => self.string(background, value),
                 Value::Bytes(value) => {
-                    RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
+                    DecodedValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
                 }
                 Value::NativeType(value) => {
-                    RuntimeValue::NativeType(self.intern_native_type(value.clone()))
+                    DecodedValue::NativeType(self.intern_native_type(value.clone()))
                 }
                 Value::DeclaredType(value) => {
                     let body = self.import_value_with(
@@ -1410,7 +1410,7 @@ impl Heap {
                         prototypes,
                         location,
                     )?;
-                    RuntimeValue::DeclaredType(self.allocate(Object::DeclaredType {
+                    DecodedValue::DeclaredType(self.allocate(Object::DeclaredType {
                         id: value.id().clone(),
                         name: Arc::from(value.name()),
                         body,
@@ -1435,19 +1435,19 @@ impl Heap {
                     return payload.with_type_witness(owner);
                 }
                 Value::Opaque(value) => {
-                    RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
+                    DecodedValue::Opaque(self.allocate(Object::Opaque(value.clone())))
                 }
-                Value::Atom(Atom::Builtin(atom)) => RuntimeValue::BuiltinAtom(*atom),
+                Value::Atom(Atom::Builtin(atom)) => DecodedValue::BuiltinAtom(*atom),
                 Value::Atom(Atom::Named(name)) => self.atom(background, name),
                 Value::Tagged { tag, payload } => {
                     let tag = match tag {
-                        Atom::Builtin(atom) => RuntimeValue::BuiltinAtom(*atom),
+                        Atom::Builtin(atom) => DecodedValue::BuiltinAtom(*atom),
                         Atom::Named(name) => self.atom(background, name),
                     };
                     let payload = self
                         .import_value_with(background, payload, externals, prototypes, location)?;
-                    RuntimeValue::Tagged(self.allocate(Object::Tagged {
-                        tag: RichValue::new(tag, location),
+                    DecodedValue::Tagged(self.allocate(Object::Tagged {
+                        tag: Val::new(tag, location),
                         payload,
                     }))
                 }
@@ -1460,7 +1460,7 @@ impl Heap {
                             )
                         })
                         .collect::<Result<Box<[_]>, _>>()?;
-                    RuntimeValue::Array(self.allocate(Object::Array(values)))
+                    DecodedValue::Array(self.allocate(Object::Array(values)))
                 }
                 Value::Tuple(values) => {
                     let values = values
@@ -1471,7 +1471,7 @@ impl Heap {
                             )
                         })
                         .collect::<Result<Box<[_]>, _>>()?;
-                    RuntimeValue::Tuple(self.allocate(Object::Tuple(values)))
+                    DecodedValue::Tuple(self.allocate(Object::Tuple(values)))
                 }
                 Value::Dict(dict) => {
                     let fields = dict
@@ -1494,7 +1494,7 @@ impl Heap {
                             )
                         })
                         .collect::<Result<Box<[_]>, _>>()?;
-                    RuntimeValue::Dict(self.allocate(Object::Dict { shape, values }))
+                    DecodedValue::Dict(self.allocate(Object::Dict { shape, values }))
                 }
                 Value::Func(closure) => {
                     let prototype = match closure.prototype() {
@@ -1512,7 +1512,7 @@ impl Heap {
                             )
                         })
                         .collect::<Result<Box<[_]>, _>>()?;
-                    RuntimeValue::Func(self.allocate(Object::Closure {
+                    DecodedValue::Func(self.allocate(Object::Closure {
                         identity: Arc::clone(closure.identity()),
                         prototype,
                         upvalues,
@@ -1533,7 +1533,7 @@ impl Heap {
                         prototypes,
                         location,
                     )?;
-                    RuntimeValue::Dyn(self.allocate(Object::Dyn {
+                    DecodedValue::Dyn(self.allocate(Object::Dyn {
                         identity: Arc::clone(dyn_value.identity()),
                         descriptor,
                         value,
@@ -1624,7 +1624,7 @@ pub(crate) struct HeapView<'a> {
 
 type BytecodeLinks<'a> = (
     &'a Arc<FuncByteCode>,
-    &'a [RichValue],
+    &'a [Val],
     &'a [InternId],
     &'a [RuntimePrototype],
 );
@@ -1646,7 +1646,7 @@ impl<'a> HeapView<'a> {
         self.heap(handle.storage)?.object(handle)
     }
 
-    pub(crate) fn unwrap_declared(&self, mut value: RichValue) -> Result<RichValue, HeapError> {
+    pub(crate) fn unwrap_declared(&self, mut value: Val) -> Result<Val, HeapError> {
         if let Some(handle) = value.type_witness() {
             if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
                 return Err(HeapError("type witness refers to another object kind"));
@@ -1656,14 +1656,14 @@ impl<'a> HeapView<'a> {
         Ok(value)
     }
 
-    pub(crate) fn type_witness(&self, value: RichValue) -> Result<Option<RichValue>, HeapError> {
+    pub(crate) fn type_witness(&self, value: Val) -> Result<Option<Val>, HeapError> {
         let Some(handle) = value.type_witness() else {
             return Ok(None);
         };
         if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
             return Err(HeapError("type witness refers to another object kind"));
         }
-        Ok(Some(RichValue::unknown(RuntimeValue::DeclaredType(handle))))
+        Ok(Some(Val::unknown(DecodedValue::DeclaredType(handle))))
     }
 
     pub(crate) fn text(&self, id: InternId) -> Result<&'a str, HeapError> {
@@ -1701,7 +1701,7 @@ impl<'a> HeapView<'a> {
     pub(crate) fn closure(
         &self,
         handle: Handle,
-    ) -> Result<(RuntimePrototype, &'a [RichValue]), HeapError> {
+    ) -> Result<(RuntimePrototype, &'a [Val]), HeapError> {
         let Object::Closure {
             prototype,
             upvalues,
@@ -1726,17 +1726,14 @@ impl<'a> HeapView<'a> {
         }
     }
 
-    pub(crate) fn up_link(&self, handle: Handle) -> Result<Option<RichValue>, HeapError> {
+    pub(crate) fn up_link(&self, handle: Handle) -> Result<Option<Val>, HeapError> {
         let Object::UpLink { value } = self.object(handle)? else {
             return Err(HeapError("handle is not an up-link"));
         };
         Ok(*value)
     }
 
-    pub(crate) fn dyn_parts(
-        &self,
-        handle: Handle,
-    ) -> Result<(&'a Arc<()>, RichValue, RichValue), HeapError> {
+    pub(crate) fn dyn_parts(&self, handle: Handle) -> Result<(&'a Arc<()>, Val, Val), HeapError> {
         let Object::Dyn {
             identity,
             descriptor,
@@ -1749,11 +1746,7 @@ impl<'a> HeapView<'a> {
         Ok((identity, *descriptor, *value))
     }
 
-    pub(crate) fn sequence(
-        &self,
-        handle: Handle,
-        tuple: bool,
-    ) -> Result<&'a [RichValue], HeapError> {
+    pub(crate) fn sequence(&self, handle: Handle, tuple: bool) -> Result<&'a [Val], HeapError> {
         match self.object(handle)? {
             Object::Array(values) if !tuple => Ok(values),
             Object::Tuple(values) if tuple => Ok(values),
@@ -1761,7 +1754,7 @@ impl<'a> HeapView<'a> {
         }
     }
 
-    pub(crate) fn tagged(&self, handle: Handle) -> Result<(RichValue, RichValue), HeapError> {
+    pub(crate) fn tagged(&self, handle: Handle) -> Result<(Val, Val), HeapError> {
         let Object::Tagged { tag, payload } = self.object(handle)? else {
             return Err(HeapError("handle is not a Tagged value"));
         };
@@ -1772,7 +1765,7 @@ impl<'a> HeapView<'a> {
         &self,
         handle: Handle,
         field: InternId,
-    ) -> Result<Option<RichValue>, HeapError> {
+    ) -> Result<Option<Val>, HeapError> {
         let Object::Dict { shape, values } = self.object(handle)? else {
             return Err(HeapError("handle is not a Dict"));
         };
@@ -1803,7 +1796,7 @@ impl<'a> HeapView<'a> {
     pub(crate) fn dict_parts(
         &self,
         handle: Handle,
-    ) -> Result<(&'a [InternId], &'a [RichValue]), HeapError> {
+    ) -> Result<(&'a [InternId], &'a [Val]), HeapError> {
         let Object::Dict { shape, values } = self.object(handle)? else {
             return Err(HeapError("handle is not a Dict"));
         };
@@ -1814,7 +1807,7 @@ impl<'a> HeapView<'a> {
         &self,
         handle: Handle,
         field: &str,
-    ) -> Result<Option<RichValue>, HeapError> {
+    ) -> Result<Option<Val>, HeapError> {
         let Object::Dict { shape, values } = self.object(handle)? else {
             return Err(HeapError("handle is not a Dict"));
         };
@@ -1825,28 +1818,24 @@ impl<'a> HeapView<'a> {
         Ok(index.and_then(|index| values.get(index).copied()))
     }
 
-    pub(crate) fn string_text(&self, value: RichValue) -> Result<Option<TextRef<'a>>, HeapError> {
+    pub(crate) fn string_text(&self, value: Val) -> Result<Option<TextRef<'a>>, HeapError> {
         match value.value() {
-            RuntimeValue::InlineString(text) => Ok(Some(TextRef::inline(text))),
-            RuntimeValue::ShortString(id) => Ok(Some(TextRef::borrowed(self.text(id)?))),
+            DecodedValue::InlineString(text) => Ok(Some(TextRef::inline(text))),
+            DecodedValue::ShortString(id) => Ok(Some(TextRef::borrowed(self.text(id)?))),
             _ => Ok(None),
         }
     }
 
-    pub(crate) fn atom_text(&self, value: RichValue) -> Result<Option<TextRef<'a>>, HeapError> {
+    pub(crate) fn atom_text(&self, value: Val) -> Result<Option<TextRef<'a>>, HeapError> {
         match value.value() {
-            RuntimeValue::BuiltinAtom(atom) => Ok(Some(TextRef::borrowed(atom.name()))),
-            RuntimeValue::InlineAtom(text) => Ok(Some(TextRef::inline(text))),
-            RuntimeValue::Atom(id) => Ok(Some(TextRef::borrowed(self.text(id)?))),
+            DecodedValue::BuiltinAtom(atom) => Ok(Some(TextRef::borrowed(atom.name()))),
+            DecodedValue::InlineAtom(text) => Ok(Some(TextRef::inline(text))),
+            DecodedValue::Atom(id) => Ok(Some(TextRef::borrowed(self.text(id)?))),
             _ => Ok(None),
         }
     }
 
-    pub(crate) fn values_equal(
-        &self,
-        left: RichValue,
-        right: RichValue,
-    ) -> Result<bool, HeapError> {
+    pub(crate) fn values_equal(&self, left: Val, right: Val) -> Result<bool, HeapError> {
         self.values_equal_with(left, right, &mut HashSet::new())
     }
 
@@ -1854,30 +1843,30 @@ impl<'a> HeapView<'a> {
     ///
     /// Closures and opaque/native values are intentionally atomic here: an
     /// operation only depends on their identity, not on captured internals.
-    pub(crate) fn first_data_failure(&self, root: RichValue) -> Result<Option<u32>, HeapError> {
+    pub(crate) fn first_data_failure(&self, root: Val) -> Result<Option<u32>, HeapError> {
         let mut pending = vec![root];
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
             let handle = match value.value() {
-                RuntimeValue::Failed(failure) => return Ok(Some(failure)),
-                RuntimeValue::Array(handle)
-                | RuntimeValue::Tuple(handle)
-                | RuntimeValue::Tagged(handle)
-                | RuntimeValue::Dict(handle)
-                | RuntimeValue::Dyn(handle) => handle,
-                RuntimeValue::Int(_)
-                | RuntimeValue::Float(_)
-                | RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_)
-                | RuntimeValue::InlineString(_)
-                | RuntimeValue::ShortString(_)
-                | RuntimeValue::Bytes(_)
-                | RuntimeValue::Opaque(_)
-                | RuntimeValue::NativeType(_)
-                | RuntimeValue::DeclaredType(_)
-                | RuntimeValue::Func(_)
-                | RuntimeValue::UpLink(_) => continue,
+                DecodedValue::Failed(failure) => return Ok(Some(failure)),
+                DecodedValue::Array(handle)
+                | DecodedValue::Tuple(handle)
+                | DecodedValue::Tagged(handle)
+                | DecodedValue::Dict(handle)
+                | DecodedValue::Dyn(handle) => handle,
+                DecodedValue::Int(_)
+                | DecodedValue::Float(_)
+                | DecodedValue::BuiltinAtom(_)
+                | DecodedValue::InlineAtom(_)
+                | DecodedValue::Atom(_)
+                | DecodedValue::InlineString(_)
+                | DecodedValue::ShortString(_)
+                | DecodedValue::Bytes(_)
+                | DecodedValue::Opaque(_)
+                | DecodedValue::NativeType(_)
+                | DecodedValue::DeclaredType(_)
+                | DecodedValue::Func(_)
+                | DecodedValue::UpLink(_) => continue,
             };
             if !visited.insert(handle) {
                 continue;
@@ -1913,8 +1902,8 @@ impl<'a> HeapView<'a> {
 
     fn values_equal_with(
         &self,
-        left: RichValue,
-        right: RichValue,
+        left: Val,
+        right: Val,
         visited: &mut HashSet<(Handle, Handle)>,
     ) -> Result<bool, HeapError> {
         match (left.type_witness(), right.type_witness()) {
@@ -1939,9 +1928,9 @@ impl<'a> HeapView<'a> {
                 .value();
                 if !matches!(
                     raw,
-                    RuntimeValue::BuiltinAtom(_)
-                        | RuntimeValue::InlineAtom(_)
-                        | RuntimeValue::Atom(_)
+                    DecodedValue::BuiltinAtom(_)
+                        | DecodedValue::InlineAtom(_)
+                        | DecodedValue::Atom(_)
                 ) {
                     return Ok(false);
                 }
@@ -1951,7 +1940,7 @@ impl<'a> HeapView<'a> {
         let left = left.without_type_witness();
         let right = right.without_type_witness();
         match (left.value(), right.value()) {
-            (RuntimeValue::Func(left), RuntimeValue::Func(right)) => {
+            (DecodedValue::Func(left), DecodedValue::Func(right)) => {
                 let Object::Closure { identity: left, .. } = self.object(left)? else {
                     return Err(HeapError("Func handle refers to another object kind"));
                 };
@@ -1963,29 +1952,29 @@ impl<'a> HeapView<'a> {
                 };
                 Ok(Arc::ptr_eq(left, right))
             }
-            (RuntimeValue::Dyn(left), RuntimeValue::Dyn(right)) => {
+            (DecodedValue::Dyn(left), DecodedValue::Dyn(right)) => {
                 let (left, _, _) = self.dyn_parts(left)?;
                 let (right, _, _) = self.dyn_parts(right)?;
                 Ok(Arc::ptr_eq(left, right))
             }
-            (RuntimeValue::UpLink(_), _) | (_, RuntimeValue::UpLink(_)) => {
+            (DecodedValue::UpLink(_), _) | (_, DecodedValue::UpLink(_)) => {
                 Err(HeapError("up-link escaped into equality"))
             }
-            (RuntimeValue::Int(left), RuntimeValue::Int(right)) => Ok(left == right),
-            (RuntimeValue::Float(left), RuntimeValue::Float(right)) => Ok(left == right),
+            (DecodedValue::Int(left), DecodedValue::Int(right)) => Ok(left == right),
+            (DecodedValue::Float(left), DecodedValue::Float(right)) => Ok(left == right),
             (
-                left @ (RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_)),
-                right @ (RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_)),
+                left @ (DecodedValue::BuiltinAtom(_)
+                | DecodedValue::InlineAtom(_)
+                | DecodedValue::Atom(_)),
+                right @ (DecodedValue::BuiltinAtom(_)
+                | DecodedValue::InlineAtom(_)
+                | DecodedValue::Atom(_)),
             ) => Ok(self.atom_text(left.into())? == self.atom_text(right.into())?),
             (
-                left @ (RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_)),
-                right @ (RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_)),
+                left @ (DecodedValue::InlineString(_) | DecodedValue::ShortString(_)),
+                right @ (DecodedValue::InlineString(_) | DecodedValue::ShortString(_)),
             ) => Ok(self.string_text(left.into())? == self.string_text(right.into())?),
-            (RuntimeValue::Bytes(left), RuntimeValue::Bytes(right)) => {
+            (DecodedValue::Bytes(left), DecodedValue::Bytes(right)) => {
                 if left == right {
                     return Ok(true);
                 }
@@ -1997,7 +1986,7 @@ impl<'a> HeapView<'a> {
                 };
                 Ok(left == right)
             }
-            (RuntimeValue::Opaque(left), RuntimeValue::Opaque(right)) => {
+            (DecodedValue::Opaque(left), DecodedValue::Opaque(right)) => {
                 if left == right {
                     return Ok(true);
                 }
@@ -2009,8 +1998,8 @@ impl<'a> HeapView<'a> {
                 };
                 Ok(left.logical_eq(right))
             }
-            (RuntimeValue::NativeType(left), RuntimeValue::NativeType(right)) => Ok(left == right),
-            (RuntimeValue::DeclaredType(left), RuntimeValue::DeclaredType(right)) => {
+            (DecodedValue::NativeType(left), DecodedValue::NativeType(right)) => Ok(left == right),
+            (DecodedValue::DeclaredType(left), DecodedValue::DeclaredType(right)) => {
                 let Object::DeclaredType { id: left, .. } = self.object(left)? else {
                     return Err(HeapError(
                         "DeclaredType handle refers to another object kind",
@@ -2023,11 +2012,11 @@ impl<'a> HeapView<'a> {
                 };
                 Ok(left == right)
             }
-            (RuntimeValue::Array(left), RuntimeValue::Array(right))
-            | (RuntimeValue::Tuple(left), RuntimeValue::Tuple(right)) => {
+            (DecodedValue::Array(left), DecodedValue::Array(right))
+            | (DecodedValue::Tuple(left), DecodedValue::Tuple(right)) => {
                 self.sequence_handles_equal(left, right, visited)
             }
-            (RuntimeValue::Tagged(left), RuntimeValue::Tagged(right)) => {
+            (DecodedValue::Tagged(left), DecodedValue::Tagged(right)) => {
                 if left == right || !visited.insert((left, right)) {
                     return Ok(true);
                 }
@@ -2036,7 +2025,7 @@ impl<'a> HeapView<'a> {
                 Ok(self.values_equal_with(left_tag, right_tag, visited)?
                     && self.values_equal_with(left_payload, right_payload, visited)?)
             }
-            (RuntimeValue::Dict(left), RuntimeValue::Dict(right)) => {
+            (DecodedValue::Dict(left), DecodedValue::Dict(right)) => {
                 self.dict_handles_equal(left, right, visited)
             }
             _ => Ok(false),
@@ -2107,8 +2096,8 @@ impl<'a> HeapView<'a> {
 
     fn value_slices_equal(
         &self,
-        left: &[RichValue],
-        right: &[RichValue],
+        left: &[Val],
+        right: &[Val],
         visited: &mut HashSet<(Handle, Handle)>,
     ) -> Result<bool, HeapError> {
         if left.len() != right.len() {
@@ -2122,17 +2111,17 @@ impl<'a> HeapView<'a> {
         Ok(true)
     }
 
-    pub(crate) fn export_value(&self, value: RichValue) -> Result<Value, HeapError> {
+    pub(crate) fn export_value(&self, value: Val) -> Result<Value, HeapError> {
         self.export_value_with(value, &mut HashSet::new(), &mut HashMap::new(), None, false)
     }
 
-    pub(crate) fn export_type_identity(&self, value: RichValue) -> Result<Value, HeapError> {
+    pub(crate) fn export_type_identity(&self, value: Val) -> Result<Value, HeapError> {
         self.export_value_with(value, &mut HashSet::new(), &mut HashMap::new(), None, true)
     }
 
     fn export_value_projecting_up_links(
         &self,
-        value: RichValue,
+        value: Val,
         projection: &Value,
     ) -> Result<Value, HeapError> {
         self.export_value_with(
@@ -2146,7 +2135,7 @@ impl<'a> HeapView<'a> {
 
     fn export_value_with(
         &self,
-        value: RichValue,
+        value: Val,
         visiting: &mut HashSet<Handle>,
         completed: &mut HashMap<Handle, Value>,
         up_link_projection: Option<&Value>,
@@ -2178,20 +2167,20 @@ impl<'a> HeapView<'a> {
             return Ok(value.clone());
         }
         let exported = match runtime {
-            RuntimeValue::Failed(_) => {
+            DecodedValue::Failed(_) => {
                 return Err(HeapError(
                     "failed evaluation node cannot cross a value boundary",
                 ));
             }
-            RuntimeValue::Int(value) => Value::Int(value),
-            RuntimeValue::Float(value) if value.is_finite() => Value::Float(value),
-            RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
-            RuntimeValue::BuiltinAtom(atom) => Value::Atom(Atom::builtin(atom)),
-            RuntimeValue::InlineAtom(text) => Value::atom(text.as_str()),
-            RuntimeValue::Atom(id) => Value::atom(self.text(id)?),
-            RuntimeValue::InlineString(text) => Value::string(text.as_str()),
-            RuntimeValue::ShortString(id) => Value::string(self.text(id)?),
-            RuntimeValue::Bytes(handle) => {
+            DecodedValue::Int(value) => Value::Int(value),
+            DecodedValue::Float(value) if value.is_finite() => Value::Float(value),
+            DecodedValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
+            DecodedValue::BuiltinAtom(atom) => Value::Atom(Atom::builtin(atom)),
+            DecodedValue::InlineAtom(text) => Value::atom(text.as_str()),
+            DecodedValue::Atom(id) => Value::atom(self.text(id)?),
+            DecodedValue::InlineString(text) => Value::string(text.as_str()),
+            DecodedValue::ShortString(id) => Value::string(self.text(id)?),
+            DecodedValue::Bytes(handle) => {
                 let Object::Bytes(value) = self.enter_object(handle, visiting)? else {
                     return Err(HeapError("Bytes handle refers to another object kind"));
                 };
@@ -2199,7 +2188,7 @@ impl<'a> HeapView<'a> {
                 visiting.remove(&handle);
                 value
             }
-            RuntimeValue::Opaque(handle) => {
+            DecodedValue::Opaque(handle) => {
                 let Object::Opaque(value) = self.enter_object(handle, visiting)? else {
                     return Err(HeapError("Opaque handle refers to another object kind"));
                 };
@@ -2207,8 +2196,8 @@ impl<'a> HeapView<'a> {
                 visiting.remove(&handle);
                 value
             }
-            RuntimeValue::NativeType(id) => Value::NativeType(self.native_type(id)?.clone()),
-            RuntimeValue::DeclaredType(handle) => {
+            DecodedValue::NativeType(id) => Value::NativeType(self.native_type(id)?.clone()),
+            DecodedValue::DeclaredType(handle) => {
                 if shallow_declared_types {
                     let Object::DeclaredType { id, name, .. } = self.object(handle)? else {
                         return Err(HeapError(
@@ -2245,8 +2234,8 @@ impl<'a> HeapView<'a> {
                 visiting.remove(&handle);
                 value
             }
-            RuntimeValue::Array(handle) | RuntimeValue::Tuple(handle) => {
-                let tuple = matches!(runtime, RuntimeValue::Tuple(_));
+            DecodedValue::Array(handle) | DecodedValue::Tuple(handle) => {
+                let tuple = matches!(runtime, DecodedValue::Tuple(_));
                 let object = self.enter_object(handle, visiting)?;
                 let values = match object {
                     Object::Array(values) if !tuple => values,
@@ -2272,7 +2261,7 @@ impl<'a> HeapView<'a> {
                     Value::Array(values.into())
                 }
             }
-            RuntimeValue::Tagged(handle) => {
+            DecodedValue::Tagged(handle) => {
                 let Object::Tagged { tag, payload } = self.enter_object(handle, visiting)? else {
                     return Err(HeapError("Tagged handle refers to another object kind"));
                 };
@@ -2296,7 +2285,7 @@ impl<'a> HeapView<'a> {
                 visiting.remove(&handle);
                 Value::tagged(tag, payload)
             }
-            RuntimeValue::Dict(handle) => {
+            DecodedValue::Dict(handle) => {
                 let Object::Dict { shape, values } = self.enter_object(handle, visiting)? else {
                     return Err(HeapError("Dict handle refers to another object kind"));
                 };
@@ -2332,7 +2321,7 @@ impl<'a> HeapView<'a> {
                 };
                 Value::Dict(Dict::new(shape, values))
             }
-            RuntimeValue::Func(handle) => {
+            DecodedValue::Func(handle) => {
                 let Object::Closure {
                     identity,
                     prototype,
@@ -2367,7 +2356,7 @@ impl<'a> HeapView<'a> {
                     upvalues,
                 )))
             }
-            RuntimeValue::Dyn(handle) => {
+            DecodedValue::Dyn(handle) => {
                 let Object::Dyn {
                     identity,
                     descriptor,
@@ -2401,7 +2390,7 @@ impl<'a> HeapView<'a> {
                     origin.clone(),
                 )))
             }
-            RuntimeValue::UpLink(handle) => {
+            DecodedValue::UpLink(handle) => {
                 let linked = self
                     .up_link(handle)?
                     .ok_or(HeapError("up-link is uninitialized"))?;
@@ -2432,16 +2421,16 @@ impl<'a> HeapView<'a> {
         Ok(exported)
     }
 
-    fn is_type_metadata_root(&self, value: RuntimeValue) -> Result<bool, HeapError> {
-        let RuntimeValue::Dict(handle) = value else {
+    fn is_type_metadata_root(&self, value: DecodedValue) -> Result<bool, HeapError> {
+        let DecodedValue::Dict(handle) = value else {
             return Ok(false);
         };
         let Some(kind) = self.dict_get_text(handle, "kind")? else {
             return Ok(false);
         };
         let kind = match kind.value() {
-            RuntimeValue::BuiltinAtom(atom) => atom.name(),
-            RuntimeValue::Atom(id) => self.text(id)?,
+            DecodedValue::BuiltinAtom(atom) => atom.name(),
+            DecodedValue::Atom(id) => self.text(id)?,
             _ => return Ok(false),
         };
         Ok(matches!(
@@ -2550,8 +2539,8 @@ impl<'a> HeapView<'a> {
 fn copy_roots(
     target: &mut Heap,
     source: HeapView<'_>,
-    roots: &[RichValue],
-) -> Result<Vec<RichValue>, HeapError> {
+    roots: &[Val],
+) -> Result<Vec<Val>, HeapError> {
     let mut pending = PendingCopy::new(target, &source);
     let roots = roots
         .iter()
@@ -2565,10 +2554,10 @@ fn copy_roots(
 pub(crate) fn instantiate_type_family(
     target: &mut Heap,
     background: Option<&Heap>,
-    template: RichValue,
-    arguments: &[RichValue],
+    template: Val,
+    arguments: &[Val],
     argument_descriptors: &[crate::types::TypeDescriptor],
-) -> Result<(RichValue, usize), HeapError> {
+) -> Result<(Val, usize), HeapError> {
     let (root, pending) = {
         let source = HeapView {
             current: target,
@@ -2594,9 +2583,9 @@ pub(crate) fn instantiate_type_family(
 
 fn bound_type_replacements(
     source: &HeapView<'_>,
-    root: RichValue,
-    arguments: &[RichValue],
-) -> Result<(HashMap<Handle, RichValue>, HashSet<Handle>), HeapError> {
+    root: Val,
+    arguments: &[Val],
+) -> Result<(HashMap<Handle, Val>, HashSet<Handle>), HeapError> {
     let mut replacements = HashMap::new();
     let mut pending = vec![root];
     let mut visited = HashSet::new();
@@ -2618,7 +2607,7 @@ fn bound_type_replacements(
                 match source.text(*field)? {
                     "kind" => kind = source.atom_text(*value)?,
                     "parameter" => {
-                        if let RuntimeValue::Int(index) = value.value() {
+                        if let DecodedValue::Int(index) = value.value() {
                             parameter = usize::try_from(index).ok();
                         }
                     }
@@ -2669,27 +2658,27 @@ fn bound_type_replacements(
     Ok((replacements, forced_objects))
 }
 
-fn runtime_object_handle(value: RuntimeValue) -> Option<Handle> {
+fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
     match value {
-        RuntimeValue::NativeType(_) => None,
-        RuntimeValue::Bytes(handle)
-        | RuntimeValue::DeclaredType(handle)
-        | RuntimeValue::Opaque(handle)
-        | RuntimeValue::Array(handle)
-        | RuntimeValue::Tuple(handle)
-        | RuntimeValue::Tagged(handle)
-        | RuntimeValue::Dict(handle)
-        | RuntimeValue::Func(handle)
-        | RuntimeValue::Dyn(handle)
-        | RuntimeValue::UpLink(handle) => Some(handle),
-        RuntimeValue::Failed(_)
-        | RuntimeValue::Int(_)
-        | RuntimeValue::Float(_)
-        | RuntimeValue::BuiltinAtom(_)
-        | RuntimeValue::InlineAtom(_)
-        | RuntimeValue::Atom(_)
-        | RuntimeValue::InlineString(_)
-        | RuntimeValue::ShortString(_) => None,
+        DecodedValue::NativeType(_) => None,
+        DecodedValue::Bytes(handle)
+        | DecodedValue::DeclaredType(handle)
+        | DecodedValue::Opaque(handle)
+        | DecodedValue::Array(handle)
+        | DecodedValue::Tuple(handle)
+        | DecodedValue::Tagged(handle)
+        | DecodedValue::Dict(handle)
+        | DecodedValue::Func(handle)
+        | DecodedValue::Dyn(handle)
+        | DecodedValue::UpLink(handle) => Some(handle),
+        DecodedValue::Failed(_)
+        | DecodedValue::Int(_)
+        | DecodedValue::Float(_)
+        | DecodedValue::BuiltinAtom(_)
+        | DecodedValue::InlineAtom(_)
+        | DecodedValue::Atom(_)
+        | DecodedValue::InlineString(_)
+        | DecodedValue::ShortString(_) => None,
     }
 }
 
@@ -2697,8 +2686,8 @@ pub(crate) fn relocate_work_roots(
     target: &mut Heap,
     main: &Heap,
     source: &Heap,
-    roots: &[RichValue],
-) -> Result<Vec<RichValue>, HeapError> {
+    roots: &[Val],
+) -> Result<Vec<Val>, HeapError> {
     if target.storage != Storage::Work
         || source.storage != Storage::Work
         || main.storage != Storage::Main
@@ -2720,7 +2709,7 @@ pub(crate) fn relocate_work_roots(
 pub(crate) fn publish_root(
     target: &mut Heap,
     current: &Heap,
-    root: RichValue,
+    root: Val,
 ) -> Result<PersistentValue, HeapError> {
     if target.storage != Storage::Main || current.storage != Storage::Work {
         return Err(HeapError(
@@ -2757,13 +2746,13 @@ struct PendingCopy {
     text: TextTable,
     shape_base: u32,
     shapes: Vec<Box<[InternId]>>,
-    objects_forwarded: HashMap<Handle, Handle>,
+    objects_forwarded: HashMap<u32, u32>,
     text_forwarded: HashMap<InternId, InternId>,
     shapes_forwarded: HashMap<ShapeId, ShapeId>,
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
-    value_replacements: HashMap<Handle, RichValue>,
+    value_replacements: HashMap<Handle, Val>,
     forced_objects: HashSet<Handle>,
-    type_argument_values: Option<Arc<[RichValue]>>,
+    type_argument_values: Option<Arc<[Val]>>,
     type_arguments: Option<Arc<[crate::types::TypeDescriptor]>>,
 }
 
@@ -2793,9 +2782,9 @@ impl PendingCopy {
     fn new_type_application(
         target: &Heap,
         source: &HeapView<'_>,
-        value_replacements: HashMap<Handle, RichValue>,
+        value_replacements: HashMap<Handle, Val>,
         forced_objects: HashSet<Handle>,
-        type_argument_values: &[RichValue],
+        type_argument_values: &[Val],
         type_arguments: &[crate::types::TypeDescriptor],
     ) -> Self {
         Self {
@@ -2811,8 +2800,8 @@ impl PendingCopy {
         &mut self,
         target: &Heap,
         source: &HeapView<'_>,
-        value: RichValue,
-    ) -> Result<RichValue, HeapError> {
+        value: Val,
+    ) -> Result<Val, HeapError> {
         if let Some(handle) = runtime_object_handle(value.value())
             && let Some(replacement) = self.value_replacements.get(&handle)
         {
@@ -2823,62 +2812,61 @@ impl PendingCopy {
             });
         }
         let copied = match value.value() {
-            RuntimeValue::Failed(id) if self.target_storage == Storage::Work => {
-                RuntimeValue::Failed(id)
+            DecodedValue::Failed(id) if self.target_storage == Storage::Work => {
+                DecodedValue::Failed(id)
             }
-            RuntimeValue::Failed(_) => {
+            DecodedValue::Failed(_) => {
                 return Err(HeapError("failed evaluation node cannot enter Main world"));
             }
-            RuntimeValue::Int(_)
-            | RuntimeValue::BuiltinAtom(_)
-            | RuntimeValue::InlineAtom(_)
-            | RuntimeValue::InlineString(_) => value.value(),
-            RuntimeValue::Float(float) if float.is_finite() => value.value(),
-            RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
-            RuntimeValue::Atom(id) => RuntimeValue::Atom(self.copy_text(target, source, id)?),
-            RuntimeValue::ShortString(id) => {
-                RuntimeValue::ShortString(self.copy_text(target, source, id)?)
+            DecodedValue::Int(_)
+            | DecodedValue::BuiltinAtom(_)
+            | DecodedValue::InlineAtom(_)
+            | DecodedValue::InlineString(_) => value.value(),
+            DecodedValue::Float(float) if float.is_finite() => value.value(),
+            DecodedValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
+            DecodedValue::Atom(id) => DecodedValue::Atom(self.copy_text(target, source, id)?),
+            DecodedValue::ShortString(id) => {
+                DecodedValue::ShortString(self.copy_text(target, source, id)?)
             }
-            RuntimeValue::Bytes(handle) => {
-                RuntimeValue::Bytes(self.copy_object(target, source, handle)?)
+            DecodedValue::Bytes(handle) => {
+                DecodedValue::Bytes(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Opaque(handle) => {
-                RuntimeValue::Opaque(self.copy_object(target, source, handle)?)
+            DecodedValue::Opaque(handle) => {
+                DecodedValue::Opaque(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::NativeType(id) => {
+            DecodedValue::NativeType(id) => {
                 self.copy_native_type(target, source, id)?;
-                RuntimeValue::NativeType(id)
+                DecodedValue::NativeType(id)
             }
-            RuntimeValue::DeclaredType(handle) => {
-                RuntimeValue::DeclaredType(self.copy_object(target, source, handle)?)
+            DecodedValue::DeclaredType(handle) => {
+                DecodedValue::DeclaredType(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Array(handle) => {
-                RuntimeValue::Array(self.copy_object(target, source, handle)?)
+            DecodedValue::Array(handle) => {
+                DecodedValue::Array(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Tuple(handle) => {
-                RuntimeValue::Tuple(self.copy_object(target, source, handle)?)
+            DecodedValue::Tuple(handle) => {
+                DecodedValue::Tuple(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Tagged(handle) => {
-                RuntimeValue::Tagged(self.copy_object(target, source, handle)?)
+            DecodedValue::Tagged(handle) => {
+                DecodedValue::Tagged(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Dict(handle) => {
-                RuntimeValue::Dict(self.copy_object(target, source, handle)?)
+            DecodedValue::Dict(handle) => {
+                DecodedValue::Dict(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Func(handle) => {
-                RuntimeValue::Func(self.copy_object(target, source, handle)?)
+            DecodedValue::Func(handle) => {
+                DecodedValue::Func(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Dyn(handle) => {
-                RuntimeValue::Dyn(self.copy_object(target, source, handle)?)
+            DecodedValue::Dyn(handle) => {
+                DecodedValue::Dyn(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::UpLink(handle) => {
-                RuntimeValue::UpLink(self.copy_object(target, source, handle)?)
+            DecodedValue::UpLink(handle) => {
+                DecodedValue::UpLink(self.copy_object(target, source, handle)?)
             }
         };
         let mut copied = value.with_value(copied).without_type_witness();
         if let Some(owner) = value.type_witness() {
             let owner = self.copy_object(target, source, owner)?;
-            copied =
-                copied.with_type_witness(RichValue::unknown(RuntimeValue::DeclaredType(owner)))?;
+            copied = copied.with_type_witness(Val::unknown(DecodedValue::DeclaredType(owner)))?;
         }
         Ok(copied)
     }
@@ -2897,8 +2885,11 @@ impl PendingCopy {
             }
             return Ok(handle);
         }
-        if let Some(forwarded) = self.objects_forwarded.get(&handle) {
-            return Ok(*forwarded);
+        if let Some(forwarded) = self.objects_forwarded.get(&handle.slot) {
+            return Ok(Handle {
+                storage: self.target_storage,
+                slot: *forwarded,
+            });
         }
         let object = source.object(handle)?;
         if matches!(object, Object::Reserved) {
@@ -2908,7 +2899,7 @@ impl PendingCopy {
             storage: self.target_storage,
             slot: self.object_base + self.objects.len() as u32,
         };
-        self.objects_forwarded.insert(handle, copied);
+        self.objects_forwarded.insert(handle.slot, copied.slot);
         self.objects.push(Object::Reserved);
         let object = self.copy_object_data(target, source, object)?;
         self.objects[(copied.slot - self.object_base) as usize] = object;
@@ -2921,7 +2912,7 @@ impl PendingCopy {
         source: &HeapView<'_>,
         object: &Object,
     ) -> Result<Object, HeapError> {
-        let copy_values = |this: &mut Self, values: &[RichValue]| {
+        let copy_values = |this: &mut Self, values: &[Val]| {
             values
                 .iter()
                 .map(|value| this.copy_value(target, source, *value))
@@ -3151,31 +3142,31 @@ impl PendingCopy {
 }
 
 #[cfg(test)]
-fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
+fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
     match value {
-        RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => id.storage != target,
-        RuntimeValue::NativeType(_) => false,
-        RuntimeValue::Bytes(handle)
-        | RuntimeValue::Opaque(handle)
-        | RuntimeValue::DeclaredType(handle)
-        | RuntimeValue::Array(handle)
-        | RuntimeValue::Tuple(handle)
-        | RuntimeValue::Tagged(handle)
-        | RuntimeValue::Dict(handle)
-        | RuntimeValue::Func(handle)
-        | RuntimeValue::Dyn(handle)
-        | RuntimeValue::UpLink(handle) => handle.storage != target,
-        RuntimeValue::Failed(_)
-        | RuntimeValue::Int(_)
-        | RuntimeValue::Float(_)
-        | RuntimeValue::BuiltinAtom(_)
-        | RuntimeValue::InlineAtom(_)
-        | RuntimeValue::InlineString(_) => false,
+        DecodedValue::Atom(id) | DecodedValue::ShortString(id) => id.storage != target,
+        DecodedValue::NativeType(_) => false,
+        DecodedValue::Bytes(handle)
+        | DecodedValue::Opaque(handle)
+        | DecodedValue::DeclaredType(handle)
+        | DecodedValue::Array(handle)
+        | DecodedValue::Tuple(handle)
+        | DecodedValue::Tagged(handle)
+        | DecodedValue::Dict(handle)
+        | DecodedValue::Func(handle)
+        | DecodedValue::Dyn(handle)
+        | DecodedValue::UpLink(handle) => handle.storage != target,
+        DecodedValue::Failed(_)
+        | DecodedValue::Int(_)
+        | DecodedValue::Float(_)
+        | DecodedValue::BuiltinAtom(_)
+        | DecodedValue::InlineAtom(_)
+        | DecodedValue::InlineString(_) => false,
     }
 }
 
 #[cfg(test)]
-fn rich_value_contains_foreign(value: RichValue, target: Storage) -> bool {
+fn val_contains_foreign(value: Val, target: Storage) -> bool {
     value_contains_foreign(value.value(), target)
         || value
             .type_witness()
@@ -3188,26 +3179,26 @@ fn object_contains_disallowed(
     background: Option<Storage>,
 ) -> bool {
     let foreign = |storage| storage != target && Some(storage) != background;
-    let value_foreign = |value: RichValue| {
+    let value_foreign = |value: Val| {
         let payload_is_foreign = match value.value() {
-            RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => foreign(id.storage),
-            RuntimeValue::NativeType(_) => false,
-            RuntimeValue::Bytes(handle)
-            | RuntimeValue::Opaque(handle)
-            | RuntimeValue::DeclaredType(handle)
-            | RuntimeValue::Array(handle)
-            | RuntimeValue::Tuple(handle)
-            | RuntimeValue::Tagged(handle)
-            | RuntimeValue::Dict(handle)
-            | RuntimeValue::Func(handle)
-            | RuntimeValue::Dyn(handle)
-            | RuntimeValue::UpLink(handle) => foreign(handle.storage),
-            RuntimeValue::Failed(_)
-            | RuntimeValue::Int(_)
-            | RuntimeValue::Float(_)
-            | RuntimeValue::BuiltinAtom(_)
-            | RuntimeValue::InlineAtom(_)
-            | RuntimeValue::InlineString(_) => false,
+            DecodedValue::Atom(id) | DecodedValue::ShortString(id) => foreign(id.storage),
+            DecodedValue::NativeType(_) => false,
+            DecodedValue::Bytes(handle)
+            | DecodedValue::Opaque(handle)
+            | DecodedValue::DeclaredType(handle)
+            | DecodedValue::Array(handle)
+            | DecodedValue::Tuple(handle)
+            | DecodedValue::Tagged(handle)
+            | DecodedValue::Dict(handle)
+            | DecodedValue::Func(handle)
+            | DecodedValue::Dyn(handle)
+            | DecodedValue::UpLink(handle) => foreign(handle.storage),
+            DecodedValue::Failed(_)
+            | DecodedValue::Int(_)
+            | DecodedValue::Float(_)
+            | DecodedValue::BuiltinAtom(_)
+            | DecodedValue::InlineAtom(_)
+            | DecodedValue::InlineString(_) => false,
         };
         payload_is_foreign
             || value
@@ -3268,28 +3259,28 @@ mod tests {
         Loc::from_usize(source, range).unwrap()
     }
 
-    fn rv(value: RuntimeValue) -> RichValue {
+    fn rv(value: DecodedValue) -> Val {
         value.into()
     }
 
     #[test]
     #[cfg(target_pointer_width = "64")]
-    fn rich_value_is_compact_and_copy() {
+    fn val_is_compact_and_copy() {
         fn assert_copy<T: Copy>() {}
 
-        assert_copy::<RichValue>();
-        assert_eq!(std::mem::size_of::<RichValue>(), 32);
-        assert_eq!(std::mem::align_of::<RichValue>(), 8);
+        assert_copy::<Val>();
+        assert_eq!(std::mem::size_of::<Val>(), 32);
+        assert_eq!(std::mem::align_of::<Val>(), 8);
         assert_eq!(std::mem::size_of::<Meta>(), 4);
     }
 
     #[test]
     fn flat_meta_round_trips_exact_classification_and_traits() {
         for storage in [Storage::Main, Storage::Work] {
-            let value = RichValue::unknown(RuntimeValue::Array(Handle { storage, slot: 7 }));
+            let value = Val::unknown(DecodedValue::Array(Handle { storage, slot: 7 }));
             assert_eq!(
                 value.value(),
-                RuntimeValue::Array(Handle { storage, slot: 7 })
+                DecodedValue::Array(Handle { storage, slot: 7 })
             );
             assert_eq!(value.meta.sub_kind(), HeapKind::Array);
             assert_ne!(value.meta.traits() & TRAIT_REFERENCE, 0);
@@ -3302,8 +3293,8 @@ mod tests {
     #[test]
     fn inline_text_and_native_type_use_no_heap_or_text_slot() {
         let mut heap = Heap::work();
-        let short_string = RichValue::unknown(heap.string(None, "1234567"));
-        let short_atom = RichValue::unknown(heap.atom(None, "1234567"));
+        let short_string = Val::unknown(heap.string(None, "1234567"));
+        let short_atom = Val::unknown(heap.atom(None, "1234567"));
         let native = crate::NativeType::bind(
             crate::value::NativeTypeId {
                 module: crate::value::NativeModuleId(7),
@@ -3311,7 +3302,7 @@ mod tests {
             },
             "fixture#Native",
         );
-        let native_value = RichValue::unknown(RuntimeValue::NativeType(
+        let native_value = Val::unknown(DecodedValue::NativeType(
             heap.intern_native_type(native.clone()),
         ));
 
@@ -3322,32 +3313,32 @@ mod tests {
         };
         assert_eq!(view.string_text(short_string).unwrap().unwrap(), "1234567");
         assert_eq!(view.atom_text(short_atom).unwrap().unwrap(), "1234567");
-        let RuntimeValue::NativeType(id) = native_value.value() else {
+        let DecodedValue::NativeType(id) = native_value.value() else {
             panic!("expected immediate NativeType")
         };
         assert_eq!(heap.native_type(id).unwrap(), &native);
 
-        let long = RichValue::unknown(heap.string(None, "12345678"));
-        assert!(matches!(long.value(), RuntimeValue::ShortString(_)));
+        let long = Val::unknown(heap.string(None, "12345678"));
+        assert!(matches!(long.value(), DecodedValue::ShortString(_)));
         assert_eq!(heap.counts(), (0, 1, 0));
     }
 
     #[test]
     fn scoped_type_id_is_independent_from_value_storage() {
-        let raw = RichValue::unknown(RuntimeValue::Int(1));
-        let typed = RichValue {
+        let raw = Val::unknown(DecodedValue::Int(1));
+        let typed = Val {
             ty: ScopedId::new(Storage::Work, 7).0,
             ..raw
         };
         assert_eq!(ScopedId(typed.ty).storage(), Storage::Work);
         assert_eq!(ScopedId(typed.ty).slot(), 7);
-        assert_eq!(typed.value(), RuntimeValue::Int(1));
+        assert_eq!(typed.value(), DecodedValue::Int(1));
     }
 
     #[test]
-    fn rich_value_equality_ignores_location() {
-        let left = RichValue::new(RuntimeValue::Int(42), Some(location("left", 1..2)));
-        let right = RichValue::new(RuntimeValue::Int(42), Some(location("right", 3..4)));
+    fn val_equality_ignores_location() {
+        let left = Val::new(DecodedValue::Int(42), Some(location("left", 1..2)));
+        let right = Val::new(DecodedValue::Int(42), Some(location("right", 3..4)));
 
         assert_eq!(left, right);
     }
@@ -3358,8 +3349,8 @@ mod tests {
         let generated_loc = location("function", 3..4);
         let call_loc = location("caller", 5..6);
 
-        let original = RichValue::original(RuntimeValue::Int(1), Some(original_loc));
-        let generated = RichValue::new(RuntimeValue::Int(2), Some(generated_loc));
+        let original = Val::original(DecodedValue::Int(1), Some(original_loc));
+        let generated = Val::new(DecodedValue::Int(2), Some(generated_loc));
 
         let preserved = original.rebase_generated(Some(call_loc));
         assert!(preserved.is_original());
@@ -3369,7 +3360,7 @@ mod tests {
             Some(call_loc)
         );
         assert_eq!(
-            RichValue::unknown(RuntimeValue::Int(3))
+            Val::unknown(DecodedValue::Int(3))
                 .rebase_generated(Some(call_loc))
                 .loc(),
             Some(call_loc)
@@ -3396,7 +3387,7 @@ mod tests {
         let root = heap.import_sourced_value(None, &sourced).unwrap();
         assert!(root.is_original());
         assert_eq!(root.loc(), Some(root_loc));
-        let RuntimeValue::Array(handle) = root.value() else {
+        let DecodedValue::Array(handle) = root.value() else {
             panic!("expected imported Array")
         };
         let Object::Array(items) = heap.object(handle).unwrap() else {
@@ -3413,9 +3404,9 @@ mod tests {
         let mut world = Heap::main();
         let mut current = Heap::work();
         let array = current.allocate(Object::Array(
-            vec![RichValue::original(RuntimeValue::Int(42), Some(item_loc))].into(),
+            vec![Val::original(DecodedValue::Int(42), Some(item_loc))].into(),
         ));
-        let root = RichValue::original(RuntimeValue::Array(array), Some(root_loc));
+        let root = Val::original(DecodedValue::Array(array), Some(root_loc));
 
         let copied = copy_roots(
             &mut world,
@@ -3429,7 +3420,7 @@ mod tests {
 
         assert_eq!(copied.loc(), Some(root_loc));
         assert!(copied.is_original());
-        let RuntimeValue::Array(handle) = copied.value() else {
+        let DecodedValue::Array(handle) = copied.value() else {
             panic!("expected copied Array")
         };
         let Object::Array(items) = world.object(handle).unwrap() else {
@@ -3447,7 +3438,7 @@ mod tests {
         let atom = current.atom(Some(&world), "Custom");
         let string = current.string(Some(&world), "Custom");
         let root = current.allocate(Object::Tuple(
-            vec![rv(atom), rv(string), rv(RuntimeValue::Bytes(shared))].into(),
+            vec![rv(atom), rv(string), rv(DecodedValue::Bytes(shared))].into(),
         ));
         current.allocate(Object::Bytes(vec![1, 2, 3].into()));
 
@@ -3457,22 +3448,22 @@ mod tests {
                 current: &current,
                 background: None,
             },
-            &[rv(RuntimeValue::Tuple(root))],
+            &[rv(DecodedValue::Tuple(root))],
         )
         .unwrap();
 
         assert_eq!(world.counts(), (2, 0, 0));
-        let RuntimeValue::Tuple(root) = copied[0].value() else {
+        let DecodedValue::Tuple(root) = copied[0].value() else {
             panic!("expected tuple root")
         };
         let Object::Tuple(values) = world.object(root).unwrap() else {
             panic!("expected tuple object")
         };
-        assert_eq!(values[2], rv(RuntimeValue::Bytes(shared)));
+        assert_eq!(values[2], rv(DecodedValue::Bytes(shared)));
         assert!(
             !values
                 .iter()
-                .any(|value| rich_value_contains_foreign(*value, Storage::Main))
+                .any(|value| val_contains_foreign(*value, Storage::Main))
         );
     }
 
@@ -3484,7 +3475,7 @@ mod tests {
         current
             .initialize(
                 cycle,
-                Object::Array(vec![rv(RuntimeValue::Array(cycle))].into()),
+                Object::Array(vec![rv(DecodedValue::Array(cycle))].into()),
             )
             .unwrap();
         copy_roots(
@@ -3493,13 +3484,13 @@ mod tests {
                 current: &current,
                 background: None,
             },
-            &[rv(RuntimeValue::Array(cycle))],
+            &[rv(DecodedValue::Array(cycle))],
         )
         .unwrap();
         assert_eq!(world.counts().0, 1);
 
         let before = world.counts();
-        let invalid = RuntimeValue::Array(Handle {
+        let invalid = DecodedValue::Array(Handle {
             storage: Storage::Work,
             slot: 99,
         });
@@ -3529,8 +3520,8 @@ mod tests {
                 background: None,
             },
             &[
-                rv(RuntimeValue::Bytes(shared)),
-                rv(RuntimeValue::Bytes(shared)),
+                rv(DecodedValue::Bytes(shared)),
+                rv(DecodedValue::Bytes(shared)),
             ],
         )
         .unwrap();
@@ -3548,15 +3539,15 @@ mod tests {
         source
             .initialize(
                 cycle,
-                Object::Array(vec![rv(RuntimeValue::Array(cycle))].into()),
+                Object::Array(vec![rv(DecodedValue::Array(cycle))].into()),
             )
             .unwrap();
         let root = source.allocate(Object::Tuple(
             vec![
-                rv(RuntimeValue::Bytes(shared)),
-                rv(RuntimeValue::Bytes(shared)),
-                rv(RuntimeValue::Bytes(stable)),
-                rv(RuntimeValue::Array(cycle)),
+                rv(DecodedValue::Bytes(shared)),
+                rv(DecodedValue::Bytes(shared)),
+                rv(DecodedValue::Bytes(stable)),
+                rv(DecodedValue::Array(cycle)),
             ]
             .into(),
         ));
@@ -3568,26 +3559,26 @@ mod tests {
             &mut target,
             &main,
             &source,
-            &[rv(RuntimeValue::Tuple(root))],
+            &[rv(DecodedValue::Tuple(root))],
         )
         .unwrap();
 
         assert_eq!(target.counts().0, 4);
-        let RuntimeValue::Tuple(root) = relocated[0].value() else {
+        let DecodedValue::Tuple(root) = relocated[0].value() else {
             panic!("expected relocated tuple")
         };
         let Object::Tuple(values) = target.object(root).unwrap() else {
             panic!("expected relocated tuple object")
         };
         assert_eq!(values[0], values[1]);
-        assert_eq!(values[2], rv(RuntimeValue::Bytes(stable)));
-        let RuntimeValue::Array(cycle) = values[3].value() else {
+        assert_eq!(values[2], rv(DecodedValue::Bytes(stable)));
+        let DecodedValue::Array(cycle) = values[3].value() else {
             panic!("expected relocated cycle")
         };
         let Object::Array(cycle_values) = target.object(cycle).unwrap() else {
             panic!("expected relocated cycle object")
         };
-        assert_eq!(cycle_values[0], rv(RuntimeValue::Array(cycle)));
+        assert_eq!(cycle_values[0], rv(DecodedValue::Array(cycle)));
         assert_ne!(root.slot, 0);
     }
 
@@ -3595,19 +3586,19 @@ mod tests {
     fn failed_nodes_relocate_between_work_worlds_but_cannot_enter_main_or_value() {
         let main = Heap::main();
         let mut source = Heap::work();
-        let root = RichValue::unknown(RuntimeValue::Array(source.allocate(Object::Array(
-            vec![RichValue::unknown(RuntimeValue::Failed(7))].into(),
+        let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(
+            vec![Val::unknown(DecodedValue::Failed(7))].into(),
         ))));
 
         let mut target = Heap::work();
         let relocated = relocate_work_roots(&mut target, &main, &source, &[root]).unwrap();
-        let RuntimeValue::Array(handle) = relocated[0].value() else {
+        let DecodedValue::Array(handle) = relocated[0].value() else {
             panic!("expected relocated Array")
         };
         let Object::Array(items) = target.object(handle).unwrap() else {
             panic!("expected relocated Array object")
         };
-        assert!(matches!(items[0].value(), RuntimeValue::Failed(7)));
+        assert!(matches!(items[0].value(), DecodedValue::Failed(7)));
         assert!(
             HeapView {
                 current: &target,
@@ -3630,17 +3621,17 @@ mod tests {
         let mut work = Heap::work();
         let work_root = work.allocate(Object::Array(vec![stable].into()));
 
-        let published = publish_root(&mut main, &work, rv(RuntimeValue::Array(work_root)))
+        let published = publish_root(&mut main, &work, rv(DecodedValue::Array(work_root)))
             .unwrap()
             .runtime();
-        let RuntimeValue::Array(main_root) = published.value() else {
+        let DecodedValue::Array(main_root) = published.value() else {
             panic!("expected published Array")
         };
         assert_eq!(main_root.storage, Storage::Main);
         let Object::Array(items) = main.object(main_root).unwrap() else {
             panic!("expected Main Array")
         };
-        let RuntimeValue::Bytes(stable_bytes) = items[0].value() else {
+        let DecodedValue::Bytes(stable_bytes) = items[0].value() else {
             panic!("expected Main Bytes")
         };
         assert_eq!(stable_bytes.storage, Storage::Main);
@@ -3780,14 +3771,14 @@ mod tests {
         local
             .initialize(
                 left,
-                Object::Array(vec![rv(RuntimeValue::Array(left))].into()),
+                Object::Array(vec![rv(DecodedValue::Array(left))].into()),
             )
             .unwrap();
         let right = local.reserve();
         local
             .initialize(
                 right,
-                Object::Array(vec![rv(RuntimeValue::Array(right))].into()),
+                Object::Array(vec![rv(DecodedValue::Array(right))].into()),
             )
             .unwrap();
         let world = Heap::main();
@@ -3797,8 +3788,8 @@ mod tests {
                 background: Some(&world),
             }
             .values_equal(
-                rv(RuntimeValue::Array(left)),
-                rv(RuntimeValue::Array(right))
+                rv(DecodedValue::Array(left)),
+                rv(DecodedValue::Array(right))
             )
             .unwrap()
         );
@@ -3808,13 +3799,13 @@ mod tests {
     fn promotion_copies_ready_up_links_and_rejects_uninitialized_links() {
         let mut local = Heap::work();
         let link = local.allocate(Object::UpLink { value: None });
-        let array = local.allocate(Object::Array(vec![rv(RuntimeValue::UpLink(link))].into()));
+        let array = local.allocate(Object::Array(vec![rv(DecodedValue::UpLink(link))].into()));
         local
-            .initialize_up_link(link, rv(RuntimeValue::Array(array)))
+            .initialize_up_link(link, rv(DecodedValue::Array(array)))
             .unwrap();
         let mut world = Heap::main();
-        let RuntimeValue::UpLink(persistent_link) =
-            publish_root(&mut world, &local, rv(RuntimeValue::UpLink(link)))
+        let DecodedValue::UpLink(persistent_link) =
+            publish_root(&mut world, &local, rv(DecodedValue::UpLink(link)))
                 .unwrap()
                 .runtime()
                 .value()
@@ -3826,7 +3817,7 @@ mod tests {
             current: &reader,
             background: Some(&world),
         };
-        let RuntimeValue::Array(array) = view
+        let DecodedValue::Array(array) = view
             .up_link(persistent_link)
             .unwrap()
             .expect("published up-link is ready")
@@ -3836,12 +3827,12 @@ mod tests {
         };
         assert_eq!(
             view.sequence(array, false).unwrap(),
-            &[rv(RuntimeValue::UpLink(persistent_link))]
+            &[rv(DecodedValue::UpLink(persistent_link))]
         );
 
         let mut uninitialized = Heap::work();
         let link = uninitialized.allocate(Object::UpLink { value: None });
-        assert!(publish_root(&mut world, &uninitialized, rv(RuntimeValue::UpLink(link))).is_err());
+        assert!(publish_root(&mut world, &uninitialized, rv(DecodedValue::UpLink(link))).is_err());
     }
 
     #[test]
@@ -3855,7 +3846,7 @@ mod tests {
             vec![Value::Int(1), Value::Int(2), Value::Int(3)],
         ));
         let mut world = Heap::main();
-        let RuntimeValue::Dict(dict) = publish_value(&mut world, &value).unwrap().runtime().value()
+        let DecodedValue::Dict(dict) = publish_value(&mut world, &value).unwrap().runtime().value()
         else {
             panic!("expected persistent Dict")
         };
@@ -3867,11 +3858,11 @@ mod tests {
         };
         assert_eq!(
             view.dict_get(dict, field).unwrap(),
-            Some(rv(RuntimeValue::Int(2)))
+            Some(rv(DecodedValue::Int(2)))
         );
         assert_eq!(
             view.dict_get_text(dict, "c").unwrap(),
-            Some(rv(RuntimeValue::Int(3)))
+            Some(rv(DecodedValue::Int(3)))
         );
     }
 
@@ -3951,7 +3942,7 @@ mod tests {
         let different = source
             .import_value(None, &declared(other, Value::Int(7)))
             .unwrap();
-        assert_eq!(left.value(), RuntimeValue::Int(7));
+        assert_eq!(left.value(), DecodedValue::Int(7));
         assert!(left.type_witness().is_some());
         let view = HeapView {
             current: &source,
@@ -3969,7 +3960,7 @@ mod tests {
 
         let mut main = Heap::main();
         let copied = copy_roots(&mut main, view, &[left]).unwrap()[0];
-        assert_eq!(copied.value(), RuntimeValue::Int(7));
+        assert_eq!(copied.value(), DecodedValue::Int(7));
         assert_eq!(copied.type_witness().unwrap().storage, Storage::Main);
         let main_view = HeapView {
             current: &main,
@@ -3992,7 +3983,7 @@ mod tests {
                 &Value::Declared(DeclaredValue::new(owner, Value::atom("Ready"))),
             )
             .unwrap();
-        let raw = RichValue::unknown(heap.atom(None, "Ready"));
+        let raw = Val::unknown(heap.atom(None, "Ready"));
         let view = HeapView {
             current: &heap,
             background: None,
@@ -4005,12 +3996,12 @@ mod tests {
     fn legacy_projection_reuses_completed_dag_nodes_and_rejects_cycles() {
         let mut heap = Heap::work();
         let shared = heap.allocate(Object::Array(
-            vec![rv(RuntimeValue::Int(1)), rv(RuntimeValue::Int(2))].into(),
+            vec![rv(DecodedValue::Int(1)), rv(DecodedValue::Int(2))].into(),
         ));
         let root = heap.allocate(Object::Tuple(
             vec![
-                rv(RuntimeValue::Array(shared)),
-                rv(RuntimeValue::Array(shared)),
+                rv(DecodedValue::Array(shared)),
+                rv(DecodedValue::Array(shared)),
             ]
             .into(),
         ));
@@ -4018,7 +4009,7 @@ mod tests {
             current: &heap,
             background: None,
         }
-        .export_value(rv(RuntimeValue::Tuple(root)))
+        .export_value(rv(DecodedValue::Tuple(root)))
         .unwrap();
         let Value::Tuple(items) = exported else {
             panic!("expected exported Tuple")
@@ -4031,14 +4022,14 @@ mod tests {
         let cycle = heap.reserve();
         heap.initialize(
             cycle,
-            Object::Array(vec![rv(RuntimeValue::Array(cycle))].into()),
+            Object::Array(vec![rv(DecodedValue::Array(cycle))].into()),
         )
         .unwrap();
         let error = HeapView {
             current: &heap,
             background: None,
         }
-        .export_value(rv(RuntimeValue::Array(cycle)))
+        .export_value(rv(DecodedValue::Array(cycle)))
         .unwrap_err();
         assert_eq!(
             error.to_string(),
@@ -4054,7 +4045,7 @@ mod tests {
             assert_eq!(error.to_string(), "Telora Float must be finite");
         }
 
-        let runtime = RichValue::unknown(RuntimeValue::Float(f64::NAN));
+        let runtime = Val::unknown(DecodedValue::Float(f64::NAN));
         let error = HeapView {
             current: &heap,
             background: None,

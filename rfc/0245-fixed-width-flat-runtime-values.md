@@ -1,6 +1,6 @@
 # RFC 0245: Fixed-Width Flat Runtime Values
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #88
 - Depends on: RFC 0012, RFC 0021, RFC 0023, RFC 0103, RFC 0237, RFC 0241
 
@@ -24,7 +24,7 @@ boundaries and records final evidence.
 struct Val {
     loc: PackedLoc, // three u32 words
     meta: Meta,     // one u32 word
-    ty: u32,        // a Main/Local type-arena slot selected by Meta
+    ty: u32,        // an optional Main/Work scoped type-witness slot
     narrow: u32,    // reserved for trait/interface narrowing evidence
     raw: u64,       // immediate bits or a reference payload
 }
@@ -126,3 +126,18 @@ boundaries but is not used between internal evaluation stages.
 6. Work/Main and Work/Work copy retain graph sharing and recursive edges;
 7. strict and best-effort evaluation preserve their current outcomes; and
 8. workspace tests, clippy, and recursive performance fixtures pass.
+
+## Outcome
+
+RFCs 0246 through 0249 implement the fixed 32-byte `Val`, scoped references,
+inline text, immediate NativeType identity, allocation-free declared
+witnesses, and slot-forwarded graph copying. VM registers, Heap edges, and
+persistent roots use `Val`; the private `DecodedValue` enum is only a transient
+view of `Val.meta` and `Val.raw` used by pattern matches.
+
+Work/Work and Work/Main copies preserve cycles, sharing, provenance, Fail
+nodes where permitted, and declared witnesses without projecting through the
+Host-owned `Value` graph. The RFC 0242 release protocol remains at the RFC 0241
+accepted performance level. The workspace's only core test failure is the
+independently reproduced declared-family identity baseline recorded on issue
+#88; it is not caused by this representation series.

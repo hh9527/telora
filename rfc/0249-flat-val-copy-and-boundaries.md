@@ -1,6 +1,6 @@
 # RFC 0249: Flat-Val Copy and Boundaries
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #88
 - Depends on: RFC 0245, RFC 0246, RFC 0247, RFC 0248, RFC 0244
 
@@ -65,3 +65,34 @@ The final implementation records:
 6. performance does not materially regress from RFC 0241 accepted results;
 7. workspace format, tests, and clippy pass; and
 8. RFCs 0245 through 0249 record their implemented outcome.
+
+## Outcome
+
+`Val` is now the only stored VM value representation. The former
+`RuntimeValue`/`RichValue` names were removed; `DecodedValue` remains only as a
+transient private decoding view and is never stored in a register, Heap edge,
+or boundary value.
+
+Each collector has fixed source and target Worlds. Its object forwarding table
+is therefore exactly `HashMap<u32, u32>`, mapping a source arena slot to a
+target arena slot. Main references are recognized by their scoped high bit and
+retained before forwarding. Raw Heap references, uplinks, and `ty` witnesses
+all use the same object map. A forwarding entry is installed before child
+scanning, preserving cycles and shared subgraphs.
+
+The RFC 0242 release protocol produced these three-sample median user times on
+the implementation host:
+
+| fixture | RFC 0241 accepted | flat `Val` |
+|---|---:|---:|
+| flat-functions | 0.076314s | 0.074788s |
+| recursive-functions | 0.116674s | 0.117637s |
+| nested-functions | 0.217471s | 0.217537s |
+| recursive-values-shallow | 0.040793s | 0.041378s |
+| recursive-values-growing | 0.038608s | 0.037188s |
+| query-builder-check | 0.405207s | 0.398406s |
+| query-builder-show | 0.401056s | 0.411054s |
+
+No fixture materially regressed. Core tests and clippy pass except for the
+independently reproduced declared-family identity baseline recorded on issue
+#88.
