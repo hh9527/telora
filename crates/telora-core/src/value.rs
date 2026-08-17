@@ -277,6 +277,10 @@ impl NativeType {
     pub fn qualified_name(&self) -> &str {
         &self.qualified_name
     }
+
+    pub(crate) fn id(&self) -> NativeTypeId {
+        self.id
+    }
 }
 
 impl PartialEq for NativeType {

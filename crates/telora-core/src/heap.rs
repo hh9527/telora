@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-const SHORT_TEXT_BYTES: usize = 32;
+const INLINE_TEXT_BYTES: usize = 7;
 
 const KIND_BITS: u32 = 6;
 const SUB_KIND_BITS: u32 = 6;
@@ -21,12 +21,11 @@ const PROVENANCE_SHIFT: u32 = 28;
 const PROVENANCE_MASK: u32 = 0b11 << PROVENANCE_SHIFT;
 
 const TRAIT_REFERENCE: u16 = 1 << 0;
-const TRAIT_LOCAL: u16 = 1 << 1;
-const TRAIT_TEXT: u16 = 1 << 2;
-const TRAIT_INLINE: u16 = 1 << 3;
-const TRAIT_HEAP: u16 = 1 << 4;
-const TRAIT_UPLINK: u16 = 1 << 5;
-const TRAIT_TRACE: u16 = 1 << 6;
+const TRAIT_TEXT: u16 = 1 << 1;
+const TRAIT_INLINE: u16 = 1 << 2;
+const TRAIT_HEAP: u16 = 1 << 3;
+const TRAIT_UPLINK: u16 = 1 << 4;
+const TRAIT_TRACE: u16 = 1 << 5;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Storage {
@@ -41,16 +40,12 @@ enum FlatKind {
     Int,
     Float,
     InlineString,
-    MainString,
-    LocalString,
+    String,
     InlineAtom,
-    MainAtom,
-    LocalAtom,
+    Atom,
     NativeType,
-    MainHeap,
-    MainUpLink,
-    LocalHeap,
-    LocalUpLink,
+    Heap,
+    UpLink,
     Invalid = 63,
 }
 
@@ -61,16 +56,12 @@ impl FlatKind {
             1 => Self::Int,
             2 => Self::Float,
             3 => Self::InlineString,
-            4 => Self::MainString,
-            5 => Self::LocalString,
-            6 => Self::InlineAtom,
-            7 => Self::MainAtom,
-            8 => Self::LocalAtom,
-            9 => Self::NativeType,
-            10 => Self::MainHeap,
-            11 => Self::MainUpLink,
-            12 => Self::LocalHeap,
-            13 => Self::LocalUpLink,
+            4 => Self::String,
+            5 => Self::InlineAtom,
+            6 => Self::Atom,
+            7 => Self::NativeType,
+            8 => Self::Heap,
+            9 => Self::UpLink,
             _ => Self::Invalid,
         }
     }
@@ -79,12 +70,9 @@ impl FlatKind {
         match self {
             Self::Never | Self::Int | Self::Float | Self::NativeType => TRAIT_INLINE,
             Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
-            Self::MainString | Self::MainAtom => TRAIT_REFERENCE | TRAIT_TEXT,
-            Self::LocalString | Self::LocalAtom => TRAIT_REFERENCE | TRAIT_LOCAL | TRAIT_TEXT,
-            Self::MainHeap => TRAIT_REFERENCE | TRAIT_HEAP,
-            Self::LocalHeap => TRAIT_REFERENCE | TRAIT_LOCAL | TRAIT_HEAP,
-            Self::MainUpLink => TRAIT_REFERENCE | TRAIT_UPLINK | TRAIT_TRACE,
-            Self::LocalUpLink => TRAIT_REFERENCE | TRAIT_LOCAL | TRAIT_UPLINK | TRAIT_TRACE,
+            Self::String | Self::Atom => TRAIT_REFERENCE | TRAIT_TEXT,
+            Self::Heap => TRAIT_REFERENCE | TRAIT_HEAP,
+            Self::UpLink => TRAIT_REFERENCE | TRAIT_UPLINK | TRAIT_TRACE,
             Self::Invalid => 0,
         }
     }
@@ -94,9 +82,7 @@ impl FlatKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum HeapKind {
     None,
-    String,
     Bytes,
-    NativeType,
     DeclaredType,
     Declared,
     Opaque,
@@ -111,18 +97,16 @@ enum HeapKind {
 impl HeapKind {
     fn from_bits(bits: u32) -> Self {
         match bits {
-            1 => Self::String,
-            2 => Self::Bytes,
-            3 => Self::NativeType,
-            4 => Self::DeclaredType,
-            5 => Self::Declared,
-            6 => Self::Opaque,
-            7 => Self::Array,
-            8 => Self::Tuple,
-            9 => Self::Tagged,
-            10 => Self::Dict,
-            11 => Self::Func,
-            12 => Self::Dyn,
+            1 => Self::Bytes,
+            2 => Self::DeclaredType,
+            3 => Self::Declared,
+            4 => Self::Opaque,
+            5 => Self::Array,
+            6 => Self::Tuple,
+            7 => Self::Tagged,
+            8 => Self::Dict,
+            9 => Self::Func,
+            10 => Self::Dyn,
             _ => Self::None,
         }
     }
@@ -137,7 +121,7 @@ impl HeapKind {
             | Self::DeclaredType
             | Self::Declared
             | Self::Dyn => TRAIT_TRACE,
-            Self::None | Self::String | Self::Bytes | Self::NativeType | Self::Opaque => 0,
+            Self::None | Self::Bytes | Self::Opaque => 0,
         }
     }
 }
@@ -226,6 +210,160 @@ pub(crate) struct InternId {
     slot: u32,
 }
 
+const SCOPED_ID_WORK_BIT: u32 = 1 << 31;
+const SCOPED_ID_SLOT_MASK: u32 = SCOPED_ID_WORK_BIT - 1;
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ScopedId(u32);
+
+impl ScopedId {
+    fn new(storage: Storage, slot: u32) -> Self {
+        assert!(
+            slot <= SCOPED_ID_SLOT_MASK,
+            "arena slot exceeds scoped ID range"
+        );
+        Self(
+            slot | if storage == Storage::Work {
+                SCOPED_ID_WORK_BIT
+            } else {
+                0
+            },
+        )
+    }
+
+    fn storage(self) -> Storage {
+        if self.0 & SCOPED_ID_WORK_BIT == 0 {
+            Storage::Main
+        } else {
+            Storage::Work
+        }
+    }
+
+    fn slot(self) -> u32 {
+        self.0 & SCOPED_ID_SLOT_MASK
+    }
+
+    fn from_raw(raw: u64) -> Self {
+        Self(u32::try_from(raw).expect("scoped reference exceeds 32 bits"))
+    }
+
+    fn raw(self) -> u64 {
+        u64::from(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct InlineText {
+    bytes: [u8; 8],
+}
+
+impl InlineText {
+    fn new(text: &str) -> Option<Self> {
+        if text.len() > INLINE_TEXT_BYTES {
+            return None;
+        }
+        let mut bytes = [0; 8];
+        bytes[..text.len()].copy_from_slice(text.as_bytes());
+        bytes[7] = text.len() as u8;
+        Some(Self { bytes })
+    }
+
+    fn from_raw(raw: u64) -> Self {
+        Self {
+            bytes: raw.to_le_bytes(),
+        }
+    }
+
+    fn raw(self) -> u64 {
+        u64::from_le_bytes(self.bytes)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        let len = self.bytes[7] as usize;
+        debug_assert!(len <= INLINE_TEXT_BYTES);
+        std::str::from_utf8(&self.bytes[..len]).expect("inline text must be valid UTF-8")
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TextRefInner<'a> {
+    Inline(InlineText),
+    Borrowed(&'a str),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TextRef<'a>(TextRefInner<'a>);
+
+impl<'a> TextRef<'a> {
+    pub(crate) fn inline(text: InlineText) -> Self {
+        Self(TextRefInner::Inline(text))
+    }
+
+    pub(crate) fn borrowed(text: &'a str) -> Self {
+        Self(TextRefInner::Borrowed(text))
+    }
+
+    pub fn as_str(&self) -> &str {
+        match &self.0 {
+            TextRefInner::Inline(text) => text.as_str(),
+            TextRefInner::Borrowed(text) => text,
+        }
+    }
+}
+
+impl AsRef<str> for TextRef<'_> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::ops::Deref for TextRef<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl PartialEq for TextRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for TextRef<'_> {}
+
+impl PartialEq<&str> for TextRef<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for TextRef<'_> {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<TextRef<'_>> for String {
+    fn eq(&self, other: &TextRef<'_>) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl fmt::Display for TextRef<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl From<TextRef<'_>> for String {
+    fn from(value: TextRef<'_>) -> Self {
+        value.as_str().to_owned()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ShapeId {
     storage: Storage,
@@ -238,11 +376,12 @@ pub(crate) enum RuntimeValue {
     Int(i64),
     Float(f64),
     BuiltinAtom(BuiltinAtom),
+    InlineAtom(InlineText),
     Atom(InternId),
+    InlineString(InlineText),
     ShortString(InternId),
-    String(Handle),
     Bytes(Handle),
-    NativeType(Handle),
+    NativeType(crate::value::NativeTypeId),
     DeclaredType(Handle),
     Declared(Handle),
     Opaque(Handle),
@@ -264,17 +403,28 @@ impl RuntimeValue {
             Self::BuiltinAtom(atom) => (
                 FlatKind::InlineAtom,
                 HeapKind::None,
-                builtin_atom_bits(atom),
+                InlineText::new(atom.name())
+                    .expect("built-in Atoms fit inline")
+                    .raw(),
             ),
-            Self::Atom(id) => (text_kind(id.storage, false), HeapKind::None, id.slot as u64),
-            Self::ShortString(id) => (text_kind(id.storage, true), HeapKind::None, id.slot as u64),
-            Self::String(handle) => (
-                text_kind(handle.storage, true),
-                HeapKind::String,
-                handle.slot as u64,
+            Self::InlineAtom(text) => (FlatKind::InlineAtom, HeapKind::None, text.raw()),
+            Self::Atom(id) => (
+                FlatKind::Atom,
+                HeapKind::None,
+                ScopedId::new(id.storage, id.slot).raw(),
+            ),
+            Self::InlineString(text) => (FlatKind::InlineString, HeapKind::None, text.raw()),
+            Self::ShortString(id) => (
+                FlatKind::String,
+                HeapKind::None,
+                ScopedId::new(id.storage, id.slot).raw(),
             ),
             Self::Bytes(handle) => heap_parts(handle, HeapKind::Bytes),
-            Self::NativeType(handle) => heap_parts(handle, HeapKind::NativeType),
+            Self::NativeType(id) => (
+                FlatKind::NativeType,
+                HeapKind::None,
+                u64::from(id.module.0) | (u64::from(id.local) << 32),
+            ),
             Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
             Self::Declared(handle) => heap_parts(handle, HeapKind::Declared),
             Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
@@ -285,58 +435,20 @@ impl RuntimeValue {
             Self::Func(handle) => heap_parts(handle, HeapKind::Func),
             Self::Dyn(handle) => heap_parts(handle, HeapKind::Dyn),
             Self::UpLink(handle) => (
-                match handle.storage {
-                    Storage::Main => FlatKind::MainUpLink,
-                    Storage::Work => FlatKind::LocalUpLink,
-                },
+                FlatKind::UpLink,
                 HeapKind::None,
-                handle.slot as u64,
+                ScopedId::new(handle.storage, handle.slot).raw(),
             ),
         };
         (Meta::new(kind, sub_kind, Provenance::Unknown), raw)
     }
 }
 
-fn builtin_atom_bits(atom: BuiltinAtom) -> u64 {
-    match atom {
-        BuiltinAtom::None => 0,
-        BuiltinAtom::Some => 1,
-        BuiltinAtom::Ok => 2,
-        BuiltinAtom::Err => 3,
-        BuiltinAtom::True => 4,
-        BuiltinAtom::False => 5,
-    }
-}
-
-fn builtin_atom_from_bits(bits: u64) -> BuiltinAtom {
-    match bits {
-        0 => BuiltinAtom::None,
-        1 => BuiltinAtom::Some,
-        2 => BuiltinAtom::Ok,
-        3 => BuiltinAtom::Err,
-        4 => BuiltinAtom::True,
-        5 => BuiltinAtom::False,
-        _ => unreachable!("invalid built-in Atom bits"),
-    }
-}
-
-fn text_kind(storage: Storage, string: bool) -> FlatKind {
-    match (storage, string) {
-        (Storage::Main, true) => FlatKind::MainString,
-        (Storage::Work, true) => FlatKind::LocalString,
-        (Storage::Main, false) => FlatKind::MainAtom,
-        (Storage::Work, false) => FlatKind::LocalAtom,
-    }
-}
-
 fn heap_parts(handle: Handle, sub_kind: HeapKind) -> (FlatKind, HeapKind, u64) {
     (
-        match handle.storage {
-            Storage::Main => FlatKind::MainHeap,
-            Storage::Work => FlatKind::LocalHeap,
-        },
+        FlatKind::Heap,
         sub_kind,
-        handle.slot as u64,
+        ScopedId::new(handle.storage, handle.slot).raw(),
     )
 }
 
@@ -345,7 +457,8 @@ fn heap_parts(handle: Handle, sub_kind: HeapKind) -> (FlatKind, HeapKind, u64) {
 pub(crate) struct RichValue {
     loc: PackedLoc,
     meta: Meta,
-    ty: u64,
+    ty: u32,
+    narrow: u32,
     raw: u64,
 }
 
@@ -371,6 +484,7 @@ impl RichValue {
                 Provenance::Unknown
             }),
             ty: 0,
+            narrow: 0,
             raw,
         }
     }
@@ -385,6 +499,7 @@ impl RichValue {
                 Provenance::Unknown
             }),
             ty: 0,
+            narrow: 0,
             raw,
         }
     }
@@ -424,81 +539,53 @@ impl RichValue {
     }
 
     pub(crate) fn value(self) -> RuntimeValue {
+        debug_assert_eq!(self.narrow, 0, "narrowing evidence is not implemented");
         debug_assert_eq!(
             self.meta.traits(),
             self.meta.kind().traits() | self.meta.sub_kind().traits(),
             "runtime Meta traits disagree with its exact classification"
         );
-        let slot = || u32::try_from(self.raw).expect("runtime reference slot exceeds u32");
-        let storage = || match self.meta.kind() {
-            FlatKind::MainString
-            | FlatKind::MainAtom
-            | FlatKind::MainHeap
-            | FlatKind::MainUpLink => Storage::Main,
-            FlatKind::LocalString
-            | FlatKind::LocalAtom
-            | FlatKind::LocalHeap
-            | FlatKind::LocalUpLink => Storage::Work,
-            _ => unreachable!("immediate kind has no storage"),
-        };
+        let scoped_id = || ScopedId::from_raw(self.raw);
         let handle = || Handle {
-            storage: storage(),
-            slot: slot(),
+            storage: scoped_id().storage(),
+            slot: scoped_id().slot(),
         };
         match (self.meta.kind(), self.meta.sub_kind()) {
             (FlatKind::Never, _) => RuntimeValue::Failed((self.raw >> 1) as u32),
             (FlatKind::Int, _) => RuntimeValue::Int(self.raw as i64),
             (FlatKind::Float, _) => RuntimeValue::Float(f64::from_bits(self.raw)),
             (FlatKind::InlineAtom, _) => {
-                RuntimeValue::BuiltinAtom(builtin_atom_from_bits(self.raw))
+                let text = InlineText::from_raw(self.raw);
+                builtin_atom(text.as_str())
+                    .map(RuntimeValue::BuiltinAtom)
+                    .unwrap_or(RuntimeValue::InlineAtom(text))
             }
-            (FlatKind::MainAtom | FlatKind::LocalAtom, _) => RuntimeValue::Atom(InternId {
-                storage: storage(),
-                slot: slot(),
+            (FlatKind::InlineString, _) => {
+                RuntimeValue::InlineString(InlineText::from_raw(self.raw))
+            }
+            (FlatKind::Atom, _) => RuntimeValue::Atom(InternId {
+                storage: scoped_id().storage(),
+                slot: scoped_id().slot(),
             }),
-            (FlatKind::MainString | FlatKind::LocalString, HeapKind::String) => {
-                RuntimeValue::String(handle())
-            }
-            (FlatKind::MainString | FlatKind::LocalString, _) => {
-                RuntimeValue::ShortString(InternId {
-                    storage: storage(),
-                    slot: slot(),
-                })
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Bytes) => {
-                RuntimeValue::Bytes(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::NativeType) => {
-                RuntimeValue::NativeType(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::DeclaredType) => {
-                RuntimeValue::DeclaredType(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Declared) => {
-                RuntimeValue::Declared(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Opaque) => {
-                RuntimeValue::Opaque(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Array) => {
-                RuntimeValue::Array(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Tuple) => {
-                RuntimeValue::Tuple(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Tagged) => {
-                RuntimeValue::Tagged(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Dict) => {
-                RuntimeValue::Dict(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Func) => {
-                RuntimeValue::Func(handle())
-            }
-            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Dyn) => {
-                RuntimeValue::Dyn(handle())
-            }
-            (FlatKind::MainUpLink | FlatKind::LocalUpLink, _) => RuntimeValue::UpLink(handle()),
+            (FlatKind::String, _) => RuntimeValue::ShortString(InternId {
+                storage: scoped_id().storage(),
+                slot: scoped_id().slot(),
+            }),
+            (FlatKind::Heap, HeapKind::Bytes) => RuntimeValue::Bytes(handle()),
+            (FlatKind::NativeType, _) => RuntimeValue::NativeType(crate::value::NativeTypeId {
+                module: crate::value::NativeModuleId(self.raw as u32),
+                local: (self.raw >> 32) as u32,
+            }),
+            (FlatKind::Heap, HeapKind::DeclaredType) => RuntimeValue::DeclaredType(handle()),
+            (FlatKind::Heap, HeapKind::Declared) => RuntimeValue::Declared(handle()),
+            (FlatKind::Heap, HeapKind::Opaque) => RuntimeValue::Opaque(handle()),
+            (FlatKind::Heap, HeapKind::Array) => RuntimeValue::Array(handle()),
+            (FlatKind::Heap, HeapKind::Tuple) => RuntimeValue::Tuple(handle()),
+            (FlatKind::Heap, HeapKind::Tagged) => RuntimeValue::Tagged(handle()),
+            (FlatKind::Heap, HeapKind::Dict) => RuntimeValue::Dict(handle()),
+            (FlatKind::Heap, HeapKind::Func) => RuntimeValue::Func(handle()),
+            (FlatKind::Heap, HeapKind::Dyn) => RuntimeValue::Dyn(handle()),
+            (FlatKind::UpLink, _) => RuntimeValue::UpLink(handle()),
             _ => unreachable!("invalid runtime Meta combination"),
         }
     }
@@ -523,6 +610,7 @@ impl PartialEq for RichValue {
         self.meta.kind() == other.meta.kind()
             && self.meta.sub_kind() == other.meta.sub_kind()
             && self.ty == other.ty
+            && self.narrow == other.narrow
             && self.raw == other.raw
     }
 }
@@ -731,9 +819,7 @@ impl Heap {
                 // a self-reference to its own declaration wrapper.
                 Object::DeclaredType { .. }
                 | Object::Reserved
-                | Object::String(_)
                 | Object::Bytes(_)
-                | Object::NativeType(_)
                 | Object::Opaque(_) => {}
             }
         }
@@ -769,9 +855,7 @@ pub(crate) enum RuntimePrototype {
 #[derive(Clone, Debug)]
 pub(crate) enum Object {
     Reserved,
-    String(Box<str>),
     Bytes(Box<[u8]>),
-    NativeType(crate::NativeType),
     DeclaredType {
         id: crate::value::DeclaredTypeId,
         name: Arc<str>,
@@ -869,6 +953,7 @@ pub(crate) struct Heap {
     storage: Storage,
     objects: Vec<Object>,
     text: TextTable,
+    native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
     shapes: Vec<Box<[InternId]>>,
     shape_slots: HashMap<Vec<InternId>, u32>,
     exported_shapes: Mutex<HashMap<u32, Arc<Shape>>>,
@@ -880,6 +965,7 @@ impl Heap {
             storage,
             objects: Vec::new(),
             text: TextTable::default(),
+            native_types: HashMap::new(),
             shapes: Vec::new(),
             shape_slots: HashMap::new(),
             exported_shapes: Mutex::new(HashMap::new()),
@@ -912,6 +998,18 @@ impl Heap {
         handle
     }
 
+    fn intern_native_type(&mut self, value: crate::NativeType) -> crate::value::NativeTypeId {
+        let id = value.id();
+        self.native_types.entry(id).or_insert(value);
+        id
+    }
+
+    fn native_type(&self, id: crate::value::NativeTypeId) -> Result<&crate::NativeType, HeapError> {
+        self.native_types
+            .get(&id)
+            .ok_or(HeapError("native type ID is not registered in this world"))
+    }
+
     pub(crate) fn export_persistent(&self, value: PersistentValue) -> Result<Value, HeapError> {
         HeapView {
             current: self,
@@ -942,9 +1040,8 @@ impl Heap {
             let handle = match value {
                 RuntimeValue::Failed(_) => continue,
                 RuntimeValue::UpLink(_) => return Ok(true),
-                RuntimeValue::String(handle)
-                | RuntimeValue::Bytes(handle)
-                | RuntimeValue::NativeType(handle)
+                RuntimeValue::NativeType(_) => continue,
+                RuntimeValue::Bytes(handle)
                 | RuntimeValue::DeclaredType(handle)
                 | RuntimeValue::Declared(handle)
                 | RuntimeValue::Opaque(handle)
@@ -957,7 +1054,9 @@ impl Heap {
                 RuntimeValue::Int(_)
                 | RuntimeValue::Float(_)
                 | RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
                 | RuntimeValue::Atom(_)
+                | RuntimeValue::InlineString(_)
                 | RuntimeValue::ShortString(_) => continue,
             };
             if !visited.insert(handle) {
@@ -1006,10 +1105,7 @@ impl Heap {
                 }
                 Object::Reserved => return Err(HeapError("heap object is uninitialized")),
                 Object::UpLink { .. } => return Ok(true),
-                Object::String(_)
-                | Object::Bytes(_)
-                | Object::NativeType(_)
-                | Object::Opaque(_) => {}
+                Object::Bytes(_) | Object::Opaque(_) => {}
             }
         }
         Ok(false)
@@ -1088,20 +1184,22 @@ impl Heap {
     }
 
     pub(crate) fn string(&mut self, background: Option<&Heap>, text: &str) -> RuntimeValue {
-        if text.len() <= SHORT_TEXT_BYTES {
+        if let Some(text) = InlineText::new(text) {
+            RuntimeValue::InlineString(text)
+        } else {
             if let Some(id) = background.and_then(|heap| heap.find_text(text)) {
                 RuntimeValue::ShortString(id)
             } else {
                 RuntimeValue::ShortString(self.intern(text))
             }
-        } else {
-            RuntimeValue::String(self.allocate(Object::String(text.into())))
         }
     }
 
     pub(crate) fn atom(&mut self, background: Option<&Heap>, text: &str) -> RuntimeValue {
         if let Some(builtin) = builtin_atom(text) {
             RuntimeValue::BuiltinAtom(builtin)
+        } else if let Some(text) = InlineText::new(text) {
+            RuntimeValue::InlineAtom(text)
         } else if let Some(id) = background.and_then(|heap| heap.find_text(text)) {
             RuntimeValue::Atom(id)
         } else {
@@ -1174,7 +1272,7 @@ impl Heap {
                 RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
             }
             Value::NativeType(value) => {
-                RuntimeValue::NativeType(self.allocate(Object::NativeType(value.clone())))
+                RuntimeValue::NativeType(self.intern_native_type(value.clone()))
             }
             Value::DeclaredType(value) => {
                 let body = self.import_sourced_at(background, value.body(), provenance, path)?;
@@ -1279,7 +1377,7 @@ impl Heap {
                     RuntimeValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
                 }
                 Value::NativeType(value) => {
-                    RuntimeValue::NativeType(self.allocate(Object::NativeType(value.clone())))
+                    RuntimeValue::NativeType(self.intern_native_type(value.clone()))
                 }
                 Value::DeclaredType(value) => {
                     let body = self.import_value_with(
@@ -1541,6 +1639,17 @@ impl<'a> HeapView<'a> {
         self.heap(id.storage)?.resolve_text(id)
     }
 
+    pub(crate) fn native_type(
+        &self,
+        id: crate::value::NativeTypeId,
+    ) -> Result<&'a crate::NativeType, HeapError> {
+        self.current.native_type(id).or_else(|_| {
+            self.background
+                .ok_or(HeapError("native type ID is not registered in this view"))?
+                .native_type(id)
+        })
+    }
+
     fn shape(&self, id: ShapeId) -> Result<&'a [InternId], HeapError> {
         self.heap(id.storage)?.shape(id)
     }
@@ -1685,21 +1794,19 @@ impl<'a> HeapView<'a> {
         Ok(index.and_then(|index| values.get(index).copied()))
     }
 
-    pub(crate) fn string_text(&self, value: RichValue) -> Result<Option<&'a str>, HeapError> {
+    pub(crate) fn string_text(&self, value: RichValue) -> Result<Option<TextRef<'a>>, HeapError> {
         match value.value() {
-            RuntimeValue::ShortString(id) => Ok(Some(self.text(id)?)),
-            RuntimeValue::String(handle) => match self.object(handle)? {
-                Object::String(value) => Ok(Some(value)),
-                _ => Err(HeapError("String handle refers to another object kind")),
-            },
+            RuntimeValue::InlineString(text) => Ok(Some(TextRef::inline(text))),
+            RuntimeValue::ShortString(id) => Ok(Some(TextRef::borrowed(self.text(id)?))),
             _ => Ok(None),
         }
     }
 
-    pub(crate) fn atom_text(&self, value: RichValue) -> Result<Option<&'a str>, HeapError> {
+    pub(crate) fn atom_text(&self, value: RichValue) -> Result<Option<TextRef<'a>>, HeapError> {
         match value.value() {
-            RuntimeValue::BuiltinAtom(atom) => Ok(Some(atom.name())),
-            RuntimeValue::Atom(id) => Ok(Some(self.text(id)?)),
+            RuntimeValue::BuiltinAtom(atom) => Ok(Some(TextRef::borrowed(atom.name()))),
+            RuntimeValue::InlineAtom(text) => Ok(Some(TextRef::inline(text))),
+            RuntimeValue::Atom(id) => Ok(Some(TextRef::borrowed(self.text(id)?))),
             _ => Ok(None),
         }
     }
@@ -1731,9 +1838,10 @@ impl<'a> HeapView<'a> {
                 RuntimeValue::Int(_)
                 | RuntimeValue::Float(_)
                 | RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
                 | RuntimeValue::Atom(_)
+                | RuntimeValue::InlineString(_)
                 | RuntimeValue::ShortString(_)
-                | RuntimeValue::String(_)
                 | RuntimeValue::Bytes(_)
                 | RuntimeValue::Opaque(_)
                 | RuntimeValue::NativeType(_)
@@ -1762,10 +1870,8 @@ impl<'a> HeapView<'a> {
                     pending.push(descriptor.value());
                 }
                 Object::Declared { payload, .. } => pending.push(payload.value()),
-                Object::String(_)
-                | Object::Bytes(_)
+                Object::Bytes(_)
                 | Object::Opaque(_)
-                | Object::NativeType(_)
                 | Object::DeclaredType { .. }
                 | Object::Closure { .. }
                 | Object::UpLink { .. }
@@ -1805,32 +1911,18 @@ impl<'a> HeapView<'a> {
             }
             (RuntimeValue::Int(left), RuntimeValue::Int(right)) => Ok(left == right),
             (RuntimeValue::Float(left), RuntimeValue::Float(right)) => Ok(left == right),
-            (RuntimeValue::BuiltinAtom(left), RuntimeValue::BuiltinAtom(right)) => {
-                Ok(left == right)
-            }
-            (RuntimeValue::Atom(left), RuntimeValue::Atom(right))
-            | (RuntimeValue::ShortString(left), RuntimeValue::ShortString(right)) => {
-                if left.storage == right.storage {
-                    Ok(left == right)
-                } else {
-                    Ok(self.text(left)? == self.text(right)?)
-                }
-            }
-            (left @ RuntimeValue::BuiltinAtom(_), right @ RuntimeValue::Atom(_))
-            | (left @ RuntimeValue::Atom(_), right @ RuntimeValue::BuiltinAtom(_)) => {
-                Ok(self.atom_text(left.into())? == self.atom_text(right.into())?)
-            }
             (
-                left @ (RuntimeValue::ShortString(_) | RuntimeValue::String(_)),
-                right @ (RuntimeValue::ShortString(_) | RuntimeValue::String(_)),
-            ) => {
-                if let (RuntimeValue::String(left), RuntimeValue::String(right)) = (left, right)
-                    && left == right
-                {
-                    return Ok(true);
-                }
-                Ok(self.string_text(left.into())? == self.string_text(right.into())?)
-            }
+                left @ (RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
+                | RuntimeValue::Atom(_)),
+                right @ (RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
+                | RuntimeValue::Atom(_)),
+            ) => Ok(self.atom_text(left.into())? == self.atom_text(right.into())?),
+            (
+                left @ (RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_)),
+                right @ (RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_)),
+            ) => Ok(self.string_text(left.into())? == self.string_text(right.into())?),
             (RuntimeValue::Bytes(left), RuntimeValue::Bytes(right)) => {
                 if left == right {
                     return Ok(true);
@@ -1855,18 +1947,7 @@ impl<'a> HeapView<'a> {
                 };
                 Ok(left.logical_eq(right))
             }
-            (RuntimeValue::NativeType(left), RuntimeValue::NativeType(right)) => {
-                if left == right {
-                    return Ok(true);
-                }
-                let Object::NativeType(left) = self.object(left)? else {
-                    return Err(HeapError("NativeType handle refers to another object kind"));
-                };
-                let Object::NativeType(right) = self.object(right)? else {
-                    return Err(HeapError("NativeType handle refers to another object kind"));
-                };
-                Ok(left == right)
-            }
+            (RuntimeValue::NativeType(left), RuntimeValue::NativeType(right)) => Ok(left == right),
             (RuntimeValue::DeclaredType(left), RuntimeValue::DeclaredType(right)) => {
                 let Object::DeclaredType { id: left, .. } = self.object(left)? else {
                     return Err(HeapError(
@@ -1909,10 +1990,14 @@ impl<'a> HeapView<'a> {
             }
             (
                 RuntimeValue::Declared(declared),
-                atom @ (RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_)),
+                atom @ (RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
+                | RuntimeValue::Atom(_)),
             )
             | (
-                atom @ (RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_)),
+                atom @ (RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
+                | RuntimeValue::Atom(_)),
                 RuntimeValue::Declared(declared),
             ) => {
                 let Object::Declared { payload, .. } = self.object(declared)? else {
@@ -2081,16 +2166,10 @@ impl<'a> HeapView<'a> {
             RuntimeValue::Float(value) if value.is_finite() => Value::Float(value),
             RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             RuntimeValue::BuiltinAtom(atom) => Value::Atom(Atom::builtin(atom)),
+            RuntimeValue::InlineAtom(text) => Value::atom(text.as_str()),
             RuntimeValue::Atom(id) => Value::atom(self.text(id)?),
+            RuntimeValue::InlineString(text) => Value::string(text.as_str()),
             RuntimeValue::ShortString(id) => Value::string(self.text(id)?),
-            RuntimeValue::String(handle) => {
-                let Object::String(value) = self.enter_object(handle, visiting)? else {
-                    return Err(HeapError("String handle refers to another object kind"));
-                };
-                let value = Value::string(value.as_ref());
-                visiting.remove(&handle);
-                value
-            }
             RuntimeValue::Bytes(handle) => {
                 let Object::Bytes(value) = self.enter_object(handle, visiting)? else {
                     return Err(HeapError("Bytes handle refers to another object kind"));
@@ -2107,14 +2186,7 @@ impl<'a> HeapView<'a> {
                 visiting.remove(&handle);
                 value
             }
-            RuntimeValue::NativeType(handle) => {
-                let Object::NativeType(value) = self.enter_object(handle, visiting)? else {
-                    return Err(HeapError("NativeType handle refers to another object kind"));
-                };
-                let value = Value::NativeType(value.clone());
-                visiting.remove(&handle);
-                value
-            }
+            RuntimeValue::NativeType(id) => Value::NativeType(self.native_type(id)?.clone()),
             RuntimeValue::DeclaredType(handle) => {
                 if shallow_declared_types {
                     let Object::DeclaredType { id, name, .. } = self.object(handle)? else {
@@ -2564,7 +2636,7 @@ fn bound_type_replacements(
                     _ => {}
                 }
             }
-            if kind == Some("Bound") {
+            if kind.is_some_and(|kind| kind == "Bound") {
                 let index = parameter.ok_or(HeapError("Bound metadata has no parameter index"))?;
                 let argument = arguments
                     .get(index)
@@ -2589,11 +2661,7 @@ fn bound_type_replacements(
                 vec![value.ok_or(HeapError("uninitialized type metadata up-link"))?]
             }
             Object::ByteCodeProto { values, .. } => values.to_vec(),
-            Object::Reserved
-            | Object::String(_)
-            | Object::Bytes(_)
-            | Object::NativeType(_)
-            | Object::Opaque(_) => Vec::new(),
+            Object::Reserved | Object::Bytes(_) | Object::Opaque(_) => Vec::new(),
         };
         for child in children {
             if let Some(child_handle) = runtime_object_handle(child.value()) {
@@ -2615,9 +2683,8 @@ fn bound_type_replacements(
 
 fn runtime_object_handle(value: RuntimeValue) -> Option<Handle> {
     match value {
-        RuntimeValue::String(handle)
-        | RuntimeValue::Bytes(handle)
-        | RuntimeValue::NativeType(handle)
+        RuntimeValue::NativeType(_) => None,
+        RuntimeValue::Bytes(handle)
         | RuntimeValue::DeclaredType(handle)
         | RuntimeValue::Declared(handle)
         | RuntimeValue::Opaque(handle)
@@ -2632,7 +2699,9 @@ fn runtime_object_handle(value: RuntimeValue) -> Option<Handle> {
         | RuntimeValue::Int(_)
         | RuntimeValue::Float(_)
         | RuntimeValue::BuiltinAtom(_)
+        | RuntimeValue::InlineAtom(_)
         | RuntimeValue::Atom(_)
+        | RuntimeValue::InlineString(_)
         | RuntimeValue::ShortString(_) => None,
     }
 }
@@ -2704,6 +2773,7 @@ struct PendingCopy {
     objects_forwarded: HashMap<Handle, Handle>,
     text_forwarded: HashMap<InternId, InternId>,
     shapes_forwarded: HashMap<ShapeId, ShapeId>,
+    native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
     value_replacements: HashMap<Handle, RichValue>,
     forced_objects: HashSet<Handle>,
     type_argument_values: Option<Arc<[RichValue]>>,
@@ -2725,6 +2795,7 @@ impl PendingCopy {
             objects_forwarded: HashMap::new(),
             text_forwarded: HashMap::new(),
             shapes_forwarded: HashMap::new(),
+            native_types: HashMap::new(),
             value_replacements: HashMap::new(),
             forced_objects: HashSet::new(),
             type_argument_values: None,
@@ -2771,15 +2842,15 @@ impl PendingCopy {
             RuntimeValue::Failed(_) => {
                 return Err(HeapError("failed evaluation node cannot enter Main world"));
             }
-            RuntimeValue::Int(_) | RuntimeValue::BuiltinAtom(_) => value.value(),
+            RuntimeValue::Int(_)
+            | RuntimeValue::BuiltinAtom(_)
+            | RuntimeValue::InlineAtom(_)
+            | RuntimeValue::InlineString(_) => value.value(),
             RuntimeValue::Float(float) if float.is_finite() => value.value(),
             RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             RuntimeValue::Atom(id) => RuntimeValue::Atom(self.copy_text(target, source, id)?),
             RuntimeValue::ShortString(id) => {
                 RuntimeValue::ShortString(self.copy_text(target, source, id)?)
-            }
-            RuntimeValue::String(handle) => {
-                RuntimeValue::String(self.copy_object(target, source, handle)?)
             }
             RuntimeValue::Bytes(handle) => {
                 RuntimeValue::Bytes(self.copy_object(target, source, handle)?)
@@ -2787,8 +2858,9 @@ impl PendingCopy {
             RuntimeValue::Opaque(handle) => {
                 RuntimeValue::Opaque(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::NativeType(handle) => {
-                RuntimeValue::NativeType(self.copy_object(target, source, handle)?)
+            RuntimeValue::NativeType(id) => {
+                self.copy_native_type(target, source, id)?;
+                RuntimeValue::NativeType(id)
             }
             RuntimeValue::DeclaredType(handle) => {
                 RuntimeValue::DeclaredType(self.copy_object(target, source, handle)?)
@@ -2867,10 +2939,8 @@ impl PendingCopy {
         };
         Ok(match object {
             Object::Reserved => return Err(HeapError("cannot copy an uninitialized object")),
-            Object::String(value) => Object::String(value.clone()),
             Object::Bytes(value) => Object::Bytes(value.clone()),
             Object::Opaque(value) => Object::Opaque(value.clone()),
-            Object::NativeType(value) => Object::NativeType(value.clone()),
             Object::DeclaredType {
                 id,
                 name,
@@ -3013,6 +3083,20 @@ impl PendingCopy {
         Ok(copied)
     }
 
+    fn copy_native_type(
+        &mut self,
+        target: &Heap,
+        source: &HeapView<'_>,
+        id: crate::value::NativeTypeId,
+    ) -> Result<(), HeapError> {
+        if target.native_types.contains_key(&id) || self.native_types.contains_key(&id) {
+            return Ok(());
+        }
+        self.native_types
+            .insert(id, source.native_type(id)?.clone());
+        Ok(())
+    }
+
     fn copy_shape(
         &mut self,
         target: &Heap,
@@ -3070,6 +3154,7 @@ impl PendingCopy {
 
     fn commit(self, target: &mut Heap) {
         target.objects.extend(self.objects);
+        target.native_types.extend(self.native_types);
         for value in self.text.values {
             target.text.insert(&value);
         }
@@ -3083,10 +3168,9 @@ impl PendingCopy {
 fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
     match value {
         RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => id.storage != target,
-        RuntimeValue::String(handle)
-        | RuntimeValue::Bytes(handle)
+        RuntimeValue::NativeType(_) => false,
+        RuntimeValue::Bytes(handle)
         | RuntimeValue::Opaque(handle)
-        | RuntimeValue::NativeType(handle)
         | RuntimeValue::DeclaredType(handle)
         | RuntimeValue::Declared(handle)
         | RuntimeValue::Array(handle)
@@ -3099,7 +3183,9 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
         RuntimeValue::Failed(_)
         | RuntimeValue::Int(_)
         | RuntimeValue::Float(_)
-        | RuntimeValue::BuiltinAtom(_) => false,
+        | RuntimeValue::BuiltinAtom(_)
+        | RuntimeValue::InlineAtom(_)
+        | RuntimeValue::InlineString(_) => false,
     }
 }
 
@@ -3116,10 +3202,9 @@ fn object_contains_disallowed(
     let foreign = |storage| storage != target && Some(storage) != background;
     let value_foreign = |value: RichValue| match value.value() {
         RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => foreign(id.storage),
-        RuntimeValue::String(handle)
-        | RuntimeValue::Bytes(handle)
+        RuntimeValue::NativeType(_) => false,
+        RuntimeValue::Bytes(handle)
         | RuntimeValue::Opaque(handle)
-        | RuntimeValue::NativeType(handle)
         | RuntimeValue::DeclaredType(handle)
         | RuntimeValue::Declared(handle)
         | RuntimeValue::Array(handle)
@@ -3132,7 +3217,9 @@ fn object_contains_disallowed(
         RuntimeValue::Failed(_)
         | RuntimeValue::Int(_)
         | RuntimeValue::Float(_)
-        | RuntimeValue::BuiltinAtom(_) => false,
+        | RuntimeValue::BuiltinAtom(_)
+        | RuntimeValue::InlineAtom(_)
+        | RuntimeValue::InlineString(_) => false,
     };
     match object {
         Object::Reserved => true,
@@ -3163,7 +3250,7 @@ fn object_contains_disallowed(
                     RuntimePrototype::Native(_) => false,
                 })
         }
-        Object::String(_) | Object::Bytes(_) | Object::Opaque(_) | Object::NativeType(_) => false,
+        Object::Bytes(_) | Object::Opaque(_) => false,
     }
 }
 
@@ -3216,11 +3303,53 @@ mod tests {
             assert_ne!(value.meta.traits() & TRAIT_REFERENCE, 0);
             assert_ne!(value.meta.traits() & TRAIT_HEAP, 0);
             assert_ne!(value.meta.traits() & TRAIT_TRACE, 0);
-            assert_eq!(
-                value.meta.traits() & TRAIT_LOCAL != 0,
-                storage == Storage::Work
-            );
+            assert_eq!(ScopedId::from_raw(value.raw).storage(), storage);
         }
+    }
+
+    #[test]
+    fn inline_text_and_native_type_use_no_heap_or_text_slot() {
+        let mut heap = Heap::work();
+        let short_string = RichValue::unknown(heap.string(None, "1234567"));
+        let short_atom = RichValue::unknown(heap.atom(None, "1234567"));
+        let native = crate::NativeType::bind(
+            crate::value::NativeTypeId {
+                module: crate::value::NativeModuleId(7),
+                local: 11,
+            },
+            "fixture#Native",
+        );
+        let native_value = RichValue::unknown(RuntimeValue::NativeType(
+            heap.intern_native_type(native.clone()),
+        ));
+
+        assert_eq!(heap.counts(), (0, 0, 0));
+        let view = HeapView {
+            current: &heap,
+            background: None,
+        };
+        assert_eq!(view.string_text(short_string).unwrap().unwrap(), "1234567");
+        assert_eq!(view.atom_text(short_atom).unwrap().unwrap(), "1234567");
+        let RuntimeValue::NativeType(id) = native_value.value() else {
+            panic!("expected immediate NativeType")
+        };
+        assert_eq!(heap.native_type(id).unwrap(), &native);
+
+        let long = RichValue::unknown(heap.string(None, "12345678"));
+        assert!(matches!(long.value(), RuntimeValue::ShortString(_)));
+        assert_eq!(heap.counts(), (0, 1, 0));
+    }
+
+    #[test]
+    fn scoped_type_id_is_independent_from_value_storage() {
+        let raw = RichValue::unknown(RuntimeValue::Int(1));
+        let typed = RichValue {
+            ty: ScopedId::new(Storage::Work, 7).0,
+            ..raw
+        };
+        assert_eq!(ScopedId(typed.ty).storage(), Storage::Work);
+        assert_eq!(ScopedId(typed.ty).slot(), 7);
+        assert_eq!(typed.value(), RuntimeValue::Int(1));
     }
 
     #[test]
@@ -3340,7 +3469,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(world.counts(), (2, 1, 0));
+        assert_eq!(world.counts(), (2, 0, 0));
         let RuntimeValue::Tuple(root) = copied[0].value() else {
             panic!("expected tuple root")
         };
@@ -3441,7 +3570,7 @@ mod tests {
         ));
         source.allocate(Object::Bytes(vec![4, 5, 6].into()));
         let mut target = Heap::work();
-        target.allocate(Object::String("existing".into()));
+        target.allocate(Object::Bytes(Box::new([])));
 
         let relocated = relocate_work_roots(
             &mut target,

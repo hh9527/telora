@@ -24,7 +24,8 @@ boundaries and records final evidence.
 struct Val {
     loc: PackedLoc, // three u32 words
     meta: Meta,     // one u32 word
-    ty: u64,        // zero or a canonical TypeId witness
+    ty: u32,        // a Main/Local type-arena slot selected by Meta
+    narrow: u32,    // reserved for trait/interface narrowing evidence
     raw: u64,       // immediate bits or a reference payload
 }
 ```
@@ -37,11 +38,14 @@ represent VM graph identity.
 
 The fields describe separate facts:
 
-- `kind` says how to decode `raw` and, for references, which World owns it;
+- `kind` says how to decode `raw`;
 - `sub-kind` identifies the physical Heap object without describing its
   language type;
 - trait bits support branch-free or single-mask questions about representation;
-- `ty` is the unforgeable language-level type witness; and
+- `ty` is a scoped `u32` language-level type witness;
+  and
+- `narrow` is an independent slot reserved for future trait/interface
+  refinement evidence;
 - `loc` and provenance describe source origin without affecting equality.
 
 `Bool` is not a runtime kind. `'True` and `'False` are inline Atoms and may
@@ -57,16 +61,12 @@ Never
 Int
 Float
 IString
-MainString
-LocalString
+String
 IAtom
-MainAtom
-LocalAtom
+Atom
 NativeType
-MainHeap
-MainUplink
-LocalHeap
-LocalUplink
+Heap
+Uplink
 ```
 
 Heap sub-kinds initially cover `Bytes`, `Array`, `Tuple`, `Tagged`, `Dict`,
@@ -87,11 +87,19 @@ API projection and is not this physical taxonomy.
 
 ## Narrowing invariants
 
-A zero witness denotes an unbranded raw value. A nonzero witness denotes a
-canonical type identity owned by the execution context. Raw data must be
-structurally validated before the witness is installed. Equal witnesses permit
-the existing declared-identity fast path; unequal declared witnesses are an
-identity mismatch even when their payload structures happen to match.
+Reference-bearing fields use a `ScopedId(u32)`: bit 31 is zero for Main and one
+for Work, while bits 0 through 30 hold the arena slot. `ty == 0` means no
+witness; valid witness slots use a reserved-zero encoding. Raw data must be
+structurally validated before a witness is installed.
+Equal scoped witnesses permit the existing declared-identity fast path;
+unequal declared witnesses are an identity mismatch even when their payload
+structures happen to match. Work type witnesses relocate through a type
+forwarding/interner map; Main type witnesses remain unchanged. `narrow` will
+use the same scoped-ID encoding.
+
+`narrow` is zero in this RFC series. Its future interpretation must not change
+the exact type identity in `ty`; it will describe additional proven
+trait/interface refinement, not another nominal type.
 
 ## Compatibility
 

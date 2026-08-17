@@ -7,17 +7,16 @@
 ## Summary
 
 Telora will replace runtime `DeclaredValue` and `Object::Declared` wrappers
-with a canonical nonzero `u64` witness stored directly in `Val.ty`.
+with a canonical `u32` arena slot stored directly in `Val.ty`.
 Validation of raw values remains structural; validation of an already matching
 witness remains an identity fast path.
 
 ## Witness registry
 
-An execution context owns a canonical registry from declared identity to
-`TypeId`. The registry includes concrete declarations and applications of
-parameterized declared families. Zero is permanently reserved for raw values.
-IDs are stable across all WorkWorlds attached to the context and while values
-remain reachable from its MainWorld. They are not serialized as a language or
+Each World owns a canonical type arena from declared identity to `TypeId`.
+Meta records whether `Val.ty` addresses the Main arena, the current Local
+arena, or no arena. The arenas include concrete declarations and applications
+of parameterized declared families. IDs are not serialized as a language or
 Host ABI.
 
 The registry retains the full identity key: module identity, declaration slot,
@@ -42,6 +41,10 @@ Installing a witness preserves `loc`, Meta, raw payload, and graph sharing. It
 does not allocate, copy, or wrap the payload. Since `Val` is copied by value,
 different edges may hold the same raw payload with different valid narrowing
 metadata only where the language's existing validation semantics permit that.
+
+Local witnesses relocate through a type forwarding/interner map during
+Work/Work or Work/Main copy. Main witnesses remain unchanged when the target
+shares the MainWorld.
 
 ## Type values versus witnesses
 

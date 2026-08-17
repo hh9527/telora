@@ -22,7 +22,8 @@ Copy begins from one or more root `Val`s and uses Meta masks:
 - Local Heap objects install an object forwarding entry before child traversal;
 - Local uplinks use a separate forwarding entry and preserve recursive graph
   closure; and
-- witnesses remain stable within the shared execution context.
+- Main witnesses remain unchanged and Local witnesses relocate through a
+  canonical type forwarding/interner map.
 
 The collector scans distinct reachable Local nodes, not an unfolded tree. A
 later copy-GC policy may choose when to invoke this mechanism; this RFC defines

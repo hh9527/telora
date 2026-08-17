@@ -124,7 +124,7 @@ pub(crate) fn native_compile(context: &mut CallContext<'_, '_>) -> Result<(), Na
         .as_str()
         .ok_or_else(|| NativeError::new("std/regex.compile expects String"))?
         .to_owned();
-    let compiled = compile_pattern(pattern)?;
+    let compiled = compile_pattern(pattern.as_str().to_owned())?;
     context.set_opaque(context.result(), native_type, compiled)
 }
 
@@ -169,7 +169,11 @@ fn stripped_metadata(
     mut metadata: crate::ValueRef<'_>,
 ) -> Result<crate::ValueRef<'_>, NativeError> {
     metadata = resolve_metadata(metadata)?;
-    while metadata.dict_get("kind").and_then(|kind| kind.as_atom()) == Some("WithAttributes") {
+    while metadata
+        .dict_get("kind")
+        .and_then(|kind| kind.as_atom())
+        .is_some_and(|kind| kind == "WithAttributes")
+    {
         metadata = metadata
             .dict_get("inner")
             .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
@@ -192,7 +196,7 @@ fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> 
         return None;
     }
     let payload = stripped_metadata(variants.dict_get("Some")?).ok()?;
-    (payload.as_atom() != Some("None")).then_some(payload)
+    (!payload.as_atom().is_some_and(|atom| atom == "None")).then_some(payload)
 }
 
 fn attached_regex(metadata: crate::ValueRef<'_>) -> Result<Option<CompiledRegex>, NativeError> {
@@ -206,7 +210,7 @@ fn attached_regex(metadata: crate::ValueRef<'_>) -> Result<Option<CompiledRegex>
             let (tag, payload) = provider
                 .tagged_parts()
                 .ok_or_else(|| NativeError::new("std/string.parse provider must be Tagged"))?;
-            if tag.as_atom() != Some("Regex") {
+            if !tag.as_atom().is_some_and(|tag| tag == "Regex") {
                 return Err(NativeError::new("unknown std/string.parse provider"));
             }
             let native_type = payload
@@ -223,7 +227,11 @@ fn attached_regex(metadata: crate::ValueRef<'_>) -> Result<Option<CompiledRegex>
                 .map(Some)
                 .ok_or_else(|| NativeError::new("regex parse provider has an invalid payload"));
         }
-        if metadata.dict_get("kind").and_then(|kind| kind.as_atom()) != Some("WithAttributes") {
+        if !metadata
+            .dict_get("kind")
+            .and_then(|kind| kind.as_atom())
+            .is_some_and(|kind| kind == "WithAttributes")
+        {
             return Ok(None);
         }
         metadata = metadata
@@ -238,7 +246,8 @@ fn parse_plan(metadata: crate::ValueRef<'_>) -> Result<ParsePlan, NativeError> {
         return Ok(ParsePlan::Regex { compiled, fields });
     }
     let metadata = stripped_metadata(metadata)?;
-    match metadata.dict_get("kind").and_then(|kind| kind.as_atom()) {
+    let kind = metadata.dict_get("kind").and_then(|kind| kind.as_atom());
+    match kind.as_ref().map(crate::TextRef::as_str) {
         Some("String") => Ok(ParsePlan::String),
         Some("Int") => Ok(ParsePlan::Int),
         Some("Float") => Ok(ParsePlan::Float),
@@ -251,7 +260,11 @@ fn validate_relation(
     metadata: crate::ValueRef<'_>,
 ) -> Result<BTreeMap<String, FieldPlan>, NativeError> {
     let metadata = stripped_metadata(metadata)?;
-    if metadata.dict_get("kind").and_then(|kind| kind.as_atom()) != Some("Struct") {
+    if !metadata
+        .dict_get("kind")
+        .and_then(|kind| kind.as_atom())
+        .is_some_and(|kind| kind == "Struct")
+    {
         return Err(NativeError::new(
             "std/regex.parse_by requires a struct type",
         ));
@@ -460,7 +473,7 @@ fn native_text_codec_marker(
     if decorator_context
         .dict_get("kind")
         .and_then(|kind| kind.as_atom())
-        != Some("Type")
+        .is_none_or(|kind| kind != "Type")
     {
         return Err(NativeError::new(format!(
             "{key} is only supported on a type container"

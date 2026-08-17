@@ -170,10 +170,8 @@ impl<'a> ValueRef<'a> {
 
     pub(crate) fn object_handle(self) -> Option<Handle> {
         match self.value.value() {
-            RuntimeValue::String(handle)
-            | RuntimeValue::Bytes(handle)
+            RuntimeValue::Bytes(handle)
             | RuntimeValue::Opaque(handle)
-            | RuntimeValue::NativeType(handle)
             | RuntimeValue::DeclaredType(handle)
             | RuntimeValue::Array(handle)
             | RuntimeValue::Tagged(handle)
@@ -211,7 +209,7 @@ impl<'a> ValueRef<'a> {
             }
             RuntimeValue::Int(_) => ValueKind::Int,
             RuntimeValue::Float(_) => ValueKind::Float,
-            RuntimeValue::ShortString(_) | RuntimeValue::String(_) => ValueKind::String,
+            RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => ValueKind::String,
             RuntimeValue::Bytes(_) => ValueKind::Bytes,
             RuntimeValue::NativeType(_) => ValueKind::Type,
             RuntimeValue::DeclaredType(_) => ValueKind::Type,
@@ -232,7 +230,9 @@ impl<'a> ValueRef<'a> {
             RuntimeValue::Opaque(_) => ValueKind::Opaque,
             RuntimeValue::Dict(_) => ValueKind::Dict,
             RuntimeValue::Array(_) => ValueKind::Array,
-            RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_) => ValueKind::Atom,
+            RuntimeValue::BuiltinAtom(_) | RuntimeValue::InlineAtom(_) | RuntimeValue::Atom(_) => {
+                ValueKind::Atom
+            }
             RuntimeValue::Tagged(_) => ValueKind::Tagged,
             RuntimeValue::Tuple(_) => ValueKind::Tuple,
             RuntimeValue::Func(_) => ValueKind::Func,
@@ -243,10 +243,11 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    pub fn as_atom(self) -> Option<&'a str> {
+    pub fn as_atom(self) -> Option<crate::TextRef<'a>> {
         match self.value.value() {
-            RuntimeValue::BuiltinAtom(atom) => Some(atom.name()),
-            RuntimeValue::Atom(id) => self.view.text(id).ok(),
+            RuntimeValue::BuiltinAtom(atom) => Some(crate::heap::TextRef::borrowed(atom.name())),
+            RuntimeValue::InlineAtom(text) => Some(crate::heap::TextRef::inline(text)),
+            RuntimeValue::Atom(id) => self.view.text(id).ok().map(crate::heap::TextRef::borrowed),
             _ => None,
         }
     }
@@ -265,13 +266,12 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    pub fn as_str(self) -> Option<&'a str> {
+    pub fn as_str(self) -> Option<crate::TextRef<'a>> {
         match self.value.value() {
-            RuntimeValue::ShortString(id) => self.view.text(id).ok(),
-            RuntimeValue::String(handle) => match self.view.object(handle).ok()? {
-                Object::String(value) => Some(value),
-                _ => None,
-            },
+            RuntimeValue::InlineString(text) => Some(crate::heap::TextRef::inline(text)),
+            RuntimeValue::ShortString(id) => {
+                self.view.text(id).ok().map(crate::heap::TextRef::borrowed)
+            }
             _ => None,
         }
     }
@@ -287,13 +287,10 @@ impl<'a> ValueRef<'a> {
     }
 
     pub fn as_native_type(self) -> Option<&'a crate::NativeType> {
-        let RuntimeValue::NativeType(handle) = self.value.value() else {
+        let RuntimeValue::NativeType(id) = self.value.value() else {
             return None;
         };
-        match self.view.object(handle).ok()? {
-            Object::NativeType(value) => Some(value),
-            _ => None,
-        }
+        self.view.native_type(id).ok()
     }
 
     pub(crate) fn declared_type_parts(
@@ -2216,7 +2213,7 @@ impl Vm {
                                         )
                                     })?
                                 {
-                                    output.push_str(value);
+                                    output.push_str(value.as_str());
                                 } else if let Some(value) =
                                     view.atom_text(*value).map_err(|heap_error| {
                                         error(
@@ -2227,7 +2224,7 @@ impl Vm {
                                         )
                                     })?
                                 {
-                                    output.push_str(value);
+                                    output.push_str(value.as_str());
                                 } else {
                                     unreachable!("interpolation values were validated");
                                 }
@@ -2847,41 +2844,21 @@ impl Vm {
                         }
                         Opcode::Panic { message } => {
                             let message = *read_register(&registers, *message, function, pc)?;
-                            let text = match message.value() {
-                                RuntimeValue::ShortString(id) => view
-                                    .text(id)
-                                    .map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                    .to_owned(),
-                                RuntimeValue::String(handle) => {
-                                    match view.object(handle).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })? {
-                                        Object::String(value) => value.to_string(),
-                                        _ => {
-                                            return Err(runtime_type_error(
-                                                "String", &message, &view, function, pc,
-                                            ));
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    return Err(runtime_type_error(
-                                        "String", &message, &view, function, pc,
-                                    ));
-                                }
-                            };
+                            let text = view
+                                .string_text(message)
+                                .map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?
+                                .ok_or_else(|| {
+                                    runtime_type_error("String", &message, &view, function, pc)
+                                })?
+                                .as_str()
+                                .to_owned();
                             return Err(error(RuntimeErrorKind::Panic, text, function, pc));
                         }
                         Opcode::Raise {
@@ -3324,7 +3301,9 @@ fn drive_vm_action(
                 }
                 if matches!(
                     callee.value(),
-                    RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_)
+                    RuntimeValue::BuiltinAtom(_)
+                        | RuntimeValue::InlineAtom(_)
+                        | RuntimeValue::Atom(_)
                 ) {
                     if arguments.len() != 1 {
                         return Err(error(
@@ -4225,13 +4204,14 @@ fn resume_array_continuation(
                     continuation.call_pc,
                 )
             })?;
-            match view.atom_text(tag).map_err(|heap_error| {
+            let tag = view.atom_text(tag).map_err(|heap_error| {
                 core_dict_heap_error(
                     heap_error,
                     &continuation.call_function,
                     continuation.call_pc,
                 )
-            })? {
+            })?;
+            match tag.as_ref().map(crate::TextRef::as_str) {
                 Some("Continue") => continuation.accumulator = Some(payload),
                 Some("Break") => {
                     return Ok(VmAction::Return {
@@ -4566,7 +4546,7 @@ fn run_core_string(
         };
         view.string_text(arguments[index])
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-            .map(str::to_owned)
+            .map(|text| text.as_str().to_owned())
             .ok_or_else(|| runtime_type_error("String", &arguments[index], &view, function, pc))
     };
     let call_loc = instruction_location(function, pc);
@@ -4622,7 +4602,7 @@ fn run_core_string(
                             pc,
                         )
                     })?;
-                strings.push(text);
+                strings.push(text.as_str().to_owned());
             }
             let output = strings.join(&separator);
             charge_allocation(account, output.len() as u64, function, pc)?;
@@ -4850,12 +4830,12 @@ fn run_core_path(
                 })?;
             if part.starts_with('/') {
                 joined.clear();
-                joined.push_str(part);
+                joined.push_str(part.as_str());
             } else {
                 if !joined.is_empty() && !joined.ends_with('/') {
                     joined.push('/');
                 }
-                joined.push_str(part);
+                joined.push_str(part.as_str());
             }
         }
         joined
@@ -4866,7 +4846,7 @@ fn run_core_path(
         };
         view.string_text(arguments[0])
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-            .map(str::to_owned)
+            .map(|text| text.as_str().to_owned())
             .ok_or_else(|| runtime_type_error("String", &arguments[0], &view, function, pc))?
     };
     let normalized = normalize_lexical_path(&input);
@@ -5014,7 +4994,7 @@ fn run_core_dict(
                 ));
             };
             match view
-                .dict_get_text(handle, key)
+                .dict_get_text(handle, key.as_str())
                 .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
             {
                 Some(payload) => {
@@ -5167,7 +5147,7 @@ fn run_core_dict(
                         pc,
                     ));
                 };
-                entries.push((field.to_owned(), pair[1]));
+                entries.push((field.as_str().to_owned(), pair[1]));
             }
             entries.sort_by(|left, right| left.0.cmp(&right.0));
             if let Some(duplicate) = entries
@@ -5599,7 +5579,7 @@ fn run_core_attributes(
                 .ok_or_else(|| {
                     runtime_type_error("String key", &arguments[1], &view, function, pc)
                 })?;
-            let found = attributes.get(key).copied();
+            let found = attributes.get(key.as_str()).copied();
             if operation == CoreAttributesFunction::Has {
                 RichValue::new(
                     RuntimeValue::BuiltinAtom(if found.is_some() {
@@ -5847,7 +5827,7 @@ fn run_core_model(
                 let unit = view
                     .atom_text(inner)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-                    == Some("None");
+                    .is_some_and(|atom| atom == "None");
                 if !unit && !matches!(inner.value(), RuntimeValue::UpLink(_)) {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
@@ -5978,7 +5958,7 @@ fn run_core_type_desc(
                     "Named",
                     "Dyn",
                 ];
-                if !KINDS.contains(&kind) {
+                if !KINDS.contains(&kind.as_str()) {
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
                         format!("unknown Type metadata kind '{kind}"),
@@ -5986,7 +5966,7 @@ fn run_core_type_desc(
                         pc,
                     ));
                 }
-                kind.to_owned()
+                kind.as_str().to_owned()
             };
             Ok(VmAction::Return {
                 value: RichValue::new(RuntimeValue::Atom(current.intern(&kind)), input.loc()),
@@ -6012,24 +5992,23 @@ fn run_core_type_desc(
             })
         }
         CoreTypeDescFunction::OpaqueName => {
-            let name = if let RuntimeValue::NativeType(handle) = input.value() {
-                match view
-                    .object(handle)
-                    .map_err(|error| core_dict_heap_error(error, function, pc))?
-                {
-                    Object::NativeType(value) => Some(value.qualified_name().to_owned()),
-                    _ => None,
-                }
+            let name = if let RuntimeValue::NativeType(id) = input.value() {
+                Some(
+                    view.native_type(id)
+                        .map_err(|error| core_dict_heap_error(error, function, pc))?
+                        .qualified_name()
+                        .to_owned(),
+                )
             } else if let RuntimeValue::Dict(handle) = input.value() {
                 let kind = view
                     .dict_get_text(handle, "kind")
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                     .and_then(|value| view.atom_text(value).ok().flatten());
-                if kind == Some("Opaque") {
+                if kind.is_some_and(|kind| kind == "Opaque") {
                     view.dict_get_text(handle, "name")
                         .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                         .and_then(|value| view.string_text(value).ok().flatten())
-                        .map(str::to_owned)
+                        .map(|text| text.as_str().to_owned())
                 } else {
                     None
                 }
@@ -6172,7 +6151,7 @@ fn run_core_dyn(
                 }
                 RuntimeValue::Int(_) => "Int",
                 RuntimeValue::Float(_) => "Float",
-                RuntimeValue::ShortString(_) | RuntimeValue::String(_) => "String",
+                RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => "String",
                 RuntimeValue::Bytes(_) => "Bytes",
                 RuntimeValue::Opaque(_) => "Opaque",
                 RuntimeValue::NativeType(_) => "Type",
@@ -6212,7 +6191,9 @@ fn run_core_dyn(
                 }
                 RuntimeValue::Dict(_) => "Dict",
                 RuntimeValue::Array(_) => "Array",
-                RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_) => "Atom",
+                RuntimeValue::BuiltinAtom(_)
+                | RuntimeValue::InlineAtom(_)
+                | RuntimeValue::Atom(_) => "Atom",
                 RuntimeValue::Tagged(_) => "Tagged",
                 RuntimeValue::Tuple(_) => "Tuple",
                 RuntimeValue::Func(_) => "Func",
@@ -6249,7 +6230,7 @@ fn run_core_dyn(
                 CoreDynFunction::CheckFloat => matches!(value.value(), RuntimeValue::Float(_)),
                 CoreDynFunction::CheckString => matches!(
                     value.value(),
-                    RuntimeValue::ShortString(_) | RuntimeValue::String(_)
+                    RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_)
                 ),
                 CoreDynFunction::CheckBytes => matches!(value.value(), RuntimeValue::Bytes(_)),
                 _ => unreachable!(),
@@ -6403,7 +6384,7 @@ fn observe_dyn_structure(
                 .dict_get_text(value_handle, name)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("dyn.field could not find field {name:?}"))?;
-            let child_desc = match kind {
+            let child_desc = match kind.as_str() {
                 "Struct" => {
                     let RuntimeValue::Dict(fields) = type_field("fields")?.value() else {
                         return Err("Struct.fields descriptor must be a Dict".into());
@@ -6424,7 +6405,7 @@ fn observe_dyn_structure(
             let (value_fields, values) = view
                 .dict_parts(value_handle)
                 .map_err(|error| error.to_string())?;
-            let descriptors = match kind {
+            let descriptors = match kind.as_str() {
                 "Struct" => {
                     let RuntimeValue::Dict(fields) = type_field("fields")?.value() else {
                         return Err("Struct.fields descriptor must be a Dict".into());
@@ -6504,11 +6485,11 @@ fn observe_dyn_structure(
             ))
         }
         CoreDynFunction::Tag => {
-            let (tag, _) = dyn_tagged_parts(kind, type_handle, value, view)?;
+            let (tag, _) = dyn_tagged_parts(kind.as_str(), type_handle, value, view)?;
             Ok(DynObservation::Tag(tag))
         }
         CoreDynFunction::Payload => {
-            let (_, payload) = dyn_tagged_parts(kind, type_handle, value, view)?;
+            let (_, payload) = dyn_tagged_parts(kind.as_str(), type_handle, value, view)?;
             Ok(DynObservation::Payload(payload))
         }
         _ => unreachable!("only structural operations reach observer"),
@@ -6553,11 +6534,12 @@ fn dyn_tagged_parts(
     view: &HeapView<'_>,
 ) -> Result<(String, Option<(RichValue, RichValue)>), String> {
     let runtime = match value.value() {
-        RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_) => {
+        RuntimeValue::BuiltinAtom(_) | RuntimeValue::InlineAtom(_) | RuntimeValue::Atom(_) => {
             let tag = view
                 .atom_text(value)
                 .map_err(|error| error.to_string())?
                 .expect("Atom has text")
+                .as_str()
                 .to_owned();
             (tag, None)
         }
@@ -6567,6 +6549,7 @@ fn dyn_tagged_parts(
                 .atom_text(tag)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "Tagged runtime tag is not an Atom".to_owned())?
+                .as_str()
                 .to_owned();
             (tag, Some(payload))
         }
@@ -6583,7 +6566,7 @@ fn dyn_tagged_parts(
                 .map_err(|error| error.to_string())?
                 .and_then(|tag| view.atom_text(tag).ok().flatten())
                 .ok_or_else(|| "Atom descriptor has no tag".to_owned())?;
-            if runtime.0 != expected || runtime.1.is_some() {
+            if runtime.0 != expected.as_str() || runtime.1.is_some() {
                 return Err(format!("expected unit tag '{expected}"));
             }
             Ok((runtime.0, None))
@@ -6594,7 +6577,7 @@ fn dyn_tagged_parts(
                 .map_err(|error| error.to_string())?
                 .and_then(|tag| view.atom_text(tag).ok().flatten())
                 .ok_or_else(|| "Tagged descriptor has no tag".to_owned())?;
-            if runtime.0 != expected {
+            if runtime.0 != expected.as_str() {
                 return Err(format!("expected tag '{expected}"));
             }
             let payload = runtime
@@ -6620,7 +6603,11 @@ fn dyn_tagged_parts(
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("Enum has no variant {:?}", runtime.0))?;
             let (inner, _) = strip_runtime_attributes(variant, "Dyn.enum.variant", view)?;
-            let unit = view.atom_text(inner).ok().flatten() == Some("None");
+            let unit = view
+                .atom_text(inner)
+                .ok()
+                .flatten()
+                .is_some_and(|atom| atom == "None");
             match (unit, runtime.1) {
                 (true, None) => Ok((runtime.0, None)),
                 (true, Some(_)) => Err(format!("unit variant {:?} has a payload", runtime.0)),
@@ -6802,10 +6789,10 @@ fn finish_dyn_observation(
     })
 }
 
-fn dyn_descriptor_leaf_kind<'a>(
+fn dyn_descriptor_leaf_kind(
     mut descriptor: RichValue,
-    view: &HeapView<'a>,
-) -> Result<&'a str, String> {
+    view: &HeapView<'_>,
+) -> Result<String, String> {
     loop {
         descriptor = declared_type_body(descriptor, view)?;
         if let RuntimeValue::UpLink(handle) = descriptor.value() {
@@ -6824,7 +6811,7 @@ fn dyn_descriptor_leaf_kind<'a>(
             .and_then(|kind| view.atom_text(kind).ok().flatten())
             .ok_or_else(|| "Dyn descriptor is missing an Atom kind".to_owned())?;
         if kind != "WithAttributes" {
-            return Ok(kind);
+            return Ok(kind.as_str().to_owned());
         }
         descriptor = view
             .dict_get_text(handle, "inner")
@@ -6866,7 +6853,7 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("{kind} Type metadata is missing {field}"))
     };
-    match kind {
+    match kind.as_str() {
         "TypeOf" => Ok(vec![get("instance")?]),
         "Array" | "Dict" => Ok(vec![get("item")?]),
         "Tagged" => Ok(vec![get("payload")?]),
@@ -6900,7 +6887,13 @@ fn type_desc_children(input: RichValue, view: &HeapView<'_>) -> Result<Vec<RichV
                 .filter_map(|value| {
                     let stripped = strip_runtime_attributes(*value, "Type.variants", view);
                     match stripped {
-                        Ok((inner, _)) if view.atom_text(inner).ok().flatten() == Some("None") => {
+                        Ok((inner, _))
+                            if view
+                                .atom_text(inner)
+                                .ok()
+                                .flatten()
+                                .is_some_and(|atom| atom == "None") =>
+                        {
                             None
                         }
                         Ok((inner, _)) => Some(Ok(inner)),
@@ -7171,7 +7164,7 @@ fn validate_model_context(
     if view
         .atom_text(context)
         .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-        == Some("None")
+        .is_some_and(|atom| atom == "None")
     {
         return Ok(());
     }
@@ -7194,7 +7187,7 @@ fn validate_model_context(
         .dict_get_text(handle, "name")
         .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
         .and_then(|value| view.string_text(value).ok().flatten());
-    if fields == ["kind", "name"] && kind == Some("Type") && name.is_some() {
+    if fields == ["kind", "name"] && kind.is_some_and(|kind| kind == "Type") && name.is_some() {
         Ok(())
     } else {
         Err(error(
@@ -7728,7 +7721,7 @@ fn decode_runtime_type_at(
         decoded.rule = value;
         return Ok(decoded);
     }
-    let kind = match kind {
+    let kind = match kind.as_str() {
         "Bound" => CodecKind::Any,
         "Named" => CodecKind::Any,
         "Any" => CodecKind::Any,
@@ -7745,7 +7738,7 @@ fn decode_runtime_type_at(
                 .map_err(|error| error.to_string())?
                 .and_then(|tag| view.atom_text(tag).ok().flatten())
                 .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            CodecKind::Atom(tag.to_owned())
+            CodecKind::Atom(tag.as_str().to_owned())
         }
         "Array" => {
             let item = view
@@ -7782,7 +7775,7 @@ fn decode_runtime_type_at(
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{path}.payload is missing"))?;
             CodecKind::Tagged {
-                tag: tag.to_owned(),
+                tag: tag.as_str().to_owned(),
                 payload: Box::new(decode_runtime_type_at(
                     payload,
                     &format!("{path}.payload"),
@@ -7871,17 +7864,20 @@ fn decode_runtime_type_at(
                 let name = view.text(*name).map_err(|error| error.to_string())?;
                 let variant_path = format!("{path}.variants.{name}");
                 let (inner, attributes) = strip_runtime_attributes(*variant, &variant_path, &view)?;
-                let payload =
-                    if view.atom_text(inner).map_err(|error| error.to_string())? == Some("None") {
-                        None
-                    } else {
-                        Some(Box::new(decode_runtime_type_at(
-                            inner,
-                            &variant_path,
-                            current,
-                            background,
-                        )?))
-                    };
+                let payload = if view
+                    .atom_text(inner)
+                    .map_err(|error| error.to_string())?
+                    .is_some_and(|atom| atom == "None")
+                {
+                    None
+                } else {
+                    Some(Box::new(decode_runtime_type_at(
+                        inner,
+                        &variant_path,
+                        current,
+                        background,
+                    )?))
+                };
                 decoded.insert(
                     name.to_owned(),
                     CodecEnumVariant {
@@ -7915,7 +7911,7 @@ fn strip_runtime_attributes(
             .dict_get_text(handle, "kind")
             .map_err(|error| error.to_string())?
             .and_then(|kind| view.atom_text(kind).ok().flatten());
-        if kind != Some("WithAttributes") {
+        if !kind.is_some_and(|kind| kind == "WithAttributes") {
             break;
         }
         let fields = view
@@ -8011,7 +8007,11 @@ fn text_codec_bridge(schema: &CodecType, view: &HeapView<'_>) -> Result<bool, St
         ("std/string.decode_by_parse", decode.expect("checked")),
         ("std/string.encode_by_display", encode.expect("checked")),
     ] {
-        if view.atom_text(*marker).map_err(|error| error.to_string())? != Some("True") {
+        if !view
+            .atom_text(*marker)
+            .map_err(|error| error.to_string())?
+            .is_some_and(|atom| atom == "True")
+        {
             return Err(format!("{name} must be 'True"));
         }
     }
@@ -8153,7 +8153,7 @@ fn transform_codec(
                                 schema.rule,
                             )
                         })?;
-                    crate::regex::parse_value(metadata, source)
+                    crate::regex::parse_value(metadata, source.as_str())
                         .map(|parsed| parsed_codec_node(parsed, value.loc()))
                         .map_err(|message| {
                             CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
@@ -8218,7 +8218,7 @@ fn transform_codec(
             let actual = view
                 .atom_text(value)
                 .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?;
-            if actual == Some(expected) {
+            if actual.is_some_and(|actual| actual.as_str() == expected) {
                 Ok(CodecNode::Existing(value))
             } else {
                 Err(CodecFailure::new(
@@ -8304,7 +8304,7 @@ fn transform_codec(
             if view
                 .atom_text(actual_tag)
                 .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
-                != Some(tag)
+                .is_none_or(|actual| actual.as_str() != tag)
             {
                 return Err(CodecFailure::new(
                     format!("{path}: expected tag '{tag}"),
@@ -8596,7 +8596,7 @@ fn plan_struct(
             if view
                 .atom_text(rule)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?
-                != Some("CamelCase")
+                .is_none_or(|atom| atom != "CamelCase")
             {
                 return Err(CodecFailure::new(
                     format!("{path}: rename_all must be 'CamelCase"),
@@ -8620,7 +8620,7 @@ fn plan_struct(
             .map(|rule| {
                 view.string_text(rule)
                     .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?
-                    .map(str::to_owned)
+                    .map(|text| text.as_str().to_owned())
                     .ok_or_else(|| {
                         CodecFailure::new(
                             format!("{path}.{internal_name}: rename must be a String"),
@@ -8635,7 +8635,7 @@ fn plan_struct(
             if view
                 .atom_text(rule)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?
-                != Some("True")
+                .is_none_or(|atom| atom != "True")
             {
                 return Err(CodecFailure::new(
                     format!("{path}.{internal_name}: flatten must be 'True"),
@@ -8669,7 +8669,7 @@ fn plan_struct(
                 let policy = view
                     .atom_text(rule)
                     .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?;
-                match policy {
+                match policy.as_ref().map(crate::TextRef::as_str) {
                     Some("None") => Ok(SkipPolicy::None),
                     Some("False") => Ok(SkipPolicy::False),
                     Some("Empty") => Ok(SkipPolicy::Empty),
@@ -8841,7 +8841,7 @@ fn plan_enum(
             if view
                 .atom_text(rule)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?
-                != Some("True")
+                .is_none_or(|atom| atom != "True")
             {
                 return Err(CodecFailure::new(
                     format!("{path}: untagged must be 'True"),
@@ -8865,7 +8865,7 @@ fn plan_enum(
             if view
                 .atom_text(rule)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?
-                != Some("CamelCase")
+                .is_none_or(|atom| atom != "CamelCase")
             {
                 return Err(CodecFailure::new(
                     format!("{path}: rename_all must be 'CamelCase"),
@@ -8898,7 +8898,7 @@ fn plan_enum(
         let external_name = if let Some(rule) = rename_rule {
             view.string_text(rule)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, rule))?
-                .map(str::to_owned)
+                .map(|text| text.as_str().to_owned())
                 .ok_or_else(|| {
                     CodecFailure::new(
                         format!("{path}.{internal_name}: rename must be a String"),
@@ -9469,7 +9469,7 @@ fn transform_codec_field(
             if view
                 .atom_text(tag)
                 .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
-                != Some("Some")
+                .is_none_or(|tag| tag != "Some")
             {
                 return Err(CodecFailure::new(
                     format!("{path}: expected Option"),
@@ -9505,9 +9505,11 @@ fn codec_should_skip(
                 background: Some(background),
             };
             match value.value() {
-                RuntimeValue::String(_) | RuntimeValue::ShortString(_) => {
-                    view.string_text(value).ok().flatten() == Some("")
-                }
+                RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => view
+                    .string_text(value)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|text| text.as_str().is_empty()),
                 RuntimeValue::Array(handle) => view
                     .sequence(handle, false)
                     .is_ok_and(|values| values.is_empty()),
@@ -10113,14 +10115,15 @@ fn run_core_result(
     let (tag, payload) = view
         .tagged(handle)
         .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
-    match view.atom_text(tag).map_err(|heap_error| {
+    let tag = view.atom_text(tag).map_err(|heap_error| {
         error(
             RuntimeErrorKind::InvalidBytecode,
             heap_error.to_string(),
             function,
             pc,
         )
-    })? {
+    })?;
+    match tag.as_ref().map(crate::TextRef::as_str) {
         Some("Ok") => Ok(VmAction::Return {
             value: payload,
             return_target,
@@ -10135,7 +10138,7 @@ fn run_core_result(
                         pc,
                     )
                 })? {
-                (message.to_owned(), payload.loc(), None)
+                (message.as_str().to_owned(), payload.loc(), None)
             } else if let RuntimeValue::Dict(handle) = payload.value() {
                 let message = view
                     .dict_get_text(handle, "message")
@@ -10149,6 +10152,7 @@ fn run_core_result(
                             pc,
                         )
                     })?
+                    .as_str()
                     .to_owned();
                 let data = view
                     .dict_get_text(handle, "data")
@@ -10228,7 +10232,7 @@ fn run_core_json(
                 pc,
             ));
         };
-        let parsed = crate::json::parse_json("<json string>", source);
+        let parsed = crate::json::parse_json("<json string>", source.as_str());
         let parsed = match parsed {
             Ok(value) => {
                 let bytes = legacy_value_bytes(&value)
@@ -10606,18 +10610,16 @@ fn validate_json_attribute_configuration(
             .string_text(payload)
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
             .is_some(),
-        CoreJsonFunction::RenameAll => {
-            view.atom_text(payload)
-                .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-                == Some("CamelCase")
-        }
+        CoreJsonFunction::RenameAll => view
+            .atom_text(payload)
+            .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
+            .is_some_and(|atom| atom == "CamelCase"),
         CoreJsonFunction::Default => true,
         CoreJsonFunction::SkipSerializingIf => {
-            matches!(
-                view.atom_text(payload)
-                    .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?,
-                Some("None" | "False" | "Empty")
-            ) || matches!(payload.value(), RuntimeValue::Func(handle) if view.function_arity(handle).is_ok_and(|arity| arity == 1))
+            view.atom_text(payload)
+                .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
+                .is_some_and(|atom| matches!(atom.as_str(), "None" | "False" | "Empty"))
+                || matches!(payload.value(), RuntimeValue::Func(handle) if view.function_arity(handle).is_ok_and(|arity| arity == 1))
         }
         _ => unreachable!(),
     };
@@ -10665,19 +10667,17 @@ impl<'a> JsonWriter<'a> {
             RuntimeValue::BuiltinAtom(BuiltinAtom::None) => self.output.push_str("null"),
             RuntimeValue::BuiltinAtom(BuiltinAtom::True) => self.output.push_str("true"),
             RuntimeValue::BuiltinAtom(BuiltinAtom::False) => self.output.push_str("false"),
+            RuntimeValue::InlineString(text) => self.string(text.as_str()),
             RuntimeValue::ShortString(id) => {
                 self.string(self.view.text(id).map_err(|e| e.to_string())?)
-            }
-            RuntimeValue::String(handle) => {
-                match self.view.object(handle).map_err(|e| e.to_string())? {
-                    Object::String(value) => self.string(value),
-                    _ => return Err("invalid String handle".into()),
-                }
             }
             RuntimeValue::Array(handle) => self.array(handle, depth)?,
             RuntimeValue::Dict(handle) => self.dict(handle, depth)?,
             RuntimeValue::BuiltinAtom(atom) => {
                 return Err(format!("JSON cannot encode '{}", atom.name()));
+            }
+            RuntimeValue::InlineAtom(text) => {
+                return Err(format!("JSON cannot encode '{}", text.as_str()));
             }
             RuntimeValue::Atom(id) => {
                 return Err(format!(
@@ -10831,6 +10831,7 @@ fn run_core_diagnostic(
             )
         })?
         .ok_or_else(|| runtime_type_error("String", &arguments[0], &view, function, pc))?;
+    let message = message.as_str().to_owned();
     let subjects = match arguments[1].value() {
         RuntimeValue::Tuple(handle) => view
             .sequence(handle, true)
@@ -10852,11 +10853,11 @@ fn run_core_diagnostic(
     let mut diagnostic = primary.map_or_else(
         || Diagnostic {
             severity: crate::source::Severity::Warning,
-            message: message.to_owned(),
+            message: message.clone(),
             labels: Vec::new(),
             notes: Vec::new(),
         },
-        |location| Diagnostic::new(crate::source::Severity::Warning, message, location),
+        |location| Diagnostic::new(crate::source::Severity::Warning, &message, location),
     );
     for related in subjects {
         if primary != Some(related) {
@@ -10907,15 +10908,16 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push("'");
                 self.push(atom.name());
             }
+            RuntimeValue::InlineAtom(text) => {
+                self.push("'");
+                self.push(text.as_str());
+            }
             RuntimeValue::Atom(id) => {
                 self.push("'");
                 self.push(self.view.text(id)?);
             }
+            RuntimeValue::InlineString(text) => self.quoted(text.as_str()),
             RuntimeValue::ShortString(id) => self.quoted(self.view.text(id)?),
-            RuntimeValue::String(handle) => match self.view.object(handle)? {
-                Object::String(value) => self.quoted(value),
-                _ => return Err(crate::heap::HeapError::new("invalid String handle")),
-            },
             RuntimeValue::Bytes(handle) => match self.view.object(handle)? {
                 Object::Bytes(value) => {
                     self.push("b\"");
@@ -10933,14 +10935,11 @@ impl<'a> DebugValueFormatter<'a> {
                 Object::Opaque(value) => self.push(&format!("{value:?}")),
                 _ => return Err(crate::heap::HeapError::new("invalid Opaque handle")),
             },
-            RuntimeValue::NativeType(handle) => match self.view.object(handle)? {
-                Object::NativeType(value) => {
-                    self.push("<type ");
-                    self.push(value.qualified_name());
-                    self.push(">");
-                }
-                _ => return Err(crate::heap::HeapError::new("invalid NativeType handle")),
-            },
+            RuntimeValue::NativeType(id) => {
+                self.push("<type ");
+                self.push(self.view.native_type(id)?.qualified_name());
+                self.push(">");
+            }
             RuntimeValue::DeclaredType(handle) => match self.view.object(handle)? {
                 Object::DeclaredType { name, .. } => {
                     self.push("<type ");
@@ -10961,11 +10960,11 @@ impl<'a> DebugValueFormatter<'a> {
                 }
                 let (tag, payload) = self.view.tagged(handle)?;
                 self.push("'");
-                self.push(
-                    self.view
-                        .atom_text(tag)?
-                        .ok_or_else(|| crate::heap::HeapError::new("Tagged tag is not an Atom"))?,
-                );
+                let tag = self
+                    .view
+                    .atom_text(tag)?
+                    .ok_or_else(|| crate::heap::HeapError::new("Tagged tag is not an Atom"))?;
+                self.push(tag.as_str());
                 self.push("(");
                 self.value(payload, depth + 1)?;
                 self.push(")");
@@ -11339,8 +11338,8 @@ fn ordered_comparison(
             left < right
         }),
         (
-            RuntimeValue::ShortString(_) | RuntimeValue::String(_),
-            RuntimeValue::ShortString(_) | RuntimeValue::String(_),
+            RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_),
+            RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_),
         ) => {
             let left = view.string_text(*left).map_err(|heap_error| {
                 error(
@@ -11457,8 +11456,10 @@ fn runtime_shallow_type_error(
         RuntimeValue::Failed(_) => unreachable!(),
         RuntimeValue::Int(_) => "Int",
         RuntimeValue::Float(_) => "Float",
-        RuntimeValue::BuiltinAtom(_) | RuntimeValue::Atom(_) => "Atom",
-        RuntimeValue::ShortString(_) | RuntimeValue::String(_) => "String",
+        RuntimeValue::BuiltinAtom(_) | RuntimeValue::InlineAtom(_) | RuntimeValue::Atom(_) => {
+            "Atom"
+        }
+        RuntimeValue::InlineString(_) | RuntimeValue::ShortString(_) => "String",
         RuntimeValue::Bytes(_) => "Bytes",
         RuntimeValue::Opaque(_) => "Opaque",
         RuntimeValue::NativeType(_) => "Type",

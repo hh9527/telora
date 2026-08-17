@@ -50,7 +50,11 @@ fn resolve(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
 
 fn strip(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
     metadata = resolve(metadata)?;
-    while metadata.dict_get("kind").and_then(|kind| kind.as_atom()) == Some("WithAttributes") {
+    while metadata
+        .dict_get("kind")
+        .and_then(|kind| kind.as_atom())
+        .is_some_and(|kind| kind == "WithAttributes")
+    {
         metadata = resolve(
             metadata
                 .dict_get("inner")
@@ -70,7 +74,7 @@ fn attached_template(mut metadata: ValueRef<'_>) -> Result<Option<DisplayTemplat
             let (tag, payload) = provider
                 .tagged_parts()
                 .ok_or_else(|| NativeError::new("std/fmt.display provider must be Tagged"))?;
-            if tag.as_atom() != Some("Template") {
+            if !tag.as_atom().is_some_and(|tag| tag == "Template") {
                 return Err(NativeError::new("unknown std/fmt.display provider"));
             }
             let native_type = payload
@@ -87,7 +91,11 @@ fn attached_template(mut metadata: ValueRef<'_>) -> Result<Option<DisplayTemplat
                 .map(Some)
                 .ok_or_else(|| NativeError::new("invalid std/fmt.display template provider"));
         }
-        if metadata.dict_get("kind").and_then(|kind| kind.as_atom()) != Some("WithAttributes") {
+        if !metadata
+            .dict_get("kind")
+            .and_then(|kind| kind.as_atom())
+            .is_some_and(|kind| kind == "WithAttributes")
+        {
             return Ok(None);
         }
         metadata = metadata
@@ -159,7 +167,11 @@ fn display_plan_at(metadata: ValueRef<'_>, depth: usize) -> Result<DisplayPlan, 
     }
     if let Some(template) = attached_template(metadata)? {
         let inner = strip(metadata)?;
-        if inner.dict_get("kind").and_then(|kind| kind.as_atom()) != Some("Struct") {
+        if !inner
+            .dict_get("kind")
+            .and_then(|kind| kind.as_atom())
+            .is_some_and(|kind| kind == "Struct")
+        {
             return Err(NativeError::new("fmt.display_by requires a struct type"));
         }
         let members = inner
@@ -187,10 +199,10 @@ fn display_plan_at(metadata: ValueRef<'_>, depth: usize) -> Result<DisplayPlan, 
         }
         return Ok(DisplayPlan::Template { template, fields });
     }
-    match strip(metadata)?
+    let kind = strip(metadata)?
         .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-    {
+        .and_then(|kind| kind.as_atom());
+    match kind.as_ref().map(crate::TextRef::as_str) {
         Some("String") => Ok(DisplayPlan::String),
         Some("Int") => Ok(DisplayPlan::Int),
         Some("Float") => Ok(DisplayPlan::Float),
@@ -203,11 +215,12 @@ fn render(plan: &DisplayPlan, value: ValueRef<'_>, output: &mut String) -> Resul
         .unwrap_declared()
         .ok_or_else(|| NativeError::new("Display received an invalid declared value"))?;
     match plan {
-        DisplayPlan::String => output.push_str(
-            value
+        DisplayPlan::String => {
+            let text = value
                 .as_str()
-                .ok_or_else(|| NativeError::new("Display expected String"))?,
-        ),
+                .ok_or_else(|| NativeError::new("Display expected String"))?;
+            output.push_str(text.as_str());
+        }
         DisplayPlan::Int => output.push_str(
             &value
                 .as_int()
@@ -244,7 +257,7 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
         .value(context.argument(0)?)?
         .as_str()
         .ok_or_else(|| NativeError::new("std/fmt.display_by expects String"))?;
-    let template = parse_template(source)?;
+    let template = parse_template(source.as_str())?;
 
     let opaque = context.scratch()?;
     context.set_opaque(opaque, native_type.clone(), template)?;

@@ -26,7 +26,6 @@ The initial traits are representation facts used on hot paths:
 
 ```text
 REFERENCE  raw names an arena slot or handle
-LOCAL      the reference belongs to the current WorkWorld
 TEXT       the reference names interned String/Atom text
 INLINE     raw contains the complete scalar payload
 HEAP       raw names a general Heap object
@@ -45,6 +44,11 @@ kind/sub-kind/trait consistency at Heap access and copy boundaries.
 Unknown provenance permits a zero source word. Original versus generated
 origin is stored in Meta so `Loc` does not sacrifice source-ID space or invent
 invalid `NonZeroU32` values.
+
+The remaining words are `ty: u32`, `narrow: u32`, and `raw: u64`. Reference
+IDs carry their own Main/Work bit rather than storing World ownership in Meta.
+`ty` uses this scoped-ID form; `narrow` remains zero and is reserved for future
+trait/interface refinement evidence using the same form.
 
 ## Equality
 

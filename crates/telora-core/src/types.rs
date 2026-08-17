@@ -302,7 +302,7 @@ impl TypeGraph {
                 .then_some(())
                 .ok_or_else(|| format!("{path} has invalid fields for {kind}"))
         };
-        Ok(match kind {
+        Ok(match kind.as_str() {
             "Bound" => {
                 require(&["kind", "parameter"])?;
                 let parameter = value
@@ -318,7 +318,7 @@ impl TypeGraph {
                     .dict_get("name")
                     .and_then(ValueRef::as_str)
                     .ok_or_else(|| format!("{path}.name must be a String"))?;
-                TypeNode::Named(name.to_owned())
+                TypeNode::Named(name.as_str().to_owned())
             }
             "Any" => {
                 require(&["kind"])?;
@@ -367,7 +367,7 @@ impl TypeGraph {
                     .dict_get("tag")
                     .and_then(ValueRef::as_atom)
                     .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-                TypeNode::Atom(atom_from_name(tag))
+                TypeNode::Atom(atom_from_name(tag.as_str()))
             }
             "Array" => {
                 require(&["item", "kind"])?;
@@ -399,7 +399,7 @@ impl TypeGraph {
                     links,
                 )?;
                 TypeNode::Tagged {
-                    tag: atom_from_name(tag),
+                    tag: atom_from_name(tag.as_str()),
                     payload,
                 }
             }
@@ -464,7 +464,7 @@ impl TypeGraph {
                         values.dict_get(name).expect("Dict field"),
                         &variant_path,
                     )?;
-                    let payload = if inner.as_atom() == Some("None") {
+                    let payload = if inner.as_atom().is_some_and(|atom| atom == "None") {
                         None
                     } else {
                         Some(self.decode_persistent(inner, &variant_path, links)?)
@@ -4852,7 +4852,7 @@ fn native_atom_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError
     let Some(atom) = context.value(argument)?.as_atom() else {
         return Err(NativeError::new("Atom expects an Atom value"));
     };
-    let _ = atom_from_name(atom);
+    let _ = atom_from_name(atom.as_str());
     write_native_type_record(context, "Atom", &[("tag", argument)])
 }
 
@@ -5056,7 +5056,7 @@ fn decode_type_ref_with(
             Err(format!("{path} has invalid fields for {kind}"))
         }
     };
-    Ok(match kind {
+    Ok(match kind.as_str() {
         "Bound" | "'Bound" => {
             require(&["kind", "parameter"])?;
             let parameter = value
@@ -5072,7 +5072,7 @@ fn decode_type_ref_with(
                 .dict_get("name")
                 .and_then(ValueRef::as_str)
                 .ok_or_else(|| format!("{path}.name must be a String"))?;
-            TypeDescriptor::Named(name.to_owned())
+            TypeDescriptor::Named(name.as_str().to_owned())
         }
         "Any" => {
             require(&["kind"])?;
@@ -5123,7 +5123,7 @@ fn decode_type_ref_with(
                 .dict_get("tag")
                 .and_then(ValueRef::as_atom)
                 .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            TypeDescriptor::Atom(atom_from_name(tag))
+            TypeDescriptor::Atom(atom_from_name(tag.as_str()))
         }
         "Array" => {
             require(&["item", "kind"])?;
@@ -5157,7 +5157,7 @@ fn decode_type_ref_with(
                 .dict_get("payload")
                 .ok_or_else(|| format!("{path}.payload is missing"))?;
             TypeDescriptor::Tagged {
-                tag: atom_from_name(tag),
+                tag: atom_from_name(tag.as_str()),
                 payload: Box::new(decode_type_ref_with(
                     payload,
                     &format!("{path}.payload"),
@@ -5239,7 +5239,7 @@ fn decode_type_ref_with(
                         let variant = variants.dict_get(name).expect("Dict field exists");
                         let variant_path = format!("{path}.variants.{name}");
                         let inner = strip_attributes_ref(variant, &variant_path)?;
-                        let payload = if inner.as_atom() == Some("None") {
+                        let payload = if inner.as_atom().is_some_and(|atom| atom == "None") {
                             None
                         } else {
                             Some(Box::new(decode_type_ref_with(
@@ -5291,7 +5291,11 @@ fn strip_attributes_ref<'a>(mut value: ValueRef<'a>, path: &str) -> Result<Value
         let Some(fields) = value.dict_fields() else {
             return Ok(value);
         };
-        if value.dict_get("kind").and_then(ValueRef::as_atom) != Some("WithAttributes") {
+        if !value
+            .dict_get("kind")
+            .and_then(ValueRef::as_atom)
+            .is_some_and(|kind| kind == "WithAttributes")
+        {
             return Ok(value);
         }
         if fields != ["attributes", "inner", "kind"] {
@@ -5360,7 +5364,11 @@ fn validate_value_ref(
                 ))
             }
         }
-        TypeDescriptor::Atom(expected) if value.as_atom() == Some(expected.name()) => Ok(()),
+        TypeDescriptor::Atom(expected)
+            if value.as_atom().is_some_and(|atom| atom == expected.name()) =>
+        {
+            Ok(())
+        }
         TypeDescriptor::Atom(expected) => Err(format!("{path} must be '{}", expected.name())),
         TypeDescriptor::Array(item) => {
             if value.kind() != ValueKind::Array {
@@ -5392,7 +5400,10 @@ fn validate_value_ref(
             let Some((actual_tag, actual_payload)) = value.tagged_parts() else {
                 return Err(format!("{path} must be a Tagged value"));
             };
-            if actual_tag.as_atom() != Some(tag.name()) {
+            if !actual_tag
+                .as_atom()
+                .is_some_and(|actual| actual == tag.name())
+            {
                 return Err(format!("{path} must have tag '{}", tag.name()));
             }
             validate_value_ref(payload, actual_payload, &format!("{path}.payload"))
@@ -5431,7 +5442,7 @@ fn validate_value_ref(
         }
         TypeDescriptor::Enum(variants) => {
             if let Some(tag) = value.as_atom() {
-                return match variants.get(tag) {
+                return match variants.get(tag.as_str()) {
                     Some(None) => Ok(()),
                     Some(Some(_)) => Err(format!("{path} variant '{tag} requires a payload")),
                     None => Err(format!("{path} has unknown Enum variant '{tag}")),
@@ -5443,7 +5454,7 @@ fn validate_value_ref(
             let tag = tag_value
                 .as_atom()
                 .ok_or_else(|| format!("{path} Tagged tag must be an Atom"))?;
-            match variants.get(tag) {
+            match variants.get(tag.as_str()) {
                 Some(Some(payload)) => {
                     validate_value_ref(payload, payload_value, &format!("{path}.{tag}"))
                 }

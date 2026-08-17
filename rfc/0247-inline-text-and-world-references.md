@@ -1,14 +1,14 @@
 # RFC 0247: Inline Text and World References
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #88
 - Depends on: RFC 0245, RFC 0246
 
 ## Summary
 
-Telora will give short String and Atom values a canonical allocation-free
-encoding, distinguish Main and Local text and Heap references in Meta, and
-encode NativeType identity directly in `raw`.
+Telora gives short String and Atom values a canonical allocation-free encoding,
+stores Main/Work ownership in each reference ID, and encodes NativeType identity
+directly in `raw`.
 
 ## Inline text
 
@@ -30,10 +30,10 @@ inline representation.
 
 ## Reference kinds
 
-`MainString`, `MainAtom`, `MainHeap`, and `MainUplink` are stable background
-references. `LocalString`, `LocalAtom`, `LocalHeap`, and `LocalUplink` belong to
-the active WorkWorld. Their raw payload is a slot or packed handle whose exact
-format is private to the owning arena.
+Reference kinds do not duplicate World ownership. Their payload contains a
+`ScopedId(u32)` whose high bit is zero for Main and one for Work; the remaining
+31 bits name the arena slot. Immediate kinds may use all 64 raw bits because
+they do not interpret a scoped reference.
 
 Local text is copied by resolving its content and interning that content in the
 target. Local Heap objects are copied through the object forwarding map.
@@ -63,3 +63,18 @@ identity becomes immediate.
 6. native opaque downcasts retain exact module/local identity checks; and
 7. codecs, formatting, diagnostics, and module tests pass.
 
+## Outcome
+
+String and Atom values of at most seven UTF-8 bytes now live entirely in
+`Val.raw`. Longer text has one representation as a Main- or Work-scoped intern
+ID; the obsolete Heap String object was removed. Built-in Atoms use the same
+inline byte encoding as other short Atoms.
+
+Heap, text, and uplink kinds no longer distinguish Main from Work. Their raw
+reference is a scoped ID, so copy boundaries can classify ownership without a
+Heap lookup. NativeType stores its module/local identity directly in raw and
+uses a per-World registry only to resolve display and Host metadata; copying
+its identity allocates no Heap object.
+
+The core suite passes except for the independently reproduced baseline failure
+`declared_family_applications_use_head_and_argument_identity`.

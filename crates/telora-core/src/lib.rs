@@ -36,6 +36,7 @@ pub use compiler::{ExecutionError, compile_source, run_source};
 pub use document::{
     DocumentSnapshot, DocumentText, DocumentVersion, PositionEncoding, TextEdit, TextPosition,
 };
+pub use heap::TextRef;
 pub use hir::{
     HirDefinition, HirDefinitionId, HirDefinitionKind, HirExpression, HirExpressionId, HirProgram,
     HirReference, HirReferenceId, HirResolution, HirTypeParameter,
