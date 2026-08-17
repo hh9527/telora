@@ -50,6 +50,12 @@ The type checker observes these rules before deep resolution:
 Deep substitution remains required when a parameterized declared body is being
 instantiated, projected, decoded, or otherwise structurally observed.
 
+Compiler-side declared bodies are immutable shared analysis nodes while
+descriptor-based inference remains in use. This sharing is not part of the VM
+value model: runtime bodies and payloads remain Heap objects, and no shared
+owned `Value` crosses a World boundary. The final published analysis still
+interns descriptors into `TypeGraph` and exposes `TypeId` roots.
+
 ## Boundary audit
 
 Implementation audits every constructor of `DeclaredValue` and

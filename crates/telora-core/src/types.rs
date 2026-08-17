@@ -905,7 +905,7 @@ pub enum TypeDescriptor {
 pub struct DeclaredTypeDescriptor {
     pub(crate) id: crate::value::DeclaredTypeId,
     pub(crate) name: String,
-    pub(crate) body: Box<TypeDescriptor>,
+    pub(crate) body: Arc<TypeDescriptor>,
 }
 
 impl DeclaredTypeDescriptor {
@@ -5017,7 +5017,7 @@ fn decode_type_ref_with(
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: id.clone(),
             name: name.to_owned(),
-            body: Box::new(if shallow_declared_types {
+            body: Arc::new(if shallow_declared_types {
                 TypeDescriptor::Any
             } else {
                 decode_type_ref_with(body, path, false)?
@@ -5489,7 +5489,7 @@ pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, S
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: declared.id().clone(),
             name: declared.name().to_owned(),
-            body: Box::new(decode_type(declared.body(), path)?),
+            body: Arc::new(decode_type(declared.body(), path)?),
         }));
     }
     let Value::Dict(metadata) = value else {
@@ -5817,6 +5817,9 @@ fn definition_component_plan(block: &Block, hir: &HirProgram) -> DefinitionCompo
                 .map(|definition| (definition.id, binding.value.name.location))
         })
         .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return DefinitionComponentPlan::default();
+    }
     let indices = candidates
         .iter()
         .enumerate()
@@ -6581,7 +6584,11 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: Box::new(self.instantiate_with(&declared.body, variables)),
+                    body: if arguments.is_empty() {
+                        Arc::clone(&declared.body)
+                    } else {
+                        Arc::new(self.instantiate_with(&declared.body, variables))
+                    },
                 })
             }
             TypeDescriptor::Array(item) => {
@@ -6603,25 +6610,22 @@ impl<'a> GenericInference<'a> {
                     .map(|item| self.instantiate_with(item, variables))
                     .collect(),
             ),
-            TypeDescriptor::Struct(fields) => TypeDescriptor::Struct(
-                fields
-                    .iter()
-                    .map(|(name, field)| (name.clone(), self.instantiate_with(field, variables)))
-                    .collect(),
-            ),
-            TypeDescriptor::Enum(variants) => TypeDescriptor::Enum(
-                variants
-                    .iter()
-                    .map(|(name, payload)| {
-                        (
-                            name.clone(),
-                            payload
-                                .as_ref()
-                                .map(|payload| Box::new(self.instantiate_with(payload, variables))),
-                        )
-                    })
-                    .collect(),
-            ),
+            TypeDescriptor::Struct(fields) => {
+                let mut instantiated = fields.clone();
+                for (source, target) in fields.values().zip(instantiated.values_mut()) {
+                    *target = self.instantiate_with(source, variables);
+                }
+                TypeDescriptor::Struct(instantiated)
+            }
+            TypeDescriptor::Enum(variants) => {
+                let mut instantiated = variants.clone();
+                for (source, target) in variants.values().zip(instantiated.values_mut()) {
+                    *target = source
+                        .as_ref()
+                        .map(|payload| Box::new(self.instantiate_with(payload, variables)));
+                }
+                TypeDescriptor::Enum(instantiated)
+            }
             TypeDescriptor::Union(variants) => TypeDescriptor::Union(
                 variants
                     .iter()
@@ -6655,7 +6659,11 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: Box::new(self.resolve(&declared.body)),
+                    body: if arguments.is_empty() {
+                        Arc::clone(&declared.body)
+                    } else {
+                        Arc::new(self.resolve(&declared.body))
+                    },
                 })
             }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
@@ -6670,25 +6678,22 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Tuple(items) => {
                 TypeDescriptor::Tuple(items.iter().map(|item| self.resolve(item)).collect())
             }
-            TypeDescriptor::Struct(fields) => TypeDescriptor::Struct(
-                fields
-                    .iter()
-                    .map(|(name, field)| (name.clone(), self.resolve(field)))
-                    .collect(),
-            ),
-            TypeDescriptor::Enum(variants) => TypeDescriptor::Enum(
-                variants
-                    .iter()
-                    .map(|(name, payload)| {
-                        (
-                            name.clone(),
-                            payload
-                                .as_ref()
-                                .map(|payload| Box::new(self.resolve(payload))),
-                        )
-                    })
-                    .collect(),
-            ),
+            TypeDescriptor::Struct(fields) => {
+                let mut resolved = fields.clone();
+                for (source, target) in fields.values().zip(resolved.values_mut()) {
+                    *target = self.resolve(source);
+                }
+                TypeDescriptor::Struct(resolved)
+            }
+            TypeDescriptor::Enum(variants) => {
+                let mut resolved = variants.clone();
+                for (source, target) in variants.values().zip(resolved.values_mut()) {
+                    *target = source
+                        .as_ref()
+                        .map(|payload| Box::new(self.resolve(payload)));
+                }
+                TypeDescriptor::Enum(resolved)
+            }
             TypeDescriptor::Union(variants) => {
                 let variants = variants
                     .iter()
@@ -8758,7 +8763,7 @@ fn replace_inference_variables(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(replace_inference_variables(&declared.body, replacements)),
+                body: Arc::new(replace_inference_variables(&declared.body, replacements)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -8852,7 +8857,7 @@ fn rename_named_types(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(rename_named_types(&declared.body, names)),
+                body: Arc::new(rename_named_types(&declared.body, names)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -9059,7 +9064,7 @@ fn bind_inference_variables(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(bind_inference_variables(&declared.body, replacements)),
+                body: Arc::new(bind_inference_variables(&declared.body, replacements)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -10050,7 +10055,7 @@ fn substitute_bound_parameters(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(body),
+                body: Arc::new(body),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -10148,7 +10153,7 @@ fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(erase_type_variables(&declared.body)),
+                body: Arc::new(erase_type_variables(&declared.body)),
             })
         }
         TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(erase_type_variables(item))),
@@ -10592,7 +10597,7 @@ mod tests {
         let expected = TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: owner.id().clone(),
             name: owner.name().to_owned(),
-            body: Box::new(body.clone()),
+            body: Arc::new(body.clone()),
         });
         let invalid_payload = vm
             .make_dict([("value".to_owned(), Value::string("not an Int"))])

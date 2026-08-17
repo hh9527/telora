@@ -1,7 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -758,17 +757,6 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn check_command(arguments: CheckArgs) -> Result<i32, String> {
     let context = command_context(arguments.context)?;
-    // Finalization is deliberately silent: the recoverable pass below owns
-    // diagnostics and observations, so `dbg!` is never emitted twice.
-    let strict_engine = Engine::new(engine_config());
-    let strict = strict_engine
-        .load_module_id(&context, &arguments.module_id, BTreeMap::new())
-        .map_err(|error| error.to_string())
-        .and_then(|module| {
-            strict_engine
-                .check(&module)
-                .map_err(|error| error.to_string())
-        });
     let workspace = engine()
         .recover_workspace_id(context, &arguments.module_id)
         .map_err(|error| error.to_string())?;
@@ -811,19 +799,6 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
         .filter(|module| module.state != WorkspaceModuleState::Known)
         .map(|module| module.name.as_str())
         .collect::<Vec<_>>();
-    if let Err(error) = &strict
-        && !has_error_diagnostic
-    {
-        emit(json!({
-            "schema": "telora.check/v1",
-            "module": arguments.module_id,
-            "record": "diagnostic",
-            "severity": "error",
-            "message": error,
-            "labels": [],
-            "notes": [],
-        }))?;
-    }
     if !incomplete.is_empty() {
         emit(json!({
             "schema": "telora.check/v1",
@@ -835,7 +810,10 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
             "notes": [],
         }))?;
     }
-    let failed = strict.is_err() || has_error_diagnostic || !incomplete.is_empty();
+    // Recovery marks a module Known only after the ordinary strict
+    // analyze/compile/evaluate/publish path succeeds. Other states retain the
+    // richer best-effort diagnostics but cannot make check succeed.
+    let failed = has_error_diagnostic || !incomplete.is_empty();
     emit(json!({
         "schema": "telora.check/v1",
         "module": arguments.module_id,

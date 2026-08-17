@@ -1,6 +1,6 @@
 # RFC 0241: Recursive Type and Value Performance
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #87
 - Depends on: RFC 0034, RFC 0035, RFC 0235, RFC 0237, RFC 0238
 
@@ -135,3 +135,27 @@ This phase is complete when:
 7. tests cover type comparison, validation, copy, publish, and projection
    boundaries; and
 8. workspace formatting, linting, and tests pass.
+
+## Outcome
+
+The accepted release build retains tool-stage values as Heap roots, reuses
+completed nodes at unavoidable legacy projections, and shares immutable
+compiler-side declared descriptor bodies. The latter are analysis data, not VM
+values and not a cross-World representation.
+
+RFC 0242's three-sample median user times changed as follows on the same host:
+
+| fixture | baseline | accepted |
+|---|---:|---:|
+| flat-functions | 0.194514s | 0.076314s |
+| recursive-functions | 0.759197s | 0.116674s |
+| nested-functions | 1.863950s | 0.217471s |
+| recursive-values-shallow | 0.098112s | 0.040793s |
+| recursive-values-growing | 16.166534s | 0.038608s |
+| query-builder-check | 7.241579s | 0.405207s |
+| query-builder-show | 3.640251s | 0.401056s |
+
+The growing DAG is approximately 419 times faster and no longer depends on its
+unfolded leaf count. QueryBuilder `check` and `show` are both below half a
+second. Besides graph representation changes, `check` now reuses recovery's
+strict finalization result instead of executing the complete module twice.

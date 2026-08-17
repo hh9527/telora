@@ -250,7 +250,7 @@ impl Heap {
                     crate::types::TypeDescriptor::Declared(crate::types::DeclaredTypeDescriptor {
                         id,
                         name,
-                        body: Box::new(body),
+                        body: Arc::new(body),
                     }),
                 ))
             })
@@ -1634,11 +1634,23 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn export_value(&self, value: RichValue) -> Result<Value, HeapError> {
-        self.export_value_with(value.value, &mut HashSet::new(), None, false)
+        self.export_value_with(
+            value.value,
+            &mut HashSet::new(),
+            &mut HashMap::new(),
+            None,
+            false,
+        )
     }
 
     pub(crate) fn export_type_identity(&self, value: RichValue) -> Result<Value, HeapError> {
-        self.export_value_with(value.value, &mut HashSet::new(), None, true)
+        self.export_value_with(
+            value.value,
+            &mut HashSet::new(),
+            &mut HashMap::new(),
+            None,
+            true,
+        )
     }
 
     fn export_value_projecting_up_links(
@@ -1646,17 +1658,28 @@ impl<'a> HeapView<'a> {
         value: RichValue,
         projection: &Value,
     ) -> Result<Value, HeapError> {
-        self.export_value_with(value.value, &mut HashSet::new(), Some(projection), false)
+        self.export_value_with(
+            value.value,
+            &mut HashSet::new(),
+            &mut HashMap::new(),
+            Some(projection),
+            false,
+        )
     }
 
     fn export_value_with(
         &self,
         value: RuntimeValue,
         visiting: &mut HashSet<Handle>,
+        completed: &mut HashMap<Handle, Value>,
         up_link_projection: Option<&Value>,
         shallow_declared_types: bool,
     ) -> Result<Value, HeapError> {
-        Ok(match value {
+        let handle = runtime_object_handle(value);
+        if let Some(value) = handle.and_then(|handle| completed.get(&handle)) {
+            return Ok(value.clone());
+        }
+        let exported = match value {
             RuntimeValue::Failed(_) => {
                 return Err(HeapError(
                     "failed evaluation node cannot cross a value boundary",
@@ -1725,6 +1748,7 @@ impl<'a> HeapView<'a> {
                 let body = self.export_value_with(
                     body.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
@@ -1761,6 +1785,7 @@ impl<'a> HeapView<'a> {
                 let payload = self.export_value_with(
                     payload.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
@@ -1781,6 +1806,7 @@ impl<'a> HeapView<'a> {
                         self.export_value_with(
                             value.value,
                             visiting,
+                            completed,
                             up_link_projection,
                             shallow_declared_types,
                         )
@@ -1800,6 +1826,7 @@ impl<'a> HeapView<'a> {
                 let tag = match self.export_value_with(
                     tag.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )? {
@@ -1809,6 +1836,7 @@ impl<'a> HeapView<'a> {
                 let payload = self.export_value_with(
                     payload.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
@@ -1830,6 +1858,7 @@ impl<'a> HeapView<'a> {
                         self.export_value_with(
                             value.value,
                             visiting,
+                            completed,
                             up_link_projection,
                             shallow_declared_types,
                         )
@@ -1862,6 +1891,7 @@ impl<'a> HeapView<'a> {
                 let prototype = self.export_prototype(
                     prototype,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
@@ -1871,6 +1901,7 @@ impl<'a> HeapView<'a> {
                         self.export_value_with(
                             value.value,
                             visiting,
+                            completed,
                             up_link_projection,
                             shallow_declared_types,
                         )
@@ -1897,12 +1928,14 @@ impl<'a> HeapView<'a> {
                 let descriptor = self.export_value_with(
                     descriptor.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
                 let value = self.export_value_with(
                     value.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
@@ -1932,13 +1965,18 @@ impl<'a> HeapView<'a> {
                 let value = self.export_value_with(
                     linked.value,
                     visiting,
+                    completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
                 visiting.remove(&handle);
                 value
             }
-        })
+        };
+        if let Some(handle) = handle {
+            completed.insert(handle, exported.clone());
+        }
+        Ok(exported)
     }
 
     fn is_type_metadata_root(&self, value: RuntimeValue) -> Result<bool, HeapError> {
@@ -1995,6 +2033,7 @@ impl<'a> HeapView<'a> {
         &self,
         prototype: &RuntimePrototype,
         visiting: &mut HashSet<Handle>,
+        completed: &mut HashMap<Handle, Value>,
         up_link_projection: Option<&Value>,
         shallow_declared_types: bool,
     ) -> Result<Prototype, HeapError> {
@@ -2016,6 +2055,7 @@ impl<'a> HeapView<'a> {
                         self.export_value_with(
                             value.value,
                             visiting,
+                            completed,
                             up_link_projection,
                             shallow_declared_types,
                         )
@@ -2031,6 +2071,7 @@ impl<'a> HeapView<'a> {
                         match self.export_prototype(
                             prototype,
                             visiting,
+                            completed,
                             up_link_projection,
                             shallow_declared_types,
                         )? {
@@ -3358,6 +3399,51 @@ mod tests {
         .export_value(runtime)
         .unwrap();
         assert_eq!(exported.to_string(), value.to_string());
+    }
+
+    #[test]
+    fn legacy_projection_reuses_completed_dag_nodes_and_rejects_cycles() {
+        let mut heap = Heap::work();
+        let shared = heap.allocate(Object::Array(
+            vec![rv(RuntimeValue::Int(1)), rv(RuntimeValue::Int(2))].into(),
+        ));
+        let root = heap.allocate(Object::Tuple(
+            vec![
+                rv(RuntimeValue::Array(shared)),
+                rv(RuntimeValue::Array(shared)),
+            ]
+            .into(),
+        ));
+        let exported = HeapView {
+            current: &heap,
+            background: None,
+        }
+        .export_value(rv(RuntimeValue::Tuple(root)))
+        .unwrap();
+        let Value::Tuple(items) = exported else {
+            panic!("expected exported Tuple")
+        };
+        let [Value::Array(left), Value::Array(right)] = items.as_ref() else {
+            panic!("expected two exported Arrays")
+        };
+        assert!(Arc::ptr_eq(left, right));
+
+        let cycle = heap.reserve();
+        heap.initialize(
+            cycle,
+            Object::Array(vec![rv(RuntimeValue::Array(cycle))].into()),
+        )
+        .unwrap();
+        let error = HeapView {
+            current: &heap,
+            background: None,
+        }
+        .export_value(rv(RuntimeValue::Array(cycle)))
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cyclic heap values cannot cross the legacy Value boundary"
+        );
     }
 
     #[test]

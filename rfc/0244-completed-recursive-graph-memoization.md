@@ -77,3 +77,16 @@ must retain the same pre-order forwarding invariant.
 8. the growing recursive-value fixture is approximately linear in distinct
    nodes rather than exponential in unfolded leaves; and
 9. correctness and performance measurements from RFC 0242 pass.
+
+## Outcome
+
+Tool evaluation now holds `PersistentValue` roots in one Main Heap and loads
+them through bytecode external links. A fresh WorkWorld is published directly
+to Main after each expression. TypeMetadata decoding reads the persistent Heap
+view directly.
+
+Legacy projection carries both an active set and a completed map. A regression
+constructs a Tuple with two edges to one Array and verifies that both exported
+children share one `Arc<[Value]>`; a true self-cycle remains rejected. The
+growing recursive-value fixture's median user time fell from 16.166534 seconds
+to 0.038608 seconds in the final accepted command path.
