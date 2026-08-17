@@ -1,6 +1,6 @@
 # RFC 0246: Flat Meta and 32-Byte Val
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #88
 - Depends on: RFC 0245
 
@@ -69,3 +69,18 @@ legacy Host `Value` are migrated by explicit conversions.
 5. VM registers and Heap child arrays store `Val`; and
 6. the complete workspace test suite passes before RFC 0247 begins.
 
+## Outcome
+
+VM registers and Heap edges now store the fixed four-word representation. The
+former `RuntimeValue` enum is retained only as a transient decoded view while
+call sites migrate; it is not stored in a register, Heap edge, persistent root,
+or cross-World value. Compile-time and unit assertions fix the representation
+at 32-byte size and 8-byte alignment.
+
+Meta uses exact kind and sub-kind codes plus derived query traits. Debug builds
+verify that the stored traits equal those implied by the exact classification.
+Packed locations preserve Unknown, Original, and Generated behavior. The
+existing core suite passes except for
+`declared_family_applications_use_head_and_argument_identity`, which fails
+identically at the RFC-only parent commit and is therefore recorded as a
+pre-existing baseline defect rather than a layout regression.

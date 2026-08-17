@@ -12,10 +12,206 @@ use std::sync::{Arc, Mutex};
 
 const SHORT_TEXT_BYTES: usize = 32;
 
+const KIND_BITS: u32 = 6;
+const SUB_KIND_BITS: u32 = 6;
+const KIND_MASK: u32 = (1 << KIND_BITS) - 1;
+const SUB_KIND_MASK: u32 = ((1 << SUB_KIND_BITS) - 1) << KIND_BITS;
+const TRAIT_SHIFT: u32 = KIND_BITS + SUB_KIND_BITS;
+const PROVENANCE_SHIFT: u32 = 28;
+const PROVENANCE_MASK: u32 = 0b11 << PROVENANCE_SHIFT;
+
+const TRAIT_REFERENCE: u16 = 1 << 0;
+const TRAIT_LOCAL: u16 = 1 << 1;
+const TRAIT_TEXT: u16 = 1 << 2;
+const TRAIT_INLINE: u16 = 1 << 3;
+const TRAIT_HEAP: u16 = 1 << 4;
+const TRAIT_UPLINK: u16 = 1 << 5;
+const TRAIT_TRACE: u16 = 1 << 6;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum Storage {
     Work,
     Main,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum FlatKind {
+    Never,
+    Int,
+    Float,
+    InlineString,
+    MainString,
+    LocalString,
+    InlineAtom,
+    MainAtom,
+    LocalAtom,
+    NativeType,
+    MainHeap,
+    MainUpLink,
+    LocalHeap,
+    LocalUpLink,
+    Invalid = 63,
+}
+
+impl FlatKind {
+    fn from_bits(bits: u32) -> Self {
+        match bits {
+            0 => Self::Never,
+            1 => Self::Int,
+            2 => Self::Float,
+            3 => Self::InlineString,
+            4 => Self::MainString,
+            5 => Self::LocalString,
+            6 => Self::InlineAtom,
+            7 => Self::MainAtom,
+            8 => Self::LocalAtom,
+            9 => Self::NativeType,
+            10 => Self::MainHeap,
+            11 => Self::MainUpLink,
+            12 => Self::LocalHeap,
+            13 => Self::LocalUpLink,
+            _ => Self::Invalid,
+        }
+    }
+
+    const fn traits(self) -> u16 {
+        match self {
+            Self::Never | Self::Int | Self::Float | Self::NativeType => TRAIT_INLINE,
+            Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
+            Self::MainString | Self::MainAtom => TRAIT_REFERENCE | TRAIT_TEXT,
+            Self::LocalString | Self::LocalAtom => TRAIT_REFERENCE | TRAIT_LOCAL | TRAIT_TEXT,
+            Self::MainHeap => TRAIT_REFERENCE | TRAIT_HEAP,
+            Self::LocalHeap => TRAIT_REFERENCE | TRAIT_LOCAL | TRAIT_HEAP,
+            Self::MainUpLink => TRAIT_REFERENCE | TRAIT_UPLINK | TRAIT_TRACE,
+            Self::LocalUpLink => TRAIT_REFERENCE | TRAIT_LOCAL | TRAIT_UPLINK | TRAIT_TRACE,
+            Self::Invalid => 0,
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum HeapKind {
+    None,
+    String,
+    Bytes,
+    NativeType,
+    DeclaredType,
+    Declared,
+    Opaque,
+    Array,
+    Tuple,
+    Tagged,
+    Dict,
+    Func,
+    Dyn,
+}
+
+impl HeapKind {
+    fn from_bits(bits: u32) -> Self {
+        match bits {
+            1 => Self::String,
+            2 => Self::Bytes,
+            3 => Self::NativeType,
+            4 => Self::DeclaredType,
+            5 => Self::Declared,
+            6 => Self::Opaque,
+            7 => Self::Array,
+            8 => Self::Tuple,
+            9 => Self::Tagged,
+            10 => Self::Dict,
+            11 => Self::Func,
+            12 => Self::Dyn,
+            _ => Self::None,
+        }
+    }
+
+    const fn traits(self) -> u16 {
+        match self {
+            Self::Array
+            | Self::Tuple
+            | Self::Tagged
+            | Self::Dict
+            | Self::Func
+            | Self::DeclaredType
+            | Self::Declared
+            | Self::Dyn => TRAIT_TRACE,
+            Self::None | Self::String | Self::Bytes | Self::NativeType | Self::Opaque => 0,
+        }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct Meta(u32);
+
+impl Meta {
+    fn new(kind: FlatKind, sub_kind: HeapKind, provenance: Provenance) -> Self {
+        let traits = kind.traits() | sub_kind.traits();
+        Self(
+            kind as u32
+                | ((sub_kind as u32) << KIND_BITS)
+                | ((traits as u32) << TRAIT_SHIFT)
+                | ((provenance as u32) << PROVENANCE_SHIFT),
+        )
+    }
+
+    fn kind(self) -> FlatKind {
+        FlatKind::from_bits(self.0 & KIND_MASK)
+    }
+
+    fn sub_kind(self) -> HeapKind {
+        HeapKind::from_bits((self.0 & SUB_KIND_MASK) >> KIND_BITS)
+    }
+
+    fn traits(self) -> u16 {
+        ((self.0 >> TRAIT_SHIFT) & u16::MAX as u32) as u16
+    }
+
+    fn provenance(self) -> Provenance {
+        match (self.0 & PROVENANCE_MASK) >> PROVENANCE_SHIFT {
+            1 => Provenance::Original,
+            2 => Provenance::Generated,
+            _ => Provenance::Unknown,
+        }
+    }
+
+    fn with_provenance(self, provenance: Provenance) -> Self {
+        Self((self.0 & !PROVENANCE_MASK) | ((provenance as u32) << PROVENANCE_SHIFT))
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct PackedLoc {
+    source: u32,
+    start: u32,
+    end: u32,
+}
+
+impl PackedLoc {
+    const UNKNOWN: Self = Self {
+        source: 0,
+        start: 0,
+        end: 0,
+    };
+
+    fn new(loc: Option<Loc>) -> Self {
+        loc.map_or(Self::UNKNOWN, |loc| Self {
+            source: loc.source.get(),
+            start: loc.start,
+            end: loc.end,
+        })
+    }
+
+    fn get(self) -> Option<Loc> {
+        Some(Loc {
+            source: crate::SourceId::from_raw(self.source)?,
+            start: self.start,
+            end: self.end,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -59,41 +255,141 @@ pub(crate) enum RuntimeValue {
     UpLink(Handle),
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct RichValue {
-    pub(crate) value: RuntimeValue,
-    provenance: Provenance,
+impl RuntimeValue {
+    fn encode(self) -> (Meta, u64) {
+        let (kind, sub_kind, raw) = match self {
+            Self::Failed(id) => (FlatKind::Never, HeapKind::None, ((id as u64) << 1) | 1),
+            Self::Int(value) => (FlatKind::Int, HeapKind::None, value as u64),
+            Self::Float(value) => (FlatKind::Float, HeapKind::None, value.to_bits()),
+            Self::BuiltinAtom(atom) => (
+                FlatKind::InlineAtom,
+                HeapKind::None,
+                builtin_atom_bits(atom),
+            ),
+            Self::Atom(id) => (text_kind(id.storage, false), HeapKind::None, id.slot as u64),
+            Self::ShortString(id) => (text_kind(id.storage, true), HeapKind::None, id.slot as u64),
+            Self::String(handle) => (
+                text_kind(handle.storage, true),
+                HeapKind::String,
+                handle.slot as u64,
+            ),
+            Self::Bytes(handle) => heap_parts(handle, HeapKind::Bytes),
+            Self::NativeType(handle) => heap_parts(handle, HeapKind::NativeType),
+            Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
+            Self::Declared(handle) => heap_parts(handle, HeapKind::Declared),
+            Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
+            Self::Array(handle) => heap_parts(handle, HeapKind::Array),
+            Self::Tuple(handle) => heap_parts(handle, HeapKind::Tuple),
+            Self::Tagged(handle) => heap_parts(handle, HeapKind::Tagged),
+            Self::Dict(handle) => heap_parts(handle, HeapKind::Dict),
+            Self::Func(handle) => heap_parts(handle, HeapKind::Func),
+            Self::Dyn(handle) => heap_parts(handle, HeapKind::Dyn),
+            Self::UpLink(handle) => (
+                match handle.storage {
+                    Storage::Main => FlatKind::MainUpLink,
+                    Storage::Work => FlatKind::LocalUpLink,
+                },
+                HeapKind::None,
+                handle.slot as u64,
+            ),
+        };
+        (Meta::new(kind, sub_kind, Provenance::Unknown), raw)
+    }
 }
 
+fn builtin_atom_bits(atom: BuiltinAtom) -> u64 {
+    match atom {
+        BuiltinAtom::None => 0,
+        BuiltinAtom::Some => 1,
+        BuiltinAtom::Ok => 2,
+        BuiltinAtom::Err => 3,
+        BuiltinAtom::True => 4,
+        BuiltinAtom::False => 5,
+    }
+}
+
+fn builtin_atom_from_bits(bits: u64) -> BuiltinAtom {
+    match bits {
+        0 => BuiltinAtom::None,
+        1 => BuiltinAtom::Some,
+        2 => BuiltinAtom::Ok,
+        3 => BuiltinAtom::Err,
+        4 => BuiltinAtom::True,
+        5 => BuiltinAtom::False,
+        _ => unreachable!("invalid built-in Atom bits"),
+    }
+}
+
+fn text_kind(storage: Storage, string: bool) -> FlatKind {
+    match (storage, string) {
+        (Storage::Main, true) => FlatKind::MainString,
+        (Storage::Work, true) => FlatKind::LocalString,
+        (Storage::Main, false) => FlatKind::MainAtom,
+        (Storage::Work, false) => FlatKind::LocalAtom,
+    }
+}
+
+fn heap_parts(handle: Handle, sub_kind: HeapKind) -> (FlatKind, HeapKind, u64) {
+    (
+        match handle.storage {
+            Storage::Main => FlatKind::MainHeap,
+            Storage::Work => FlatKind::LocalHeap,
+        },
+        sub_kind,
+        handle.slot as u64,
+    )
+}
+
+#[repr(C, align(8))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RichValue {
+    loc: PackedLoc,
+    meta: Meta,
+    narrow: u64,
+    raw: u64,
+}
+
+const _: [(); 32] = [(); std::mem::size_of::<RichValue>()];
+const _: [(); 8] = [(); std::mem::align_of::<RichValue>()];
+
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Provenance {
     Unknown,
-    Original(Loc),
-    Generated(Loc),
+    Original,
+    Generated,
 }
 
 impl RichValue {
-    pub(crate) const fn new(value: RuntimeValue, loc: Option<Loc>) -> Self {
+    pub(crate) fn new(value: RuntimeValue, loc: Option<Loc>) -> Self {
+        let (meta, raw) = value.encode();
         Self {
-            value,
-            provenance: match loc {
-                Some(loc) => Provenance::Generated(loc),
-                None => Provenance::Unknown,
-            },
+            loc: PackedLoc::new(loc),
+            meta: meta.with_provenance(if loc.is_some() {
+                Provenance::Generated
+            } else {
+                Provenance::Unknown
+            }),
+            narrow: 0,
+            raw,
         }
     }
 
-    pub(crate) const fn original(value: RuntimeValue, loc: Option<Loc>) -> Self {
+    pub(crate) fn original(value: RuntimeValue, loc: Option<Loc>) -> Self {
+        let (meta, raw) = value.encode();
         Self {
-            value,
-            provenance: match loc {
-                Some(loc) => Provenance::Original(loc),
-                None => Provenance::Unknown,
-            },
+            loc: PackedLoc::new(loc),
+            meta: meta.with_provenance(if loc.is_some() {
+                Provenance::Original
+            } else {
+                Provenance::Unknown
+            }),
+            narrow: 0,
+            raw,
         }
     }
 
-    pub(crate) const fn unknown(value: RuntimeValue) -> Self {
+    pub(crate) fn unknown(value: RuntimeValue) -> Self {
         Self::new(value, None)
     }
 
@@ -101,37 +397,133 @@ impl RichValue {
         if self.loc() == loc {
             self
         } else {
-            Self::new(self.value, loc)
+            Self {
+                loc: PackedLoc::new(loc),
+                meta: self.meta.with_provenance(if loc.is_some() {
+                    Provenance::Generated
+                } else {
+                    Provenance::Unknown
+                }),
+                ..self
+            }
         }
     }
 
-    pub(crate) const fn rebase_generated(self, call_site: Option<Loc>) -> Self {
-        match self.provenance {
-            Provenance::Original(_) => self,
-            Provenance::Unknown | Provenance::Generated(_) => Self::new(self.value, call_site),
+    pub(crate) fn rebase_generated(self, call_site: Option<Loc>) -> Self {
+        match self.meta.provenance() {
+            Provenance::Original => self,
+            Provenance::Unknown | Provenance::Generated => self.with_loc(call_site),
         }
     }
 
-    pub(crate) const fn loc(self) -> Option<Loc> {
-        match self.provenance {
+    pub(crate) fn loc(self) -> Option<Loc> {
+        match self.meta.provenance() {
             Provenance::Unknown => None,
-            Provenance::Original(loc) | Provenance::Generated(loc) => Some(loc),
+            Provenance::Original | Provenance::Generated => self.loc.get(),
         }
     }
 
-    pub(crate) const fn with_value(self, value: RuntimeValue) -> Self {
-        Self { value, ..self }
+    pub(crate) fn value(self) -> RuntimeValue {
+        debug_assert_eq!(
+            self.meta.traits(),
+            self.meta.kind().traits() | self.meta.sub_kind().traits(),
+            "runtime Meta traits disagree with its exact classification"
+        );
+        let slot = || u32::try_from(self.raw).expect("runtime reference slot exceeds u32");
+        let storage = || match self.meta.kind() {
+            FlatKind::MainString
+            | FlatKind::MainAtom
+            | FlatKind::MainHeap
+            | FlatKind::MainUpLink => Storage::Main,
+            FlatKind::LocalString
+            | FlatKind::LocalAtom
+            | FlatKind::LocalHeap
+            | FlatKind::LocalUpLink => Storage::Work,
+            _ => unreachable!("immediate kind has no storage"),
+        };
+        let handle = || Handle {
+            storage: storage(),
+            slot: slot(),
+        };
+        match (self.meta.kind(), self.meta.sub_kind()) {
+            (FlatKind::Never, _) => RuntimeValue::Failed((self.raw >> 1) as u32),
+            (FlatKind::Int, _) => RuntimeValue::Int(self.raw as i64),
+            (FlatKind::Float, _) => RuntimeValue::Float(f64::from_bits(self.raw)),
+            (FlatKind::InlineAtom, _) => {
+                RuntimeValue::BuiltinAtom(builtin_atom_from_bits(self.raw))
+            }
+            (FlatKind::MainAtom | FlatKind::LocalAtom, _) => RuntimeValue::Atom(InternId {
+                storage: storage(),
+                slot: slot(),
+            }),
+            (FlatKind::MainString | FlatKind::LocalString, HeapKind::String) => {
+                RuntimeValue::String(handle())
+            }
+            (FlatKind::MainString | FlatKind::LocalString, _) => {
+                RuntimeValue::ShortString(InternId {
+                    storage: storage(),
+                    slot: slot(),
+                })
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Bytes) => {
+                RuntimeValue::Bytes(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::NativeType) => {
+                RuntimeValue::NativeType(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::DeclaredType) => {
+                RuntimeValue::DeclaredType(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Declared) => {
+                RuntimeValue::Declared(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Opaque) => {
+                RuntimeValue::Opaque(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Array) => {
+                RuntimeValue::Array(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Tuple) => {
+                RuntimeValue::Tuple(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Tagged) => {
+                RuntimeValue::Tagged(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Dict) => {
+                RuntimeValue::Dict(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Func) => {
+                RuntimeValue::Func(handle())
+            }
+            (FlatKind::MainHeap | FlatKind::LocalHeap, HeapKind::Dyn) => {
+                RuntimeValue::Dyn(handle())
+            }
+            (FlatKind::MainUpLink | FlatKind::LocalUpLink, _) => RuntimeValue::UpLink(handle()),
+            _ => unreachable!("invalid runtime Meta combination"),
+        }
+    }
+
+    pub(crate) fn with_value(self, value: RuntimeValue) -> Self {
+        let (meta, raw) = value.encode();
+        Self {
+            meta: meta.with_provenance(self.meta.provenance()),
+            raw,
+            ..self
+        }
     }
 
     #[cfg(test)]
-    const fn is_original(self) -> bool {
-        matches!(self.provenance, Provenance::Original(_))
+    fn is_original(self) -> bool {
+        matches!(self.meta.provenance(), Provenance::Original)
     }
 }
 
 impl PartialEq for RichValue {
     fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
+        self.meta.kind() == other.meta.kind()
+            && self.meta.sub_kind() == other.meta.sub_kind()
+            && self.narrow == other.narrow
+            && self.raw == other.raw
     }
 }
 
@@ -149,7 +541,7 @@ impl PersistentValue {
         if heap.storage != Storage::Main {
             return Err(HeapError("persistent values require a Main world"));
         }
-        let RuntimeValue::Dict(handle) = self.0.value else {
+        let RuntimeValue::Dict(handle) = self.0.value() else {
             return Err(HeapError("persistent value is not a Dict"));
         };
         let Object::Dict { shape, values } = heap.object(handle)? else {
@@ -219,7 +611,7 @@ impl Heap {
         let replace = |value: &mut RichValue| {
             if let Some((_, replacement)) = replacements
                 .iter()
-                .find(|(candidate, _)| candidate.runtime().value == value.value)
+                .find(|(candidate, _)| candidate.runtime().value() == value.value())
             {
                 *value = replacement.runtime().with_loc(value.loc());
             }
@@ -227,8 +619,8 @@ impl Heap {
         let replacement_arguments = replacements
             .iter()
             .filter_map(|(candidate, replacement)| {
-                let candidate = runtime_object_handle(candidate.runtime().value)?;
-                let RuntimeValue::DeclaredType(handle) = replacement.runtime().value else {
+                let candidate = runtime_object_handle(candidate.runtime().value())?;
+                let RuntimeValue::DeclaredType(handle) = replacement.runtime().value() else {
                     return None;
                 };
                 let Object::DeclaredType { id, name, body, .. } = self.object(handle).ok()? else {
@@ -268,7 +660,7 @@ impl Heap {
                         storage: self.storage,
                         slot: slot as u32,
                     },
-                    value.value,
+                    value.value(),
                 ))
             })
             .collect::<HashMap<_, _>>();
@@ -320,9 +712,9 @@ impl Heap {
                 } => {
                     let mut applied = id.arguments().to_vec();
                     for (index, argument) in arguments.iter().enumerate() {
-                        let value = match argument.value {
+                        let value = match argument.value() {
                             RuntimeValue::UpLink(handle) => {
-                                up_links.get(&handle).copied().unwrap_or(argument.value)
+                                up_links.get(&handle).copied().unwrap_or(argument.value())
                             }
                             value => value,
                         };
@@ -356,7 +748,7 @@ impl Heap {
         replacements
             .iter()
             .find_map(|(candidate, replacement)| {
-                (candidate.runtime().value == value.runtime().value).then_some(*replacement)
+                (candidate.runtime().value() == value.runtime().value()).then_some(*replacement)
             })
             .unwrap_or(value)
     }
@@ -544,7 +936,7 @@ impl Heap {
         &self,
         value: PersistentValue,
     ) -> Result<bool, HeapError> {
-        let mut pending = vec![value.runtime().value];
+        let mut pending = vec![value.runtime().value()];
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
             let handle = match value {
@@ -573,21 +965,21 @@ impl Heap {
             }
             match self.object(handle)? {
                 Object::Array(values) | Object::Tuple(values) => {
-                    pending.extend(values.iter().map(|value| value.value));
+                    pending.extend(values.iter().map(|value| value.value()));
                 }
                 Object::Tagged { tag, payload } => {
-                    pending.push(tag.value);
-                    pending.push(payload.value);
+                    pending.push(tag.value());
+                    pending.push(payload.value());
                 }
                 Object::Dict { values, .. } => {
-                    pending.extend(values.iter().map(|value| value.value));
+                    pending.extend(values.iter().map(|value| value.value()));
                 }
                 Object::Closure {
                     prototype,
                     upvalues,
                     ..
                 } => {
-                    pending.extend(upvalues.iter().map(|value| value.value));
+                    pending.extend(upvalues.iter().map(|value| value.value()));
                     if let RuntimePrototype::Bytecode(handle) = prototype {
                         pending.push(RuntimeValue::Func(*handle));
                     }
@@ -595,18 +987,18 @@ impl Heap {
                 Object::Dyn {
                     descriptor, value, ..
                 } => {
-                    pending.push(descriptor.value);
-                    pending.push(value.value);
+                    pending.push(descriptor.value());
+                    pending.push(value.value());
                 }
-                Object::DeclaredType { body, .. } => pending.push(body.value),
+                Object::DeclaredType { body, .. } => pending.push(body.value()),
                 Object::Declared { owner, payload } => {
-                    pending.push(owner.value);
-                    pending.push(payload.value);
+                    pending.push(owner.value());
+                    pending.push(payload.value());
                 }
                 Object::ByteCodeProto {
                     values, prototypes, ..
                 } => {
-                    pending.extend(values.iter().map(|value| value.value));
+                    pending.extend(values.iter().map(|value| value.value()));
                     pending.extend(prototypes.iter().filter_map(|prototype| match prototype {
                         RuntimePrototype::Bytecode(handle) => Some(RuntimeValue::Func(*handle)),
                         RuntimePrototype::Native(_) => None,
@@ -1135,7 +1527,7 @@ impl<'a> HeapView<'a> {
 
     pub(crate) fn unwrap_declared(&self, mut value: RichValue) -> Result<RichValue, HeapError> {
         loop {
-            let RuntimeValue::Declared(handle) = value.value else {
+            let RuntimeValue::Declared(handle) = value.value() else {
                 return Ok(value);
             };
             let Object::Declared { payload, .. } = self.object(handle)? else {
@@ -1294,7 +1686,7 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn string_text(&self, value: RichValue) -> Result<Option<&'a str>, HeapError> {
-        match value.value {
+        match value.value() {
             RuntimeValue::ShortString(id) => Ok(Some(self.text(id)?)),
             RuntimeValue::String(handle) => match self.object(handle)? {
                 Object::String(value) => Ok(Some(value)),
@@ -1305,7 +1697,7 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn atom_text(&self, value: RichValue) -> Result<Option<&'a str>, HeapError> {
-        match value.value {
+        match value.value() {
             RuntimeValue::BuiltinAtom(atom) => Ok(Some(atom.name())),
             RuntimeValue::Atom(id) => Ok(Some(self.text(id)?)),
             _ => Ok(None),
@@ -1317,7 +1709,7 @@ impl<'a> HeapView<'a> {
         left: RichValue,
         right: RichValue,
     ) -> Result<bool, HeapError> {
-        self.values_equal_with(left.value, right.value, &mut HashSet::new())
+        self.values_equal_with(left.value(), right.value(), &mut HashSet::new())
     }
 
     /// Returns the first failed node reachable through data containers.
@@ -1325,7 +1717,7 @@ impl<'a> HeapView<'a> {
     /// Closures and opaque/native values are intentionally atomic here: an
     /// operation only depends on their identity, not on captured internals.
     pub(crate) fn first_data_failure(&self, root: RichValue) -> Result<Option<u32>, HeapError> {
-        let mut pending = vec![root.value];
+        let mut pending = vec![root.value()];
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
             let handle = match value {
@@ -1354,22 +1746,22 @@ impl<'a> HeapView<'a> {
             }
             match self.object(handle)? {
                 Object::Array(values) | Object::Tuple(values) => {
-                    pending.extend(values.iter().rev().map(|value| value.value));
+                    pending.extend(values.iter().rev().map(|value| value.value()));
                 }
                 Object::Tagged { tag, payload } => {
-                    pending.push(payload.value);
-                    pending.push(tag.value);
+                    pending.push(payload.value());
+                    pending.push(tag.value());
                 }
                 Object::Dict { values, .. } => {
-                    pending.extend(values.iter().rev().map(|value| value.value));
+                    pending.extend(values.iter().rev().map(|value| value.value()));
                 }
                 Object::Dyn {
                     descriptor, value, ..
                 } => {
-                    pending.push(value.value);
-                    pending.push(descriptor.value);
+                    pending.push(value.value());
+                    pending.push(descriptor.value());
                 }
-                Object::Declared { payload, .. } => pending.push(payload.value),
+                Object::Declared { payload, .. } => pending.push(payload.value()),
                 Object::String(_)
                 | Object::Bytes(_)
                 | Object::Opaque(_)
@@ -1507,10 +1899,10 @@ impl<'a> HeapView<'a> {
                     return Err(HeapError("Declared handle refers to another object kind"));
                 };
                 Ok(
-                    self.values_equal_with(left_owner.value, right_owner.value, visited)?
+                    self.values_equal_with(left_owner.value(), right_owner.value(), visited)?
                         && self.values_equal_with(
-                            left_payload.value,
-                            right_payload.value,
+                            left_payload.value(),
+                            right_payload.value(),
                             visited,
                         )?,
                 )
@@ -1526,7 +1918,7 @@ impl<'a> HeapView<'a> {
                 let Object::Declared { payload, .. } = self.object(declared)? else {
                     return Err(HeapError("Declared handle refers to another object kind"));
                 };
-                self.values_equal_with(payload.value, atom, visited)
+                self.values_equal_with(payload.value(), atom, visited)
             }
             (RuntimeValue::Array(left), RuntimeValue::Array(right))
             | (RuntimeValue::Tuple(left), RuntimeValue::Tuple(right)) => {
@@ -1539,10 +1931,10 @@ impl<'a> HeapView<'a> {
                 let (left_tag, left_payload) = self.tagged(left)?;
                 let (right_tag, right_payload) = self.tagged(right)?;
                 Ok(
-                    self.values_equal_with(left_tag.value, right_tag.value, visited)?
+                    self.values_equal_with(left_tag.value(), right_tag.value(), visited)?
                         && self.values_equal_with(
-                            left_payload.value,
-                            right_payload.value,
+                            left_payload.value(),
+                            right_payload.value(),
                             visited,
                         )?,
                 )
@@ -1626,7 +2018,7 @@ impl<'a> HeapView<'a> {
             return Ok(false);
         }
         for (left, right) in left.iter().zip(right) {
-            if !self.values_equal_with(left.value, right.value, visited)? {
+            if !self.values_equal_with(left.value(), right.value(), visited)? {
                 return Ok(false);
             }
         }
@@ -1635,7 +2027,7 @@ impl<'a> HeapView<'a> {
 
     pub(crate) fn export_value(&self, value: RichValue) -> Result<Value, HeapError> {
         self.export_value_with(
-            value.value,
+            value.value(),
             &mut HashSet::new(),
             &mut HashMap::new(),
             None,
@@ -1645,7 +2037,7 @@ impl<'a> HeapView<'a> {
 
     pub(crate) fn export_type_identity(&self, value: RichValue) -> Result<Value, HeapError> {
         self.export_value_with(
-            value.value,
+            value.value(),
             &mut HashSet::new(),
             &mut HashMap::new(),
             None,
@@ -1659,7 +2051,7 @@ impl<'a> HeapView<'a> {
         projection: &Value,
     ) -> Result<Value, HeapError> {
         self.export_value_with(
-            value.value,
+            value.value(),
             &mut HashSet::new(),
             &mut HashMap::new(),
             Some(projection),
@@ -1746,7 +2138,7 @@ impl<'a> HeapView<'a> {
                     ));
                 };
                 let body = self.export_value_with(
-                    body.value,
+                    body.value(),
                     visiting,
                     completed,
                     up_link_projection,
@@ -1765,7 +2157,7 @@ impl<'a> HeapView<'a> {
                 else {
                     return Err(HeapError("Declared handle refers to another object kind"));
                 };
-                let RuntimeValue::DeclaredType(owner_handle) = owner.value else {
+                let RuntimeValue::DeclaredType(owner_handle) = owner.value() else {
                     return Err(HeapError("Declared owner is not a DeclaredType"));
                 };
                 let Object::DeclaredType { id, name, .. } = self.object(owner_handle)? else {
@@ -1783,7 +2175,7 @@ impl<'a> HeapView<'a> {
                     body: Box::new(any_body),
                 };
                 let payload = self.export_value_with(
-                    payload.value,
+                    payload.value(),
                     visiting,
                     completed,
                     up_link_projection,
@@ -1804,7 +2196,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value,
+                            value.value(),
                             visiting,
                             completed,
                             up_link_projection,
@@ -1824,7 +2216,7 @@ impl<'a> HeapView<'a> {
                     return Err(HeapError("Tagged handle refers to another object kind"));
                 };
                 let tag = match self.export_value_with(
-                    tag.value,
+                    tag.value(),
                     visiting,
                     completed,
                     up_link_projection,
@@ -1834,7 +2226,7 @@ impl<'a> HeapView<'a> {
                     _ => return Err(HeapError("Tagged tag is not an Atom")),
                 };
                 let payload = self.export_value_with(
-                    payload.value,
+                    payload.value(),
                     visiting,
                     completed,
                     up_link_projection,
@@ -1856,7 +2248,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value,
+                            value.value(),
                             visiting,
                             completed,
                             up_link_projection,
@@ -1899,7 +2291,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value,
+                            value.value(),
                             visiting,
                             completed,
                             up_link_projection,
@@ -1926,14 +2318,14 @@ impl<'a> HeapView<'a> {
                     return Err(HeapError("Dyn handle refers to another object kind"));
                 };
                 let descriptor = self.export_value_with(
-                    descriptor.value,
+                    descriptor.value(),
                     visiting,
                     completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
                 let value = self.export_value_with(
-                    value.value,
+                    value.value(),
                     visiting,
                     completed,
                     up_link_projection,
@@ -1953,7 +2345,7 @@ impl<'a> HeapView<'a> {
                     .up_link(handle)?
                     .ok_or(HeapError("up-link is uninitialized"))?;
                 if let Some(projection) = up_link_projection
-                    && self.is_type_metadata_root(linked.value)?
+                    && self.is_type_metadata_root(linked.value())?
                 {
                     return Ok(projection.clone());
                 }
@@ -1963,7 +2355,7 @@ impl<'a> HeapView<'a> {
                     ));
                 }
                 let value = self.export_value_with(
-                    linked.value,
+                    linked.value(),
                     visiting,
                     completed,
                     up_link_projection,
@@ -1986,7 +2378,7 @@ impl<'a> HeapView<'a> {
         let Some(kind) = self.dict_get_text(handle, "kind")? else {
             return Ok(false);
         };
-        let kind = match kind.value {
+        let kind = match kind.value() {
             RuntimeValue::BuiltinAtom(atom) => atom.name(),
             RuntimeValue::Atom(id) => self.text(id)?,
             _ => return Ok(false),
@@ -2053,7 +2445,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value,
+                            value.value(),
                             visiting,
                             completed,
                             up_link_projection,
@@ -2150,7 +2542,7 @@ fn bound_type_replacements(
     let mut parents = HashMap::<Handle, Vec<Handle>>::new();
     let mut forced_objects = HashSet::new();
     while let Some(value) = pending.pop() {
-        let Some(handle) = runtime_object_handle(value.value) else {
+        let Some(handle) = runtime_object_handle(value.value()) else {
             continue;
         };
         if !visited.insert(handle) {
@@ -2165,7 +2557,7 @@ fn bound_type_replacements(
                 match source.text(*field)? {
                     "kind" => kind = source.atom_text(*value)?,
                     "parameter" => {
-                        if let RuntimeValue::Int(index) = value.value {
+                        if let RuntimeValue::Int(index) = value.value() {
                             parameter = usize::try_from(index).ok();
                         }
                     }
@@ -2204,7 +2596,7 @@ fn bound_type_replacements(
             | Object::Opaque(_) => Vec::new(),
         };
         for child in children {
-            if let Some(child_handle) = runtime_object_handle(child.value) {
+            if let Some(child_handle) = runtime_object_handle(child.value()) {
                 parents.entry(child_handle).or_default().push(handle);
             }
             pending.push(child);
@@ -2363,7 +2755,7 @@ impl PendingCopy {
         source: &HeapView<'_>,
         value: RichValue,
     ) -> Result<RichValue, HeapError> {
-        if let Some(handle) = runtime_object_handle(value.value)
+        if let Some(handle) = runtime_object_handle(value.value())
             && let Some(replacement) = self.value_replacements.get(&handle)
         {
             return Ok(if replacement.loc().is_some() {
@@ -2372,15 +2764,15 @@ impl PendingCopy {
                 replacement.with_loc(value.loc())
             });
         }
-        let copied = match value.value {
+        let copied = match value.value() {
             RuntimeValue::Failed(id) if self.target_storage == Storage::Work => {
                 RuntimeValue::Failed(id)
             }
             RuntimeValue::Failed(_) => {
                 return Err(HeapError("failed evaluation node cannot enter Main world"));
             }
-            RuntimeValue::Int(_) | RuntimeValue::BuiltinAtom(_) => value.value,
-            RuntimeValue::Float(float) if float.is_finite() => value.value,
+            RuntimeValue::Int(_) | RuntimeValue::BuiltinAtom(_) => value.value(),
+            RuntimeValue::Float(float) if float.is_finite() => value.value(),
             RuntimeValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             RuntimeValue::Atom(id) => RuntimeValue::Atom(self.copy_text(target, source, id)?),
             RuntimeValue::ShortString(id) => {
@@ -2713,7 +3105,7 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
 
 #[cfg(test)]
 fn rich_value_contains_foreign(value: RichValue, target: Storage) -> bool {
-    value_contains_foreign(value.value, target)
+    value_contains_foreign(value.value(), target)
 }
 
 fn object_contains_disallowed(
@@ -2722,7 +3114,7 @@ fn object_contains_disallowed(
     background: Option<Storage>,
 ) -> bool {
     let foreign = |storage| storage != target && Some(storage) != background;
-    let value_foreign = |value: RichValue| match value.value {
+    let value_foreign = |value: RichValue| match value.value() {
         RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => foreign(id.storage),
         RuntimeValue::String(handle)
         | RuntimeValue::Bytes(handle)
@@ -2808,6 +3200,27 @@ mod tests {
 
         assert_copy::<RichValue>();
         assert_eq!(std::mem::size_of::<RichValue>(), 32);
+        assert_eq!(std::mem::align_of::<RichValue>(), 8);
+        assert_eq!(std::mem::size_of::<Meta>(), 4);
+    }
+
+    #[test]
+    fn flat_meta_round_trips_exact_classification_and_traits() {
+        for storage in [Storage::Main, Storage::Work] {
+            let value = RichValue::unknown(RuntimeValue::Array(Handle { storage, slot: 7 }));
+            assert_eq!(
+                value.value(),
+                RuntimeValue::Array(Handle { storage, slot: 7 })
+            );
+            assert_eq!(value.meta.sub_kind(), HeapKind::Array);
+            assert_ne!(value.meta.traits() & TRAIT_REFERENCE, 0);
+            assert_ne!(value.meta.traits() & TRAIT_HEAP, 0);
+            assert_ne!(value.meta.traits() & TRAIT_TRACE, 0);
+            assert_eq!(
+                value.meta.traits() & TRAIT_LOCAL != 0,
+                storage == Storage::Work
+            );
+        }
     }
 
     #[test]
@@ -2862,7 +3275,7 @@ mod tests {
         let root = heap.import_sourced_value(None, &sourced).unwrap();
         assert!(root.is_original());
         assert_eq!(root.loc(), Some(root_loc));
-        let RuntimeValue::Array(handle) = root.value else {
+        let RuntimeValue::Array(handle) = root.value() else {
             panic!("expected imported Array")
         };
         let Object::Array(items) = heap.object(handle).unwrap() else {
@@ -2895,7 +3308,7 @@ mod tests {
 
         assert_eq!(copied.loc(), Some(root_loc));
         assert!(copied.is_original());
-        let RuntimeValue::Array(handle) = copied.value else {
+        let RuntimeValue::Array(handle) = copied.value() else {
             panic!("expected copied Array")
         };
         let Object::Array(items) = world.object(handle).unwrap() else {
@@ -2928,7 +3341,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(world.counts(), (2, 1, 0));
-        let RuntimeValue::Tuple(root) = copied[0].value else {
+        let RuntimeValue::Tuple(root) = copied[0].value() else {
             panic!("expected tuple root")
         };
         let Object::Tuple(values) = world.object(root).unwrap() else {
@@ -3039,7 +3452,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(target.counts().0, 4);
-        let RuntimeValue::Tuple(root) = relocated[0].value else {
+        let RuntimeValue::Tuple(root) = relocated[0].value() else {
             panic!("expected relocated tuple")
         };
         let Object::Tuple(values) = target.object(root).unwrap() else {
@@ -3047,7 +3460,7 @@ mod tests {
         };
         assert_eq!(values[0], values[1]);
         assert_eq!(values[2], rv(RuntimeValue::Bytes(stable)));
-        let RuntimeValue::Array(cycle) = values[3].value else {
+        let RuntimeValue::Array(cycle) = values[3].value() else {
             panic!("expected relocated cycle")
         };
         let Object::Array(cycle_values) = target.object(cycle).unwrap() else {
@@ -3067,13 +3480,13 @@ mod tests {
 
         let mut target = Heap::work();
         let relocated = relocate_work_roots(&mut target, &main, &source, &[root]).unwrap();
-        let RuntimeValue::Array(handle) = relocated[0].value else {
+        let RuntimeValue::Array(handle) = relocated[0].value() else {
             panic!("expected relocated Array")
         };
         let Object::Array(items) = target.object(handle).unwrap() else {
             panic!("expected relocated Array object")
         };
-        assert!(matches!(items[0].value, RuntimeValue::Failed(7)));
+        assert!(matches!(items[0].value(), RuntimeValue::Failed(7)));
         assert!(
             HeapView {
                 current: &target,
@@ -3099,14 +3512,14 @@ mod tests {
         let published = publish_root(&mut main, &work, rv(RuntimeValue::Array(work_root)))
             .unwrap()
             .runtime();
-        let RuntimeValue::Array(main_root) = published.value else {
+        let RuntimeValue::Array(main_root) = published.value() else {
             panic!("expected published Array")
         };
         assert_eq!(main_root.storage, Storage::Main);
         let Object::Array(items) = main.object(main_root).unwrap() else {
             panic!("expected Main Array")
         };
-        let RuntimeValue::Bytes(stable_bytes) = items[0].value else {
+        let RuntimeValue::Bytes(stable_bytes) = items[0].value() else {
             panic!("expected Main Bytes")
         };
         assert_eq!(stable_bytes.storage, Storage::Main);
@@ -3283,7 +3696,7 @@ mod tests {
             publish_root(&mut world, &local, rv(RuntimeValue::UpLink(link)))
                 .unwrap()
                 .runtime()
-                .value
+                .value()
         else {
             panic!("expected persistent up-link")
         };
@@ -3296,7 +3709,7 @@ mod tests {
             .up_link(persistent_link)
             .unwrap()
             .expect("published up-link is ready")
-            .value
+            .value()
         else {
             panic!("expected Array")
         };
@@ -3321,7 +3734,7 @@ mod tests {
             vec![Value::Int(1), Value::Int(2), Value::Int(3)],
         ));
         let mut world = Heap::main();
-        let RuntimeValue::Dict(dict) = publish_value(&mut world, &value).unwrap().runtime().value
+        let RuntimeValue::Dict(dict) = publish_value(&mut world, &value).unwrap().runtime().value()
         else {
             panic!("expected persistent Dict")
         };
