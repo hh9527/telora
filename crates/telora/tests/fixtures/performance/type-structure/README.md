@@ -10,7 +10,19 @@ Build an optimized CLI before measuring:
 cargo build --release -p telora
 ```
 
-Run a fixture from the repository root:
+Run the stable suite from the repository root:
+
+```sh
+python3 crates/telora/tests/fixtures/performance/type-structure/measure.py
+```
+
+The runner performs one warm-up and three measured runs per case, then emits
+one JSON object per line with median wall, user, and system time. It never
+includes compilation time. Use `--samples`, `--fixture`, `--binary`, and
+`--timeout` to control an explicit run; `--help` lists the accepted fixture
+names.
+
+For an exploratory single sample, run:
 
 ```sh
 /usr/bin/time -f 'elapsed=%e user=%U sys=%S' \
@@ -41,5 +53,6 @@ Use `show` to isolate workspace recovery from output rendering:
 ```
 
 Record the compiler profile, hardware, command, and several runs when comparing
-results. Wall-clock thresholds should only be added after the underlying hot
-paths are understood.
+results. Compare medians produced on the same host under similar load.
+Wall-clock thresholds should only be added after the underlying hot paths are
+understood.

@@ -1,7 +1,7 @@
 # RFC 0241: Recursive Type and Value Performance
 
 - Status: Proposed
-- Tracking issue: #83
+- Tracking issue: #87
 - Depends on: RFC 0034, RFC 0035, RFC 0235, RFC 0237, RFC 0238
 
 ## Summary
@@ -21,7 +21,7 @@ model.
 
 ## Problem
 
-Issue #83 contains two independent reproductions:
+Issue #83 contains two independent reproductions tracked to completion by #87:
 
 - repeated checks involving nested or recursive descriptors make a realistic
   QueryBuilder take several seconds; and
@@ -103,4 +103,3 @@ This phase is complete when:
 7. tests cover type comparison, validation, copy, publish, and projection
    boundaries; and
 8. workspace formatting, linting, and tests pass.
-

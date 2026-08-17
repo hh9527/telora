@@ -1,7 +1,7 @@
 # RFC 0242: Recursive Performance Evidence
 
-- Status: Proposed
-- Tracking issue: #83
+- Status: Implemented
+- Tracking issue: #87
 - Depends on: RFC 0241
 
 ## Summary
@@ -67,4 +67,3 @@ machine-readable diagnostic and must not alter ordinary stdout.
 4. correctness tests cover trusted and untrusted declared-value boundaries;
 5. the protocol records a baseline before RFC 0243 implementation; and
 6. normal workspace tests remain deterministic.
-

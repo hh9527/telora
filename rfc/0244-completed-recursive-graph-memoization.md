@@ -1,7 +1,7 @@
 # RFC 0244: Completed Recursive Graph Memoization
 
 - Status: Proposed
-- Tracking issue: #83
+- Tracking issue: #87
 - Depends on: RFC 0241, RFC 0242, RFC 0243
 
 ## Summary

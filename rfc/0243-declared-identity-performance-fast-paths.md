@@ -1,7 +1,7 @@
 # RFC 0243: Declared-Identity Performance Fast Paths
 
 - Status: Proposed
-- Tracking issue: #83
+- Tracking issue: #87
 - Depends on: RFC 0241, RFC 0242, RFC 0237
 
 ## Summary
@@ -69,4 +69,3 @@ unless their adapter contract already guarantees the exact declared type.
 6. QueryBuilder and recursive-value measurements improve without semantic
    output changes; and
 7. all codec, Dyn, schema, module, and Host-boundary tests pass.
-
