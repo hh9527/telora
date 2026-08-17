@@ -198,7 +198,7 @@ impl Ord for DeclaredTypeId {
 pub struct DeclaredType {
     pub(crate) id: DeclaredTypeId,
     pub(crate) name: Arc<str>,
-    pub(crate) body: Box<Value>,
+    pub(crate) body: Arc<Value>,
 }
 
 impl DeclaredType {
@@ -211,7 +211,7 @@ impl DeclaredType {
         Self {
             id: DeclaredTypeId::concrete(module, declaration),
             name: name.into(),
-            body: Box::new(body),
+            body: Arc::new(body),
         }
     }
 
@@ -225,7 +225,7 @@ impl DeclaredType {
         Self {
             id: DeclaredTypeId::applied(module, declaration, arguments),
             name: name.into(),
-            body: Box::new(body),
+            body: Arc::new(body),
         }
     }
 
@@ -259,14 +259,14 @@ impl std::hash::Hash for DeclaredType {
 #[derive(Clone)]
 pub struct DeclaredValue {
     pub(crate) owner: DeclaredType,
-    pub(crate) payload: Box<Value>,
+    pub(crate) payload: Arc<Value>,
 }
 
 impl DeclaredValue {
     pub(crate) fn new(owner: DeclaredType, payload: Value) -> Self {
         Self {
             owner,
-            payload: Box::new(payload),
+            payload: Arc::new(payload),
         }
     }
 

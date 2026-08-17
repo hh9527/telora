@@ -1,6 +1,6 @@
 # RFC 0243: Declared-Identity Performance Fast Paths
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #87
 - Depends on: RFC 0241, RFC 0242, RFC 0237
 

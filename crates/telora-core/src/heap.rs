@@ -228,7 +228,7 @@ impl Heap {
                     crate::types::TypeDescriptor::Declared(crate::types::DeclaredTypeDescriptor {
                         id,
                         name,
-                        body: Box::new(body),
+                        body: Arc::new(body),
                     }),
                 ))
             })
@@ -1690,7 +1690,7 @@ impl<'a> HeapView<'a> {
                     return Ok(Value::DeclaredType(DeclaredType {
                         id: id.clone(),
                         name: Arc::clone(name),
-                        body: Box::new(body),
+                        body: Arc::new(body),
                     }));
                 }
                 let Object::DeclaredType { id, name, body, .. } =
@@ -1709,7 +1709,7 @@ impl<'a> HeapView<'a> {
                 let value = Value::DeclaredType(DeclaredType {
                     id: id.clone(),
                     name: Arc::clone(name),
-                    body: Box::new(body),
+                    body: Arc::new(body),
                 });
                 visiting.remove(&handle);
                 value
@@ -1734,7 +1734,7 @@ impl<'a> HeapView<'a> {
                 let owner = DeclaredType {
                     id: id.clone(),
                     name: Arc::clone(name),
-                    body: Box::new(any_body),
+                    body: Arc::new(any_body),
                 };
                 let payload = self.export_value_with(
                     payload.value,

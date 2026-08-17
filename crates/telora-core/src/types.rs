@@ -776,7 +776,7 @@ fn rename_named_type_metadata(metadata: &Value, names: &HashMap<String, String>)
         return Value::DeclaredType(crate::DeclaredType {
             id: declared.id().clone(),
             name: Arc::from(declared.name()),
-            body: Box::new(rename_named_type_metadata(declared.body(), names)),
+            body: Arc::new(rename_named_type_metadata(declared.body(), names)),
         });
     }
     let Value::Dict(fields) = metadata else {
@@ -905,7 +905,7 @@ pub enum TypeDescriptor {
 pub struct DeclaredTypeDescriptor {
     pub(crate) id: crate::value::DeclaredTypeId,
     pub(crate) name: String,
-    pub(crate) body: Box<TypeDescriptor>,
+    pub(crate) body: Arc<TypeDescriptor>,
 }
 
 impl DeclaredTypeDescriptor {
@@ -1006,7 +1006,7 @@ impl TypeDescriptor {
                 return Value::DeclaredType(crate::DeclaredType {
                     id: declared.id.clone(),
                     name: Arc::from(declared.name.as_str()),
-                    body: Box::new(declared.body.to_value(vm)),
+                    body: Arc::new(declared.body.to_value(vm)),
                 });
             }
             Self::Inference(_) => panic!("inference variables are not runtime type metadata"),
@@ -4929,7 +4929,7 @@ fn decode_type_ref_with(
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: id.clone(),
             name: name.to_owned(),
-            body: Box::new(if shallow_declared_types {
+            body: Arc::new(if shallow_declared_types {
                 TypeDescriptor::Any
             } else {
                 decode_type_ref_with(body, path, false)?
@@ -5228,14 +5228,14 @@ fn validate_value_ref(
 ) -> Result<(), String> {
     match descriptor {
         TypeDescriptor::Declared(expected) => {
-            if let Some((owner, payload)) = value.declared_value_parts() {
+            if let Some((owner, _)) = value.declared_value_parts() {
                 let Some((actual, _, _)) = owner.declared_type_parts() else {
                     return Err(format!("{path} has an invalid declared owner"));
                 };
                 if actual != &expected.id {
                     return Err(format!("{path} has a different declared type identity"));
                 }
-                validate_value_ref(&expected.body, payload, path)
+                Ok(())
             } else {
                 validate_value_ref(&expected.body, value, path)
             }
@@ -5401,7 +5401,7 @@ pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, S
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: declared.id().clone(),
             name: declared.name().to_owned(),
-            body: Box::new(decode_type(declared.body(), path)?),
+            body: Arc::new(decode_type(declared.body(), path)?),
         }));
     }
     let Value::Dict(metadata) = value else {
@@ -5929,6 +5929,29 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Named(name) => Some(name.clone()),
             _ => None,
         }
+    }
+
+    fn declared_identity(&self, ty: &TypeDescriptor) -> Option<crate::value::DeclaredTypeId> {
+        fn find(
+            inference: &GenericInference<'_>,
+            ty: &TypeDescriptor,
+            named: &mut HashSet<String>,
+            variables: &mut HashSet<InferenceVariableId>,
+        ) -> Option<crate::value::DeclaredTypeId> {
+            match ty {
+                TypeDescriptor::Declared(declared) => Some(declared.id.clone()),
+                TypeDescriptor::Named(name) if named.insert(name.clone()) => inference
+                    .named_type(name)
+                    .and_then(|ty| find(inference, ty, named, variables)),
+                TypeDescriptor::Inference(variable) if variables.insert(*variable) => inference
+                    .substitutions
+                    .get(variable)
+                    .and_then(|ty| find(inference, ty, named, variables)),
+                _ => None,
+            }
+        }
+
+        find(self, ty, &mut HashSet::new(), &mut HashSet::new())
     }
 
     fn finish_return_boundary(
@@ -6470,7 +6493,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: Box::new(self.instantiate_with(&declared.body, variables)),
+                    body: Arc::new(self.instantiate_with(&declared.body, variables)),
                 })
             }
             TypeDescriptor::Array(item) => {
@@ -6544,7 +6567,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: Box::new(self.resolve(&declared.body)),
+                    body: Arc::new(self.resolve(&declared.body)),
                 })
             }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
@@ -6788,6 +6811,16 @@ impl<'a> GenericInference<'a> {
         if let Some(query) = &self.query {
             query.check().map_err(|error| error.to_string())?;
         }
+        if let (Some(left), Some(right)) =
+            (self.declared_identity(left), self.declared_identity(right))
+            && left.has_same_head(&right)
+            && left.arguments().len() == right.arguments().len()
+        {
+            for (left, right) in left.arguments().iter().zip(right.arguments()) {
+                self.unify(left, right)?;
+            }
+            return Ok(());
+        }
         let left = self.resolve(left);
         let right = self.resolve(right);
         if let (TypeDescriptor::Struct(fields), TypeDescriptor::Dict(item)) = (&left, &right) {
@@ -6934,6 +6967,17 @@ impl<'a> GenericInference<'a> {
     }
 
     fn check(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
+        if let (Some(actual), Some(expected)) = (
+            self.declared_identity(actual),
+            self.declared_identity(expected),
+        ) && actual.has_same_head(&expected)
+            && actual.arguments().len() == expected.arguments().len()
+        {
+            for (actual, expected) in actual.arguments().iter().zip(expected.arguments()) {
+                self.check(actual, expected)?;
+            }
+            return Ok(());
+        }
         if let (TypeDescriptor::Named(actual), TypeDescriptor::Named(expected)) = (actual, expected)
         {
             if actual == expected {
@@ -8626,7 +8670,7 @@ fn replace_inference_variables(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(replace_inference_variables(&declared.body, replacements)),
+                body: Arc::new(replace_inference_variables(&declared.body, replacements)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -8720,7 +8764,7 @@ fn rename_named_types(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(rename_named_types(&declared.body, names)),
+                body: Arc::new(rename_named_types(&declared.body, names)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -8927,7 +8971,7 @@ fn bind_inference_variables(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(bind_inference_variables(&declared.body, replacements)),
+                body: Arc::new(bind_inference_variables(&declared.body, replacements)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -9918,7 +9962,7 @@ fn substitute_bound_parameters(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(body),
+                body: Arc::new(body),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -10016,7 +10060,7 @@ fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Box::new(erase_type_variables(&declared.body)),
+                body: Arc::new(erase_type_variables(&declared.body)),
             })
         }
         TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(erase_type_variables(item))),
@@ -10444,6 +10488,48 @@ fn frontend_error(source_name: &str, message: impl Into<String>) -> FrontendErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn validate_legacy_value(descriptor: &TypeDescriptor, value: &Value) -> Result<(), String> {
+        crate::vm::with_legacy_value_ref(value, |value| {
+            validate_value_ref(descriptor, value, "value")
+        })
+    }
+
+    #[test]
+    fn declared_validation_trusts_matching_owners_but_not_raw_values() {
+        let body =
+            TypeDescriptor::Struct(BTreeMap::from([("value".to_owned(), TypeDescriptor::Int)]));
+        let mut vm = Vm::new();
+        let owner = crate::DeclaredType::bind("test", 1, "Number", body.to_value(&mut vm));
+        let expected = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: owner.id().clone(),
+            name: owner.name().to_owned(),
+            body: Arc::new(body.clone()),
+        });
+        let invalid_payload = vm
+            .make_dict([("value".to_owned(), Value::string("not an Int"))])
+            .unwrap();
+        let trusted = Value::Declared(crate::DeclaredValue::new(
+            owner.clone(),
+            invalid_payload.clone(),
+        ));
+        assert_eq!(validate_legacy_value(&expected, &trusted), Ok(()));
+
+        let raw_error = validate_legacy_value(&expected, &invalid_payload).unwrap_err();
+        assert!(raw_error.contains("value.value must be Int"), "{raw_error}");
+
+        let other_owner =
+            crate::DeclaredType::bind("test", 2, "OtherNumber", body.to_value(&mut vm));
+        let other = Value::Declared(crate::DeclaredValue::new(other_owner, invalid_payload));
+        let identity_error = validate_legacy_value(&expected, &other).unwrap_err();
+        assert!(
+            identity_error.contains("different declared type identity"),
+            "{identity_error}"
+        );
+
+        let valid_raw = vm.make_dict([("value".to_owned(), Value::Int(3))]).unwrap();
+        assert_eq!(validate_legacy_value(&expected, &valid_raw), Ok(()));
+    }
 
     #[test]
     fn bootstrap_prelude_keeps_public_projections_consistent() {

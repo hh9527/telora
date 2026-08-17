@@ -432,6 +432,24 @@ impl<'a> ValueRef<'a> {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn with_legacy_value_ref<R>(
+    value: &crate::Value,
+    callback: impl FnOnce(ValueRef<'_>) -> R,
+) -> R {
+    let mut heap = Heap::work();
+    let value = heap
+        .import_value(None, value)
+        .expect("test value imports into a Work heap");
+    callback(ValueRef {
+        value,
+        view: HeapView {
+            current: &heap,
+            background: None,
+        },
+    })
+}
+
 pub struct CallContext<'vm, 'stack> {
     current: &'vm mut Heap,
     background: Option<&'vm Heap>,
