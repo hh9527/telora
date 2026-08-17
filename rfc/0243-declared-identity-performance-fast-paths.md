@@ -66,6 +66,6 @@ unless their adapter contract already guarantees the exact declared type.
 4. a successful raw validation returns the expected declared wrapper;
 5. declared type comparison uses ID or family arguments without body-sized
    `Debug` keys;
-6. QueryBuilder and recursive-value measurements improve without semantic
-   output changes; and
+6. the fast paths improve declared comparison independently of runtime value
+   storage representation; and
 7. all codec, Dyn, schema, module, and Host-boundary tests pass.

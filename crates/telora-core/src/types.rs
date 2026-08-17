@@ -2,7 +2,7 @@ use crate::ast::{
     BinaryOperator, Binding, BindingKind, Block, Expr, ExprKind, Pattern, Program, StringPartKind,
     TypeArgumentKind, UnaryOperator, located,
 };
-use crate::compiler::compile_expression_with_bindings;
+use crate::compiler::compile_expression_with_external_bindings;
 use crate::heap::{Handle, Heap, PersistentValue};
 use crate::hir::{HirDefinitionId, HirDefinitionKind, HirExpressionId, HirProgram, HirResolution};
 use crate::json::{Provenance, ValuePath, ValuePathSegment};
@@ -776,7 +776,7 @@ fn rename_named_type_metadata(metadata: &Value, names: &HashMap<String, String>)
         return Value::DeclaredType(crate::DeclaredType {
             id: declared.id().clone(),
             name: Arc::from(declared.name()),
-            body: Arc::new(rename_named_type_metadata(declared.body(), names)),
+            body: Box::new(rename_named_type_metadata(declared.body(), names)),
         });
     }
     let Value::Dict(fields) = metadata else {
@@ -905,7 +905,7 @@ pub enum TypeDescriptor {
 pub struct DeclaredTypeDescriptor {
     pub(crate) id: crate::value::DeclaredTypeId,
     pub(crate) name: String,
-    pub(crate) body: Arc<TypeDescriptor>,
+    pub(crate) body: Box<TypeDescriptor>,
 }
 
 impl DeclaredTypeDescriptor {
@@ -1006,7 +1006,7 @@ impl TypeDescriptor {
                 return Value::DeclaredType(crate::DeclaredType {
                     id: declared.id.clone(),
                     name: Arc::from(declared.name.as_str()),
-                    body: Arc::new(declared.body.to_value(vm)),
+                    body: Box::new(declared.body.to_value(vm)),
                 });
             }
             Self::Inference(_) => panic!("inference variables are not runtime type metadata"),
@@ -1515,14 +1515,22 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         facts.insert(definition, fact);
     }
     let mut types = TypeGraph::default();
-    let mut tool_values = prelude.values;
-    tool_values.extend(external_values.clone());
-    let any_metadata = tool_values
-        .get("Any")
-        .expect("core prelude defines Any")
-        .clone();
+    let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+    let mut evaluator = ToolEvaluator::new(Arc::clone(&debug_sink));
+    let mut tool_values = evaluator
+        .publish_map(&prelude.values)
+        .expect("core prelude values can enter the tool Main world");
+    tool_values.extend(external_values.iter().map(|(name, value)| {
+        (
+            name.clone(),
+            evaluator
+                .publish(value)
+                .expect("external values can enter the tool Main world"),
+        )
+    }));
+    let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in bindings.values() {
-        tool_values.insert(binding.value.name.value.clone(), any_metadata.clone());
+        tool_values.insert(binding.value.name.value.clone(), any_metadata);
     }
     for node in &dependencies.nodes {
         let binding = bindings[&node.definition];
@@ -1531,15 +1539,19 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             && dependency_reaches(&dependencies, node.definition, node.definition)
         {
             let name = binding.value.name.value.clone();
-            tool_values.insert(name.clone(), TypeDescriptor::Named(name).to_value(&mut vm));
+            let value = TypeDescriptor::Named(name.clone()).to_value(&mut vm);
+            tool_values.insert(
+                name,
+                evaluator
+                    .publish(&value)
+                    .expect("named metadata can enter the tool Main world"),
+            );
         }
     }
     let mut account = QuotaAccount::new(quota);
     if let Some(query) = control.query {
         account = account.with_query(query.clone());
     }
-    let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
-
     while facts.len() < bindings.len() {
         let mut progressed = false;
         for node in &dependencies.nodes {
@@ -1601,9 +1613,12 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                     name: parameter.value.clone(),
                     location: parameter.location,
                 });
+                let value = TypeDescriptor::Bound(id).to_value(&mut vm);
                 evaluation_bindings.insert(
                     parameter.value.clone(),
-                    TypeDescriptor::Bound(id).to_value(&mut vm),
+                    evaluator
+                        .publish(&value)
+                        .expect("bound metadata can enter the tool Main world"),
                 );
             }
             if facts.contains_key(&node.definition) {
@@ -1616,7 +1631,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                 &evaluation_bindings,
                 &mut account,
                 sources,
-                &debug_sink,
+                &mut evaluator,
             )
             .and_then(|value| {
                 let value = if parameters.is_empty() {
@@ -1625,23 +1640,28 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         binding,
                         &declared_initializer_slots,
                         value,
+                        &mut evaluator,
                     )?
                 } else if binding.value.declared_initializer.is_some() {
                     let arguments = parameters
                         .iter()
                         .map(|parameter| TypeDescriptor::Bound(parameter.id))
                         .collect::<Vec<_>>();
-                    Value::DeclaredType(crate::DeclaredType::bind_application(
-                        source_name.as_str(),
-                        declared_initializer_slots[&binding.value.name.location],
-                        binding.value.name.value.as_str(),
-                        &arguments,
-                        value,
-                    ))
+                    evaluator
+                        .heap
+                        .declare_persistent_type_application(
+                            value,
+                            source_name.as_str(),
+                            declared_initializer_slots[&binding.value.name.location],
+                            binding.value.name.value.as_str(),
+                            &arguments,
+                        )
+                        .map_err(|error| frontend_error(&source_name, error.to_string()))?
                 } else {
                     value
                 };
-                TypeDescriptor::from_value(&value)
+                evaluator
+                    .decode_type(value, "Type")
                     .map(|descriptor| (value, descriptor))
                     .map_err(|message| {
                         FrontendError::from_diagnostic(
@@ -1685,9 +1705,12 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                             progressed = true;
                             continue;
                         }
+                        let metadata = evaluator
+                            .export(value)
+                            .expect("type-family metadata can cross the legacy analysis boundary");
                         let family = TypeFamilyTemplate {
                             parameters: parameters.clone(),
-                            metadata: value,
+                            metadata,
                         };
                         let scheme = TypeScheme {
                             parameters,
@@ -1706,7 +1729,11 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         };
                         let erased = erase_type_variables(&scheme.body);
                         definition_schemes.insert(node.definition, scheme);
-                        (erased, type_family_value(&family))
+                        let family_value = type_family_value(&family);
+                        let published = evaluator
+                            .publish(&family_value)
+                            .expect("type-family closure can enter the tool Main world");
+                        (erased, published)
                     };
                     let id = types.intern_descriptor(&definition_descriptor);
                     tool_values.insert(binding.value.name.value.clone(), published_value);
@@ -1775,10 +1802,11 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         &tool_values,
                         &mut account,
                         sources,
-                        &debug_sink,
+                        &mut evaluator,
                     )
                     .and_then(|value| {
-                        TypeDescriptor::from_value(&value)
+                        evaluator
+                            .decode_type(value, "Type")
                             .map(|descriptor| (value, descriptor))
                             .map_err(|message| {
                                 FrontendError::from_diagnostic(
@@ -1820,7 +1848,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         let binding = bindings[definition];
                         let name = &binding.value.name.value;
                         facts.insert(*definition, SemanticFact::known(roots[name]));
-                        tool_values.insert(name.clone(), values[name].clone());
+                        tool_values.insert(name.clone(), values[name]);
                     }
                 } else {
                     for definition in &component {
@@ -2084,10 +2112,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .cloned()
         .collect::<Vec<_>>();
     let BootstrapPrelude {
-        values: mut tool_values,
+        values: bootstrap_values,
         types: mut static_environment,
         schemes: mut binding_schemes,
     } = prelude;
+    let mut evaluator = ToolEvaluator::new(Arc::clone(debug_sink));
+    let mut tool_values = evaluator.publish_map(&bootstrap_values)?;
     let mut declared_types = BTreeMap::new();
     let mut binding_types = BTreeMap::new();
     let mut declared_type_spans = HashMap::new();
@@ -2130,7 +2160,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .and_then(|interface| interface.exports.get(name))
             .cloned();
         let tool_value = authoritative_imported_value(value, interface, name, &mut tool_vm);
-        tool_values.insert(name.clone(), tool_value);
+        tool_values.insert(name.clone(), evaluator.publish(&tool_value)?);
         let inferred = imported_static_descriptor(value, interface, name);
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
@@ -2144,16 +2174,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .collect::<BTreeMap<_, _>>();
     validate_export_references(program, prelude_names.iter(), external_values, sources)?;
 
-    let any_metadata = tool_values
-        .get("Any")
-        .expect("core prelude defines Any")
-        .clone();
+    let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in &program.value.body.value.bindings {
         if matches!(
             binding.value.kind,
             BindingKind::Type | BindingKind::NativeType
         ) {
-            tool_values.insert(binding.value.name.value.clone(), any_metadata.clone());
+            tool_values.insert(binding.value.name.value.clone(), any_metadata);
             static_environment.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
             binding_types.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
         }
@@ -2183,7 +2210,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })?;
         let interface = qualified_external_interfaces.get(name);
         let value = authoritative_imported_value(&value, interface, name, &mut tool_vm);
-        tool_values.insert(name.clone(), value);
+        tool_values.insert(name.clone(), evaluator.publish(&value)?);
     }
 
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
@@ -2196,10 +2223,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
             && dependency_reaches(&type_dependencies, node.definition, node.definition)
         {
             let name = binding.value.name.value.clone();
-            tool_values.insert(
-                name.clone(),
-                TypeDescriptor::Named(name).to_value(&mut tool_vm),
-            );
+            let value = TypeDescriptor::Named(name.clone()).to_value(&mut tool_vm);
+            tool_values.insert(name, evaluator.publish(&value)?);
         }
     }
     let contract_type_definitions = program
@@ -2276,15 +2301,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     &tool_values,
                     account,
                     sources,
-                    debug_sink,
+                    &mut evaluator,
                 )?;
                 let value = declare_metadata_value(
                     source_name,
                     binding,
                     &declared_initializer_slots,
                     value,
+                    &mut evaluator,
                 )?;
-                let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
                     FrontendError::from_diagnostic(
                         sources,
                         Diagnostic::error(
@@ -2339,10 +2365,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     name: parameter.value.clone(),
                     location: parameter.location,
                 });
-                bindings.insert(
-                    parameter.value.clone(),
-                    TypeDescriptor::Bound(parameter_id).to_value(&mut tool_vm),
-                );
+                let value = TypeDescriptor::Bound(parameter_id).to_value(&mut tool_vm);
+                bindings.insert(parameter.value.clone(), evaluator.publish(&value)?);
             }
             let value = evaluate_tool_expression(
                 source_name,
@@ -2350,24 +2374,27 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 &bindings,
                 account,
                 sources,
-                debug_sink,
+                &mut evaluator,
             )?;
             let value = if binding.value.declared_initializer.is_some() {
                 let arguments = parameters
                     .iter()
                     .map(|parameter| TypeDescriptor::Bound(parameter.id))
                     .collect::<Vec<_>>();
-                Value::DeclaredType(crate::DeclaredType::bind_application(
-                    source_name,
-                    declared_initializer_slots[&binding.value.name.location],
-                    binding.value.name.value.as_str(),
-                    &arguments,
-                    value,
-                ))
+                evaluator
+                    .heap
+                    .declare_persistent_type_application(
+                        value,
+                        source_name,
+                        declared_initializer_slots[&binding.value.name.location],
+                        binding.value.name.value.as_str(),
+                        &arguments,
+                    )
+                    .map_err(|error| frontend_error(source_name, error.to_string()))?
             } else {
                 value
             };
-            let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+            let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
                 FrontendError::from_diagnostic(
                     sources,
                     Diagnostic::error(
@@ -2398,7 +2425,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             }
             let family = TypeFamilyTemplate {
                 parameters: parameters.clone(),
-                metadata: value,
+                metadata: evaluator.export(value)?,
             };
             let family_value = type_family_value(&family);
             let scheme = TypeScheme {
@@ -2415,7 +2442,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 },
             };
             let erased = erase_type_variables(&scheme.body);
-            tool_values.insert(binding.value.name.value.clone(), family_value.clone());
+            tool_values.insert(
+                binding.value.name.value.clone(),
+                evaluator.publish(&family_value)?,
+            );
             static_environment.insert(binding.value.name.value.clone(), erased.clone());
             binding_types.insert(binding.value.name.value.clone(), erased);
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
@@ -2461,15 +2491,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         &tool_values,
                         account,
                         sources,
-                        debug_sink,
+                        &mut evaluator,
                     )?;
                     let value = declare_metadata_value(
                         source_name,
                         binding,
                         &declared_initializer_slots,
                         value,
+                        &mut evaluator,
                     )?;
-                    let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
                         frontend_error(
                             source_name,
                             format!(
@@ -2561,10 +2592,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 name: parameter.value.clone(),
                 location: parameter.location,
             });
-            contract_values.insert(
-                parameter.value.clone(),
-                TypeDescriptor::Bound(id).to_value(&mut tool_vm),
-            );
+            let value = TypeDescriptor::Bound(id).to_value(&mut tool_vm);
+            contract_values.insert(parameter.value.clone(), evaluator.publish(&value)?);
         }
         let metadata = evaluate_tool_expression(
             source_name,
@@ -2572,9 +2601,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             &contract_values,
             account,
             sources,
-            debug_sink,
+            &mut evaluator,
         )?;
-        let descriptor = TypeDescriptor::from_value(&metadata).map_err(|message| {
+        let descriptor = evaluator.decode_type(metadata, "Type").map_err(|message| {
             frontend_error(
                 source_name,
                 format!("declaration {name} has invalid contract metadata: {message}"),
@@ -2662,10 +2691,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
-                tool_values.insert(binding.value.name.value.clone(), value);
+                tool_values.insert(binding.value.name.value.clone(), evaluator.publish(&value)?);
                 if binding.value.kind == BindingKind::NativeType {
-                    let value = tool_values[&binding.value.name.value].clone();
-                    let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                    let value = tool_values[&binding.value.name.value];
+                    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
                         FrontendError::from_diagnostic(
                             sources,
                             Diagnostic::error(
@@ -2702,15 +2731,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     &tool_values,
                     account,
                     sources,
-                    debug_sink,
+                    &mut evaluator,
                 )?;
                 let value = declare_metadata_value(
                     source_name,
                     binding,
                     &declared_initializer_slots,
                     value,
+                    &mut evaluator,
                 )?;
-                let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+                let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
                     FrontendError::from_diagnostic(
                         sources,
                         Diagnostic::error(
@@ -2747,9 +2777,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         &tool_values,
                         account,
                         sources,
-                        debug_sink,
+                        &mut evaluator,
                     )?;
-                    let expected = TypeDescriptor::from_value(&metadata).map_err(|message| {
+                    let expected = evaluator.decode_type(metadata, "Type").map_err(|message| {
                         frontend_error(
                             source_name,
                             format!(
@@ -2814,7 +2844,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     &tool_values,
                     account,
                     sources,
-                    debug_sink,
+                    &mut evaluator,
                 ) {
                     tool_values.insert(binding.value.name.value.clone(), value);
                 }
@@ -2834,7 +2864,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     &tool_values,
                     account,
                     sources,
-                    debug_sink,
+                    &mut evaluator,
                 ) {
                     tool_values.insert(name.clone(), value);
                 }
@@ -2865,7 +2895,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         &mut tool_vm,
                     );
                     binding_schemes.insert(binding.value.name.value.clone(), scheme);
-                    tool_values.insert(binding.value.name.value.clone(), tool_value);
+                    tool_values.insert(
+                        binding.value.name.value.clone(),
+                        evaluator.publish(&tool_value)?,
+                    );
                 } else {
                     let tool_value = authoritative_imported_value(
                         &value,
@@ -2873,7 +2906,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         &binding.value.name.value,
                         &mut tool_vm,
                     );
-                    tool_values.insert(binding.value.name.value.clone(), tool_value);
+                    tool_values.insert(
+                        binding.value.name.value.clone(),
+                        evaluator.publish(&tool_value)?,
+                    );
                 }
             }
         }
@@ -2905,10 +2941,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
     for binding in &program.value.body.value.bindings {
         let mut annotation_values = tool_values.clone();
         for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-            annotation_values.insert(
-                parameter.value.clone(),
-                TypeDescriptor::Bound(TypeParameterId(index as u32)).to_value(&mut tool_vm),
-            );
+            let value = TypeDescriptor::Bound(TypeParameterId(index as u32)).to_value(&mut tool_vm);
+            annotation_values.insert(parameter.value.clone(), evaluator.publish(&value)?);
         }
         collect_nested_annotation_types(
             source_name,
@@ -2916,7 +2950,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             &annotation_values,
             account,
             sources,
-            debug_sink,
+            &mut evaluator,
             &mut local_annotations,
         )?;
     }
@@ -2926,7 +2960,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &tool_values,
         account,
         sources,
-        debug_sink,
+        &mut evaluator,
         &mut local_annotations,
     )?;
     let mut named_types = imported_named_types;
@@ -3751,12 +3785,13 @@ fn declare_metadata_value(
     source_name: &str,
     binding: &Binding,
     slots: &HashMap<crate::Location, u32>,
-    value: Value,
-) -> Result<Value, FrontendError> {
+    value: PersistentValue,
+    evaluator: &mut ToolEvaluator,
+) -> Result<PersistentValue, FrontendError> {
     let Some(kind) = binding.value.declared_initializer else {
         return Ok(value);
     };
-    let descriptor = TypeDescriptor::from_value(&value).map_err(|message| {
+    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
         frontend_error(
             source_name,
             format!(
@@ -3788,12 +3823,10 @@ fn declare_metadata_value(
         .get(&binding.value.name.location)
         .copied()
         .expect("direct declared initializer has a declaration slot");
-    Ok(Value::DeclaredType(crate::DeclaredType::bind(
-        source_name,
-        slot,
-        binding.value.name.value.as_str(),
-        value,
-    )))
+    evaluator
+        .heap
+        .declare_persistent_type(value, source_name, slot, binding.value.name.value.as_str())
+        .map_err(|error| frontend_error(source_name, error.to_string()))
 }
 
 fn is_declared_literal_construction(
@@ -3831,21 +3864,25 @@ fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) ->
 fn evaluate_tool_expression(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Value>,
+    bindings: &BTreeMap<String, PersistentValue>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
-    debug_sink: &Arc<dyn DebugSink>,
-) -> Result<Value, FrontendError> {
-    let function = compile_expression_with_bindings(
+    evaluator: &mut ToolEvaluator,
+) -> Result<PersistentValue, FrontendError> {
+    let function = compile_expression_with_external_bindings(
         source_name,
         "<tool-stage>",
         expression,
-        bindings,
+        bindings.keys().cloned(),
         sources.get(expression.location.source),
     )?;
-    Vm::new()
-        .with_debug_sink(Arc::clone(debug_sink))
-        .execute_with_account(&function, &[], account)
+    let externals = bindings
+        .iter()
+        .map(|(name, value)| (name.clone(), *value))
+        .collect::<HashMap<_, _>>();
+    let world = evaluator
+        .vm
+        .execute_in_work(&evaluator.heap, &externals, &function, &[], account)
         .map_err(|error| {
             frontend_error(
                 source_name,
@@ -3854,7 +3891,52 @@ fn evaluate_tool_expression(
                     error.with_sources(sources)
                 ),
             )
-        })
+        })?;
+    world.publish(&mut evaluator.heap).map_err(|error| {
+        frontend_error(
+            source_name,
+            format!("tool-stage publication failed: {error}"),
+        )
+    })
+}
+
+struct ToolEvaluator {
+    vm: Vm,
+    heap: Heap,
+}
+
+impl ToolEvaluator {
+    fn new(debug_sink: Arc<dyn DebugSink>) -> Self {
+        Self {
+            vm: Vm::new().with_debug_sink(debug_sink),
+            heap: Heap::main(),
+        }
+    }
+
+    fn publish(&mut self, value: &Value) -> Result<PersistentValue, FrontendError> {
+        crate::heap::publish_value(&mut self.heap, value)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
+    }
+
+    fn publish_map(
+        &mut self,
+        values: &BTreeMap<String, Value>,
+    ) -> Result<BTreeMap<String, PersistentValue>, FrontendError> {
+        values
+            .iter()
+            .map(|(name, value)| self.publish(value).map(|value| (name.clone(), value)))
+            .collect()
+    }
+
+    fn decode_type(&self, value: PersistentValue, path: &str) -> Result<TypeDescriptor, String> {
+        decode_type_ref(ValueRef::persistent(value, &self.heap), path)
+    }
+
+    fn export(&self, value: PersistentValue) -> Result<Value, FrontendError> {
+        self.heap
+            .export_persistent(value)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
+    }
 }
 
 pub(crate) fn type_family_value(family: &TypeFamilyTemplate) -> Value {
@@ -3974,10 +4056,10 @@ fn optional_type_metadata_is_none(metadata: &Value) -> bool {
 fn collect_nested_annotation_types(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Value>,
+    bindings: &BTreeMap<String, PersistentValue>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
-    debug_sink: &Arc<dyn DebugSink>,
+    debug_sink: &mut ToolEvaluator,
     annotations: &mut HashMap<crate::Location, TypeDescriptor>,
 ) -> Result<(), FrontendError> {
     match &expression.value {
@@ -4060,15 +4142,17 @@ fn collect_nested_annotation_types(
                     sources,
                     debug_sink,
                 )?;
-                let descriptor = TypeDescriptor::from_value(&metadata).map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!("closure annotation is invalid: {message}"),
-                            annotation.location,
-                        ),
-                    )
-                })?;
+                let descriptor = debug_sink
+                    .decode_type(metadata, "Type")
+                    .map_err(|message| {
+                        FrontendError::from_diagnostic(
+                            sources,
+                            Diagnostic::error(
+                                format!("closure annotation is invalid: {message}"),
+                                annotation.location,
+                            ),
+                        )
+                    })?;
                 annotations.insert(annotation.location, descriptor);
             }
             collect_block_annotation_types(
@@ -4205,15 +4289,17 @@ fn collect_nested_annotation_types(
                     sources,
                     debug_sink,
                 )?;
-                let descriptor = TypeDescriptor::from_value(&metadata).map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!("type argument is invalid: {message}"),
-                            expression.location,
-                        ),
-                    )
-                })?;
+                let descriptor = debug_sink
+                    .decode_type(metadata, "Type")
+                    .map_err(|message| {
+                        FrontendError::from_diagnostic(
+                            sources,
+                            Diagnostic::error(
+                                format!("type argument is invalid: {message}"),
+                                expression.location,
+                            ),
+                        )
+                    })?;
                 annotations.insert(expression.location, descriptor);
             }
         }
@@ -4353,10 +4439,10 @@ fn collect_nested_annotation_types(
 fn collect_block_annotation_types(
     source_name: &str,
     block: &Block,
-    bindings: &BTreeMap<String, Value>,
+    bindings: &BTreeMap<String, PersistentValue>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
-    debug_sink: &Arc<dyn DebugSink>,
+    debug_sink: &mut ToolEvaluator,
     annotations: &mut HashMap<crate::Location, TypeDescriptor>,
 ) -> Result<(), FrontendError> {
     for binding in &block.value.bindings {
@@ -4369,18 +4455,20 @@ fn collect_block_annotation_types(
                 sources,
                 debug_sink,
             )?;
-            let descriptor = TypeDescriptor::from_value(&metadata).map_err(|message| {
-                FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(
-                        format!(
-                            "annotation on {} is invalid: {message}",
-                            binding.value.name.value
+            let descriptor = debug_sink
+                .decode_type(metadata, "Type")
+                .map_err(|message| {
+                    FrontendError::from_diagnostic(
+                        sources,
+                        Diagnostic::error(
+                            format!(
+                                "annotation on {} is invalid: {message}",
+                                binding.value.name.value
+                            ),
+                            annotation.location,
                         ),
-                        annotation.location,
-                    ),
-                )
-            })?;
+                    )
+                })?;
             annotations.insert(annotation.location, descriptor);
         }
         collect_nested_annotation_types(
@@ -4929,7 +5017,7 @@ fn decode_type_ref_with(
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: id.clone(),
             name: name.to_owned(),
-            body: Arc::new(if shallow_declared_types {
+            body: Box::new(if shallow_declared_types {
                 TypeDescriptor::Any
             } else {
                 decode_type_ref_with(body, path, false)?
@@ -5401,7 +5489,7 @@ pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, S
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: declared.id().clone(),
             name: declared.name().to_owned(),
-            body: Arc::new(decode_type(declared.body(), path)?),
+            body: Box::new(decode_type(declared.body(), path)?),
         }));
     }
     let Value::Dict(metadata) = value else {
@@ -6493,7 +6581,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: Arc::new(self.instantiate_with(&declared.body, variables)),
+                    body: Box::new(self.instantiate_with(&declared.body, variables)),
                 })
             }
             TypeDescriptor::Array(item) => {
@@ -6567,7 +6655,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: Arc::new(self.resolve(&declared.body)),
+                    body: Box::new(self.resolve(&declared.body)),
                 })
             }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
@@ -8670,7 +8758,7 @@ fn replace_inference_variables(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Arc::new(replace_inference_variables(&declared.body, replacements)),
+                body: Box::new(replace_inference_variables(&declared.body, replacements)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -8764,7 +8852,7 @@ fn rename_named_types(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Arc::new(rename_named_types(&declared.body, names)),
+                body: Box::new(rename_named_types(&declared.body, names)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -8971,7 +9059,7 @@ fn bind_inference_variables(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Arc::new(bind_inference_variables(&declared.body, replacements)),
+                body: Box::new(bind_inference_variables(&declared.body, replacements)),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -9962,7 +10050,7 @@ fn substitute_bound_parameters(
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Arc::new(body),
+                body: Box::new(body),
             })
         }
         TypeDescriptor::Array(item) => {
@@ -10060,7 +10148,7 @@ fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),
-                body: Arc::new(erase_type_variables(&declared.body)),
+                body: Box::new(erase_type_variables(&declared.body)),
             })
         }
         TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(erase_type_variables(item))),
@@ -10504,7 +10592,7 @@ mod tests {
         let expected = TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: owner.id().clone(),
             name: owner.name().to_owned(),
-            body: Arc::new(body.clone()),
+            body: Box::new(body.clone()),
         });
         let invalid_payload = vm
             .make_dict([("value".to_owned(), Value::string("not an Int"))])

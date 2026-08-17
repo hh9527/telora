@@ -187,6 +187,28 @@ impl Heap {
         )))
     }
 
+    pub(crate) fn declare_persistent_type_application(
+        &mut self,
+        body: PersistentValue,
+        module: impl Into<Arc<str>>,
+        declaration: u32,
+        name: impl Into<Arc<str>>,
+        arguments: &[crate::types::TypeDescriptor],
+    ) -> Result<PersistentValue, HeapError> {
+        if self.storage != Storage::Main {
+            return Err(HeapError("declared type roots require a Main world"));
+        }
+        let handle = self.allocate(Object::DeclaredType {
+            id: crate::value::DeclaredTypeId::applied(module, declaration, arguments),
+            name: name.into(),
+            body: body.runtime(),
+            application_arguments: None,
+        });
+        Ok(PersistentValue(RichValue::unknown(
+            RuntimeValue::DeclaredType(handle),
+        )))
+    }
+
     pub(crate) fn rewrite_declared_type_references(
         &mut self,
         replacements: &[(PersistentValue, PersistentValue)],
@@ -228,7 +250,7 @@ impl Heap {
                     crate::types::TypeDescriptor::Declared(crate::types::DeclaredTypeDescriptor {
                         id,
                         name,
-                        body: Arc::new(body),
+                        body: Box::new(body),
                     }),
                 ))
             })
@@ -1690,7 +1712,7 @@ impl<'a> HeapView<'a> {
                     return Ok(Value::DeclaredType(DeclaredType {
                         id: id.clone(),
                         name: Arc::clone(name),
-                        body: Arc::new(body),
+                        body: Box::new(body),
                     }));
                 }
                 let Object::DeclaredType { id, name, body, .. } =
@@ -1709,7 +1731,7 @@ impl<'a> HeapView<'a> {
                 let value = Value::DeclaredType(DeclaredType {
                     id: id.clone(),
                     name: Arc::clone(name),
-                    body: Arc::new(body),
+                    body: Box::new(body),
                 });
                 visiting.remove(&handle);
                 value
@@ -1734,7 +1756,7 @@ impl<'a> HeapView<'a> {
                 let owner = DeclaredType {
                     id: id.clone(),
                     name: Arc::clone(name),
-                    body: Arc::new(any_body),
+                    body: Box::new(any_body),
                 };
                 let payload = self.export_value_with(
                     payload.value,

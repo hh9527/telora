@@ -198,10 +198,11 @@ impl Ord for DeclaredTypeId {
 pub struct DeclaredType {
     pub(crate) id: DeclaredTypeId,
     pub(crate) name: Arc<str>,
-    pub(crate) body: Arc<Value>,
+    pub(crate) body: Box<Value>,
 }
 
 impl DeclaredType {
+    #[cfg(test)]
     pub(crate) fn bind(
         module: impl Into<Arc<str>>,
         declaration: u32,
@@ -211,21 +212,7 @@ impl DeclaredType {
         Self {
             id: DeclaredTypeId::concrete(module, declaration),
             name: name.into(),
-            body: Arc::new(body),
-        }
-    }
-
-    pub(crate) fn bind_application(
-        module: impl Into<Arc<str>>,
-        declaration: u32,
-        name: impl Into<Arc<str>>,
-        arguments: &[crate::types::TypeDescriptor],
-        body: Value,
-    ) -> Self {
-        Self {
-            id: DeclaredTypeId::applied(module, declaration, arguments),
-            name: name.into(),
-            body: Arc::new(body),
+            body: Box::new(body),
         }
     }
 
@@ -259,14 +246,14 @@ impl std::hash::Hash for DeclaredType {
 #[derive(Clone)]
 pub struct DeclaredValue {
     pub(crate) owner: DeclaredType,
-    pub(crate) payload: Arc<Value>,
+    pub(crate) payload: Box<Value>,
 }
 
 impl DeclaredValue {
     pub(crate) fn new(owner: DeclaredType, payload: Value) -> Self {
         Self {
             owner,
-            payload: Arc::new(payload),
+            payload: Box::new(payload),
         }
     }
 

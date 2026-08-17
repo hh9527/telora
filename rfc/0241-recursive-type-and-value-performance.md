@@ -7,11 +7,12 @@
 ## Summary
 
 Telora will make recursive declared types and shared recursive values cost
-proportional to the distinct graph actually inspected. A declared identity is
-the primary comparison and validation key; structural bodies are traversed only
-at boundaries that establish identity or when anonymous structural types are
-compared. Graph algorithms retain active-cycle detection and add completed
-memoization where a shared DAG is currently expanded as a tree.
+proportional to the distinct graph actually inspected. Composite runtime values
+remain exclusively heap objects; internal stages retain cheap heap references
+instead of projecting them into owned `Value` trees. A declared identity is the
+primary comparison and validation key. Structural bodies are traversed only at
+boundaries that establish identity or when anonymous structural types are
+compared.
 
 This is an umbrella RFC. RFC 0242 establishes reproducible evidence and
 regression coverage, RFC 0243 defines declared-identity fast paths, and RFC 0244
@@ -31,11 +32,16 @@ Issue #83 contains two independent reproductions tracked to completion by #87:
 RFCs 0235 through 0240 made declared Struct and Enum roots nominal, but some
 consumers still behave structurally after identity is known. In particular,
 declared-value validation revalidates the complete payload, descriptor
-normalization can clone a declared body repeatedly, and legacy `Value`
-projection detects only active cycles rather than reusing completed nodes.
+normalization can clone a declared body repeatedly. More importantly, the tool
+stage stores bindings as legacy owned `Value` trees, creates a new VM for each
+expression, imports those trees into a new Heap, and exports the result again.
+This repeatedly unfolds a shared Heap graph.
 
-The Work/Main heap copier is not part of this defect: it installs a forwarding
-handle before visiting children and already preserves graph sharing.
+The Work/Main and Work/Work heap copier is not part of this defect: it installs
+a forwarding handle before visiting children and already preserves graph
+sharing. Object references are copied and compared as cheap `(storage, slot)`
+handles. Only interned `String`/`Atom` references require cross-World value
+lookup or comparison; their relocation remains governed by the text table.
 
 ## Invariants
 
@@ -49,9 +55,33 @@ The phase preserves these rules:
    proof of its payload contract;
 5. anonymous Struct, Enum, Tuple, Array, Dict, Union, and Function types remain
    structurally checked;
-6. active cycles at the legacy acyclic `Value` boundary remain errors; and
-7. memoization may preserve DAG sharing but may not convert an unsupported
+6. internal evaluation does not cross the legacy owned `Value` boundary;
+7. active cycles at an unavoidable legacy acyclic `Value` boundary remain
+   errors; and
+8. memoization may preserve DAG sharing but may not convert an unsupported
    cycle into a successful export.
+
+## Runtime value representation
+
+The target runtime `Val` is a fixed-width copy value, conceptually:
+
+```rust
+struct Val {
+    loc: Loc,       // source, start, end
+    payload: u64,   // immediate bits or a Heap slot
+    tag: u32,       // primary kind plus a canonical type witness
+}
+```
+
+Four tag bits distinguish the primary runtime kind. The remaining bits may
+carry a canonical type witness. A raw value has no witness; narrowing validates
+its structure once and returns the same payload and provenance with the witness
+filled. Narrowing must not allocate an owned wrapper or introduce Rust shared
+ownership. Declared identity checks are therefore witness-ID comparisons.
+
+Compiler-side `TypeDescriptor` trees are not runtime values. They are migrated
+toward `TypeGraph`/`TypeId` separately; they never justify projecting a runtime
+Heap graph into owned `Value`.
 
 ## Child RFCs
 
@@ -69,12 +99,14 @@ descending into its payload. Type inference and comparison avoid resolving or
 formatting a declared body when owner identity or family arguments are
 sufficient.
 
-### RFC 0244: completed graph memoization
+### RFC 0244: Heap-native tool evaluation
 
-Structural graph consumers distinguish `visiting` from `completed`. A repeated
-completed handle or stable type pair reuses its prior result. The initial scope
-is legacy `Value` projection and the remaining structural type-pair paths shown
-by RFC 0242 evidence; already-linear heap copying is audited but unchanged.
+Tool evaluation owns one Main Heap and keeps every binding as a
+`PersistentValue`. Expressions load those roots through external constant links,
+run in fresh Work Worlds, and publish their result back into the Main Heap.
+Legacy projection occurs only at a true Host/API boundary. Completed
+memoization is limited to unavoidable owned projections and structural type
+comparisons still shown hot by RFC 0242 evidence.
 
 ## Stopping rules
 

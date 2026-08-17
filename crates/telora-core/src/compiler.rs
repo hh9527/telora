@@ -264,14 +264,15 @@ pub fn run_source(
         .map_err(|error| ExecutionError::Runtime(error.with_sources(&sources)))
 }
 
-pub(crate) fn compile_expression_with_bindings(
+pub(crate) fn compile_expression_with_external_bindings(
     source_name: &str,
     function_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Value>,
+    bindings: impl IntoIterator<Item = String>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {
-    let hir = HirProgram::resolve_runtime_expression(expression, bindings.keys().cloned());
+    let bindings = bindings.into_iter().collect::<Vec<_>>();
+    let hir = HirProgram::resolve_runtime_expression(expression, bindings.iter().cloned());
     validate_hir(source_file, &hir)?;
     let mut compiler = Compiler {
         source_name,
@@ -297,9 +298,10 @@ pub(crate) fn compile_expression_with_bindings(
         declared_value_owners: HashMap::new(),
         source_file: Some(source_file),
     };
-    for (name, value) in bindings {
-        let register = compiler.load_constant(value.clone(), expression.location);
-        compiler.environment.insert(name.clone(), register);
+    for name in bindings {
+        let register =
+            compiler.load_external_constant(Value::none(), name.clone(), expression.location);
+        compiler.environment.insert(name, register);
     }
     compiler.compile_tail_expr(expression)?;
     compiler.finish()
