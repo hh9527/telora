@@ -1,43 +1,43 @@
 import "std/array" as array;
 import "std/string" as string;
 
-@enum type Function = {
-    Coalesce: 'None,
-    Substr: 'None,
-    Sum: 'None,
+type Function = enum {
+    'Coalesce,
+    'Substr,
+    'Sum,
 };
 
-@enum type BinaryOp = {
-    Equal: 'None,
-    NotEqual: 'None,
-    GreaterEqual: 'None,
-    Subtract: 'None,
+type BinaryOp = enum {
+    'Equal,
+    'NotEqual,
+    'GreaterEqual,
+    'Subtract,
 };
 
-@struct type Column = { relation: String, name: String };
+type Column = struct { relation: String, name: String };
 
-@struct type Call = { function: Function, args: Array(Expr) };
-@struct type Binary = { left: Expr, op: BinaryOp, right: Expr };
-@struct type Aggregate = { function: Function, value: Expr };
+type Call = struct { function: Function, args: Array(Expr) };
+type Binary = struct { left: Expr, op: BinaryOp, right: Expr };
+type Aggregate = struct { function: Function, value: Expr };
 
-@enum type Expr = {
-    Column: Column,
-    Int: Int,
-    Text: String,
-    Call: Call,
-    Binary: Binary,
-    Aggregate: Aggregate,
-    Parameter: 'None,
+type Expr = enum {
+    'Column(Column),
+    'Int(Int),
+    'Text(String),
+    'Call(Call),
+    'Binary(Binary),
+    'Aggregate(Aggregate),
+    'Parameter,
 };
 
-@struct type Projection = { expr: Expr, alias: Option(String) };
-@struct type Source = { name: String, alias: String };
+type Projection = struct { expr: Expr, alias: Option(String) };
+type Source = struct { name: String, alias: String };
 
-@enum type JoinKind = { Inner: 'None, Left: 'None };
-@struct type Join = { kind: JoinKind, source: Source, on: Expr };
-@struct type Order = { expr: Expr };
+type JoinKind = enum { 'Inner, 'Left };
+type Join = struct { kind: JoinKind, source: Source, on: Expr };
+type Order = struct { expr: Expr };
 
-@struct type SelectBody = {
+type SelectBody = struct {
     projections: Array(Projection),
     from: Source,
     joins: Array(Join),
@@ -47,8 +47,8 @@ import "std/string" as string;
     limit: Option(Int),
 };
 
-@struct type CommonTable = { name: String, query: SelectBody };
-@struct type Select = { common_tables: Array(CommonTable), body: SelectBody };
+type CommonTable = struct { name: String, query: SelectBody };
+type Select = struct { common_tables: Array(CommonTable), body: SelectBody };
 
 def quote_identifier: Fn(String) -> String = fn(value) {
     `"\{string.replace(value, "\"", "\"\"")}"`

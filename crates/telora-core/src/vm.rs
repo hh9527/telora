@@ -2126,7 +2126,19 @@ impl Vm {
                             )?;
                         }
                         Opcode::InterpolateString { dst, parts } => {
-                            let values = read_many(&registers, parts, function, pc)?;
+                            let values = read_many(&registers, parts, function, pc)?
+                                .into_iter()
+                                .map(|value| {
+                                    view.unwrap_declared(value).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
                             let mut length = 0usize;
                             for value in &values {
                                 length += if let RuntimeValue::Int(value) = value.value {

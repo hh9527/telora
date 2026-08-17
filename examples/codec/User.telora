@@ -1,8 +1,7 @@
 import "core:codec" as codec;
 import "core:result" as result;
 
-@struct
-type Type = {v: Option(String)};
+type Type = struct {v: Option(String)};
 
 let decode = fn(value) {
     codec.decode(Type, value)

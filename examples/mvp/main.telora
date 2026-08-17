@@ -1,7 +1,6 @@
 import "./user.json" as raw_user;
 
-@struct
-type User = {
+type User = struct {
     name: String,
     age: Int,
     nickname: Option(String),

@@ -3973,8 +3973,8 @@ export { private as visible, identity as map };"#,
                 .collect::<Vec<_>>(),
             vec!["Left", "Right"]
         );
-        assert_eq!(binding.value.type_parameters[0].location.range(), 18..22);
-        assert_eq!(binding.value.type_parameters[1].location.range(), 24..29);
+        assert_eq!(binding.value.type_parameters[0].location.range(), 10..14);
+        assert_eq!(binding.value.type_parameters[1].location.range(), 16..21);
         assert!(matches!(binding.value.value.value, ExprKind::Call { .. }));
     }
 
@@ -3989,7 +3989,9 @@ export { private as visible, identity as map };"#,
         let ExprKind::Call { callee, arguments } = &user.value.value.value else {
             panic!("expected Struct model call");
         };
-        assert!(matches!(&callee.value, ExprKind::Variable(name) if name.value == "struct"));
+        assert!(
+            matches!(&callee.value, ExprKind::Variable(name) if name.value == "\0telora_struct")
+        );
         assert_eq!(arguments.len(), 2);
         assert!(matches!(&arguments[1].value, ExprKind::Dict(fields) if fields.len() == 1));
 
@@ -3997,7 +3999,7 @@ export { private as visible, identity as map };"#,
         let ExprKind::Call { callee, arguments } = &maybe.value.value.value else {
             panic!("expected Enum model call");
         };
-        assert!(matches!(&callee.value, ExprKind::Variable(name) if name.value == "enum"));
+        assert!(matches!(&callee.value, ExprKind::Variable(name) if name.value == "\0telora_enum"));
         assert!(matches!(&arguments[1].value, ExprKind::Dict(variants) if variants.len() == 2));
     }
 
@@ -4042,7 +4044,9 @@ export { private as visible, identity as map };"#,
         else {
             panic!("expected Struct model call");
         };
-        assert!(matches!(&model.value, ExprKind::Variable(name) if name.value == "struct"));
+        assert!(
+            matches!(&model.value, ExprKind::Variable(name) if name.value == "\0telora_struct")
+        );
         let ExprKind::Dict(fields) = &model_arguments[1].value else {
             panic!("expected Struct fields");
         };

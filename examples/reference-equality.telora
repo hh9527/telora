@@ -2,14 +2,7 @@ import "std/array" as arrays;
 import "std/type-desc" as desc;
 import "std/dyn" as dyn;
 
-@enum type TypeDescKind = {
-    Any: 'None, Never: 'None, Type: 'None, TypeOf: 'None,
-    Int: 'None, Float: 'None, String: 'None, Bytes: 'None,
-    Atom: 'None, Array: 'None, Dict: 'None, Tagged: 'None,
-    Tuple: 'None, Struct: 'None, Enum: 'None, Union: 'None,
-    Func: 'None, WithAttributes: 'None, Bound: 'None, Dyn: 'None, Ref: 'None,
-    Opaque: 'None,
-};
+type TypeDescKind = desc.TypeDescKind;
 type EqualityResult = Result(Bool, String);
 type DynPair = Tuple([Dyn, Dyn]);
 type Field = Tuple([String, Dyn]);

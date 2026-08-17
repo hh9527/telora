@@ -1,7 +1,7 @@
 import "ontology-method/types.telora" as ontology;
 
-@enum type Entity = { Order: 'None };
-@enum type Measure = { Revenue: 'None };
+type Entity = enum { 'Order };
+type Measure = enum { 'Revenue };
 
 type MeasureCapability = ontology.Capability(Measure, Entity, String);
 

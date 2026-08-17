@@ -1,85 +1,43 @@
-# Precise composition over built-in type families remains ordinary Telora.
-def Maybe:
-    for(T) Fn(TypeOf(T)) -> TypeOf(Option(T)) =
-    fn(inner) { Option(inner) };
+# Model families are declared directly. Applying one preserves the provider's
+# declaration identity together with the canonical argument identities.
+type Maybe(T) = Option(T);
+type Many(T) = Array(T);
 
-def Many:
-    for(T) Fn(TypeOf(T)) -> TypeOf(Array(T)) =
-    fn(inner) { Array(inner) };
-
-# User-defined metadata functions can construct concrete model types. Their
-# generic result currently widens to Type; the consuming type declaration
-# evaluates the function and retains the complete represented structure.
-def Requirement:
-    for(Key, Output) Fn(TypeOf(Key), TypeOf(Output)) -> Type =
-    fn(Key, Output) {
-    struct('None, {
+type Requirement(Key, Output) = struct {
         key: Key,
         output: Output,
-    })
-    };
+};
 
-def Capability:
-    for(Id, Input, Output)
-    Fn(TypeOf(Id), TypeOf(Input), TypeOf(Output)) -> Type =
-    fn(Id, Input, Output) {
-    struct('None, {
+type Capability(Id, Input, Output) = struct {
         id: Id,
         lower: Fn(Id, Input) -> Option(Output),
-    })
-    };
+};
 
-def MeasureDefinition:
-    for(Id, Entity, SemanticType, Aggregation, Input, Output)
-    Fn(
-        TypeOf(Id),
-        TypeOf(Entity),
-        TypeOf(SemanticType),
-        TypeOf(Aggregation),
-        TypeOf(Input),
-        TypeOf(Output),
-    ) -> Type =
-    fn(Id, Entity, SemanticType, Aggregation, Input, Output) {
-        struct('None, {
-            id: Id,
-            value_type: SemanticType,
-            natural_grain: Entity,
-            aggregation: Aggregation,
-            lower: Fn(Id, Input) -> Option(Output),
-        })
-    };
+type MeasureDefinition(Id, Entity, SemanticType, Aggregation, Input, Output) = struct {
+    id: Id,
+    value_type: SemanticType,
+    natural_grain: Entity,
+    aggregation: Aggregation,
+    lower: Fn(Id, Input) -> Option(Output),
+};
 
-def DimensionDefinition:
-    for(Id, Input, Output)
-    Fn(TypeOf(Id), TypeOf(Input), TypeOf(Output)) -> Type =
-    fn(Id, Input, Output) {
-        struct('None, {
-            id: Id,
-            lower: Fn(Id, Input) -> Option(Output),
-        })
-    };
+type DimensionDefinition(Id, Input, Output) = struct {
+    id: Id,
+    lower: Fn(Id, Input) -> Option(Output),
+};
 
-def RelationDefinition:
-    for(Entity, Cardinality, Mapping)
-    Fn(TypeOf(Entity), TypeOf(Cardinality), TypeOf(Mapping)) -> Type =
-    fn(Entity, Cardinality, Mapping) {
-        struct('None, {
-            from: Entity,
-            to: Entity,
-            cardinality: Cardinality,
-            mapping: Mapping,
-        })
-    };
+type RelationDefinition(Entity, Cardinality, Mapping) = struct {
+    from: Entity,
+    to: Entity,
+    cardinality: Cardinality,
+    mapping: Mapping,
+};
 
-def Compilation:
-    for(Output) Fn(TypeOf(Output)) -> Type =
-    fn(Output) {
-        struct('None, {
-            results: Array(Option(Output)),
-            values: Array(Output),
-            complete: Option(Array(Output)),
-        })
-    };
+type Compilation(Output) = struct {
+    results: Array(Option(Output)),
+    values: Array(Output),
+    complete: Option(Array(Output)),
+};
 
 export {
     Maybe,

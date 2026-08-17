@@ -1,4 +1,4 @@
-@struct type DiagnosticRecord = {message: String};
+type DiagnosticRecord = struct {message: String};
 
 export let output = {
     let warning: DiagnosticRecord = {message: "configuration key is deprecated"};

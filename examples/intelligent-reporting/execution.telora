@@ -1,20 +1,20 @@
 import "std/json" as json;
 import "std/array" as array;
 
-@enum type SqlDialect = { Sqlite: 'None };
-@enum type OutputMode = { Table: 'None, Json: 'None };
+type SqlDialect = enum { 'Sqlite };
+type OutputMode = enum { 'Table, 'Json };
 
-@enum type ParameterValue = { Text: String, Int: Int };
-@struct type QueryParameter = { name: String, value: ParameterValue };
+type ParameterValue = enum { 'Text(String), 'Int(Int) };
+type QueryParameter = struct { name: String, value: ParameterValue };
 
-@enum type ResultType = { Text: 'None, Int: 'None, MoneyCents: 'None, Count: 'None };
-@struct type ResultField = { name: String, ty: ResultType };
+type ResultType = enum { 'Text, 'Int, 'MoneyCents, 'Count };
+type ResultField = struct { name: String, ty: ResultType };
 
-@struct type RenderPlan = { mode: OutputMode, fields: Array(String) };
-@struct type EncodedParameter = { name: String, ty: String, value: String };
-@struct type EncodedResultField = { name: String, ty: String };
+type RenderPlan = struct { mode: OutputMode, fields: Array(String) };
+type EncodedParameter = struct { name: String, ty: String, value: String };
+type EncodedResultField = struct { name: String, ty: String };
 
-@struct type ExecutionPlan = {
+type ExecutionPlan = struct {
     version: Int,
     restriction_revision: String,
     dialect: SqlDialect,

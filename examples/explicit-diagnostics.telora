@@ -1,16 +1,16 @@
 import "std/array" as arrays;
 
-@struct type Package = {
+type Package = struct {
     name: String,
     version: Int,
 };
 
-@struct type Project = {
+type Project = struct {
     name: String,
     packages: Array(Package),
 };
 
-@struct type DiagnosticRecord = {message: String};
+type DiagnosticRecord = struct {message: String};
 type Diagnostics = Array(DiagnosticRecord);
 type Validation = Tuple([Project, Diagnostics]);
 

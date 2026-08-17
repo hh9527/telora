@@ -1,17 +1,17 @@
 import "ontology-method/ontology.telora" as ontology;
 import "ontology-method/types.telora" as types;
 
-@enum type Entity = {
-    Region: 'None,
-    Organization: 'None,
-    Customer: 'None,
-    Order: 'None,
-    OrderItem: 'None,
-    Product: 'None,
-    Category: 'None,
+type Entity = enum {
+    'Region,
+    'Organization,
+    'Customer,
+    'Order,
+    'OrderItem,
+    'Product,
+    'Category,
 };
 
-@struct type RelationMapping = {
+type RelationMapping = struct {
     table: String,
     alias: String,
     left_alias: String,
@@ -20,14 +20,14 @@ import "ontology-method/types.telora" as types;
     right_column: String,
 };
 
-@enum type Cardinality = {
-    ManyToOne: 'None,
-    OneToMany: 'None,
+type Cardinality = enum {
+    'ManyToOne,
+    'OneToMany,
 };
 
 type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
 
-@struct type PathPlan = {
+type PathPlan = struct {
     relations: Array(Relation),
     fanout: Array(Entity),
     missing: Array(Entity),

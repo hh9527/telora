@@ -1,8 +1,8 @@
 import "ontology-method/types.telora" as ontology;
 import "ontology-method/ontology.telora" as method;
 
-@enum type Entity = { Order: 'None };
-@enum type Measure = { Revenue: 'None, Units: 'None };
+type Entity = enum { 'Order };
+type Measure = enum { 'Revenue, 'Units };
 
 type MeasureCapability = ontology.Capability(Measure, Entity, String);
 
@@ -11,10 +11,12 @@ let revenue: MeasureCapability = {
     lower: fn(measure, entity) { 'Some(`revenue from \{entity}`) },
 };
 
+let requested: Array(Measure) = ['Revenue, 'Units];
+let input: Entity = 'Order;
 export let output = method.lower_requested(
-    ['Revenue, 'Units],
+    requested,
     [revenue],
     fn(item) { item.id },
     fn(item, id, input) { item.lower(id, input) },
-    'Order,
+    input,
 );

@@ -7,13 +7,13 @@ type ExecSettings = exec_types.ExecSettings;
 type UnpackType = exec_types.UnpackType;
 type Install = exec_types.Install;
 
-@struct type Package = {
+type Package = struct {
     name: String,
     src: String,
     digest: String,
 };
 
-@struct type PreparedPackage = {
+type PreparedPackage = struct {
     dest: String,
     install: Install,
 };

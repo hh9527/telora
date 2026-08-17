@@ -1016,7 +1016,7 @@ mod tests {
                 (Token::StructInitializer, "struct"),
                 (Token::EnumInitializer, "enum"),
                 (Token::Identifier, "struct"),
-                (Token::Identifier, "struct"),
+                (Token::StructInitializer, "struct"),
             ]
         );
         assert!(diagnostics.is_empty());

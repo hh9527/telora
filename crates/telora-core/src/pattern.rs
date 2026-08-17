@@ -348,6 +348,9 @@ impl AnalysisContext {
     }
 
     fn catch_all(&self, matched: &TypeDescriptor) -> PatternShape {
+        if let TypeDescriptor::Declared(declared) = matched {
+            return self.catch_all(declared.body());
+        }
         let mut shape = PatternShape::new(PatternCompatibility::Compatible, true);
         if let TypeDescriptor::Enum(variants) = matched {
             shape.covered_variants.extend(variants.keys().cloned());

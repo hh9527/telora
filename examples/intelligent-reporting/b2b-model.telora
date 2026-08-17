@@ -32,35 +32,35 @@ import "./execution.telora" {
     OutputMode, QueryParameter, ResultType, ResultField, RenderPlan, ExecutionPlan,
 };
 
-@enum type Measure = {
-    NetRevenue: 'None,
-    UnitsSold: 'None,
+type Measure = enum {
+    'NetRevenue,
+    'UnitsSold,
 };
 
-@enum type SemanticValueType = {
-    MoneyCents: 'None,
-    Count: 'None,
+type SemanticValueType = enum {
+    'MoneyCents,
+    'Count,
 };
 
-@enum type Aggregation = {
-    Additive: 'None,
+type Aggregation = enum {
+    'Additive,
 };
 
-@enum type Alignment = {
-    Natural: 'None,
-    PreAggregate: Entity,
+type Alignment = enum {
+    'Natural,
+    'PreAggregate(Entity),
 };
 
-@enum type Dimension = {
-    OrderMonth: 'None,
-    CustomerRegion: 'None,
-    OrganizationKind: 'None,
-    ProductCategory: 'None,
-    EmployeeKind: 'None,
-    ProductSku: 'None,
+type Dimension = enum {
+    'OrderMonth,
+    'CustomerRegion,
+    'OrganizationKind,
+    'ProductCategory,
+    'EmployeeKind,
+    'ProductSku,
 };
 
-@struct type ReportIntent = {
+type ReportIntent = struct {
     measures: Array(Measure),
     alignment: Alignment,
     dimensions: Array(Dimension),
@@ -70,16 +70,16 @@ import "./execution.telora" {
     render: RenderIntent,
 };
 
-@struct type RenderIntent = { mode: OutputMode, fields: Array(String) };
+type RenderIntent = struct { mode: OutputMode, fields: Array(String) };
 
-@struct type Restriction = {
+type Restriction = struct {
     revision: String,
     allowed_entities: Array(Entity),
 };
 
-@enum type Filter = { CustomerRegion: String };
+type Filter = enum { 'CustomerRegion(String) };
 
-@struct type QueryPlan = {
+type QueryPlan = struct {
     measures: Array(Measure),
     base_entity: Entity,
     required_entities: Array(Entity),
@@ -91,7 +91,7 @@ import "./execution.telora" {
     measure_fields: Array(ResultField),
 };
 
-@struct type GroupRequirement = {
+type GroupRequirement = struct {
     dimension: Dimension,
     projection: Projection,
     group_expression: Expr,
@@ -99,14 +99,14 @@ import "./execution.telora" {
     result_field: ResultField,
 };
 
-@struct type FilterRequirement = {
+type FilterRequirement = struct {
     source: Filter,
     expression: Expr,
     required_entity: Entity,
     parameter: QueryParameter,
 };
 
-@struct type SemanticPlan = {
+type SemanticPlan = struct {
     query_plan: QueryPlan,
     requirements: Array(GroupRequirement),
     filter_requirements: Array(FilterRequirement),
@@ -115,12 +115,12 @@ import "./execution.telora" {
     render: RenderIntent,
 };
 
-@struct type RelationalPlan = {
+type RelationalPlan = struct {
     semantic: SemanticPlan,
     paths: PathPlan,
 };
 
-@struct type SqlPlan = {
+type SqlPlan = struct {
     query: Select,
     parameters: Array(QueryParameter),
     result_schema: Array(ResultField),

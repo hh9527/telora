@@ -30,15 +30,22 @@ fn template_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeErro
 }
 
 fn resolve(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
-    if let Some(body) = metadata.declared_type_body() {
-        metadata = body;
+    for _ in 0..128 {
+        if let Some(body) = metadata.declared_type_body() {
+            metadata = body;
+            continue;
+        }
+        if metadata.is_hidden_up_link() {
+            metadata = metadata
+                .resolve_hidden_up_link()
+                .map_err(NativeError::new)?;
+            continue;
+        }
+        return Ok(metadata);
     }
-    if metadata.is_hidden_up_link() {
-        metadata = metadata
-            .resolve_hidden_up_link()
-            .map_err(NativeError::new)?;
-    }
-    Ok(metadata)
+    Err(NativeError::new(
+        "std/fmt.display metadata resolution exceeds the recursive type limit",
+    ))
 }
 
 fn strip(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {

@@ -8,7 +8,7 @@ import "toolchain-method/toolchain.telora" as toolchain;
 type Package = toolchain.Package;
 type ExecFn = exec_types.ExecFn;
 
-@struct type ToolchainSource = {
+type ToolchainSource = struct {
     compilers: Dict(Package),
     sysroots: Dict(Package),
 };

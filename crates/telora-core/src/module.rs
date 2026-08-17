@@ -4393,23 +4393,23 @@ mod tests {
     }
 
     #[test]
-    fn core_prelude_is_explicitly_importable_with_typed_exports() {
+    fn core_prelude_exposes_only_union_and_validate() {
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
             r#"import "core/prelude" as prelude;
-import "core/prelude" { struct as make_struct, validate as check };
+import "core/prelude" { validate as check };
 import "std/result" as result;
-type User = make_struct('None, {name: String});
+type User = struct {name: String};
 let user: User = {name: result.unwrap(check(String, "telora"))};
-(user, struct == prelude.struct, enum == prelude.enum, union == prelude.union, validate == prelude.validate, make_struct == prelude.struct, check == prelude.validate)"#,
+(user, union == prelude.union, validate == prelude.validate, check == prelude.validate)"#,
         )
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
-            "({name: \"telora\"}, 'True, 'True, 'True, 'True, 'True, 'True)"
+            "({name: \"telora\"}, 'True, 'True, 'True)"
         );
         fs::write(
             directory.join("missing.telora"),
@@ -4422,7 +4422,7 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
 
         fs::write(
             directory.join("duplicate.telora"),
-            "import \"core/prelude\" { struct as item, enum as item }; item",
+            "import \"core/prelude\" { union as item, validate as item }; item",
         )
         .unwrap();
         let duplicate =
@@ -4441,10 +4441,10 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
         fs::write(
             directory.join("main.telora"),
             r#"import "std/result" as result, *;
-import "core/prelude" as prelude, { struct as make_struct };
-type User = make_struct('None, {name: String});
+import "core/prelude" as prelude, { validate as check };
+type User = struct {name: String};
 let user = {name: unwrap('Ok("telora"))};
-(user, result.unwrap == unwrap, prelude.struct == make_struct)"#,
+(user, result.unwrap == unwrap, prelude.validate == check)"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -5333,8 +5333,9 @@ type Independent = String;
             directory.join("main.telora"),
             "import \"./user.json\" as user;\
              import \"./answer.telora\" as answer;\
+             import \"std/result\" as result;\
              type User = struct {name: String, age: Int};\
-             let checked: User = user;\
+             let checked = validate(User, user) |> result.unwrap;\
              (checked.name, answer)",
         )
         .unwrap();
@@ -5369,6 +5370,7 @@ name = "rustc"
             r#"import "./config.toml" as config;
                import "./sub/../config.toml" as same;
                import "std/toml" as toml;
+               import "std/result" as result;
                type TomlDate = toml.DateTime;
                type Tool = struct {name: String};
                type Config = struct {
@@ -5377,7 +5379,7 @@ name = "rustc"
                    environment: Dict(String),
                    tools: Array(Tool),
                };
-               let checked: Config = config;
+               let checked = validate(Config, config) |> result.unwrap;
                (checked.released, checked.tools, same.title)"#,
         )
         .unwrap();
@@ -5408,22 +5410,17 @@ name = "rustc"
         fs::write(
             directory.join("main.telora"),
             "import \"./user.toml\" as user;\n\
+             import \"std/result\" as result;\n\
              type User = struct {name: String, age: Int};\n\
-             let checked: User = user;\n\
+             let checked = validate(User, user) |> result.unwrap;\n\
              checked",
         )
         .unwrap();
-        let error =
-            load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap_err();
-        let message = error.message();
-        assert!(
-            message.contains("user.toml:2:7: binding checked has type"),
-            "{message}"
-        );
-        assert!(
-            message.contains("main.telora:2:1: type requirement declared here"),
-            "{message}"
-        );
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let error = module.execute(100_000).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("user.toml:1:1"), "{message}");
+        assert!(message.contains("main.telora:3:1"), "{message}");
 
         fs::write(
             directory.join("main.telora"),
@@ -5660,22 +5657,17 @@ name = "rustc"
         fs::write(
             directory.join("main.telora"),
             "import \"./user.json\" as user;\n\
+             import \"std/result\" as result;\n\
              type User = struct {name: String, age: Int};\n\
-             let checked: User = user;\n\
+             let checked = validate(User, user) |> result.unwrap;\n\
              checked",
         )
         .unwrap();
-        let error =
-            load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap_err();
-        let message = error.message();
-        assert!(
-            message.contains("user.json:1:21: binding checked has type"),
-            "{message}"
-        );
-        assert!(
-            message.contains("main.telora:2:1: type requirement declared here"),
-            "{message}"
-        );
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let error = module.execute(100_000).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("user.json:1:1"), "{message}");
+        assert!(message.contains("main.telora:3:1"), "{message}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -5906,13 +5898,13 @@ name = "rustc"
             directory.join("main.telora"),
             r#"import "std/array" as array;
                type Kind = enum {
-                   Missing: 'None,
-                   Unauthorized: 'None,
+                   'Missing,
+                   'Unauthorized,
                };
                type Rejection = struct {kind: Kind};
                let initial: Array(Rejection) = [];
                array.fold([1, 2], initial, fn(rejections, value) {
-                   let rejection = if value == 1 {
+                   let rejection: Rejection = if value == 1 {
                        {kind: 'Missing}
                    } else {
                        {kind: 'Unauthorized}
@@ -5925,7 +5917,7 @@ name = "rustc"
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             module.analysis.display(module.analysis.result_type),
-            "Array<{kind: enum {Missing, Unauthorized}}>"
+            "Array<Rejection>"
         );
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
@@ -6039,15 +6031,15 @@ name = "rustc"
                def collect: for(A)
                    Fn(Array(A), Array(String)) -> CollectResult(A) =
                    fn(values, prior) {
-                       let initial = {reports: [], diagnostics: prior};
+                       let initial: CollectResult(A) = {reports: [], diagnostics: prior};
                        array.fold(values, initial, fn(acc, value) {
-                           if value == value {
+                           let next: CollectResult(A) = if value == value {
                                {reports: array.push(acc.reports, {value, accepted: 'True}),
                                 diagnostics: acc.diagnostics}
                            } else {
                                {reports: array.push(acc.reports, {value, accepted: 'False}),
                                 diagnostics: array.push(acc.diagnostics, "rejected")}
-                           }
+                           }; next
                        })
                    };
                collect([1, 2], [])"#;
@@ -6055,10 +6047,7 @@ name = "rustc"
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         let expected = module.analysis.display(module.analysis.result_type);
-        assert_eq!(
-            expected,
-            "{diagnostics: Array<String>, reports: Array<{accepted: enum {False, True}, value: Int}>}"
-        );
+        assert_eq!(expected, "CollectResult");
 
         let reversed = source
             .replace("if value == value", "if value != value")
@@ -6116,7 +6105,7 @@ name = "rustc"
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             module.analysis.display(module.analysis.result_type),
-            "{count: Int}"
+            "Output"
         );
         assert_eq!(module.execute(100_000).unwrap().to_string(), "{count: 2}");
         fs::remove_dir_all(directory).unwrap();
@@ -6243,7 +6232,7 @@ name = "rustc"
                        });
                        array.map(steps, fn(step) { step.evidence })
                    };
-               type Id = enum { A: 'None, B: 'None };
+               type Id = enum {'A, 'B};
                def lower_a: Fn(Id) -> Option(Int) = fn(id) {
                    if id == 'A { 'Some(1) } else { 'None }
                };
@@ -7314,10 +7303,7 @@ unchanged", "|"),
         let alias = module
             .analysis
             .display(module.analysis.declared_types["TreeBox"]);
-        assert!(
-            alias.contains("Array<Tree>") || alias.contains("recursive"),
-            "{alias}"
-        );
+        assert_eq!(alias, "Box");
         assert!(!alias.contains("Any"), "{alias}");
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
@@ -7453,7 +7439,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "./api.telora" as api;
-               type Node = enum {A: 'None, B: 'None};
+               type Node = enum {'A, 'B};
                type Requirement = struct {target: Node};
                def target_of: Fn(Requirement) -> Node = fn(req) { req.target };
                api.use([{target: 'B}], target_of)"#,
@@ -7461,10 +7447,7 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(
-            module.analysis.display(module.analysis.result_type),
-            "enum {A, B}"
-        );
+        assert_eq!(module.analysis.display(module.analysis.result_type), "Node");
         assert_eq!(module.execute(100_000).unwrap().to_string(), "'B");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -7626,12 +7609,12 @@ unchanged", "|"),
 
         fs::write(
             directory.join("base.telora"),
-            "type Status = enum {Ready: 'None}; {Status: Status}",
+            "type Status = enum {'Ready}; {Status: Status}",
         )
         .unwrap();
         fs::write(
             directory.join("local.telora"),
-            "type Status = enum {Ready: 'None};\
+            "type Status = enum {'Ready};\
              type Box(A) = struct {status: Status, value: A};\
              {Box: Box}",
         )
@@ -8913,7 +8896,7 @@ unchanged", "|"),
             r#"import "./reference-equality.telora" as equality;
                import "std/eq" as eq;
                type Node = struct {value: Int, children: Array(Node)};
-               type Choice = enum {None: 'None, Some: String};
+               type Choice = enum {'None, 'Some(String)};
                type Pair = Tuple([Int, String]);
                type Unary = Fn(Int) -> Int;
                let left: Node = {value: 1, children: [{value: 2, children: []}]};
@@ -9253,10 +9236,10 @@ unchanged", "|"),
                    }; decorate
                };
                let model: Fn(Any, Any) -> Any = fn(ctx, value) {
-                   attributes.add(struct(ctx, value), { "vendor:acme.model": ctx.name })
+                   attributes.add(value, { "vendor:acme.model": ctx.name })
                };
                @model
-               type User = {
+               type User = struct {
                    @rename("type")
                    ty: String,
                };
@@ -9288,8 +9271,11 @@ unchanged", "|"),
                 .starts_with("'Ok(")
         );
 
-        let Value::Dict(metadata) = result.get("metadata").unwrap() else {
-            panic!("expected attributed type metadata")
+        let Value::DeclaredType(declared) = result.get("metadata").unwrap() else {
+            panic!("expected declared type metadata")
+        };
+        let Value::Dict(metadata) = declared.body() else {
+            panic!("expected attributed declared body")
         };
         assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
         let Value::Dict(model_attributes) = metadata.get("attributes").unwrap() else {
@@ -9323,7 +9309,7 @@ unchanged", "|"),
     }
 
     #[test]
-    fn normalized_struct_and_enum_models_preserve_uniform_member_attributes() {
+    fn declared_struct_and_enum_models_preserve_uniform_member_attributes() {
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
@@ -9342,8 +9328,8 @@ unchanged", "|"),
 
                @annotate("enum", 3)
                type Choice = enum {
-                   None: 'None,
-                   User: User,
+                   'None,
+                   'User(User),
                };
 
                @union
@@ -9352,7 +9338,6 @@ unchanged", "|"),
                    String,
                ];
 
-               let explicit = struct('None, { value: Int });
                let explicit_union = union('None, [Int, String]);
                let unit: Choice = 'None;
                let payload: Choice = 'User({ name: "Ada", role: "admin" });
@@ -9360,7 +9345,6 @@ unchanged", "|"),
                {
                    user: User,
                    choice: Choice,
-                   explicit: explicit,
                    explicit_union: explicit_union,
                    scalar: Scalar,
                    scalar_value: scalar_value,
@@ -9391,7 +9375,13 @@ unchanged", "|"),
             assert!(matches!(wrapper.get("attributes"), Some(Value::Dict(_))));
             wrapper
         }
-        let user = assert_wrapper(result.get("user").unwrap());
+        fn declared_body(value: &Value) -> &Value {
+            let Value::DeclaredType(declared) = value else {
+                panic!("expected declared type metadata")
+            };
+            declared.body()
+        }
+        let user = assert_wrapper(declared_body(result.get("user").unwrap()));
         let Value::Dict(user_metadata) = user.get("inner").unwrap() else {
             panic!("expected Struct metadata")
         };
@@ -9411,7 +9401,7 @@ unchanged", "|"),
             "{marker: (\"model\", 1)}"
         );
 
-        let choice = assert_wrapper(result.get("choice").unwrap());
+        let choice = assert_wrapper(declared_body(result.get("choice").unwrap()));
         let Value::Dict(enum_metadata) = choice.get("inner").unwrap() else {
             panic!("expected Enum metadata")
         };
@@ -9446,14 +9436,6 @@ unchanged", "|"),
         let second = assert_wrapper(&union_variants[1]);
         assert_eq!(second.get("attributes").unwrap().to_string(), "{}");
 
-        let explicit = assert_wrapper(result.get("explicit").unwrap());
-        let Value::Dict(explicit_metadata) = explicit.get("inner").unwrap() else {
-            panic!("expected explicit Struct metadata")
-        };
-        let Value::Dict(explicit_fields) = explicit_metadata.get("fields").unwrap() else {
-            panic!("expected explicit fields")
-        };
-        assert_wrapper(explicit_fields.get("value").unwrap());
         let explicit_union = assert_wrapper(result.get("explicit_union").unwrap());
         let Value::Dict(explicit_union_metadata) = explicit_union.get("inner").unwrap() else {
             panic!("expected explicit Union metadata")
@@ -9474,7 +9456,7 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
-               type Choice = enum { None: 'None, Number: Int };
+               type Choice = enum {'None, 'Number(Int)};
                {
                    unknown: validate(Choice, 'Other),
                    missing: validate(Choice, 'Number),
@@ -10317,7 +10299,7 @@ export { CallExpr, Expr };"#,
     }
 
     #[test]
-    fn normalized_model_constructors_reject_invalid_inputs_and_charge_quota() {
+    fn removed_model_constructors_are_unavailable_and_union_remains_accounted() {
         let directory = fixture_dir();
         let run_error = |name: &str, expression: &str| {
             let path = directory.join(name);
@@ -10325,26 +10307,6 @@ export { CallExpr, Expr };"#,
             let module = load_module(path, BTreeMap::new(), 100_000).unwrap();
             module.execute(100_000).unwrap_err()
         };
-        assert!(
-            run_error("context.telora", "struct('Bad, {x: Int})")
-                .message
-                .contains("model context")
-        );
-        assert!(
-            run_error("empty.telora", "enum('None, {})")
-                .message
-                .contains("at least one variant")
-        );
-        assert!(
-            run_error("field.telora", "struct('None, {x: 1})")
-                .message
-                .contains("Type metadata")
-        );
-        assert!(
-            run_error("variant.telora", "enum('None, {Bad: 1})")
-                .message
-                .contains("Type metadata")
-        );
         assert!(
             run_error("empty-union.telora", "union('None, [])")
                 .message
@@ -10365,13 +10327,16 @@ export { CallExpr, Expr };"#,
         );
 
         for (name, source) in [
+            ("struct.telora", "struct('None, {x: Int})"),
+            ("enum.telora", "enum('None, {X: 'None})"),
             ("uppercase-struct.telora", "Struct({x: Int})"),
+            ("uppercase-enum.telora", "Enum({X: 'None})"),
             ("uppercase-union.telora", "Union([Int, String])"),
         ] {
             let path = directory.join(name);
             fs::write(&path, source).unwrap();
             let error = match load_module(path, BTreeMap::new(), 100_000) {
-                Ok(_) => panic!("uppercase constructor must be absent"),
+                Ok(_) => panic!("removed constructor must be absent"),
                 Err(error) => error,
             };
             assert!(error.message.contains("unknown binding"));
@@ -10437,6 +10402,7 @@ export { CallExpr, Expr };"#,
         fs::write(
             directory.join("main.telora"),
             r#"import "std/json" as json;
+               type Nested = struct { child_value: String };
                @json.rename_all('CamelCase)
                type Model = struct {
                    @json.rename("outerName")
@@ -10446,14 +10412,17 @@ export { CallExpr, Expr };"#,
                    value_name: Option(Int),
 
                    @json.flatten
-                   nested: struct('None, { child_value: String }),
+                   nested: Nested,
                };
                Model"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(root) = module.execute(100_000).unwrap() else {
-            panic!("expected attributed model")
+        let Value::DeclaredType(declared) = module.execute(100_000).unwrap() else {
+            panic!("expected declared model")
+        };
+        let Value::Dict(root) = declared.body() else {
+            panic!("expected attributed declared body")
         };
         let Value::Dict(root_attributes) = root.get("attributes").unwrap() else {
             panic!("expected root attributes")
@@ -10595,7 +10564,7 @@ export { CallExpr, Expr };"#,
         .unwrap();
         let failure = module.execute_with_quota(Quota::with_fuel(2)).unwrap_err();
         assert_eq!(failure.kind, crate::RuntimeErrorKind::FuelExhausted);
-        let value = module.execute_with_quota(Quota::with_fuel(3)).unwrap();
+        let value = module.execute_with_quota(Quota::with_fuel(4)).unwrap();
         assert_eq!(value.to_string(), "'Ok({retained: 7})");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -10869,7 +10838,7 @@ export { CallExpr, Expr };"#,
                type ExecSettings = exec_types.ExecSettings;
                type ExecRequest = exec_types.ExecRequest;
                type ExecEnv = exec_types.ExecEnv;
-               type Platform = struct {os: String, arch: String};
+               type Platform = exec_types.Platform;
                type Config = struct {platform: Platform, offset: Int};
                def helper = fn(value) { value + 1 };
                def helper2 = fn(value) { helper(value) + 1 };
@@ -11103,7 +11072,7 @@ export { CallExpr, Expr };"#,
             .unwrap();
         assert_eq!(
             family.scheme.as_deref(),
-            Some("for(A) Fn(TypeOf(A)) -> TypeOf({value: A})")
+            Some("for(A) Fn(TypeOf(A)) -> TypeOf(Box)")
         );
         assert!(!family.scheme.as_deref().unwrap().contains("Any"));
         fs::remove_dir_all(directory).unwrap();
@@ -11131,7 +11100,7 @@ export { CallExpr, Expr };"#,
         assert_eq!(family.ty.state, crate::FactState::Known);
         assert_eq!(
             family.scheme.as_deref(),
-            Some("for(A) Fn(TypeOf(A)) -> TypeOf({value: A})")
+            Some("for(A) Fn(TypeOf(A)) -> TypeOf(Box)")
         );
         assert!(!family.scheme.as_deref().unwrap().contains("Any"));
         fs::remove_dir_all(directory).unwrap();
@@ -11259,8 +11228,8 @@ export let output = `unexpected \{array.length(second)}`;"#,
                 &main,
                 format!(
                     r#"import "std/array" as array;
-type A = enum {{ Bad: 'None }};
-type B = enum {{ Bad: 'None }};
+type A = enum {{ 'Bad }};
+type B = enum {{ 'Bad }};
 type Pair = struct {{ left: Int, right: String }};
 def fail_a: Fn(A) -> Int = fn(value) {{ fail!("diagnostic A", value) }};
 def fail_b: Fn(B) -> Int = fn(value) {{ fail!("diagnostic B", value) }};
@@ -12117,7 +12086,7 @@ export let output = (compared, selected);"#,
             r#"import "./reference-show.telora" as show;
                type User = struct {name: String, scores: Array(Int)};
                type Node = struct {value: Int, children: Array(Node)};
-               type Choice = enum {None: 'None, Some: String};
+               type Choice = enum {'None, 'Some(String)};
                type Pair = Tuple([Int, String]);
                type Unary = Fn(Int) -> Int;
                let user: User = {name: "Ada", scores: [2, 3]};
@@ -12184,7 +12153,7 @@ export let output = (compared, selected);"#,
                type User = struct {name: String, scores: Array(Int)};
                type Renamed = struct {label: String, scores: Array(Int)};
                type Node = struct {value: Int, children: Array(Node)};
-               type Choice = enum {None: 'None, Some: String};
+               type Choice = enum {'None, 'Some(String)};
                type Pair = Tuple([Int, Int]);
                type Unary = Fn(Int) -> Int;
                let user: User = {name: "Ada", scores: [2, 3]};
@@ -12264,13 +12233,15 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "./explicit-diagnostics.telora" as validation;
 import "std/array" as arrays;
+import "std/result" as result;
 import "./project.json" as project;
 let initial: Array(validation.DiagnosticRecord) = [];
-let output = match validation.validate_project(project, initial) {
+let checked_input = validate(validation.Project, project) |> result.unwrap;
+let output = match validation.validate_project(checked_input, initial) {
     (checked, diagnostics) => {
         count: arrays.length(diagnostics),
         initial_count: arrays.length(initial),
-        unchanged: checked == project,
+        unchanged: checked == checked_input,
         messages: arrays.map(diagnostics, fn(item) { item.message }),
     },
 };
@@ -12318,7 +12289,8 @@ def inspect_i: Fn(Dyn) -> Int = fn(value) {
     }
 };
 def inspect: for(A) Fn(TypeOf(A)) -> Fn(A) -> Int = interpreter!(inspect_i);
-inspect(User)(user)"#;
+let checked = validate(User, user) |> result.unwrap;
+inspect(User)(checked)"#;
         fs::write(directory.join("main.telora"), source).unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();

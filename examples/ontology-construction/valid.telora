@@ -2,13 +2,13 @@ import "ontology-method/types.telora" as ontology;
 import "ontology-method/ontology.telora" as method;
 import "std/array" as array;
 
-@enum type Entity = {
-    Order: 'None,
-    Customer: 'None,
+type Entity = enum {
+    'Order,
+    'Customer,
 };
 
-@enum type Measure = {
-    Revenue: 'None,
+type Measure = enum {
+    'Revenue,
 };
 
 type OptionalEntity = ontology.Maybe(Entity);
@@ -23,12 +23,14 @@ let capability: MeasureCapability = {
     },
 };
 
+let requested: Array(Measure) = ['Revenue];
+let input: Entity = 'Order;
 let lowered = method.lower_requested(
-    ['Revenue],
+    requested,
     [capability],
     fn(item) { item.id },
     fn(item, id, input) { item.lower(id, input) },
-    'Order,
+    input,
 );
 
 export let output: MeasureRequirement = match array.find(method.completed(lowered), fn(ignored) { 'True }) {

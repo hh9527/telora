@@ -1,5 +1,4 @@
-@struct
-type Request = {
+type Request = struct {
     action: String,
     count: Int,
 };

@@ -2,47 +2,47 @@ import "std/array" as array;
 import "ontology-method/types.telora" as types;
 import "analytics-ontology/compiler.telora" as analytics;
 
-@enum type Entity = {
-    Workspace: 'None,
-    Subscription: 'None,
-    Plan: 'None,
-    User: 'None,
-    Ticket: 'None,
-    Message: 'None,
-    Agent: 'None,
-    Team: 'None,
-    SlaPolicy: 'None,
-    TicketTag: 'None,
-    Tag: 'None,
+type Entity = enum {
+    'Workspace,
+    'Subscription,
+    'Plan,
+    'User,
+    'Ticket,
+    'Message,
+    'Agent,
+    'Team,
+    'SlaPolicy,
+    'TicketTag,
+    'Tag,
 };
 
-@enum type Measure = {
-    ResolvedTickets: 'None,
-    AgentReplies: 'None,
+type Measure = enum {
+    'ResolvedTickets,
+    'AgentReplies,
 };
 
-@enum type Dimension = {
-    OpenedMonth: 'None,
-    WorkspacePlan: 'None,
-    AssignedTeam: 'None,
-    SlaPolicy: 'None,
-    TicketTag: 'None,
-    CustomerSegment: 'None,
+type Dimension = enum {
+    'OpenedMonth,
+    'WorkspacePlan,
+    'AssignedTeam,
+    'SlaPolicy,
+    'TicketTag,
+    'CustomerSegment,
 };
 
-@enum type SemanticValueType = { Count: 'None };
-@enum type Aggregation = { Additive: 'None };
-@enum type Alignment = { Direct: 'None };
-@enum type Cardinality = { ManyToOne: 'None, OneToMany: 'None };
+type SemanticValueType = enum { 'Count };
+type Aggregation = enum { 'Additive };
+type Alignment = enum { 'Direct };
+type Cardinality = enum { 'ManyToOne, 'OneToMany };
 
-@struct type RelationMapping = {
+type RelationMapping = struct {
     target_table: String,
     join_condition: String,
 };
 
 type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
 
-@struct type MeasurePlan = {
+type MeasurePlan = struct {
     source: Measure,
     value_type: SemanticValueType,
     aggregation: Aggregation,
@@ -51,7 +51,7 @@ type Relation = types.RelationDefinition(Entity, Cardinality, RelationMapping);
     expression: String,
 };
 
-@struct type DimensionPlan = {
+type DimensionPlan = struct {
     source: Dimension,
     required_entity: Entity,
     expression: String,
@@ -72,13 +72,13 @@ type DimensionCapability = types.DimensionDefinition(
     DimensionPlan,
 );
 
-@struct type CombinedMeasure = {
+type CombinedMeasure = struct {
     base_entity: Entity,
     plans: Array(MeasurePlan),
     required_entities: Array(Entity),
 };
 
-@struct type ExecutionPlan = {
+type ExecutionPlan = struct {
     revision: String,
     base_entity: Entity,
     measures: Array(MeasurePlan),

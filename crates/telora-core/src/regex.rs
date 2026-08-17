@@ -146,26 +146,34 @@ pub(crate) fn native_is_match(context: &mut CallContext<'_, '_>) -> Result<(), N
     )
 }
 
-fn stripped_metadata(
-    mut metadata: crate::ValueRef<'_>,
-) -> Result<crate::ValueRef<'_>, NativeError> {
-    if let Some(body) = metadata.declared_type_body() {
-        metadata = body;
-    }
-    if metadata.is_hidden_up_link() {
-        metadata = metadata
-            .resolve_hidden_up_link()
-            .map_err(NativeError::new)?;
-    }
-    while metadata.dict_get("kind").and_then(|kind| kind.as_atom()) == Some("WithAttributes") {
-        metadata = metadata
-            .dict_get("inner")
-            .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
+fn resolve_metadata(mut metadata: crate::ValueRef<'_>) -> Result<crate::ValueRef<'_>, NativeError> {
+    for _ in 0..128 {
+        if let Some(body) = metadata.declared_type_body() {
+            metadata = body;
+            continue;
+        }
         if metadata.is_hidden_up_link() {
             metadata = metadata
                 .resolve_hidden_up_link()
                 .map_err(NativeError::new)?;
+            continue;
         }
+        return Ok(metadata);
+    }
+    Err(NativeError::new(
+        "std/regex metadata resolution exceeds the recursive type limit",
+    ))
+}
+
+fn stripped_metadata(
+    mut metadata: crate::ValueRef<'_>,
+) -> Result<crate::ValueRef<'_>, NativeError> {
+    metadata = resolve_metadata(metadata)?;
+    while metadata.dict_get("kind").and_then(|kind| kind.as_atom()) == Some("WithAttributes") {
+        metadata = metadata
+            .dict_get("inner")
+            .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
+        metadata = resolve_metadata(metadata)?;
     }
     Ok(metadata)
 }
@@ -190,14 +198,7 @@ fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> 
 fn attached_regex(metadata: crate::ValueRef<'_>) -> Result<Option<CompiledRegex>, NativeError> {
     let mut metadata = metadata;
     loop {
-        if let Some(body) = metadata.declared_type_body() {
-            metadata = body;
-        }
-        if metadata.is_hidden_up_link() {
-            metadata = metadata
-                .resolve_hidden_up_link()
-                .map_err(NativeError::new)?;
-        }
+        metadata = resolve_metadata(metadata)?;
         if let Some(provider) = metadata
             .dict_get("attributes")
             .and_then(|attributes| attributes.dict_get("std/string.parse"))

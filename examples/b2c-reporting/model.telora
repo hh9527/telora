@@ -2,70 +2,70 @@ import "std/array" as array;
 import "analytics-ontology/compiler.telora" as analytics;
 import "ontology-method/types.telora" as types;
 
-@enum type Entity = {
-    Consumer: 'None,
-    Household: 'None,
-    Address: 'None,
-    Region: 'None,
-    Session: 'None,
-    Cart: 'None,
-    CartItem: 'None,
-    Order: 'None,
-    OrderItem: 'None,
-    Product: 'None,
-    Category: 'None,
-    Campaign: 'None,
+type Entity = enum {
+    'Consumer,
+    'Household,
+    'Address,
+    'Region,
+    'Session,
+    'Cart,
+    'CartItem,
+    'Order,
+    'OrderItem,
+    'Product,
+    'Category,
+    'Campaign,
 };
 
-@enum type Measure = {
-    PurchaseRevenue: 'None,
-    SessionConversions: 'None,
+type Measure = enum {
+    'PurchaseRevenue,
+    'SessionConversions,
 };
 
-@enum type Dimension = {
-    PurchaseMonth: 'None,
-    ConsumerRegion: 'None,
-    AcquisitionCampaign: 'None,
-    ProductCategory: 'None,
-    LoyaltyTier: 'None,
+type Dimension = enum {
+    'PurchaseMonth,
+    'ConsumerRegion,
+    'AcquisitionCampaign,
+    'ProductCategory,
+    'LoyaltyTier,
 };
 
-@enum type Alignment = { Natural: 'None };
+type Alignment = enum { 'Natural };
 
-@enum type SemanticValueType = {
-    MoneyCents: 'None,
-    Count: 'None,
+type SemanticValueType = enum {
+    'MoneyCents,
+    'Count,
 };
 
-@enum type Aggregation = {
-    Additive: 'None,
-    NonAdditive: 'None,
+type Aggregation = enum {
+    'Additive,
+    'NonAdditive,
 };
 
-@enum type Cardinality = {
-    ManyToOne: 'None,
-    OneToMany: 'None,
+type Cardinality = enum {
+    'ManyToOne,
+    'OneToMany,
 };
 
-@struct type RelationMapping = {
+type RelationMapping = struct {
     table: String,
     on: String,
 };
 
-@struct type MeasurePlan = {
+type MeasurePlan = struct {
     source: Measure,
     base_entity: Entity,
     required_entities: Array(Entity),
     expression: String,
 };
 
-@struct type DimensionPlan = {
+type DimensionPlan = struct {
     source: Dimension,
     required_entity: Entity,
     expression: String,
 };
 
-@struct type ExecutionPlan = {
+type ExecutionPlan = struct {
     revision: String,
     base_entity: Entity,
     measures: Array(MeasurePlan),
@@ -74,7 +74,7 @@ import "ontology-method/types.telora" as types;
     read_only: Bool,
 };
 
-@struct type CombinedMeasure = {
+type CombinedMeasure = struct {
     base_entity: Entity,
     measures: Array(MeasurePlan),
     required_entities: Array(Entity),

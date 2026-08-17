@@ -1476,6 +1476,13 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .collect::<Vec<_>>(),
     );
     let bindings = type_definition_bindings(&hir, &recovered.bindings);
+    let declared_initializer_slots = recovered
+        .bindings
+        .iter()
+        .filter(|binding| binding.value.declared_initializer.is_some())
+        .enumerate()
+        .map(|(slot, binding)| (binding.value.name.location, slot as u32))
+        .collect::<HashMap<_, _>>();
     let type_definitions = bindings.keys().copied().collect::<HashSet<_>>();
     let import_definitions = hir
         .definitions()
@@ -1612,6 +1619,28 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                 &debug_sink,
             )
             .and_then(|value| {
+                let value = if parameters.is_empty() {
+                    declare_metadata_value(
+                        &source_name,
+                        binding,
+                        &declared_initializer_slots,
+                        value,
+                    )?
+                } else if binding.value.declared_initializer.is_some() {
+                    let arguments = parameters
+                        .iter()
+                        .map(|parameter| TypeDescriptor::Bound(parameter.id))
+                        .collect::<Vec<_>>();
+                    Value::DeclaredType(crate::DeclaredType::bind_application(
+                        source_name.as_str(),
+                        declared_initializer_slots[&binding.value.name.location],
+                        binding.value.name.value.as_str(),
+                        &arguments,
+                        value,
+                    ))
+                } else {
+                    value
+                };
                 TypeDescriptor::from_value(&value)
                     .map(|descriptor| (value, descriptor))
                     .map_err(|message| {
@@ -3774,10 +3803,20 @@ fn is_declared_literal_construction(
     _actual: &TypeDescriptor,
     expected: &TypeDescriptor,
 ) -> bool {
-    let TypeDescriptor::Declared(declared) = expected else {
-        return false;
-    };
-    declared_body_accepts_expression(&declared.body, expression)
+    match (expected, &expression.value) {
+        (TypeDescriptor::Declared(declared), _) => {
+            declared_body_accepts_expression(&declared.body, expression)
+        }
+        (TypeDescriptor::Array(item), ExprKind::Array(items))
+            if matches!(item.as_ref(), TypeDescriptor::Declared(_)) =>
+        {
+            items.iter().all(|item_expression| {
+                !matches!(item_expression.value, ExprKind::Spread(_))
+                    && is_declared_literal_construction(item_expression, &TypeDescriptor::Any, item)
+            })
+        }
+        _ => false,
+    }
 }
 
 fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) -> bool {
@@ -4496,12 +4535,19 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             metadata.clone(),
         ),
     );
-    for name in ["Struct", "Enum", "Union"] {
+    for name in ["\0telora_struct", "\0telora_enum"] {
         prelude.insert(
             name.into(),
-            function(vec![TypeDescriptor::Any], metadata.clone()),
+            function(
+                vec![TypeDescriptor::Any, TypeDescriptor::Any],
+                metadata.clone(),
+            ),
         );
     }
+    prelude.insert(
+        "Union".into(),
+        function(vec![TypeDescriptor::Any], metadata.clone()),
+    );
     prelude.insert(
         "Option".into(),
         function(vec![metadata.clone()], metadata.clone()),
@@ -8013,7 +8059,7 @@ impl<'a> GenericInference<'a> {
             } => {
                 let value_type = self.infer(value, environment, None)?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
-                let analysis = crate::pattern::analyze_pattern(pattern, &resolved_value_type);
+                let analysis = crate::pattern::analyze_pattern(pattern, &value_type);
                 if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                     && analysis.problems.is_empty()
                 {
@@ -8055,7 +8101,7 @@ impl<'a> GenericInference<'a> {
             } => {
                 let value_type = self.infer(value, environment, None)?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
-                let analysis = crate::pattern::analyze_pattern(pattern, &resolved_value_type);
+                let analysis = crate::pattern::analyze_pattern(pattern, &value_type);
                 if analysis.irrefutable {
                     self.pattern_diagnostics
                         .entry(pattern.location)
@@ -8118,8 +8164,7 @@ impl<'a> GenericInference<'a> {
                     } else {
                         (environment.clone(), None, None)
                     };
-                    let analysis =
-                        crate::pattern::analyze_pattern(&arm.value.pattern, &resolved_value_type);
+                    let analysis = crate::pattern::analyze_pattern(&arm.value.pattern, &value_type);
                     if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                         && !arm.value.irrefutable_required
                         && analysis.problems.is_empty()
@@ -10812,9 +10857,11 @@ mod tests {
         ] {
             let analysis = analyze_source(name, source).unwrap();
             let expected = if name == "parameter-and-result-contract-types.telora" {
-                "{text: String}"
+                "Output"
+            } else if name == "transitive-contract-types.telora" {
+                "NamedPlan"
             } else {
-                "{name: String}"
+                "Plan"
             };
             assert_eq!(analysis.display(analysis.result_type), expected, "{name}");
         }
@@ -10834,14 +10881,8 @@ mod tests {
                       let output = result;\
                       {output}";
         let analysis = analyze_source("callback-contract.telora", source).unwrap();
-        assert_eq!(
-            analysis.display(analysis.result_type),
-            "{output: {value: {name: String}}}"
-        );
-        assert_eq!(
-            analysis.display(analysis.binding_types["output"]),
-            "{value: {name: String}}"
-        );
+        assert_eq!(analysis.display(analysis.result_type), "{output: Box}");
+        assert_eq!(analysis.display(analysis.binding_types["output"]), "Box");
 
         let with_unused_family = analyze_source(
             "callback-contract-unused-family.telora",
@@ -11033,7 +11074,7 @@ mod tests {
         assert!(
             structure.module_interface.exports["collect"]
                 .display_name()
-                .contains("complete: enum {None, Some(Array<Output>)}")
+                .contains("-> Batch")
         );
 
         let invalid_source = [
@@ -11232,7 +11273,7 @@ mod tests {
 
     #[test]
     fn generic_calls_combine_singleton_atoms_with_closed_enum_evidence() {
-        let prelude = "type NodeId = enum {Base: 'None, Other: 'None};\
+        let prelude = "type NodeId = enum {'Base, 'Other};\
              let nodes: Array(NodeId) = ['Other];";
         for call in [
             "def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };\
@@ -11243,12 +11284,12 @@ mod tests {
              choose('Base, 'Other, nodes)",
         ] {
             let analysis = analyze_with_natives(&format!("{prelude}{call}"), &[]).unwrap();
-            assert_eq!(analysis.display(analysis.result_type), "enum {Base, Other}");
+            assert_eq!(analysis.display(analysis.result_type), "NodeId");
         }
 
         let conflict = analyze_with_natives(
-            "type NodeId = enum {Base: 'None, Other: 'None};\
-             type ForeignId = enum {Foreign: 'None};\
+            "type NodeId = enum {'Base, 'Other};\
+             type ForeignId = enum {'Foreign};\
              def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };\
              let foreign: Array(ForeignId) = ['Foreign];\
              choose('Base, foreign)",
@@ -12484,7 +12525,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             analysis.definition_schemes[&collect.id].display_name(),
-            "for(N, M) Fn(Array<{value: {left: N, right: M}}>) -> Array<{value: {left: N, right: M}}>"
+            "for(N, M) Fn(Array<Box>) -> Array<Box>"
         );
 
         let leaked = analyze_with_natives(
@@ -12874,14 +12915,14 @@ mod tests {
             .expect("unbox definition");
         assert_eq!(
             analysis.definition_schemes[&unbox.id].display_name(),
-            "for(Content) Fn({value: Content}) -> Content"
+            "for(Content) Fn(Box) -> Content"
         );
         assert_eq!(analysis.display(analysis.result_type), "(Int, Int)");
     }
 
     #[test]
     fn generic_call_context_widens_singleton_fields_in_anonymous_records() {
-        let prelude = "type Node = enum {A: 'None, B: 'None};\
+        let prelude = "type Node = enum {'A, 'B};\
              type Requirement = struct {target: Node};\
              def target_of: Fn(Requirement) -> Node = fn(req) { req.target };\
              def use: for(Req) Fn(Array(Req), Fn(Req) -> Node) -> Node =\
@@ -12892,7 +12933,7 @@ mod tests {
                 &format!("{prelude} use({records}, target_of)"),
             )
             .unwrap();
-            assert_eq!(analysis.display(analysis.result_type), "enum {A, B}");
+            assert_eq!(analysis.display(analysis.result_type), "Node");
         }
 
         let conflict = analyze_source(
@@ -12909,15 +12950,15 @@ mod tests {
         let conflicting_enum = analyze_source(
             "generic-record-enum-conflict.telora",
             &format!(
-                "{prelude} type Foreign = enum {{Foreign: 'None}};\
+                "{prelude} type Foreign = enum {{'Foreign}};\
                  let foreign: Foreign = 'Foreign;\
                  use([{{target: foreign}}], target_of)"
             ),
         )
         .unwrap_err();
         assert!(
-            conflicting_enum.message.contains("enum {Foreign}")
-                && conflicting_enum.message.contains("enum {A, B}"),
+            conflicting_enum.message.contains("Foreign")
+                && conflicting_enum.message.contains("Node"),
             "{}",
             conflicting_enum.message
         );
@@ -12972,8 +13013,8 @@ mod tests {
 
     #[test]
     fn explicit_array_context_checks_anonymous_concrete_family_catalogs() {
-        let definitions = "type Id = enum {First: 'None, Second: 'None};\
-             type Mode = enum {Direct: 'None, Derived: 'None};\
+        let definitions = "type Id = enum {'First, 'Second};\
+             type Mode = enum {'Direct, 'Derived};\
              type Capability(IdType, Input, Output) = struct {\
                  id: IdType,\
                  mode: Mode,\
@@ -13001,10 +13042,7 @@ mod tests {
             let source =
                 format!("{definitions} let catalog: Array(Concrete) = [{elements}]; catalog");
             let analysis = analyze_source(&format!("catalog-{name}.telora"), &source).unwrap();
-            assert_eq!(
-                analysis.display(analysis.result_type),
-                "Array<{dependencies: Array<enum {First, Second}>, id: enum {First, Second}, lower: Fn(Int) -> enum {None, Some(String)}, mode: enum {Derived, Direct}}>"
-            );
+            assert_eq!(analysis.display(analysis.result_type), "Array<Capability>");
         }
 
         let incompatible = analyze_source(
@@ -13112,13 +13150,13 @@ mod tests {
             "decorated-concrete-family-chain.telora",
             "type Requirement(E) = struct {target: E, reason: String};\
              type Output = struct {requirements: Array(Requirement(Entity))};\
-             type Entity = enum {Order: 'None};\
+             type Entity = enum {'Order};\
              Output",
         )
         .unwrap();
         assert_eq!(
             analysis.display(analysis.declared_types["Output"]),
-            "{requirements: Array<{reason: String, target: enum {Order}}>}"
+            "Output"
         );
     }
 
@@ -13128,7 +13166,7 @@ mod tests {
         for (name, source) in [
             (
                 "earlier-concrete-argument.telora",
-                "type Entity = enum {Order: 'None};\
+                "type Entity = enum {'Order};\
                  type Requirement(E) = struct {target: E, reason: String};\
                  type Output = struct {requirements: Array(Requirement(Entity))}; Output",
             ),
@@ -13137,7 +13175,7 @@ mod tests {
                 "type Requirement(E) = struct {target: E, reason: String};\
                  type Requirements(E) = Array(Requirement(E));\
                  type Output = struct {requirements: Requirements(Entity)};\
-                 type Entity = enum {Order: 'None}; Output",
+                 type Entity = enum {'Order}; Output",
             ),
         ] {
             let analysis = analyze_source(name, source).unwrap();
@@ -13268,7 +13306,11 @@ mod tests {
              user",
         )
         .unwrap_err();
-        assert!(error.message.contains("not assignable"));
+        assert!(
+            error.message.contains("String") && error.message.contains("Int"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
@@ -13668,7 +13710,7 @@ mod tests {
             "recursive-expr.telora",
             "type CallNode = struct {args: Array(Expr)};\
              type BinNode = struct {left: Expr, right: Expr};\
-             type Expr = enum {Literal: Int, Call: CallNode, Bin: BinNode};\
+             type Expr = enum {'Literal(Int), 'Call(CallNode), 'Bin(BinNode)};\
              type Plan(A) = struct {root: Expr, value: A};\
              def render: Fn(Expr) -> String = fn(expr) { \"ok\" };\
              def transform: for(A) Fn(Plan(A)) -> String = fn(plan) { render(plan.root) };\
@@ -13697,11 +13739,7 @@ mod tests {
             .definition_schemes
             .get(&definition("Plan"))
             .expect("dependent family keeps its scheme");
-        assert!(
-            plan.display_name().contains("root: enum"),
-            "{}",
-            plan.display_name()
-        );
+        assert_eq!(plan.display_name(), "for(A) Fn(TypeOf(A)) -> TypeOf(Plan)");
         assert!(
             !plan.display_name().contains("Any"),
             "{}",
@@ -13856,13 +13894,13 @@ mod tests {
     }
 
     #[test]
-    fn program_bytecode_erases_or_retains_type_metadata_by_use() {
+    fn program_bytecode_retains_declared_ownership_metadata_and_explicit_witnesses() {
         let erased = crate::compile_source(
             "test",
             "type User = struct {name: String}; let user: User = {name: \"Ada\"}; user.name",
         )
         .unwrap();
-        assert!(!erased.constants().iter().any(is_type_metadata));
+        assert!(erased.constants().iter().any(is_type_metadata));
 
         let retained =
             crate::compile_source("test", "type User = struct {name: String}; User").unwrap();
