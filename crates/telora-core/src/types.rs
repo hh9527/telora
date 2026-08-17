@@ -10612,10 +10612,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(recursive.display(recursive.result_type), "Int");
-        assert!(
-            recursive
-                .display(recursive.binding_types["value_of"])
-                .contains("children: Array<")
+        assert_eq!(
+            recursive.display(recursive.binding_types["value_of"]),
+            "Fn(Node) -> Int"
         );
 
         let invalid = analyze_source(
@@ -10629,7 +10628,7 @@ mod tests {
 
         let mutual = analyze_source(
             "recursive-expr.telora",
-            "type Expr = enum {Value: Int, Call: CallExpr};\
+            "type Expr = enum {'Value(Int), 'Call(CallExpr)};\
              type CallExpr = struct {name: String, args: Array(Expr)};\
              type Renderer(Context) = struct {render: Fn(Context, Expr) -> String};\
              type Context = struct {prefix: String};\
@@ -10653,7 +10652,6 @@ mod tests {
                 (mutual.hir.definition(*definition)?.name == "Renderer").then_some(scheme)
             })
             .expect("Renderer family scheme");
-        assert!(renderer.display_name().contains("Expr"));
         assert!(!renderer.display_name().contains("Any"));
     }
 
@@ -12807,7 +12805,7 @@ mod tests {
             "recursive-family-alias.telora",
             "type Box(A) = struct {value: A};\
              type Branch = struct {children: Array(Tree)};\
-             type Tree = enum {Leaf: Int, Branch: Branch};\
+             type Tree = enum {'Leaf(Int), 'Branch(Branch)};\
              type TreeBox = Box(Tree);\
              def identity: Fn(TreeBox) -> TreeBox = fn(value) { value };\
              identity({value: 'Leaf(1)})",

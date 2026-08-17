@@ -1621,10 +1621,22 @@ impl<'a> HeapView<'a> {
                 else {
                     return Err(HeapError("Declared handle refers to another object kind"));
                 };
-                let Value::DeclaredType(owner) =
-                    self.export_value_with(owner.value, visiting, up_link_projection)?
-                else {
+                let RuntimeValue::DeclaredType(owner_handle) = owner.value else {
                     return Err(HeapError("Declared owner is not a DeclaredType"));
+                };
+                let Object::DeclaredType { id, name, .. } = self.object(owner_handle)? else {
+                    return Err(HeapError(
+                        "DeclaredType handle refers to another object kind",
+                    ));
+                };
+                // Ordinary values need the exact owner witness but not a second
+                // projection of its potentially recursive metadata body.
+                let any_shape = Arc::new(Shape::from_sorted_fields(vec!["kind".into()]));
+                let any_body = Value::Dict(Dict::new(any_shape, vec![Value::atom("Any")]));
+                let owner = DeclaredType {
+                    id: id.clone(),
+                    name: Arc::clone(name),
+                    body: Box::new(any_body),
                 };
                 let payload =
                     self.export_value_with(payload.value, visiting, up_link_projection)?;

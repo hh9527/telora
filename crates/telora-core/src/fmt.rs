@@ -30,6 +30,9 @@ fn template_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeErro
 }
 
 fn resolve(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
+    if let Some(body) = metadata.declared_type_body() {
+        metadata = body;
+    }
     if metadata.is_hidden_up_link() {
         metadata = metadata
             .resolve_hidden_up_link()
@@ -189,6 +192,9 @@ fn display_plan_at(metadata: ValueRef<'_>, depth: usize) -> Result<DisplayPlan, 
 }
 
 fn render(plan: &DisplayPlan, value: ValueRef<'_>, output: &mut String) -> Result<(), NativeError> {
+    let value = value
+        .unwrap_declared()
+        .ok_or_else(|| NativeError::new("Display received an invalid declared value"))?;
     match plan {
         DisplayPlan::String => output.push_str(
             value

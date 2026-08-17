@@ -1649,8 +1649,7 @@ mod tests {
             .unwrap();
         let node_type = node.ty.value.unwrap();
         let shown = snapshot.types().display(node_type).unwrap();
-        assert!(shown.contains("children: Array<"), "{shown}");
-        assert!(shown.contains("Node"), "{shown}");
+        assert_eq!(shown, "TypeOf(Node)");
         assert_eq!(
             snapshot.type_at(Location::new(
                 node.location.source,

@@ -1,6 +1,6 @@
 # RFC 0238: Recursive declared component sealing
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #85
 - Depends on: RFC 0034, RFC 0035, RFC 0157, RFC 0235, RFC 0237
 

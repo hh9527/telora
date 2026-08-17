@@ -303,7 +303,7 @@ fn call_cascade(record: &Value) -> bool {
 fn recursive_type_metadata_does_not_add_recovery_errors() {
     let cwd = fixture();
     let source = r#"type CallExpr = struct { args: Array(Expr) };
-type Expr = enum { Call: CallExpr, Text: String };
+type Expr = enum { 'Call(CallExpr), 'Text(String) };
 def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
 let failed = reject(1);
 export let output = "unreachable";"#;
@@ -351,7 +351,7 @@ fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
     fs::write(
         cwd.join("src/recursive.telora"),
         r#"type CallExpr = struct { args: Array(Expr) };
-type Expr = enum { Call: CallExpr, Text: String };
+type Expr = enum { 'Call(CallExpr), 'Text(String) };
 export { CallExpr, Expr };"#,
     )
     .unwrap();

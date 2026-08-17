@@ -315,6 +315,18 @@ impl<'a> ValueRef<'a> {
         ))
     }
 
+    pub(crate) fn declared_type_body(self) -> Option<ValueRef<'a>> {
+        self.declared_type_parts().map(|(_, _, body)| body)
+    }
+
+    pub(crate) fn unwrap_declared(self) -> Option<ValueRef<'a>> {
+        let value = self.view.unwrap_declared(self.value).ok()?;
+        Some(ValueRef {
+            value,
+            view: self.view,
+        })
+    }
+
     pub(crate) fn declared_value_parts(self) -> Option<(ValueRef<'a>, ValueRef<'a>)> {
         let RuntimeValue::Declared(handle) = self.value.value else {
             return None;

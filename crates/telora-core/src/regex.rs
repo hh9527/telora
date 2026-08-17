@@ -149,6 +149,9 @@ pub(crate) fn native_is_match(context: &mut CallContext<'_, '_>) -> Result<(), N
 fn stripped_metadata(
     mut metadata: crate::ValueRef<'_>,
 ) -> Result<crate::ValueRef<'_>, NativeError> {
+    if let Some(body) = metadata.declared_type_body() {
+        metadata = body;
+    }
     if metadata.is_hidden_up_link() {
         metadata = metadata
             .resolve_hidden_up_link()
@@ -187,6 +190,9 @@ fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> 
 fn attached_regex(metadata: crate::ValueRef<'_>) -> Result<Option<CompiledRegex>, NativeError> {
     let mut metadata = metadata;
     loop {
+        if let Some(body) = metadata.declared_type_body() {
+            metadata = body;
+        }
         if metadata.is_hidden_up_link() {
             metadata = metadata
                 .resolve_hidden_up_link()

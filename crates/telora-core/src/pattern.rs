@@ -58,6 +58,9 @@ pub(crate) fn first_refutable_location(
     pattern: &Pattern,
     matched: &TypeDescriptor,
 ) -> Option<Location> {
+    if let TypeDescriptor::Declared(declared) = matched {
+        return first_refutable_location(pattern, declared.body());
+    }
     if analyze_pattern(pattern, matched).irrefutable {
         return None;
     }
@@ -109,6 +112,9 @@ pub(crate) fn first_incompatible_location(
     pattern: &Pattern,
     matched: &TypeDescriptor,
 ) -> Option<Location> {
+    if let TypeDescriptor::Declared(declared) = matched {
+        return first_incompatible_location(pattern, declared.body());
+    }
     if analyze_pattern(pattern, matched).compatibility != PatternCompatibility::Incompatible {
         return None;
     }
@@ -180,6 +186,13 @@ impl PatternShape {
 
 impl AnalysisContext {
     fn analyze(&mut self, pattern: &Pattern, matched: &TypeDescriptor) -> PatternShape {
+        if !matches!(
+            pattern.value,
+            PatternKind::Wildcard | PatternKind::Binding(_)
+        ) && let TypeDescriptor::Declared(declared) = matched
+        {
+            return self.analyze(pattern, declared.body());
+        }
         match &pattern.value {
             PatternKind::Wildcard => self.catch_all(matched),
             PatternKind::Binding(name) => {

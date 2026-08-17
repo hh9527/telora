@@ -6970,7 +6970,7 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "./families.telora" {Box};
                type Branch = struct {children: Array(Tree)};
-               type Tree = enum {Leaf: Int, Branch: Branch};
+               type Tree = enum {'Leaf(Int), 'Branch(Branch)};
                type TreeBox = Box(Tree);
                def identity: Fn(TreeBox) -> TreeBox = fn(value) { value };
                identity({value: 'Branch({children: ['Leaf(1)]})})"#,
@@ -6994,8 +6994,8 @@ unchanged", "|"),
     fn imported_families_preserve_provider_recursive_fields_regardless_of_declaration_order() {
         let recursive_orders = [
             r#"type CallExpr = struct {name: String, args: Array(Expr)};
-               type Expr = enum {Literal: Literal, Column: ColumnRef, Call: CallExpr};"#,
-            r#"type Expr = enum {Literal: Literal, Column: ColumnRef, Call: CallExpr};
+               type Expr = enum {'Literal(Literal), 'Column(ColumnRef), 'Call(CallExpr)};"#,
+            r#"type Expr = enum {'Literal(Literal), 'Column(ColumnRef), 'Call(CallExpr)};
                type CallExpr = struct {name: String, args: Array(Expr)};"#,
         ];
         let imports = [
@@ -7027,9 +7027,9 @@ unchanged", "|"),
                     .replace("$RECURSIVE_TYPES", recursive_types);
                 fs::write(directory.join("types.telora"), provider).unwrap();
                 let consumer = r#"$IMPORT
-                   type Id = enum {Name: 'None};
+                   type Id = enum {'Name};
                    type Output = struct {value: String};
-                   type Input = enum {All: 'None};
+                   type Input = enum {'All};
                    def column: Fn(String, String) -> $EXPR = fn(alias, name) {
                        'Column({alias: alias, column: name})
                    };
@@ -7074,7 +7074,7 @@ unchanged", "|"),
         fs::write(
             directory.join("types.telora"),
             r#"type Call = struct {args: Array(Expr)};
-               type Expr = enum {Literal: Int, Call: Call};
+               type Expr = enum {'Literal(Int), 'Call(Call)};
                type Family(A) = struct {expr: Expr, value: A};
                export {Expr, Family};"#,
         )
@@ -7118,7 +7118,7 @@ unchanged", "|"),
         fs::write(
             directory.join("expr.telora"),
             r#"type CallExpr = struct {name: String, args: Array(Expr)};
-               type Expr = enum {Literal: Int, Call: CallExpr};
+               type Expr = enum {'Literal(Int), 'Call(CallExpr)};
                export {Expr};"#,
         )
         .unwrap();
@@ -7186,7 +7186,7 @@ unchanged", "|"),
         fs::write(
             directory.join("alias.telora"),
             r#"import "./provider.telora" {Box};
-               type Local = enum {A: 'None};
+               type Local = enum {'A};
                type LocalBox = Box(Local);
                export {LocalBox, Local};"#,
         )
@@ -7254,9 +7254,9 @@ unchanged", "|"),
         fs::write(
             directory.join("domain.telora"),
             r#"import "./factory.telora" {Model, make_creator, make_composed_creator};
-               type Subject = enum {Order: 'None};
+               type Subject = enum {'Order};
                type CallExpr = struct {name: String, args: Array(Expr)};
-               type Expr = enum {Subject: Subject, Call: CallExpr};
+               type Expr = enum {'Subject(Subject), 'Call(CallExpr)};
                let model: Model(Subject, Expr) = {
                    subject: 'Order,
                    output: 'Call({name: "root", args: ['Subject('Order)]}),
@@ -7290,7 +7290,7 @@ unchanged", "|"),
             directory.join("origin.telora"),
             r#"type Box(A) = struct {value: A};
                type Branch = struct {children: Array(Tree)};
-               type Tree = enum {Leaf: Int, Branch: Branch};
+               type Tree = enum {'Leaf(Int), 'Branch(Branch)};
                export def identity: for(A) Fn(A) -> A = fn(value) { value };
                export {Box, Tree};"#,
         )
@@ -9778,21 +9778,22 @@ unchanged", "|"),
         let types_module =
             load_module(directory.join("Types.telora"), BTreeMap::new(), 100_000).unwrap();
         let node = types_module.analysis.declared_types["Node"];
-        let crate::TypeNode::Struct(fields) = types_module.analysis.types.node(node) else {
-            panic!("Node must be a Struct in the authoritative type graph");
+        let crate::TypeNode::Declared { id, body, .. } = types_module.analysis.types.node(node)
+        else {
+            panic!("Node must be a declared Type in the authoritative type graph");
+        };
+        let crate::TypeNode::Struct(fields) = types_module.analysis.types.node(*body) else {
+            panic!("Node body must be a Struct in the authoritative type graph");
         };
         let crate::TypeNode::Array(children) = types_module.analysis.types.node(fields["children"])
         else {
             panic!("Node.children must be an Array");
         };
-        assert_eq!(
-            *children, node,
-            "the recursive edge must retain TypeId identity"
-        );
-        assert_eq!(
-            types_module.analysis.display(node),
-            "{children: Array<Node>, value: Int}"
-        );
+        assert!(matches!(
+            types_module.analysis.types.node(*children),
+            crate::TypeNode::Declared { id: child_id, .. } if child_id == id
+        ));
+        assert_eq!(types_module.analysis.display(node), "Node");
         assert!(types_module.analysis.types.is_assignable(node, node));
 
         fs::write(
@@ -9859,11 +9860,11 @@ unchanged", "|"),
         )
         .unwrap();
         let leak = load_module(directory.join("leak.telora"), BTreeMap::new(), 100_000).unwrap();
+        let leak_error = leak.execute(100_000).unwrap_err();
         assert!(
-            leak.execute(100_000)
-                .unwrap_err()
-                .message
-                .contains("internal up-link")
+            leak_error.message.contains("cannot encode Type"),
+            "{}",
+            leak_error.message
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -9974,13 +9975,13 @@ unchanged", "|"),
             directory.join("types.telora"),
             r#"type IntValue = struct {value: Int};
                type StringValue = struct {value: String};
-               type Val = enum {Int: IntValue, Str: StringValue};
+               type Val = enum {'Int(IntValue), 'Str(StringValue)};
                type BinaryNode = struct {left: Expr, right: Expr};
                type ColumnRef = struct {alias: String, column: String};
                type Expr = enum {
-                   Value: Val,
-                   Add: BinaryNode,
-                   Column: ColumnRef,
+                   'Value(Val),
+                   'Add(BinaryNode),
+                   'Column(ColumnRef),
                };
                type Mapping = struct {predicate: Expr};
                type Relation(M) = struct {mapping: M};
@@ -9997,7 +9998,7 @@ unchanged", "|"),
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               type Entity = enum {Order: 'None};
+               type Entity = enum {'Order};
                type Use = types.RelationUse(Entity);
                let relation: Use = {
                    entity: 'Order,
@@ -10031,7 +10032,7 @@ unchanged", "|"),
             directory.join("types.telora"),
             r#"import "std/codec" as codec;
                type Binary = struct {left: Expr, right: Expr};
-               type Expr = enum {Lit: Int, Add: Binary};
+               type Expr = enum {'Lit(Int), 'Add(Binary)};
                type Payload(A, B, C, D, E, F, G) = struct {
                    a: A, b: B, c: C, d: D, e: E, f: F, g: G,
                };
@@ -10097,7 +10098,7 @@ unchanged", "|"),
         fs::write(
             &main,
             r#"type CallExpr = struct { args: Array(Expr) };
-type Expr = enum { Call: CallExpr, Text: String };
+type Expr = enum { 'Call(CallExpr), 'Text(String) };
 export { CallExpr, Expr };"#,
         )
         .unwrap();
@@ -10120,7 +10121,7 @@ export { CallExpr, Expr };"#,
         fs::write(
             directory.join("expr.telora"),
             r#"type Binary = struct {left: Expr, right: Expr};
-               type Expr = enum {Lit: Int, Add: Binary};
+               type Expr = enum {'Lit(Int), 'Add(Binary)};
                def lit: Fn(Int) -> Expr = fn(value) { 'Lit(value) };
                def add: Fn(Expr, Expr) -> Expr = fn(left, right) {
                    'Add({left, right})
@@ -11305,7 +11306,7 @@ export let output = "unreachable";"#
             &main,
             r#"type CallExpr = struct {args: Array(Expr)};
 type BinExpr = struct {left: Expr, right: Expr};
-type Expr = enum {Call: CallExpr, Bin: BinExpr, Text: String};
+type Expr = enum {'Call(CallExpr), 'Bin(BinExpr), 'Text(String)};
 type Plan(A) = struct {root: Expr, value: A};
 def render: Fn(Expr) -> String = fn(expr) {
     match expr {
