@@ -99,11 +99,12 @@ pub struct NativeType {
     qualified_name: Arc<str>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct DeclaredTypeId {
     module: Arc<str>,
     declaration: u32,
-    arguments: Arc<[String]>,
+    arguments: Arc<[crate::types::TypeDescriptor]>,
+    argument_keys: Arc<[String]>,
 }
 
 impl DeclaredTypeId {
@@ -112,6 +113,7 @@ impl DeclaredTypeId {
             module: module.into(),
             declaration,
             arguments: Arc::new([]),
+            argument_keys: Arc::new([]),
         }
     }
 
@@ -123,9 +125,10 @@ impl DeclaredTypeId {
         Self {
             module: module.into(),
             declaration,
-            arguments: arguments
+            arguments: arguments.into(),
+            argument_keys: arguments
                 .iter()
-                .map(|argument| format!("{argument:?}"))
+                .map(crate::types::TypeDescriptor::identity_key)
                 .collect::<Vec<_>>()
                 .into(),
         }
@@ -135,8 +138,59 @@ impl DeclaredTypeId {
         Self::applied(Arc::clone(&self.module), self.declaration, arguments)
     }
 
-    pub(crate) fn argument_count(&self) -> usize {
-        self.arguments.len()
+    pub(crate) fn arguments(&self) -> &[crate::types::TypeDescriptor] {
+        &self.arguments
+    }
+
+    pub(crate) fn has_same_head(&self, other: &Self) -> bool {
+        self.module == other.module && self.declaration == other.declaration
+    }
+
+    pub(crate) fn identity_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            self.module.len(),
+            self.module,
+            self.declaration,
+            self.argument_keys
+                .iter()
+                .map(|argument| format!("{}:{argument}", argument.len()))
+                .collect::<String>()
+        )
+    }
+}
+
+impl PartialEq for DeclaredTypeId {
+    fn eq(&self, other: &Self) -> bool {
+        self.module == other.module
+            && self.declaration == other.declaration
+            && self.argument_keys == other.argument_keys
+    }
+}
+
+impl Eq for DeclaredTypeId {}
+
+impl std::hash::Hash for DeclaredTypeId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.module.hash(state);
+        self.declaration.hash(state);
+        self.argument_keys.hash(state);
+    }
+}
+
+impl PartialOrd for DeclaredTypeId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DeclaredTypeId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.module, self.declaration, &self.argument_keys).cmp(&(
+            &other.module,
+            other.declaration,
+            &other.argument_keys,
+        ))
     }
 }
 

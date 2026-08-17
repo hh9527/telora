@@ -731,6 +731,14 @@ impl<'a> Compiler<'a> {
                                 _ => false,
                             };
                             let register = if has_named_metadata {
+                                let template = match &value {
+                                    Value::Func(closure) => closure
+                                        .upvalues()
+                                        .first()
+                                        .expect("type family closure carries its template")
+                                        .clone(),
+                                    _ => unreachable!("type family value is callable"),
+                                };
                                 let body = located(
                                     BlockKind {
                                         bindings: Vec::new(),
@@ -738,10 +746,11 @@ impl<'a> Compiler<'a> {
                                     },
                                     binding.value.value.location,
                                 );
-                                self.compile_closure(
+                                self.compile_closure_with_declared_family(
                                     &binding.value.type_parameters,
                                     &body,
                                     binding.location,
+                                    Some(template),
                                 )?
                             } else {
                                 self.load_constant(value, binding.location)
@@ -1348,6 +1357,16 @@ impl<'a> Compiler<'a> {
         body: &Block,
         location: Location,
     ) -> Result<RegisterId, FrontendError> {
+        self.compile_closure_with_declared_family(parameters, body, location, None)
+    }
+
+    fn compile_closure_with_declared_family(
+        &mut self,
+        parameters: &[Identifier],
+        body: &Block,
+        location: Location,
+        declared_template: Option<Value>,
+    ) -> Result<RegisterId, FrontendError> {
         let mut bound = parameters
             .iter()
             .map(|parameter| parameter.value.clone())
@@ -1413,7 +1432,49 @@ impl<'a> Compiler<'a> {
             &captured_definitions,
             &self.declared_value_owners,
         )?;
-        nested.compile_tail_block(body)?;
+        if let Some(template) = declared_template {
+            let structural = nested.compile_block(body)?;
+            let native = Value::Func(std::sync::Arc::new(Closure::native(NativeFunction::new(
+                "type-family.declare",
+                parameters.len() + 2,
+                crate::types::native_declare_type_family,
+            ))));
+            let native = nested.load_constant(native, location);
+            let template = nested.load_constant(template, location);
+            let base = nested.allocate();
+            nested.emit(
+                Operation::Move {
+                    dst: base,
+                    src: native,
+                },
+                location,
+            );
+            for source in std::iter::once(template)
+                .chain(std::iter::once(structural))
+                .chain((0..parameters.len()).map(|index| RegisterId(index as u32)))
+            {
+                let destination = nested.allocate();
+                nested.emit(
+                    Operation::Move {
+                        dst: destination,
+                        src: source,
+                    },
+                    location,
+                );
+            }
+            nested.emit(
+                Operation::Call {
+                    base,
+                    argument_count: u32::try_from(parameters.len() + 2).map_err(|_| {
+                        frontend_error(self.source_name, "too many type parameters")
+                    })?,
+                },
+                location,
+            );
+            nested.emit(Operation::Return { src: base }, location);
+        } else {
+            nested.compile_tail_block(body)?;
+        }
         let function = Box::new(nested.finish_lir());
 
         let dst = self.allocate();

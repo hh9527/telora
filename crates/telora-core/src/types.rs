@@ -772,6 +772,13 @@ pub(crate) struct TypeFamilyTemplate {
 }
 
 fn rename_named_type_metadata(metadata: &Value, names: &HashMap<String, String>) -> Value {
+    if let Value::DeclaredType(declared) = metadata {
+        return Value::DeclaredType(crate::DeclaredType {
+            id: declared.id().clone(),
+            name: Arc::from(declared.name()),
+            body: Box::new(rename_named_type_metadata(declared.body(), names)),
+        });
+    }
     let Value::Dict(fields) = metadata else {
         return metadata.clone();
     };
@@ -912,6 +919,79 @@ impl DeclaredTypeDescriptor {
 }
 
 impl TypeDescriptor {
+    pub(crate) fn identity_key(&self) -> String {
+        fn sequence<'a>(tag: &str, items: impl IntoIterator<Item = &'a TypeDescriptor>) -> String {
+            let items = items
+                .into_iter()
+                .map(TypeDescriptor::identity_key)
+                .map(|item| format!("{}:{item}", item.len()))
+                .collect::<String>();
+            format!("{tag}{}:{items}", items.len())
+        }
+
+        match self {
+            Self::Bound(parameter) => format!("b{}", parameter.0),
+            Self::Named(name) => format!("n{}:{name}", name.len()),
+            Self::Declared(declared) => format!("d{}", declared.id.identity_key()),
+            Self::Inference(variable) => format!("i{}", variable.0),
+            Self::Any => "a".into(),
+            Self::Never => "v".into(),
+            Self::Type => "t".into(),
+            Self::Dyn => "y".into(),
+            Self::TypeOf(instance) => sequence("o", [instance.as_ref()]),
+            Self::Int => "I".into(),
+            Self::Float => "F".into(),
+            Self::String => "S".into(),
+            Self::Bytes => "B".into(),
+            Self::Opaque(native_type) => {
+                let name = native_type.qualified_name();
+                format!("p{}:{name}", name.len())
+            }
+            Self::Atom(atom) => {
+                let name = atom.name();
+                format!("m{}:{name}", name.len())
+            }
+            Self::Array(item) => sequence("r", [item.as_ref()]),
+            Self::Dict(item) => sequence("c", [item.as_ref()]),
+            Self::Tagged { tag, payload } => {
+                let name = tag.name();
+                format!("g{}:{name}{}", name.len(), sequence("", [payload.as_ref()]))
+            }
+            Self::Tuple(items) => sequence("u", items),
+            Self::Struct(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|(name, field)| {
+                        let field = field.identity_key();
+                        format!("{}:{name}{}:{field}", name.len(), field.len())
+                    })
+                    .collect::<String>();
+                format!("s{}:{fields}", fields.len())
+            }
+            Self::Enum(variants) => {
+                let variants = variants
+                    .iter()
+                    .map(|(name, payload)| {
+                        let payload = payload
+                            .as_deref()
+                            .map(TypeDescriptor::identity_key)
+                            .unwrap_or_default();
+                        format!("{}:{name}{}:{payload}", name.len(), payload.len())
+                    })
+                    .collect::<String>();
+                format!("e{}:{variants}", variants.len())
+            }
+            Self::Union(variants) => sequence("j", variants),
+            Self::Function { parameters, result } => {
+                format!(
+                    "f{}{}",
+                    sequence("", parameters),
+                    sequence("", [result.as_ref()])
+                )
+            }
+        }
+    }
+
     pub fn to_value(&self, vm: &mut Vm) -> Value {
         let entries = match self {
             Self::Bound(parameter) => vec![
@@ -3750,42 +3830,95 @@ pub(crate) fn type_family_value(family: &TypeFamilyTemplate) -> Value {
 }
 
 fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let template = context.export_value(context.upvalue(0)?)?;
-    let template_descriptor = TypeDescriptor::from_value(&template)
-        .map_err(|message| NativeError::new(format!("invalid type-family template: {message}")))?;
+    let template = context.upvalue(0)?;
     let arity = context
         .value(context.upvalue(1)?)?
         .as_int()
         .and_then(|arity| usize::try_from(arity).ok())
         .ok_or_else(|| NativeError::new("invalid type-family arity"))?;
-    let mut replacements = HashMap::with_capacity(arity);
+    let mut argument_registers = Vec::with_capacity(arity);
+    let mut argument_descriptors = Vec::with_capacity(arity);
     for index in 0..arity {
         let register = context.argument(index)?;
-        validate_native_type(context.value(register)?).map_err(|error| {
-            NativeError::new(format!(
-                "type-family argument {} is not valid TypeMetadata: {}",
-                index + 1,
-                error.message
-            ))
-        })?;
-        let parameter = TypeParameterId(
-            u32::try_from(index)
-                .map_err(|_| NativeError::new("type-family argument index exceeds u32"))?,
-        );
-        let argument = context.export_value(register)?;
-        let argument = TypeDescriptor::from_value(&argument).map_err(|message| {
+        let argument = native_type_argument_descriptor(context, register, index)?;
+        argument_registers.push(register);
+        argument_descriptors.push(argument);
+    }
+    let result = context.result();
+    context.instantiate_type_family(
+        result,
+        template,
+        &argument_registers,
+        &argument_descriptors,
+    )?;
+    context.mark_at_call_site(result)
+}
+
+pub(crate) fn native_declare_type_family(
+    context: &mut CallContext<'_, '_>,
+) -> Result<(), NativeError> {
+    let template = context.argument(0)?;
+    let body = context.argument(1)?;
+    let (head, name, _) = context
+        .value(template)?
+        .declared_type_parts()
+        .ok_or_else(|| NativeError::new("type-family declaration template is not declared"))?;
+    let head = head.clone();
+    let name = name.to_owned();
+    let arity = context.argument_count().saturating_sub(2);
+    let mut argument_registers = Vec::with_capacity(arity);
+    let mut argument_descriptors = Vec::with_capacity(arity);
+    for index in 0..arity {
+        let register = context.argument(index + 2)?;
+        let argument = native_type_argument_descriptor(context, register, index)?;
+        argument_registers.push(register);
+        argument_descriptors.push(argument);
+    }
+    let id = apply_declared_type_arguments(&head, &argument_descriptors);
+    context.make_declared_type_application(
+        context.result(),
+        id,
+        name,
+        body,
+        &argument_registers,
+    )?;
+    context.mark_at_call_site(context.result())
+}
+
+fn native_type_argument_descriptor(
+    context: &CallContext<'_, '_>,
+    register: RegisterId,
+    index: usize,
+) -> Result<TypeDescriptor, NativeError> {
+    validate_native_type(context.value(register)?).map_err(|error| {
+        NativeError::new(format!(
+            "type-family argument {} is not valid TypeMetadata: {}",
+            index + 1,
+            error.message
+        ))
+    })?;
+    let is_cyclic = |error: &NativeError| {
+        error
+            .message
+            .contains("cyclic heap values cannot cross the legacy Value boundary")
+    };
+    let value = match context.export_value(register) {
+        Ok(value) => Some(value),
+        Err(error) if is_cyclic(&error) => match context.export_type_identity(register) {
+            Ok(value) => Some(value),
+            Err(error) if is_cyclic(&error) => None,
+            Err(error) => return Err(error),
+        },
+        Err(error) => return Err(error),
+    };
+    value.map_or(Ok(TypeDescriptor::Any), |value| {
+        TypeDescriptor::from_value(&value).map_err(|message| {
             NativeError::new(format!(
                 "invalid type-family argument {}: {message}",
                 index + 1
             ))
-        })?;
-        replacements.insert(parameter, argument);
-    }
-    let descriptor = substitute_bound_parameters(&template_descriptor, &replacements);
-    let value = descriptor.to_value(&mut Vm::new());
-    let result = context.result();
-    context.set_value(result, &value)?;
-    context.mark_at_call_site(result)
+        })
+    })
 }
 
 fn optional_type_metadata_is_none(metadata: &Value) -> bool {
@@ -4696,7 +4829,16 @@ pub(crate) fn native_validate(context: &mut CallContext<'_, '_>) -> Result<(), N
     match validate_value_ref(&descriptor, context.value(value_register)?, "value") {
         Ok(()) => {
             context.set_atom(tag, "Ok")?;
-            context.copy(payload, value_register)?;
+            if matches!(descriptor, TypeDescriptor::Declared(_))
+                && context
+                    .value(value_register)?
+                    .declared_value_parts()
+                    .is_none()
+            {
+                context.make_declared_value(payload, type_register, value_register)?;
+            } else {
+                context.copy(payload, value_register)?;
+            }
         }
         Err(message) => {
             context.set_atom(tag, "Err")?;
@@ -4716,7 +4858,7 @@ pub(crate) fn native_validate(context: &mut CallContext<'_, '_>) -> Result<(), N
 }
 
 pub(crate) fn decode_native_type(value: ValueRef<'_>) -> Result<TypeDescriptor, NativeError> {
-    decode_type_ref(value, "Type").map_err(NativeError::new)
+    decode_type_ref_with(value, "Type", false).map_err(NativeError::new)
 }
 
 fn validate_native_type(value: ValueRef<'_>) -> Result<(), NativeError> {
@@ -4727,6 +4869,14 @@ fn validate_native_type(value: ValueRef<'_>) -> Result<(), NativeError> {
 }
 
 fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, String> {
+    decode_type_ref_with(value, path, false)
+}
+
+fn decode_type_ref_with(
+    value: ValueRef<'_>,
+    path: &str,
+    shallow_declared_types: bool,
+) -> Result<TypeDescriptor, String> {
     let value = value.resolve_hidden_up_link()?;
     if let Some(native_type) = value.as_native_type() {
         return Ok(TypeDescriptor::Opaque(native_type.clone()));
@@ -4735,7 +4885,11 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: id.clone(),
             name: name.to_owned(),
-            body: Box::new(decode_type_ref(body, path)?),
+            body: Box::new(if shallow_declared_types {
+                TypeDescriptor::Any
+            } else {
+                decode_type_ref_with(body, path, false)?
+            }),
         }));
     }
     let fields = value
@@ -4757,9 +4911,10 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
         if attributes.kind() != ValueKind::Dict {
             return Err(format!("{path}.attributes must be a Dict"));
         }
-        return decode_type_ref(
+        return decode_type_ref_with(
             value.dict_get("inner").expect("validated wrapper field"),
             path,
+            shallow_declared_types,
         );
     }
     let require = |expected: &[&str]| -> Result<(), String> {
@@ -4808,9 +4963,10 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
             let instance = value
                 .dict_get("instance")
                 .ok_or_else(|| format!("{path}.instance is missing"))?;
-            TypeDescriptor::TypeOf(Box::new(decode_type_ref(
+            TypeDescriptor::TypeOf(Box::new(decode_type_ref_with(
                 instance,
                 &format!("{path}.instance"),
+                shallow_declared_types,
             )?))
         }
         "Int" => {
@@ -4842,14 +4998,22 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
             let item = value
                 .dict_get("item")
                 .ok_or_else(|| format!("{path}.item is missing"))?;
-            TypeDescriptor::Array(Box::new(decode_type_ref(item, &format!("{path}.item"))?))
+            TypeDescriptor::Array(Box::new(decode_type_ref_with(
+                item,
+                &format!("{path}.item"),
+                shallow_declared_types,
+            )?))
         }
         "Dict" => {
             require(&["item", "kind"])?;
             let item = value
                 .dict_get("item")
                 .ok_or_else(|| format!("{path}.item is missing"))?;
-            TypeDescriptor::Dict(Box::new(decode_type_ref(item, &format!("{path}.item"))?))
+            TypeDescriptor::Dict(Box::new(decode_type_ref_with(
+                item,
+                &format!("{path}.item"),
+                shallow_declared_types,
+            )?))
         }
         "Tagged" => {
             require(&["kind", "payload", "tag"])?;
@@ -4862,7 +5026,11 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
                 .ok_or_else(|| format!("{path}.payload is missing"))?;
             TypeDescriptor::Tagged {
                 tag: atom_from_name(tag),
-                payload: Box::new(decode_type_ref(payload, &format!("{path}.payload"))?),
+                payload: Box::new(decode_type_ref_with(
+                    payload,
+                    &format!("{path}.payload"),
+                    shallow_declared_types,
+                )?),
             }
         }
         "Tuple" | "Union" => {
@@ -4880,9 +5048,10 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
             }
             let values = (0..sequence.sequence_len().expect("Array has a length"))
                 .map(|index| {
-                    decode_type_ref(
+                    decode_type_ref_with(
                         sequence.sequence_get(index).expect("valid Array index"),
                         &format!("{path}.{field}[{index}]"),
+                        shallow_declared_types,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -4910,7 +5079,11 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
                         let field = fields_value.dict_get(name).expect("Dict field exists");
                         Ok((
                             (*name).to_owned(),
-                            decode_type_ref(field, &format!("{path}.fields.{name}"))?,
+                            decode_type_ref_with(
+                                field,
+                                &format!("{path}.fields.{name}"),
+                                shallow_declared_types,
+                            )?,
                         ))
                     })
                     .collect::<Result<_, String>>()?,
@@ -4937,7 +5110,11 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
                         let payload = if inner.as_atom() == Some("None") {
                             None
                         } else {
-                            Some(Box::new(decode_type_ref(inner, &variant_path)?))
+                            Some(Box::new(decode_type_ref_with(
+                                inner,
+                                &variant_path,
+                                shallow_declared_types,
+                            )?))
                         };
                         Ok(((*name).to_owned(), payload))
                     })
@@ -4954,9 +5131,10 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
             }
             let parameters = (0..parameters.sequence_len().expect("Array has a length"))
                 .map(|index| {
-                    decode_type_ref(
+                    decode_type_ref_with(
                         parameters.sequence_get(index).expect("valid Array index"),
                         &format!("{path}.parameters[{index}]"),
+                        shallow_declared_types,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -4965,7 +5143,11 @@ fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, St
                 .ok_or_else(|| format!("{path}.result is missing"))?;
             TypeDescriptor::Function {
                 parameters,
-                result: Box::new(decode_type_ref(result, &format!("{path}.result"))?),
+                result: Box::new(decode_type_ref_with(
+                    result,
+                    &format!("{path}.result"),
+                    shallow_declared_types,
+                )?),
             }
         }
         _ => return Err(format!("{path}.kind has unknown value '{kind}")),
@@ -5002,16 +5184,17 @@ fn validate_value_ref(
 ) -> Result<(), String> {
     match descriptor {
         TypeDescriptor::Declared(expected) => {
-            let (owner, payload) = value
-                .declared_value_parts()
-                .ok_or_else(|| format!("{path} must carry declared type {}", expected.name))?;
-            let Some((actual, _, _)) = owner.declared_type_parts() else {
-                return Err(format!("{path} has an invalid declared owner"));
-            };
-            if actual != &expected.id {
-                return Err(format!("{path} has a different declared type identity"));
+            if let Some((owner, payload)) = value.declared_value_parts() {
+                let Some((actual, _, _)) = owner.declared_type_parts() else {
+                    return Err(format!("{path} has an invalid declared owner"));
+                };
+                if actual != &expected.id {
+                    return Err(format!("{path} has a different declared type identity"));
+                }
+                validate_value_ref(&expected.body, payload, path)
+            } else {
+                validate_value_ref(&expected.body, value, path)
             }
-            validate_value_ref(&expected.body, payload, path)
         }
         TypeDescriptor::Any => Ok(()),
         TypeDescriptor::Never => Err(format!("{path} cannot have type Never")),
@@ -6233,6 +6416,19 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Bound(parameter) => variables
                 .get(parameter)
                 .map_or_else(|| ty.clone(), |fresh| TypeDescriptor::Inference(*fresh)),
+            TypeDescriptor::Declared(declared) => {
+                let arguments = declared
+                    .id
+                    .arguments()
+                    .iter()
+                    .map(|argument| self.instantiate_with(argument, variables))
+                    .collect::<Vec<_>>();
+                TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                    id: declared.id.reapply(&arguments),
+                    name: declared.name.clone(),
+                    body: Box::new(self.instantiate_with(&declared.body, variables)),
+                })
+            }
             TypeDescriptor::Array(item) => {
                 TypeDescriptor::Array(Box::new(self.instantiate_with(item, variables)))
             }
@@ -6294,6 +6490,19 @@ impl<'a> GenericInference<'a> {
                 .substitutions
                 .get(variable)
                 .map_or_else(|| ty.clone(), |ty| self.resolve(ty)),
+            TypeDescriptor::Declared(declared) => {
+                let arguments = declared
+                    .id
+                    .arguments()
+                    .iter()
+                    .map(|argument| self.resolve(argument))
+                    .collect::<Vec<_>>();
+                TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                    id: declared.id.reapply(&arguments),
+                    name: declared.name.clone(),
+                    body: Box::new(self.resolve(&declared.body)),
+                })
+            }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
             TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(self.resolve(item))),
             TypeDescriptor::TypeOf(instance) => {
@@ -6346,6 +6555,14 @@ impl<'a> GenericInference<'a> {
     fn occurs(&self, variable: InferenceVariableId, ty: &TypeDescriptor) -> bool {
         match self.resolve(ty) {
             TypeDescriptor::Inference(candidate) => candidate == variable,
+            TypeDescriptor::Declared(declared) => {
+                declared
+                    .id
+                    .arguments()
+                    .iter()
+                    .any(|argument| self.occurs(variable, argument))
+                    || self.occurs(variable, &declared.body)
+            }
             TypeDescriptor::Array(item) => self.occurs(variable, &item),
             TypeDescriptor::Dict(item) => self.occurs(variable, &item),
             TypeDescriptor::TypeOf(instance) => self.occurs(variable, &instance),
@@ -6571,6 +6788,15 @@ impl<'a> GenericInference<'a> {
             (TypeDescriptor::TypeOf(_), TypeDescriptor::Type) => Ok(()),
             (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
                 self.unify(left, right)
+            }
+            (TypeDescriptor::Declared(left), TypeDescriptor::Declared(right))
+                if left.id.has_same_head(&right.id)
+                    && left.id.arguments().len() == right.id.arguments().len() =>
+            {
+                for (left, right) in left.id.arguments().iter().zip(right.id.arguments()) {
+                    self.unify(left, right)?;
+                }
+                Ok(())
             }
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right)) => self.unify(left, right),
             (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => self.unify(left, right),
@@ -8297,6 +8523,9 @@ fn collect_inference_variables(
             collect_inference_variables(item, variables);
         }
         TypeDescriptor::Declared(declared) => {
+            for argument in declared.id.arguments() {
+                collect_inference_variables(argument, variables);
+            }
             collect_inference_variables(&declared.body, variables);
         }
         TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
@@ -8344,11 +8573,19 @@ fn replace_inference_variables(
             || descriptor.clone(),
             |fresh| TypeDescriptor::Inference(*fresh),
         ),
-        TypeDescriptor::Declared(declared) => TypeDescriptor::Declared(DeclaredTypeDescriptor {
-            id: declared.id.clone(),
-            name: declared.name.clone(),
-            body: Box::new(replace_inference_variables(&declared.body, replacements)),
-        }),
+        TypeDescriptor::Declared(declared) => {
+            let arguments = declared
+                .id
+                .arguments()
+                .iter()
+                .map(|argument| replace_inference_variables(argument, replacements))
+                .collect::<Vec<_>>();
+            TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                id: declared.id.reapply(&arguments),
+                name: declared.name.clone(),
+                body: Box::new(replace_inference_variables(&declared.body, replacements)),
+            })
+        }
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(replace_inference_variables(item, replacements)))
         }
@@ -8430,11 +8667,19 @@ fn rename_named_types(
             .cloned()
             .map(TypeDescriptor::Named)
             .unwrap_or_else(|| descriptor.clone()),
-        TypeDescriptor::Declared(declared) => TypeDescriptor::Declared(DeclaredTypeDescriptor {
-            id: declared.id.clone(),
-            name: declared.name.clone(),
-            body: Box::new(rename_named_types(&declared.body, names)),
-        }),
+        TypeDescriptor::Declared(declared) => {
+            let arguments = declared
+                .id
+                .arguments()
+                .iter()
+                .map(|argument| rename_named_types(argument, names))
+                .collect::<Vec<_>>();
+            TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                id: declared.id.reapply(&arguments),
+                name: declared.name.clone(),
+                body: Box::new(rename_named_types(&declared.body, names)),
+            })
+        }
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(rename_named_types(item, names)))
         }
@@ -8501,7 +8746,12 @@ fn collect_named_names(descriptor: &TypeDescriptor, names: &mut HashMap<String, 
         TypeDescriptor::Named(name) => {
             names.insert(name.clone(), display_named_type(name).to_owned());
         }
-        TypeDescriptor::Declared(declared) => collect_named_names(&declared.body, names),
+        TypeDescriptor::Declared(declared) => {
+            for argument in declared.id.arguments() {
+                collect_named_names(argument, names);
+            }
+            collect_named_names(&declared.body, names);
+        }
         TypeDescriptor::Array(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
@@ -8545,6 +8795,9 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
             collect_bound_parameters(item, parameters);
         }
         TypeDescriptor::Declared(declared) => {
+            for argument in declared.id.arguments() {
+                collect_bound_parameters(argument, parameters);
+            }
             collect_bound_parameters(&declared.body, parameters);
         }
         TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
@@ -8621,6 +8874,19 @@ fn bind_inference_variables(
             || descriptor.clone(),
             |parameter| TypeDescriptor::Bound(*parameter),
         ),
+        TypeDescriptor::Declared(declared) => {
+            let arguments = declared
+                .id
+                .arguments()
+                .iter()
+                .map(|argument| bind_inference_variables(argument, replacements))
+                .collect::<Vec<_>>();
+            TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                id: declared.id.reapply(&arguments),
+                name: declared.name.clone(),
+                body: Box::new(bind_inference_variables(&declared.body, replacements)),
+            })
+        }
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(bind_inference_variables(item, replacements)))
         }
@@ -8690,6 +8956,10 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
     match ty {
         TypeDescriptor::Inference(_) => true,
         TypeDescriptor::Bound(_) => false,
+        TypeDescriptor::Declared(declared) => {
+            declared.id.arguments().iter().any(contains_type_variable)
+                || contains_type_variable(&declared.body)
+        }
         TypeDescriptor::Array(item) => contains_type_variable(item),
         TypeDescriptor::Dict(item) => contains_type_variable(item),
         TypeDescriptor::TypeOf(instance) => contains_type_variable(instance),
@@ -8712,6 +8982,10 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
 pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Named(_) => true,
+        TypeDescriptor::Declared(declared) => {
+            declared.id.arguments().iter().any(contains_named_type)
+                || contains_named_type(&declared.body)
+        }
         TypeDescriptor::Array(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
@@ -9592,14 +9866,11 @@ fn substitute_bound_parameters(
             .unwrap_or_else(|| descriptor.clone()),
         TypeDescriptor::Declared(declared) => {
             let body = substitute_bound_parameters(&declared.body, replacements);
-            let arguments = declared.id.argument_count();
-            let arguments = (0..arguments)
-                .map(|index| {
-                    replacements
-                        .get(&TypeParameterId(index as u32))
-                        .cloned()
-                        .unwrap_or(TypeDescriptor::Any)
-                })
+            let arguments = declared
+                .id
+                .arguments()
+                .iter()
+                .map(|argument| substitute_bound_parameters(argument, replacements))
                 .collect::<Vec<_>>();
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
@@ -9667,9 +9938,44 @@ fn substitute_bound_parameters(
     }
 }
 
+pub(crate) fn apply_declared_type_arguments(
+    id: &crate::value::DeclaredTypeId,
+    arguments: &[TypeDescriptor],
+) -> crate::value::DeclaredTypeId {
+    let replacements = arguments
+        .iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            (
+                TypeParameterId(u32::try_from(index).expect("type family arity exceeds u32")),
+                argument.clone(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let applied = id
+        .arguments()
+        .iter()
+        .map(|argument| substitute_bound_parameters(argument, &replacements))
+        .collect::<Vec<_>>();
+    id.reapply(&applied)
+}
+
 fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
     match descriptor {
         TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) => TypeDescriptor::Any,
+        TypeDescriptor::Declared(declared) => {
+            let arguments = declared
+                .id
+                .arguments()
+                .iter()
+                .map(erase_type_variables)
+                .collect::<Vec<_>>();
+            TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                id: declared.id.reapply(&arguments),
+                name: declared.name.clone(),
+                body: Box::new(erase_type_variables(&declared.body)),
+            })
+        }
         TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(erase_type_variables(item))),
         TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(erase_type_variables(item))),
         TypeDescriptor::TypeOf(instance) => {
@@ -12503,13 +12809,49 @@ mod tests {
             .expect("Box definition");
         assert_eq!(
             analysis.definition_schemes[&box_definition.id].display_name(),
-            "for(A) Fn(TypeOf(A)) -> TypeOf({value: A})"
+            "for(A) Fn(TypeOf(A)) -> TypeOf(Box)"
         );
-        assert_eq!(
-            analysis.display(analysis.declared_types["IntBox"]),
-            "{value: Int}"
+        assert_eq!(analysis.display(analysis.declared_types["IntBox"]), "Box");
+        assert_eq!(analysis.display(analysis.result_type), "Box");
+    }
+
+    #[test]
+    fn declared_family_applications_use_head_and_argument_identity() {
+        let analysis = analyze_source(
+            "family-identities.telora",
+            "type Box(A) = struct {value: A};\
+             type Other(A) = struct {value: A};\
+             type Phantom(A) = struct {value: Int};\
+             type Maybe(A) = enum {'None, 'Some(A)};\
+             type IntBox = Box(Int);\
+             type IntBoxAlias = Box(Int);\
+             type Text = Box(String);\
+             type EqualShape = Other(Int);\
+             type PhantomInt = Phantom(Int);\
+             type PhantomText = Phantom(String);\
+             type Nested = Box(Maybe(Int));\
+             type Optional = Maybe(Int);\
+             0",
+        )
+        .unwrap();
+        let declared_id = |name: &str| {
+            let TypeNode::Declared { id, .. } = analysis.types.node(analysis.declared_types[name])
+            else {
+                panic!("{name} must be a declared family application")
+            };
+            id
+        };
+
+        assert_eq!(declared_id("IntBox"), declared_id("IntBoxAlias"));
+        assert_ne!(declared_id("IntBox"), declared_id("Text"));
+        assert_ne!(declared_id("IntBox"), declared_id("EqualShape"));
+        assert_ne!(declared_id("PhantomInt"), declared_id("PhantomText"));
+        assert_eq!(declared_id("Nested").arguments().len(), 1);
+        assert_eq!(declared_id("Optional").arguments().len(), 1);
+        assert_ne!(
+            declared_id("Nested").identity_key(),
+            declared_id("Optional").identity_key()
         );
-        assert_eq!(analysis.display(analysis.result_type), "{value: Int}");
     }
 
     #[test]
@@ -12697,10 +13039,15 @@ mod tests {
              Response",
         )
         .unwrap();
-        assert_eq!(
-            analysis.display(analysis.declared_types["Response"]),
-            "{error: enum {None, Some(Int)}, payload: enum {None, Some({value: String})}}"
-        );
+        let response = analysis.declared_types["Response"];
+        assert_eq!(analysis.display(response), "Envelope");
+        let TypeNode::Declared { body, .. } = analysis.types.node(response) else {
+            panic!("Response must retain its Envelope owner")
+        };
+        let body = analysis.types.display(*body);
+        assert!(body.contains("Box"), "{body}");
+        assert!(body.contains("Int"), "{body}");
+        assert!(!body.contains("Any"), "{body}");
     }
 
     #[test]
@@ -12811,9 +13158,14 @@ mod tests {
              identity({value: 'Leaf(1)})",
         )
         .unwrap();
-        let alias = analysis.display(analysis.declared_types["TreeBox"]);
-        assert!(alias.contains("Array<Tree>"), "{alias}");
-        assert!(!alias.contains("Any"), "{alias}");
+        let alias = analysis.declared_types["TreeBox"];
+        assert_eq!(analysis.display(alias), "Box");
+        let TypeNode::Declared { body, .. } = analysis.types.node(alias) else {
+            panic!("a family application must retain its declared owner")
+        };
+        let body = analysis.types.display(*body);
+        assert!(body.contains("Tree"), "{body}");
+        assert!(!body.contains("Any"), "{body}");
         assert!(!analysis.display(analysis.result_type).contains("Any"));
     }
 

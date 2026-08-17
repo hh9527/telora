@@ -1,6 +1,6 @@
 # RFC 0239: Acyclic parameterized declared families
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #85
 - Depends on: RFC 0218, RFC 0232, RFC 0235, RFC 0237, RFC 0238
 

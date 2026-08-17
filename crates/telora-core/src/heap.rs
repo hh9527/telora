@@ -180,6 +180,7 @@ impl Heap {
             id: crate::value::DeclaredTypeId::concrete(module, declaration),
             name: name.into(),
             body,
+            application_arguments: None,
         });
         Ok(PersistentValue(RichValue::unknown(
             RuntimeValue::DeclaredType(handle),
@@ -201,6 +202,54 @@ impl Heap {
                 *value = replacement.runtime().with_loc(value.loc());
             }
         };
+        let replacement_arguments = replacements
+            .iter()
+            .filter_map(|(candidate, replacement)| {
+                let candidate = runtime_object_handle(candidate.runtime().value)?;
+                let RuntimeValue::DeclaredType(handle) = replacement.runtime().value else {
+                    return None;
+                };
+                let Object::DeclaredType { id, name, body, .. } = self.object(handle).ok()? else {
+                    return None;
+                };
+                let id = id.clone();
+                let name = name.to_string();
+                let body = *body;
+                let body = HeapView {
+                    current: self,
+                    background: None,
+                }
+                .export_value(body)
+                .ok()
+                .and_then(|body| crate::types::TypeDescriptor::from_value(&body).ok())
+                .unwrap_or(crate::types::TypeDescriptor::Any);
+                Some((
+                    candidate,
+                    crate::types::TypeDescriptor::Declared(crate::types::DeclaredTypeDescriptor {
+                        id,
+                        name,
+                        body: Box::new(body),
+                    }),
+                ))
+            })
+            .collect::<HashMap<_, _>>();
+        let up_links = self
+            .objects
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, object)| {
+                let Object::UpLink { value: Some(value) } = object else {
+                    return None;
+                };
+                Some((
+                    Handle {
+                        storage: self.storage,
+                        slot: slot as u32,
+                    },
+                    value.value,
+                ))
+            })
+            .collect::<HashMap<_, _>>();
         for object in &mut self.objects {
             match object {
                 Object::Array(values) | Object::Tuple(values) => {
@@ -241,6 +290,28 @@ impl Heap {
                     for value in values.iter_mut() {
                         replace(value);
                     }
+                }
+                Object::DeclaredType {
+                    id,
+                    application_arguments: Some(arguments),
+                    ..
+                } => {
+                    let mut applied = id.arguments().to_vec();
+                    for (index, argument) in arguments.iter().enumerate() {
+                        let value = match argument.value {
+                            RuntimeValue::UpLink(handle) => {
+                                up_links.get(&handle).copied().unwrap_or(argument.value)
+                            }
+                            value => value,
+                        };
+                        if let Some(handle) = runtime_object_handle(value)
+                            && let Some(declared) = replacement_arguments.get(&handle)
+                            && let Some(target) = applied.get_mut(index)
+                        {
+                            *target = declared.clone();
+                        }
+                    }
+                    *id = id.reapply(&applied);
                 }
                 // The body edge owns the structural definition and must not become
                 // a self-reference to its own declaration wrapper.
@@ -291,6 +362,7 @@ pub(crate) enum Object {
         id: crate::value::DeclaredTypeId,
         name: Arc<str>,
         body: RichValue,
+        application_arguments: Option<Box<[RichValue]>>,
     },
     Declared {
         owner: RichValue,
@@ -696,6 +768,7 @@ impl Heap {
                     id: value.id().clone(),
                     name: Arc::from(value.name()),
                     body,
+                    application_arguments: None,
                 }))
             }
             Value::Declared(value) => {
@@ -806,6 +879,7 @@ impl Heap {
                         id: value.id().clone(),
                         name: Arc::from(value.name()),
                         body,
+                        application_arguments: None,
                     }))
                 }
                 Value::Declared(value) => {
@@ -1538,7 +1612,11 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn export_value(&self, value: RichValue) -> Result<Value, HeapError> {
-        self.export_value_with(value.value, &mut HashSet::new(), None)
+        self.export_value_with(value.value, &mut HashSet::new(), None, false)
+    }
+
+    pub(crate) fn export_type_identity(&self, value: RichValue) -> Result<Value, HeapError> {
+        self.export_value_with(value.value, &mut HashSet::new(), None, true)
     }
 
     fn export_value_projecting_up_links(
@@ -1546,7 +1624,7 @@ impl<'a> HeapView<'a> {
         value: RichValue,
         projection: &Value,
     ) -> Result<Value, HeapError> {
-        self.export_value_with(value.value, &mut HashSet::new(), Some(projection))
+        self.export_value_with(value.value, &mut HashSet::new(), Some(projection), false)
     }
 
     fn export_value_with(
@@ -1554,6 +1632,7 @@ impl<'a> HeapView<'a> {
         value: RuntimeValue,
         visiting: &mut HashSet<Handle>,
         up_link_projection: Option<&Value>,
+        shallow_declared_types: bool,
     ) -> Result<Value, HeapError> {
         Ok(match value {
             RuntimeValue::Failed(_) => {
@@ -1600,14 +1679,33 @@ impl<'a> HeapView<'a> {
                 value
             }
             RuntimeValue::DeclaredType(handle) => {
-                let Object::DeclaredType { id, name, body } =
+                if shallow_declared_types {
+                    let Object::DeclaredType { id, name, .. } = self.object(handle)? else {
+                        return Err(HeapError(
+                            "DeclaredType handle refers to another object kind",
+                        ));
+                    };
+                    let any_shape = Arc::new(Shape::from_sorted_fields(vec!["kind".into()]));
+                    let body = Value::Dict(Dict::new(any_shape, vec![Value::atom("Any")]));
+                    return Ok(Value::DeclaredType(DeclaredType {
+                        id: id.clone(),
+                        name: Arc::clone(name),
+                        body: Box::new(body),
+                    }));
+                }
+                let Object::DeclaredType { id, name, body, .. } =
                     self.enter_object(handle, visiting)?
                 else {
                     return Err(HeapError(
                         "DeclaredType handle refers to another object kind",
                     ));
                 };
-                let body = self.export_value_with(body.value, visiting, up_link_projection)?;
+                let body = self.export_value_with(
+                    body.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
                 let value = Value::DeclaredType(DeclaredType {
                     id: id.clone(),
                     name: Arc::clone(name),
@@ -1638,8 +1736,12 @@ impl<'a> HeapView<'a> {
                     name: Arc::clone(name),
                     body: Box::new(any_body),
                 };
-                let payload =
-                    self.export_value_with(payload.value, visiting, up_link_projection)?;
+                let payload = self.export_value_with(
+                    payload.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
                 visiting.remove(&handle);
                 Value::Declared(DeclaredValue::new(owner, payload))
             }
@@ -1653,7 +1755,14 @@ impl<'a> HeapView<'a> {
                 };
                 let values = values
                     .iter()
-                    .map(|value| self.export_value_with(value.value, visiting, up_link_projection))
+                    .map(|value| {
+                        self.export_value_with(
+                            value.value,
+                            visiting,
+                            up_link_projection,
+                            shallow_declared_types,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 visiting.remove(&handle);
                 if tuple {
@@ -1666,12 +1775,21 @@ impl<'a> HeapView<'a> {
                 let Object::Tagged { tag, payload } = self.enter_object(handle, visiting)? else {
                     return Err(HeapError("Tagged handle refers to another object kind"));
                 };
-                let tag = match self.export_value_with(tag.value, visiting, up_link_projection)? {
+                let tag = match self.export_value_with(
+                    tag.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )? {
                     Value::Atom(tag) => tag,
                     _ => return Err(HeapError("Tagged tag is not an Atom")),
                 };
-                let payload =
-                    self.export_value_with(payload.value, visiting, up_link_projection)?;
+                let payload = self.export_value_with(
+                    payload.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
                 visiting.remove(&handle);
                 Value::tagged(tag, payload)
             }
@@ -1686,7 +1804,14 @@ impl<'a> HeapView<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let values = values
                     .iter()
-                    .map(|value| self.export_value_with(value.value, visiting, up_link_projection))
+                    .map(|value| {
+                        self.export_value_with(
+                            value.value,
+                            visiting,
+                            up_link_projection,
+                            shallow_declared_types,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 visiting.remove(&handle);
                 let owner = self.heap(shape.storage)?;
@@ -1712,10 +1837,22 @@ impl<'a> HeapView<'a> {
                 else {
                     return Err(HeapError("Func handle refers to another object kind"));
                 };
-                let prototype = self.export_prototype(prototype, visiting, up_link_projection)?;
+                let prototype = self.export_prototype(
+                    prototype,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
                 let upvalues = upvalues
                     .iter()
-                    .map(|value| self.export_value_with(value.value, visiting, up_link_projection))
+                    .map(|value| {
+                        self.export_value_with(
+                            value.value,
+                            visiting,
+                            up_link_projection,
+                            shallow_declared_types,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 visiting.remove(&handle);
                 Value::Func(Arc::new(Closure::from_parts_with_identity(
@@ -1735,9 +1872,18 @@ impl<'a> HeapView<'a> {
                 else {
                     return Err(HeapError("Dyn handle refers to another object kind"));
                 };
-                let descriptor =
-                    self.export_value_with(descriptor.value, visiting, up_link_projection)?;
-                let value = self.export_value_with(value.value, visiting, up_link_projection)?;
+                let descriptor = self.export_value_with(
+                    descriptor.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
+                let value = self.export_value_with(
+                    value.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
                 visiting.remove(&handle);
                 Value::Dyn(Arc::new(DynValue::from_parts_with_metadata(
                     Arc::clone(identity),
@@ -1761,7 +1907,12 @@ impl<'a> HeapView<'a> {
                         "cyclic heap values cannot cross the legacy Value boundary",
                     ));
                 }
-                let value = self.export_value_with(linked.value, visiting, up_link_projection)?;
+                let value = self.export_value_with(
+                    linked.value,
+                    visiting,
+                    up_link_projection,
+                    shallow_declared_types,
+                )?;
                 visiting.remove(&handle);
                 value
             }
@@ -1823,6 +1974,7 @@ impl<'a> HeapView<'a> {
         prototype: &RuntimePrototype,
         visiting: &mut HashSet<Handle>,
         up_link_projection: Option<&Value>,
+        shallow_declared_types: bool,
     ) -> Result<Prototype, HeapError> {
         Ok(match prototype {
             RuntimePrototype::Native(function) => Prototype::Native(*function),
@@ -1838,7 +1990,14 @@ impl<'a> HeapView<'a> {
                 };
                 let values = values
                     .iter()
-                    .map(|value| self.export_value_with(value.value, visiting, up_link_projection))
+                    .map(|value| {
+                        self.export_value_with(
+                            value.value,
+                            visiting,
+                            up_link_projection,
+                            shallow_declared_types,
+                        )
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 let text = text
                     .iter()
@@ -1847,7 +2006,12 @@ impl<'a> HeapView<'a> {
                 let prototypes = prototypes
                     .iter()
                     .map(|prototype| {
-                        match self.export_prototype(prototype, visiting, up_link_projection)? {
+                        match self.export_prototype(
+                            prototype,
+                            visiting,
+                            up_link_projection,
+                            shallow_declared_types,
+                        )? {
                             Prototype::Bytecode(function) => Ok(function),
                             Prototype::Native(_) => Err(HeapError(
                                 "native prototype cannot occupy a bytecode link slot",
@@ -1880,6 +2044,142 @@ fn copy_roots(
     pending.validate()?;
     pending.commit(target);
     Ok(roots)
+}
+
+pub(crate) fn instantiate_type_family(
+    target: &mut Heap,
+    background: Option<&Heap>,
+    template: RichValue,
+    arguments: &[RichValue],
+    argument_descriptors: &[crate::types::TypeDescriptor],
+) -> Result<(RichValue, usize), HeapError> {
+    let (root, pending) = {
+        let source = HeapView {
+            current: target,
+            background,
+        };
+        let (replacements, forced_objects) = bound_type_replacements(&source, template, arguments)?;
+        let mut pending = PendingCopy::new_type_application(
+            target,
+            &source,
+            replacements,
+            forced_objects,
+            arguments,
+            argument_descriptors,
+        );
+        let root = pending.copy_value(target, &source, template)?;
+        pending.validate()?;
+        (root, pending)
+    };
+    let allocation_count = pending.objects.len();
+    pending.commit(target);
+    Ok((root, allocation_count))
+}
+
+fn bound_type_replacements(
+    source: &HeapView<'_>,
+    root: RichValue,
+    arguments: &[RichValue],
+) -> Result<(HashMap<Handle, RichValue>, HashSet<Handle>), HeapError> {
+    let mut replacements = HashMap::new();
+    let mut pending = vec![root];
+    let mut visited = HashSet::new();
+    let mut parents = HashMap::<Handle, Vec<Handle>>::new();
+    let mut forced_objects = HashSet::new();
+    while let Some(value) = pending.pop() {
+        let Some(handle) = runtime_object_handle(value.value) else {
+            continue;
+        };
+        if !visited.insert(handle) {
+            continue;
+        }
+        let object = source.object(handle)?;
+        if let Object::Dict { shape, values } = object {
+            let fields = source.shape(*shape)?;
+            let mut kind = None;
+            let mut parameter = None;
+            for (field, value) in fields.iter().zip(values.iter()) {
+                match source.text(*field)? {
+                    "kind" => kind = source.atom_text(*value)?,
+                    "parameter" => {
+                        if let RuntimeValue::Int(index) = value.value {
+                            parameter = usize::try_from(index).ok();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if kind == Some("Bound") {
+                let index = parameter.ok_or(HeapError("Bound metadata has no parameter index"))?;
+                let argument = arguments
+                    .get(index)
+                    .copied()
+                    .ok_or(HeapError("Bound metadata parameter is out of range"))?;
+                replacements.insert(handle, argument);
+                forced_objects.insert(handle);
+                continue;
+            }
+        }
+        let children = match object {
+            Object::DeclaredType { body, .. } => vec![*body],
+            Object::Declared { owner, payload } => vec![*owner, *payload],
+            Object::Array(values) | Object::Tuple(values) => values.to_vec(),
+            Object::Tagged { tag, payload } => vec![*tag, *payload],
+            Object::Dict { values, .. } => values.to_vec(),
+            Object::Closure { upvalues, .. } => upvalues.to_vec(),
+            Object::Dyn {
+                descriptor, value, ..
+            } => vec![*descriptor, *value],
+            Object::UpLink { value } => {
+                vec![value.ok_or(HeapError("uninitialized type metadata up-link"))?]
+            }
+            Object::ByteCodeProto { values, .. } => values.to_vec(),
+            Object::Reserved
+            | Object::String(_)
+            | Object::Bytes(_)
+            | Object::NativeType(_)
+            | Object::Opaque(_) => Vec::new(),
+        };
+        for child in children {
+            if let Some(child_handle) = runtime_object_handle(child.value) {
+                parents.entry(child_handle).or_default().push(handle);
+            }
+            pending.push(child);
+        }
+    }
+    let mut affected = forced_objects.iter().copied().collect::<Vec<_>>();
+    while let Some(child) = affected.pop() {
+        for parent in parents.get(&child).into_iter().flatten() {
+            if forced_objects.insert(*parent) {
+                affected.push(*parent);
+            }
+        }
+    }
+    Ok((replacements, forced_objects))
+}
+
+fn runtime_object_handle(value: RuntimeValue) -> Option<Handle> {
+    match value {
+        RuntimeValue::String(handle)
+        | RuntimeValue::Bytes(handle)
+        | RuntimeValue::NativeType(handle)
+        | RuntimeValue::DeclaredType(handle)
+        | RuntimeValue::Declared(handle)
+        | RuntimeValue::Opaque(handle)
+        | RuntimeValue::Array(handle)
+        | RuntimeValue::Tuple(handle)
+        | RuntimeValue::Tagged(handle)
+        | RuntimeValue::Dict(handle)
+        | RuntimeValue::Func(handle)
+        | RuntimeValue::Dyn(handle)
+        | RuntimeValue::UpLink(handle) => Some(handle),
+        RuntimeValue::Failed(_)
+        | RuntimeValue::Int(_)
+        | RuntimeValue::Float(_)
+        | RuntimeValue::BuiltinAtom(_)
+        | RuntimeValue::Atom(_)
+        | RuntimeValue::ShortString(_) => None,
+    }
 }
 
 pub(crate) fn relocate_work_roots(
@@ -1949,6 +2249,10 @@ struct PendingCopy {
     objects_forwarded: HashMap<Handle, Handle>,
     text_forwarded: HashMap<InternId, InternId>,
     shapes_forwarded: HashMap<ShapeId, ShapeId>,
+    value_replacements: HashMap<Handle, RichValue>,
+    forced_objects: HashSet<Handle>,
+    type_argument_values: Option<Arc<[RichValue]>>,
+    type_arguments: Option<Arc<[crate::types::TypeDescriptor]>>,
 }
 
 impl PendingCopy {
@@ -1966,6 +2270,27 @@ impl PendingCopy {
             objects_forwarded: HashMap::new(),
             text_forwarded: HashMap::new(),
             shapes_forwarded: HashMap::new(),
+            value_replacements: HashMap::new(),
+            forced_objects: HashSet::new(),
+            type_argument_values: None,
+            type_arguments: None,
+        }
+    }
+
+    fn new_type_application(
+        target: &Heap,
+        source: &HeapView<'_>,
+        value_replacements: HashMap<Handle, RichValue>,
+        forced_objects: HashSet<Handle>,
+        type_argument_values: &[RichValue],
+        type_arguments: &[crate::types::TypeDescriptor],
+    ) -> Self {
+        Self {
+            value_replacements,
+            forced_objects,
+            type_argument_values: Some(type_argument_values.into()),
+            type_arguments: Some(type_arguments.into()),
+            ..Self::new(target, source)
         }
     }
 
@@ -1975,6 +2300,15 @@ impl PendingCopy {
         source: &HeapView<'_>,
         value: RichValue,
     ) -> Result<RichValue, HeapError> {
+        if let Some(handle) = runtime_object_handle(value.value)
+            && let Some(replacement) = self.value_replacements.get(&handle)
+        {
+            return Ok(if replacement.loc().is_some() {
+                *replacement
+            } else {
+                replacement.with_loc(value.loc())
+            });
+        }
         let copied = match value.value {
             RuntimeValue::Failed(id) if self.target_storage == Storage::Work => {
                 RuntimeValue::Failed(id)
@@ -2038,7 +2372,7 @@ impl PendingCopy {
         source: &HeapView<'_>,
         handle: Handle,
     ) -> Result<Handle, HeapError> {
-        if handle.storage != self.source_storage {
+        if handle.storage != self.source_storage && !self.forced_objects.contains(&handle) {
             if handle.storage == self.target_storage {
                 target.object(handle)?;
             } else {
@@ -2082,11 +2416,35 @@ impl PendingCopy {
             Object::Bytes(value) => Object::Bytes(value.clone()),
             Object::Opaque(value) => Object::Opaque(value.clone()),
             Object::NativeType(value) => Object::NativeType(value.clone()),
-            Object::DeclaredType { id, name, body } => Object::DeclaredType {
-                id: id.clone(),
-                name: Arc::clone(name),
-                body: self.copy_value(target, source, *body)?,
-            },
+            Object::DeclaredType {
+                id,
+                name,
+                body,
+                application_arguments,
+            } => {
+                let type_argument_values = self.type_argument_values.clone();
+                let application_arguments = if let Some(arguments) = type_argument_values {
+                    Some(arguments.as_ref().into())
+                } else if let Some(arguments) = application_arguments {
+                    Some(
+                        arguments
+                            .iter()
+                            .map(|argument| self.copy_value(target, source, *argument))
+                            .collect::<Result<Box<[_]>, _>>()?,
+                    )
+                } else {
+                    None
+                };
+                Object::DeclaredType {
+                    id: self.type_arguments.as_ref().map_or_else(
+                        || id.clone(),
+                        |arguments| crate::types::apply_declared_type_arguments(id, arguments),
+                    ),
+                    name: Arc::clone(name),
+                    body: self.copy_value(target, source, *body)?,
+                    application_arguments,
+                }
+            }
             Object::Declared { owner, payload } => Object::Declared {
                 owner: self.copy_value(target, source, *owner)?,
                 payload: self.copy_value(target, source, *payload)?,

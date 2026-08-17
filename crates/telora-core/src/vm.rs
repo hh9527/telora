@@ -302,7 +302,7 @@ impl<'a> ValueRef<'a> {
         let RuntimeValue::DeclaredType(handle) = self.value.value else {
             return None;
         };
-        let Object::DeclaredType { id, name, body } = self.view.object(handle).ok()? else {
+        let Object::DeclaredType { id, name, body, .. } = self.view.object(handle).ok()? else {
             return None;
         };
         Some((
@@ -503,6 +503,10 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         })?))
     }
 
+    pub const fn argument_count(&self) -> usize {
+        self.argument_count
+    }
+
     pub const fn result(&self) -> RegisterId {
         self.result
     }
@@ -668,6 +672,90 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         }
         .export_value(value)
         .map_err(|error| NativeError::new(error.to_string()))
+    }
+
+    pub(crate) fn export_type_identity(
+        &self,
+        source: RegisterId,
+    ) -> Result<crate::Value, NativeError> {
+        let value = self.owned(source)?;
+        HeapView {
+            current: self.current,
+            background: self.background,
+        }
+        .export_type_identity(value)
+        .map_err(|error| NativeError::new(error.to_string()))
+    }
+
+    pub(crate) fn instantiate_type_family(
+        &mut self,
+        destination: RegisterId,
+        template: RegisterId,
+        arguments: &[RegisterId],
+        argument_descriptors: &[crate::types::TypeDescriptor],
+    ) -> Result<(), NativeError> {
+        let template = self.owned(template)?;
+        let arguments = arguments
+            .iter()
+            .map(|argument| self.owned(*argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (value, allocations) = crate::heap::instantiate_type_family(
+            self.current,
+            self.background,
+            template,
+            &arguments,
+            argument_descriptors,
+        )
+        .map_err(|error| NativeError::new(error.to_string()))?;
+        self.charge_sequence(allocations)?;
+        self.set(destination, value)
+    }
+
+    pub(crate) fn make_declared_type_application(
+        &mut self,
+        destination: RegisterId,
+        id: crate::value::DeclaredTypeId,
+        name: impl Into<Arc<str>>,
+        body: RegisterId,
+        arguments: &[RegisterId],
+    ) -> Result<(), NativeError> {
+        let body = self.owned(body)?;
+        let arguments = arguments
+            .iter()
+            .map(|argument| self.owned(*argument))
+            .collect::<Result<Box<[_]>, _>>()?;
+        self.charge_sequence(arguments.len().saturating_add(1))?;
+        let handle = self.current.allocate(Object::DeclaredType {
+            id,
+            name: name.into(),
+            body,
+            application_arguments: Some(arguments),
+        });
+        self.set(
+            destination,
+            RichValue::unknown(RuntimeValue::DeclaredType(handle)),
+        )
+    }
+
+    pub(crate) fn make_declared_value(
+        &mut self,
+        destination: RegisterId,
+        owner: RegisterId,
+        payload: RegisterId,
+    ) -> Result<(), NativeError> {
+        let owner = self.owned(owner)?;
+        if !matches!(owner.value, RuntimeValue::DeclaredType(_)) {
+            return Err(NativeError::new(
+                "declared value owner is not a declared Type",
+            ));
+        }
+        let payload = self.owned(payload)?;
+        self.charge_sequence(1)?;
+        let handle = self.current.allocate(Object::Declared { owner, payload });
+        self.set(
+            destination,
+            RichValue::new(RuntimeValue::Declared(handle), payload.loc()),
+        )
     }
 
     pub fn copy(&mut self, destination: RegisterId, source: RegisterId) -> Result<(), NativeError> {
@@ -7562,6 +7650,9 @@ fn decode_runtime_type_at(
         };
         let mut decoded = decode_runtime_type_at(*body, path, current, background)?;
         decoded.declared_owner = Some(value);
+        if decoded.rule.loc().is_none() {
+            decoded.rule = value;
+        }
         return Ok(decoded);
     }
     let RuntimeValue::Dict(handle) = value.value else {
@@ -8490,7 +8581,10 @@ fn plan_struct(
     let mut planned = Vec::with_capacity(fields.len());
     let mut external_names: BTreeMap<String, RichValue> = BTreeMap::new();
     for (internal_name, field) in fields {
-        let field_schema = resolve_codec_type_once(field, data, view)?;
+        let mut field_schema = resolve_codec_type_once(field, data, view)?;
+        if field_schema.rule.loc().is_none() {
+            field_schema.rule = schema.rule;
+        }
         let rename = field.attributes.get("std/json.rename").copied();
         let rename = rename
             .map(|rule| {
@@ -8654,7 +8748,6 @@ fn resolve_codec_type_once(
     )
     .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
     resolved.attributes.extend(schema.attributes.clone());
-    resolved.rule = schema.rule;
     Ok(resolved)
 }
 

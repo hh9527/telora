@@ -5207,7 +5207,7 @@ type Independent = String;
             rendered.contains("contract rule declared here"),
             "{rendered}"
         );
-        assert!(rendered.contains("User.telora:3:47:"), "{rendered}");
+        assert!(rendered.contains("User.telora:3:46:"), "{rendered}");
 
         fs::write(
             directory.join("inspect.telora"),
@@ -5966,8 +5966,8 @@ name = "rustc"
         fs::write(
             directory.join("types.telora"),
             r#"type Kind = enum {
-                   Missing: 'None,
-                   Unauthorized: 'None,
+                   'Missing,
+                   'Unauthorized,
                };
                export { Kind };"#,
         )
@@ -5981,11 +5981,12 @@ name = "rustc"
                    Fn(Array(Int), Subject) -> Array(Rejection(Subject)) =
                    fn(values, subject) {
                        let rejections = array.fold(values, [], fn(rejections, value) {
-                           if value == 1 {
-                               array.push(rejections, {kind: 'Missing, subject: subject})
+                           let rejection: Rejection(Subject) = if value == 1 {
+                               {kind: 'Missing, subject: subject}
                            } else {
-                               array.push(rejections, {kind: 'Unauthorized, subject: subject})
-                           }
+                               {kind: 'Unauthorized, subject: subject}
+                           };
+                           array.push(rejections, rejection)
                        });
                        rejections
                    };
@@ -5996,7 +5997,7 @@ name = "rustc"
             load_module(directory.join("records.telora"), BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             records.analysis.display(records.analysis.result_type),
-            "Array<{kind: enum {Missing, Unauthorized}, subject: String}>"
+            "Array<Rejection>"
         );
         assert_eq!(
             records.execute(100_000).unwrap().to_string(),
@@ -6744,7 +6745,7 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("families.telora"),
-            r#"type Status = enum {Ready: 'None};
+            r#"type Status = enum {'Ready};
                type Box(A) = struct {status: Status, value: A};
                {Box: Box}"#,
         )
@@ -6781,7 +6782,7 @@ unchanged", "|"),
             let module = load_module(directory.join(name), BTreeMap::new(), 100_000).unwrap();
             assert_eq!(
                 module.analysis.display(module.analysis.result_type),
-                "{status: enum {Ready}, value: Int}",
+                "Box",
                 "{name}"
             );
             assert_eq!(
@@ -6807,10 +6808,7 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(
-            module.analysis.display(module.analysis.result_type),
-            "{value: String}"
-        );
+        assert_eq!(module.analysis.display(module.analysis.result_type), "Box");
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
             "{value: \"ready\"}"
@@ -6978,11 +6976,14 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let alias = module
-            .analysis
-            .display(module.analysis.declared_types["TreeBox"]);
-        assert!(alias.contains("Array<Tree>"), "{alias}");
-        assert!(!alias.contains("Any"), "{alias}");
+        let alias = module.analysis.declared_types["TreeBox"];
+        assert_eq!(module.analysis.display(alias), "Box");
+        let crate::TypeNode::Declared { body, .. } = module.analysis.types.node(alias) else {
+            panic!("TreeBox must retain the Box application owner")
+        };
+        let body = module.analysis.types.display(*body);
+        assert!(body.contains("Tree"), "{body}");
+        assert!(!body.contains("Any"), "{body}");
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
             "{value: 'Branch({children: ['Leaf(1)]})}"
@@ -7169,7 +7170,7 @@ unchanged", "|"),
         for name in ["direct", "alias"] {
             assert_eq!(
                 module.analysis.display(module.analysis.binding_types[name]),
-                "{text: String}"
+                "Output"
             );
         }
         fs::remove_dir_all(directory).unwrap();
@@ -7207,25 +7208,25 @@ unchanged", "|"),
             module
                 .analysis
                 .display(module.analysis.binding_types["via_alias"]),
-            "{value: enum {A}}"
+            "Box"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["direct"]),
-            "{value: enum {A}}"
+            "Box"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["identity"]),
-            "Fn({value: enum {A}}) -> {value: enum {A}}"
+            "Fn(Box) -> Box"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["output"]),
-            "({value: enum {A}}, {value: enum {A}})"
+            "(Box, Box)"
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -7274,7 +7275,7 @@ unchanged", "|"),
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         let result_type = module.analysis.display(module.analysis.result_type);
-        assert!(result_type.contains("Array<Expr>"), "{result_type}");
+        assert_eq!(result_type, "(Expr, Expr)");
         assert!(!result_type.contains("Any"), "{result_type}");
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
@@ -7506,16 +7507,11 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
-               import "std/attributes" as attributes;
-               type Box(Item) = attributes.add(
-                   struct('None, {
-                       value: attributes.add(
-                           Item,
-                           { "std/json.rename": "payload" },
-                       ),
-                   }),
-                   { "std/json.rename_all": 'CamelCase },
-               );
+               import "std/json" as json;
+               @json.rename_all('CamelCase)
+               type Box(Item) = struct {
+                   @json.rename("payload") value: Item,
+               };
                {
                    metadata: Box(String),
                    decoded: codec.decode(Box(String), {payload: "ready"}),
@@ -7536,8 +7532,11 @@ unchanged", "|"),
             "{}",
             result.get("decoded").unwrap()
         );
-        let Value::Dict(metadata) = result.get("metadata").unwrap() else {
-            panic!("expected attributed family metadata")
+        let Value::DeclaredType(declared) = result.get("metadata").unwrap() else {
+            panic!("expected declared family metadata")
+        };
+        let Value::Dict(metadata) = declared.body() else {
+            panic!("expected attributed family body")
         };
         assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
         let Value::Dict(model_attributes) = metadata.get("attributes").unwrap() else {
@@ -7569,16 +7568,11 @@ unchanged", "|"),
 
         fs::write(
             directory.join("family.telora"),
-            r#"import "std/attributes" as attributes;
-               type Box(Item) = attributes.add(
-                   struct('None, {
-                       value: attributes.add(
-                           Item,
-                           { "std/json.rename": "payload" },
-                       ),
-                   }),
-                   { "std/json.rename_all": 'CamelCase },
-               );
+            r#"import "std/json" as json;
+               @json.rename_all('CamelCase)
+               type Box(Item) = struct {
+                   @json.rename("payload") value: Item,
+               };
                export {Box};"#,
         )
         .unwrap();
@@ -8264,13 +8258,13 @@ unchanged", "|"),
             module
                 .analysis
                 .display(module.analysis.binding_types["decoded"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok({name: String})}"
+            "enum {Err({data: Any, message: String, rule: Any}), Ok(User)}"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["checked"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok({name: String})}"
+            "enum {Err({data: Any, message: String, rule: Any}), Ok(User)}"
         );
         assert_eq!(
             module
@@ -8282,13 +8276,13 @@ unchanged", "|"),
             module
                 .analysis
                 .display(module.analysis.binding_types["formatted"]),
-            "enum {Err(String), Ok({name: String})}"
+            "enum {Err(String), Ok(User)}"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["chained"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok({name: String})}"
+            "enum {Err({data: Any, message: String, rule: Any}), Ok(User)}"
         );
         assert_eq!(
             module
@@ -8314,15 +8308,11 @@ unchanged", "|"),
         let Value::Dict(error) = payload.as_ref() else {
             panic!("validation failure must be a structured error")
         };
-        assert!(
-            error
-                .get("message")
-                .unwrap()
-                .to_string()
-                .contains("must be String")
-        );
+        let message = error.get("message").unwrap().to_string();
+        assert!(message.contains("must be String"), "{message}");
         assert_eq!(error.get("data").unwrap().to_string(), "{name: 1}");
-        assert!(error.get("rule").unwrap().to_string().contains("'Struct"));
+        let rule = error.get("rule").unwrap().to_string();
+        assert!(rule.contains("User"), "{rule}");
 
         fs::write(
             directory.join("wrong-encode.telora"),
@@ -9516,12 +9506,12 @@ unchanged", "|"),
                type User = struct {name: String};
                @json.rename_all('CamelCase)
                type Event = enum {
-                   Idle: 'None,
-                   UserJoined: User,
-                   @json.rename("fatal") FatalError: String,
+                   'Idle,
+                   'UserJoined(User),
+                   @json.rename("fatal") 'FatalError(String),
                };
                @json.untagged
-               type Scalar = enum {Text: String, Count: Int};
+               type Scalar = enum {'Text(String), 'Count(Int)};
                type Envelope = struct {event: Event};
                {
                    idle: codec.decode(Event, "idle") |> result.unwrap,
@@ -9562,8 +9552,8 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/json" as json;
-               @json.untagged type Scalar = enum {Text: String, Count: Int};
-               @json.untagged type Ambiguous = enum {Anything: Any, Text: String};
+               @json.untagged type Scalar = enum {'Text(String), 'Count(Int)};
+               @json.untagged type Ambiguous = enum {'Anything(Any), 'Text(String)};
                {
                    no_match: codec.decode(Scalar, []),
                    ambiguous: codec.decode(Ambiguous, "text"),
@@ -9608,8 +9598,8 @@ unchanged", "|"),
                type User = struct {name: String};
                type Details = struct {city_name: String};
                @json.rename_all('CamelCase)
-               type Event = enum {Idle: 'None, UserJoined: User};
-               @json.untagged type Scalar = enum {Text: String, Count: Int};
+               type Event = enum {'Idle, 'UserJoined(User)};
+               @json.untagged type Scalar = enum {'Text(String), 'Count(Int)};
                @json.rename_all('CamelCase)
                type Model = struct {
                    user_id: Int,
@@ -10007,12 +9997,12 @@ unchanged", "|"),
                        right: 'Column({alias: "t", column: "id"}),
                    })}},
                };
-               {
-                   encoded: codec.encode(Use, relation)
+                {
+                    encoded: codec.encode(Use, relation)
                        |> result.unwrap
                        |> json.stringify,
-                   schema: json.schema(Use),
-               }"#,
+                    schema: json.schema(Use),
+                }"#,
         )
         .unwrap();
 
