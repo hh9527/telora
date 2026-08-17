@@ -330,21 +330,14 @@ Two physical loads resolving to the same canonical `ModuleId` in one Engine
 must reuse one declaration identity. Different dependency identities remain
 different even if their source text and declaration names are equal.
 
-## Transitional boundary
+## Composition boundary
 
-Until RFC 0240, legacy `@struct` / `@enum` declarations remain structural. Only
-the direct RFC 0236 initializer mints declared identity. This prevents an
-ordinary decorator call from gaining language-owned authority.
-
-During this branch-only phase:
-
-- direct, non-parameterized, acyclic initializers are nominal under RFC 0237;
-- direct recursive initializers retain RFC 0236 behavior until RFC 0238;
-- direct parameterized initializers retain RFC 0236 family behavior until RFC
-  0239; and
-- legacy declarations remain structural until migration.
-
-The umbrella branch is not merged to `main` in this mixed state.
+Only a direct RFC 0236 `struct` or `enum` initializer mints declaration-owned
+identity. RFC 0238 applies the same identity and value representation to
+recursive concrete components; RFC 0239 applies it to acyclic parameterized
+families. RFC 0240 removes `@struct`, `@enum`, and the public callable model
+constructors, so no ordinary decorator or Function can gain declaration-owned
+authority.
 
 ## Diagnostics and observation
 
@@ -384,9 +377,10 @@ acyclic body covered here.
 11. legacy Host export/import round-trips declared metadata and values without
     erasing or manufacturing ownership;
 12. invalid and quota-failed construction publishes no partial wrapper;
-13. recursive and parameterized direct declarations retain their RFC 0236
-    behavior for their later child RFCs; and
-14. legacy decorator declarations remain structural until RFC 0240.
+13. recursive declarations compose with RFC 0238 reserve/seal semantics;
+14. parameterized declarations compose with RFC 0239 canonical application
+    identity; and
+15. removed decorator and callable forms fail under RFC 0240.
 
 ## Implementation plan and go/no-go gates
 

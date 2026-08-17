@@ -21,18 +21,15 @@ type OptionValue(Item) = enum {
 };
 ```
 
-This RFC establishes the final declaration shape while deliberately preserving
-the current structural TypeMetadata semantics. It lowers the new forms to the
-existing normalized `struct(ctx, fields)` and `enum(ctx, variants)` operations.
-Distinct equal-shaped declarations therefore remain structurally assignable
-until RFC 0237 adds declared identity end to end.
+This RFC establishes the declaration shape and lowers it to private normalized
+Struct/Enum operations. RFCs 0237 through 0239 add declared identity, recursive
+sealing, and family-application identity to that surface. Distinct equal-shaped
+direct declarations are therefore nominally incompatible in the completed
+language.
 
 `struct` and `enum` are contextual keywords only in the direct initializer
-position of a `type` declaration. The legacy callable prelude bindings and
-`@struct` / `@enum` decorators remain temporarily available so this RFC can be
-implemented, tested, and committed without forcing the complete repository
-migration. RFC 0240 removes those legacy surfaces after identity, recursion,
-and parameterized-family semantics are complete.
+position of a `type` declaration. RFC 0240 removes the former callable prelude
+bindings and `@struct` / `@enum` decorators; they are not compatibility forms.
 
 ## Motivation
 
@@ -95,7 +92,7 @@ This RFC does not add:
 - positional Structs, newtypes, or unit Structs;
 - variadic Enum payloads;
 - separate generic-type application syntax; or
-- removal of the legacy constructors and decorators.
+- the repository migration and legacy removal owned by RFC 0240.
 
 ## Grammar
 
@@ -125,9 +122,9 @@ enum_variant:
 ```
 
 `struct` and `enum` are recognized as initializers only when they occur
-immediately after the declaration `=` and are followed by `{`. During this
-transition RFC, ordinary expressions such as `struct('None, fields)` continue
-to parse as calls to the existing prelude Function.
+immediately after the declaration `=` and are followed by `{`. Ordinary source
+expressions such as `struct('None, fields)` have no public prelude target and
+fail deterministically under RFC 0240.
 
 The initializer is not a general expression:
 
@@ -136,8 +133,9 @@ let metadata = struct {value: Int}; # invalid
 def build = fn() { enum {'None} };  # invalid
 ```
 
-The final RFC 0240 may reserve both words lexically after their ordinary value
-bindings are removed. That removal is not required for this parser boundary.
+RFC 0240 removes their ordinary value bindings. This RFC only owns contextual
+initializer parsing, not whether the spellings remain usable as unrelated
+domain identifiers in unambiguous positions.
 
 ## Struct fields
 
@@ -273,8 +271,7 @@ The model initializer runs before an outer root decorator, matching:
 
 ```telora
 @outer
-@struct
-type Old = fields;
+type Model = struct {value: Int};
 ```
 
 The lowered expression uses the initializer's complete source range for the
@@ -294,7 +291,7 @@ type Box(Item) = struct {
 
 The initializer is evaluated once with the same rigid Bound metadata used by
 the current decorated body. It publishes the same structural symbolic template
-and callable scheme as the equivalent legacy declaration:
+and callable scheme required by the declaration:
 
 ```text
 Box : for(Item) Fn(TypeOf(Item)) -> TypeOf(Box(Item))
@@ -331,34 +328,23 @@ until the declaration is complete.
 ## Static and runtime semantics
 
 After lowering, all existing analysis and VM behavior remains authoritative.
-In this RFC:
+In the completed RFC 0235 phase:
 
 ```telora
 type Left = struct {value: Int};
 type Right = struct {value: Int};
 ```
 
-`Left` and `Right` remain structurally assignable. The new syntax does not
-smuggle nominal identity into `Named`, HIR definition IDs, synthetic attributes,
-or display names.
+`Left` and `Right` are nominally incompatible under RFC 0237. Identity belongs
+to authoritative declared TypeMetadata; it is not smuggled into `Named`, HIR
+definition IDs, synthetic attributes, or display names.
 
-Recursive concrete declarations continue through the existing up-link and
-promotion path. Parameterized recursion continues to be rejected under RFC
-0232. `show`, LSP, codec, schema, `Dyn`, and TypeDesc observe the same normalized
-metadata graph as the equivalent legacy declaration.
+Recursive concrete declarations use RFC 0238 reserve/seal components.
+Parameterized families use RFC 0239 canonical applications, while parameterized
+recursion remains rejected under RFC 0232. `show`, LSP, codec, schema, `Dyn`, and
+TypeDesc observe the same authoritative declared metadata graph.
 
 ## Migration boundary
-
-During RFC 0236 through RFC 0239, both surfaces are accepted:
-
-```telora
-@struct type Old = {value: Int};
-type New = struct {value: Int};
-```
-
-Focused migration should prefer the new form in new tests and fixtures, but a
-repository-wide mechanical rewrite is deferred to RFC 0240. Historical RFCs
-retain their original source examples.
 
 RFC 0240 removes without compatibility aliases:
 
@@ -366,8 +352,10 @@ RFC 0240 removes without compatibility aliases:
 - ordinary prelude Functions named `struct` and `enum`; and
 - explicit source calls such as `struct('None, fields)`.
 
-Code that genuinely computes structural metadata dynamically must be audited
-rather than mechanically converted to a declared nominal type.
+Code that genuinely computed structural metadata dynamically is redesigned
+around direct declared initializers or remaining canonical anonymous metadata;
+it is not mechanically rebranded as a declared nominal type. Historical RFCs
+may retain superseded examples as historical evidence.
 
 ## Acceptance criteria
 
@@ -380,14 +368,14 @@ rather than mechanically converted to a declared nominal type.
 4. root, field, and variant decorators execute once in the established order
    with the established contexts;
 5. direct and mutual concrete recursion retain existing behavior;
-6. distinct equal-shaped declarations remain structurally assignable in this
-   RFC;
+6. distinct equal-shaped declarations are nominally incompatible after RFC
+   0237;
 7. CST nodes and semantic queries retain accurate authored ranges;
 8. incomplete initializers produce focused diagnostics while later bindings
    remain recoverable;
-9. legacy decorator and callable surfaces continue to pass until RFC 0240;
-10. no `Box[A]`, positional Struct, newtype, nominal identity, or recursive
-    family behavior is introduced; and
+9. legacy decorator and callable surfaces fail under RFC 0240;
+10. no `Box[A]`, positional Struct, newtype, or recursive family behavior is
+    introduced by this syntax RFC; and
 11. parser, syntax, type-analysis, module, CLI, and LSP regressions pass.
 
 ## Implementation plan
@@ -397,8 +385,8 @@ rather than mechanically converted to a declared nominal type.
    expressions with authored source ranges;
 3. synthesize the current model context and operation before root decorators;
 4. add duplicate/member/recovery diagnostics;
-5. cover ordinary, decorated, parameterized, recursive, malformed, and legacy
-   declarations; and
+5. cover ordinary, decorated, parameterized, recursive, malformed, and removed
+   legacy declarations; and
 6. run formatting, warning-denied Clippy, and the full workspace test suite.
 
 ## Rejected alternatives

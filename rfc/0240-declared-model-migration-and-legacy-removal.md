@@ -1,6 +1,6 @@
 # RFC 0240: Declared-model migration and legacy removal
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #85
 - Depends on: RFC 0235, RFC 0236, RFC 0237, RFC 0238, RFC 0239
 

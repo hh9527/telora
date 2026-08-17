@@ -351,8 +351,9 @@ Type, TypeOf(A), Dyn, opaque native type
 Any, Never
 ```
 
-Record/Struct 类型按字段结构检查；type alias 不创建新的名义身份。Native opaque type
-具有由注册模块和 slot 决定的名义身份，普通用户代码不能伪造其值。
+匿名 Record 按字段结构检查。直接 `struct` / `enum` 类型声明具有声明拥有的名义身份；
+相同结构的两个声明互不兼容。type alias 不创建新的身份，只保留被引用类型的身份。
+Native opaque type 具有由注册模块和 slot 决定的名义身份，普通用户代码不能伪造其值。
 
 `Any` 表示源码契约或 Host 边界显式放弃静态精度。严格推断不会用 `Any` 代替已知
 类型之间的冲突；它也不是 editor 因源码损坏而暂时不知道类型的状态。
@@ -453,25 +454,32 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 
 ### 7.1 Struct、Enum 和 decorator
 
-常见声明使用普通 metadata decorator：
+具名 Struct 和 Enum 使用 `type` 的专用声明初始化器：
 
 ```telora
-@struct
-type User = {
+type User = struct {
     id: Int,
     name: String,
 };
 
-@enum
-type Status = {
-    Pending: 'None,
-    Failed: String,
+type Status = enum {
+    'Pending,
+    'Failed(String),
 };
 ```
 
-`@struct` 和 `@enum` 不是独立的 class/ADT 编译通道；它们调用 metadata-to-metadata
-函数，将普通字面结构规范化为相应 descriptor。其他 decorator 可以添加 attribute，
-供 codec、schema、文本表示或用户态解释器消费。
+`struct` 和 `enum` 只在 `type Name(...) =` 后的直接初始化位置具有该含义；它们不是
+普通 Function，不能捕获、传递或调用。公开 prelude 不提供同名 metadata 构造器，
+`@struct` 和 `@enum` 也不是兼容语法。
+
+每个直接声明拥有由 provider module 与声明位置确定的私有身份。不同声明即使字段或
+variant 完全相同，也不是同一个类型；alias、import 和 reexport 则保留原身份。普通
+TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具仍从同一份权威元数据图工作，
+没有第二套编译器专属类型世界。
+
+Struct 字段和 Enum variant 可以使用普通 decorator 添加 attribute，供 codec、schema、
+文本表示或用户态解释器消费。根 decorator 在结构 draft 上运行，但必须保留声明的
+Struct 或 Enum kind，且不能创建或替换声明身份。
 
 Decorator 应保持确定和纯粹。失败的 metadata 构造不能发布部分类型图。
 
@@ -480,8 +488,7 @@ Decorator 应保持确定和纯粹。失败的 metadata 构造不能发布部分
 参数化 `type` 声明创建可命名的元数据 family：
 
 ```telora
-@struct
-type Box(Item) = {value: Item};
+type Box(Item) = struct {value: Item};
 
 def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
     {value}
@@ -496,8 +503,9 @@ def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
 ```
 
 声明 body 使用刚性符号参数求值一次，产生规范模板；`Box(String)` 对模板做避免捕获
-的替换，不用 String 重新执行 body。因此 family 不是任意 type-level function，也
-不是 higher-kinded nominal constructor。
+的替换，不用 String 重新执行 body。每个完整应用的身份由 provider 声明 head 与
+规范类型实参共同确定；同一应用重复求值返回同一个类型身份。因此 family 不是任意
+type-level function，也不是 higher-kinded constructor。
 
 Family 必须一次提供全部参数，不支持 partial application 或参数化递归。无环 family
 可以组合本模块中的其他 family 和非参数化 concrete type，也可以跨完整、选择性、
@@ -1202,12 +1210,12 @@ Atom、不同 closure、不同 `Option` variant 或匿名 Struct 时，仅凭元
 在最小公共边界给 Array 提供具体契约即可把同一个 family 实例下传到匿名元素：
 
 ```telora
-@struct type Entry(Id, Value) = {
+type Entry(Id, Value) = struct {
     id: Id,
     value: Option(Value),
 };
 
-@enum type EntryId = {First: 'None, Second: 'None};
+type EntryId = enum {'First, 'Second};
 type IntEntry = Entry(EntryId, Int);
 
 let entries: Array(IntEntry) = [
@@ -1216,21 +1224,23 @@ let entries: Array(IntEntry) = [
 ];
 ```
 
-该标注提供检查目标，不改变值的运行时表示，也不授权 `Any` fallback。若记录需要在
-数组之外分别构造，可以改为给完整记录或具名构建函数标注 `IntEntry`。若完整泛型
-调用仍有歧义，可以进一步使用 `@[...]` 显式提供无法由值参数唯一确定的类型实参。
+该标注提供检查目标，并授权这些字面量在构造点获得 `IntEntry` 的声明身份；它不
+授权 `Any` fallback，也不能把先前产生的匿名记录按形状重新标记。若记录需要在数组
+之外分别构造，应给完整记录或具名构建函数标注 `IntEntry`。若完整泛型调用仍有
+歧义，可以进一步使用 `@[...]` 显式提供无法由值参数唯一确定的类型实参。
 
 ### 14.2 Enum payload 的具名类型要求
 
-`@enum` decorator 当前要求每个有 payload 的 variant 引用可解析的具名
-TypeMetadata。不能在 enum 类型声明的 payload 位置直接放置匿名 Struct：
+Enum variant 的 payload 是一个 TypeMetadata 表达式。`struct { ... }` 只允许作为
+直接 `type` 初始化器，不是普通 TypeMetadata 表达式，因此匿名 Struct 不能直接写在
+payload 位置；应先声明具名 Struct：
 
 ```telora
-# 非法：payload 是匿名 Struct TypeMetadata
-# @enum type Expr = {Column: {alias: String, column: String}};
+# 非法：struct 初始化器不能嵌入 enum payload
+# type Expr = enum {'Column(struct {alias: String, column: String})};
 
-@struct type ColumnRef = {alias: String, column: String};
-@enum type Expr = {Column: ColumnRef};
+type ColumnRef = struct {alias: String, column: String};
+type Expr = enum {'Column(ColumnRef)};
 ```
 
 该限制只属于类型声明。构造 tagged value 时，payload 的匿名记录仍会按具名 Struct
@@ -1243,21 +1253,22 @@ let expr: Expr = 'Column({alias: "orders", column: "id"});
 ### 14.3 Family 与递归类型
 
 递归 concrete TypeMetadata 在普通 definition contract、参数化 family contract 和
-模块接口中保持具名 identity 与有限图回边。契约检查按递归图比较类型，并以已经
-访问的 reference pair 终止；不会把回边展开为无限树，也不会将递归位置擦除为
-`Any`。因此递归表达式类型可以直接进入函数和 family：
+模块接口中保持声明 identity 与有限图回边。一个递归 component 会先预留全部声明
+身份，再验证并原子封闭；失败的 component 不发布部分类型。契约检查按递归图比较，
+并以已经访问的 reference pair 终止，不会把回边展开为无限树或擦除为 `Any`。
+因此递归表达式类型可以直接进入函数和 family：
 
 ```telora
-@enum type Expr = {Literal: Value, Call: CallExpr};
-@struct type CallExpr = {name: String, args: Array(Expr)};
+type Expr = enum {'Literal(Value), 'Call(CallExpr)};
+type CallExpr = struct {name: String, args: Array(Expr)};
 
-@struct type Dialect(Context) = {
+type Dialect(Context) = struct {
     render: Fn(Context, Expr) -> String,
 };
 ```
 
-同一递归结构经 whole-module、selective 或 open import 得到的契约保持结构等价；
-模块内部用于避免名称碰撞的 identity 不属于显示名称，也不是源码可引用的类型名。
+同一个递归声明经 whole-module、selective 或 open import 得到的契约保持原声明身份；
+另一个同结构声明仍是不同类型。私有 identity 不属于显示名称，也不是源码可引用的值。
 
 Family 自身仍不能参数化递归或形成循环 family component，也不能调用同模块普通
 helper。这里的限制是 family 求值依赖的限制，不限制 family 字段引用已经封闭的

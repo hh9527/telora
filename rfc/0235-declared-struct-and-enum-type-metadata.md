@@ -1,6 +1,6 @@
 # RFC 0235: Declared Struct and Enum TypeMetadata
 
-- Status: Proposed umbrella
+- Status: Implemented
 - Tracking issue: #85
 - Depends on: RFC 0027, RFC 0028, RFC 0034, RFC 0035, RFC 0051,
   RFC 0055, RFC 0090, RFC 0218, RFC 0232

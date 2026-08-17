@@ -28,9 +28,9 @@ export { Entity, Measure, Dimension, ExecutionPlan };
 enum variant 使用单引号值：
 
 ```telora
-@enum type Entity = {
-    Ticket: 'None,
-    Agent: 'None,
+type Entity = enum {
+    'Ticket,
+    'Agent,
 };
 
 let ticket: Entity = 'Ticket;
@@ -39,7 +39,7 @@ let ticket: Entity = 'Ticket;
 record 类型与值：
 
 ```telora
-@struct type Item = { name: String, nodes: Array(Entity) };
+type Item = struct { name: String, nodes: Array(Entity) };
 let item: Item = {name: "x", nodes: ['Ticket]};
 ```
 
