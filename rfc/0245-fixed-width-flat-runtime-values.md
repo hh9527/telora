@@ -24,7 +24,7 @@ boundaries and records final evidence.
 struct Val {
     loc: PackedLoc, // three u32 words
     meta: Meta,     // one u32 word
-    narrow: u64,    // zero or a canonical TypeId witness
+    ty: u64,        // zero or a canonical TypeId witness
     raw: u64,       // immediate bits or a reference payload
 }
 ```
@@ -41,7 +41,7 @@ The fields describe separate facts:
 - `sub-kind` identifies the physical Heap object without describing its
   language type;
 - trait bits support branch-free or single-mask questions about representation;
-- `narrow` is the unforgeable language-level type witness; and
+- `ty` is the unforgeable language-level type witness; and
 - `loc` and provenance describe source origin without affecting equality.
 
 `Bool` is not a runtime kind. `'True` and `'False` are inline Atoms and may
@@ -118,4 +118,3 @@ boundaries but is not used between internal evaluation stages.
 6. Work/Main and Work/Work copy retain graph sharing and recursive edges;
 7. strict and best-effort evaluation preserve their current outcomes; and
 8. workspace tests, clippy, and recursive performance fixtures pass.
-

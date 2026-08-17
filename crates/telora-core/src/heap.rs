@@ -345,7 +345,7 @@ fn heap_parts(handle: Handle, sub_kind: HeapKind) -> (FlatKind, HeapKind, u64) {
 pub(crate) struct RichValue {
     loc: PackedLoc,
     meta: Meta,
-    narrow: u64,
+    ty: u64,
     raw: u64,
 }
 
@@ -370,7 +370,7 @@ impl RichValue {
             } else {
                 Provenance::Unknown
             }),
-            narrow: 0,
+            ty: 0,
             raw,
         }
     }
@@ -384,7 +384,7 @@ impl RichValue {
             } else {
                 Provenance::Unknown
             }),
-            narrow: 0,
+            ty: 0,
             raw,
         }
     }
@@ -522,7 +522,7 @@ impl PartialEq for RichValue {
     fn eq(&self, other: &Self) -> bool {
         self.meta.kind() == other.meta.kind()
             && self.meta.sub_kind() == other.meta.sub_kind()
-            && self.narrow == other.narrow
+            && self.ty == other.ty
             && self.raw == other.raw
     }
 }

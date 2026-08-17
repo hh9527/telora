@@ -7,7 +7,7 @@
 ## Summary
 
 Telora will replace runtime `DeclaredValue` and `Object::Declared` wrappers
-with a canonical nonzero `u64` witness stored directly in `Val.narrow`.
+with a canonical nonzero `u64` witness stored directly in `Val.ty`.
 Validation of raw values remains structural; validation of an already matching
 witness remains an identity fast path.
 
@@ -29,7 +29,7 @@ are not keys.
 ```text
 narrow(expected, raw value):
     structurally validate expected.body against value
-    return value with narrow = expected.id
+    return value with ty = expected.id
 
 narrow(expected, value with witness expected.id):
     return value unchanged
@@ -46,7 +46,7 @@ metadata only where the language's existing validation semantics permit that.
 ## Type values versus witnesses
 
 A runtime value whose Heap sub-kind is `Type` is first-class TypeMetadata. A
-`narrow` witness is proof about an ordinary value. The two are related through
+`ty` witness is proof about an ordinary value. The two are related through
 the canonical registry but are not interchangeable representations.
 
 ## Acceptance criteria
@@ -59,4 +59,3 @@ the canonical registry but are not interchangeable representations.
 6. copying a Val preserves or relocates its witness according to context
    lifetime without structural revalidation; and
 7. declared Struct/Enum, codec, Dyn, formatting, and Host-boundary tests pass.
-
