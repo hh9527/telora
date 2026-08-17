@@ -1,6 +1,6 @@
 # RFC 0248: Canonical Val Witnesses
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #88
 - Depends on: RFC 0245, RFC 0246, RFC 0247, RFC 0237, RFC 0243
 

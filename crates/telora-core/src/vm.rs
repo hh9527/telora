@@ -213,20 +213,6 @@ impl<'a> ValueRef<'a> {
             RuntimeValue::Bytes(_) => ValueKind::Bytes,
             RuntimeValue::NativeType(_) => ValueKind::Type,
             RuntimeValue::DeclaredType(_) => ValueKind::Type,
-            RuntimeValue::Declared(handle) => {
-                let Object::Declared { payload, .. } = self
-                    .view
-                    .object(handle)
-                    .expect("Declared handle was produced by this heap")
-                else {
-                    unreachable!("Declared handle has another object kind")
-                };
-                ValueRef {
-                    value: *payload,
-                    view: self.view,
-                }
-                .kind()
-            }
             RuntimeValue::Opaque(_) => ValueKind::Opaque,
             RuntimeValue::Dict(_) => ValueKind::Dict,
             RuntimeValue::Array(_) => ValueKind::Array,
@@ -325,19 +311,14 @@ impl<'a> ValueRef<'a> {
     }
 
     pub(crate) fn declared_value_parts(self) -> Option<(ValueRef<'a>, ValueRef<'a>)> {
-        let RuntimeValue::Declared(handle) = self.value.value() else {
-            return None;
-        };
-        let Object::Declared { owner, payload } = self.view.object(handle).ok()? else {
-            return None;
-        };
+        let owner = self.view.type_witness(self.value).ok()??;
         Some((
             ValueRef {
-                value: *owner,
+                value: owner,
                 view: self.view,
             },
             ValueRef {
-                value: *payload,
+                value: self.value.without_type_witness(),
                 view: self.view,
             },
         ))
@@ -765,11 +746,11 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             ));
         }
         let payload = self.owned(payload)?;
-        self.charge_sequence(1)?;
-        let handle = self.current.allocate(Object::Declared { owner, payload });
         self.set(
             destination,
-            RichValue::new(RuntimeValue::Declared(handle), payload.loc()),
+            payload
+                .with_type_witness(owner)
+                .map_err(|error| NativeError::new(error.to_string()))?,
         )
     }
 
@@ -5759,15 +5740,10 @@ fn run_core_model(
                 pc,
             ));
         };
-        account
-            .charge_allocation(std::mem::size_of::<Object>() as u64)
-            .map_err(|_| allocation_error("allocation quota exceeded", function, pc))?;
-        let value = RuntimeValue::Declared(current.allocate(Object::Declared {
-            owner: arguments[0],
-            payload: arguments[1],
-        }));
         return Ok(VmAction::Return {
-            value: RichValue::new(value, arguments[1].loc()),
+            value: arguments[1]
+                .with_type_witness(arguments[0])
+                .map_err(|error| core_dict_heap_error(error, function, pc))?,
             return_target,
         });
     }
@@ -6156,39 +6132,6 @@ fn run_core_dyn(
                 RuntimeValue::Opaque(_) => "Opaque",
                 RuntimeValue::NativeType(_) => "Type",
                 RuntimeValue::DeclaredType(_) => "Type",
-                RuntimeValue::Declared(handle) => {
-                    let Object::Declared { payload, .. } = view
-                        .object(handle)
-                        .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-                    else {
-                        return Err(error(
-                            RuntimeErrorKind::InvalidBytecode,
-                            "Declared handle has another object kind",
-                            function,
-                            pc,
-                        ));
-                    };
-                    match (ValueRef {
-                        value: *payload,
-                        view,
-                    })
-                    .kind()
-                    {
-                        ValueKind::Int => "Int",
-                        ValueKind::Float => "Float",
-                        ValueKind::String => "String",
-                        ValueKind::Bytes => "Bytes",
-                        ValueKind::Type => "Type",
-                        ValueKind::Opaque => "Opaque",
-                        ValueKind::Dict => "Dict",
-                        ValueKind::Array => "Array",
-                        ValueKind::Atom => "Atom",
-                        ValueKind::Tagged => "Tagged",
-                        ValueKind::Tuple => "Tuple",
-                        ValueKind::Func => "Func",
-                        ValueKind::Dyn => "Dyn",
-                    }
-                }
                 RuntimeValue::Dict(_) => "Dict",
                 RuntimeValue::Array(_) => "Array",
                 RuntimeValue::BuiltinAtom(_)
@@ -8075,28 +8018,18 @@ fn transform_codec(
                     current,
                     background: Some(background),
                 };
-                let RuntimeValue::Declared(handle) = value.value() else {
+                let Some(actual_owner) = view
+                    .type_witness(value)
+                    .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
+                else {
                     return Err(CodecFailure::new(
                         format!("{path}: expected a declared value"),
                         value,
                         schema.rule,
                     ));
                 };
-                let Object::Declared {
-                    owner: actual_owner,
-                    payload,
-                } = view
-                    .object(handle)
-                    .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
-                else {
-                    return Err(CodecFailure::new(
-                        format!("{path}: invalid declared value"),
-                        value,
-                        schema.rule,
-                    ));
-                };
                 let same_owner = view
-                    .values_equal(*actual_owner, owner)
+                    .values_equal(actual_owner, owner)
                     .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?;
                 if !same_owner {
                     return Err(CodecFailure::new(
@@ -8107,7 +8040,7 @@ fn transform_codec(
                 }
                 transform_codec(
                     &structural,
-                    *payload,
+                    value.without_type_witness(),
                     direction,
                     path,
                     predicate_decisions,
@@ -10026,10 +9959,10 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
             loc,
         } => {
             let payload = materialize_codec_node(*payload, current, background);
-            RichValue::new(
-                RuntimeValue::Declared(current.allocate(Object::Declared { owner, payload })),
-                loc,
-            )
+            payload
+                .with_type_witness(owner)
+                .expect("codec declared owner was decoded as a declared Type")
+                .with_loc(loc)
         }
         CodecNode::Atom(atom, loc) => RichValue::new(RuntimeValue::BuiltinAtom(atom), loc),
         CodecNode::NamedAtom(value, loc) => {
@@ -10689,14 +10622,6 @@ impl<'a> JsonWriter<'a> {
             RuntimeValue::Opaque(_) => return Err("JSON cannot encode Opaque values".into()),
             RuntimeValue::NativeType(_) => return Err("JSON cannot encode Type values".into()),
             RuntimeValue::DeclaredType(_) => return Err("JSON cannot encode Type values".into()),
-            RuntimeValue::Declared(handle) => {
-                let Object::Declared { payload, .. } =
-                    self.view.object(handle).map_err(|e| e.to_string())?
-                else {
-                    return Err("invalid Declared handle".into());
-                };
-                self.value(*payload, depth)?;
-            }
             RuntimeValue::Tuple(_) => {
                 return Err("JSON cannot encode Tuple; use a codec first".into());
             }
@@ -10947,10 +10872,6 @@ impl<'a> DebugValueFormatter<'a> {
                     self.push(">");
                 }
                 _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
-            },
-            RuntimeValue::Declared(handle) => match self.view.object(handle)? {
-                Object::Declared { payload, .. } => self.value(*payload, depth)?,
-                _ => return Err(crate::heap::HeapError::new("invalid Declared handle")),
             },
             RuntimeValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
             RuntimeValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
@@ -11464,7 +11385,6 @@ fn runtime_shallow_type_error(
         RuntimeValue::Opaque(_) => "Opaque",
         RuntimeValue::NativeType(_) => "Type",
         RuntimeValue::DeclaredType(_) => "Type",
-        RuntimeValue::Declared(_) => "declared value",
         RuntimeValue::Array(_) => "Array",
         RuntimeValue::Tuple(_) => "Tuple",
         RuntimeValue::Tagged(_) => "Tagged",

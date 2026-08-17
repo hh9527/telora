@@ -84,7 +84,6 @@ enum HeapKind {
     None,
     Bytes,
     DeclaredType,
-    Declared,
     Opaque,
     Array,
     Tuple,
@@ -99,14 +98,13 @@ impl HeapKind {
         match bits {
             1 => Self::Bytes,
             2 => Self::DeclaredType,
-            3 => Self::Declared,
-            4 => Self::Opaque,
-            5 => Self::Array,
-            6 => Self::Tuple,
-            7 => Self::Tagged,
-            8 => Self::Dict,
-            9 => Self::Func,
-            10 => Self::Dyn,
+            3 => Self::Opaque,
+            4 => Self::Array,
+            5 => Self::Tuple,
+            6 => Self::Tagged,
+            7 => Self::Dict,
+            8 => Self::Func,
+            9 => Self::Dyn,
             _ => Self::None,
         }
     }
@@ -119,7 +117,6 @@ impl HeapKind {
             | Self::Dict
             | Self::Func
             | Self::DeclaredType
-            | Self::Declared
             | Self::Dyn => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
         }
@@ -250,6 +247,25 @@ impl ScopedId {
 
     fn raw(self) -> u64 {
         u64::from(self.0)
+    }
+
+    fn optional(storage: Storage, slot: u32) -> Self {
+        assert!(
+            slot < SCOPED_ID_SLOT_MASK,
+            "arena slot exceeds optional scoped ID range"
+        );
+        Self::new(storage, slot + 1)
+    }
+
+    fn optional_handle(raw: u32) -> Option<Handle> {
+        if raw == 0 {
+            return None;
+        }
+        let id = Self(raw);
+        Some(Handle {
+            storage: id.storage(),
+            slot: id.slot() - 1,
+        })
     }
 }
 
@@ -383,7 +399,6 @@ pub(crate) enum RuntimeValue {
     Bytes(Handle),
     NativeType(crate::value::NativeTypeId),
     DeclaredType(Handle),
-    Declared(Handle),
     Opaque(Handle),
     Array(Handle),
     Tuple(Handle),
@@ -426,7 +441,6 @@ impl RuntimeValue {
                 u64::from(id.module.0) | (u64::from(id.local) << 32),
             ),
             Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
-            Self::Declared(handle) => heap_parts(handle, HeapKind::Declared),
             Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
             Self::Array(handle) => heap_parts(handle, HeapKind::Array),
             Self::Tuple(handle) => heap_parts(handle, HeapKind::Tuple),
@@ -577,7 +591,6 @@ impl RichValue {
                 local: (self.raw >> 32) as u32,
             }),
             (FlatKind::Heap, HeapKind::DeclaredType) => RuntimeValue::DeclaredType(handle()),
-            (FlatKind::Heap, HeapKind::Declared) => RuntimeValue::Declared(handle()),
             (FlatKind::Heap, HeapKind::Opaque) => RuntimeValue::Opaque(handle()),
             (FlatKind::Heap, HeapKind::Array) => RuntimeValue::Array(handle()),
             (FlatKind::Heap, HeapKind::Tuple) => RuntimeValue::Tuple(handle()),
@@ -588,6 +601,24 @@ impl RichValue {
             (FlatKind::UpLink, _) => RuntimeValue::UpLink(handle()),
             _ => unreachable!("invalid runtime Meta combination"),
         }
+    }
+
+    pub(crate) fn type_witness(self) -> Option<Handle> {
+        ScopedId::optional_handle(self.ty)
+    }
+
+    pub(crate) fn with_type_witness(self, owner: RichValue) -> Result<Self, HeapError> {
+        let RuntimeValue::DeclaredType(handle) = owner.value() else {
+            return Err(HeapError("declared value owner is not a declared Type"));
+        };
+        Ok(Self {
+            ty: ScopedId::optional(handle.storage, handle.slot).0,
+            ..self
+        })
+    }
+
+    pub(crate) fn without_type_witness(self) -> Self {
+        Self { ty: 0, ..self }
     }
 
     pub(crate) fn with_value(self, value: RuntimeValue) -> Self {
@@ -779,10 +810,6 @@ impl Heap {
                     replace(descriptor);
                     replace(value);
                 }
-                Object::Declared { owner, payload } => {
-                    replace(owner);
-                    replace(payload);
-                }
                 Object::UpLink { value } => {
                     if let Some(value) = value {
                         replace(value);
@@ -861,10 +888,6 @@ pub(crate) enum Object {
         name: Arc<str>,
         body: RichValue,
         application_arguments: Option<Box<[RichValue]>>,
-    },
-    Declared {
-        owner: RichValue,
-        payload: RichValue,
     },
     Opaque(crate::value::OpaqueValue),
     Array(Box<[RichValue]>),
@@ -1034,16 +1057,18 @@ impl Heap {
         &self,
         value: PersistentValue,
     ) -> Result<bool, HeapError> {
-        let mut pending = vec![value.runtime().value()];
+        let mut pending = vec![value.runtime()];
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
-            let handle = match value {
+            if let Some(witness) = value.type_witness() {
+                pending.push(RichValue::unknown(RuntimeValue::DeclaredType(witness)));
+            }
+            let handle = match value.value() {
                 RuntimeValue::Failed(_) => continue,
                 RuntimeValue::UpLink(_) => return Ok(true),
                 RuntimeValue::NativeType(_) => continue,
                 RuntimeValue::Bytes(handle)
                 | RuntimeValue::DeclaredType(handle)
-                | RuntimeValue::Declared(handle)
                 | RuntimeValue::Opaque(handle)
                 | RuntimeValue::Array(handle)
                 | RuntimeValue::Tuple(handle)
@@ -1064,42 +1089,40 @@ impl Heap {
             }
             match self.object(handle)? {
                 Object::Array(values) | Object::Tuple(values) => {
-                    pending.extend(values.iter().map(|value| value.value()));
+                    pending.extend(values.iter().copied());
                 }
                 Object::Tagged { tag, payload } => {
-                    pending.push(tag.value());
-                    pending.push(payload.value());
+                    pending.push(*tag);
+                    pending.push(*payload);
                 }
                 Object::Dict { values, .. } => {
-                    pending.extend(values.iter().map(|value| value.value()));
+                    pending.extend(values.iter().copied());
                 }
                 Object::Closure {
                     prototype,
                     upvalues,
                     ..
                 } => {
-                    pending.extend(upvalues.iter().map(|value| value.value()));
+                    pending.extend(upvalues.iter().copied());
                     if let RuntimePrototype::Bytecode(handle) = prototype {
-                        pending.push(RuntimeValue::Func(*handle));
+                        pending.push(RichValue::unknown(RuntimeValue::Func(*handle)));
                     }
                 }
                 Object::Dyn {
                     descriptor, value, ..
                 } => {
-                    pending.push(descriptor.value());
-                    pending.push(value.value());
+                    pending.push(*descriptor);
+                    pending.push(*value);
                 }
-                Object::DeclaredType { body, .. } => pending.push(body.value()),
-                Object::Declared { owner, payload } => {
-                    pending.push(owner.value());
-                    pending.push(payload.value());
-                }
+                Object::DeclaredType { body, .. } => pending.push(*body),
                 Object::ByteCodeProto {
                     values, prototypes, ..
                 } => {
-                    pending.extend(values.iter().map(|value| value.value()));
+                    pending.extend(values.iter().copied());
                     pending.extend(prototypes.iter().filter_map(|prototype| match prototype {
-                        RuntimePrototype::Bytecode(handle) => Some(RuntimeValue::Func(*handle)),
+                        RuntimePrototype::Bytecode(handle) => {
+                            Some(RichValue::unknown(RuntimeValue::Func(*handle)))
+                        }
                         RuntimePrototype::Native(_) => None,
                     }));
                 }
@@ -1292,7 +1315,7 @@ impl Heap {
                 )?;
                 let payload =
                     self.import_sourced_at(background, value.payload(), provenance, path)?;
-                RuntimeValue::Declared(self.allocate(Object::Declared { owner, payload }))
+                return Ok(payload.with_type_witness(owner)?.with_loc(loc));
             }
             Value::Opaque(value) => {
                 RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
@@ -1409,7 +1432,7 @@ impl Heap {
                         prototypes,
                         location,
                     )?;
-                    RuntimeValue::Declared(self.allocate(Object::Declared { owner, payload }))
+                    return payload.with_type_witness(owner);
                 }
                 Value::Opaque(value) => {
                     RuntimeValue::Opaque(self.allocate(Object::Opaque(value.clone())))
@@ -1624,15 +1647,23 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn unwrap_declared(&self, mut value: RichValue) -> Result<RichValue, HeapError> {
-        loop {
-            let RuntimeValue::Declared(handle) = value.value() else {
-                return Ok(value);
-            };
-            let Object::Declared { payload, .. } = self.object(handle)? else {
-                return Err(HeapError("Declared handle refers to another object kind"));
-            };
-            value = *payload;
+        if let Some(handle) = value.type_witness() {
+            if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
+                return Err(HeapError("type witness refers to another object kind"));
+            }
+            value = value.without_type_witness();
         }
+        Ok(value)
+    }
+
+    pub(crate) fn type_witness(&self, value: RichValue) -> Result<Option<RichValue>, HeapError> {
+        let Some(handle) = value.type_witness() else {
+            return Ok(None);
+        };
+        if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
+            return Err(HeapError("type witness refers to another object kind"));
+        }
+        Ok(Some(RichValue::unknown(RuntimeValue::DeclaredType(handle))))
     }
 
     pub(crate) fn text(&self, id: InternId) -> Result<&'a str, HeapError> {
@@ -1816,7 +1847,7 @@ impl<'a> HeapView<'a> {
         left: RichValue,
         right: RichValue,
     ) -> Result<bool, HeapError> {
-        self.values_equal_with(left.value(), right.value(), &mut HashSet::new())
+        self.values_equal_with(left, right, &mut HashSet::new())
     }
 
     /// Returns the first failed node reachable through data containers.
@@ -1824,17 +1855,16 @@ impl<'a> HeapView<'a> {
     /// Closures and opaque/native values are intentionally atomic here: an
     /// operation only depends on their identity, not on captured internals.
     pub(crate) fn first_data_failure(&self, root: RichValue) -> Result<Option<u32>, HeapError> {
-        let mut pending = vec![root.value()];
+        let mut pending = vec![root];
         let mut visited = HashSet::new();
         while let Some(value) = pending.pop() {
-            let handle = match value {
+            let handle = match value.value() {
                 RuntimeValue::Failed(failure) => return Ok(Some(failure)),
                 RuntimeValue::Array(handle)
                 | RuntimeValue::Tuple(handle)
                 | RuntimeValue::Tagged(handle)
                 | RuntimeValue::Dict(handle)
-                | RuntimeValue::Dyn(handle)
-                | RuntimeValue::Declared(handle) => handle,
+                | RuntimeValue::Dyn(handle) => handle,
                 RuntimeValue::Int(_)
                 | RuntimeValue::Float(_)
                 | RuntimeValue::BuiltinAtom(_)
@@ -1854,22 +1884,21 @@ impl<'a> HeapView<'a> {
             }
             match self.object(handle)? {
                 Object::Array(values) | Object::Tuple(values) => {
-                    pending.extend(values.iter().rev().map(|value| value.value()));
+                    pending.extend(values.iter().rev().copied());
                 }
                 Object::Tagged { tag, payload } => {
-                    pending.push(payload.value());
-                    pending.push(tag.value());
+                    pending.push(*payload);
+                    pending.push(*tag);
                 }
                 Object::Dict { values, .. } => {
-                    pending.extend(values.iter().rev().map(|value| value.value()));
+                    pending.extend(values.iter().rev().copied());
                 }
                 Object::Dyn {
                     descriptor, value, ..
                 } => {
-                    pending.push(value.value());
-                    pending.push(descriptor.value());
+                    pending.push(*value);
+                    pending.push(*descriptor);
                 }
-                Object::Declared { payload, .. } => pending.push(payload.value()),
                 Object::Bytes(_)
                 | Object::Opaque(_)
                 | Object::DeclaredType { .. }
@@ -1884,11 +1913,44 @@ impl<'a> HeapView<'a> {
 
     fn values_equal_with(
         &self,
-        left: RuntimeValue,
-        right: RuntimeValue,
+        left: RichValue,
+        right: RichValue,
         visited: &mut HashSet<(Handle, Handle)>,
     ) -> Result<bool, HeapError> {
-        match (left, right) {
+        match (left.type_witness(), right.type_witness()) {
+            (Some(left_owner), Some(right_owner)) => {
+                let Object::DeclaredType { id: left_id, .. } = self.object(left_owner)? else {
+                    return Err(HeapError("type witness refers to another object kind"));
+                };
+                let Object::DeclaredType { id: right_id, .. } = self.object(right_owner)? else {
+                    return Err(HeapError("type witness refers to another object kind"));
+                };
+                if left_id != right_id {
+                    return Ok(false);
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                let raw = if left.type_witness().is_some() {
+                    left
+                } else {
+                    right
+                }
+                .without_type_witness()
+                .value();
+                if !matches!(
+                    raw,
+                    RuntimeValue::BuiltinAtom(_)
+                        | RuntimeValue::InlineAtom(_)
+                        | RuntimeValue::Atom(_)
+                ) {
+                    return Ok(false);
+                }
+            }
+            (None, None) => {}
+        }
+        let left = left.without_type_witness();
+        let right = right.without_type_witness();
+        match (left.value(), right.value()) {
             (RuntimeValue::Func(left), RuntimeValue::Func(right)) => {
                 let Object::Closure { identity: left, .. } = self.object(left)? else {
                     return Err(HeapError("Func handle refers to another object kind"));
@@ -1961,50 +2023,6 @@ impl<'a> HeapView<'a> {
                 };
                 Ok(left == right)
             }
-            (RuntimeValue::Declared(left), RuntimeValue::Declared(right)) => {
-                if left == right || !visited.insert((left, right)) {
-                    return Ok(true);
-                }
-                let Object::Declared {
-                    owner: left_owner,
-                    payload: left_payload,
-                } = self.object(left)?
-                else {
-                    return Err(HeapError("Declared handle refers to another object kind"));
-                };
-                let Object::Declared {
-                    owner: right_owner,
-                    payload: right_payload,
-                } = self.object(right)?
-                else {
-                    return Err(HeapError("Declared handle refers to another object kind"));
-                };
-                Ok(
-                    self.values_equal_with(left_owner.value(), right_owner.value(), visited)?
-                        && self.values_equal_with(
-                            left_payload.value(),
-                            right_payload.value(),
-                            visited,
-                        )?,
-                )
-            }
-            (
-                RuntimeValue::Declared(declared),
-                atom @ (RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_)),
-            )
-            | (
-                atom @ (RuntimeValue::BuiltinAtom(_)
-                | RuntimeValue::InlineAtom(_)
-                | RuntimeValue::Atom(_)),
-                RuntimeValue::Declared(declared),
-            ) => {
-                let Object::Declared { payload, .. } = self.object(declared)? else {
-                    return Err(HeapError("Declared handle refers to another object kind"));
-                };
-                self.values_equal_with(payload.value(), atom, visited)
-            }
             (RuntimeValue::Array(left), RuntimeValue::Array(right))
             | (RuntimeValue::Tuple(left), RuntimeValue::Tuple(right)) => {
                 self.sequence_handles_equal(left, right, visited)
@@ -2015,14 +2033,8 @@ impl<'a> HeapView<'a> {
                 }
                 let (left_tag, left_payload) = self.tagged(left)?;
                 let (right_tag, right_payload) = self.tagged(right)?;
-                Ok(
-                    self.values_equal_with(left_tag.value(), right_tag.value(), visited)?
-                        && self.values_equal_with(
-                            left_payload.value(),
-                            right_payload.value(),
-                            visited,
-                        )?,
-                )
+                Ok(self.values_equal_with(left_tag, right_tag, visited)?
+                    && self.values_equal_with(left_payload, right_payload, visited)?)
             }
             (RuntimeValue::Dict(left), RuntimeValue::Dict(right)) => {
                 self.dict_handles_equal(left, right, visited)
@@ -2103,7 +2115,7 @@ impl<'a> HeapView<'a> {
             return Ok(false);
         }
         for (left, right) in left.iter().zip(right) {
-            if !self.values_equal_with(left.value(), right.value(), visited)? {
+            if !self.values_equal_with(*left, *right, visited)? {
                 return Ok(false);
             }
         }
@@ -2111,23 +2123,11 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn export_value(&self, value: RichValue) -> Result<Value, HeapError> {
-        self.export_value_with(
-            value.value(),
-            &mut HashSet::new(),
-            &mut HashMap::new(),
-            None,
-            false,
-        )
+        self.export_value_with(value, &mut HashSet::new(), &mut HashMap::new(), None, false)
     }
 
     pub(crate) fn export_type_identity(&self, value: RichValue) -> Result<Value, HeapError> {
-        self.export_value_with(
-            value.value(),
-            &mut HashSet::new(),
-            &mut HashMap::new(),
-            None,
-            true,
-        )
+        self.export_value_with(value, &mut HashSet::new(), &mut HashMap::new(), None, true)
     }
 
     fn export_value_projecting_up_links(
@@ -2136,7 +2136,7 @@ impl<'a> HeapView<'a> {
         projection: &Value,
     ) -> Result<Value, HeapError> {
         self.export_value_with(
-            value.value(),
+            value,
             &mut HashSet::new(),
             &mut HashMap::new(),
             Some(projection),
@@ -2146,17 +2146,38 @@ impl<'a> HeapView<'a> {
 
     fn export_value_with(
         &self,
-        value: RuntimeValue,
+        value: RichValue,
         visiting: &mut HashSet<Handle>,
         completed: &mut HashMap<Handle, Value>,
         up_link_projection: Option<&Value>,
         shallow_declared_types: bool,
     ) -> Result<Value, HeapError> {
-        let handle = runtime_object_handle(value);
+        if let Some(owner_handle) = value.type_witness() {
+            let Object::DeclaredType { id, name, .. } = self.object(owner_handle)? else {
+                return Err(HeapError("type witness refers to another object kind"));
+            };
+            let any_shape = Arc::new(Shape::from_sorted_fields(vec!["kind".into()]));
+            let any_body = Value::Dict(Dict::new(any_shape, vec![Value::atom("Any")]));
+            let owner = DeclaredType {
+                id: id.clone(),
+                name: Arc::clone(name),
+                body: Box::new(any_body),
+            };
+            let payload = self.export_value_with(
+                value.without_type_witness(),
+                visiting,
+                completed,
+                up_link_projection,
+                shallow_declared_types,
+            )?;
+            return Ok(Value::Declared(DeclaredValue::new(owner, payload)));
+        }
+        let runtime = value.value();
+        let handle = runtime_object_handle(runtime);
         if let Some(value) = handle.and_then(|handle| completed.get(&handle)) {
             return Ok(value.clone());
         }
-        let exported = match value {
+        let exported = match runtime {
             RuntimeValue::Failed(_) => {
                 return Err(HeapError(
                     "failed evaluation node cannot cross a value boundary",
@@ -2210,7 +2231,7 @@ impl<'a> HeapView<'a> {
                     ));
                 };
                 let body = self.export_value_with(
-                    body.value(),
+                    *body,
                     visiting,
                     completed,
                     up_link_projection,
@@ -2224,40 +2245,8 @@ impl<'a> HeapView<'a> {
                 visiting.remove(&handle);
                 value
             }
-            RuntimeValue::Declared(handle) => {
-                let Object::Declared { owner, payload } = self.enter_object(handle, visiting)?
-                else {
-                    return Err(HeapError("Declared handle refers to another object kind"));
-                };
-                let RuntimeValue::DeclaredType(owner_handle) = owner.value() else {
-                    return Err(HeapError("Declared owner is not a DeclaredType"));
-                };
-                let Object::DeclaredType { id, name, .. } = self.object(owner_handle)? else {
-                    return Err(HeapError(
-                        "DeclaredType handle refers to another object kind",
-                    ));
-                };
-                // Ordinary values need the exact owner witness but not a second
-                // projection of its potentially recursive metadata body.
-                let any_shape = Arc::new(Shape::from_sorted_fields(vec!["kind".into()]));
-                let any_body = Value::Dict(Dict::new(any_shape, vec![Value::atom("Any")]));
-                let owner = DeclaredType {
-                    id: id.clone(),
-                    name: Arc::clone(name),
-                    body: Box::new(any_body),
-                };
-                let payload = self.export_value_with(
-                    payload.value(),
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                visiting.remove(&handle);
-                Value::Declared(DeclaredValue::new(owner, payload))
-            }
             RuntimeValue::Array(handle) | RuntimeValue::Tuple(handle) => {
-                let tuple = matches!(value, RuntimeValue::Tuple(_));
+                let tuple = matches!(runtime, RuntimeValue::Tuple(_));
                 let object = self.enter_object(handle, visiting)?;
                 let values = match object {
                     Object::Array(values) if !tuple => values,
@@ -2268,7 +2257,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value(),
+                            *value,
                             visiting,
                             completed,
                             up_link_projection,
@@ -2288,7 +2277,7 @@ impl<'a> HeapView<'a> {
                     return Err(HeapError("Tagged handle refers to another object kind"));
                 };
                 let tag = match self.export_value_with(
-                    tag.value(),
+                    *tag,
                     visiting,
                     completed,
                     up_link_projection,
@@ -2298,7 +2287,7 @@ impl<'a> HeapView<'a> {
                     _ => return Err(HeapError("Tagged tag is not an Atom")),
                 };
                 let payload = self.export_value_with(
-                    payload.value(),
+                    *payload,
                     visiting,
                     completed,
                     up_link_projection,
@@ -2320,7 +2309,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value(),
+                            *value,
                             visiting,
                             completed,
                             up_link_projection,
@@ -2363,7 +2352,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value(),
+                            *value,
                             visiting,
                             completed,
                             up_link_projection,
@@ -2390,14 +2379,14 @@ impl<'a> HeapView<'a> {
                     return Err(HeapError("Dyn handle refers to another object kind"));
                 };
                 let descriptor = self.export_value_with(
-                    descriptor.value(),
+                    *descriptor,
                     visiting,
                     completed,
                     up_link_projection,
                     shallow_declared_types,
                 )?;
                 let value = self.export_value_with(
-                    value.value(),
+                    *value,
                     visiting,
                     completed,
                     up_link_projection,
@@ -2427,7 +2416,7 @@ impl<'a> HeapView<'a> {
                     ));
                 }
                 let value = self.export_value_with(
-                    linked.value(),
+                    linked,
                     visiting,
                     completed,
                     up_link_projection,
@@ -2517,7 +2506,7 @@ impl<'a> HeapView<'a> {
                     .iter()
                     .map(|value| {
                         self.export_value_with(
-                            value.value(),
+                            *value,
                             visiting,
                             completed,
                             up_link_projection,
@@ -2649,7 +2638,6 @@ fn bound_type_replacements(
         }
         let children = match object {
             Object::DeclaredType { body, .. } => vec![*body],
-            Object::Declared { owner, payload } => vec![*owner, *payload],
             Object::Array(values) | Object::Tuple(values) => values.to_vec(),
             Object::Tagged { tag, payload } => vec![*tag, *payload],
             Object::Dict { values, .. } => values.to_vec(),
@@ -2686,7 +2674,6 @@ fn runtime_object_handle(value: RuntimeValue) -> Option<Handle> {
         RuntimeValue::NativeType(_) => None,
         RuntimeValue::Bytes(handle)
         | RuntimeValue::DeclaredType(handle)
-        | RuntimeValue::Declared(handle)
         | RuntimeValue::Opaque(handle)
         | RuntimeValue::Array(handle)
         | RuntimeValue::Tuple(handle)
@@ -2865,9 +2852,6 @@ impl PendingCopy {
             RuntimeValue::DeclaredType(handle) => {
                 RuntimeValue::DeclaredType(self.copy_object(target, source, handle)?)
             }
-            RuntimeValue::Declared(handle) => {
-                RuntimeValue::Declared(self.copy_object(target, source, handle)?)
-            }
             RuntimeValue::Array(handle) => {
                 RuntimeValue::Array(self.copy_object(target, source, handle)?)
             }
@@ -2890,7 +2874,13 @@ impl PendingCopy {
                 RuntimeValue::UpLink(self.copy_object(target, source, handle)?)
             }
         };
-        Ok(value.with_value(copied))
+        let mut copied = value.with_value(copied).without_type_witness();
+        if let Some(owner) = value.type_witness() {
+            let owner = self.copy_object(target, source, owner)?;
+            copied =
+                copied.with_type_witness(RichValue::unknown(RuntimeValue::DeclaredType(owner)))?;
+        }
+        Ok(copied)
     }
 
     fn copy_object(
@@ -2970,10 +2960,6 @@ impl PendingCopy {
                     application_arguments,
                 }
             }
-            Object::Declared { owner, payload } => Object::Declared {
-                owner: self.copy_value(target, source, *owner)?,
-                payload: self.copy_value(target, source, *payload)?,
-            },
             Object::Array(values) => Object::Array(copy_values(self, values)?),
             Object::Tuple(values) => Object::Tuple(copy_values(self, values)?),
             Object::Tagged { tag, payload } => Object::Tagged {
@@ -3172,7 +3158,6 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
         RuntimeValue::Bytes(handle)
         | RuntimeValue::Opaque(handle)
         | RuntimeValue::DeclaredType(handle)
-        | RuntimeValue::Declared(handle)
         | RuntimeValue::Array(handle)
         | RuntimeValue::Tuple(handle)
         | RuntimeValue::Tagged(handle)
@@ -3192,6 +3177,9 @@ fn value_contains_foreign(value: RuntimeValue, target: Storage) -> bool {
 #[cfg(test)]
 fn rich_value_contains_foreign(value: RichValue, target: Storage) -> bool {
     value_contains_foreign(value.value(), target)
+        || value
+            .type_witness()
+            .is_some_and(|handle| handle.storage != target)
 }
 
 fn object_contains_disallowed(
@@ -3200,26 +3188,31 @@ fn object_contains_disallowed(
     background: Option<Storage>,
 ) -> bool {
     let foreign = |storage| storage != target && Some(storage) != background;
-    let value_foreign = |value: RichValue| match value.value() {
-        RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => foreign(id.storage),
-        RuntimeValue::NativeType(_) => false,
-        RuntimeValue::Bytes(handle)
-        | RuntimeValue::Opaque(handle)
-        | RuntimeValue::DeclaredType(handle)
-        | RuntimeValue::Declared(handle)
-        | RuntimeValue::Array(handle)
-        | RuntimeValue::Tuple(handle)
-        | RuntimeValue::Tagged(handle)
-        | RuntimeValue::Dict(handle)
-        | RuntimeValue::Func(handle)
-        | RuntimeValue::Dyn(handle)
-        | RuntimeValue::UpLink(handle) => foreign(handle.storage),
-        RuntimeValue::Failed(_)
-        | RuntimeValue::Int(_)
-        | RuntimeValue::Float(_)
-        | RuntimeValue::BuiltinAtom(_)
-        | RuntimeValue::InlineAtom(_)
-        | RuntimeValue::InlineString(_) => false,
+    let value_foreign = |value: RichValue| {
+        let payload_is_foreign = match value.value() {
+            RuntimeValue::Atom(id) | RuntimeValue::ShortString(id) => foreign(id.storage),
+            RuntimeValue::NativeType(_) => false,
+            RuntimeValue::Bytes(handle)
+            | RuntimeValue::Opaque(handle)
+            | RuntimeValue::DeclaredType(handle)
+            | RuntimeValue::Array(handle)
+            | RuntimeValue::Tuple(handle)
+            | RuntimeValue::Tagged(handle)
+            | RuntimeValue::Dict(handle)
+            | RuntimeValue::Func(handle)
+            | RuntimeValue::Dyn(handle)
+            | RuntimeValue::UpLink(handle) => foreign(handle.storage),
+            RuntimeValue::Failed(_)
+            | RuntimeValue::Int(_)
+            | RuntimeValue::Float(_)
+            | RuntimeValue::BuiltinAtom(_)
+            | RuntimeValue::InlineAtom(_)
+            | RuntimeValue::InlineString(_) => false,
+        };
+        payload_is_foreign
+            || value
+                .type_witness()
+                .is_some_and(|handle| foreign(handle.storage))
     };
     match object {
         Object::Reserved => true,
@@ -3235,7 +3228,6 @@ fn object_contains_disallowed(
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
         Object::DeclaredType { body, .. } => value_foreign(*body),
-        Object::Declared { owner, payload } => value_foreign(*owner) || value_foreign(*payload),
         Object::UpLink { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,
@@ -3941,6 +3933,72 @@ mod tests {
         .export_value(runtime)
         .unwrap();
         assert_eq!(exported.to_string(), value.to_string());
+    }
+
+    #[test]
+    fn declared_witnesses_replace_payload_wrappers_across_equality_and_boundaries() {
+        let number = DeclaredType::bind("test", 1, "Number", Value::Int(0));
+        let other = DeclaredType::bind("test", 2, "Other", Value::Int(0));
+        let declared =
+            |owner: DeclaredType, payload| Value::Declared(DeclaredValue::new(owner, payload));
+        let mut source = Heap::work();
+        let left = source
+            .import_value(None, &declared(number.clone(), Value::Int(7)))
+            .unwrap();
+        let right = source
+            .import_value(None, &declared(number.clone(), Value::Int(7)))
+            .unwrap();
+        let different = source
+            .import_value(None, &declared(other, Value::Int(7)))
+            .unwrap();
+        assert_eq!(left.value(), RuntimeValue::Int(7));
+        assert!(left.type_witness().is_some());
+        let view = HeapView {
+            current: &source,
+            background: None,
+        };
+        assert!(view.values_equal(left, right).unwrap());
+        assert!(!view.values_equal(left, different).unwrap());
+
+        let exported = view.export_value(left).unwrap();
+        let Value::Declared(exported) = exported else {
+            panic!("declared witness was not reconstructed at the Host boundary")
+        };
+        assert_eq!(exported.owner().id(), number.id());
+        assert!(matches!(exported.payload(), Value::Int(7)));
+
+        let mut main = Heap::main();
+        let copied = copy_roots(&mut main, view, &[left]).unwrap()[0];
+        assert_eq!(copied.value(), RuntimeValue::Int(7));
+        assert_eq!(copied.type_witness().unwrap().storage, Storage::Main);
+        let main_view = HeapView {
+            current: &main,
+            background: None,
+        };
+        let Value::Declared(copied) = main_view.export_value(copied).unwrap() else {
+            panic!("copied witness was not reconstructed at the Host boundary")
+        };
+        assert_eq!(copied.owner().id(), number.id());
+        assert!(matches!(copied.payload(), Value::Int(7)));
+    }
+
+    #[test]
+    fn declared_atoms_keep_raw_atom_equality() {
+        let owner = DeclaredType::bind("test", 1, "Flag", Value::atom("Atom"));
+        let mut heap = Heap::work();
+        let declared = heap
+            .import_value(
+                None,
+                &Value::Declared(DeclaredValue::new(owner, Value::atom("Ready"))),
+            )
+            .unwrap();
+        let raw = RichValue::unknown(heap.atom(None, "Ready"));
+        let view = HeapView {
+            current: &heap,
+            background: None,
+        };
+        assert!(view.values_equal(declared, raw).unwrap());
+        assert!(view.values_equal(raw, declared).unwrap());
     }
 
     #[test]
