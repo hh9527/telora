@@ -2431,6 +2431,17 @@ pub(crate) fn publish_root(
             "publication requires a Work world and Main world",
         ));
     }
+    if (HeapView {
+        current,
+        background: Some(target),
+    })
+    .first_data_failure(root)?
+    .is_some()
+    {
+        return Err(HeapError(
+            "failed evaluation node cannot cross a Host publication boundary",
+        ));
+    }
     let roots = copy_roots(
         target,
         HeapView {
@@ -2563,12 +2574,10 @@ impl PendingCopy {
             });
         }
         let copied = match value.value() {
-            DecodedValue::Failed(id) if self.target_storage == Storage::Work => {
-                DecodedValue::Failed(id)
-            }
-            DecodedValue::Failed(_) => {
-                return Err(HeapError("failed evaluation node cannot enter Main world"));
-            }
+            // Failure ids belong to the Main world's stable failure arena.
+            // Work executions inherit that arena as a prefix and append new
+            // roots, so the identity does not need relocation during copy.
+            DecodedValue::Failed(id) => DecodedValue::Failed(id),
             DecodedValue::Int(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
@@ -3372,7 +3381,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_nodes_relocate_between_work_worlds_but_cannot_enter_main() {
+    fn failed_nodes_cross_module_publication_but_not_host_publication() {
         let main = Heap::main();
         let mut source = Heap::work();
         let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(
@@ -3390,6 +3399,16 @@ mod tests {
         assert!(matches!(items[0].value(), DecodedValue::Failed(7)));
         let mut destination = Heap::main();
         assert!(publish_root(&mut destination, &source, root).is_err());
+        let published = publish_module_root(&mut destination, &source, root).unwrap();
+        assert_eq!(
+            HeapView {
+                current: &destination,
+                background: None,
+            }
+            .first_data_failure(published.runtime())
+            .unwrap(),
+            Some(7)
+        );
     }
 
     #[test]

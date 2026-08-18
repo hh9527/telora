@@ -1515,6 +1515,16 @@ impl WorkWorld {
             ));
         };
         let effects = view.sequence(effects, false)?.to_vec();
+        // Audit the complete batch before the Host observes or executes the
+        // first effect. A later failed payload must not permit earlier effects
+        // to escape and make the transition partially visible.
+        for effect in &effects {
+            if view.first_data_failure(*effect)?.is_some() {
+                return Err(crate::heap::HeapError::new(
+                    "failed evaluation node cannot cross the SystemEffect boundary",
+                ));
+            }
+        }
         self.root = *state;
         Ok((self, effects))
     }
@@ -1658,13 +1668,14 @@ impl Vm {
         Ok(arena)
     }
 
-    pub(crate) fn execute_in_work_best_effort(
+    pub(crate) fn execute_in_work_best_effort_with_failures(
         &mut self,
         background: &Heap,
         externals: &HashMap<String, Val>,
         function: &BytecodeFunction,
         arguments: &[crate::DataWorld],
         account: &mut QuotaAccount,
+        inherited_failure_count: usize,
     ) -> Result<VmExecution, RuntimeError> {
         self.execute_frame_with_policy(
             background,
@@ -1677,6 +1688,7 @@ impl Vm {
             &[],
             account,
             true,
+            inherited_failure_count,
         )
         .map_err(|failure| failure.error)
     }
@@ -1736,6 +1748,7 @@ impl Vm {
             captures,
             account,
             false,
+            0,
         )
         .map(|execution| execution.world)
         .map_err(|failure| failure.error)
@@ -1754,6 +1767,7 @@ impl Vm {
         captures: &[crate::DataWorld],
         account: &mut QuotaAccount,
         best_effort: bool,
+        inherited_failure_count: usize,
     ) -> Result<VmExecution, VmExecutionFailure> {
         // Linking recursively walks the immutable prototype graph. Keep that host
         // recursion off callers' often-small test or embedding threads; VM calls
@@ -1889,6 +1903,9 @@ impl Vm {
         let mut frames = vec![root_frame];
         let debug_sink = Arc::clone(&self.debug_sink);
 
+        // A failed node may arrive through an imported Main-world Module. Its
+        // id is below the stable prefix length owned by that Main world; only
+        // newly created roots need to be retained by this execution.
         let mut failures = Vec::new();
         let mut result = (|| -> Result<Val, RuntimeError> {
             loop {
@@ -3401,7 +3418,9 @@ impl Vm {
                         }
                         let failure_id = if let Some(failure_id) = runtime_error.propagated_failure
                         {
-                            if failure_id as usize >= failures.len() {
+                            if failure_id as usize
+                                >= inherited_failure_count.saturating_add(failures.len())
+                            {
                                 break Err(error(
                                     RuntimeErrorKind::InvalidBytecode,
                                     "failed evaluation node references an unknown root",
@@ -3412,7 +3431,10 @@ impl Vm {
                             failure_id
                         } else {
                             append_runtime_trace(&mut runtime_error, &frames);
-                            let failure_id = u32::try_from(failures.len()).map_err(|_| {
+                            let failure_id = u32::try_from(
+                                inherited_failure_count.saturating_add(failures.len()),
+                            )
+                            .map_err(|_| {
                                 error(
                                     RuntimeErrorKind::AllocationQuotaExceeded,
                                     "best-effort failure arena is full",
@@ -3525,6 +3547,7 @@ impl Vm {
                 &[],
                 account,
                 false,
+                0,
             )
             .map_err(|failure| (failure.heap, failure.error))?;
         let world = execution.world;
@@ -13039,6 +13062,29 @@ mod tests {
                 .value(DecodedValue::Array(cycle).into(), 0)
                 .unwrap_err(),
             "JSON cannot encode cyclic values"
+        );
+    }
+
+    #[test]
+    fn reducer_transition_audits_the_complete_effect_batch() {
+        let background = Heap::main();
+        let mut heap = Heap::work();
+        let failed_payload = Val::unknown(DecodedValue::Array(heap.allocate(Object::Array(
+            vec![Val::unknown(DecodedValue::Failed(0))].into(),
+        ))));
+        let effects = Val::unknown(DecodedValue::Array(heap.allocate(Object::Array(
+            vec![Val::unknown(DecodedValue::Int(1)), failed_payload].into(),
+        ))));
+        let root = Val::unknown(DecodedValue::Tuple(heap.allocate(Object::Tuple(
+            vec![Val::unknown(DecodedValue::Int(0)), effects].into(),
+        ))));
+        let error = match (WorkWorld { heap, root }).into_reducer_transition(&background) {
+            Ok(_) => panic!("failed effect batch crossed the Host boundary"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.to_string(),
+            "failed evaluation node cannot cross the SystemEffect boundary"
         );
     }
 }

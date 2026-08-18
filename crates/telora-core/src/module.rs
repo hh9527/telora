@@ -64,22 +64,20 @@ struct OpenImportCandidate {
 }
 
 #[derive(Clone)]
-struct RecoveryOpenImportCandidate {
+struct WorkspaceOpenImportCandidate {
     provider: ModuleCName,
     scheme: crate::types::TypeScheme,
-    provenance: Option<Provenance>,
     root: PersistentValue,
     concrete_types: BTreeMap<String, TypeDescriptor>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
-fn recovery_open_import_exports(
+fn workspace_open_import_exports(
     provider: &ModuleCName,
     interface: &ModuleInterface,
-    provenance: Option<&Provenance>,
     root: PersistentValue,
     heap: &Heap,
-) -> Result<Vec<(String, RecoveryOpenImportCandidate)>, ModuleError> {
+) -> Result<Vec<(String, WorkspaceOpenImportCandidate)>, ModuleError> {
     interface
         .exports
         .iter()
@@ -92,10 +90,9 @@ fn recovery_open_import_exports(
                 })?;
             Ok((
                 name.clone(),
-                RecoveryOpenImportCandidate {
+                WorkspaceOpenImportCandidate {
                     provider: provider.clone(),
                     scheme: scheme.clone(),
-                    provenance: provenance.cloned(),
                     root: field_root,
                     concrete_types: interface.concrete_types.clone(),
                     type_family_template: interface.type_family_templates.get(name).cloned(),
@@ -793,6 +790,7 @@ struct MainWorld {
     heap: Heap,
     modules: ModuleGraph,
     types: TypeStore,
+    failures: Vec<crate::RuntimeError>,
 }
 
 impl MainWorld {
@@ -834,6 +832,7 @@ impl MainWorld {
             heap,
             modules,
             types,
+            failures: Vec::new(),
         }
     }
 
@@ -1187,7 +1186,7 @@ fn install_native_modules_observed(
                     program: Some(program),
                     analysis: Some(analysis),
                     partial: None,
-                    state: WorkspaceModuleState::Known,
+                    state: WorkspaceModuleState::Available,
                     imports,
                     diagnostics: Vec::new(),
                 },
@@ -1893,13 +1892,6 @@ impl Engine {
         )
     }
 
-    fn check_observed(
-        &self,
-        module: &LoadedModule,
-    ) -> (Result<(), crate::RuntimeError>, Vec<Diagnostic>) {
-        module.check_observed(self.config.session_quota, Arc::clone(&self.debug_sink))
-    }
-
     pub fn invoke_world(
         &self,
         module: &LoadedModule,
@@ -2302,22 +2294,6 @@ impl Engine {
         let root_module = resolver
             .resolve_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let root = root_module
-            .path()
-            .expect("local root has a path")
-            .to_owned();
-        if let Ok(mut module) = self.load_module(&root, BTreeMap::new()) {
-            let (result, diagnostics) = self.check_observed(&module);
-            match result {
-                Ok(_) => {
-                    module.workspace.extend_diagnostics(diagnostics);
-                    return Ok(module.workspace);
-                }
-                Err(error)
-                    if error.failure_class() == crate::evaluation::FailureClass::Recoverable => {}
-                Err(_) => return Ok(module.workspace),
-            }
-        }
         let opaque_modules = builtin_list(&self.native_modules)
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
@@ -2337,7 +2313,7 @@ impl Engine {
             &self.debug_sink,
             &self.native_modules,
         )?;
-        let mut builder = RecoverableWorkspaceBuilder {
+        let mut builder = WorkspaceBuilder {
             engine: self,
             resolver,
             overlays: &BTreeMap::new(),
@@ -2416,28 +2392,6 @@ impl Engine {
         let root_module = resolver
             .selected_root()
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        if let Ok(mut module) = load_module_with_resolver(
-            resolver.clone(),
-            BTreeMap::new(),
-            self.config.module_quota,
-            Arc::clone(&self.debug_sink),
-            &self.native_modules,
-            ModuleSourcePolicy::ExplicitExports,
-        ) {
-            let (result, diagnostics) = self.check_observed(&module);
-            module.workspace.extend_diagnostics(diagnostics);
-            match result {
-                Ok(_) => return Ok(module.workspace),
-                Err(error)
-                    if error.failure_class() == crate::evaluation::FailureClass::Recoverable => {}
-                Err(error) => {
-                    if let Some(diagnostic) = error.diagnostic() {
-                        module.workspace.extend_diagnostics([diagnostic]);
-                    }
-                    return Ok(module.workspace);
-                }
-            }
-        }
         let opaque_modules = builtin_list(&self.native_modules)
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
@@ -2457,7 +2411,7 @@ impl Engine {
             &self.debug_sink,
             &self.native_modules,
         )?;
-        let mut builder = RecoverableWorkspaceBuilder {
+        let mut builder = WorkspaceBuilder {
             engine: self,
             resolver,
             overlays: &BTreeMap::new(),
@@ -2521,7 +2475,7 @@ impl Engine {
             &self.debug_sink,
             &self.native_modules,
         )?;
-        let mut builder = RecoverableWorkspaceBuilder {
+        let mut builder = WorkspaceBuilder {
             engine: self,
             resolver,
             overlays,
@@ -2549,7 +2503,7 @@ impl Engine {
     }
 }
 
-struct RecoverableWorkspaceBuilder<'a> {
+struct WorkspaceBuilder<'a> {
     engine: &'a Engine,
     resolver: ModuleResolver,
     overlays: &'a BTreeMap<PathBuf, crate::document::DocumentText>,
@@ -2566,7 +2520,7 @@ struct RecoverableWorkspaceBuilder<'a> {
     cycle_reported: bool,
 }
 
-impl RecoverableWorkspaceBuilder<'_> {
+impl WorkspaceBuilder<'_> {
     fn load_telora<'a>(
         &'a mut self,
         module: ResolvedModule,
@@ -2649,7 +2603,7 @@ impl RecoverableWorkspaceBuilder<'_> {
             let mut external_roots = HashMap::new();
             let mut external_interfaces = BTreeMap::new();
             let mut unavailable_imports = HashSet::new();
-            let mut open_candidates: BTreeMap<String, Vec<RecoveryOpenImportCandidate>> =
+            let mut open_candidates: BTreeMap<String, Vec<WorkspaceOpenImportCandidate>> =
                 BTreeMap::new();
             let mut diagnostics = Vec::new();
             for option in &invalid_scoped_options {
@@ -2713,10 +2667,9 @@ impl RecoverableWorkspaceBuilder<'_> {
                     });
                     if let Some(module) = self.core_modules.get(&target) {
                         if open {
-                            match recovery_open_import_exports(
+                            match workspace_open_import_exports(
                                 &target_module.id,
                                 &module.interface,
-                                module.provenance.as_ref(),
                                 module.root,
                                 &self.main.heap,
                             ) {
@@ -2774,16 +2727,14 @@ impl RecoverableWorkspaceBuilder<'_> {
                 };
                 if let Some(root) = root {
                     if open {
-                        let provenance = self.provenances.get(&target_module.id);
                         let interface = self
                             .interfaces
                             .get(&target_module.id)
                             .cloned()
                             .unwrap_or_default();
-                        match recovery_open_import_exports(
+                        match workspace_open_import_exports(
                             &target_module.id,
                             &interface,
-                            provenance,
                             root,
                             &self.main.heap,
                         ) {
@@ -2841,10 +2792,9 @@ impl RecoverableWorkspaceBuilder<'_> {
                 && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
             {
                 let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
-                if let Ok(exports) = recovery_open_import_exports(
+                if let Ok(exports) = workspace_open_import_exports(
                     &provider,
                     &module.interface,
-                    module.provenance.as_ref(),
                     module.root,
                     &self.main.heap,
                 ) {
@@ -2923,78 +2873,35 @@ impl RecoverableWorkspaceBuilder<'_> {
                     query: self.query,
                 },
             );
-            let mut runtime_diagnostics = Vec::new();
-            let mut recovered_analysis = None;
             let runtime_module_id = self
                 .main
                 .modules
                 .id(&module_id)
                 .unwrap_or(ModuleId::ANONYMOUS);
-            let strict = if self.cycle_members.contains(&module_id)
+            let evaluated = if self.cycle_members.contains(&module_id)
                 || !invalid_scoped_options.is_empty()
                 || missing_exports
             {
-                None
+                ModuleEvaluation::default()
             } else {
-                program.as_ref().and_then(|program| {
-                    match self.analyze_and_evaluate(
-                        runtime_module_id,
-                        source_id,
-                        program,
-                        &external_roots,
-                        &external_interfaces,
-                    ) {
-                        Ok((analysis, root, emitted)) => {
-                            runtime_diagnostics.extend(emitted);
-                            Some((analysis, root))
-                        }
-                        Err(RecoveryEvaluationError::Runtime {
-                            analysis,
-                            error,
-                            emitted,
-                        }) if error.failure_class()
-                            == crate::evaluation::FailureClass::Recoverable =>
-                        {
-                            if emitted.is_empty() {
-                                if let Some(diagnostic) = error.diagnostic() {
-                                    runtime_diagnostics.push(diagnostic);
-                                }
-                            } else {
-                                runtime_diagnostics.extend(emitted);
-                            }
-                            self.evaluate_best_effort_module(
-                                runtime_module_id,
-                                source_id,
-                                program,
-                                &analysis,
-                                &external_roots,
-                                &mut runtime_diagnostics,
-                            );
-                            recovered_analysis = Some(*analysis);
-                            None
-                        }
-                        Err(_) => None,
-                    }
-                })
+                program
+                    .as_ref()
+                    .map_or_else(ModuleEvaluation::default, |program| {
+                        self.analyze_and_evaluate(
+                            runtime_module_id,
+                            source_id,
+                            program,
+                            &external_roots,
+                            &external_interfaces,
+                        )
+                    })
             };
-            diagnostics.extend(runtime_diagnostics);
-            let partial_empty =
-                partial.hir.definitions().is_empty() && partial.hir.expressions().is_empty();
-            let analysis = strict
-                .as_ref()
-                .map(|(analysis, _)| analysis.clone())
-                .or(recovered_analysis);
+            diagnostics.extend(evaluated.diagnostics);
+            let analysis = evaluated.analysis;
             let partial = analysis.is_none().then_some(partial);
-            let strict_root = strict.as_ref().map(|(_, root)| root);
-            let state = if missing_exports {
-                WorkspaceModuleState::Unavailable
-            } else if strict_root.is_some() {
-                WorkspaceModuleState::Known
-            } else if self.cycle_members.contains(&module_id) || partial_empty {
-                WorkspaceModuleState::Unavailable
-            } else {
-                WorkspaceModuleState::Partial
-            };
+            // Availability describes whether the source Module exists. Failed,
+            // unknown and incomputable facts remain properties of its graph.
+            let state = WorkspaceModuleState::Available;
             self.inputs.insert(
                 key.clone(),
                 SemanticModuleInput {
@@ -3010,7 +2917,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                     diagnostics,
                 },
             );
-            if let Some((_, root)) = strict {
+            if let Some(root) = evaluated.root {
                 let interface = self.inputs[&key]
                     .analysis
                     .as_ref()
@@ -3068,11 +2975,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                 program: None,
                 analysis: None,
                 partial: None,
-                state: if sourced.is_some() {
-                    WorkspaceModuleState::Known
-                } else {
-                    WorkspaceModuleState::Unavailable
-                },
+                state: WorkspaceModuleState::Available,
                 imports: Vec::new(),
                 diagnostics: parsed.diagnostics,
             },
@@ -3096,13 +2999,13 @@ impl RecoverableWorkspaceBuilder<'_> {
         program: &Program,
         external_roots: &HashMap<String, PersistentValue>,
         external_interfaces: &BTreeMap<String, ModuleInterface>,
-    ) -> Result<(crate::Analysis, PersistentValue, Vec<Diagnostic>), RecoveryEvaluationError> {
+    ) -> ModuleEvaluation {
         let mut account = QuotaAccount::new(self.engine.config.module_quota);
         if let Some(query) = self.query {
             account = account.with_query(query.clone());
         }
         let source = self.sources.get(source_id);
-        let analysis = analyze_program_with_bindings_observed(
+        let analysis = match analyze_program_with_bindings_observed(
             &source.name,
             module_id,
             program,
@@ -3118,8 +3021,12 @@ impl RecoverableWorkspaceBuilder<'_> {
             &self.engine.debug_sink,
             &mut self.main.heap,
             &mut self.main.types,
-        )
-        .map_err(|_| RecoveryEvaluationError::Module)?;
+        ) {
+            Ok(analysis) => analysis,
+            Err(error) => {
+                return ModuleEvaluation::failed(frontend_diagnostic(error, source_id, program));
+            }
+        };
         let mut execution_roots = external_roots.clone();
         install_type_family_roots(&mut execution_roots, &analysis);
         let static_funcs = self.main.modules.static_funcs(module_id);
@@ -3131,88 +3038,123 @@ impl RecoverableWorkspaceBuilder<'_> {
         let erased_bindings = metadata
             .map(|metadata| metadata.erased_bindings)
             .unwrap_or_default();
-        let function = compile_program_with_promoted_types_and_static_funcs(
+        let function = match compile_program_with_promoted_types_and_static_funcs(
             source,
             program,
             &analysis,
             &promoted_types,
             &erased_bindings,
             &static_funcs,
-        )
-        .map_err(|_| RecoveryEvaluationError::Module)?;
-        let arena = match Vm::new()
+        ) {
+            Ok(function) => function,
+            Err(error) => {
+                return ModuleEvaluation::analyzed(
+                    analysis,
+                    frontend_diagnostic(error, source_id, program),
+                );
+            }
+        };
+        let inherited_failure_count = self.main.failures.len();
+        let execution = match Vm::new()
             .with_debug_sink(Arc::clone(&self.engine.debug_sink))
-            .execute_in_work(
+            .execute_in_work_best_effort_with_failures(
                 &self.main.heap,
                 &runtime_roots(&execution_roots),
                 &function,
                 &[],
                 &mut account,
+                inherited_failure_count,
             ) {
-            Ok(arena) => arena,
+            Ok(execution) => execution,
             Err(error) => {
-                return Err(RecoveryEvaluationError::Runtime {
-                    analysis: Box::new(analysis),
-                    error: Box::new(error),
-                    emitted: account.take_diagnostics(),
-                });
+                let mut diagnostics = account.take_diagnostics();
+                if let Some(diagnostic) = error.diagnostic() {
+                    merge_runtime_diagnostics(&mut diagnostics, [diagnostic]);
+                } else {
+                    merge_runtime_diagnostics(
+                        &mut diagnostics,
+                        [Diagnostic::error(error.to_string(), program.location)],
+                    );
+                }
+                return ModuleEvaluation {
+                    analysis: Some(analysis),
+                    root: None,
+                    diagnostics,
+                };
             }
         };
+        let mut diagnostics = Vec::new();
+        merge_runtime_diagnostics(&mut diagnostics, account.take_diagnostics());
+        merge_runtime_errors(&mut diagnostics, execution.failures.clone());
+        let failures = execution.failures;
         let root = if analysis.explicit_exports {
-            arena.publish_module(&mut self.main.heap)
+            execution.world.publish_module(&mut self.main.heap)
         } else {
-            arena.publish(&mut self.main.heap)
+            execution.world.publish(&mut self.main.heap)
+        };
+        match root {
+            Ok(root) => {
+                self.main.failures.extend(failures);
+                ModuleEvaluation {
+                    analysis: Some(analysis),
+                    root: Some(root),
+                    diagnostics,
+                }
+            }
+            Err(error) => {
+                merge_runtime_diagnostics(
+                    &mut diagnostics,
+                    [Diagnostic::error(error.to_string(), program.location)],
+                );
+                ModuleEvaluation {
+                    analysis: Some(analysis),
+                    root: None,
+                    diagnostics,
+                }
+            }
         }
-        .map_err(|_| RecoveryEvaluationError::Module)?;
-        Ok((analysis, root, account.take_diagnostics()))
+    }
+}
+
+#[derive(Default)]
+struct ModuleEvaluation {
+    analysis: Option<crate::Analysis>,
+    root: Option<PersistentValue>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl ModuleEvaluation {
+    fn failed(diagnostic: Diagnostic) -> Self {
+        Self {
+            diagnostics: vec![diagnostic],
+            ..Self::default()
+        }
     }
 
-    fn evaluate_best_effort_module(
-        &self,
-        module_id: ModuleId,
-        source_id: crate::SourceId,
-        program: &Program,
-        analysis: &crate::Analysis,
-        external_roots: &HashMap<String, PersistentValue>,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        let source = self.sources.get(source_id);
-        let mut graph_account = QuotaAccount::new(self.engine.config.module_quota);
-        if let Some(query) = self.query {
-            graph_account = graph_account.with_query(query.clone());
-        }
-        let mut execution_roots = external_roots.clone();
-        install_type_family_roots(&mut execution_roots, analysis);
-        let static_funcs = self.main.modules.static_funcs(module_id);
-        let metadata = metadata_compilation_plan(program);
-        let promoted_types = metadata
-            .as_ref()
-            .map(|metadata| metadata.type_names.iter().cloned().collect())
-            .unwrap_or_default();
-        let erased_bindings = metadata
-            .map(|metadata| metadata.erased_bindings)
-            .unwrap_or_default();
-        if let Ok(function) = compile_program_with_promoted_types_and_static_funcs(
-            source,
-            program,
-            analysis,
-            &promoted_types,
-            &erased_bindings,
-            &static_funcs,
-        ) && let Ok(execution) = Vm::new()
-            .with_debug_sink(Arc::clone(&self.engine.debug_sink))
-            .execute_in_work_best_effort(
-                &self.main.heap,
-                &runtime_roots(&execution_roots),
-                &function,
-                &[],
-                &mut graph_account,
-            )
-        {
-            merge_runtime_diagnostics(diagnostics, graph_account.take_diagnostics());
-            merge_runtime_errors(diagnostics, execution.failures);
+    fn analyzed(analysis: crate::Analysis, diagnostic: Diagnostic) -> Self {
+        Self {
+            analysis: Some(analysis),
+            diagnostics: vec![diagnostic],
+            ..Self::default()
         }
     }
+}
+
+fn frontend_diagnostic(
+    error: crate::FrontendError,
+    source: crate::SourceId,
+    program: &Program,
+) -> Diagnostic {
+    error
+        .diagnostic
+        .map(|diagnostic| *diagnostic)
+        .unwrap_or_else(|| {
+            let offset = u32::try_from(error.location.offset).unwrap_or(program.location.start);
+            Diagnostic::error(
+                error.message,
+                crate::Location::new(source, crate::TextRange::at(offset)),
+            )
+        })
 }
 
 fn merge_runtime_errors(diagnostics: &mut Vec<Diagnostic>, errors: Vec<crate::RuntimeError>) {
@@ -3266,15 +3208,6 @@ fn same_runtime_diagnostic(left: &Diagnostic, right: &Diagnostic) -> bool {
             })
     };
     compact_matches(left, right) || compact_matches(right, left)
-}
-
-enum RecoveryEvaluationError {
-    Module,
-    Runtime {
-        analysis: Box<crate::Analysis>,
-        error: Box<crate::RuntimeError>,
-        emitted: Vec<Diagnostic>,
-    },
 }
 
 fn block_on_recovery<F: std::future::Future>(future: F) -> F::Output {
@@ -4196,7 +4129,7 @@ impl ModuleLoader {
                                 program: None,
                                 analysis: None,
                                 partial: None,
-                                state: crate::semantic::WorkspaceModuleState::Known,
+                                state: crate::semantic::WorkspaceModuleState::Available,
                                 imports: Vec::new(),
                                 diagnostics: Vec::new(),
                             },
@@ -4669,7 +4602,7 @@ impl ModuleLoader {
                 program: Some(program),
                 analysis: Some(analysis.clone()),
                 partial: None,
-                state: crate::semantic::WorkspaceModuleState::Known,
+                state: crate::semantic::WorkspaceModuleState::Available,
                 imports: semantic_imports,
                 diagnostics: Vec::new(),
             },
@@ -5243,7 +5176,7 @@ import "./library.telora" *;
         let module = snapshot
             .module_by_path(&canonicalize(&module).unwrap())
             .unwrap();
-        assert_eq!(module.state, WorkspaceModuleState::Unavailable);
+        assert_eq!(module.state, WorkspaceModuleState::Available);
         assert_eq!(
             snapshot
                 .diagnostics()
@@ -5443,14 +5376,14 @@ export let output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
             .find(|module| module.name == "acme/runtime")
             .unwrap();
         assert_eq!(host.kind, WorkspaceModuleKind::Core);
-        assert_eq!(host.state, WorkspaceModuleState::Known);
+        assert_eq!(host.state, WorkspaceModuleState::Available);
 
         let snapshot = engine.recover_workspace(&main).unwrap();
         assert!(snapshot.diagnostics().is_empty());
         assert!(snapshot.modules().iter().any(|module| {
             module.name == "acme/runtime"
                 && module.kind == WorkspaceModuleKind::Core
-                && module.state == WorkspaceModuleState::Known
+                && module.state == WorkspaceModuleState::Available
         }));
         let clock = crate::RevisionClock::default();
         let context = crate::QueryContext::current(clock);
@@ -6058,7 +5991,7 @@ name = "rustc"
             .module_by_path(&canonicalize(&directory.join("config.toml")).unwrap())
             .unwrap();
         assert_eq!(toml.kind, WorkspaceModuleKind::Toml);
-        assert_eq!(toml.state, WorkspaceModuleState::Known);
+        assert_eq!(toml.state, WorkspaceModuleState::Available);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -6115,7 +6048,7 @@ name = "rustc"
             .module_by_path(&canonicalize(&config).unwrap())
             .unwrap();
         assert_eq!(config.kind, WorkspaceModuleKind::Toml);
-        assert_eq!(config.state, WorkspaceModuleState::Unavailable);
+        assert_eq!(config.state, WorkspaceModuleState::Available);
         let source = config.source.expect("invalid TOML source is retained");
         assert!(snapshot.diagnostics().iter().any(|diagnostic| {
             diagnostic.message.contains("duplicate TOML key")
@@ -6153,7 +6086,7 @@ name = "rustc"
             .module_by_path(&canonicalize(&config).unwrap())
             .unwrap();
         assert_eq!(yaml.kind, WorkspaceModuleKind::Yaml);
-        assert_eq!(yaml.state, WorkspaceModuleState::Known);
+        assert_eq!(yaml.state, WorkspaceModuleState::Available);
 
         fs::write(&config, "name: first\nname: second\n").unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
@@ -6161,7 +6094,7 @@ name = "rustc"
             .module_by_path(&canonicalize(&config).unwrap())
             .unwrap();
         assert_eq!(yaml.kind, WorkspaceModuleKind::Yaml);
-        assert_eq!(yaml.state, WorkspaceModuleState::Unavailable);
+        assert_eq!(yaml.state, WorkspaceModuleState::Available);
         assert!(
             snapshot
                 .diagnostics()
@@ -11669,8 +11602,8 @@ export { CallExpr, Expr };"#,
         let model = snapshot
             .module_by_path(&canonicalize(&model).unwrap())
             .unwrap();
-        assert_eq!(main.state, WorkspaceModuleState::Partial);
-        assert_eq!(model.state, WorkspaceModuleState::Partial);
+        assert_eq!(main.state, WorkspaceModuleState::Available);
+        assert_eq!(model.state, WorkspaceModuleState::Available);
         let fact = |module, name: &str| {
             &snapshot
                 .definitions()
@@ -11716,7 +11649,7 @@ export { CallExpr, Expr };"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Known);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let item = snapshot
             .definitions()
             .iter()
@@ -11736,7 +11669,7 @@ export { CallExpr, Expr };"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Known);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let family = snapshot
             .definitions()
             .iter()
@@ -11763,7 +11696,7 @@ export { CallExpr, Expr };"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let family = snapshot
             .definitions()
             .iter()
@@ -11797,7 +11730,7 @@ export { CallExpr, Expr };"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let diagnostic = snapshot
             .diagnostics()
             .iter()
@@ -11838,7 +11771,7 @@ export { CallExpr, Expr };"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let division_errors = snapshot
             .diagnostics()
             .iter()
@@ -11958,7 +11891,7 @@ export let output = "unreachable";"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let messages = snapshot
             .diagnostics()
             .iter()
@@ -11998,6 +11931,107 @@ export let output = "unreachable";"#,
     }
 
     #[test]
+    fn workspace_modules_keep_failed_and_healthy_exports_across_imports() {
+        let directory = fixture_dir();
+        let dependency = directory.join("dependency.telora");
+        let healthy = directory.join("healthy.telora");
+        let blocked = directory.join("blocked.telora");
+        fs::write(
+            &dependency,
+            r#"export let failed = fail!("dependency failed", 1);
+export let healthy = 41;"#,
+        )
+        .unwrap();
+        fs::write(
+            &healthy,
+            r#"import "./dependency.telora" as dependency;
+export let output = dependency.healthy + 1;"#,
+        )
+        .unwrap();
+        fs::write(
+            &blocked,
+            r#"import "./dependency.telora" as dependency;
+export let output = dependency.failed + 1;"#,
+        )
+        .unwrap();
+
+        for root in [&healthy, &blocked] {
+            let snapshot = recovery_engine().recover_workspace(root).unwrap();
+            assert_eq!(
+                snapshot
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.message == "dependency failed")
+                    .count(),
+                1,
+                "{:#?}",
+                snapshot.diagnostics()
+            );
+            assert!(!snapshot.diagnostics().iter().any(|diagnostic| {
+                diagnostic.message.contains("unknown root")
+                    || diagnostic.message.contains("finalization is incomplete")
+                    || diagnostic.message.contains("module is unavailable")
+                    || diagnostic
+                        .message
+                        .contains("dependent computation received a failed evaluation node")
+            }));
+            let module = snapshot
+                .module_by_path(&canonicalize(root).unwrap())
+                .unwrap();
+            let output = snapshot
+                .definitions()
+                .iter()
+                .find(|definition| definition.module == module.id && definition.name == "output")
+                .unwrap();
+            assert_eq!(output.ty.state, crate::FactState::Known);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn workspace_failure_ids_remain_stable_across_multiple_modules() {
+        let directory = fixture_dir();
+        let first = directory.join("first.telora");
+        let second = directory.join("second.telora");
+        let main = directory.join("main.telora");
+        fs::write(&first, r#"export let failed = fail!("first failed", 1);"#).unwrap();
+        fs::write(
+            &second,
+            r#"export let failed = fail!("second failed", 2);"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./first.telora" as first;
+import "./second.telora" as second;
+export let output = second.failed + 1;"#,
+        )
+        .unwrap();
+
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        for message in ["first failed", "second failed"] {
+            assert_eq!(
+                snapshot
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.message == message)
+                    .count(),
+                1,
+                "{:#?}",
+                snapshot.diagnostics()
+            );
+        }
+        assert!(!snapshot.diagnostics().iter().any(|diagnostic| {
+            diagnostic.message.contains("unknown root")
+                || diagnostic
+                    .message
+                    .contains("dependent computation received a failed evaluation node")
+        }));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn recoverable_workspace_continues_healthy_array_slots_and_skips_failed_slots() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
@@ -12022,7 +12056,7 @@ export let output = [1, 2, 3, 4]
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         let mut messages = snapshot
             .diagnostics()
             .iter()
@@ -12063,7 +12097,7 @@ export let output = match array.get(array.map([1, 2, 3], transform), 0) {
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         assert_eq!(
             snapshot
                 .diagnostics()
@@ -12100,7 +12134,7 @@ export let output = array.length([1, transform(2), 1 / 0, transform(3), 4]);"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         assert!(
             snapshot
                 .diagnostics()
@@ -12332,7 +12366,7 @@ export let output = (compared, selected);"#,
         let root = snapshot
             .module_by_path(&canonicalize(&main).unwrap())
             .unwrap();
-        assert_eq!(root.state, WorkspaceModuleState::Partial);
+        assert_eq!(root.state, WorkspaceModuleState::Available);
         assert!(snapshot.diagnostics().iter().any(|diagnostic| {
             diagnostic.message == "broken"
                 && diagnostic.labels[0].location.source == root.source.unwrap()
@@ -12392,17 +12426,19 @@ export let output = (compared, selected);"#,
             );
         }
         assert!(snapshot.modules().iter().any(|module| {
-            module.kind == WorkspaceModuleKind::Json && module.state == WorkspaceModuleState::Known
+            module.kind == WorkspaceModuleKind::Json
+                && module.state == WorkspaceModuleState::Available
         }));
         assert!(snapshot.modules().iter().any(|module| {
-            module.kind == WorkspaceModuleKind::Core && module.state == WorkspaceModuleState::Known
+            module.kind == WorkspaceModuleKind::Core
+                && module.state == WorkspaceModuleState::Available
         }));
         assert_eq!(
             snapshot
                 .module_by_path(&canonicalize(&model).unwrap())
                 .unwrap()
                 .state,
-            WorkspaceModuleState::Known
+            WorkspaceModuleState::Available
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -12430,9 +12466,9 @@ export let output = (compared, selected);"#,
                 .modules()
                 .iter()
                 .filter(|module| module.kind == WorkspaceModuleKind::Telora)
-                .filter(|module| module.state == WorkspaceModuleState::Unavailable)
+                .filter(|module| module.state == WorkspaceModuleState::Available)
                 .count(),
-            2
+            3
         );
         assert_eq!(
             snapshot

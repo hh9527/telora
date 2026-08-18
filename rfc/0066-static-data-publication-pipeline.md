@@ -70,8 +70,8 @@ publication boundary does not prescribe spawning or threading.
 ## Implementation result
 
 `parse_static_data_registered` is the single format dispatch boundary for the
-strict and recoverable loaders. `RecoverableWorkspaceBuilder::load_static_data`
-now owns source acquisition, snapshot state, diagnostics, and value-cache
+strict loader and workspace tools. `WorkspaceBuilder::load_static_data` now owns
+source acquisition, snapshot availability, diagnostics, and value-cache
 publication for every supported static format. The strict loader uses the same
 parse result before importing the sourced value into the persistent heap.
 

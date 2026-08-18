@@ -4,26 +4,30 @@
 - Depends on: RFC 0044, RFC 0103, RFC 0104, RFC 0233
 - Tracking issues: #55, #61
 - Supersedes: RFC 0104's prohibition on partial internal containers
+- Amended by: #93 (ordinary Module pipeline and Host-boundary finalization)
 
 ## Summary
 
 Telora uses one recoverable evaluation/evidence graph for diagnostic tools. A
 node in that graph is either known, failed with stable diagnostic identities,
 unavailable, unknown, conflicted, or skipped because a dependency failed.
-Failed nodes are evaluator-private: they are not Telora values or types and
-cannot cross an ordinary module, codec, or Host value boundary.
+Failed nodes are evaluator-private: they are not Telora values or types. They
+may cross the internal WorkWorld/MainWorld Module boundary under a stable
+failure identity, but cannot cross codec, final return, SystemEffect, or other
+Host-visible boundaries.
 
 The public commands consume this machinery with different finalization rules:
 
 ```text
-show  = query(recoverable evidence graph)
-check = best-effort evaluate(graph) |> strict Module finalization
+show  = query(ordinary Module evidence graph)
+check = evaluate(Module, best-effort policy) |> diagnostic/trust decision
 run   = strict Main loading |> selected Entry lifecycle
 ```
 
-`show` succeeding means that the query ran. `check` succeeding proves that the
-selected module finalized to a complete ordinary Module value. `run` remains
-fail-fast and additionally performs Entry scheduling.
+`show` succeeding means that the query ran. `check` succeeding means the
+ordinary Module pipeline produced no error diagnostic; it does not use a
+second Module type or rerun strict finalization. `run` remains fail-fast and
+additionally performs Entry scheduling.
 
 ## Recoverable evidence graph
 
@@ -56,7 +60,8 @@ Eval(T) = Value(T) | Failed(DiagnosticIds)
 
 Struct, Tuple, Array, tagged payload, and Dict nodes may retain failed children
 while best-effort evaluation continues. Their surface type does not change.
-Any ordinary publication of a reachable failed child is rejected.
+Internal Module publication may retain a reachable failed child. Publication
+to Host-visible data is rejected.
 
 Continuation depends on data dependencies:
 
@@ -80,16 +85,16 @@ internal container. RFC 0104's atomic publication rule remains in force.
 
 ## `check`
 
-`telora check <module>` evaluates the complete selected module with best-effort
-recovery, then performs strict finalization:
+`telora check <module>` evaluates the selected ordinary Module with the
+best-effort scheduling policy:
 
 - independent work after a recoverable failure may add diagnostics;
 - warnings alone do not fail finalization;
 - any syntax, type, resolution, or runtime error produces a nonzero exit and no
-  Module value, even if the selected root does not depend on that failure;
+  Host-visible result, even if the selected root does not depend on that failure;
 - stdout is a `telora.check/v1` JSONL stream containing zero or more diagnostic
-  records followed by exactly one summary record; only a complete ordinary
-  Module produces `status: "ok"` and a zero exit;
+  records followed by exactly one summary record; only a graph without error
+  diagnostics produces `status: "ok"` and a zero exit;
 - exported closures are already-computed values; invoking one later is a
   separate computation outside this check.
 
@@ -97,15 +102,15 @@ Dependency reachability controls which additional computations best-effort may
 perform, not whether its result may be delivered. A clean root can sometimes be
 computed after an unrelated internal failure, but the complete evaluation has
 already lost publication authority. Any error diagnostic makes `check`
-nonzero and discards the complete Module export. A subsequent strict load is
-the only authoritative acceptance run.
+nonzero and prevents Host delivery. The internal Module graph remains
+available to `show` and downstream diagnostic evaluation. A subsequent strict
+`run` is the authoritative application acceptance run.
 
-Across module boundaries, recovery may retain a dependency as an internal
-`UntrustedModule` state and continue unrelated dependency work. This is not an
-ordinary Module export. The dependency's root diagnostics keep their original
-severity; the boundary state does not manufacture another copy of each error.
-Finalizing the module selected by the command treats any error in its recovered
-graph as a terminal `UntrustedModule` result and discards the root export.
+Across module boundaries, best-effort always retains an ordinary Module. A
+Module's availability says only whether its source exists; individual facts
+carry known, unknown, conflicted, or incomputable state. Healthy exports remain
+usable by independent downstream work, while failed exports propagate the same
+stable failure identity. The boundary does not manufacture another diagnostic.
 
 ## `show`
 
@@ -119,24 +124,25 @@ present that approximation as authoritative.
 
 1. `check` is nonzero for `fail!`, division by zero, Array out-of-range, type
    errors, syntax errors, and unavailable dependencies.
-2. `check` succeeds for a complete module with warnings and prints `ok` only
-   after strict finalization.
+2. `check` succeeds for a module with warnings and no errors, without executing
+   a duplicate strict/recovery Module pipeline.
 3. `show` retains unaffected facts for recoverable syntax and evaluation
    damage.
 4. Multiple independent failures have deterministic, deduplicated diagnostics.
 5. `array.map` continues healthy slots after recoverable callback failures.
 6. shape-only operations remain usable internally when children failed;
    selecting a failed child propagates its diagnostic identity.
-7. no partial value crosses module export, codec, or ordinary Host value
-   boundaries; `dbg!` may render a bounded Host-only `<failed>` marker.
+7. internal Module publication may retain failed nodes, while no failed node
+   crosses codec, final return, SystemEffect, or another Host-visible boundary;
+   `dbg!` may render a bounded Host-only `<failed>` marker.
 8. a clean root computed after an internal failure remains diagnostic evidence
    only: `check` and `run --best-effort` are nonzero and publish no value.
 9. strict `run` behavior and successful values remain unchanged.
 
 ## Implementation plan
 
-1. make `check` consume the recoverable workspace and require strict
-   finalization before reporting success;
+1. make `check` consume the ordinary Module workspace under the best-effort
+   scheduling policy and decide success from concrete diagnostics;
 2. retain private failed children at ordinary result registers and native
    continuation boundaries;
 3. implement dependency rules for common Array operations and general
@@ -146,16 +152,15 @@ present that approximation as authoritative.
 
 ## Implementation status
 
-The `check` finalization portion is implemented for #55. The CLI runs a silent
-strict evaluation to obtain the authoritative success judgment, then consumes
-the recoverable workspace for diagnostics and observations. This keeps `dbg!`
-single-shot while making `fail!`, division by zero, out-of-range indexing, and
-all other strict runtime failures nonzero. Error diagnostics or any incomplete
-workspace module also produce `status: "error"`; warnings alone do not. The
-summary contains the stable module ID, status, and dependency count. Expected
-language rejection is structured stdout plus a nonzero exit, not mixed text;
-ordinary stderr remains reserved for CLI/Host faults and the separate `dbg!`
-observation channel.
+The `check` behavior is implemented by the unified workspace Module pipeline.
+Each module is analyzed, compiled, and evaluated once under the best-effort
+scheduling policy. `fail!`, division by zero, out-of-range indexing, and other
+concrete errors produce diagnostics and `status: "error"`; warnings alone do
+not. There is no synthetic incomplete-module diagnostic and no duplicate
+strict pass used merely to judge success. The summary contains the stable
+module ID, status, and dependency count. Expected language rejection is
+structured stdout plus a nonzero exit, not mixed text; ordinary stderr remains
+reserved for CLI/Host faults and the separate `dbg!` observation channel.
 
 The #61 implementation adds crate-private failed heap nodes and a best-effort
 VM recovery loop at ordinary result-register and native callback boundaries.
@@ -165,8 +170,9 @@ slots and continue healthy slots. Filter and flat-map continue independent
 callbacks but return failure because output shape is unknown. Fold stops when
 its accumulator fails. Array length remains shape-only, and get propagates a
 selected failed slot. Root diagnostic identities propagate without creating
-new diagnostics, failed nodes may relocate only between WorkWorlds, and Main
-publication, ordinary Value export, and JSON encoding reject them.
+new diagnostics. Failed nodes may relocate between WorkWorlds and across
+internal Module publication into MainWorld; codec, final return, SystemEffect,
+and other Host-visible publication reject them.
 
 `run --best-effort` performs this diagnostic Main pass before Entry startup. It
 emits `telora.run/v1` JSONL diagnostics on stderr. Any error diagnostic makes

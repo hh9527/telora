@@ -128,8 +128,7 @@ pub enum WorkspaceModuleKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkspaceModuleState {
-    Known,
-    Partial,
+    Available,
     Unavailable,
 }
 
@@ -554,7 +553,7 @@ impl WorkspaceSnapshot {
                 name: source_name,
                 path: None,
                 kind: WorkspaceModuleKind::Telora,
-                state: WorkspaceModuleState::Partial,
+                state: WorkspaceModuleState::Available,
                 source: Some(source),
                 imports: Vec::new(),
                 options: Vec::new(),
@@ -824,10 +823,6 @@ impl WorkspaceSnapshot {
         &self.diagnostics
     }
 
-    pub(crate) fn extend_diagnostics(&mut self, diagnostics: impl IntoIterator<Item = Diagnostic>) {
-        self.diagnostics.extend(diagnostics);
-    }
-
     pub fn type_at(&self, location: Location) -> Option<WorkspaceTypeId> {
         if let Some(reference) = self.reference_at(location)
             && let Some(ty) = reference
@@ -966,7 +961,7 @@ impl WorkspaceSnapshot {
                 program: None,
                 analysis: None,
                 partial: None,
-                state: WorkspaceModuleState::Known,
+                state: WorkspaceModuleState::Available,
                 imports: Vec::new(),
                 diagnostics: Vec::new(),
             });
@@ -1766,7 +1761,7 @@ mod tests {
                 program: Some(program),
                 analysis: Some(analysis),
                 partial: None,
-                state: WorkspaceModuleState::Known,
+                state: WorkspaceModuleState::Available,
                 imports: Vec::new(),
                 diagnostics: Vec::new(),
             }],

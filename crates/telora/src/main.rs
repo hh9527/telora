@@ -11,8 +11,8 @@ use std::sync::Arc;
 use telora_core::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
     DataWorld, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
-    Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent,
-    WorkspaceModuleState, WorkspaceSnapshot, parse_json,
+    Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent, WorkspaceSnapshot,
+    parse_json,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -679,28 +679,10 @@ async fn run_command(arguments: RunArgs) -> Result<i32, String> {
                 diagnostic,
             ))?;
         }
-        let incomplete = workspace
-            .modules()
-            .iter()
-            .filter(|module| module.state != WorkspaceModuleState::Known)
-            .map(|module| module.name.as_str())
-            .collect::<Vec<_>>();
         let failed = workspace
             .diagnostics()
             .iter()
-            .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error)
-            || !incomplete.is_empty();
-        if !incomplete.is_empty() {
-            emit_stderr(json!({
-                "schema": "telora.run/v1",
-                "module": selected,
-                "record": "diagnostic",
-                "severity": "error",
-                "message": format!("Main finalization is incomplete: {}", incomplete.join(", ")),
-                "labels": [],
-                "notes": [],
-            }))?;
-        }
+            .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error);
         if failed {
             emit_stderr(json!({
                 "schema": "telora.run/v1",
@@ -793,27 +775,7 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
             "notes": diagnostic.notes,
         }))?;
     }
-    let incomplete = workspace
-        .modules()
-        .iter()
-        .filter(|module| module.state != WorkspaceModuleState::Known)
-        .map(|module| module.name.as_str())
-        .collect::<Vec<_>>();
-    if !incomplete.is_empty() {
-        emit(json!({
-            "schema": "telora.check/v1",
-            "module": arguments.module_id,
-            "record": "diagnostic",
-            "severity": "error",
-            "message": format!("module finalization is incomplete: {}", incomplete.join(", ")),
-            "labels": [],
-            "notes": [],
-        }))?;
-    }
-    // Recovery marks a module Known only after the ordinary strict
-    // analyze/compile/evaluate/publish path succeeds. Other states retain the
-    // richer best-effort diagnostics but cannot make check succeed.
-    let failed = has_error_diagnostic || !incomplete.is_empty();
+    let failed = has_error_diagnostic;
     emit(json!({
         "schema": "telora.check/v1",
         "module": arguments.module_id,
@@ -989,10 +951,7 @@ fn show_exports(
     module_name: &str,
     pattern: Option<&str>,
 ) -> Result<(), String> {
-    let authority = match workspace.module(module).map(|item| item.state) {
-        Some(WorkspaceModuleState::Known) => "authoritative",
-        _ => "recovery",
-    };
+    let authority = "authoritative";
     let mut exports = workspace.exports_of(module);
     exports.retain(|e| pattern.is_none_or(|p| e.name.contains(p)));
     exports.sort_by(|a, b| a.name.cmp(&b.name));

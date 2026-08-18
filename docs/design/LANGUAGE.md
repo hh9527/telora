@@ -843,23 +843,26 @@ Fail 传播按操作实际读取的数据确定：
 - `any` 找到健康的 True、`all` 找到健康的 False 时，短路结果不依赖其他槽位；否则
   任一失败 predicate 令结果为 Fail。`find` 只有在所选成员之前没有失败 predicate
   时才能产生 Some；先前失败会令成员身份不确定并传播 Fail。
-- 结构相等、codec、JSON、Host value 和 World 固化会读取完整可达数据图；任一可达
-  Fail 都传播原根因或拒绝边界，不能把内部节点渲染成普通类型错误。
+- 结构相等、codec、JSON 和 Host value 会读取完整可达数据图；任一可达 Fail 都传播
+  原根因或拒绝边界，不能把内部节点渲染成普通类型错误。Module 在 WorkWorld 与
+  MainWorld 间的内部固化不是 Host publication，可以保留 Fail 以供下游继续诊断。
 
 传播节点不是新的根因诊断。实现可以保存有界的传播 lineage，但同一 Fail 穿过 callback、
 native 函数、模块或边界时不得产生诸如“expected Func/Array”之类的二次类型错误。
 非保形操作不提供源码可观察的“健康投影”；为收集诊断而暂存的健康成员也不能被下游
 代码、codec、Entry 或 Host 当作结果使用。
 
-任何 error diagnostic 都会使本轮 World 导出整体失去发布意义，即使最终根值不依赖
+任何 error diagnostic 都会使本轮命令的最终结果失去 Host 发布意义，即使最终根值不依赖
 内部失败且能够算出。失败节点的可达性只决定 best-effort 还能继续哪些诊断计算，不决定
-结果能否交付。普通 module、codec 或 Host value 均不得发布本轮结果；严格执行遇到未处理
+结果能否交付。codec、最终返回值和 SystemEffect 都不得越过 Host 边界；一批
+SystemEffect 必须先整体完成可信审计，才能执行其中第一个 effect。严格执行遇到未处理
 失败立即失败。
 
-跨模块恢复时，依赖库可以在诊断图中保留为内部 `UntrustedModule` 状态，使其他不相关
-依赖仍可继续分析；它不是普通 Module export，也不把原始 error 降级为 warning。命令所选
-根模块在 finalization 时，只要其恢复图中存在 error，就以 `UntrustedModule` 失败并废弃
-根导出。依赖边界不重复制造根因诊断。
+跨模块 best-effort 始终使用普通 Module。Module 的 `Available/Unavailable` 只表达源码
+是否存在；定义和表达式各自携带 `Known/Unknown/Incomputable` 等事实状态。Module 可以在
+MainWorld 内部同时保留健康 export 与含 Fail 的 export：下游读取健康 export 可继续工作，
+读取失败 export 则传播同一个 Fail。不存在 `PartialModule` 或 `UntrustedModule` 语言实体，
+依赖边界也不重复制造根因诊断。
 
 ### 9.5 失败类别
 
@@ -986,25 +989,27 @@ local definitions。`-p` 执行大小写敏感的字面子串匹配，不解释 
 `-k` 互斥。`--at` 接受从一开始计数的 `line[:column]`：只有行号时选择与该行相交的
 事实，带列号时选择覆盖该点的事实；它与 `-p`、`-k`、`--exports` 互斥。空匹配成功
 且不输出记录。每条记录显式区分 `authoritative`、`recovery` 或 `debug` 权威层级；
-表达式级记录属于 `debug`，错误恢复所得记录的权威层级服从其事实和模块状态。
+表达式级记录属于 `debug`，错误恢复所得记录的权威层级服从对应事实状态，而不是模块级
+“完整性”状态。
 Namespace import 的 definition record 以 `target` 给出被导入模块的稳定 ID，并省略
 普通值的 `type` 字段；其成员的精确公开 type/scheme 由该目标模块的 `--exports`
 记录定义。Selective import 仍在本地 definition record 中直接携带所选成员的精确
 type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct 类型。
 
-`check` 用 best-effort 模式求完整模块并以严格 finalization 决定退出状态。独立计算可以
-在失败后继续，以收集更多诊断；但任何语法、类型、解析或运行时 error 都会令整轮导出
-失去意义，命令非零退出且不交付 Module graph，即使某个干净的最终根仍可算出。只有没有
-error 且严格加载也能成功时才可交付。成功的 finalization 保留在内部 semantic module
-graph 边界；它不把导出图物化为 legacy Host `Value`，因此合法的递归 TypeMetadata 和
-递归函数闭包不会因 Host value 边界而失败。`check` 的 stdout 完全采用 `telora.check/v1`
+`check` 用统一 Module 管线的 best-effort 调度策略求值。独立计算可以在失败后继续，以收集
+更多诊断；任何语法、类型、解析或运行时 error 都会令命令失败，即使某个干净的最终根仍可
+算出。内部 Module graph 仍可保留，用于查询健康事实和诊断因果，但不会作为 Host 结果交付。
+没有 error 时，best-effort 与严格模式同属成功且值语义一致；`check` 不再额外重跑一条
+strict/recovery finalization 管线。Module graph 不物化为 legacy Host `Value`，因此合法的
+递归 TypeMetadata 和递归函数闭包不会因 Host value 边界而失败。`check` 的 stdout 完全采用
+`telora.check/v1`
 JSONL：先按稳定顺序输出
 零到多条 `diagnostic` record，最后恰好一条 `summary` record；summary 包含稳定 module
 ID、dependency 数量和 `ok` 或 `error` status。Warning 本身不阻止成功；失败不伪造
 Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`dbg!` 仍是独立旁路。
 
-`show` 不执行上述 finalization。它查询由 recoverable CST、部分语义分析和诊断求值形成
-的全面证据图，因此模块不完整或求值失败时仍可返回不受影响的事实。`show` 成功只表示查询
+`show` 查询同一普通 Module 管线产生的全面证据图，包括 recoverable CST、部分语义事实和
+诊断求值结果，因此存在错误或求值失败时仍可返回不受影响的事实。`show` 成功只表示查询
 成功，不表示模块健康；恢复节点不得以权威 `Any` 伪装成已知值。
 
 `run --best-effort` 在启动 Entry 前对 Main 执行静默的 best-effort 诊断求值，并把

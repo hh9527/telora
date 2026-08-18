@@ -123,7 +123,7 @@ fn show_selects_registered_standard_library_modules() {
 }
 
 #[test]
-fn check_requires_complete_runtime_finalization() {
+fn check_rejects_concrete_runtime_errors_without_synthetic_finalization() {
     let cwd = fixture();
     let cases = [
         ("failed", "export let output = fail!(\"boom\", 1);"),
@@ -151,6 +151,11 @@ fn check_requires_complete_runtime_finalization() {
         );
         assert_eq!(records.last().unwrap()["record"], "summary");
         assert_eq!(records.last().unwrap()["status"], "error");
+        assert!(!records.iter().any(|record| {
+            record["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("finalization is incomplete"))
+        }));
         assert!(check.stderr.is_empty(), "{name} mixed text into stderr");
     }
 }
