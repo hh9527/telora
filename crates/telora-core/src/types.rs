@@ -7969,12 +7969,7 @@ impl<'a> GenericInference<'a> {
         environment: &HashMap<String, TypeDescriptor>,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
-        let constructs_declared_value =
-            matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_))
-                || matches!(
-                    &expression.value,
-                    ExprKind::Call { callee, .. } if matches!(callee.value, ExprKind::Atom(_))
-                );
+        let constructs_declared_value = expression_constructs_declared_value(expression);
         let expected_declared = expected.and_then(|expected| {
             let TypeDescriptor::Declared(declared) = self.expose_named(expected) else {
                 return None;
@@ -8334,8 +8329,22 @@ impl<'a> GenericInference<'a> {
                     bool_type
                 }
                 BinaryOperator::Equal | BinaryOperator::NotEqual => {
-                    self.infer(left, environment, None)?;
-                    self.infer(right, environment, None)?;
+                    let left_constructs = expression_constructs_declared_value(left);
+                    let right_constructs = expression_constructs_declared_value(right);
+                    if left_constructs != right_constructs {
+                        let (evidence, literal) = if left_constructs {
+                            (right, left)
+                        } else {
+                            (left, right)
+                        };
+                        let evidence = self.infer(evidence, environment, None)?;
+                        let evidence = self.resolve(&evidence);
+                        let expected = self.declared_identity(&evidence).map(|_| &evidence);
+                        self.infer(literal, environment, expected)?;
+                    } else {
+                        self.infer(left, environment, None)?;
+                        self.infer(right, environment, None)?;
+                    }
                     normalized_bool_descriptor()
                 }
                 BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::BitXor => {
@@ -10934,6 +10943,14 @@ fn potentially_assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) ->
         }
         _ => assignable(actual, expected),
     }
+}
+
+fn expression_constructs_declared_value(expression: &Expr) -> bool {
+    matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_))
+        || matches!(
+            &expression.value,
+            ExprKind::Call { callee, .. } if matches!(callee.value, ExprKind::Atom(_))
+        )
 }
 
 fn join_types(left: TypeDescriptor, right: TypeDescriptor) -> TypeDescriptor {

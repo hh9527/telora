@@ -7579,6 +7579,58 @@ unchanged", "|"),
     }
 
     #[test]
+    fn equality_contextualizes_nominal_literals_in_both_operand_orders() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"type Wrapper = enum {'Box(String), 'Bag(Int)};
+               type Status = enum {'Ready, 'Waiting};
+               type Point = struct {x: Int};
+               export {Wrapper, Status, Point};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" {Wrapper, Status, Point};
+               let wrapper: Wrapper = 'Box("x");
+               let expected: Wrapper = 'Box("x");
+               let status: Status = 'Ready;
+               let point: Point = {x: 1};
+               {
+                   annotated: wrapper == expected,
+                   payload_right: wrapper == 'Box("x"),
+                   payload_left: 'Box("x") == wrapper,
+                   atom_right: status == 'Ready,
+                   atom_left: 'Ready == status,
+                   struct_right: point == {x: 1},
+                   struct_left: {x: 1} == point,
+               }"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "{annotated: 'True, atom_left: 'True, atom_right: 'True, payload_left: 'True, payload_right: 'True, struct_left: 'True, struct_right: 'True}"
+        );
+
+        fs::write(
+            directory.join("different.telora"),
+            r#"type Left = struct {x: Int};
+               type Right = struct {x: Int};
+               let left: Left = {x: 1};
+               let right: Right = {x: 1};
+               left == right"#,
+        )
+        .unwrap();
+        let different =
+            load_module(directory.join("different.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(different.execute(100_000).unwrap().to_string(), "'False");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_generic_struct_families_construct_nested_array_tuple_fields() {
         let directory = fixture_dir();
         fs::write(
