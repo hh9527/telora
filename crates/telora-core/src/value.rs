@@ -391,7 +391,6 @@ pub(crate) enum CoreModelFunction {
     Struct,
     Enum,
     Union,
-    Own,
 }
 
 impl CoreModelFunction {
@@ -400,7 +399,6 @@ impl CoreModelFunction {
             Self::Struct => "\0telora_struct",
             Self::Enum => "\0telora_enum",
             Self::Union => "union",
-            Self::Own => "<own-declared>",
         }
     }
 

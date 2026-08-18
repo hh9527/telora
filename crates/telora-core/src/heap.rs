@@ -2069,21 +2069,7 @@ impl<'a> HeapView<'a> {
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
-                let raw = if left.type_id().is_some() {
-                    left
-                } else {
-                    right
-                }
-                .without_type_id()
-                .value();
-                if !matches!(
-                    raw,
-                    DecodedValue::BuiltinAtom(_)
-                        | DecodedValue::InlineAtom(_)
-                        | DecodedValue::Atom(_)
-                ) {
-                    return Ok(false);
-                }
+                return Ok(false);
             }
             (None, None) => {}
         }
@@ -3292,6 +3278,20 @@ mod tests {
         let typed = raw.with_type_id(crate::TypeId::builtin(7));
         assert_eq!(typed.type_id(), Some(crate::TypeId::builtin(7)));
         assert_eq!(typed.value(), DecodedValue::Int(1));
+    }
+
+    #[test]
+    fn equality_never_guesses_across_a_nominal_witness_boundary() {
+        let heap = Heap::work();
+        let view = HeapView {
+            current: &heap,
+            background: None,
+        };
+        let raw = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::True));
+        let typed = raw.with_type_id(crate::TypeId::builtin(7));
+        assert!(!view.values_equal(typed, raw).unwrap());
+        assert!(!view.values_equal(raw, typed).unwrap());
+        assert!(view.values_equal(typed, typed).unwrap());
     }
 
     #[test]

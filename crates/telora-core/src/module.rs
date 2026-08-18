@@ -7577,9 +7577,35 @@ unchanged", "|"),
         )
         .unwrap();
         let different =
-            load_module(directory.join("different.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(different.execute(100_000).unwrap().to_string(), "'False");
+            load_module(directory.join("different.telora"), BTreeMap::new(), 100_000).unwrap_err();
+        assert!(different.to_string().contains("cannot unify"));
+        assert!(different.to_string().contains("Left"));
+        assert!(different.to_string().contains("Right"));
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_function_contracts_brand_nested_private_nominal_literals() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("provider.telora"),
+            r#"import "std/array" as array;
+               type Status = enum {'Ready, 'Waiting};
+               type Input = struct {statuses: Array(Status)};
+               export def accepts: Fn(Input) -> Bool = fn(input) {
+                   array.any(input.statuses, fn(status) { status == 'Ready })
+               };"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./provider.telora" {accepts}; accepts({statuses: ['Ready]})"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(module.execute(100_000).unwrap().to_string(), "'True");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -9684,7 +9710,6 @@ unchanged", "|"),
                };
                {
                    scalar: (eq.equal(1, 1), 1 == 1),
-                   heterogeneous: (eq.equal(1, "1"), 1 == "1"),
                    nested: (eq.equal([{a: 1}], [{a: 1}]), [{a: 1}] == [{a: 1}]),
                    same_function: (eq.equal(function, function), function == function),
                    other_function: (eq.equal(function, fn(value) { value }), function == fn(value) { value }),
@@ -9708,12 +9733,36 @@ unchanged", "|"),
             output.get("other_function").unwrap().to_string(),
             "('False, 'False)"
         );
-        assert_eq!(
-            output.get("heterogeneous").unwrap().to_string(),
-            "('False, 'False)"
-        );
         assert_eq!(output.get("higher_order").unwrap().to_string(), "'True");
         assert_eq!(output.get("direct_callback").unwrap().to_string(), "'True");
+
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "std/eq" as eq; (eq.equal(1, "1"), 1 == "1")"#,
+        )
+        .unwrap();
+        let error =
+            load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000).unwrap_err();
+        assert!(error.to_string().contains("cannot unify String with Int"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn typed_equality_allows_distinct_runtime_variants_of_one_union() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"type Scalar = union('None, [Int, String]);
+               let left: Scalar = 1;
+               let right: Scalar = "1";
+               (left == right, left != right)"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().value().to_string(),
+            "('False, 'True)"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -12026,11 +12075,7 @@ export let output = dependency.failed + 1;"#,
         let second = directory.join("second.telora");
         let main = directory.join("main.telora");
         fs::write(&first, r#"export let failed = fail!("first failed", 1);"#).unwrap();
-        fs::write(
-            &second,
-            r#"export let failed = fail!("second failed", 2);"#,
-        )
-        .unwrap();
+        fs::write(&second, r#"export let failed = fail!("second failed", 2);"#).unwrap();
         fs::write(
             &main,
             r#"import "./first.telora" as first;

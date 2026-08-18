@@ -175,11 +175,14 @@ Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。�
 
 ### 3.3 相等性和顺序
 
-普通标量和结构值支持 `==` 和 `!=`，包括异构值；类型或形状不同时结果为 False。
-若一侧具有 exact nominal identity，另一侧是 dict、Atom 或 Tagged 字面量，该字面量
-从具名值获得同一名义类型上下文，与操作数顺序无关。复合值按结构比较，但两个具名
-值还必须具有相同的 canonical TypeId；函数按不透明函数身份比较，而不是比较代码或
-闭包捕获内容。`!=` 是 `==` 的精确布尔补集。
+普通标量和结构值支持 `==` 和 `!=`，其签名均要求两个操作数具有同一静态语义类型
+`T`；已知类型或形状不兼容时在前端报错，不把类型错误解释为 False。若一侧具有
+exact nominal identity，另一侧是 dict、Atom 或 Tagged 字面量，该字面量从具名值
+获得同一名义类型上下文，与操作数顺序无关。复合值按结构比较，但两个具名值还必须
+具有相同的 canonical TypeId；函数按不透明函数身份比较，而不是比较代码或闭包捕获
+内容。显式 `Any`、Union 等动态边界允许同一静态类型在运行时携带不同 variant，
+此时不同 meta 或不同名义 identity 返回 False。只有一侧携带 exact nominal witness
+时也返回 False，不会按 raw payload 猜测字面量来源。`!=` 是 `==` 的精确布尔补集。
 
 `<`、`>`、`<=` 和 `>=` 只接受类型相同的 `Int`、`Float` 或 `String` 操作数；数值
 之间没有隐式转换。Int 使用有符号数值顺序。Float 只包含有限 binary64 值，使用

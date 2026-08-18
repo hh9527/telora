@@ -34,6 +34,11 @@ pub enum Instruction {
         dst: Register,
         src: Register,
     },
+    OwnDeclared {
+        dst: Register,
+        owner: Register,
+        value: Register,
+    },
     AllocFunc {
         dst: Register,
         static_id: Option<crate::FuncId>,
@@ -249,6 +254,11 @@ pub enum Opcode {
     Move {
         dst: Register,
         src: Register,
+    },
+    OwnDeclared {
+        dst: Register,
+        owner: Register,
+        value: Register,
     },
     AllocFunc {
         dst: Register,
@@ -686,6 +696,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             value: ValueLinkId(constant),
         },
         Instruction::Move { dst, src } => Opcode::Move { dst, src },
+        Instruction::OwnDeclared { dst, owner, value } => Opcode::OwnDeclared { dst, owner, value },
         Instruction::AllocFunc { dst, static_id } => Opcode::AllocFunc { dst, static_id },
         Instruction::SealFunc { target, source } => Opcode::SealFunc { target, source },
         Instruction::AllocTypeSlot { dst } => Opcode::AllocTypeSlot { dst },

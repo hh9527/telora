@@ -1,2 +1,2 @@
-native equal: for(A, B) Fn(A, B) -> Bool;
+native equal: for(T) Fn(T, T) -> Bool;
 export { equal };

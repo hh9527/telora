@@ -1,6 +1,6 @@
 # RFC 0251: Typed Semantic Equality
 
-- Status: Accepted
+- Status: Implemented
 - Tracking issue: #98
 - Depends on: RFC 0070, RFC 0074, RFC 0095, RFC 0221, RFC 0248, RFC 0250
 
@@ -138,3 +138,17 @@ equality escape hatch.
 7. `!=` is the exact complement of successful `==` comparisons.
 8. The SSOT documents only typed equality and no identity operator.
 9. The complete workspace test suite passes.
+
+## Implementation outcome
+
+Implemented by the #98 branch. Equality inference now uses one semantic type,
+`std/eq.equal` publishes the same single-parameter contract, and runtime value
+comparison never crosses a nominal witness boundary by guessing payload
+provenance. Pattern tag selection uses a separate internal operation.
+
+Concrete declared witnesses are installed by the `OwnDeclared` bytecode
+operation for every expression carrying an exact analyzed owner, including
+field and control-flow results. Tool-stage evaluation consumes the same owner
+map as normal module execution. This avoids both witness loss in generic
+callbacks and the source-location rebasing that occurred when ownership was
+previously encoded as an ordinary native call.
