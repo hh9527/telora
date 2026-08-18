@@ -73,6 +73,7 @@ class Manifest:
     reporting: dict[str, Any] = field(default_factory=lambda: {"sinks": []})
     manifest_name: str = "experiment.json"
     metrics: dict[str, Any] = field(default_factory=lambda: {"roles": {}})
+    workflow: dict[str, Any] | None = None
 
 def _string_array(value: Any, where: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
@@ -92,7 +93,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         raise ControlError(f"invalid experiment plan manifest: {exc}") from None
     if not isinstance(data, dict):
         raise ControlError("experiment manifest must be an object")
-    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment", "permission_preflight", "reporting", "metrics"}, "manifest")
+    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment", "permission_preflight", "reporting", "metrics", "workflow"}, "manifest")
     if data.get("schema") != "telora.opencode-cloned-plan/v1":
         raise ControlError("unsupported experiment manifest schema")
 
@@ -105,6 +106,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     permission_preflight = data.get("permission_preflight", {})
     reporting = data.get("reporting", {"sinks": []})
     metrics = data.get("metrics", {"roles": {}})
+    workflow = data.get("workflow")
     archive = _string_array(data.get("archive", []), "archive")
     observe = _string_array(data.get("observe", []), "observe")
     if not isinstance(validation, list) or not isinstance(artifacts, list):
@@ -209,6 +211,13 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
             raise ControlError("artifact build must be nonempty")
     for item in (*archive, *observe):
         safe_relative(item)
+    if workflow is not None:
+        from .task_cli import TaskError, validate_workflow
+        try:
+            workflow = validate_workflow(workflow)
+        except TaskError as exc:
+            raise ControlError(str(exc), exc.code) from None
     return Manifest(plan_id, root, dict(prompts), tuple(validation), tuple(archive),
                     tuple(observe), tuple(artifacts), dict(environment), normalized_preflight,
-                    {"sinks": normalized_sinks}, metrics={"roles": normalized_metric_roles})
+                    {"sinks": normalized_sinks}, metrics={"roles": normalized_metric_roles},
+                    workflow=workflow)

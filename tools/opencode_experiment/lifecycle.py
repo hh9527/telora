@@ -19,6 +19,7 @@ from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
 from .permissions import preflight_permissions
 from .state import SCHEMA, atomic_json, atomic_write, bind_plan, load_state, locked, now, save_state
+from .task_cli import TaskError, publish_node, workflow_status
 
 
 def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
@@ -135,6 +136,8 @@ def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
     workspace = Path(state["workspace"])
     if state.get("opencode_environment", {}) != manifest.environment:
         raise ControlError("opencode environment changed since preparation")
+    if state.get("workflow") != manifest.workflow:
+        raise ControlError("workflow changed since preparation")
     if sha256(manifest.root / manifest.manifest_name) != state["input_hashes"].get(manifest.manifest_name):
         raise ControlError(f"{manifest.manifest_name} changed since preparation")
     if sha256(manifest.root / "opencode.json") != state["input_hashes"].get("opencode.json"):
@@ -175,6 +178,7 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             "server_url": f"http://127.0.0.1:{port}", "repository_revision": revision, "repository_dirty": dirty,
             "plan_revision": plan_revision, "plan_source": plan_source,
             "opencode_environment": manifest.environment,
+            "workflow": manifest.workflow,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
             "artifact_overrides": dict(artifacts or {}),
             "created_at": reserved_state.get("created_at", now()) if reserved_state else now(),
@@ -202,6 +206,59 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
         except Exception:
             state["phase"] = "failed"; save_state(root, state); raise
     return root, state, True
+
+
+def publish_workflow_node(context: Context, node_id: str, reason: str, *, content: bytes | None = None,
+                          once: str | None = None) -> dict[str, Any]:
+    workflow = context.state.get("workflow")
+    if not workflow:
+        raise ControlError("execution plan has no workflow", 64)
+    with locked(context.root):
+        state = load_state(context.root)
+        if once and state.get(once):
+            return dict(state[once])
+        try:
+            result = publish_node(Path(state["workspace"]), workflow, node_id, content)
+        except TaskError as exc:
+            raise ControlError(str(exc), exc.code) from None
+        number = int(state.get("next_node_event", 0))
+        event = {**result, "number": number, "reason": reason, "published_at": now()}
+        directory = context.root / "nodes"
+        directory.mkdir(exist_ok=True)
+        atomic_json(directory / f"{number:03d}-{node_id.replace('/', '-')}.json", event)
+        state["next_node_event"] = number + 1
+        if once:
+            state[once] = event
+        save_state(context.root, state)
+        context.state = state
+        return event
+
+
+def quiesce_workflow(context: Context, timeout: float = 120) -> None:
+    workflow = context.state.get("workflow")
+    if not workflow:
+        return
+    status = workflow_status(Path(context.state["workspace"]), workflow)
+    if not status["quiescent"]:
+        pending = [task["id"] for task in workflow["tasks"] if not status["tasks"][task["id"]]["current"]]
+        details = []
+        if pending:
+            details.append(f"pending tasks: {', '.join(pending)}")
+        if not status["nodes"][workflow["finish_node"]]["current"]:
+            details.append(f"finish node is not current: {workflow['finish_node']}")
+        if status["claims"]:
+            details.append(f"active claims: {', '.join(sorted(status['claims']))}")
+        raise ControlError(f"workflow is not accepted; {'; '.join(details)}", 75)
+    atomic_write(Path(context.state["workspace"]) / workflow["stop_path"], b"")
+    deadline = time.monotonic() + timeout
+    while True:
+        state, _ = reconcile(context)
+        context.state = state
+        if not state.get("active_round") and context.client().status().get("type", "idle") == "idle":
+            return
+        if time.monotonic() >= deadline:
+            raise ControlError("timed out waiting for workflow roles to stop", 75)
+        time.sleep(.1)
 
 
 def create_empty_session(root: Path, state: dict[str, Any], title: str) -> dict[str, Any]:

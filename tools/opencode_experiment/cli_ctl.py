@@ -11,12 +11,13 @@ from pathlib import Path
 from .config import ControlError, repository_root, validate_identifier
 from .context import Context, resolve
 from .external import resolve_capabilities, resolve_cli
-from .lifecycle import finish, live_boundary, reconcile, request_start, run_validation, safe_cleanup, send_round, verify_prepared
+from .lifecycle import finish, live_boundary, publish_workflow_node, quiesce_workflow, reconcile, request_start, run_validation, safe_cleanup, send_round, verify_prepared
 from .metrics import collect_metrics
 from .observe import failures, latest_assistant, normalized, recent, text_parts, timeline
 from .query import run_query, select_engine
 from .reporting import submit_report
 from .state import atomic_json, load_state, locked, save_state
+from .task_cli import workflow_status
 from .watch import watch_progress
 
 
@@ -35,7 +36,7 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control and observe named opencode experiments.")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
-    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "iterate", "validate", "export", "finish", "retire", "children", "tree", "stats"):
+    for name in ("workspace", "start", "status", "snapshot", "events", "files", "failures", "audit", "answer", "continue", "validate", "export", "finish", "retire", "children", "tree", "stats"):
         item = commands.add_parser(name); item.add_argument("exec_name")
         if name == "answer": item.add_argument("--json", action="store_true", dest="as_json")
     for name, default, maximum in (("recent", 3, 20), ("timeline", 8, 50)):
@@ -48,17 +49,15 @@ def parser() -> argparse.ArgumentParser:
     query = commands.add_parser("query"); query.add_argument("exec_name"); group = query.add_mutually_exclusive_group(required=True); group.add_argument("expression", nargs="?"); group.add_argument("--file"); query.add_argument("--raw-output", action="store_true")
     watch = commands.add_parser("watch"); watch.add_argument("exec_name"); watch.add_argument("--debounce", type=lambda x: count(x, 3600), default=30); watch.add_argument("--timeout", type=lambda x: count(x, 86400), default=300)
     report = commands.add_parser("report"); report.add_argument("exec_name"); report.add_argument("--body-file", required=True, type=Path)
+    ready = commands.add_parser("ready"); ready.add_argument("exec_name"); ready.add_argument("node")
+    feedback = commands.add_parser("feedback"); feedback.add_argument("exec_name"); feedback.add_argument("node"); feedback.add_argument("--body-file", required=True, type=Path)
+    tasks = commands.add_parser("tasks"); tasks.add_argument("exec_name")
     return root
 
 
 def live_document(context: Context) -> tuple[dict, list]:
     state, messages = reconcile(context); context.state = state
     return normalized(state, messages, context.client().status(), context.rounds(), context.manifest.observe), messages
-
-
-def require_iteration_available(rounds: list[dict]) -> None:
-    if any(record.get("kind") == "iteration" for record in rounds):
-        raise ControlError("this execution has already used its single A2-A3 iteration", 75)
 
 
 def doctor() -> dict:
@@ -117,6 +116,9 @@ def main(argv: list[str] | None = None) -> int:
                 if time.monotonic() >= deadline: raise ControlError("timed out waiting for oc-run to enter the TUI", 75)
                 time.sleep(.1)
             verify_prepared(context.manifest, context.state)
+            if context.state.get("workflow"):
+                for node_id in context.state["workflow"]["start_nodes"]:
+                    publish_workflow_node(context, node_id, "start", once=f"workflow_started_{node_id}")
             initial = [record for record in context.rounds() if record.get("kind") == "initial"]
             if initial and initial[0].get("user_message_id"):
                 emit(initial[0]); return 0
@@ -189,6 +191,15 @@ def main(argv: list[str] | None = None) -> int:
                 if event.get("type") in ("session.status", "session.error", "message.updated") or (event.get("type") == "message.part.updated" and properties.get("part", {}).get("type") == "tool" and properties.get("part", {}).get("state", {}).get("status") in ("completed", "error")):
                     emit(event)
             return 0
+        if args.command == "ready":
+            emit(publish_workflow_node(context, args.node, "ready")); return 0
+        if args.command == "feedback":
+            content = args.body_file.read_bytes()
+            emit(publish_workflow_node(context, args.node, "feedback", content=content)); return 0
+        if args.command == "tasks":
+            if not context.state.get("workflow") or not context.state.get("workspace"):
+                raise ControlError("execution workflow is not prepared", 75)
+            emit(workflow_status(Path(context.state["workspace"]), context.state["workflow"])); return 0
         if args.command == "ask":
             text = Path(args.file).read_text(encoding="utf-8") if args.file else args.message
             if not text: raise ControlError("ask message must not be empty", 64)
@@ -197,9 +208,6 @@ def main(argv: list[str] | None = None) -> int:
             _, latest = live_boundary(context, allow_length=True)
             if latest.get("info", {}).get("finish") != "length": raise ControlError("latest assistant message did not finish at length")
             emit(send_round(context, "continue", context.manifest.prompts["continue"], require_finish="length")); return 0
-        if args.command == "iterate":
-            require_iteration_available(context.rounds())
-            emit(send_round(context, "iteration", context.manifest.prompts["continue"])); return 0
         if args.command == "validate":
             values = run_validation(context); emit(values); return 1 if any(v["exit"] for v in values) else 0
         if args.command == "export":
@@ -209,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
             emit({"path": str(path), "bytes": path.stat().st_size,
                   "messages": len(value.get("messages", [])) if isinstance(value, dict) else None})
             return 0
-        if args.command == "finish": finish(context); print(f"Execution {exec_name} is frozen. You may exit the TUI."); return 0
+        if args.command == "finish":
+            quiesce_workflow(context)
+            finish(context); print(f"Execution {exec_name} is frozen. You may exit the TUI."); return 0
         if args.command == "retire":
             if context.state["phase"] not in ("finished", "retired"): raise ControlError("only a finished execution can be retired")
             if not all((context.root / "result" / name).is_file() for name in ("query.json", "session.json", "messages.json")): raise ControlError("frozen query evidence is incomplete")

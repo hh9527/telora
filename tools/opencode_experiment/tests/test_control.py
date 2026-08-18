@@ -24,7 +24,7 @@ from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
-from tools.opencode_experiment.cli_ctl import main as control_main, parser as control_parser, require_iteration_available
+from tools.opencode_experiment.cli_ctl import main as control_main, parser as control_parser
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,12 +94,13 @@ class ConfigStateTest(unittest.TestCase):
         for value in ("A", "a/b", ".hidden", "a b"):
             with self.assertRaises(ControlError): validate_identifier(value, "id")
 
-    def test_iteration_command_has_a_single_round_budget(self):
-        args = control_parser().parse_args(["iterate", "run"])
-        self.assertEqual((args.command, args.exec_name), ("iterate", "run"))
-        require_iteration_available([{"kind": "initial"}])
-        with self.assertRaisesRegex(ControlError, "already used"):
-            require_iteration_available([{"kind": "initial"}, {"kind": "iteration"}])
+    def test_node_publication_commands_are_available(self):
+        args = control_parser().parse_args(["ready", "run", "qb.ready"])
+        self.assertEqual((args.command, args.exec_name, args.node), ("ready", "run", "qb.ready"))
+        args = control_parser().parse_args(["feedback", "run", "qb-feedback-a2.feedback",
+                                            "--body-file", "feedback.md"])
+        self.assertEqual((args.command, args.node, args.body_file),
+                         ("feedback", "qb-feedback-a2.feedback", Path("feedback.md")))
 
     def test_stats_command_is_available(self):
         args = control_parser().parse_args(["stats", "run"])
@@ -140,10 +141,9 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("完整内容", coordinator)
         self.assertIn("当前反馈完整内容", coordinator)
         self.assertIn("整个 execution 不存在第二轮修订", coordinator)
-        self.assertIn("./oc-ctl iterate", (plan / "README.md").read_text(encoding="utf-8"))
         self.assertEqual([item["cwd"] for item in manifest.validation], ["ontology", "ontology", "ent-1", "ent-1"])
 
-    def test_ontology_3_pins_model_and_requires_query_builder_review(self):
+    def test_ontology_3_pins_model_and_uses_file_driven_workflow(self):
         repo = Path(__file__).resolve().parents[3]
         plan = repo / "experiments" / "ontology-3"
         model = "deepseek/deepseek-v4-flash"
@@ -152,8 +152,35 @@ class ConfigStateTest(unittest.TestCase):
             text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
             self.assertIn(f'model: "{model}"', text)
         coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
-        self.assertIn("GNNN-QUERY-BUILDER-DRAFT-READY", coordinator)
-        self.assertIn("GNNN-QUERY-BUILDER-REVIEW-READY", coordinator)
+        self.assertIn("同时启动 A1、A2、A3 各一次", coordinator)
+        self.assertNotIn("touch", coordinator)
+        manifest = load_manifest(repo, "ontology-3")
+        self.assertEqual(manifest.workflow["schema"], "telora.opencode-node-workflow/v1")
+        self.assertEqual(manifest.workflow["start_nodes"], ["lang.ready", "domain.ready"])
+        self.assertEqual(manifest.workflow["finish_node"], "ent-1-model.ready")
+        self.assertEqual(len(manifest.workflow["nodes"]), 14)
+        self.assertEqual(len(manifest.workflow["tasks"]), 7)
+        nodes = {item["id"]: item for item in manifest.workflow["nodes"]}
+        tasks = {item["id"]: item for item in manifest.workflow["tasks"]}
+        self.assertEqual(nodes["qb.rc"]["role"], "a1")
+        self.assertEqual(nodes["edsl.rc"]["role"], "a2")
+        self.assertEqual(nodes["ent-1-model.rc"]["role"], "a3")
+        self.assertEqual(nodes["qb.ready"]["needs"], ["qb.rc"])
+        self.assertEqual(nodes["qb-review-a2.rc"]["role"], "a2")
+        self.assertEqual(nodes["qb-review-a3.rc"]["role"], "a3")
+        self.assertEqual(nodes["qb-feedback-a2.feedback"]["observes"], "qb.rc")
+        self.assertEqual(nodes["qb-feedback-a3.feedback"]["observes"], "qb.rc")
+        self.assertEqual(nodes["qb.rc"]["inputs"],
+                         ["qb-feedback-a2.feedback", "qb-feedback-a3.feedback"])
+        self.assertEqual(tasks["edsl.rc"]["absorbs"], ["qb-review-a2.rc"])
+        self.assertEqual(tasks["ent-1-model.rc"]["absorbs"], ["qb-review-a3.rc"])
+        self.assertTrue(all(task_id.endswith(".rc") for task_id in tasks))
+        self.assertEqual(next(item for item in manifest.artifacts if item["name"] == "telora")["source"],
+                         "target/release/telora")
+        self.assertIn("./bin/oc-task next a1", manifest.permission_preflight["a1"])
+        self.assertIn("./bin/oc-task mark-done a2 qb-review-a2.rc", manifest.permission_preflight["a2"])
+        self.assertFalse(any("mark-blocked" in command for commands in manifest.permission_preflight.values()
+                             for command in commands))
         self.assertEqual((plan / "ontology" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
         self.assertEqual((plan / "ent-1" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
         domain = (plan / "ent-1" / "DOMAIN.md").read_text(encoding="utf-8")
