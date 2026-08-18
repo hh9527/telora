@@ -55,6 +55,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             source: include_str!("../modules/std/dyn.native.telora"),
             functions: vec![
                 ("pack", NativeFunction::core_dyn(CoreDynFunction::Pack)),
+                (
+                    "project_with",
+                    NativeFunction::core_dyn(CoreDynFunction::ProjectWith),
+                ),
                 ("desc", NativeFunction::core_dyn(CoreDynFunction::Desc)),
                 ("kind", NativeFunction::core_dyn(CoreDynFunction::Kind)),
                 (

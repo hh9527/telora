@@ -734,7 +734,7 @@ fn run_accepts_external_json() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "export let output: String = input;",
+        "export let output: String = input.cast!(String).unwrap!();",
     )
     .unwrap();
     fs::write(cwd.join("input.json"), r#""accepted""#).unwrap();

@@ -493,6 +493,7 @@ pub(crate) enum CoreTypeDescFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreDynFunction {
     Pack,
+    ProjectWith,
     Desc,
     Kind,
     CheckInt,
@@ -511,6 +512,7 @@ impl CoreDynFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Pack => "std/dyn.pack",
+            Self::ProjectWith => "std/dyn.project_with",
             Self::Desc => "std/dyn.desc",
             Self::Kind => "std/dyn.kind",
             Self::CheckInt => "std/dyn.check_int",
@@ -528,7 +530,7 @@ impl CoreDynFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Pack | Self::Field => 2,
+            Self::Pack | Self::ProjectWith | Self::Field => 2,
             _ => 1,
         }
     }

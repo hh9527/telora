@@ -3179,7 +3179,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
-                    if !contains_named_type(&expected)
+                    if !contains_any_descriptor(&inferred)
+                        && !contains_named_type(&expected)
                         && !same_nominal_head_with_erased_arguments(&inferred, &expected)
                         && !assignable(&inferred, &expected)
                         && !is_declared_literal_construction(
@@ -3345,15 +3346,40 @@ pub(crate) fn analyze_program_with_bindings_observed(
     )?;
     let mut named_types = imported_named_types;
     named_types.extend(declared_types.clone());
+    let dyn_namespaces = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            (binding.value.kind == BindingKind::Import
+                && binding.value.imported_name.is_none()
+                && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/dyn"))
+            .then(|| binding.value.name.value.clone())
+        })
+        .collect::<HashSet<_>>();
     let mut inference = GenericInference::new(
         &binding_schemes,
         &hir,
         &qualified_external_interfaces,
         &named_types,
         &local_annotations,
+        &dyn_namespaces,
         !external_roots.contains_key("Tuple"),
         account.query_context(),
     );
+    for binding in &program.value.body.value.bindings {
+        if binding.value.annotation.is_some()
+            && binding_types
+                .get(&binding.value.name.value)
+                .is_some_and(contains_any_descriptor)
+        {
+            inference
+                .authored_any_definitions
+                .insert(binding.value.name.location);
+        }
+    }
     let mut checked_environment = static_environment.clone();
     let type_metadata_expected = TypeDescriptor::Type;
     let mut delayed_bindings = Vec::new();
@@ -3571,15 +3597,33 @@ pub(crate) fn analyze_program_with_bindings_observed(
         if is_delayed {
             inference.delayed_initializer_depth += 1;
         }
-        let mut initializer_environment;
-        let environment = if is_delayed && binding.value.kind == BindingKind::Def && !is_recursive {
-            initializer_environment = checked_environment.clone();
-            initializer_environment.remove(&binding.value.name.value);
-            &initializer_environment
+        let mut initializer_environment = None;
+        if is_delayed && binding.value.kind == BindingKind::Def && !is_recursive {
+            let mut environment = checked_environment.clone();
+            environment.remove(&binding.value.name.value);
+            initializer_environment = Some(environment);
+        } else if binding.value.kind == BindingKind::Type
+            && !binding.value.type_parameters.is_empty()
+        {
+            let mut environment = checked_environment.clone();
+            for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
+                environment.insert(
+                    parameter.value.clone(),
+                    TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(TypeParameterId(
+                        index as u32,
+                    )))),
+                );
+            }
+            initializer_environment = Some(environment);
+        }
+        let environment = initializer_environment
+            .as_ref()
+            .unwrap_or(&checked_environment);
+        let inferred = if binding.value.kind == BindingKind::Type {
+            inference.infer(&binding.value.value, environment, expected)
         } else {
-            &checked_environment
+            inference.infer_authored_boundary(&binding.value.value, environment, expected)
         };
-        let inferred = inference.infer(&binding.value.value, environment, expected);
         if is_delayed {
             inference.delayed_initializer_depth -= 1;
         }
@@ -4522,6 +4566,7 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("Tuple", 1, native_tuple_type),
             NativeFunction::new("Func", 2, native_function_type),
             NativeFunction::new("validate", 2, native_validate),
+            NativeFunction::new("\0telora_cast", 2, native_checked_cast),
             NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
         ] {
             values.insert(
@@ -4879,6 +4924,74 @@ fn collect_nested_annotation_types(
             debug_sink,
             annotations,
         )?,
+        ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
+            collect_nested_annotation_types(
+                source_name,
+                value,
+                bindings,
+                account,
+                sources,
+                debug_sink,
+                annotations,
+            )?;
+            let metadata = evaluate_tool_expression(
+                source_name,
+                target,
+                bindings,
+                account,
+                sources,
+                debug_sink,
+            )?;
+            let descriptor = debug_sink
+                .decode_type(metadata, "Type")
+                .map_err(|message| {
+                    FrontendError::from_diagnostic(
+                        sources,
+                        Diagnostic::error(
+                            format!("type target is invalid: {message}"),
+                            target.location,
+                        ),
+                    )
+                })?;
+            annotations.insert(target.location, descriptor);
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            for expression in [namespace.as_ref(), value.as_ref()] {
+                collect_nested_annotation_types(
+                    source_name,
+                    expression,
+                    bindings,
+                    account,
+                    sources,
+                    debug_sink,
+                    annotations,
+                )?;
+            }
+            let metadata = evaluate_tool_expression(
+                source_name,
+                target,
+                bindings,
+                account,
+                sources,
+                debug_sink,
+            )?;
+            let descriptor = debug_sink
+                .decode_type(metadata, "Type")
+                .map_err(|message| {
+                    FrontendError::from_diagnostic(
+                        sources,
+                        Diagnostic::error(
+                            format!("Dyn projection target is invalid: {message}"),
+                            target.location,
+                        ),
+                    )
+                })?;
+            annotations.insert(target.location, descriptor);
+        }
         ExprKind::Binary { left, right, .. } => {
             for expression in [left.as_ref(), right.as_ref()] {
                 collect_nested_annotation_types(
@@ -5281,6 +5394,13 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             TypeDescriptor::Dyn,
         ),
     );
+    prelude.insert(
+        "\0telora_cast".into(),
+        function(
+            vec![TypeDescriptor::Type, TypeDescriptor::Any],
+            TypeDescriptor::Any,
+        ),
+    );
     prelude
 }
 
@@ -5572,6 +5692,34 @@ pub(crate) fn native_validate(context: &mut CallContext<'_, '_>) -> Result<(), N
                     ("rule".into(), type_register),
                 ],
             )?;
+        }
+    }
+    context.make_tagged(context.result(), tag, payload)
+}
+
+fn native_checked_cast(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let type_register = context.argument(0)?;
+    let value_register = context.argument(1)?;
+    let descriptor = decode_native_type(context.value(type_register)?)?;
+    let tag = context.scratch()?;
+    let payload = context.scratch()?;
+    match validate_value_ref(&descriptor, context.value(value_register)?, "value") {
+        Ok(()) => {
+            context.set_atom(tag, "Ok")?;
+            if matches!(descriptor, TypeDescriptor::Declared(_))
+                && context
+                    .value(value_register)?
+                    .declared_value_parts()
+                    .is_none()
+            {
+                context.make_declared_value(payload, type_register, value_register)?;
+            } else {
+                context.copy(payload, value_register)?;
+            }
+        }
+        Err(message) => {
+            context.set_atom(tag, "Err")?;
+            context.set_string(payload, message)?;
         }
     }
     context.make_tagged(context.result(), tag, payload)
@@ -6188,6 +6336,8 @@ struct GenericInference<'a> {
     named_types: &'a BTreeMap<String, TypeDescriptor>,
     declared_bodies: HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
     local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
+    authored_any_definitions: HashSet<crate::Location>,
+    dyn_namespaces: &'a HashSet<String>,
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
     next_variable: u32,
@@ -6385,6 +6535,7 @@ impl<'a> GenericInference<'a> {
         external_interfaces: &'a BTreeMap<String, ModuleInterface>,
         named_types: &'a BTreeMap<String, TypeDescriptor>,
         local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
+        dyn_namespaces: &'a HashSet<String>,
         builtin_tuple_available: bool,
         query: Option<crate::query::QueryContext>,
     ) -> Self {
@@ -6411,6 +6562,8 @@ impl<'a> GenericInference<'a> {
             named_types,
             declared_bodies,
             local_annotations,
+            authored_any_definitions: HashSet::new(),
+            dyn_namespaces,
             builtin_tuple_available,
             query,
             next_variable: 0,
@@ -8110,6 +8263,125 @@ impl<'a> GenericInference<'a> {
         result
     }
 
+    fn infer_authored_boundary(
+        &mut self,
+        expression: &Expr,
+        environment: &HashMap<String, TypeDescriptor>,
+        expected: Option<&TypeDescriptor>,
+    ) -> Result<TypeDescriptor, String> {
+        let authored = expected.and_then(|expected| {
+            self.authored_expression_contract(expression, environment)
+                .map(|actual| (actual, self.resolve(expected)))
+        });
+        let inferred = self.infer(expression, environment, expected)?;
+        if let Some((actual, expected)) = authored
+            && narrows_any(&self.resolve(&actual), &expected)
+        {
+            return Err(format!(
+                "cannot narrow {} to {} without cast!",
+                actual.display_name(),
+                expected.display_name()
+            ));
+        }
+        Ok(inferred)
+    }
+
+    fn authored_expression_contract(
+        &self,
+        expression: &Expr,
+        environment: &HashMap<String, TypeDescriptor>,
+    ) -> Option<TypeDescriptor> {
+        match &expression.value {
+            ExprKind::Variable(name) => {
+                let contract = self
+                    .scheme(&name.value)
+                    .map(|scheme| scheme.body)
+                    .or_else(|| environment.get(&name.value).cloned())?;
+                (self.reference_has_authored_contract(expression)
+                    && contains_any_descriptor(&contract))
+                .then_some(contract)
+            }
+            ExprKind::Field { .. } => self.explicit_scheme(expression).map(|scheme| scheme.body),
+            ExprKind::Call { callee, .. } => {
+                let callee_contract = self
+                    .explicit_scheme(callee)
+                    .map(|scheme| scheme.body)
+                    .or_else(|| match &callee.value {
+                        ExprKind::Variable(name) => environment.get(&name.value).cloned(),
+                        _ => None,
+                    })?;
+                match callee_contract {
+                    TypeDescriptor::Function { result, .. }
+                        if !contains_any_descriptor(&result)
+                            || self.reference_has_authored_contract(callee) =>
+                    {
+                        Some(*result)
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::TypeAscription { target, .. } => {
+                self.local_annotations.get(&target.location).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn reference_has_authored_contract(&self, expression: &Expr) -> bool {
+        if let ExprKind::Field { receiver, .. } = &expression.value
+            && let ExprKind::Variable(module) = &receiver.value
+            && self.external_interfaces.contains_key(&module.value)
+        {
+            return true;
+        }
+        if let ExprKind::TypeApply { callee, .. } = &expression.value {
+            return self.reference_has_authored_contract(callee);
+        }
+        self.hir
+            .expression_ids_at(expression.location)
+            .filter_map(|id| self.hir.expression(id))
+            .filter_map(|expression| expression.reference)
+            .filter_map(|id| self.hir.reference(id))
+            .any(|reference| match reference.resolution {
+                HirResolution::External => true,
+                HirResolution::Definition(id) => {
+                    self.hir.definition(id).is_some_and(|definition| {
+                        self.authored_any_definitions.contains(&definition.location)
+                    })
+                }
+                HirResolution::Unresolved => false,
+            })
+    }
+
+    fn callee_has_runtime_boundary(&self, callee: &Expr) -> bool {
+        if let ExprKind::Field { receiver, .. } = &callee.value
+            && let ExprKind::Variable(module) = &receiver.value
+            && self.external_interfaces.contains_key(&module.value)
+        {
+            return true;
+        }
+        if let ExprKind::TypeApply { callee, .. } = &callee.value {
+            return self.callee_has_runtime_boundary(callee);
+        }
+        self.hir
+            .expression_ids_at(callee.location)
+            .filter_map(|id| self.hir.expression(id))
+            .filter_map(|expression| expression.reference)
+            .filter_map(|id| self.hir.reference(id))
+            .any(|reference| match reference.resolution {
+                HirResolution::External => true,
+                HirResolution::Definition(id) => {
+                    self.hir.definition(id).is_some_and(|definition| {
+                        matches!(
+                            definition.kind,
+                            HirDefinitionKind::Import | HirDefinitionKind::Native
+                        )
+                    })
+                }
+                HirResolution::Unresolved => false,
+            })
+    }
+
     fn infer_inner(
         &mut self,
         expression: &Expr,
@@ -8405,7 +8677,7 @@ impl<'a> GenericInference<'a> {
                     .ok_or_else(|| "return is allowed only inside a Function".to_owned())?
                     .expected
                     .clone();
-                let value = self.infer(value, environment, expected.as_ref())?;
+                let value = self.infer_authored_boundary(value, environment, expected.as_ref())?;
                 self.return_boundaries
                     .last_mut()
                     .and_then(Option::as_mut)
@@ -8423,6 +8695,59 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Never
             }
             ExprKind::Debug { value, .. } => self.infer(value, environment, expected)?,
+            ExprKind::TypeAscription { value, target } => {
+                self.infer(target, environment, Some(&TypeDescriptor::Type))?;
+                let target = self
+                    .local_annotations
+                    .get(&target.location)
+                    .cloned()
+                    .ok_or_else(|| {
+                        "type ascription target metadata was not evaluated".to_owned()
+                    })?;
+                let inferred = self.infer_authored_boundary(value, environment, Some(&target))?;
+                self.check(&inferred, &target)?;
+                target
+            }
+            ExprKind::CheckedCast { value, target } => {
+                self.infer(target, environment, Some(&TypeDescriptor::Type))?;
+                let target = self
+                    .local_annotations
+                    .get(&target.location)
+                    .cloned()
+                    .ok_or_else(|| "cast target metadata was not evaluated".to_owned())?;
+                self.infer(value, environment, None)?;
+                result_descriptor(target, TypeDescriptor::String)
+            }
+            ExprKind::DynProject {
+                namespace,
+                target,
+                value,
+            } => {
+                let ExprKind::Variable(namespace_name) = &namespace.value else {
+                    return Err("Dyn project syntax requires a std/dyn namespace".into());
+                };
+                if !self.dyn_namespaces.contains(&namespace_name.value) {
+                    return Err(format!(
+                        "{}.project@[T] is available only on an imported std/dyn namespace",
+                        namespace_name.value
+                    ));
+                }
+                self.infer(namespace, environment, None)?;
+                let target_descriptor = self
+                    .local_annotations
+                    .get(&target.location)
+                    .cloned()
+                    .ok_or_else(|| "Dyn projection target metadata was not evaluated".to_owned())?;
+                if type_identity_is_symbolic(&target_descriptor) {
+                    return Err(
+                        "Dyn projection of a generic type requires an explicit runtime TypeOf witness"
+                            .into(),
+                    );
+                }
+                self.infer(target, environment, Some(&TypeDescriptor::Type))?;
+                self.infer(value, environment, Some(&TypeDescriptor::Dyn))?;
+                option_descriptor(target_descriptor)
+            }
             ExprKind::Binary {
                 operator,
                 left,
@@ -8536,6 +8861,7 @@ impl<'a> GenericInference<'a> {
                 self.project_tuple(&receiver, index.value)?
             }
             ExprKind::Call { callee, arguments } => {
+                let callee_has_runtime_boundary = self.callee_has_runtime_boundary(callee);
                 if self.is_builtin_tuple(callee)
                     && let [argument] = arguments.as_slice()
                     && let ExprKind::Array(items) = &argument.value
@@ -8651,8 +8977,15 @@ impl<'a> GenericInference<'a> {
                             } else {
                                 Some(parameter)
                             };
-                            let argument_type =
-                                self.infer(argument, environment, inference_expected)?;
+                            let argument_type = if callee_has_runtime_boundary {
+                                self.infer(argument, environment, inference_expected)?
+                            } else {
+                                self.infer_authored_boundary(
+                                    argument,
+                                    environment,
+                                    inference_expected,
+                                )?
+                            };
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.resolve(&argument_type));
                             partial_tagged_evidence |= matches!(
@@ -8787,14 +9120,21 @@ impl<'a> GenericInference<'a> {
                     let local = parameter.annotation.as_ref().and_then(|annotation| {
                         self.local_annotations.get(&annotation.location).cloned()
                     });
+                    if local.as_ref().is_some_and(contains_any_descriptor) {
+                        self.authored_any_definitions
+                            .insert(parameter.name.location);
+                    }
                     if let (Some(local), Some(surrounding)) = (&local, surrounding) {
                         self.check(local, surrounding)?;
                     }
-                    parameter_types.push(
-                        local
-                            .or_else(|| surrounding.cloned())
-                            .unwrap_or_else(|| self.fresh_variable()),
-                    );
+                    let parameter_type = local
+                        .or_else(|| surrounding.cloned())
+                        .unwrap_or_else(|| self.fresh_variable());
+                    if contains_any_descriptor(&parameter_type) {
+                        self.authored_any_definitions
+                            .insert(parameter.name.location);
+                    }
+                    parameter_types.push(parameter_type);
                 }
                 for (parameter, ty) in parameters.iter().zip(&parameter_types) {
                     closure_environment.insert(parameter.name.value.clone(), ty.clone());
@@ -9180,6 +9520,18 @@ impl<'a> GenericInference<'a> {
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         let mut environment = environment.clone();
+        for binding in &block.value.bindings {
+            if binding
+                .value
+                .annotation
+                .as_ref()
+                .and_then(|annotation| self.local_annotations.get(&annotation.location))
+                .is_some_and(contains_any_descriptor)
+            {
+                self.authored_any_definitions
+                    .insert(binding.value.name.location);
+            }
+        }
         let declared_contracts = block
             .value
             .bindings
@@ -9356,7 +9708,11 @@ impl<'a> GenericInference<'a> {
             if is_delayed {
                 self.delayed_initializer_depth += 1;
             }
-            let inferred = self.infer(&binding.value.value, &environment, binding_expected);
+            let inferred = if binding.value.kind == BindingKind::Type {
+                self.infer(&binding.value.value, &environment, binding_expected)
+            } else {
+                self.infer_authored_boundary(&binding.value.value, &environment, binding_expected)
+            };
             if is_delayed {
                 self.delayed_initializer_depth -= 1;
             }
@@ -9397,7 +9753,7 @@ impl<'a> GenericInference<'a> {
                 }
             }
         }
-        let result = self.infer(&block.value.result, &environment, expected)?;
+        let result = self.infer_authored_boundary(&block.value.result, &environment, expected)?;
         for (name, descriptor, first_owned_variable) in delayed {
             if let Some(query) = &self.query {
                 query.check().map_err(|error| error.to_string())?;
@@ -9992,6 +10348,120 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
+fn contains_any_descriptor(descriptor: &TypeDescriptor) -> bool {
+    match descriptor {
+        TypeDescriptor::Any => true,
+        TypeDescriptor::Declared(declared) => contains_any_descriptor(&declared.body),
+        TypeDescriptor::TypeOf(item)
+        | TypeDescriptor::Array(item)
+        | TypeDescriptor::Dict(item)
+        | TypeDescriptor::Tagged { payload: item, .. } => contains_any_descriptor(item),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            items.iter().any(contains_any_descriptor)
+        }
+        TypeDescriptor::Struct(fields) => fields.values().any(contains_any_descriptor),
+        TypeDescriptor::Enum(variants) => variants
+            .values()
+            .flatten()
+            .any(|payload| contains_any_descriptor(payload)),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters.iter().any(contains_any_descriptor) || contains_any_descriptor(result)
+        }
+        TypeDescriptor::Named(_)
+        | TypeDescriptor::Never
+        | TypeDescriptor::Type
+        | TypeDescriptor::Dyn
+        | TypeDescriptor::Int
+        | TypeDescriptor::Float
+        | TypeDescriptor::String
+        | TypeDescriptor::Bytes
+        | TypeDescriptor::Opaque(_)
+        | TypeDescriptor::Atom(_)
+        | TypeDescriptor::Bound(_)
+        | TypeDescriptor::Inference(_) => false,
+    }
+}
+
+fn narrows_any(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
+    if matches!(
+        expected,
+        TypeDescriptor::Any | TypeDescriptor::Inference(_) | TypeDescriptor::Bound(_)
+    ) {
+        return false;
+    }
+    if matches!(actual, TypeDescriptor::Any) {
+        return true;
+    }
+    match (actual, expected) {
+        (TypeDescriptor::Declared(actual), TypeDescriptor::Declared(expected))
+            if actual.id == expected.id =>
+        {
+            actual
+                .id
+                .arguments()
+                .iter()
+                .zip(expected.id.arguments())
+                .any(|(actual, expected)| narrows_any(actual, expected))
+        }
+        (TypeDescriptor::Declared(actual), expected) => narrows_any(&actual.body, expected),
+        (actual, TypeDescriptor::Declared(expected)) => narrows_any(actual, &expected.body),
+        (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
+        | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
+        | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
+            narrows_any(actual, expected)
+        }
+        (
+            TypeDescriptor::Tagged {
+                payload: actual, ..
+            },
+            TypeDescriptor::Tagged {
+                payload: expected, ..
+            },
+        ) => narrows_any(actual, expected),
+        (TypeDescriptor::Tuple(actual), TypeDescriptor::Tuple(expected))
+        | (TypeDescriptor::Union(actual), TypeDescriptor::Union(expected))
+            if actual.len() == expected.len() =>
+        {
+            actual
+                .iter()
+                .zip(expected)
+                .any(|(actual, expected)| narrows_any(actual, expected))
+        }
+        (TypeDescriptor::Struct(actual), TypeDescriptor::Struct(expected)) => {
+            actual.iter().any(|(name, actual)| {
+                expected
+                    .get(name)
+                    .is_some_and(|expected| narrows_any(actual, expected))
+            })
+        }
+        (TypeDescriptor::Enum(actual), TypeDescriptor::Enum(expected)) => {
+            actual.iter().any(|(name, actual)| {
+                match (actual, expected.get(name).and_then(Option::as_deref)) {
+                    (Some(actual), Some(expected)) => narrows_any(actual, expected),
+                    _ => false,
+                }
+            })
+        }
+        (
+            TypeDescriptor::Function {
+                parameters: actual_parameters,
+                result: actual_result,
+            },
+            TypeDescriptor::Function {
+                parameters: expected_parameters,
+                result: expected_result,
+            },
+        ) if actual_parameters.len() == expected_parameters.len() => {
+            actual_parameters
+                .iter()
+                .zip(expected_parameters)
+                .any(|(actual, expected)| narrows_any(actual, expected))
+                || narrows_any(actual_result, expected_result)
+        }
+        _ => false,
+    }
+}
+
 fn expression_references_names(
     expression: &Expr,
     names: &HashSet<String>,
@@ -10034,6 +10504,19 @@ fn expression_references_names(
         ExprKind::Panic { message } => expression_references_names(message, names, bound),
         ExprKind::Raise { error } => expression_references_names(error, names, bound),
         ExprKind::Debug { value, .. } => expression_references_names(value, names, bound),
+        ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
+            expression_references_names(value, names, bound)
+                || expression_references_names(target, names, bound)
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            expression_references_names(namespace, names, bound)
+                || expression_references_names(target, names, bound)
+                || expression_references_names(value, names, bound)
+        }
         ExprKind::Binary { left, right, .. } => {
             expression_references_names(left, names, bound)
                 || expression_references_names(right, names, bound)
@@ -10457,6 +10940,25 @@ fn infer_expr_with(
                 _ => TypeDescriptor::Any,
             }
         }
+        ExprKind::TypeAscription { value, target } => {
+            infer_expr_with(target, environment, record);
+            infer_expr_with(value, environment, record)
+        }
+        ExprKind::CheckedCast { value, target } => {
+            infer_expr_with(value, environment, record);
+            infer_expr_with(target, environment, record);
+            TypeDescriptor::Any
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            infer_expr_with(namespace, environment, record);
+            infer_expr_with(target, environment, record);
+            infer_expr_with(value, environment, record);
+            TypeDescriptor::Any
+        }
         ExprKind::TypeApply { callee, arguments } => {
             infer_expr_with(callee, environment, record);
             for argument in arguments {
@@ -10619,6 +11121,19 @@ fn check_interpolations(
         }
         ExprKind::TupleProjection { receiver, .. } => {
             check_interpolations(receiver, environment, sources)?;
+        }
+        ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
+            check_interpolations(value, environment, sources)?;
+            check_interpolations(target, environment, sources)?;
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            check_interpolations(namespace, environment, sources)?;
+            check_interpolations(target, environment, sources)?;
+            check_interpolations(value, environment, sources)?;
         }
         ExprKind::Call { callee, arguments } => {
             check_interpolations(callee, environment, sources)?;
@@ -13648,6 +14163,7 @@ mod tests {
         let schemes = HashMap::new();
         let interfaces = BTreeMap::new();
         let annotations = HashMap::new();
+        let dyn_namespaces = HashSet::new();
         let named_types = BTreeMap::new();
         let hir = HirProgram::default();
         let mut inference = GenericInference::new(
@@ -13656,6 +14172,7 @@ mod tests {
             &interfaces,
             &named_types,
             &annotations,
+            &dyn_namespaces,
             true,
             None,
         );

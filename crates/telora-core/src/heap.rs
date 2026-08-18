@@ -1357,6 +1357,17 @@ impl Heap {
         })
     }
 
+    pub(crate) fn canonical_descriptor_type_id(
+        &self,
+        descriptor: &crate::types::TypeDescriptor,
+    ) -> Result<crate::TypeId, HeapError> {
+        self.types
+            .lock()
+            .map_err(|_| HeapError("type store poisoned"))?
+            .intern_descriptor(descriptor)
+            .map_err(HeapError::owned)
+    }
+
     pub(crate) fn canonical_type_name(
         &self,
         type_id: crate::TypeId,

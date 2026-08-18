@@ -362,7 +362,9 @@ Any, Never
 Native opaque type 具有由注册模块和 slot 决定的名义身份，普通用户代码不能伪造其值。
 
 `Any` 表示源码契约或 Host 边界显式放弃静态精度。严格推断不会用 `Any` 代替已知
-类型之间的冲突；它也不是 editor 因源码损坏而暂时不知道类型的状态。
+类型之间的冲突；它也不是 editor 因源码损坏而暂时不知道类型的状态。普通类型关系
+只允许 `T -> Any` 的 widening，不允许 `Any -> T` 的未经检查 narrowing。恢复分析内部
+的 Unknown/ErrorType 不属于表面 `Any`。
 `Never` 表示不产生值的路径，例如 `return`、`fail!` 和 `panic!`；它作为 bottom
 参与方向性检查，避免根失败制造级联类型错误。
 
@@ -567,6 +569,37 @@ def show:
 
 该 lifting 的可观察语义等价于构造普通 closure，并使用相应 witness 将直接 A 参数
 安全打包为 Dyn。它不是 macro system、代码生成器、trait derivation 或动态 cast。
+
+### 7.5 静态约束、checked cast 与 Dyn 投影
+
+以下边界具有不同语义，不能互相替代：
+
+```telora
+let empty = [].ty!(Array(Int));
+let truth = ty!('True, Bool);
+
+let checked = raw.cast!(User);             // Result(User, String)
+
+import "std/dyn" as dyn;
+let exact = dyn.project_with(User, package); // Option(User)
+let exact_sugar = dyn.project@[User](package);
+```
+
+`ty!(expr, T)` 与 `expr.ty!(T)` 是零运行时的静态 ascription。`T` 作为 expected type
+向 `expr` 内部传递；无法证明时前端报错。它不改变 payload、名义 witness 或来源，
+也不能把 `Any`/`Dyn` narrowing 为 `T`。
+
+`cast!(expr, T)` 与 `expr.cast!(T)` 做表示不变的 checked refinement，并返回
+`Result(T, String)`。raw Dict/Atom 的完整表示符合 T 时可以安装 T 的 canonical witness；
+已经带有另一个名义 `TypeId` 的值即使结构相同也失败。cast 不解析 String、不做数值
+转换、不解包公共数据 sum、不应用 rename/default/flatten，也不重建业务数据图；这些
+行为属于 codec/translation。失败只返回 `Err(String)`，只有显式 `unwrap!`/`must_ok!`
+才产生诊断；Fail 输入按统一规则传播。
+
+`Dyn` 精确投影比较打包 descriptor 与目标的 canonical type identity，不走结构比较或
+assignability。`project@[T]` 只对解析到 `std/dyn` namespace 的 `project` 生效，并等价于
+`project_with(T, package)`；它不是所有泛型调用的隐式 witness 规则。当前符号泛型 T
+若没有可物化的运行时 `TypeOf(T)` witness，会在前端拒绝。
 
 ## 8. 模块和封闭世界
 

@@ -1197,6 +1197,42 @@ impl<'a> Compiler<'a> {
                 self.emit(operation, expression.location);
                 Ok(dst)
             }
+            ExprKind::TypeAscription { value, .. } => self.compile_expr(value),
+            ExprKind::CheckedCast { value, target } => {
+                let hidden = located(
+                    ExprKind::Variable(located("\0telora_cast".to_owned(), expression.location)),
+                    expression.location,
+                );
+                let call = located(
+                    ExprKind::Call {
+                        callee: Box::new(hidden),
+                        arguments: vec![(**target).clone(), (**value).clone()],
+                    },
+                    expression.location,
+                );
+                self.compile_expr_unowned(&call)
+            }
+            ExprKind::DynProject {
+                namespace,
+                target,
+                value,
+            } => {
+                let callee = located(
+                    ExprKind::Field {
+                        receiver: namespace.clone(),
+                        field: located("project_with".to_owned(), expression.location),
+                    },
+                    expression.location,
+                );
+                let call = located(
+                    ExprKind::Call {
+                        callee: Box::new(callee),
+                        arguments: vec![(**target).clone(), (**value).clone()],
+                    },
+                    expression.location,
+                );
+                self.compile_expr_unowned(&call)
+            }
             ExprKind::Field { receiver, field } => {
                 let dict = self.compile_expr(receiver)?;
                 let dst = self.allocate();
@@ -2133,6 +2169,21 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
             free_expr(index, bound, free);
         }
         ExprKind::TupleProjection { receiver, .. } => free_expr(receiver, bound, free),
+        ExprKind::TypeAscription { value, .. } => free_expr(value, bound, free),
+        ExprKind::CheckedCast { value, target } => {
+            free.insert("\0telora_cast".to_owned());
+            free_expr(target, bound, free);
+            free_expr(value, bound, free);
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            free_expr(namespace, bound, free);
+            free_expr(target, bound, free);
+            free_expr(value, bound, free);
+        }
         ExprKind::Call { callee, arguments } => {
             free_expr(callee, bound, free);
             for argument in arguments {
@@ -2296,6 +2347,21 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
             collect_runtime_names(index, names);
         }
         ExprKind::TupleProjection { receiver, .. } => collect_runtime_names(receiver, names),
+        ExprKind::TypeAscription { value, .. } => collect_runtime_names(value, names),
+        ExprKind::CheckedCast { value, target } => {
+            names.insert("\0telora_cast".to_owned());
+            collect_runtime_names(target, names);
+            collect_runtime_names(value, names);
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            collect_runtime_names(namespace, names);
+            collect_runtime_names(target, names);
+            collect_runtime_names(value, names);
+        }
         ExprKind::Call { callee, arguments } => {
             collect_runtime_names(callee, names);
             for argument in arguments {
@@ -3176,6 +3242,103 @@ let decorators = {
         };
         assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
         assert_eq!(error.message, "different subjects");
+    }
+
+    #[test]
+    fn type_ascription_is_bidirectional_and_emits_no_runtime_call() {
+        for source in ["ty!([], Array(Int))", "[].ty!(Array(Int))"] {
+            let function = compile_source("test", source).unwrap();
+            assert!(
+                !function
+                    .instructions()
+                    .iter()
+                    .any(|instruction| matches!(instruction, crate::Opcode::Call { .. })),
+                "{source} emitted a runtime Call"
+            );
+            assert_eq!(run(source).unwrap().to_string(), "[]");
+        }
+
+        let truth = run("'True.ty!(Bool)").unwrap();
+        assert_eq!(truth.to_string(), "'True");
+
+        let invalid = compile_source("test", "\"1\".ty!(Int)").unwrap_err();
+        assert!(
+            invalid.message.contains("String") && invalid.message.contains("Int"),
+            "{}",
+            invalid.message
+        );
+    }
+
+    #[test]
+    fn checked_cast_preserves_representation_and_nominal_identity() {
+        for source in ["cast!(1, Int)", "1.cast!(Int)"] {
+            assert_eq!(run(source).unwrap().to_string(), "'Ok(1)");
+        }
+        assert_eq!(
+            run("\"1\".cast!(Int)").unwrap().to_string(),
+            "'Err(\"value must be Int, got String\")"
+        );
+        assert_eq!(
+            run("1.cast!(Float)").unwrap().to_string(),
+            "'Err(\"value must be Float, got Int\")"
+        );
+
+        let raw = run("type User = struct {id: Int, name: String};\
+             {id: 1, name: \"Ada\"}.cast!(User)")
+        .unwrap();
+        assert_eq!(raw.to_string(), "'Ok({id: 1, name: \"Ada\"})");
+
+        let conflict = run("type A = struct {value: Int};\
+             type B = struct {value: Int};\
+             let a: A = {value: 1};\
+             a.cast!(B)")
+        .unwrap();
+        assert_eq!(
+            conflict.to_string(),
+            "'Err(\"value has a different declared type identity\")"
+        );
+
+        let nested = run("type Address = struct {zip: Int};\
+             type User = struct {address: Address};\
+             {address: {zip: \"bad\"}}.cast!(User)")
+        .unwrap();
+        assert!(nested.to_string().contains("value.address.zip"));
+    }
+
+    #[test]
+    fn checked_cast_propagates_fail_and_any_narrowing_is_explicit() {
+        let failure = run("fail!(\"cast input failed\", 1).cast!(Int)").unwrap_err();
+        let ExecutionError::Runtime(failure) = failure else {
+            panic!("expected propagated failure")
+        };
+        assert_eq!(failure.kind, RuntimeErrorKind::RaisedBlame);
+        assert_eq!(failure.message, "cast input failed");
+
+        run("let concrete: Int = 1; let erased: Any = concrete; erased").unwrap();
+        let unchecked = compile_source(
+            "test",
+            "let erased: Any = 1; let value: Int = erased; value",
+        )
+        .unwrap_err();
+        assert!(
+            unchecked.message.contains("Any") && unchecked.message.contains("Int"),
+            "{}",
+            unchecked.message
+        );
+
+        for source in [
+            "let erased: Any = 1; let consume: Fn(Int) -> Int = fn(value) { value }; consume(erased)",
+            "let broken: Fn(Any) -> Int = fn(value) { value }; broken",
+            "let erase: Fn(Int) -> Any = fn(value) { value }; let concrete: Int = erase(1); concrete",
+            "let erased: Array(Any) = [1]; let concrete: Array(Int) = erased; concrete",
+        ] {
+            let error = compile_source("test", source).unwrap_err();
+            assert!(
+                error.message.contains("Any") && error.message.contains("cast!"),
+                "{source}: {}",
+                error.message
+            );
+        }
     }
 
     #[test]

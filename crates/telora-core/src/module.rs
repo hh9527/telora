@@ -4705,6 +4705,18 @@ fn expression_has_import(expression: &Expr) -> bool {
             expression_has_import(receiver) || expression_has_import(index)
         }
         ExprKind::TupleProjection { receiver, .. } => expression_has_import(receiver),
+        ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
+            expression_has_import(value) || expression_has_import(target)
+        }
+        ExprKind::DynProject {
+            namespace,
+            target,
+            value,
+        } => {
+            expression_has_import(namespace)
+                || expression_has_import(target)
+                || expression_has_import(value)
+        }
         ExprKind::Call { callee, arguments } => {
             expression_has_import(callee) || arguments.iter().any(expression_has_import)
         }
@@ -9372,8 +9384,11 @@ unchanged", "|"),
                let float_value = dyn.pack(Float, 1.5);
                let bytes_value = dyn.pack(Bytes, b"ab");
                type Unary = Func([Int], Int);
+               type A = struct {value: Int};
+               type B = struct {value: Int};
                let identity: Fn(Int) -> Int = fn(value) { value };
                let func_value = dyn.pack(Unary, identity);
+               let nominal = dyn.pack(A, {value: 7});
                let captured = fn() { int_value };
                {
                    int_type: dyn.desc(int_value),
@@ -9384,6 +9399,11 @@ unchanged", "|"),
                    string_value: dyn.check_string(string_value),
                    float_value: dyn.check_float(float_value),
                    bytes_value: dyn.check_bytes(bytes_value),
+                   projected_int: dyn.project_with(Int, int_value),
+                   projected_sugar: dyn.project@[Int](int_value),
+                   projected_wrong: dyn.project_with(Float, int_value),
+                   projected_nominal: dyn.project_with(A, nominal),
+                   projected_conflict: dyn.project_with(B, nominal),
                    same_identity: int_value == int_value,
                    different_identity: int_value == dyn.pack(Int, 41),
                    values: [captured(), string_value],
@@ -9413,6 +9433,23 @@ unchanged", "|"),
             output.get("bytes_value").unwrap().to_string(),
             "'Some(b\"\\x61\\x62\")"
         );
+        assert_eq!(
+            output.get("projected_int").unwrap().to_string(),
+            "'Some(41)"
+        );
+        assert_eq!(
+            output.get("projected_sugar").unwrap().to_string(),
+            "'Some(41)"
+        );
+        assert_eq!(output.get("projected_wrong").unwrap().to_string(), "'None");
+        assert_eq!(
+            output.get("projected_nominal").unwrap().to_string(),
+            "'Some({value: 7})"
+        );
+        assert_eq!(
+            output.get("projected_conflict").unwrap().to_string(),
+            "'None"
+        );
         assert_eq!(output.get("same_identity").unwrap().to_string(), "'True");
         assert_eq!(
             output.get("different_identity").unwrap().to_string(),
@@ -9429,6 +9466,40 @@ unchanged", "|"),
         let error =
             load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000).unwrap_err();
         assert!(error.to_string().contains("cannot unify String with Int"));
+
+        fs::write(
+            directory.join("invalid-project.telora"),
+            r#"let dyn = {project: fn(value) { value }};
+               dyn.project@[Int](1)"#,
+        )
+        .unwrap();
+        let error = load_module(
+            directory.join("invalid-project.telora"),
+            BTreeMap::new(),
+            100_000,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("imported std/dyn namespace"));
+
+        fs::write(
+            directory.join("generic-project.telora"),
+            r#"import "std/dyn" as dyn;
+               def project: for(A) Fn(Dyn) -> Option(A) = fn(value) {
+                   dyn.project@[A](value)
+               };
+               0"#,
+        )
+        .unwrap();
+        let error = load_module(
+            directory.join("generic-project.telora"),
+            BTreeMap::new(),
+            100_000,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("runtime TypeOf witness"),
+            "{error}"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

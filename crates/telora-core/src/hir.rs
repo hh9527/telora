@@ -523,6 +523,22 @@ impl Resolver {
                 self.index_expr(receiver, scopes);
                 None
             }
+            ExprKind::TypeAscription { value, target }
+            | ExprKind::CheckedCast { value, target } => {
+                self.index_expr(value, scopes);
+                self.index_expr(target, scopes);
+                None
+            }
+            ExprKind::DynProject {
+                namespace,
+                target,
+                value,
+            } => {
+                self.index_expr(namespace, scopes);
+                self.index_expr(target, scopes);
+                self.index_expr(value, scopes);
+                None
+            }
             ExprKind::Call { callee, arguments } => {
                 self.index_expr(callee, scopes);
                 for argument in arguments {

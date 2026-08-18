@@ -110,6 +110,19 @@ pub enum ExprKind {
         message: Option<String>,
         expression: String,
     },
+    TypeAscription {
+        value: Box<Expr>,
+        target: Box<Expr>,
+    },
+    CheckedCast {
+        value: Box<Expr>,
+        target: Box<Expr>,
+    },
+    DynProject {
+        namespace: Box<Expr>,
+        target: Box<Expr>,
+        value: Box<Expr>,
+    },
     Binary {
         operator: Located<BinaryOperator>,
         left: Box<Expr>,
