@@ -1,21 +1,20 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
-    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, Val, publish_root,
-    relocate_work_roots,
+    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, Val, publish_module_root,
+    publish_root, relocate_work_roots,
 };
 use crate::lir::RegisterId;
 use crate::value::{
     BuiltinAtom, CoreArrayFunction, CoreAttributesFunction, CoreBuiltinTypeFunction,
     CoreCodecFunction, CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
     CoreHashFunction, CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction,
-    CoreStringFunction, CoreTypeDescFunction, Dict, NativeError, NativeKind, NativeLimit, Shape,
-    Value,
+    CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind, NativeLimit,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::fmt::Write;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DebugEvent {
@@ -142,12 +141,142 @@ pub enum ValueKind {
     Tuple,
     Func,
     Dyn,
+    Module,
 }
 
 #[derive(Clone, Copy)]
 pub struct ValueRef<'a> {
     value: Val,
     view: HeapView<'a>,
+}
+
+pub struct ExecutionWorld {
+    main: Arc<Heap>,
+    work: WorkWorld,
+}
+
+#[derive(Clone)]
+pub struct DataWorld {
+    heap: Arc<Heap>,
+    root: Val,
+}
+
+impl DataWorld {
+    pub(crate) fn new(heap: Heap, root: Val) -> Self {
+        Self {
+            heap: Arc::new(heap),
+            root,
+        }
+    }
+
+    pub fn int(value: i64) -> Self {
+        Self::new(Heap::work(), Val::unknown(DecodedValue::Int(value)))
+    }
+
+    pub fn float(value: f64) -> Result<Self, &'static str> {
+        value
+            .is_finite()
+            .then(|| Self::new(Heap::work(), Val::unknown(DecodedValue::Float(value))))
+            .ok_or("Telora Float must be finite")
+    }
+
+    pub fn string(value: &str) -> Self {
+        let mut heap = Heap::work();
+        let root = Val::unknown(heap.string(None, value));
+        Self::new(heap, root)
+    }
+
+    pub fn value(&self) -> ValueRef<'_> {
+        ValueRef {
+            value: self.root,
+            view: HeapView {
+                current: &self.heap,
+                background: None,
+            },
+        }
+    }
+
+    pub(crate) fn publish(
+        &self,
+        main: &mut Heap,
+    ) -> Result<PersistentValue, crate::heap::HeapError> {
+        publish_root(main, &self.heap, self.root)
+    }
+
+    pub(crate) fn relocate_into(
+        &self,
+        target: &mut Heap,
+        main: &Heap,
+    ) -> Result<Val, crate::heap::HeapError> {
+        relocate_work_roots(target, main, &self.heap, &[self.root]).map(|roots| roots[0])
+    }
+}
+
+impl fmt::Debug for DataWorld {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DataWorld")
+            .field("value", &self.value().to_string())
+            .finish()
+    }
+}
+
+impl fmt::Display for DataWorld {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value().fmt(formatter)
+    }
+}
+
+impl ExecutionWorld {
+    pub(crate) fn new(main: Arc<Heap>, work: WorkWorld) -> Self {
+        Self { main, work }
+    }
+
+    pub fn value(&self) -> ValueRef<'_> {
+        ValueRef::work(self.work.root, &self.work.heap, &self.main)
+    }
+
+    pub fn select(mut self, field: &str) -> Result<Self, String> {
+        let selected = self
+            .value()
+            .dict_get(field)
+            .or_else(|| self.value().module_get(field))
+            .ok_or_else(|| format!("value has no field {field:?}"))?
+            .value;
+        self.work.root = selected;
+        Ok(self)
+    }
+
+    pub(crate) fn into_parts(self) -> (Arc<Heap>, WorkWorld) {
+        (self.main, self.work)
+    }
+
+    pub fn format(&self) -> Result<String, String> {
+        DebugValueFormatter::new(HeapView {
+            current: &self.work.heap,
+            background: Some(&self.main),
+        })
+        .format(self.work.root)
+        .map_err(|error| error.to_string())
+    }
+}
+
+impl fmt::Debug for ExecutionWorld {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ExecutionWorld")
+            .field("value", &self.format())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Display for ExecutionWorld {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.format() {
+            Ok(value) => formatter.write_str(&value),
+            Err(error) => write!(formatter, "<invalid value: {error}>"),
+        }
+    }
 }
 
 impl<'a> ValueRef<'a> {
@@ -161,8 +290,18 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    pub(crate) fn hidden_up_link_handle(self) -> Option<Handle> {
-        let DecodedValue::UpLink(handle) = self.value.value() else {
+    pub(crate) fn work(value: Val, work: &'a Heap, main: &'a Heap) -> Self {
+        Self {
+            value,
+            view: HeapView {
+                current: work,
+                background: Some(main),
+            },
+        }
+    }
+
+    pub(crate) fn hidden_type_slot_handle(self) -> Option<Handle> {
+        let DecodedValue::TypeSlot(handle) = self.value.value() else {
             return None;
         };
         Some(handle)
@@ -183,17 +322,17 @@ impl<'a> ValueRef<'a> {
         }
     }
 
-    pub(crate) fn is_hidden_up_link(self) -> bool {
-        matches!(self.value.value(), DecodedValue::UpLink(_))
+    pub(crate) fn is_hidden_type_slot(self) -> bool {
+        matches!(self.value.value(), DecodedValue::TypeSlot(_))
     }
 
-    pub(crate) fn resolve_hidden_up_link(self) -> Result<Self, String> {
-        let DecodedValue::UpLink(handle) = self.value.value() else {
+    pub(crate) fn resolve_hidden_type_slot(self) -> Result<Self, String> {
+        let DecodedValue::TypeSlot(handle) = self.value.value() else {
             return Ok(self);
         };
         let value = self
             .view
-            .up_link(handle)
+            .type_slot(handle)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "recursive type link is not initialized".to_owned())?;
         Ok(Self {
@@ -222,8 +361,10 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Tagged(_) => ValueKind::Tagged,
             DecodedValue::Tuple(_) => ValueKind::Tuple,
             DecodedValue::Func(_) => ValueKind::Func,
+            DecodedValue::FuncRef(_) => ValueKind::Func,
             DecodedValue::Dyn(_) => ValueKind::Dyn,
-            DecodedValue::UpLink(_) => {
+            DecodedValue::Module(_) => ValueKind::Module,
+            DecodedValue::TypeSlot(_) => {
                 unreachable!("up-links are private VM values")
             }
         }
@@ -285,14 +426,15 @@ impl<'a> ValueRef<'a> {
         let DecodedValue::DeclaredType(handle) = self.value.value() else {
             return None;
         };
-        let Object::DeclaredType { id, name, body, .. } = self.view.object(handle).ok()? else {
-            return None;
+        let (id, name, body) = match self.view.object(handle).ok()? {
+            Object::DeclaredType { id, name, body, .. } => (id, name, *body),
+            _ => return None,
         };
         Some((
             id,
             name,
             ValueRef {
-                value: *body,
+                value: body,
                 view: self.view,
             },
         ))
@@ -402,30 +544,70 @@ impl<'a> ValueRef<'a> {
             })
     }
 
-    pub fn function_arity(self) -> Option<usize> {
-        let DecodedValue::Func(handle) = self.value.value() else {
+    pub fn get(self, field: &str) -> Option<ValueRef<'a>> {
+        self.dict_get(field)
+    }
+
+    pub fn dict_values(self) -> Option<Vec<ValueRef<'a>>> {
+        let DecodedValue::Dict(handle) = self.value.value() else {
             return None;
         };
-        self.view.function_arity(handle).ok()
+        let (_, values) = self.view.dict_parts(handle).ok()?;
+        Some(
+            values
+                .iter()
+                .copied()
+                .map(|value| ValueRef {
+                    value,
+                    view: self.view,
+                })
+                .collect(),
+        )
+    }
+
+    pub fn is_declared(self) -> bool {
+        self.view
+            .type_witness(self.value)
+            .is_ok_and(|owner| owner.is_some())
+    }
+
+    pub fn declared_body(self) -> Option<ValueRef<'a>> {
+        self.declared_type_body()
+    }
+
+    pub(crate) fn module_fields(self) -> Option<Vec<&'a str>> {
+        let DecodedValue::Module(handle) = self.value.value() else {
+            return None;
+        };
+        self.view.module_fields(handle).ok()
+    }
+
+    pub(crate) fn module_get(self, field: &str) -> Option<ValueRef<'a>> {
+        let DecodedValue::Module(handle) = self.value.value() else {
+            return None;
+        };
+        self.view
+            .module_get_text(handle, field)
+            .ok()
+            .flatten()
+            .map(|value| ValueRef {
+                value,
+                view: self.view,
+            })
+    }
+
+    pub fn function_arity(self) -> Option<usize> {
+        self.view.resolved_function_arity(self.value).ok().flatten()
     }
 }
 
-#[cfg(test)]
-pub(crate) fn with_legacy_value_ref<R>(
-    value: &crate::Value,
-    callback: impl FnOnce(ValueRef<'_>) -> R,
-) -> R {
-    let mut heap = Heap::work();
-    let value = heap
-        .import_value(None, value)
-        .expect("test value imports into a Work heap");
-    callback(ValueRef {
-        value,
-        view: HeapView {
-            current: &heap,
-            background: None,
-        },
-    })
+impl fmt::Display for ValueRef<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match DebugValueFormatter::new(self.view).format(self.value) {
+            Ok(value) => formatter.write_str(&value),
+            Err(error) => write!(formatter, "<invalid value: {error}>"),
+        }
+    }
 }
 
 pub struct CallContext<'vm, 'stack> {
@@ -635,52 +817,9 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, DecodedValue::Opaque(handle).into())
     }
 
-    pub fn set_value(
-        &mut self,
-        destination: RegisterId,
-        value: &crate::Value,
-    ) -> Result<(), NativeError> {
-        let bytes = usize::try_from(legacy_value_bytes(value)?)
-            .map_err(|_| NativeError::allocation_limit("native value is too large"))?;
-        self.charge_allocation(bytes)?;
-        let value = self
-            .current
-            .import_value(self.background, value)
-            .map_err(|error| NativeError::new(error.to_string()))?;
-        self.set(destination, value)
-    }
-
     pub(crate) fn mark_at_call_site(&mut self, register: RegisterId) -> Result<(), NativeError> {
         let value = self.owned(register)?.with_loc(self.call_site);
         self.set(register, value)
-    }
-
-    pub fn export_value(&self, source: RegisterId) -> Result<crate::Value, NativeError> {
-        let value = self
-            .stack
-            .get(self.base + source.0 as usize)
-            .and_then(Option::as_ref)
-            .copied()
-            .ok_or_else(|| NativeError::new("register is not initialized"))?;
-        HeapView {
-            current: self.current,
-            background: self.background,
-        }
-        .export_value(value)
-        .map_err(|error| NativeError::new(error.to_string()))
-    }
-
-    pub(crate) fn export_type_identity(
-        &self,
-        source: RegisterId,
-    ) -> Result<crate::Value, NativeError> {
-        let value = self.owned(source)?;
-        HeapView {
-            current: self.current,
-            background: self.background,
-        }
-        .export_type_identity(value)
-        .map_err(|error| NativeError::new(error.to_string()))
     }
 
     pub(crate) fn instantiate_type_family(
@@ -721,10 +860,13 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map(|argument| self.owned(*argument))
             .collect::<Result<Box<[_]>, _>>()?;
         self.charge_sequence(arguments.len().saturating_add(1))?;
+        let type_id = self.current.canonical_declared_type_id(&id).ok();
         let handle = self.current.allocate(Object::DeclaredType {
+            type_id,
             id,
             name: name.into(),
             body,
+            sealed: true,
             application_arguments: Some(arguments),
         });
         self.set(
@@ -1086,31 +1228,13 @@ fn fail_on_reported_error(
     Err(runtime)
 }
 
-#[derive(Default)]
-struct ShapeInterner {
-    shapes: HashMap<Vec<String>, Weak<Shape>>,
-}
-
-impl ShapeInterner {
-    fn intern(&mut self, fields: Vec<String>) -> Arc<Shape> {
-        if let Some(shape) = self.shapes.get(&fields).and_then(Weak::upgrade) {
-            return shape;
-        }
-        let shape = Arc::new(Shape::from_sorted_fields(fields.clone()));
-        self.shapes.insert(fields, Arc::downgrade(&shape));
-        shape
-    }
-}
-
 pub struct Vm {
-    shapes: ShapeInterner,
     debug_sink: Arc<dyn DebugSink>,
 }
 
 impl Default for Vm {
     fn default() -> Self {
         Self {
-            shapes: ShapeInterner::default(),
             debug_sink: Arc::new(DiscardDebugSink),
         }
     }
@@ -1214,6 +1338,11 @@ pub(crate) struct VmExecution {
     pub(crate) failures: Vec<RuntimeError>,
 }
 
+struct VmExecutionFailure {
+    heap: Heap,
+    error: RuntimeError,
+}
+
 #[derive(Clone, Copy)]
 struct WorkView<'a> {
     main: &'a Heap,
@@ -1230,49 +1359,171 @@ impl<'a> WorkView<'a> {
 }
 
 impl WorkWorld {
-    pub(crate) fn export(&self, world: &Heap) -> Result<Value, crate::heap::HeapError> {
-        HeapView {
-            current: &self.heap,
-            background: Some(world),
+    #[cfg(test)]
+    pub(crate) fn root_ref<'a>(&'a self, world: &'a Heap) -> ValueRef<'a> {
+        self.value_ref(world, self.root)
+    }
+
+    pub(crate) fn heap_mut(&mut self) -> &mut Heap {
+        &mut self.heap
+    }
+
+    pub(crate) fn value_ref<'a>(&'a self, world: &'a Heap, value: Val) -> ValueRef<'a> {
+        ValueRef::work(value, &self.heap, world)
+    }
+
+    pub(crate) fn import_world_root(
+        mut self,
+        background: &Heap,
+        source: &WorkWorld,
+    ) -> Result<(Self, Val), crate::heap::HeapError> {
+        let roots = relocate_work_roots(&mut self.heap, background, &source.heap, &[source.root])?;
+        Ok((self, roots[0]))
+    }
+
+    pub(crate) fn wrap_root_dyn(
+        mut self,
+        background: &Heap,
+        type_descriptor: &crate::types::TypeDescriptor,
+        origin: impl Into<Arc<str>>,
+    ) -> Result<Self, crate::heap::HeapError> {
+        let descriptor = self
+            .heap
+            .type_descriptor_value(Some(background), type_descriptor)?;
+        self.root = self
+            .root
+            .with_value(DecodedValue::Dyn(self.heap.allocate(Object::Dyn {
+                identity: Arc::new(()),
+                descriptor,
+                value: self.root,
+                scheme: Some(crate::TypeScheme {
+                    parameters: Vec::new(),
+                    body: type_descriptor.clone(),
+                }),
+                origin: Some(origin.into()),
+            })));
+        Ok(self)
+    }
+
+    fn module_member(
+        &self,
+        world: &Heap,
+        name: &str,
+    ) -> Result<Option<Val>, crate::heap::HeapError> {
+        let view = WorkView {
+            main: world,
+            work: &self.heap,
         }
-        .export_value(self.root)
+        .heap_view();
+        let DecodedValue::Module(handle) = self.root.value() else {
+            return Err(crate::heap::HeapError::new(
+                "execution root is not a Module",
+            ));
+        };
+        let Some(field) = self.heap.find_text(name).or_else(|| world.find_text(name)) else {
+            return Ok(None);
+        };
+        view.exports_get(handle, field)
+    }
+
+    pub(crate) fn module_member_ref<'a>(
+        &'a self,
+        world: &'a Heap,
+        name: &str,
+    ) -> Result<Option<ValueRef<'a>>, crate::heap::HeapError> {
+        self.module_member(world, name)
+            .map(|value| value.map(|value| self.value_ref(world, value)))
+    }
+
+    pub(crate) fn member_function_arity(
+        &self,
+        world: &Heap,
+        name: &str,
+    ) -> Result<Option<usize>, crate::heap::HeapError> {
+        let Some(value) = self.module_member(world, name)? else {
+            return Ok(None);
+        };
+        WorkView {
+            main: world,
+            work: &self.heap,
+        }
+        .heap_view()
+        .resolved_function_arity(value)
+    }
+
+    pub(crate) fn seal_module(mut self) -> Result<Self, crate::heap::HeapError> {
+        self.root = self.heap.seal_module(self.root)?;
+        Ok(self)
+    }
+
+    pub(crate) fn module_fields(
+        &self,
+        world: &Heap,
+    ) -> Result<Vec<String>, crate::heap::HeapError> {
+        let view = WorkView {
+            main: world,
+            work: &self.heap,
+        }
+        .heap_view();
+        let DecodedValue::Module(handle) = self.root.value() else {
+            return Err(crate::heap::HeapError::new(
+                "execution root is not a Module",
+            ));
+        };
+        view.exports_fields(handle)
+            .map(|fields| fields.into_iter().map(str::to_owned).collect())
     }
 
     pub(crate) fn publish(
         self,
         world: &mut Heap,
     ) -> Result<PersistentValue, crate::heap::HeapError> {
-        publish_root(world, &self.heap, self.root)
+        publish_module_root(world, &self.heap, self.root)
+    }
+
+    pub(crate) fn publish_module(
+        mut self,
+        world: &mut Heap,
+    ) -> Result<PersistentValue, crate::heap::HeapError> {
+        self.root = self.heap.seal_module(self.root)?;
+        publish_module_root(world, &self.heap, self.root)
     }
 
     pub(crate) fn into_reducer_transition(
-        self,
+        mut self,
         world: &Heap,
-    ) -> Result<(Self, Value), crate::heap::HeapError> {
-        self.into_pair(
-            world,
-            "Entry reducer must return Tuple([State, Array(SystemEffect)])",
-            "Entry reducer transition must contain exactly State and effects",
-        )
+    ) -> Result<(Self, Vec<Val>), crate::heap::HeapError> {
+        let view = HeapView {
+            current: &self.heap,
+            background: Some(world),
+        };
+        let DecodedValue::Tuple(handle) = self.root.value() else {
+            return Err(crate::heap::HeapError::new(
+                "Entry reducer must return Tuple([State, Array(SystemEffect)])",
+            ));
+        };
+        let values = view.sequence(handle, true)?;
+        let [state, effects] = values else {
+            return Err(crate::heap::HeapError::new(
+                "Entry reducer transition must contain exactly State and effects",
+            ));
+        };
+        let DecodedValue::Array(effects) = effects.value() else {
+            return Err(crate::heap::HeapError::new(
+                "Entry reducer effects must be an Array",
+            ));
+        };
+        let effects = view.sequence(effects, false)?.to_vec();
+        self.root = *state;
+        Ok((self, effects))
     }
 
-    pub(crate) fn into_entry_initialization(
-        self,
-        world: &Heap,
-    ) -> Result<(Self, Value), crate::heap::HeapError> {
-        self.into_pair(
-            world,
-            "Entry.initialize must return Tuple([State, Reducer])",
-            "Entry.initialize must return exactly State and Reducer",
-        )
-    }
-
-    fn into_pair(
+    pub(crate) fn into_runtime_pair(
         mut self,
         world: &Heap,
         root_error: &'static str,
         length_error: &'static str,
-    ) -> Result<(Self, Value), crate::heap::HeapError> {
+    ) -> Result<(Self, Val), crate::heap::HeapError> {
         let view = HeapView {
             current: &self.heap,
             background: Some(world),
@@ -1281,13 +1532,36 @@ impl WorkWorld {
             return Err(crate::heap::HeapError::new(root_error));
         };
         let values = view.sequence(handle, true)?;
-        let [state, exported] = values else {
+        let [state, value] = values else {
             return Err(crate::heap::HeapError::new(length_error));
         };
         let state = *state;
-        let exported = view.export_value(*exported)?;
+        let value = *value;
         self.root = state;
-        Ok((self, exported))
+        Ok((self, value))
+    }
+
+    pub(crate) fn runtime_function_arity(
+        &self,
+        world: &Heap,
+        value: Val,
+    ) -> Result<Option<usize>, crate::heap::HeapError> {
+        HeapView {
+            current: &self.heap,
+            background: Some(world),
+        }
+        .resolved_function_arity(value)
+    }
+
+    pub(crate) fn into_retained_module_result(
+        self,
+        world: &Heap,
+    ) -> Result<(Self, Val), crate::heap::HeapError> {
+        self.into_runtime_pair(
+            world,
+            "module call must return Tuple([Module, Result])",
+            "module call must retain exactly Module and Result",
+        )
     }
 }
 
@@ -1301,34 +1575,20 @@ impl Vm {
         self
     }
 
-    pub fn make_dict(
-        &mut self,
-        entries: impl IntoIterator<Item = (String, Value)>,
-    ) -> Result<Value, String> {
-        let mut entries = entries.into_iter().collect::<Vec<_>>();
-        entries.sort_by(|left, right| left.0.cmp(&right.0));
-        if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-            return Err("Dict contains a duplicate field".into());
-        }
-        let (fields, values): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
-        let shape = self.shapes.intern(fields);
-        Ok(Value::Dict(Dict::new(shape, values)))
-    }
-
     pub fn execute(
         &mut self,
         function: &BytecodeFunction,
         evaluation_fuel: usize,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ExecutionWorld, RuntimeError> {
         self.execute_with_args(function, &[], evaluation_fuel)
     }
 
     pub fn execute_with_args(
         &mut self,
         function: &BytecodeFunction,
-        arguments: &[Value],
+        arguments: &[crate::DataWorld],
         evaluation_fuel: usize,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ExecutionWorld, RuntimeError> {
         self.execute_with_quota_and_args(function, arguments, Quota::with_fuel(evaluation_fuel))
     }
 
@@ -1336,16 +1596,16 @@ impl Vm {
         &mut self,
         function: &BytecodeFunction,
         quota: Quota,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ExecutionWorld, RuntimeError> {
         self.execute_with_quota_and_args(function, &[], quota)
     }
 
     pub fn execute_with_quota_and_args(
         &mut self,
         function: &BytecodeFunction,
-        arguments: &[Value],
+        arguments: &[crate::DataWorld],
         quota: Quota,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ExecutionWorld, RuntimeError> {
         let mut account = QuotaAccount::new(quota);
         self.execute_with_account(function, arguments, &mut account)
     }
@@ -1353,37 +1613,32 @@ impl Vm {
     pub(crate) fn execute_with_account(
         &mut self,
         function: &BytecodeFunction,
-        arguments: &[Value],
+        arguments: &[crate::DataWorld],
         account: &mut QuotaAccount,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ExecutionWorld, RuntimeError> {
         let diagnostic_start = account.diagnostics.len();
-        let background = Heap::main();
+        let background = Arc::new(Heap::main());
         let arena = self.execute_frame(
             &background,
             &HashMap::new(),
             function,
             None,
+            None,
+            &[],
             arguments,
             &[],
             account,
         )?;
         fail_on_reported_error(account, diagnostic_start, function)?;
-        arena.export(&background).map_err(|heap_error| {
-            error(
-                RuntimeErrorKind::InvalidBytecode,
-                heap_error.to_string(),
-                function,
-                0,
-            )
-        })
+        Ok(ExecutionWorld::new(background, arena))
     }
 
     pub(crate) fn execute_in_work(
         &mut self,
         background: &Heap,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
         function: &BytecodeFunction,
-        arguments: &[Value],
+        arguments: &[crate::DataWorld],
         account: &mut QuotaAccount,
     ) -> Result<WorkWorld, RuntimeError> {
         let diagnostic_start = account.diagnostics.len();
@@ -1392,6 +1647,8 @@ impl Vm {
             externals,
             function,
             None,
+            None,
+            &[],
             arguments,
             &[],
             account,
@@ -1403,9 +1660,9 @@ impl Vm {
     pub(crate) fn execute_in_work_best_effort(
         &mut self,
         background: &Heap,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
         function: &BytecodeFunction,
-        arguments: &[Value],
+        arguments: &[crate::DataWorld],
         account: &mut QuotaAccount,
     ) -> Result<VmExecution, RuntimeError> {
         self.execute_frame_with_policy(
@@ -1413,49 +1670,41 @@ impl Vm {
             externals,
             function,
             None,
+            None,
+            &[],
             arguments,
             &[],
             account,
             true,
         )
-    }
-
-    pub(crate) fn execute_function_with_captures_in_work(
-        &mut self,
-        background: &Heap,
-        externals: &HashMap<String, PersistentValue>,
-        function: &BytecodeFunction,
-        captures: &[Value],
-        arguments: &[Value],
-        account: &mut QuotaAccount,
-    ) -> Result<WorkWorld, RuntimeError> {
-        let diagnostic_start = account.diagnostics.len();
-        let arena = self.execute_frame(
-            background, externals, function, None, arguments, captures, account,
-        )?;
-        fail_on_reported_error(account, diagnostic_start, function)?;
-        Ok(arena)
+        .map_err(|failure| failure.error)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn execute_function_with_captures_and_work_state_in_work(
+    pub(crate) fn execute_in_existing_world_with_runtime_args(
         &mut self,
         background: &Heap,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
         function: &BytecodeFunction,
-        captures: &[Value],
-        state: WorkWorld,
-        arguments: &[Value],
+        world: WorkWorld,
+        runtime_arguments: &[Val],
+        arguments: &[crate::DataWorld],
         account: &mut QuotaAccount,
     ) -> Result<WorkWorld, RuntimeError> {
         let diagnostic_start = account.diagnostics.len();
+        let WorkWorld { heap, root } = world;
+        let mut existing_arguments = Vec::with_capacity(runtime_arguments.len() + 1);
+        existing_arguments.push(root);
+        existing_arguments.extend_from_slice(runtime_arguments);
         let arena = self.execute_frame(
             background,
             externals,
             function,
-            Some(state),
+            Some(heap),
+            None,
+            &existing_arguments,
             arguments,
-            captures,
+            &[],
             account,
         )?;
         fail_on_reported_error(account, diagnostic_start, function)?;
@@ -1466,76 +1715,57 @@ impl Vm {
     fn execute_frame(
         &mut self,
         background: &Heap,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
         function: &BytecodeFunction,
+        initial_work: Option<Heap>,
         work_state: Option<WorkWorld>,
-        arguments: &[Value],
-        captures: &[Value],
+        existing_arguments: &[Val],
+        arguments: &[crate::DataWorld],
+        captures: &[crate::DataWorld],
         account: &mut QuotaAccount,
     ) -> Result<WorkWorld, RuntimeError> {
         self.execute_frame_with_policy(
-            background, externals, function, work_state, arguments, captures, account, false,
+            background,
+            externals,
+            function,
+            initial_work,
+            work_state,
+            existing_arguments,
+            arguments,
+            captures,
+            account,
+            false,
         )
         .map(|execution| execution.world)
+        .map_err(|failure| failure.error)
     }
 
     #[allow(clippy::needless_borrow, clippy::too_many_arguments)]
     fn execute_frame_with_policy(
         &mut self,
         background: &Heap,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
         function: &BytecodeFunction,
+        initial_work: Option<Heap>,
         work_state: Option<WorkWorld>,
-        arguments: &[Value],
-        captures: &[Value],
+        existing_arguments: &[Val],
+        arguments: &[crate::DataWorld],
+        captures: &[crate::DataWorld],
         account: &mut QuotaAccount,
         best_effort: bool,
-    ) -> Result<VmExecution, RuntimeError> {
+    ) -> Result<VmExecution, VmExecutionFailure> {
         // Linking recursively walks the immutable prototype graph. Keep that host
         // recursion off callers' often-small test or embedding threads; VM calls
         // themselves use the explicit frame stack below.
-        let (mut current, prototype) = std::thread::scope(|scope| {
+        let mut current = initial_work.unwrap_or_else(|| Heap::work_for(background));
+        let linked = std::thread::scope(|scope| {
             std::thread::Builder::new()
                 .name("telora-bytecode-linker".into())
                 .stack_size(16 * 1024 * 1024)
                 .spawn_scoped(scope, || {
-                    let mut current = Heap::work();
-                    let prototype =
-                        current.link_bytecode_resolved(Some(background), function, externals)?;
-                    Ok::<_, crate::heap::HeapError>((current, prototype))
+                    current.link_bytecode_resolved(Some(background), function, externals)
                 })
-                .map_err(|_| crate::heap::HeapError::new("failed to start bytecode linker"))?
-                .join()
-                .map_err(|_| crate::heap::HeapError::new("bytecode linker panicked"))?
-        })
-        .map_err(|heap_error| {
-            error(
-                RuntimeErrorKind::InvalidBytecode,
-                heap_error.to_string(),
-                function,
-                0,
-            )
-        })?;
-        let mut runtime_arguments =
-            Vec::with_capacity(arguments.len() + usize::from(work_state.is_some()));
-        if let Some(WorkWorld { heap, root }) = work_state {
-            let relocated = relocate_work_roots(&mut current, background, &heap, &[root]).map_err(
-                |heap_error| {
-                    error(
-                        RuntimeErrorKind::InvalidBytecode,
-                        heap_error.to_string(),
-                        function,
-                        0,
-                    )
-                },
-            )?;
-            runtime_arguments.extend(relocated);
-        }
-        runtime_arguments.extend(
-            arguments
-                .iter()
-                .map(|value| current.import_value(Some(background), value))
-                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| crate::heap::HeapError::new("failed to start bytecode linker"))
                 .map_err(|heap_error| {
                     error(
                         RuntimeErrorKind::InvalidBytecode,
@@ -1543,22 +1773,101 @@ impl Vm {
                         function,
                         0,
                     )
-                })?,
+                })?
+                .join()
+                .map_err(|_| crate::heap::HeapError::new("bytecode linker panicked"))
+                .map_err(|heap_error| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        0,
+                    )
+                })
+        });
+        let prototype = match linked {
+            Ok(prototype) => prototype,
+            Err(error) => {
+                return Err(VmExecutionFailure {
+                    heap: current,
+                    error,
+                });
+            }
+        };
+        let prototype = match prototype {
+            Ok(prototype) => prototype,
+            Err(heap_error) => {
+                return Err(VmExecutionFailure {
+                    heap: current,
+                    error: error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        0,
+                    ),
+                });
+            }
+        };
+        let mut runtime_arguments = Vec::with_capacity(
+            existing_arguments.len() + arguments.len() + usize::from(work_state.is_some()),
         );
+        runtime_arguments.extend_from_slice(existing_arguments);
+        if let Some(WorkWorld { heap, root }) = work_state {
+            let relocated = match relocate_work_roots(&mut current, background, &heap, &[root]) {
+                Ok(relocated) => relocated,
+                Err(heap_error) => {
+                    return Err(VmExecutionFailure {
+                        heap: current,
+                        error: error(
+                            RuntimeErrorKind::InvalidBytecode,
+                            heap_error.to_string(),
+                            function,
+                            0,
+                        ),
+                    });
+                }
+            };
+            runtime_arguments.extend(relocated);
+        }
+        let imported_arguments = arguments
+            .iter()
+            .map(|value| value.relocate_into(&mut current, background))
+            .collect::<Result<Vec<_>, _>>();
+        let imported_arguments = match imported_arguments {
+            Ok(arguments) => arguments,
+            Err(heap_error) => {
+                return Err(VmExecutionFailure {
+                    heap: current,
+                    error: error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        0,
+                    ),
+                });
+            }
+        };
+        runtime_arguments.extend(imported_arguments);
         let captures = captures
             .iter()
-            .map(|value| current.import_value(Some(background), value))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|heap_error| {
-                error(
-                    RuntimeErrorKind::InvalidBytecode,
-                    heap_error.to_string(),
-                    function,
-                    0,
-                )
-            })?;
+            .map(|value| value.relocate_into(&mut current, background))
+            .collect::<Result<Vec<_>, _>>();
+        let captures = match captures {
+            Ok(captures) => captures,
+            Err(heap_error) => {
+                return Err(VmExecutionFailure {
+                    heap: current,
+                    error: error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        heap_error.to_string(),
+                        function,
+                        0,
+                    ),
+                });
+            }
+        };
         let mut stack: Vec<Option<Val>> = Vec::new();
-        let mut frames = vec![make_execution_frame(
+        let root_frame = make_execution_frame(
             Arc::new(function.clone()),
             prototype,
             &runtime_arguments,
@@ -1566,704 +1875,111 @@ impl Vm {
             ReturnTarget::Root,
             &mut stack,
             account.stack_limit(),
-        )?];
+        );
+        let root_frame = match root_frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                return Err(VmExecutionFailure {
+                    heap: current,
+                    error,
+                });
+            }
+        };
+        let mut frames = vec![root_frame];
         let debug_sink = Arc::clone(&self.debug_sink);
 
         let mut failures = Vec::new();
-        let mut result = loop {
-            let attempt = (|| -> Result<Val, RuntimeError> {
-                loop {
-                    let function_arc = frames
-                        .last()
-                        .expect("execution has at least one frame")
-                        .function
-                        .clone();
-                    let function = function_arc.as_ref();
-                    let pc = frames.last().expect("execution frame").pc;
-                    let instruction = function.instructions().get(pc).ok_or_else(|| {
-                        error(
-                            RuntimeErrorKind::InvalidBytecode,
-                            "instruction pointer is out of bounds",
-                            function,
-                            pc,
-                        )
-                    })?;
-                    let frame = frames.last().expect("execution frame");
-                    let base = frame.base;
-                    let end = base + frame.function.register_count();
-                    let mut registers = &mut stack[base..end];
-                    let view = WorkView {
-                        main: background,
-                        work: &current,
-                    }
-                    .heap_view();
+        let mut result = (|| -> Result<Val, RuntimeError> {
+            loop {
+                let attempt = (|| -> Result<Val, RuntimeError> {
+                    loop {
+                        let function_arc = frames
+                            .last()
+                            .expect("execution has at least one frame")
+                            .function
+                            .clone();
+                        let function = function_arc.as_ref();
+                        let pc = frames.last().expect("execution frame").pc;
+                        let instruction = function.instructions().get(pc).ok_or_else(|| {
+                            error(
+                                RuntimeErrorKind::InvalidBytecode,
+                                "instruction pointer is out of bounds",
+                                function,
+                                pc,
+                            )
+                        })?;
+                        let frame = frames.last().expect("execution frame");
+                        let base = frame.base;
+                        let end = base + frame.function.register_count();
+                        let mut registers = &mut stack[base..end];
+                        let view = WorkView {
+                            main: background,
+                            work: &current,
+                        }
+                        .heap_view();
 
-                    match instruction {
-                        Opcode::LoadConst { dst, value } => {
-                            let (_, values, _, _) =
-                                view.bytecode(frame.prototype).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            let value = values.get(value.0).copied().ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("value link {} is out of bounds", value.0),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                value.with_loc(value.loc().or(instruction_location(function, pc))),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::Move { dst, src } => {
-                            let value = *read_register(&registers, *src, function, pc)?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::MakeUpLink { dst } => {
-                            charge_allocation(
-                                account,
-                                logical_value_bytes(1).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
-                                })?,
-                                function,
-                                pc,
-                            )?;
-                            let link = Val::new(
-                                DecodedValue::UpLink(
-                                    current.allocate(crate::heap::Object::UpLink { value: None }),
-                                ),
-                                instruction_location(function, pc),
-                            );
-                            write_register(&mut registers, *dst, link, function, pc)?;
-                        }
-                        Opcode::ReadUpLink { dst, link } => {
-                            let DecodedValue::UpLink(handle) =
-                                read_register(&registers, *link, function, pc)?.value()
-                            else {
-                                return Err(error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    "up-link read operand is not an up-link",
-                                    function,
-                                    pc,
-                                ));
-                            };
-                            let value = view
-                                .up_link(handle)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .ok_or_else(|| {
-                                    error(
-                                        RuntimeErrorKind::UninitializedDefinition,
-                                        "definition was read before initialization",
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::InitializeUpLink { link, src } => {
-                            let DecodedValue::UpLink(handle) =
-                                read_register(&registers, *link, function, pc)?.value()
-                            else {
-                                return Err(error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    "up-link initialization operand is not an up-link",
-                                    function,
-                                    pc,
-                                ));
-                            };
-                            if view
-                                .up_link(handle)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .is_some()
-                            {
-                                return Err(error(
-                                    RuntimeErrorKind::DuplicateDefinition,
-                                    "definition was initialized more than once",
-                                    function,
-                                    pc,
-                                ));
-                            }
-                            let value = *read_register(&registers, *src, function, pc)?;
-                            current
-                                .initialize_up_link(handle, value)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                        }
-                        Opcode::AssertUpLinkReady { link } => {
-                            let DecodedValue::UpLink(handle) =
-                                read_register(&registers, *link, function, pc)?.value()
-                            else {
-                                return Err(error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    "up-link assertion operand is not an up-link",
-                                    function,
-                                    pc,
-                                ));
-                            };
-                            if view
-                                .up_link(handle)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .is_none()
-                            {
-                                return Err(error(
-                                    RuntimeErrorKind::UninitializedDefinition,
-                                    "declaration was not initialized before block completion",
-                                    function,
-                                    pc,
-                                ));
-                            }
-                        }
-                        Opcode::AssertFunctionArity { value, arity } => {
-                            let value = *read_register(&registers, *value, function, pc)?;
-                            let DecodedValue::Func(handle) = value.value() else {
-                                return Err(error(
-                                    RuntimeErrorKind::TypeMismatch,
-                                    format!(
-                                        "definition must be a function accepting {arity} arguments"
-                                    ),
-                                    function,
-                                    pc,
-                                ));
-                            };
-                            let actual = view.function_arity(handle).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            if actual != *arity {
-                                return Err(error(
-                                    RuntimeErrorKind::TypeMismatch,
-                                    format!(
-                                        "definition must accept {arity} arguments, got {actual}"
-                                    ),
-                                    function,
-                                    pc,
-                                ));
-                            }
-                        }
-                        Opcode::Add { dst, left, right } => {
-                            let value = numeric_binary(
-                                read_register(&registers, *left, function, pc)?,
-                                read_register(&registers, *right, function, pc)?,
-                                NumericOperation::Add,
-                                &view,
-                                account,
-                                function,
-                                pc,
-                            )?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                value.with_loc(instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::Subtract { dst, left, right } => {
-                            let value = numeric_binary(
-                                read_register(&registers, *left, function, pc)?,
-                                read_register(&registers, *right, function, pc)?,
-                                NumericOperation::Subtract,
-                                &view,
-                                account,
-                                function,
-                                pc,
-                            )?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                value.with_loc(instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::Multiply { dst, left, right } => {
-                            let value = numeric_binary(
-                                read_register(&registers, *left, function, pc)?,
-                                read_register(&registers, *right, function, pc)?,
-                                NumericOperation::Multiply,
-                                &view,
-                                account,
-                                function,
-                                pc,
-                            )?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::Divide { dst, left, right } => {
-                            let value = numeric_binary(
-                                read_register(&registers, *left, function, pc)?,
-                                read_register(&registers, *right, function, pc)?,
-                                NumericOperation::Divide,
-                                &view,
-                                account,
-                                function,
-                                pc,
-                            )?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::Remainder { dst, left, right } => {
-                            let value = numeric_binary(
-                                read_register(&registers, *left, function, pc)?,
-                                read_register(&registers, *right, function, pc)?,
-                                NumericOperation::Remainder,
-                                &view,
-                                account,
-                                function,
-                                pc,
-                            )?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::Negate { dst, src } => {
-                            let input = *read_register(&registers, *src, function, pc)?;
-                            let value = match input.value() {
-                                DecodedValue::Int(value) => {
-                                    DecodedValue::Int(value.checked_neg().ok_or_else(|| {
-                                        error(
-                                            RuntimeErrorKind::IntegerOverflow,
-                                            "integer negation overflowed",
-                                            function,
-                                            pc,
-                                        )
-                                    })?)
-                                }
-                                DecodedValue::Float(value) => DecodedValue::Float(-value),
-                                _ => {
-                                    return Err(runtime_type_error(
-                                        "numeric value",
-                                        &input,
-                                        &view,
-                                        function,
-                                        pc,
-                                    ));
-                                }
-                            };
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(value, instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::Not { dst, src } => {
-                            let input = *read_register(&registers, *src, function, pc)?;
-                            let value = match input.value() {
-                                DecodedValue::Int(value) => DecodedValue::Int(!value),
-                                DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
-                                    DecodedValue::BuiltinAtom(BuiltinAtom::False)
-                                }
-                                DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
-                                    DecodedValue::BuiltinAtom(BuiltinAtom::True)
-                                }
-                                _ => {
-                                    return Err(runtime_type_error(
-                                        "Int or Bool",
-                                        &input,
-                                        &view,
-                                        function,
-                                        pc,
-                                    ));
-                                }
-                            };
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(value, instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::LogicalNot { dst, src } => {
-                            let input = *read_register(&registers, *src, function, pc)?;
-                            let value = match input.value() {
-                                DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
-                                    DecodedValue::BuiltinAtom(BuiltinAtom::False)
-                                }
-                                DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
-                                    DecodedValue::BuiltinAtom(BuiltinAtom::True)
-                                }
-                                _ => {
-                                    return Err(runtime_type_error(
-                                        "Bool", &input, &view, function, pc,
-                                    ));
-                                }
-                            };
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(value, instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::BitNot { dst, src } => {
-                            let input = *read_register(&registers, *src, function, pc)?;
-                            let DecodedValue::Int(value) = input.value() else {
-                                return Err(runtime_type_error("Int", &input, &view, function, pc));
-                            };
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(
-                                    DecodedValue::Int(!value),
-                                    instruction_location(function, pc),
-                                ),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::BitAnd { dst, left, right }
-                        | Opcode::BitOr { dst, left, right }
-                        | Opcode::BitXor { dst, left, right } => {
-                            let operation = match instruction {
-                                Opcode::BitAnd { .. } => BitwiseOperation::And,
-                                Opcode::BitOr { .. } => BitwiseOperation::Or,
-                                Opcode::BitXor { .. } => BitwiseOperation::Xor,
-                                _ => unreachable!(),
-                            };
-                            let value = bitwise_binary(
-                                read_register(&registers, *left, function, pc)?,
-                                read_register(&registers, *right, function, pc)?,
-                                operation,
-                                &view,
-                                function,
-                                pc,
-                            )?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::Equal { dst, left, right } => {
-                            let left = *read_register(&registers, *left, function, pc)?;
-                            let right = *read_register(&registers, *right, function, pc)?;
-                            propagate_data_failures(&[left, right], &view, function, pc)?;
-                            let equal = view.values_equal(left, right).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(equal).with_loc(instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::NotEqual { dst, left, right } => {
-                            let left = *read_register(&registers, *left, function, pc)?;
-                            let right = *read_register(&registers, *right, function, pc)?;
-                            propagate_data_failures(&[left, right], &view, function, pc)?;
-                            let not_equal =
-                                !view.values_equal(left, right).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(not_equal)
-                                    .with_loc(instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::LessThan { dst, left, right } => {
-                            let left = read_register(&registers, *left, function, pc)?;
-                            let right = read_register(&registers, *right, function, pc)?;
-                            let less = ordered_comparison(left, right, false, &view, function, pc)?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(less).with_loc(instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::LessThanOrEqual { dst, left, right } => {
-                            let left = read_register(&registers, *left, function, pc)?;
-                            let right = read_register(&registers, *right, function, pc)?;
-                            let less_or_equal =
-                                ordered_comparison(left, right, true, &view, function, pc)?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(less_or_equal)
-                                    .with_loc(instruction_location(function, pc)),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::MakeArray { dst, items } => {
-                            let values = read_many(&registers, items, function, pc)?;
-                            let bytes =
-                                logical_value_bytes(values.len()).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
-                                })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(
-                                    DecodedValue::Array(
-                                        current.allocate(crate::heap::Object::Array(values.into())),
-                                    ),
-                                    instruction_location(function, pc),
-                                ),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::ConcatArrays { dst, arrays } => {
-                            let arrays = read_many(&registers, arrays, function, pc)?;
-                            let mut values = Vec::new();
-                            for array in arrays {
-                                let DecodedValue::Array(handle) = array.value() else {
-                                    return Err(runtime_type_error(
-                                        "Array spread operand",
-                                        &array,
-                                        &view,
-                                        function,
-                                        pc,
-                                    ));
-                                };
-                                values.extend_from_slice(view.sequence(handle, false).map_err(
-                                    |heap_error| {
+                        match instruction {
+                            Opcode::LoadConst { dst, value } => {
+                                let (_, values, _, _) =
+                                    view.bytecode(frame.prototype).map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
                                             heap_error.to_string(),
                                             function,
                                             pc,
                                         )
-                                    },
-                                )?);
+                                    })?;
+                                let value = values.get(value.0).copied().ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        format!("value link {} is out of bounds", value.0),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    value.with_loc(
+                                        value.loc().or(instruction_location(function, pc)),
+                                    ),
+                                    function,
+                                    pc,
+                                )?;
                             }
-                            let bytes =
-                                logical_value_bytes(values.len()).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
-                                })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(
-                                    DecodedValue::Array(
-                                        current.allocate(crate::heap::Object::Array(values.into())),
-                                    ),
-                                    instruction_location(function, pc),
-                                ),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::MakeTuple { dst, items } => {
-                            let values = read_many(&registers, items, function, pc)?;
-                            let bytes =
-                                logical_value_bytes(values.len()).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
-                                })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                Val::new(
-                                    DecodedValue::Tuple(
-                                        current.allocate(crate::heap::Object::Tuple(values.into())),
-                                    ),
-                                    instruction_location(function, pc),
-                                ),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::InterpolateString { dst, parts } => {
-                            let values = read_many(&registers, parts, function, pc)?
-                                .into_iter()
-                                .map(|value| {
-                                    view.unwrap_declared(value).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })
-                                })
-                                .collect::<Result<Vec<_>, _>>()?;
-                            let mut length = 0usize;
-                            for value in &values {
-                                length += if let DecodedValue::Int(value) = value.value() {
-                                    decimal_length(value)
-                                } else if let DecodedValue::Float(value) = value.value() {
-                                    value.to_string().len()
-                                } else if let Some(value) =
-                                    view.string_text(*value).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                {
-                                    value.len()
-                                } else if let Some(value) =
-                                    view.atom_text(*value).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                {
-                                    value.len()
+                            Opcode::Move { dst, src } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::AllocFunc { dst, static_id } => {
+                                let value = if let Some(id) = static_id {
+                                    Val::new(
+                                        DecodedValue::FuncRef(*id),
+                                        instruction_location(function, pc),
+                                    )
                                 } else {
-                                    return Err(runtime_shallow_type_error(
-                                        "String, Int, Float, or Atom interpolation value",
-                                        *value,
+                                    charge_allocation(
+                                        account,
+                                        logical_value_bytes(1).map_err(|native_error| {
+                                            allocation_error(native_error.message, function, pc)
+                                        })?,
                                         function,
                                         pc,
-                                    ));
-                                };
-                            }
-                            let bytes = u64::try_from(length).map_err(|_| {
-                                allocation_error("String allocation size overflowed", function, pc)
-                            })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            let mut output = String::with_capacity(length);
-                            for value in &values {
-                                if let DecodedValue::Int(value) = value.value() {
-                                    write!(output, "{value}")
-                                        .expect("writing to String cannot fail");
-                                } else if let DecodedValue::Float(value) = value.value() {
-                                    write!(output, "{value}")
-                                        .expect("writing to String cannot fail");
-                                } else if let Some(value) =
-                                    view.string_text(*value).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                {
-                                    output.push_str(value.as_str());
-                                } else if let Some(value) =
-                                    view.atom_text(*value).map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                {
-                                    output.push_str(value.as_str());
-                                } else {
-                                    unreachable!("interpolation values were validated");
-                                }
-                            }
-                            let value = Val::new(
-                                current.string(Some(background), &output),
-                                instruction_location(function, pc),
-                            );
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::MakeDict { dst, fields } => {
-                            let (_, _, text_links, _) =
-                                view.bytecode(frame.prototype).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
+                                    )?;
+                                    Val::new(
+                                        DecodedValue::Func(
+                                            current.allocate(crate::heap::Object::OpenFunc),
+                                        ),
+                                        instruction_location(function, pc),
                                     )
-                                })?;
-                            let mut entries = fields
-                                .iter()
-                                .map(|(field, register)| {
-                                    let field =
-                                        text_links.get(field.0).copied().ok_or_else(|| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                format!("text link {} is out of bounds", field.0),
-                                                function,
-                                                pc,
-                                            )
-                                        })?;
-                                    Ok((
-                                        field,
-                                        *read_register(&registers, *register, function, pc)?,
-                                    ))
-                                })
-                                .collect::<Result<Vec<_>, RuntimeError>>()?;
-                            entries.sort_by(|left, right| {
-                                view.text(left.0)
-                                    .unwrap_or("")
-                                    .cmp(view.text(right.0).unwrap_or(""))
-                            });
-                            if entries
-                                .windows(2)
-                                .any(|pair| view.text(pair[0].0).ok() == view.text(pair[1].0).ok())
-                            {
-                                return Err(error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    "Dict contains a duplicate field",
-                                    function,
-                                    pc,
-                                ));
+                                };
+                                write_register(&mut registers, *dst, value, function, pc)?;
                             }
-                            let (fields, values): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
-                            let field_bytes = fields.iter().try_fold(0u64, |total, field| {
-                                let length = view
-                                    .text(*field)
+                            Opcode::SealFunc { target, source } => {
+                                let target = *read_register(&registers, *target, function, pc)?;
+                                let source = *read_register(&registers, *source, function, pc)?;
+                                if view
+                                    .resolve_func(source)
                                     .map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
@@ -2272,101 +1988,815 @@ impl Vm {
                                             pc,
                                         )
                                     })?
-                                    .len();
-                                total.checked_add(length as u64).ok_or_else(|| {
-                                    allocation_error(
-                                        "Dict allocation size overflowed",
+                                    .is_none()
+                                {
+                                    return Err(error(
+                                        RuntimeErrorKind::TypeMismatch,
+                                        "function definition did not produce a FuncRef",
                                         function,
                                         pc,
-                                    )
-                                })
-                            })?;
-                            let value_bytes =
-                                logical_value_bytes(values.len()).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
-                                })?;
-                            let bytes = field_bytes.checked_add(value_bytes).ok_or_else(|| {
-                                allocation_error("Dict allocation size overflowed", function, pc)
-                            })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            let shape = current.intern_shape(fields);
-                            let dict = Val::new(
-                                DecodedValue::Dict(current.allocate(crate::heap::Object::Dict {
-                                    shape,
-                                    values: values.into(),
-                                })),
-                                instruction_location(function, pc),
-                            );
-                            write_register(&mut registers, *dst, dict, function, pc)?;
-                        }
-                        Opcode::MergeDicts { dst, dicts } => {
-                            let dicts = read_many(&registers, dicts, function, pc)?;
-                            let mut merged = BTreeMap::new();
-                            for dict in dicts {
-                                let DecodedValue::Dict(handle) = dict.value() else {
-                                    return Err(runtime_type_error(
-                                        "Dict spread operand",
-                                        &dict,
-                                        &view,
+                                    ));
+                                }
+                                match target.value() {
+                                    DecodedValue::Func(target) => {
+                                        let DecodedValue::Func(source) = source.value() else {
+                                            return Err(error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                "dynamic function slot cannot retain a static reference",
+                                                function,
+                                                pc,
+                                            ));
+                                        };
+                                        current.seal_local_func(target, source).map_err(
+                                            |heap_error| {
+                                                error(
+                                                    RuntimeErrorKind::DuplicateDefinition,
+                                                    heap_error.to_string(),
+                                                    function,
+                                                    pc,
+                                                )
+                                            },
+                                        )?;
+                                    }
+                                    DecodedValue::FuncRef(id) => current
+                                        .seal_static_func(id, source)
+                                        .map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::DuplicateDefinition,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?,
+                                    _ => {
+                                        return Err(error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            "function ref target is not a FuncRef",
+                                            function,
+                                            pc,
+                                        ));
+                                    }
+                                }
+                            }
+                            Opcode::AllocTypeSlot { dst } => {
+                                charge_allocation(
+                                    account,
+                                    logical_value_bytes(1).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?,
+                                    function,
+                                    pc,
+                                )?;
+                                let link =
+                                    Val::new(
+                                        DecodedValue::TypeSlot(current.allocate(
+                                            crate::heap::Object::TypeSlot { value: None },
+                                        )),
+                                        instruction_location(function, pc),
+                                    );
+                                write_register(&mut registers, *dst, link, function, pc)?;
+                            }
+                            Opcode::ReadTypeSlot { dst, link } => {
+                                let DecodedValue::TypeSlot(handle) =
+                                    read_register(&registers, *link, function, pc)?.value()
+                                else {
+                                    return Err(error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        "up-link read operand is not an up-link",
                                         function,
                                         pc,
                                     ));
                                 };
-                                let (fields, values) =
-                                    view.dict_parts(handle).map_err(|heap_error| {
+                                let value = view
+                                    .type_slot(handle)
+                                    .map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
                                             heap_error.to_string(),
                                             function,
                                             pc,
                                         )
+                                    })?
+                                    .ok_or_else(|| {
+                                        error(
+                                            RuntimeErrorKind::UninitializedDefinition,
+                                            "definition was read before initialization",
+                                            function,
+                                            pc,
+                                        )
                                     })?;
-                                for (field, value) in fields.iter().zip(values) {
-                                    let field = view.text(*field).map_err(|heap_error| {
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::SealTypeSlot { link, src } => {
+                                let DecodedValue::TypeSlot(handle) =
+                                    read_register(&registers, *link, function, pc)?.value()
+                                else {
+                                    return Err(error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        "up-link initialization operand is not an up-link",
+                                        function,
+                                        pc,
+                                    ));
+                                };
+                                if view
+                                    .type_slot(handle)
+                                    .map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
                                             heap_error.to_string(),
                                             function,
                                             pc,
                                         )
-                                    })?;
-                                    merged.insert(field.to_owned(), *value);
+                                    })?
+                                    .is_some()
+                                {
+                                    return Err(error(
+                                        RuntimeErrorKind::DuplicateDefinition,
+                                        "definition was initialized more than once",
+                                        function,
+                                        pc,
+                                    ));
+                                }
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                current.initialize_type_slot(handle, value).map_err(
+                                    |heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    },
+                                )?;
+                            }
+                            Opcode::AssertTypeSlotReady { link } => {
+                                let DecodedValue::TypeSlot(handle) =
+                                    read_register(&registers, *link, function, pc)?.value()
+                                else {
+                                    return Err(error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        "up-link assertion operand is not an up-link",
+                                        function,
+                                        pc,
+                                    ));
+                                };
+                                if view
+                                    .type_slot(handle)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .is_none()
+                                {
+                                    return Err(error(
+                                        RuntimeErrorKind::UninitializedDefinition,
+                                        "declaration was not initialized before block completion",
+                                        function,
+                                        pc,
+                                    ));
                                 }
                             }
-                            let field_bytes = merged.keys().try_fold(0u64, |total, field| {
-                                total.checked_add(field.len() as u64).ok_or_else(|| {
+                            Opcode::Add { dst, left, right } => {
+                                let value = numeric_binary(
+                                    read_register(&registers, *left, function, pc)?,
+                                    read_register(&registers, *right, function, pc)?,
+                                    NumericOperation::Add,
+                                    &view,
+                                    account,
+                                    function,
+                                    pc,
+                                )?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    value.with_loc(instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::Subtract { dst, left, right } => {
+                                let value = numeric_binary(
+                                    read_register(&registers, *left, function, pc)?,
+                                    read_register(&registers, *right, function, pc)?,
+                                    NumericOperation::Subtract,
+                                    &view,
+                                    account,
+                                    function,
+                                    pc,
+                                )?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    value.with_loc(instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::Multiply { dst, left, right } => {
+                                let value = numeric_binary(
+                                    read_register(&registers, *left, function, pc)?,
+                                    read_register(&registers, *right, function, pc)?,
+                                    NumericOperation::Multiply,
+                                    &view,
+                                    account,
+                                    function,
+                                    pc,
+                                )?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::Divide { dst, left, right } => {
+                                let value = numeric_binary(
+                                    read_register(&registers, *left, function, pc)?,
+                                    read_register(&registers, *right, function, pc)?,
+                                    NumericOperation::Divide,
+                                    &view,
+                                    account,
+                                    function,
+                                    pc,
+                                )?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::Remainder { dst, left, right } => {
+                                let value = numeric_binary(
+                                    read_register(&registers, *left, function, pc)?,
+                                    read_register(&registers, *right, function, pc)?,
+                                    NumericOperation::Remainder,
+                                    &view,
+                                    account,
+                                    function,
+                                    pc,
+                                )?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::Negate { dst, src } => {
+                                let input = *read_register(&registers, *src, function, pc)?;
+                                let value = match input.value() {
+                                    DecodedValue::Int(value) => {
+                                        DecodedValue::Int(value.checked_neg().ok_or_else(|| {
+                                            error(
+                                                RuntimeErrorKind::IntegerOverflow,
+                                                "integer negation overflowed",
+                                                function,
+                                                pc,
+                                            )
+                                        })?)
+                                    }
+                                    DecodedValue::Float(value) => DecodedValue::Float(-value),
+                                    _ => {
+                                        return Err(runtime_type_error(
+                                            "numeric value",
+                                            &input,
+                                            &view,
+                                            function,
+                                            pc,
+                                        ));
+                                    }
+                                };
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(value, instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::Not { dst, src } => {
+                                let input = *read_register(&registers, *src, function, pc)?;
+                                let value = match input.value() {
+                                    DecodedValue::Int(value) => DecodedValue::Int(!value),
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
+                                        DecodedValue::BuiltinAtom(BuiltinAtom::False)
+                                    }
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
+                                        DecodedValue::BuiltinAtom(BuiltinAtom::True)
+                                    }
+                                    _ => {
+                                        return Err(runtime_type_error(
+                                            "Int or Bool",
+                                            &input,
+                                            &view,
+                                            function,
+                                            pc,
+                                        ));
+                                    }
+                                };
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(value, instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::LogicalNot { dst, src } => {
+                                let input = *read_register(&registers, *src, function, pc)?;
+                                let value = match input.value() {
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::True) => {
+                                        DecodedValue::BuiltinAtom(BuiltinAtom::False)
+                                    }
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
+                                        DecodedValue::BuiltinAtom(BuiltinAtom::True)
+                                    }
+                                    _ => {
+                                        return Err(runtime_type_error(
+                                            "Bool", &input, &view, function, pc,
+                                        ));
+                                    }
+                                };
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(value, instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::BitNot { dst, src } => {
+                                let input = *read_register(&registers, *src, function, pc)?;
+                                let DecodedValue::Int(value) = input.value() else {
+                                    return Err(runtime_type_error(
+                                        "Int", &input, &view, function, pc,
+                                    ));
+                                };
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(
+                                        DecodedValue::Int(!value),
+                                        instruction_location(function, pc),
+                                    ),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::BitAnd { dst, left, right }
+                            | Opcode::BitOr { dst, left, right }
+                            | Opcode::BitXor { dst, left, right } => {
+                                let operation = match instruction {
+                                    Opcode::BitAnd { .. } => BitwiseOperation::And,
+                                    Opcode::BitOr { .. } => BitwiseOperation::Or,
+                                    Opcode::BitXor { .. } => BitwiseOperation::Xor,
+                                    _ => unreachable!(),
+                                };
+                                let value = bitwise_binary(
+                                    read_register(&registers, *left, function, pc)?,
+                                    read_register(&registers, *right, function, pc)?,
+                                    operation,
+                                    &view,
+                                    function,
+                                    pc,
+                                )?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::Equal { dst, left, right } => {
+                                let left = *read_register(&registers, *left, function, pc)?;
+                                let right = *read_register(&registers, *right, function, pc)?;
+                                propagate_data_failures(&[left, right], &view, function, pc)?;
+                                let equal =
+                                    view.values_equal(left, right).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(equal)
+                                        .with_loc(instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::NotEqual { dst, left, right } => {
+                                let left = *read_register(&registers, *left, function, pc)?;
+                                let right = *read_register(&registers, *right, function, pc)?;
+                                propagate_data_failures(&[left, right], &view, function, pc)?;
+                                let not_equal =
+                                    !view.values_equal(left, right).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(not_equal)
+                                        .with_loc(instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::LessThan { dst, left, right } => {
+                                let left = read_register(&registers, *left, function, pc)?;
+                                let right = read_register(&registers, *right, function, pc)?;
+                                let less =
+                                    ordered_comparison(left, right, false, &view, function, pc)?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(less).with_loc(instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::LessThanOrEqual { dst, left, right } => {
+                                let left = read_register(&registers, *left, function, pc)?;
+                                let right = read_register(&registers, *right, function, pc)?;
+                                let less_or_equal =
+                                    ordered_comparison(left, right, true, &view, function, pc)?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(less_or_equal)
+                                        .with_loc(instruction_location(function, pc)),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::MakeArray { dst, items } => {
+                                let values = read_many(&registers, items, function, pc)?;
+                                let bytes =
+                                    logical_value_bytes(values.len()).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(
+                                        DecodedValue::Array(
+                                            current.allocate(crate::heap::Object::Array(
+                                                values.into(),
+                                            )),
+                                        ),
+                                        instruction_location(function, pc),
+                                    ),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::ConcatArrays { dst, arrays } => {
+                                let arrays = read_many(&registers, arrays, function, pc)?;
+                                let mut values = Vec::new();
+                                for array in arrays {
+                                    let DecodedValue::Array(handle) = array.value() else {
+                                        return Err(runtime_type_error(
+                                            "Array spread operand",
+                                            &array,
+                                            &view,
+                                            function,
+                                            pc,
+                                        ));
+                                    };
+                                    values.extend_from_slice(
+                                        view.sequence(handle, false).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?,
+                                    );
+                                }
+                                let bytes =
+                                    logical_value_bytes(values.len()).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(
+                                        DecodedValue::Array(
+                                            current.allocate(crate::heap::Object::Array(
+                                                values.into(),
+                                            )),
+                                        ),
+                                        instruction_location(function, pc),
+                                    ),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::MakeTuple { dst, items } => {
+                                let values = read_many(&registers, items, function, pc)?;
+                                let bytes =
+                                    logical_value_bytes(values.len()).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    Val::new(
+                                        DecodedValue::Tuple(
+                                            current.allocate(crate::heap::Object::Tuple(
+                                                values.into(),
+                                            )),
+                                        ),
+                                        instruction_location(function, pc),
+                                    ),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::InterpolateString { dst, parts } => {
+                                let values = read_many(&registers, parts, function, pc)?
+                                    .into_iter()
+                                    .map(|value| {
+                                        view.unwrap_declared(value).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?;
+                                let mut length = 0usize;
+                                for value in &values {
+                                    length += if let DecodedValue::Int(value) = value.value() {
+                                        decimal_length(value)
+                                    } else if let DecodedValue::Float(value) = value.value() {
+                                        value.to_string().len()
+                                    } else if let Some(value) =
+                                        view.string_text(*value).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                    {
+                                        value.len()
+                                    } else if let Some(value) =
+                                        view.atom_text(*value).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                    {
+                                        value.len()
+                                    } else {
+                                        return Err(runtime_shallow_type_error(
+                                            "String, Int, Float, or Atom interpolation value",
+                                            *value,
+                                            function,
+                                            pc,
+                                        ));
+                                    };
+                                }
+                                let bytes = u64::try_from(length).map_err(|_| {
                                     allocation_error(
-                                        "Dict allocation size overflowed",
+                                        "String allocation size overflowed",
                                         function,
                                         pc,
                                     )
-                                })
-                            })?;
-                            let value_bytes =
-                                logical_value_bytes(merged.len()).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
                                 })?;
-                            let bytes = field_bytes.checked_add(value_bytes).ok_or_else(|| {
-                                allocation_error("Dict allocation size overflowed", function, pc)
-                            })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            let (fields, values): (Vec<_>, Vec<_>) = merged
-                                .into_iter()
-                                .map(|(field, value)| (current.intern(&field), value))
-                                .unzip();
-                            let shape = current.intern_shape(fields);
-                            let dict = Val::new(
-                                DecodedValue::Dict(current.allocate(crate::heap::Object::Dict {
-                                    shape,
-                                    values: values.into(),
-                                })),
-                                instruction_location(function, pc),
-                            );
-                            write_register(&mut registers, *dst, dict, function, pc)?;
-                        }
-                        Opcode::GetField { dst, dict, field } => {
-                            let (_, _, text_links, _) =
-                                view.bytecode(frame.prototype).map_err(|heap_error| {
+                                charge_allocation(account, bytes, function, pc)?;
+                                let mut output = String::with_capacity(length);
+                                for value in &values {
+                                    if let DecodedValue::Int(value) = value.value() {
+                                        write!(output, "{value}")
+                                            .expect("writing to String cannot fail");
+                                    } else if let DecodedValue::Float(value) = value.value() {
+                                        write!(output, "{value}")
+                                            .expect("writing to String cannot fail");
+                                    } else if let Some(value) =
+                                        view.string_text(*value).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                    {
+                                        output.push_str(value.as_str());
+                                    } else if let Some(value) =
+                                        view.atom_text(*value).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                    {
+                                        output.push_str(value.as_str());
+                                    } else {
+                                        unreachable!("interpolation values were validated");
+                                    }
+                                }
+                                let value = Val::new(
+                                    current.string(Some(background), &output),
+                                    instruction_location(function, pc),
+                                );
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::MakeDict { dst, fields } => {
+                                let (_, _, text_links, _) =
+                                    view.bytecode(frame.prototype).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                let mut entries = fields
+                                    .iter()
+                                    .map(|(field, register)| {
+                                        let field =
+                                            text_links.get(field.0).copied().ok_or_else(|| {
+                                                error(
+                                                    RuntimeErrorKind::InvalidBytecode,
+                                                    format!(
+                                                        "text link {} is out of bounds",
+                                                        field.0
+                                                    ),
+                                                    function,
+                                                    pc,
+                                                )
+                                            })?;
+                                        Ok((
+                                            field,
+                                            *read_register(&registers, *register, function, pc)?,
+                                        ))
+                                    })
+                                    .collect::<Result<Vec<_>, RuntimeError>>()?;
+                                entries.sort_by(|left, right| {
+                                    view.text(left.0)
+                                        .unwrap_or("")
+                                        .cmp(view.text(right.0).unwrap_or(""))
+                                });
+                                if entries.windows(2).any(|pair| {
+                                    view.text(pair[0].0).ok() == view.text(pair[1].0).ok()
+                                }) {
+                                    return Err(error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        "Dict contains a duplicate field",
+                                        function,
+                                        pc,
+                                    ));
+                                }
+                                let (fields, values): (Vec<_>, Vec<_>) =
+                                    entries.into_iter().unzip();
+                                let field_bytes =
+                                    fields.iter().try_fold(0u64, |total, field| {
+                                        let length = view
+                                            .text(*field)
+                                            .map_err(|heap_error| {
+                                                error(
+                                                    RuntimeErrorKind::InvalidBytecode,
+                                                    heap_error.to_string(),
+                                                    function,
+                                                    pc,
+                                                )
+                                            })?
+                                            .len();
+                                        total.checked_add(length as u64).ok_or_else(|| {
+                                            allocation_error(
+                                                "Dict allocation size overflowed",
+                                                function,
+                                                pc,
+                                            )
+                                        })
+                                    })?;
+                                let value_bytes =
+                                    logical_value_bytes(values.len()).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?;
+                                let bytes =
+                                    field_bytes.checked_add(value_bytes).ok_or_else(|| {
+                                        allocation_error(
+                                            "Dict allocation size overflowed",
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                let shape = current.intern_shape(fields);
+                                let dict = Val::new(
+                                    DecodedValue::Dict(current.allocate(
+                                        crate::heap::Object::Dict {
+                                            shape,
+                                            values: values.into(),
+                                        },
+                                    )),
+                                    instruction_location(function, pc),
+                                );
+                                write_register(&mut registers, *dst, dict, function, pc)?;
+                            }
+                            Opcode::MergeDicts { dst, dicts } => {
+                                let dicts = read_many(&registers, dicts, function, pc)?;
+                                let mut merged = BTreeMap::new();
+                                for dict in dicts {
+                                    let DecodedValue::Dict(handle) = dict.value() else {
+                                        return Err(runtime_type_error(
+                                            "Dict spread operand",
+                                            &dict,
+                                            &view,
+                                            function,
+                                            pc,
+                                        ));
+                                    };
+                                    let (fields, values) =
+                                        view.dict_parts(handle).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?;
+                                    for (field, value) in fields.iter().zip(values) {
+                                        let field = view.text(*field).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?;
+                                        merged.insert(field.to_owned(), *value);
+                                    }
+                                }
+                                let field_bytes =
+                                    merged.keys().try_fold(0u64, |total, field| {
+                                        total.checked_add(field.len() as u64).ok_or_else(|| {
+                                            allocation_error(
+                                                "Dict allocation size overflowed",
+                                                function,
+                                                pc,
+                                            )
+                                        })
+                                    })?;
+                                let value_bytes =
+                                    logical_value_bytes(merged.len()).map_err(|native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    })?;
+                                let bytes =
+                                    field_bytes.checked_add(value_bytes).ok_or_else(|| {
+                                        allocation_error(
+                                            "Dict allocation size overflowed",
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                let (fields, values): (Vec<_>, Vec<_>) = merged
+                                    .into_iter()
+                                    .map(|(field, value)| (current.intern(&field), value))
+                                    .unzip();
+                                let shape = current.intern_shape(fields);
+                                let dict = Val::new(
+                                    DecodedValue::Dict(current.allocate(
+                                        crate::heap::Object::Dict {
+                                            shape,
+                                            values: values.into(),
+                                        },
+                                    )),
+                                    instruction_location(function, pc),
+                                );
+                                write_register(&mut registers, *dst, dict, function, pc)?;
+                            }
+                            Opcode::GetField { dst, dict, field } => {
+                                let (_, _, text_links, _) =
+                                    view.bytecode(frame.prototype).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                let field = text_links.get(field.0).copied().ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        format!("text link {} is out of bounds", field.0),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                let dict = read_register(&registers, *dict, function, pc)?;
+                                let dict = view.unwrap_declared(*dict).map_err(|heap_error| {
                                     error(
                                         RuntimeErrorKind::InvalidBytecode,
                                         heap_error.to_string(),
@@ -2374,28 +2804,19 @@ impl Vm {
                                         pc,
                                     )
                                 })?;
-                            let field = text_links.get(field.0).copied().ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("text link {} is out of bounds", field.0),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let dict = read_register(&registers, *dict, function, pc)?;
-                            let dict = view.unwrap_declared(*dict).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let DecodedValue::Dict(handle) = dict.value() else {
-                                return Err(runtime_type_error("Dict", &dict, &view, function, pc));
-                            };
-                            let value = view
-                                .dict_get(handle, field)
+                                let value = match dict.value() {
+                                    DecodedValue::Dict(handle) => view.dict_get(handle, field),
+                                    DecodedValue::Module(handle) => view.exports_get(handle, field),
+                                    _ => {
+                                        return Err(runtime_type_error(
+                                            "Dict or Module",
+                                            &dict,
+                                            &view,
+                                            function,
+                                            pc,
+                                        ));
+                                    }
+                                }
                                 .map_err(|heap_error| {
                                     error(
                                         RuntimeErrorKind::InvalidBytecode,
@@ -2408,69 +2829,29 @@ impl Vm {
                                     error(
                                         RuntimeErrorKind::MissingField,
                                         format!(
-                                            "Dict has no field {:?}",
+                                            "value has no field {:?}",
                                             view.text(field).unwrap_or("<invalid>")
                                         ),
                                         function,
                                         pc,
                                     )
                                 })?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::GetArray { dst, array, index } => {
-                            let array = *read_register(&registers, *array, function, pc)?;
-                            let DecodedValue::Array(handle) = array.value() else {
-                                return Err(runtime_type_error(
-                                    "Array", &array, &view, function, pc,
-                                ));
-                            };
-                            let index = *read_register(&registers, *index, function, pc)?;
-                            let DecodedValue::Int(index_value) = index.value() else {
-                                return Err(runtime_type_error("Int", &index, &view, function, pc));
-                            };
-                            let items = view.sequence(handle, false).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let value = usize::try_from(index_value)
-                                .ok()
-                                .and_then(|index| items.get(index).copied());
-                            let Some(value) = value else {
-                                return Err(out_of_range_error(account, function, pc));
-                            };
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::ProjectTuple { dst, tuple, index } => {
-                            let tuple = *read_register(&registers, *tuple, function, pc)?;
-                            let DecodedValue::Tuple(handle) = tuple.value() else {
-                                return Err(runtime_type_error(
-                                    "Tuple", &tuple, &view, function, pc,
-                                ));
-                            };
-                            let value = view
-                                .sequence(handle, true)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .get(*index)
-                                .copied();
-                            let Some(value) = value else {
-                                return Err(out_of_range_error(account, function, pc));
-                            };
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::FieldExists { dst, value, field } => {
-                            let (_, _, text_links, _) =
-                                view.bytecode(frame.prototype).map_err(|heap_error| {
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::GetArray { dst, array, index } => {
+                                let array = *read_register(&registers, *array, function, pc)?;
+                                let DecodedValue::Array(handle) = array.value() else {
+                                    return Err(runtime_type_error(
+                                        "Array", &array, &view, function, pc,
+                                    ));
+                                };
+                                let index = *read_register(&registers, *index, function, pc)?;
+                                let DecodedValue::Int(index_value) = index.value() else {
+                                    return Err(runtime_type_error(
+                                        "Int", &index, &view, function, pc,
+                                    ));
+                                };
+                                let items = view.sequence(handle, false).map_err(|heap_error| {
                                     error(
                                         RuntimeErrorKind::InvalidBytecode,
                                         heap_error.to_string(),
@@ -2478,27 +2859,23 @@ impl Vm {
                                         pc,
                                     )
                                 })?;
-                            let field = text_links.get(field.0).copied().ok_or_else(|| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    format!("text link {} is out of bounds", field.0),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let value = read_register(&registers, *value, function, pc)?;
-                            propagate_direct_failure(value, function, pc)?;
-                            let value = view.unwrap_declared(*value).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let exists = match value.value() {
-                                DecodedValue::Dict(handle) => view
-                                    .dict_get(handle, field)
+                                let value = usize::try_from(index_value)
+                                    .ok()
+                                    .and_then(|index| items.get(index).copied());
+                                let Some(value) = value else {
+                                    return Err(out_of_range_error(account, function, pc));
+                                };
+                                write_register(&mut registers, *dst, value, function, pc)?;
+                            }
+                            Opcode::ProjectTuple { dst, tuple, index } => {
+                                let tuple = *read_register(&registers, *tuple, function, pc)?;
+                                let DecodedValue::Tuple(handle) = tuple.value() else {
+                                    return Err(runtime_type_error(
+                                        "Tuple", &tuple, &view, function, pc,
+                                    ));
+                                };
+                                let value = view
+                                    .sequence(handle, true)
                                     .map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
@@ -2507,374 +2884,379 @@ impl Vm {
                                             pc,
                                         )
                                     })?
-                                    .is_some(),
-                                _ => false,
-                            };
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(exists),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::IsDict { dst, value } => {
-                            let value = read_register(&registers, *value, function, pc)?;
-                            propagate_direct_failure(value, function, pc)?;
-                            let value = view.unwrap_declared(*value).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let matches = matches!(value.value(), DecodedValue::Dict(_));
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(matches),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::TupleLengthEquals { dst, value, length } => {
-                            let value = read_register(&registers, *value, function, pc)?;
-                            propagate_direct_failure(value, function, pc)?;
-                            let value = view.unwrap_declared(*value).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let matches = matches!(
-                                value.value(),
-                                DecodedValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
-                            );
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(matches),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::GetTuple { dst, tuple, index } => {
-                            let tuple = read_register(&registers, *tuple, function, pc)?;
-                            let DecodedValue::Tuple(handle) = tuple.value() else {
-                                return Err(runtime_type_error(
-                                    "Tuple", tuple, &view, function, pc,
-                                ));
-                            };
-                            let value = view
-                                .sequence(handle, true)
-                                .map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                                .get(*index)
-                                .copied()
-                                .ok_or_else(|| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        format!("tuple index {index} is out of bounds"),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            write_register(&mut registers, *dst, value, function, pc)?;
-                        }
-                        Opcode::TaggedTagEquals { dst, value, tag } => {
-                            let value = read_register(&registers, *value, function, pc)?;
-                            propagate_direct_failure(value, function, pc)?;
-                            let value = view.unwrap_declared(*value).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let expected = read_register(&registers, *tag, function, pc)?;
-                            let matches = if let DecodedValue::Tagged(handle) = value.value() {
-                                let (actual, _) = view.tagged(handle).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                                view.values_equal(actual, *expected).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?
-                            } else {
-                                false
-                            };
-                            write_register(
-                                &mut registers,
-                                *dst,
-                                runtime_bool(matches),
-                                function,
-                                pc,
-                            )?;
-                        }
-                        Opcode::GetTaggedPayload { dst, value } => {
-                            let tagged = read_register(&registers, *value, function, pc)?;
-                            let tagged = view.unwrap_declared(*tagged).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let DecodedValue::Tagged(handle) = tagged.value() else {
-                                return Err(runtime_type_error(
-                                    "Tagged", &tagged, &view, function, pc,
-                                ));
-                            };
-                            let (_, payload) = view.tagged(handle).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            write_register(&mut registers, *dst, payload, function, pc)?;
-                        }
-                        Opcode::MakeClosure {
-                            dst,
-                            prototype,
-                            captures,
-                        } => {
-                            let (_, _, _, prototypes) =
-                                view.bytecode(frame.prototype).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            let closure_prototype =
-                                prototypes.get(prototype.0).copied().ok_or_else(|| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        format!("prototype link {} is out of bounds", prototype.0),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                            let captures = read_many(&registers, captures, function, pc)?;
-                            let bytes =
-                                logical_value_bytes(captures.len()).map_err(|native_error| {
-                                    allocation_error(native_error.message, function, pc)
-                                })?;
-                            charge_allocation(account, bytes, function, pc)?;
-                            let closure = Val::new(
-                                DecodedValue::Func(current.allocate(
-                                    crate::heap::Object::Closure {
-                                        identity: Arc::new(()),
-                                        prototype: closure_prototype,
-                                        upvalues: captures.into(),
-                                    },
-                                )),
-                                instruction_location(function, pc),
-                            );
-                            write_register(&mut registers, *dst, closure, function, pc)?;
-                        }
-                        Opcode::Call {
-                            base: call_base,
-                            argument_count,
-                        } => {
-                            let callee = *read_register(&registers, *call_base, function, pc)?;
-                            let arguments = read_call_arguments(
-                                &registers,
-                                *call_base,
-                                *argument_count,
-                                function,
-                                pc,
-                            )?;
-                            frames.last_mut().expect("caller frame").pc += 1;
-                            let _ = registers;
-                            match drive_vm_action(
-                                VmAction::Call {
-                                    callee,
-                                    arguments,
-                                    return_target: ReturnTarget::Register {
-                                        destination: *call_base,
-                                        call_site: instruction_location(function, pc),
-                                    },
-                                    call_function: function_arc,
-                                    call_pc: pc,
-                                },
-                                &mut frames,
-                                &mut stack,
-                                &mut current,
-                                background,
-                                account,
-                            )? {
-                                DriveOutcome::Pending => continue,
-                                DriveOutcome::Root(value) => return Ok(value),
+                                    .get(*index)
+                                    .copied();
+                                let Some(value) = value else {
+                                    return Err(out_of_range_error(account, function, pc));
+                                };
+                                write_register(&mut registers, *dst, value, function, pc)?;
                             }
-                        }
-                        Opcode::TailCall {
-                            base: call_base,
-                            argument_count,
-                        } => {
-                            let callee = *read_register(&registers, *call_base, function, pc)?;
-                            let arguments = read_call_arguments(
-                                &registers,
-                                *call_base,
-                                *argument_count,
-                                function,
-                                pc,
-                            )?;
-                            let completed = frames.pop().expect("tail caller frame");
-                            let _ = registers;
-                            stack.truncate(completed.base);
-                            match drive_vm_action(
-                                VmAction::Call {
-                                    callee,
-                                    arguments,
-                                    return_target: completed.return_target,
-                                    call_function: function_arc,
-                                    call_pc: pc,
-                                },
-                                &mut frames,
-                                &mut stack,
-                                &mut current,
-                                background,
-                                account,
-                            )? {
-                                DriveOutcome::Pending => continue,
-                                DriveOutcome::Root(value) => return Ok(value),
+                            Opcode::FieldExists { dst, value, field } => {
+                                let (_, _, text_links, _) =
+                                    view.bytecode(frame.prototype).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                let field = text_links.get(field.0).copied().ok_or_else(|| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        format!("text link {} is out of bounds", field.0),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                let value = read_register(&registers, *value, function, pc)?;
+                                propagate_direct_failure(value, function, pc)?;
+                                let value = view.unwrap_declared(*value).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                let exists = match value.value() {
+                                    DecodedValue::Dict(handle) => view
+                                        .dict_get(handle, field)
+                                        .map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                        .is_some(),
+                                    _ => false,
+                                };
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(exists),
+                                    function,
+                                    pc,
+                                )?;
                             }
-                        }
-                        Opcode::Jump { target } => {
-                            validate_jump(*target, function, pc)?;
-                            if *target <= pc {
-                                consume_fuel(account, function, pc)?;
+                            Opcode::IsDict { dst, value } => {
+                                let value = read_register(&registers, *value, function, pc)?;
+                                propagate_direct_failure(value, function, pc)?;
+                                let value = view.unwrap_declared(*value).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                let matches = matches!(value.value(), DecodedValue::Dict(_));
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(matches),
+                                    function,
+                                    pc,
+                                )?;
                             }
-                            frames.last_mut().expect("execution frame").pc = *target;
-                            continue;
-                        }
-                        Opcode::JumpIfFalse { condition, target } => {
-                            let condition = read_register(&registers, *condition, function, pc)?;
-                            match condition.value() {
-                                DecodedValue::BuiltinAtom(BuiltinAtom::True) => {}
-                                DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
-                                    validate_jump(*target, function, pc)?;
-                                    if *target <= pc {
-                                        consume_fuel(account, function, pc)?;
-                                    }
-                                    frames.last_mut().expect("execution frame").pc = *target;
-                                    continue;
-                                }
-                                _ => {
+                            Opcode::TupleLengthEquals { dst, value, length } => {
+                                let value = read_register(&registers, *value, function, pc)?;
+                                propagate_direct_failure(value, function, pc)?;
+                                let value = view.unwrap_declared(*value).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                let matches = matches!(
+                                    value.value(),
+                                    DecodedValue::Tuple(handle) if view.sequence(handle, true).is_ok_and(|items| items.len() == *length)
+                                );
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(matches),
+                                    function,
+                                    pc,
+                                )?;
+                            }
+                            Opcode::GetTuple { dst, tuple, index } => {
+                                let tuple = read_register(&registers, *tuple, function, pc)?;
+                                let DecodedValue::Tuple(handle) = tuple.value() else {
                                     return Err(runtime_type_error(
-                                        "'True or 'False",
-                                        condition,
-                                        &view,
-                                        function,
-                                        pc,
+                                        "Tuple", tuple, &view, function, pc,
                                     ));
-                                }
+                                };
+                                let value = view
+                                    .sequence(handle, true)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .get(*index)
+                                    .copied()
+                                    .ok_or_else(|| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            format!("tuple index {index} is out of bounds"),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                write_register(&mut registers, *dst, value, function, pc)?;
                             }
-                        }
-                        Opcode::Return { src } => {
-                            let value = *read_register(&registers, *src, function, pc)?;
-                            let completed = frames.pop().expect("execution frame");
-                            let _ = registers;
-                            stack.truncate(completed.base);
-                            match drive_vm_action(
-                                VmAction::Return {
-                                    value,
-                                    return_target: completed.return_target,
-                                },
-                                &mut frames,
-                                &mut stack,
-                                &mut current,
-                                background,
-                                account,
-                            )? {
-                                DriveOutcome::Pending => continue,
-                                DriveOutcome::Root(value) => return Ok(value),
-                            }
-                        }
-                        Opcode::Fail { message } => {
-                            return Err(error(
-                                RuntimeErrorKind::NoPatternMatched,
-                                message,
-                                function,
-                                pc,
-                            ));
-                        }
-                        Opcode::Panic { message } => {
-                            let message = *read_register(&registers, *message, function, pc)?;
-                            let text = view
-                                .string_text(message)
-                                .map_err(|heap_error| {
+                            Opcode::TaggedTagEquals { dst, value, tag } => {
+                                let value = read_register(&registers, *value, function, pc)?;
+                                propagate_direct_failure(value, function, pc)?;
+                                let value = view.unwrap_declared(*value).map_err(|heap_error| {
                                     error(
                                         RuntimeErrorKind::InvalidBytecode,
                                         heap_error.to_string(),
                                         function,
                                         pc,
                                     )
-                                })?
-                                .ok_or_else(|| {
-                                    runtime_type_error("String", &message, &view, function, pc)
-                                })?
-                                .as_str()
-                                .to_owned();
-                            return Err(error(RuntimeErrorKind::Panic, text, function, pc));
-                        }
-                        Opcode::Raise {
-                            error: error_register,
-                        } => {
-                            let structured =
-                                *read_register(&registers, *error_register, function, pc)?;
-                            let DecodedValue::Dict(handle) = structured.value() else {
-                                return Err(runtime_type_error(
-                                    "BlameError",
-                                    &structured,
-                                    &view,
+                                })?;
+                                let expected = read_register(&registers, *tag, function, pc)?;
+                                let matches = if let DecodedValue::Tagged(handle) = value.value() {
+                                    let (actual, _) =
+                                        view.tagged(handle).map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?;
+                                    view.values_equal(actual, *expected).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                } else {
+                                    false
+                                };
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    runtime_bool(matches),
                                     function,
                                     pc,
-                                ));
-                            };
-                            let fields = view.dict_fields(handle).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
+                                )?;
+                            }
+                            Opcode::GetTaggedPayload { dst, value } => {
+                                let tagged = read_register(&registers, *value, function, pc)?;
+                                let tagged =
+                                    view.unwrap_declared(*tagged).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                let DecodedValue::Tagged(handle) = tagged.value() else {
+                                    return Err(runtime_type_error(
+                                        "Tagged", &tagged, &view, function, pc,
+                                    ));
+                                };
+                                let (_, payload) = view.tagged(handle).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                write_register(&mut registers, *dst, payload, function, pc)?;
+                            }
+                            Opcode::MakeClosure {
+                                dst,
+                                prototype,
+                                captures,
+                            } => {
+                                let (_, _, _, prototypes) =
+                                    view.bytecode(frame.prototype).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                let closure_prototype =
+                                    prototypes.get(prototype.0).copied().ok_or_else(|| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            format!(
+                                                "prototype link {} is out of bounds",
+                                                prototype.0
+                                            ),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                let captures = read_many(&registers, captures, function, pc)?;
+                                let bytes = logical_value_bytes(captures.len()).map_err(
+                                    |native_error| {
+                                        allocation_error(native_error.message, function, pc)
+                                    },
+                                )?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                let closure = Val::new(
+                                    DecodedValue::Func(current.allocate(
+                                        crate::heap::Object::Closure {
+                                            identity: Arc::new(()),
+                                            prototype: closure_prototype,
+                                            upvalues: captures.into(),
+                                        },
+                                    )),
+                                    instruction_location(function, pc),
+                                );
+                                write_register(&mut registers, *dst, closure, function, pc)?;
+                            }
+                            Opcode::Call {
+                                base: call_base,
+                                argument_count,
+                            } => {
+                                let callee = *read_register(&registers, *call_base, function, pc)?;
+                                let arguments = read_call_arguments(
+                                    &registers,
+                                    *call_base,
+                                    *argument_count,
                                     function,
                                     pc,
-                                )
-                            })?;
-                            if fields.as_slice() != ["data", "message", "rule"] {
-                                return Err(runtime_type_error(
-                                    "BlameError",
-                                    &structured,
-                                    &view,
+                                )?;
+                                frames.last_mut().expect("caller frame").pc += 1;
+                                let _ = registers;
+                                match drive_vm_action(
+                                    VmAction::Call {
+                                        callee,
+                                        arguments,
+                                        return_target: ReturnTarget::Register {
+                                            destination: *call_base,
+                                            call_site: instruction_location(function, pc),
+                                        },
+                                        call_function: function_arc,
+                                        call_pc: pc,
+                                    },
+                                    &mut frames,
+                                    &mut stack,
+                                    &mut current,
+                                    background,
+                                    account,
+                                )? {
+                                    DriveOutcome::Pending => continue,
+                                    DriveOutcome::Root(value) => return Ok(value),
+                                }
+                            }
+                            Opcode::TailCall {
+                                base: call_base,
+                                argument_count,
+                            } => {
+                                let callee = *read_register(&registers, *call_base, function, pc)?;
+                                let arguments = read_call_arguments(
+                                    &registers,
+                                    *call_base,
+                                    *argument_count,
+                                    function,
+                                    pc,
+                                )?;
+                                let completed = frames.pop().expect("tail caller frame");
+                                let _ = registers;
+                                stack.truncate(completed.base);
+                                match drive_vm_action(
+                                    VmAction::Call {
+                                        callee,
+                                        arguments,
+                                        return_target: completed.return_target,
+                                        call_function: function_arc,
+                                        call_pc: pc,
+                                    },
+                                    &mut frames,
+                                    &mut stack,
+                                    &mut current,
+                                    background,
+                                    account,
+                                )? {
+                                    DriveOutcome::Pending => continue,
+                                    DriveOutcome::Root(value) => return Ok(value),
+                                }
+                            }
+                            Opcode::Jump { target } => {
+                                validate_jump(*target, function, pc)?;
+                                if *target <= pc {
+                                    consume_fuel(account, function, pc)?;
+                                }
+                                frames.last_mut().expect("execution frame").pc = *target;
+                                continue;
+                            }
+                            Opcode::JumpIfFalse { condition, target } => {
+                                let condition =
+                                    read_register(&registers, *condition, function, pc)?;
+                                match condition.value() {
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::True) => {}
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::False) => {
+                                        validate_jump(*target, function, pc)?;
+                                        if *target <= pc {
+                                            consume_fuel(account, function, pc)?;
+                                        }
+                                        frames.last_mut().expect("execution frame").pc = *target;
+                                        continue;
+                                    }
+                                    _ => {
+                                        return Err(runtime_type_error(
+                                            "'True or 'False",
+                                            condition,
+                                            &view,
+                                            function,
+                                            pc,
+                                        ));
+                                    }
+                                }
+                            }
+                            Opcode::Return { src } => {
+                                let value = *read_register(&registers, *src, function, pc)?;
+                                let completed = frames.pop().expect("execution frame");
+                                let _ = registers;
+                                stack.truncate(completed.base);
+                                match drive_vm_action(
+                                    VmAction::Return {
+                                        value,
+                                        return_target: completed.return_target,
+                                    },
+                                    &mut frames,
+                                    &mut stack,
+                                    &mut current,
+                                    background,
+                                    account,
+                                )? {
+                                    DriveOutcome::Pending => continue,
+                                    DriveOutcome::Root(value) => return Ok(value),
+                                }
+                            }
+                            Opcode::Fail { message } => {
+                                return Err(error(
+                                    RuntimeErrorKind::NoPatternMatched,
+                                    message,
                                     function,
                                     pc,
                                 ));
                             }
-                            let get_field = |name| {
-                                view.dict_get_text(handle, name)
+                            Opcode::Panic { message } => {
+                                let message = *read_register(&registers, *message, function, pc)?;
+                                let text = view
+                                    .string_text(message)
                                     .map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
@@ -2884,182 +3266,271 @@ impl Vm {
                                         )
                                     })?
                                     .ok_or_else(|| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            format!("BlameError is missing {name}"),
-                                            function,
-                                            pc,
-                                        )
-                                    })
-                            };
-                            let data = get_field("data")?;
-                            let message = get_field("message")?;
-                            let rule = get_field("rule")?;
-                            let text = view.string_text(message).map_err(|heap_error| {
-                                error(
-                                    RuntimeErrorKind::InvalidBytecode,
-                                    heap_error.to_string(),
-                                    function,
-                                    pc,
-                                )
-                            })?;
-                            let Some(text) = text else {
-                                return Err(runtime_type_error(
-                                    "String", &message, &view, function, pc,
-                                ));
-                            };
-                            let mut runtime =
-                                error(RuntimeErrorKind::RaisedBlame, text, function, pc);
-                            runtime.set_locations(data.loc(), rule.loc());
-                            return Err(runtime);
-                        }
-                        Opcode::Debug {
-                            value,
-                            module,
-                            line,
-                            name,
-                            message,
-                        } => {
-                            let value = *read_register(&registers, *value, function, pc)?;
-                            if let Ok(value_text) = DebugValueFormatter::new(view).format(value) {
-                                debug_sink.emit(DebugEvent {
-                                    name: name.clone(),
-                                    repr: value_text,
-                                    module: module.clone(),
-                                    line: *line,
-                                    message: message.clone(),
-                                });
+                                        runtime_type_error("String", &message, &view, function, pc)
+                                    })?
+                                    .as_str()
+                                    .to_owned();
+                                return Err(error(RuntimeErrorKind::Panic, text, function, pc));
                             }
-                        }
-                    }
-                    frames.last_mut().expect("execution frame").pc += 1;
-                }
-            })();
-            match attempt {
-                Err(mut runtime_error)
-                    if best_effort
-                        && runtime_error.failure_class()
-                            == crate::evaluation::FailureClass::Recoverable =>
-                {
-                    let failure_location = runtime_error.data_location();
-                    let failed_instruction = runtime_error.instruction;
-                    let frame_index = frames.iter().rposition(|frame| {
-                        matches!(
-                            frame.return_target,
-                            ReturnTarget::Native(_) | ReturnTarget::Register { .. }
-                        )
-                    });
-                    let current_destination = if frame_index.is_none() {
-                        frames.last().and_then(|frame| {
-                            (frame.function.name() == runtime_error.function)
-                                .then(|| {
-                                    frame
-                                        .function
-                                        .instructions()
-                                        .get(runtime_error.instruction)
-                                        .and_then(recoverable_instruction_destination)
-                                })
-                                .flatten()
-                        })
-                    } else {
-                        None
-                    };
-                    if frame_index.is_none() && current_destination.is_none() {
-                        break Err(runtime_error);
-                    }
-                    let failure_id = if let Some(failure_id) = runtime_error.propagated_failure {
-                        if failure_id as usize >= failures.len() {
-                            break Err(error(
-                                RuntimeErrorKind::InvalidBytecode,
-                                "failed evaluation node references an unknown root",
-                                function,
-                                0,
-                            ));
-                        }
-                        failure_id
-                    } else {
-                        append_runtime_trace(&mut runtime_error, &frames);
-                        let failure_id = u32::try_from(failures.len()).map_err(|_| {
-                            error(
-                                RuntimeErrorKind::AllocationQuotaExceeded,
-                                "best-effort failure arena is full",
-                                function,
-                                0,
-                            )
-                        })?;
-                        failures.push(runtime_error);
-                        failure_id
-                    };
-                    let failure = Val::new(DecodedValue::Failed(failure_id), failure_location);
-                    if let Some(frame_index) = frame_index {
-                        let stack_base = frames[frame_index].base;
-                        let completed = frames.drain(frame_index..).next().expect("failed frame");
-                        stack.truncate(stack_base);
-                        match completed.return_target {
-                            ReturnTarget::Register {
-                                destination,
-                                call_site,
+                            Opcode::Raise {
+                                error: error_register,
                             } => {
-                                let caller = frames.last().expect("register return has a caller");
-                                let end = caller.base + caller.function.register_count();
-                                write_register(
-                                    &mut stack[caller.base..end],
-                                    destination,
-                                    failure.rebase_generated(call_site),
-                                    &caller.function,
-                                    caller.pc.saturating_sub(1),
-                                )?;
-                                continue;
+                                let structured =
+                                    *read_register(&registers, *error_register, function, pc)?;
+                                let DecodedValue::Dict(handle) = structured.value() else {
+                                    return Err(runtime_type_error(
+                                        "BlameError",
+                                        &structured,
+                                        &view,
+                                        function,
+                                        pc,
+                                    ));
+                                };
+                                let fields = view.dict_fields(handle).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                if fields.as_slice() != ["data", "message", "rule"] {
+                                    return Err(runtime_type_error(
+                                        "BlameError",
+                                        &structured,
+                                        &view,
+                                        function,
+                                        pc,
+                                    ));
+                                }
+                                let get_field = |name| {
+                                    view.dict_get_text(handle, name)
+                                        .map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                        .ok_or_else(|| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                format!("BlameError is missing {name}"),
+                                                function,
+                                                pc,
+                                            )
+                                        })
+                                };
+                                let data = get_field("data")?;
+                                let message = get_field("message")?;
+                                let rule = get_field("rule")?;
+                                let text = view.string_text(message).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        function,
+                                        pc,
+                                    )
+                                })?;
+                                let Some(text) = text else {
+                                    return Err(runtime_type_error(
+                                        "String", &message, &view, function, pc,
+                                    ));
+                                };
+                                let mut runtime =
+                                    error(RuntimeErrorKind::RaisedBlame, text, function, pc);
+                                runtime.set_locations(data.loc(), rule.loc());
+                                return Err(runtime);
                             }
-                            ReturnTarget::Native(continuation) => {
-                                let action = continuation.resume_failed(
-                                    failure,
-                                    &mut current,
-                                    background,
-                                    account,
-                                )?;
-                                match drive_vm_action(
-                                    action,
-                                    &mut frames,
-                                    &mut stack,
-                                    &mut current,
-                                    background,
-                                    account,
-                                )? {
-                                    DriveOutcome::Pending => continue,
-                                    DriveOutcome::Root(root) => break Ok(root),
+                            Opcode::Debug {
+                                value,
+                                module,
+                                line,
+                                name,
+                                message,
+                            } => {
+                                let value = *read_register(&registers, *value, function, pc)?;
+                                if let Ok(value_text) = DebugValueFormatter::new(view).format(value)
+                                {
+                                    debug_sink.emit(DebugEvent {
+                                        name: name.clone(),
+                                        repr: value_text,
+                                        module: module.clone(),
+                                        line: *line,
+                                        message: message.clone(),
+                                    });
                                 }
                             }
-                            ReturnTarget::Root => unreachable!("root frame is not recoverable"),
                         }
-                    } else {
-                        let destination = current_destination.expect("checked above");
-                        let frame = frames.last_mut().expect("execution frame");
-                        let end = frame.base + frame.function.register_count();
-                        write_register(
-                            &mut stack[frame.base..end],
-                            destination,
-                            failure,
-                            &frame.function,
-                            failed_instruction,
-                        )?;
-                        frame.pc = frame.pc.max(failed_instruction.saturating_add(1));
-                        continue;
+                        frames.last_mut().expect("execution frame").pc += 1;
                     }
+                })();
+                match attempt {
+                    Err(mut runtime_error)
+                        if best_effort
+                            && runtime_error.failure_class()
+                                == crate::evaluation::FailureClass::Recoverable =>
+                    {
+                        let failure_location = runtime_error.data_location();
+                        let failed_instruction = runtime_error.instruction;
+                        let frame_index = frames.iter().rposition(|frame| {
+                            matches!(
+                                frame.return_target,
+                                ReturnTarget::Native(_) | ReturnTarget::Register { .. }
+                            )
+                        });
+                        let current_destination = if frame_index.is_none() {
+                            frames.last().and_then(|frame| {
+                                (frame.function.name() == runtime_error.function)
+                                    .then(|| {
+                                        frame
+                                            .function
+                                            .instructions()
+                                            .get(runtime_error.instruction)
+                                            .and_then(recoverable_instruction_destination)
+                                    })
+                                    .flatten()
+                            })
+                        } else {
+                            None
+                        };
+                        if frame_index.is_none() && current_destination.is_none() {
+                            break Err(runtime_error);
+                        }
+                        let failure_id = if let Some(failure_id) = runtime_error.propagated_failure
+                        {
+                            if failure_id as usize >= failures.len() {
+                                break Err(error(
+                                    RuntimeErrorKind::InvalidBytecode,
+                                    "failed evaluation node references an unknown root",
+                                    function,
+                                    0,
+                                ));
+                            }
+                            failure_id
+                        } else {
+                            append_runtime_trace(&mut runtime_error, &frames);
+                            let failure_id = u32::try_from(failures.len()).map_err(|_| {
+                                error(
+                                    RuntimeErrorKind::AllocationQuotaExceeded,
+                                    "best-effort failure arena is full",
+                                    function,
+                                    0,
+                                )
+                            })?;
+                            failures.push(runtime_error);
+                            failure_id
+                        };
+                        let failure = Val::new(DecodedValue::Failed(failure_id), failure_location);
+                        if let Some(frame_index) = frame_index {
+                            let stack_base = frames[frame_index].base;
+                            let completed =
+                                frames.drain(frame_index..).next().expect("failed frame");
+                            stack.truncate(stack_base);
+                            match completed.return_target {
+                                ReturnTarget::Register {
+                                    destination,
+                                    call_site,
+                                } => {
+                                    let caller =
+                                        frames.last().expect("register return has a caller");
+                                    let end = caller.base + caller.function.register_count();
+                                    write_register(
+                                        &mut stack[caller.base..end],
+                                        destination,
+                                        failure.rebase_generated(call_site),
+                                        &caller.function,
+                                        caller.pc.saturating_sub(1),
+                                    )?;
+                                    continue;
+                                }
+                                ReturnTarget::Native(continuation) => {
+                                    let action = continuation.resume_failed(
+                                        failure,
+                                        &mut current,
+                                        background,
+                                        account,
+                                    )?;
+                                    match drive_vm_action(
+                                        action,
+                                        &mut frames,
+                                        &mut stack,
+                                        &mut current,
+                                        background,
+                                        account,
+                                    )? {
+                                        DriveOutcome::Pending => continue,
+                                        DriveOutcome::Root(root) => break Ok(root),
+                                    }
+                                }
+                                ReturnTarget::Root => unreachable!("root frame is not recoverable"),
+                            }
+                        } else {
+                            let destination = current_destination.expect("checked above");
+                            let frame = frames.last_mut().expect("execution frame");
+                            let end = frame.base + frame.function.register_count();
+                            write_register(
+                                &mut stack[frame.base..end],
+                                destination,
+                                failure,
+                                &frame.function,
+                                failed_instruction,
+                            )?;
+                            frame.pc = frame.pc.max(failed_instruction.saturating_add(1));
+                            continue;
+                        }
+                    }
+                    outcome => break outcome,
                 }
-                outcome => break outcome,
             }
-        };
+        })();
         if let Err(runtime_error) = &mut result {
             append_runtime_trace(runtime_error, &frames);
         }
-        result.map(|root| VmExecution {
-            world: WorkWorld {
+        match result {
+            Ok(root) => Ok(VmExecution {
+                world: WorkWorld {
+                    heap: current,
+                    root,
+                },
+                failures,
+            }),
+            Err(error) => Err(VmExecutionFailure {
                 heap: current,
-                root,
-            },
-            failures,
-        })
+                error,
+            }),
+        }
+    }
+
+    pub(crate) fn execute_in_existing_work(
+        &mut self,
+        background: &Heap,
+        externals: &HashMap<String, Val>,
+        function: &BytecodeFunction,
+        work: Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<(Heap, Val), (Heap, RuntimeError)> {
+        let diagnostic_start = account.diagnostics.len();
+        let execution = self
+            .execute_frame_with_policy(
+                background,
+                externals,
+                function,
+                Some(work),
+                None,
+                &[],
+                &[],
+                &[],
+                account,
+                false,
+            )
+            .map_err(|failure| (failure.heap, failure.error))?;
+        let world = execution.world;
+        if let Err(error) = fail_on_reported_error(account, diagnostic_start, function) {
+            return Err((world.heap, error));
+        }
+        Ok((world.heap, world.root))
     }
 }
 
@@ -3067,8 +3538,9 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
     match instruction {
         Opcode::LoadConst { dst, .. }
         | Opcode::Move { dst, .. }
-        | Opcode::MakeUpLink { dst }
-        | Opcode::ReadUpLink { dst, .. }
+        | Opcode::AllocFunc { dst, .. }
+        | Opcode::AllocTypeSlot { dst }
+        | Opcode::ReadTypeSlot { dst, .. }
         | Opcode::Add { dst, .. }
         | Opcode::Subtract { dst, .. }
         | Opcode::Multiply { dst, .. }
@@ -3104,9 +3576,9 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         Opcode::Call { base, .. } => Some(*base),
         Opcode::Panic { message } => Some(*message),
         Opcode::Raise { error } => Some(*error),
-        Opcode::InitializeUpLink { .. }
-        | Opcode::AssertUpLinkReady { .. }
-        | Opcode::AssertFunctionArity { .. }
+        Opcode::SealFunc { .. }
+        | Opcode::SealTypeSlot { .. }
+        | Opcode::AssertTypeSlotReady { .. }
         | Opcode::TailCall { .. }
         | Opcode::Jump { .. }
         | Opcode::JumpIfFalse { .. }
@@ -3314,11 +3786,19 @@ fn drive_vm_action(
                         return_target,
                     }
                 } else {
-                    let DecodedValue::Func(closure_handle) = callee.value() else {
-                        let view = HeapView {
-                            current,
-                            background: Some(background),
-                        };
+                    let view = HeapView {
+                        current,
+                        background: Some(background),
+                    };
+                    let Some(closure_handle) = view.resolve_func(callee).map_err(|heap_error| {
+                        error(
+                            RuntimeErrorKind::UninitializedDefinition,
+                            heap_error.to_string(),
+                            &call_function,
+                            call_pc,
+                        )
+                    })?
+                    else {
                         return Err(runtime_type_error(
                             "Func",
                             &callee,
@@ -3341,10 +3821,6 @@ fn drive_vm_action(
                             call_pc,
                         ));
                     }
-                    let view = HeapView {
-                        current,
-                        background: Some(background),
-                    };
                     let (runtime_prototype, upvalues) =
                         view.closure(closure_handle).map_err(|heap_error| {
                             error(
@@ -4037,7 +4513,10 @@ fn start_array_continuation(
         1
     };
     let callback = arguments[callback_index];
-    let DecodedValue::Func(callback_handle) = callback.value() else {
+    let Some(actual_callback_arity) = view
+        .resolved_function_arity(callback)
+        .map_err(|heap_error| core_dict_heap_error(heap_error, &call_function, call_pc))?
+    else {
         return Err(runtime_type_error(
             "Func",
             &callback,
@@ -4051,14 +4530,6 @@ fn start_array_continuation(
     } else {
         1
     };
-    let actual_callback_arity = view.function_arity(callback_handle).map_err(|heap_error| {
-        error(
-            RuntimeErrorKind::InvalidBytecode,
-            heap_error.to_string(),
-            &call_function,
-            call_pc,
-        )
-    })?;
     if actual_callback_arity != expected_callback_arity {
         return Err(error(
             RuntimeErrorKind::TypeMismatch,
@@ -5215,7 +5686,10 @@ fn start_dict_continuation(
         current,
         background: Some(background),
     };
-    let DecodedValue::Func(callback_handle) = callback.value() else {
+    let Some(actual_arity) = view
+        .resolved_function_arity(callback)
+        .map_err(|heap_error| core_dict_heap_error(heap_error, &call_function, call_pc))?
+    else {
         return Err(runtime_type_error(
             "Func",
             &callback,
@@ -5229,9 +5703,6 @@ fn start_dict_continuation(
     } else {
         1
     };
-    let actual_arity = view
-        .function_arity(callback_handle)
-        .map_err(|heap_error| core_dict_heap_error(heap_error, &call_function, call_pc))?;
     if actual_arity != expected_arity {
         return Err(error(
             RuntimeErrorKind::TypeMismatch,
@@ -5786,7 +6257,10 @@ fn run_core_model(
             flatten_attributes(member, &path, function, pc, current, background)?;
         match operation {
             CoreModelFunction::Struct => {
-                if !matches!(inner.value(), DecodedValue::UpLink(_)) {
+                if !matches!(
+                    inner.value(),
+                    DecodedValue::DeclaredType(_) | DecodedValue::TypeSlot(_)
+                ) {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
                     )?;
@@ -5801,7 +6275,12 @@ fn run_core_model(
                     .atom_text(inner)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                     .is_some_and(|atom| atom == "None");
-                if !unit && !matches!(inner.value(), DecodedValue::UpLink(_)) {
+                if !unit
+                    && !matches!(
+                        inner.value(),
+                        DecodedValue::DeclaredType(_) | DecodedValue::TypeSlot(_)
+                    )
+                {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
                     )?;
@@ -5880,14 +6359,14 @@ fn run_core_type_desc(
     };
     match operation {
         CoreTypeDescFunction::Kind => {
-            let observable = declared_type_body(input, &view)
-                .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-            let kind = if matches!(observable.value(), DecodedValue::NativeType(_)) {
+            let kind = if matches!(input.value(), DecodedValue::DeclaredType(_)) {
+                "Ref".to_owned()
+            } else if matches!(input.value(), DecodedValue::NativeType(_)) {
                 "Opaque".to_owned()
-            } else if matches!(observable.value(), DecodedValue::UpLink(_)) {
+            } else if matches!(input.value(), DecodedValue::TypeSlot(_)) {
                 "Ref".to_owned()
             } else {
-                let DecodedValue::Dict(handle) = observable.value() else {
+                let DecodedValue::Dict(handle) = input.value() else {
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
                         "std/type-desc.kind expects Type metadata",
@@ -6011,8 +6490,12 @@ fn run_core_type_desc(
             })
         }
         CoreTypeDescFunction::Resolve => {
-            let result = if let DecodedValue::UpLink(handle) = input.value() {
-                view.up_link(handle)
+            let result = if matches!(input.value(), DecodedValue::DeclaredType(_)) {
+                declared_type_body(input, &view).map_err(|message| {
+                    error(RuntimeErrorKind::InvalidBytecode, message, function, pc)
+                })?
+            } else if let DecodedValue::TypeSlot(handle) = input.value() {
+                view.type_slot(handle)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                     .ok_or_else(|| {
                         error(
@@ -6134,8 +6617,17 @@ fn run_core_dyn(
                 DecodedValue::Tagged(_) => "Tagged",
                 DecodedValue::Tuple(_) => "Tuple",
                 DecodedValue::Func(_) => "Func",
+                DecodedValue::FuncRef(_) => "Func",
                 DecodedValue::Dyn(_) => "Dyn",
-                DecodedValue::UpLink(_) => {
+                DecodedValue::Module(_) => {
+                    return Err(error(
+                        RuntimeErrorKind::TypeMismatch,
+                        "Dyn cannot contain a Module object",
+                        function,
+                        pc,
+                    ));
+                }
+                DecodedValue::TypeSlot(_) => {
                     return Err(error(
                         RuntimeErrorKind::InvalidBytecode,
                         "Dyn payload cannot be an internal up-link",
@@ -6308,13 +6800,17 @@ fn observe_dyn_structure(
     match operation {
         CoreDynFunction::Field => {
             let name = field.expect("field operation has a name");
-            let DecodedValue::Dict(value_handle) = value.value() else {
-                return Err(format!("dyn.field expected {kind} runtime Dict"));
+            let child_value = match value.value() {
+                DecodedValue::Dict(value_handle) => view
+                    .dict_get_text(value_handle, name)
+                    .map_err(|error| error.to_string())?,
+                DecodedValue::Module(value_handle) => view
+                    .module_get_text(value_handle, name)
+                    .map_err(|error| error.to_string())?,
+                _ => return Err(format!("dyn.field expected {kind} runtime record")),
             };
-            let child_value = view
-                .dict_get_text(value_handle, name)
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| format!("dyn.field could not find field {name:?}"))?;
+            let child_value =
+                child_value.ok_or_else(|| format!("dyn.field could not find field {name:?}"))?;
             let child_desc = match kind.as_str() {
                 "Struct" => {
                     let DecodedValue::Dict(fields) = type_field("fields")?.value() else {
@@ -6330,12 +6826,34 @@ fn observe_dyn_structure(
             Ok(DynObservation::Child(child_desc, child_value))
         }
         CoreDynFunction::Fields => {
-            let DecodedValue::Dict(value_handle) = value.value() else {
-                return Err(format!("dyn.fields expected {kind} runtime Dict"));
+            let value_fields = match value.value() {
+                DecodedValue::Dict(value_handle) => {
+                    let (fields, values) = view
+                        .dict_parts(value_handle)
+                        .map_err(|error| error.to_string())?;
+                    fields
+                        .iter()
+                        .zip(values)
+                        .map(|(name, value)| {
+                            view.text(*name)
+                                .map(|name| (name.to_owned(), *value))
+                                .map_err(|error| error.to_string())
+                        })
+                        .collect::<Result<Vec<_>, String>>()?
+                }
+                DecodedValue::Module(value_handle) => view
+                    .module_fields(value_handle)
+                    .map_err(|error| error.to_string())?
+                    .into_iter()
+                    .map(|name| {
+                        view.module_get_text(value_handle, name)
+                            .map_err(|error| error.to_string())?
+                            .map(|value| (name.to_owned(), value))
+                            .ok_or_else(|| "Module export disappeared while iterating".to_owned())
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+                _ => return Err(format!("dyn.fields expected {kind} runtime record")),
             };
-            let (value_fields, values) = view
-                .dict_parts(value_handle)
-                .map_err(|error| error.to_string())?;
             let descriptors = match kind.as_str() {
                 "Struct" => {
                     let DecodedValue::Dict(fields) = type_field("fields")?.value() else {
@@ -6343,14 +6861,24 @@ fn observe_dyn_structure(
                     };
                     let (names, descriptors) =
                         view.dict_parts(fields).map_err(|error| error.to_string())?;
-                    if names != value_fields {
+                    let names = names
+                        .iter()
+                        .map(|name| view.text(*name).map(str::to_owned))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|error| error.to_string())?;
+                    if names
+                        != value_fields
+                            .iter()
+                            .map(|(name, _)| name.clone())
+                            .collect::<Vec<_>>()
+                    {
                         return Err(
                             "Struct descriptor and runtime value have different fields".into()
                         );
                     }
                     descriptors.to_vec()
                 }
-                "Dict" => vec![type_field("item")?; values.len()],
+                "Dict" => vec![type_field("item")?; value_fields.len()],
                 _ => {
                     return Err(format!(
                         "dyn.fields does not support descriptor kind {kind}"
@@ -6358,19 +6886,10 @@ fn observe_dyn_structure(
                 }
             };
             let fields = value_fields
-                .iter()
+                .into_iter()
                 .zip(descriptors)
-                .zip(values)
-                .map(|((name, descriptor), value)| {
-                    Ok((
-                        view.text(*name)
-                            .map_err(|error| error.to_string())?
-                            .to_owned(),
-                        descriptor,
-                        *value,
-                    ))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
+                .map(|((name, value), descriptor)| (name, descriptor, value))
+                .collect();
             Ok(DynObservation::NamedChildren(fields))
         }
         CoreDynFunction::ArrayItems => {
@@ -6430,9 +6949,9 @@ fn observe_dyn_structure(
 fn normalize_dyn_descriptor(mut descriptor: Val, view: &HeapView<'_>) -> Result<Val, String> {
     loop {
         descriptor = declared_type_body(descriptor, view)?;
-        if let DecodedValue::UpLink(handle) = descriptor.value() {
+        if let DecodedValue::TypeSlot(handle) = descriptor.value() {
             descriptor = view
-                .up_link(handle)
+                .type_slot(handle)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "Dyn descriptor reference is not initialized".to_owned())?;
             continue;
@@ -6718,9 +7237,9 @@ fn finish_dyn_observation(
 fn dyn_descriptor_leaf_kind(mut descriptor: Val, view: &HeapView<'_>) -> Result<String, String> {
     loop {
         descriptor = declared_type_body(descriptor, view)?;
-        if let DecodedValue::UpLink(handle) = descriptor.value() {
+        if let DecodedValue::TypeSlot(handle) = descriptor.value() {
             descriptor = view
-                .up_link(handle)
+                .type_slot(handle)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "Dyn descriptor reference is not initialized".to_owned())?;
             continue;
@@ -6756,11 +7275,13 @@ fn declared_type_body(value: Val, view: &HeapView<'_>) -> Result<Val, String> {
 }
 
 fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, String> {
-    let input = declared_type_body(input, view)?;
+    if matches!(input.value(), DecodedValue::DeclaredType(_)) {
+        return Ok(Vec::new());
+    }
     if matches!(input.value(), DecodedValue::NativeType(_)) {
         return Ok(Vec::new());
     }
-    if matches!(input.value(), DecodedValue::UpLink(_)) {
+    if matches!(input.value(), DecodedValue::TypeSlot(_)) {
         return Ok(Vec::new());
     }
     let DecodedValue::Dict(handle) = input.value() else {
@@ -6921,7 +7442,7 @@ fn run_core_union_model(
         let path = format!("variants[{index}]");
         let (inner, attributes) =
             flatten_attributes(variant, &path, function, pc, current, background)?;
-        if !matches!(inner.value(), DecodedValue::UpLink(_)) {
+        if !matches!(inner.value(), DecodedValue::TypeSlot(_)) {
             decode_runtime_type_at(inner, &path, current, background)
                 .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
         }
@@ -7025,7 +7546,7 @@ fn allocate_builtin_enum(
         let (inner, attributes) = if let Some(payload) = payload {
             let (inner, attributes) =
                 flatten_attributes(payload, &path, function, pc, current, background)?;
-            if !matches!(inner.value(), DecodedValue::UpLink(_)) {
+            if !matches!(inner.value(), DecodedValue::TypeSlot(_)) {
                 decode_runtime_type_at(inner, &path, current, background).map_err(|message| {
                     error(RuntimeErrorKind::TypeMismatch, message, function, pc)
                 })?;
@@ -7132,7 +7653,8 @@ struct CodecType {
 
 #[derive(Clone, Debug)]
 enum CodecKind {
-    UpLink(Handle),
+    TypeSlot(Handle),
+    TypeRef(Handle),
     Any,
     Type,
     Dyn,
@@ -7511,7 +8033,7 @@ fn assert_codec_graph_ready(
         visited: &mut HashSet<Handle>,
     ) -> Result<(), CodecGraphError> {
         match &schema.kind {
-            CodecKind::UpLink(handle) => {
+            CodecKind::TypeSlot(handle) => {
                 if !visited.insert(*handle) {
                     return Ok(());
                 }
@@ -7520,10 +8042,28 @@ fn assert_codec_graph_ready(
                     background: Some(background),
                 };
                 let resolved = view
-                    .up_link(*handle)
+                    .type_slot(*handle)
                     .map_err(|error| CodecGraphError::Invalid(error.to_string()))?
                     .ok_or(CodecGraphError::Pending)?;
                 let resolved = decode_runtime_type(resolved, current, background)
+                    .map_err(CodecGraphError::Invalid)?;
+                visit(&resolved, current, background, visited)
+            }
+            CodecKind::TypeRef(handle) => {
+                if !visited.insert(*handle) {
+                    return Ok(());
+                }
+                let view = HeapView {
+                    current,
+                    background: Some(background),
+                };
+                let Object::DeclaredType { body, .. } = view
+                    .object(*handle)
+                    .map_err(|error| CodecGraphError::Invalid(error.to_string()))?
+                else {
+                    return Err(CodecGraphError::Pending);
+                };
+                let resolved = decode_runtime_type(*body, current, background)
                     .map_err(CodecGraphError::Invalid)?;
                 visit(&resolved, current, background, visited)
             }
@@ -7573,9 +8113,9 @@ fn decode_runtime_type_at(
             declared_owner: None,
         });
     }
-    if let DecodedValue::UpLink(handle) = value.value() {
+    if let DecodedValue::TypeSlot(handle) = value.value() {
         return Ok(CodecType {
-            kind: CodecKind::UpLink(handle),
+            kind: CodecKind::TypeSlot(handle),
             rule: value,
             attributes: BTreeMap::new(),
             declared_owner: None,
@@ -7586,16 +8126,12 @@ fn decode_runtime_type_at(
         background: Some(background),
     };
     if let DecodedValue::DeclaredType(handle) = value.value() {
-        let Object::DeclaredType { body, .. } = view.object(handle).map_err(|e| e.to_string())?
-        else {
-            return Err(format!("{path} has an invalid declared Type handle"));
-        };
-        let mut decoded = decode_runtime_type_at(*body, path, current, background)?;
-        decoded.declared_owner = Some(value);
-        if decoded.rule.loc().is_none() {
-            decoded.rule = value;
-        }
-        return Ok(decoded);
+        return Ok(CodecType {
+            kind: CodecKind::TypeRef(handle),
+            rule: value,
+            attributes: BTreeMap::new(),
+            declared_owner: None,
+        });
     }
     let DecodedValue::Dict(handle) = value.value() else {
         return Err(format!("{path} must be Type metadata"));
@@ -7637,7 +8173,9 @@ fn decode_runtime_type_at(
                 *attribute,
             );
         }
-        decoded.rule = value;
+        if !decoded.attributes.is_empty() || decoded.rule.loc().is_none() {
+            decoded.rule = value;
+        }
         return Ok(decoded);
     }
     let kind = match kind.as_str() {
@@ -8041,7 +8579,7 @@ fn transform_codec(
         current,
         background: Some(background),
     };
-    if !matches!(schema.kind, CodecKind::UpLink(_)) {
+    if !matches!(schema.kind, CodecKind::TypeSlot(_) | CodecKind::TypeRef(_)) {
         let bridged = text_codec_bridge(schema, &view).map_err(|message| {
             CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
         })?;
@@ -8083,15 +8621,39 @@ fn transform_codec(
         }
     }
     match &schema.kind {
-        CodecKind::UpLink(handle) => {
+        CodecKind::TypeSlot(handle) => {
             let resolved = view
-                .up_link(*handle)
+                .type_slot(*handle)
                 .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
                 .ok_or_else(|| {
                     CodecFailure::new("recursive type link is not initialized", value, schema.rule)
                 })?;
             let resolved = decode_runtime_type(resolved, current, background)
                 .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
+            transform_codec(
+                &resolved,
+                value,
+                direction,
+                path,
+                predicate_decisions,
+                current,
+                background,
+            )
+        }
+        CodecKind::TypeRef(handle) => {
+            let Object::DeclaredType { body, .. } = view
+                .object(*handle)
+                .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
+            else {
+                return Err(CodecFailure::new(
+                    "type ref is not sealed",
+                    value,
+                    schema.rule,
+                ));
+            };
+            let mut resolved = decode_runtime_type(*body, current, background)
+                .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
+            resolved.declared_owner = Some(Val::unknown(DecodedValue::DeclaredType(*handle)));
             transform_codec(
                 &resolved,
                 value,
@@ -8583,16 +9145,15 @@ fn plan_struct(
                     Some("False") => Ok(SkipPolicy::False),
                     Some("Empty") => Ok(SkipPolicy::Empty),
                     _ => {
-                        let DecodedValue::Func(handle) = rule.value() else {
+                        let Some(arity) = view.resolved_function_arity(rule).map_err(|error| {
+                            CodecFailure::new(error.to_string(), data, rule)
+                        })? else {
                             return Err(CodecFailure::new(
                                 format!("{path}.{internal_name}: invalid skip_serializing_if policy"),
                                 data,
                                 rule,
                             ));
                         };
-                        let arity = view.function_arity(handle).map_err(|error| {
-                            CodecFailure::new(error.to_string(), data, rule)
-                        })?;
                         if arity != 1 {
                             return Err(CodecFailure::new(
                                 format!("{path}.{internal_name}: skip_serializing_if predicate must accept one argument, got {arity}"),
@@ -8671,21 +9232,40 @@ fn resolve_codec_type_once(
     data: Val,
     view: &HeapView<'_>,
 ) -> Result<CodecType, CodecFailure> {
-    let CodecKind::UpLink(handle) = schema.kind else {
-        return Ok(schema.clone());
+    let (resolved, owner) = match schema.kind {
+        CodecKind::TypeSlot(handle) => (
+            view.type_slot(handle)
+                .map_err(|error| CodecFailure::new(error.to_string(), data, schema.rule))?
+                .ok_or_else(|| {
+                    CodecFailure::new("recursive type link is not initialized", data, schema.rule)
+                })?,
+            None,
+        ),
+        CodecKind::TypeRef(handle) => {
+            let Object::DeclaredType { body, .. } = view
+                .object(handle)
+                .map_err(|error| CodecFailure::new(error.to_string(), data, schema.rule))?
+            else {
+                return Err(CodecFailure::new(
+                    "type ref is not sealed",
+                    data,
+                    schema.rule,
+                ));
+            };
+            (
+                *body,
+                Some(Val::unknown(DecodedValue::DeclaredType(handle))),
+            )
+        }
+        _ => return Ok(schema.clone()),
     };
-    let resolved = view
-        .up_link(handle)
-        .map_err(|error| CodecFailure::new(error.to_string(), data, schema.rule))?
-        .ok_or_else(|| {
-            CodecFailure::new("recursive type link is not initialized", data, schema.rule)
-        })?;
     let mut resolved = decode_runtime_type(
         resolved,
         view.current,
         view.background.expect("codec views have a background heap"),
     )
     .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
+    resolved.declared_owner = owner;
     resolved.attributes.extend(schema.attributes.clone());
     Ok(resolved)
 }
@@ -9485,7 +10065,7 @@ fn generate_json_schema_node(
         current,
         background: Some(background),
     };
-    if !matches!(schema.kind, CodecKind::UpLink(_))
+    if !matches!(schema.kind, CodecKind::TypeSlot(_) | CodecKind::TypeRef(_))
         && text_codec_bridge(schema, &view)
             .map_err(|message| CodecFailure::new(message, data, schema.rule))?
     {
@@ -9517,7 +10097,7 @@ fn generate_json_schema_node(
         ));
     }
     match &schema.kind {
-        CodecKind::UpLink(handle) => {
+        CodecKind::TypeSlot(handle) => {
             if let Some(name) = links.get(handle) {
                 return Ok(schema_dict(
                     vec![("$ref", schema_string(&format!("#/$defs/{name}"), loc))],
@@ -9531,12 +10111,51 @@ fn generate_json_schema_node(
                 background: Some(background),
             };
             let resolved = view
-                .up_link(*handle)
+                .type_slot(*handle)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, schema.rule))?
                 .ok_or_else(|| {
                     CodecFailure::new("recursive type link is not initialized", data, schema.rule)
                 })?;
             let resolved = decode_runtime_type(resolved, current, background)
+                .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
+            let definition = generate_json_schema_node(
+                &resolved,
+                data,
+                current,
+                background,
+                links,
+                definitions,
+            )?;
+            definitions.insert(name.clone(), definition);
+            Ok(schema_dict(
+                vec![("$ref", schema_string(&format!("#/$defs/{name}"), loc))],
+                loc,
+            ))
+        }
+        CodecKind::TypeRef(handle) => {
+            if let Some(name) = links.get(handle) {
+                return Ok(schema_dict(
+                    vec![("$ref", schema_string(&format!("#/$defs/{name}"), loc))],
+                    loc,
+                ));
+            }
+            let name = format!("Type{}", links.len());
+            links.insert(*handle, name.clone());
+            let view = HeapView {
+                current,
+                background: Some(background),
+            };
+            let Object::DeclaredType { body, .. } = view
+                .object(*handle)
+                .map_err(|error| CodecFailure::new(error.to_string(), data, schema.rule))?
+            else {
+                return Err(CodecFailure::new(
+                    "type ref is not sealed",
+                    data,
+                    schema.rule,
+                ));
+            };
+            let resolved = decode_runtime_type(*body, current, background)
                 .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
             let definition = generate_json_schema_node(
                 &resolved,
@@ -9826,7 +10445,7 @@ fn generate_struct_schema_fields(
 
 fn codec_type_name(schema: &CodecType) -> &'static str {
     match &schema.kind {
-        CodecKind::UpLink(_) => "recursive Type",
+        CodecKind::TypeSlot(_) | CodecKind::TypeRef(_) => "recursive Type",
         CodecKind::Any => "Any",
         CodecKind::Type => "Type",
         CodecKind::Dyn => "Dyn",
@@ -9877,47 +10496,6 @@ fn codec_node_bytes(node: &CodecNode) -> Result<u64, NativeError> {
                     .ok_or_else(|| NativeError::allocation_limit("codec output size overflowed"))
             })
         }
-    }
-}
-
-fn legacy_value_bytes(value: &Value) -> Result<u64, NativeError> {
-    match value {
-        Value::Int(_)
-        | Value::Float(_)
-        | Value::NativeType(_)
-        | Value::DeclaredType(_)
-        | Value::Opaque(_)
-        | Value::Func(_)
-        | Value::Dyn(_) => Ok(0),
-        Value::Declared(value) => legacy_value_bytes(value.payload()),
-        Value::String(value) => Ok(value.len() as u64),
-        Value::Bytes(value) => Ok(value.len() as u64),
-        Value::Atom(atom) => Ok(atom.name().len() as u64),
-        Value::Array(values) | Value::Tuple(values) => {
-            let own = logical_value_bytes(values.len())?;
-            values.iter().try_fold(own, |total, value| {
-                total
-                    .checked_add(legacy_value_bytes(value)?)
-                    .ok_or_else(|| NativeError::allocation_limit("JSON value size overflowed"))
-            })
-        }
-        Value::Dict(dict) => {
-            let own = logical_value_bytes(dict.values().len())?;
-            dict.shape()
-                .fields()
-                .iter()
-                .zip(dict.values())
-                .try_fold(own, |total, (name, value)| {
-                    total
-                        .checked_add(name.len() as u64)
-                        .and_then(|total| total.checked_add(legacy_value_bytes(value).ok()?))
-                        .ok_or_else(|| NativeError::allocation_limit("JSON value size overflowed"))
-                })
-        }
-        Value::Tagged { tag, payload } => logical_value_bytes(2)?
-            .checked_add(tag.name().len() as u64)
-            .and_then(|total| total.checked_add(legacy_value_bytes(payload).ok()?))
-            .ok_or_else(|| NativeError::allocation_limit("JSON value size overflowed")),
     }
 }
 
@@ -10135,11 +10713,9 @@ fn run_core_json(
         let parsed = crate::json::parse_json("<json string>", source.as_str());
         let parsed = match parsed {
             Ok(value) => {
-                let bytes = legacy_value_bytes(&value)
-                    .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
-                charge_allocation(account, bytes, function, pc)?;
-                current
-                    .import_value(Some(background), &value)
+                charge_allocation(account, source.len() as u64, function, pc)?;
+                value
+                    .relocate_into(current, background)
                     .map_err(|heap_error| {
                         error(
                             RuntimeErrorKind::TypeMismatch,
@@ -10513,7 +11089,9 @@ fn validate_json_attribute_configuration(
             view.atom_text(payload)
                 .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                 .is_some_and(|atom| matches!(atom.as_str(), "None" | "False" | "Empty"))
-                || matches!(payload.value(), DecodedValue::Func(handle) if view.function_arity(handle).is_ok_and(|arity| arity == 1))
+                || view
+                    .resolved_function_arity(payload)
+                    .is_ok_and(|arity| arity == Some(1))
         }
         _ => unreachable!(),
     };
@@ -10590,8 +11168,12 @@ impl<'a> JsonWriter<'a> {
                 return Err("JSON cannot encode Tagged; use a codec first".into());
             }
             DecodedValue::Func(_) => return Err("JSON cannot encode Func".into()),
+            DecodedValue::FuncRef(_) => return Err("JSON cannot encode Func".into()),
             DecodedValue::Dyn(_) => return Err("JSON cannot encode Dyn".into()),
-            DecodedValue::UpLink(_) => return Err("JSON cannot encode an internal up-link".into()),
+            DecodedValue::Module(_) => return Err("JSON cannot encode Module".into()),
+            DecodedValue::TypeSlot(_) => {
+                return Err("JSON cannot encode an internal up-link".into());
+            }
         }
         Ok(())
     }
@@ -10865,12 +11447,18 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(name);
                 self.push(">");
             }
+            DecodedValue::FuncRef(id) => {
+                self.push("<fn-ref ");
+                self.push(&format!("{}:{}", id.module.raw(), id.local));
+                self.push(">");
+            }
             DecodedValue::Dyn(_) => self.push("<dyn>"),
-            DecodedValue::UpLink(handle) => {
+            DecodedValue::Module(_) => self.push("<module>"),
+            DecodedValue::TypeSlot(handle) => {
                 if !self.enter(handle, depth) {
                     return Ok(());
                 }
-                match self.view.up_link(handle)? {
+                match self.view.type_slot(handle)? {
                     Some(value) => self.value(value, depth + 1)?,
                     None => self.push("<uninitialized up-link>"),
                 }
@@ -10915,9 +11503,6 @@ impl<'a> DebugValueFormatter<'a> {
             }
             self.push("...");
         }
-        if tuple && value_count == 1 {
-            self.push(",");
-        }
         self.push(close);
         self.active.remove(&handle);
         Ok(())
@@ -10939,7 +11524,7 @@ impl<'a> DebugValueFormatter<'a> {
             if index > 0 {
                 self.push(", ");
             }
-            self.quoted(&field);
+            self.push(&field);
             self.push(": ");
             self.value(value, depth + 1)?;
         }
@@ -10967,14 +11552,7 @@ impl<'a> DebugValueFormatter<'a> {
     }
 
     fn quoted(&mut self, text: &str) {
-        self.push("\"");
-        for character in text.chars() {
-            for escaped in character.escape_debug() {
-                let mut buffer = [0u8; 4];
-                self.push(escaped.encode_utf8(&mut buffer));
-            }
-        }
-        self.push("\"");
+        self.push(&format!("{text:?}"));
     }
 
     fn push(&mut self, text: &str) {
@@ -11272,22 +11850,19 @@ fn instruction_location(function: &BytecodeFunction, pc: usize) -> Option<crate:
 fn runtime_type_error(
     expected: &str,
     actual: &Val,
-    view: &HeapView<'_>,
+    _view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
     if let DecodedValue::Failed(failure) = actual.value() {
         return propagated_failure_error(failure, actual.loc(), function, pc);
     }
-    let mut runtime_error = match view.export_value(*actual) {
-        Ok(actual) => type_error(expected, &actual, function, pc),
-        Err(heap_error) => error(
-            RuntimeErrorKind::InvalidBytecode,
-            heap_error.to_string(),
-            function,
-            pc,
-        ),
-    };
+    let mut runtime_error = error(
+        RuntimeErrorKind::TypeMismatch,
+        format!("expected {expected}, got {}", runtime_value_kind(*actual)),
+        function,
+        pc,
+    );
     runtime_error.set_data_location(actual.loc());
     runtime_error
 }
@@ -11334,7 +11909,19 @@ fn runtime_shallow_type_error(
     if let DecodedValue::Failed(failure) = actual.value() {
         return propagated_failure_error(failure, location, function, pc);
     }
-    let actual_kind = match actual.value() {
+    let actual_kind = runtime_value_kind(actual);
+    let mut runtime_error = error(
+        RuntimeErrorKind::TypeMismatch,
+        format!("expected {expected}, got {actual_kind}"),
+        function,
+        pc,
+    );
+    runtime_error.set_data_location(location);
+    runtime_error
+}
+
+fn runtime_value_kind(actual: Val) -> &'static str {
+    match actual.value() {
         DecodedValue::Failed(_) => unreachable!(),
         DecodedValue::Int(_) => "Int",
         DecodedValue::Float(_) => "Float",
@@ -11351,23 +11938,17 @@ fn runtime_shallow_type_error(
         DecodedValue::Tagged(_) => "Tagged",
         DecodedValue::Dict(_) => "Dict",
         DecodedValue::Func(_) => "Func",
+        DecodedValue::FuncRef(_) => "Func",
         DecodedValue::Dyn(_) => "Dyn",
-        DecodedValue::UpLink(_) => "internal up-link",
-    };
-    let mut runtime_error = error(
-        RuntimeErrorKind::TypeMismatch,
-        format!("expected {expected}, got {actual_kind}"),
-        function,
-        pc,
-    );
-    runtime_error.set_data_location(location);
-    runtime_error
+        DecodedValue::Module(_) => "Module",
+        DecodedValue::TypeSlot(_) => "internal up-link",
+    }
 }
 
 fn runtime_numeric_type_error(
     left: &Val,
     right: &Val,
-    view: &HeapView<'_>,
+    _view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
@@ -11380,15 +11961,16 @@ fn runtime_numeric_type_error(
     {
         return propagated_failure_error(failure, left.loc().or(right.loc()), function, pc);
     }
-    let mut runtime_error = match (view.export_value(*left), view.export_value(*right)) {
-        (Ok(left), Ok(right)) => numeric_type_error(&left, &right, function, pc),
-        (Err(heap_error), _) | (_, Err(heap_error)) => error(
-            RuntimeErrorKind::InvalidBytecode,
-            heap_error.to_string(),
-            function,
-            pc,
+    let mut runtime_error = error(
+        RuntimeErrorKind::TypeMismatch,
+        format!(
+            "numeric operands must have the same type, got {} and {}",
+            runtime_value_kind(*left),
+            runtime_value_kind(*right)
         ),
-    };
+        function,
+        pc,
+    );
     runtime_error.set_data_location(left.loc().or(right.loc()));
     runtime_error
 }
@@ -11396,7 +11978,7 @@ fn runtime_numeric_type_error(
 fn runtime_ordered_type_error(
     left: &Val,
     right: &Val,
-    view: &HeapView<'_>,
+    _view: &HeapView<'_>,
     function: &BytecodeFunction,
     pc: usize,
 ) -> RuntimeError {
@@ -11409,24 +11991,16 @@ fn runtime_ordered_type_error(
     {
         return propagated_failure_error(failure, left.loc().or(right.loc()), function, pc);
     }
-    let mut runtime_error = match (view.export_value(*left), view.export_value(*right)) {
-        (Ok(left), Ok(right)) => error(
-            RuntimeErrorKind::TypeMismatch,
-            format!(
-                "ordered operands must be matching Int, Float, or String values, got {} and {}",
-                left.type_name(),
-                right.type_name()
-            ),
-            function,
-            pc,
+    let mut runtime_error = error(
+        RuntimeErrorKind::TypeMismatch,
+        format!(
+            "ordered operands must be matching Int, Float, or String values, got {} and {}",
+            runtime_value_kind(*left),
+            runtime_value_kind(*right)
         ),
-        (Err(heap_error), _) | (_, Err(heap_error)) => error(
-            RuntimeErrorKind::InvalidBytecode,
-            heap_error.to_string(),
-            function,
-            pc,
-        ),
-    };
+        function,
+        pc,
+    );
     runtime_error.set_data_location(left.loc().or(right.loc()));
     runtime_error
 }
@@ -11448,28 +12022,10 @@ fn propagated_failure_error(
     runtime_error
 }
 
-fn numeric_type_error(
-    left: &Value,
-    right: &Value,
-    function: &BytecodeFunction,
-    pc: usize,
-) -> RuntimeError {
-    error(
-        RuntimeErrorKind::TypeMismatch,
-        format!(
-            "numeric operands must have the same type, got {} and {}",
-            left.type_name(),
-            right.type_name()
-        ),
-        function,
-        pc,
-    )
-}
-
 fn logical_value_bytes(count: usize) -> Result<u64, NativeError> {
     let count = u64::try_from(count)
         .map_err(|_| NativeError::allocation_limit("allocation item count overflowed"))?;
-    let value_size = u64::try_from(std::mem::size_of::<Value>())
+    let value_size = u64::try_from(std::mem::size_of::<Val>())
         .map_err(|_| NativeError::allocation_limit("Value size overflowed"))?;
     count
         .checked_mul(value_size)
@@ -11607,20 +12163,6 @@ fn validate_jump(
     Ok(())
 }
 
-fn type_error(
-    expected: &str,
-    actual: &Value,
-    function: &BytecodeFunction,
-    pc: usize,
-) -> RuntimeError {
-    error(
-        RuntimeErrorKind::TypeMismatch,
-        format!("expected {expected}, got {}", actual.type_name()),
-        function,
-        pc,
-    )
-}
-
 fn error(
     kind: RuntimeErrorKind,
     message: impl Into<String>,
@@ -11647,14 +12189,15 @@ fn error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Atom, BytecodeFunction, Closure, Instruction, NativeFunction, Register};
+    use crate::bytecode::Constant;
+    use crate::{Atom, BytecodeFunction, Instruction, NativeFunction, Register};
 
     fn run(
         vm: &mut Vm,
         registers: usize,
-        constants: Vec<Value>,
+        constants: Vec<Constant>,
         instructions: Vec<Instruction>,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<ExecutionWorld, RuntimeError> {
         vm.execute(
             &BytecodeFunction::new("test", registers, constants, instructions),
             1_000,
@@ -11666,7 +12209,7 @@ mod tests {
         let result = run(
             &mut Vm::new(),
             4,
-            vec![Value::Int(20), Value::Int(22), Value::Int(0)],
+            vec![Constant::Int(20), Constant::Int(22), Constant::Int(0)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11699,7 +12242,7 @@ mod tests {
             ],
         )
         .unwrap();
-        assert!(matches!(result, Value::Int(42)));
+        assert_eq!(result.value().as_int(), Some(42));
     }
 
     #[test]
@@ -11707,7 +12250,7 @@ mod tests {
         let result = run(
             &mut Vm::new(),
             4,
-            vec![Value::Int(1), Value::Int(2)],
+            vec![Constant::Int(1), Constant::Int(2)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11733,15 +12276,29 @@ mod tests {
             ],
         )
         .unwrap();
-        let Value::Tuple(dicts) = result else {
-            panic!("expected tuple");
-        };
-        let (Value::Dict(left), Value::Dict(right)) = (&dicts[0], &dicts[1]) else {
+        let tuple = result.value();
+        let left = tuple.sequence_get(0).expect("left Dict");
+        let right = tuple.sequence_get(1).expect("right Dict");
+        assert_eq!(left.dict_fields(), Some(vec!["a", "b"]));
+        let (DecodedValue::Dict(left_handle), DecodedValue::Dict(right_handle)) =
+            (left.value.value(), right.value.value())
+        else {
             panic!("expected Dict values");
         };
-        assert_eq!(left.shape().fields(), &["a".to_owned(), "b".to_owned()]);
-        assert!(left.shares_shape_with(right));
-        assert!(matches!(left.get("a"), Some(Value::Int(1))));
+        let Object::Dict {
+            shape: left_shape, ..
+        } = left.view.object(left_handle).unwrap()
+        else {
+            unreachable!()
+        };
+        let Object::Dict {
+            shape: right_shape, ..
+        } = right.view.object(right_handle).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(left_shape, right_shape);
+        assert_eq!(left.dict_get("a").unwrap().as_int(), Some(1));
     }
 
     #[test]
@@ -11749,7 +12306,10 @@ mod tests {
         let result = run(
             &mut Vm::new(),
             5,
-            vec![Value::Atom(Atom::builtin(BuiltinAtom::Ok)), Value::Int(42)],
+            vec![
+                Constant::Atom(Atom::builtin(BuiltinAtom::Ok)),
+                Constant::Int(42),
+            ],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11788,7 +12348,7 @@ mod tests {
         let overflow = run(
             &mut Vm::new(),
             3,
-            vec![Value::Int(i64::MAX), Value::Int(1)],
+            vec![Constant::Int(i64::MAX), Constant::Int(1)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11812,7 +12372,7 @@ mod tests {
         let division = run(
             &mut Vm::new(),
             3,
-            vec![Value::Int(1), Value::Int(0)],
+            vec![Constant::Int(1), Constant::Int(0)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11873,7 +12433,7 @@ mod tests {
         let error = run(
             &mut Vm::new(),
             1,
-            vec![Value::Int(1)],
+            vec![Constant::Int(1)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11909,11 +12469,11 @@ mod tests {
         let invalid_call_window = BytecodeFunction::new(
             "invalid-call-window",
             1,
-            vec![Value::Func(Arc::new(Closure::native(NativeFunction::new(
+            vec![Constant::Native(NativeFunction::new(
                 "identity",
                 1,
                 native_identity,
-            ))))],
+            ))],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11934,7 +12494,7 @@ mod tests {
         let straight = BytecodeFunction::new(
             "straight",
             1,
-            vec![Value::Int(42)],
+            vec![Constant::Int(42)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11943,15 +12503,15 @@ mod tests {
                 Instruction::Return { src: Register(0) },
             ],
         );
-        assert!(matches!(
-            Vm::new().execute(&straight, 0).unwrap(),
-            Value::Int(42)
-        ));
+        assert_eq!(
+            Vm::new().execute(&straight, 0).unwrap().value().as_int(),
+            Some(42)
+        );
 
         let forward = BytecodeFunction::new(
             "forward",
             1,
-            vec![Value::Int(42)],
+            vec![Constant::Int(42)],
             vec![
                 Instruction::Jump { target: 2 },
                 Instruction::Fail {
@@ -11964,10 +12524,10 @@ mod tests {
                 Instruction::Return { src: Register(0) },
             ],
         );
-        assert!(matches!(
-            Vm::new().execute(&forward, 0).unwrap(),
-            Value::Int(42)
-        ));
+        assert_eq!(
+            Vm::new().execute(&forward, 0).unwrap().value().as_int(),
+            Some(42)
+        );
     }
 
     #[test]
@@ -11975,7 +12535,7 @@ mod tests {
         let untaken = BytecodeFunction::new(
             "untaken",
             1,
-            vec![Value::bool(true)],
+            vec![Constant::Atom(Atom::builtin(BuiltinAtom::True))],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -11993,7 +12553,10 @@ mod tests {
         let one_back_edge = BytecodeFunction::new(
             "one-back-edge",
             1,
-            vec![Value::bool(false), Value::bool(true)],
+            vec![
+                Constant::Atom(Atom::builtin(BuiltinAtom::False)),
+                Constant::Atom(Atom::builtin(BuiltinAtom::True)),
+            ],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12021,7 +12584,7 @@ mod tests {
         let callee = Arc::new(BytecodeFunction::new(
             "callee",
             1,
-            vec![Value::Int(42)],
+            vec![Constant::Int(42)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12033,11 +12596,12 @@ mod tests {
         let bytecode = BytecodeFunction::new(
             "bytecode-call",
             2,
-            vec![Value::Func(Arc::new(Closure::new(callee, Vec::new())))],
+            vec![],
             vec![
-                Instruction::LoadConst {
+                Instruction::MakeClosure {
                     dst: Register(0),
-                    constant: 0,
+                    function: callee,
+                    captures: vec![],
                 },
                 Instruction::Call {
                     base: Register(0),
@@ -12055,14 +12619,12 @@ mod tests {
         let nested = BytecodeFunction::new(
             "nested-call",
             2,
-            vec![Value::Func(Arc::new(Closure::new(
-                Arc::new(bytecode),
-                Vec::new(),
-            )))],
+            vec![],
             vec![
-                Instruction::LoadConst {
+                Instruction::MakeClosure {
                     dst: Register(0),
-                    constant: 0,
+                    function: Arc::new(bytecode),
+                    captures: vec![],
                 },
                 Instruction::Call {
                     base: Register(0),
@@ -12077,17 +12639,11 @@ mod tests {
         );
         assert!(Vm::new().execute(&nested, 2).is_ok());
 
-        let native = NativeFunction::new("add_upvalue", 1, native_add_upvalue);
+        let native = NativeFunction::new("identity", 1, native_identity);
         let native = BytecodeFunction::new(
             "native-call",
             3,
-            vec![
-                Value::Func(Arc::new(Closure::native_with_upvalues(
-                    native,
-                    vec![Value::Int(40)],
-                ))),
-                Value::Int(2),
-            ],
+            vec![Constant::Native(native), Constant::Int(2)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12111,18 +12667,6 @@ mod tests {
         assert!(Vm::new().execute(&native, 1).is_ok());
     }
 
-    fn native_add_upvalue(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-        let argument = context
-            .value(context.argument(0)?)?
-            .as_int()
-            .ok_or_else(|| NativeError::new("expected Int argument"))?;
-        let upvalue = context
-            .value(context.upvalue(0)?)?
-            .as_int()
-            .ok_or_else(|| NativeError::new("expected Int upvalue"))?;
-        context.set_int(context.result(), argument + upvalue)
-    }
-
     fn native_identity(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
         let value = context
             .value(context.argument(0)?)?
@@ -12141,7 +12685,7 @@ mod tests {
         let function = BytecodeFunction::new(
             "native-float-call",
             1,
-            vec![Value::Func(Arc::new(Closure::native(native)))],
+            vec![Constant::Native(native)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12165,10 +12709,7 @@ mod tests {
         let native_tail = BytecodeFunction::new(
             "native-tail",
             2,
-            vec![
-                Value::Func(Arc::new(Closure::native(native))),
-                Value::Int(42),
-            ],
+            vec![Constant::Native(native), Constant::Int(42)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12188,15 +12729,15 @@ mod tests {
             Vm::new().execute(&native_tail, 0).unwrap_err().kind,
             RuntimeErrorKind::FuelExhausted
         );
-        assert!(matches!(
-            Vm::new().execute(&native_tail, 1).unwrap(),
-            Value::Int(42)
-        ));
+        assert_eq!(
+            Vm::new().execute(&native_tail, 1).unwrap().value().as_int(),
+            Some(42)
+        );
 
         let large = Arc::new(BytecodeFunction::new(
             "large-frame",
             100,
-            vec![Value::Int(7)],
+            vec![Constant::Int(7)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12208,11 +12749,12 @@ mod tests {
         let replace = BytecodeFunction::new(
             "small-frame",
             1,
-            vec![Value::Func(Arc::new(Closure::new(large, Vec::new())))],
+            vec![],
             vec![
-                Instruction::LoadConst {
+                Instruction::MakeClosure {
                     dst: Register(0),
-                    constant: 0,
+                    function: large,
+                    captures: vec![],
                 },
                 Instruction::TailCall {
                     base: Register(0),
@@ -12220,12 +12762,14 @@ mod tests {
                 },
             ],
         );
-        assert!(matches!(
+        assert_eq!(
             Vm::new()
                 .execute_with_quota(&replace, Quota::new(1, 100, u64::MAX))
-                .unwrap(),
-            Value::Int(7)
-        ));
+                .unwrap()
+                .value()
+                .as_int(),
+            Some(7)
+        );
         assert_eq!(
             Vm::new()
                 .execute_with_quota(&replace, Quota::new(1, 99, u64::MAX))
@@ -12236,13 +12780,12 @@ mod tests {
     }
 
     #[test]
-    fn native_closures_use_register_context_and_upvalues() {
-        let native = NativeFunction::new("add_upvalue", 1, native_add_upvalue);
-        let closure = Closure::native_with_upvalues(native, vec![Value::Int(40)]);
+    fn native_closures_use_register_context() {
+        let native = NativeFunction::new("identity", 1, native_identity);
         let function = BytecodeFunction::new(
             "test",
             3,
-            vec![Value::Func(Arc::new(closure)), Value::Int(2)],
+            vec![Constant::Native(native), Constant::Int(2)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12259,10 +12802,10 @@ mod tests {
                 Instruction::Return { src: Register(0) },
             ],
         );
-        assert!(matches!(
-            Vm::new().execute(&function, 20).unwrap(),
-            Value::Int(42)
-        ));
+        assert_eq!(
+            Vm::new().execute(&function, 20).unwrap().value().as_int(),
+            Some(2)
+        );
     }
 
     #[test]
@@ -12270,7 +12813,7 @@ mod tests {
         let mut function = Arc::new(BytecodeFunction::new(
             "leaf",
             1,
-            vec![Value::Int(7)],
+            vec![Constant::Int(7)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12280,15 +12823,15 @@ mod tests {
             ],
         ));
         for depth in 0..512 {
-            let closure = Value::Func(Arc::new(Closure::new(function, Vec::new())));
             function = Arc::new(BytecodeFunction::new(
                 format!("frame{depth}"),
                 2,
-                vec![closure],
+                vec![],
                 vec![
-                    Instruction::LoadConst {
+                    Instruction::MakeClosure {
                         dst: Register(0),
-                        constant: 0,
+                        function,
+                        captures: vec![],
                     },
                     Instruction::Call {
                         base: Register(0),
@@ -12298,10 +12841,14 @@ mod tests {
                 ],
             ));
         }
-        assert!(matches!(
-            Vm::new().execute(&function, 2_000).unwrap(),
-            Value::Int(7)
-        ));
+        assert_eq!(
+            Vm::new()
+                .execute(&function, 2_000)
+                .unwrap()
+                .value()
+                .as_int(),
+            Some(7)
+        );
     }
 
     #[test]
@@ -12309,7 +12856,7 @@ mod tests {
         let mut function = Arc::new(BytecodeFunction::new(
             "leaf",
             1,
-            vec![Value::Int(7)],
+            vec![Constant::Int(7)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12319,15 +12866,15 @@ mod tests {
             ],
         ));
         for _ in 0..MAX_CALL_DEPTH {
-            let closure = Value::Func(Arc::new(Closure::new(function, Vec::new())));
             function = Arc::new(BytecodeFunction::new(
                 "recursive-shape",
                 2,
-                vec![closure],
+                vec![],
                 vec![
-                    Instruction::LoadConst {
+                    Instruction::MakeClosure {
                         dst: Register(0),
-                        constant: 0,
+                        function,
+                        captures: vec![],
                     },
                     Instruction::Call {
                         base: Register(0),
@@ -12355,7 +12902,7 @@ mod tests {
         let leaf = Arc::new(BytecodeFunction::new(
             "same",
             3,
-            vec![Value::Int(1), Value::Int(0)],
+            vec![Constant::Int(1), Constant::Int(0)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -12375,15 +12922,15 @@ mod tests {
         ));
         let mut function = leaf;
         for _ in 0..2 {
-            let closure = Value::Func(Arc::new(Closure::new(function, Vec::new())));
             function = Arc::new(BytecodeFunction::new(
                 "same",
                 2,
-                vec![closure],
+                vec![],
                 vec![
-                    Instruction::LoadConst {
+                    Instruction::MakeClosure {
                         dst: Register(0),
-                        constant: 0,
+                        function,
+                        captures: vec![],
                     },
                     Instruction::Call {
                         base: Register(0),
@@ -12400,7 +12947,9 @@ mod tests {
 
     #[test]
     fn dict_allocation_charge_does_not_depend_on_shape_cache_hits() {
-        let function = crate::compile_source("test", "{answer: 42}").unwrap();
+        let function = crate::compile_source("test", "{answer: 42}")
+            .unwrap()
+            .into_function();
         let mut vm = Vm::new();
         let mut account = QuotaAccount::new(Quota::new(0, 100, u64::MAX));
         vm.execute_with_account(&function, &[], &mut account)

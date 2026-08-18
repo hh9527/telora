@@ -1,15 +1,17 @@
 use crate::ast::{BindingKind, Expr, ExprKind, Program, StringPartKind, TypeArgumentKind};
 use crate::compiler::{
-    compile_metadata_initializer, compile_program_analyzed_in, compile_program_with_promoted_types,
-    function_contract_arity, type_link_key,
+    compile_program_analyzed_in_module, compile_program_with_promoted_types_and_static_funcs,
+    function_contract_arity, metadata_compilation_plan, type_family_link_key,
+    type_family_template_link_key,
 };
 use crate::core::{
     EDGE_RUNTIME_MODULE, PRELUDE_MODULE, edge_runtime_source, module_specs, run_entry_source,
 };
-use crate::heap::{Heap, PersistentValue, publish_root, publish_value};
+use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val};
 use crate::json::{Provenance, SourcedValue, parse_json_registered};
 use crate::module_id::{
-    ModuleAuthority, ModuleFormat, ModuleId, ModuleResolver, ResolvedModule, immediate_value,
+    ModuleAuthority, ModuleCName, ModuleFormat, ModuleId, ModuleResolver, ResolvedModule,
+    immediate_value,
 };
 use crate::parser::parse_registered;
 use crate::semantic::{
@@ -18,16 +20,19 @@ use crate::semantic::{
 };
 use crate::source::{Diagnostic, SourceDatabase};
 use crate::toml::parse_toml_registered;
+use crate::type_store::TypeStore;
 use crate::types::{
     Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor, TypeFamilyTemplate,
     analyze_partial_types_recovered_with_query, analyze_program_with_bindings_observed,
     program_references_name, recovered_reference_locations,
 };
+#[cfg(test)]
+use crate::vm::ValueRef;
 use crate::vm::WorkWorld;
 use crate::yaml::parse_yaml_registered;
 use crate::{
-    Atom, BuiltinAtom, BytecodeFunction, Closure, DebugSink, DiscardDebugSink, Prototype, Quota,
-    QuotaAccount, Value, Vm,
+    BuiltinAtom, BytecodeFunction, DebugSink, DiscardDebugSink, Instruction, Quota, QuotaAccount,
+    Register, Vm,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -42,52 +47,45 @@ struct StaticDataParse {
 }
 
 #[derive(Clone)]
+struct ModuleArtifact {
+    root: PersistentValue,
+    interface: ModuleInterface,
+    provenance: Option<Provenance>,
+}
+
+#[derive(Clone)]
 struct OpenImportCandidate {
-    provider: ModuleId,
-    value: Value,
+    provider: ModuleCName,
     root: PersistentValue,
     scheme: crate::types::TypeScheme,
     provenance: Option<Provenance>,
-    opaque: bool,
     concrete_types: BTreeMap<String, TypeDescriptor>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
 #[derive(Clone)]
 struct RecoveryOpenImportCandidate {
-    provider: ModuleId,
-    value: Value,
+    provider: ModuleCName,
     scheme: crate::types::TypeScheme,
-    sourced: Option<SourcedValue>,
+    provenance: Option<Provenance>,
     root: PersistentValue,
     concrete_types: BTreeMap<String, TypeDescriptor>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
 fn recovery_open_import_exports(
-    provider: &ModuleId,
-    value: &Value,
+    provider: &ModuleCName,
     interface: &ModuleInterface,
-    sourced: Option<&SourcedValue>,
+    provenance: Option<&Provenance>,
     root: PersistentValue,
     heap: &Heap,
 ) -> Result<Vec<(String, RecoveryOpenImportCandidate)>, ModuleError> {
-    let Value::Dict(exports) = value else {
-        return Err(ModuleError::new(format!(
-            "cannot open non-module value {provider}"
-        )));
-    };
     interface
         .exports
         .iter()
         .map(|(name, scheme)| {
-            let value = exports.get(name).cloned().ok_or_else(|| {
-                ModuleError::new(format!(
-                    "module {provider} has no value for export {name:?}"
-                ))
-            })?;
             let field_root = root
-                .dict_get(heap, name)
+                .export_get(heap, name)
                 .map_err(|error| ModuleError::new(error.to_string()))?
                 .ok_or_else(|| {
                     ModuleError::new(format!("module {provider} has no root for export {name:?}"))
@@ -96,9 +94,8 @@ fn recovery_open_import_exports(
                 name.clone(),
                 RecoveryOpenImportCandidate {
                     provider: provider.clone(),
-                    value,
                     scheme: scheme.clone(),
-                    sourced: sourced.cloned(),
+                    provenance: provenance.cloned(),
                     root: field_root,
                     concrete_types: interface.concrete_types.clone(),
                     type_family_template: interface.type_family_templates.get(name).cloned(),
@@ -109,30 +106,18 @@ fn recovery_open_import_exports(
 }
 
 fn open_import_exports(
-    provider: &ModuleId,
-    value: &Value,
+    provider: &ModuleCName,
     root: PersistentValue,
     interface: &ModuleInterface,
     heap: &Heap,
     provenance: Option<&Provenance>,
-    opaque: bool,
 ) -> Result<Vec<(String, OpenImportCandidate)>, ModuleError> {
-    let Value::Dict(exports) = value else {
-        return Err(ModuleError::new(format!(
-            "cannot open non-module value {provider}"
-        )));
-    };
     interface
         .exports
         .iter()
         .map(|(name, scheme)| {
-            let value = exports.get(name).cloned().ok_or_else(|| {
-                ModuleError::new(format!(
-                    "module {provider} has no value for export {name:?}"
-                ))
-            })?;
             let root = root
-                .dict_get(heap, name)
+                .export_get(heap, name)
                 .map_err(|error| ModuleError::new(error.to_string()))?
                 .ok_or_else(|| {
                     ModuleError::new(format!("module {provider} has no root for export {name:?}"))
@@ -141,11 +126,9 @@ fn open_import_exports(
                 name.clone(),
                 OpenImportCandidate {
                     provider: provider.clone(),
-                    value,
                     root,
                     scheme: scheme.clone(),
                     provenance: provenance.cloned(),
-                    opaque,
                     concrete_types: interface.concrete_types.clone(),
                     type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
@@ -231,7 +214,7 @@ pub struct LoadedModule {
 #[derive(Clone, Debug)]
 pub struct LoadedOptionAction {
     pub key: String,
-    pub value: Value,
+    pub value: crate::DataWorld,
 }
 
 #[derive(Clone)]
@@ -249,22 +232,27 @@ struct PendingModuleInner {
 }
 
 enum PendingModuleState {
-    Pending { bindings: BTreeMap<String, Value> },
+    Pending {
+        bindings: BTreeMap<String, crate::DataWorld>,
+    },
     Initializing,
     Ready(InstantiatedModule),
     Failed(ModuleError),
 }
 
-#[derive(Clone, Debug)]
-struct InjectedValueModule {
-    value: Value,
-    interface: ModuleInterface,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InstantiatedModule {
     module: Arc<LoadedModule>,
-    exports: Value,
+    execution: Arc<WorkWorld>,
+}
+
+impl fmt::Debug for InstantiatedModule {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InstantiatedModule")
+            .field("module", &self.module.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PendingModule {
@@ -272,27 +260,8 @@ impl PendingModule {
         &self.inner.path
     }
 
-    fn bind_external(&self, name: String, value: Value) -> Result<(), ModuleError> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("pending module state poisoned");
-        let PendingModuleState::Pending { bindings, .. } = &mut *state else {
-            return Err(ModuleError::new(
-                "cannot bind an external after initialization has started",
-            ));
-        };
-        if bindings.insert(name.clone(), value).is_some() {
-            return Err(ModuleError::new(format!(
-                "external binding {name:?} is already installed"
-            )));
-        }
-        Ok(())
-    }
-
-    pub fn initialize(&self) -> Result<InstantiatedModule, ModuleError> {
-        let bindings = {
+    fn begin_initialization(&self) -> Result<BTreeMap<String, crate::DataWorld>, ModuleError> {
+        {
             let mut state = self
                 .inner
                 .state
@@ -302,17 +271,45 @@ impl PendingModule {
                 PendingModuleState::Pending { bindings } => {
                     let bindings = std::mem::take(bindings);
                     *state = PendingModuleState::Initializing;
-                    bindings
+                    Ok(bindings)
                 }
                 PendingModuleState::Initializing => {
                     return Err(ModuleError::new(
                         "module initialization is already in progress",
                     ));
                 }
-                PendingModuleState::Ready(module) => return Ok(module.clone()),
+                PendingModuleState::Ready(_) => {
+                    return Err(ModuleError::new("module is already initialized"));
+                }
                 PendingModuleState::Failed(error) => return Err(error.clone()),
             }
+        }
+    }
+
+    fn finish_initialization(&self, result: &Result<InstantiatedModule, ModuleError>) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("pending module state poisoned");
+        *state = match result {
+            Ok(module) => PendingModuleState::Ready(module.clone()),
+            Err(error) => PendingModuleState::Failed(error.clone()),
         };
+    }
+
+    pub fn initialize(&self) -> Result<InstantiatedModule, ModuleError> {
+        {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .expect("pending module state poisoned");
+            if let PendingModuleState::Ready(module) = &*state {
+                return Ok(module.clone());
+            }
+        }
+        let bindings = self.begin_initialization()?;
         let resolver = self
             .inner
             .resolver
@@ -321,33 +318,23 @@ impl PendingModule {
         let result = load_module_with_resolver(
             resolver,
             bindings,
-            BTreeMap::new(),
             self.inner.config.module_quota,
             Arc::clone(&self.inner.debug_sink),
             &self.inner.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         )
         .and_then(|module| {
-            let exports = module
-                .execute_with_quota_and_debug_sink(
-                    self.inner.config.session_quota,
-                    Arc::clone(&self.inner.debug_sink),
-                )
-                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let (execution, _) = module.execute_world_observed(
+                self.inner.config.session_quota,
+                Arc::clone(&self.inner.debug_sink),
+            );
+            let execution = execution.map_err(|error| ModuleError::new(error.to_string()))?;
             Ok(InstantiatedModule {
                 module: Arc::new(module),
-                exports,
+                execution: Arc::new(execution),
             })
         });
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("pending module state poisoned");
-        *state = match &result {
-            Ok(module) => PendingModuleState::Ready(module.clone()),
-            Err(error) => PendingModuleState::Failed(error.clone()),
-        };
+        self.finish_initialization(&result);
         result
     }
 }
@@ -356,45 +343,509 @@ impl InstantiatedModule {
     pub fn module(&self) -> &LoadedModule {
         &self.module
     }
-
-    pub fn export(&self, name: &str) -> Option<(&Value, &crate::TypeScheme)> {
-        let Value::Dict(exports) = &self.exports else {
-            return None;
-        };
-        exports
-            .get(name)
-            .zip(self.module.analysis.module_interface.exports.get(name))
-    }
 }
 
 struct CompiledTeloraModule {
     analysis: Analysis,
     function: BytecodeFunction,
-    externals: HashMap<String, PersistentValue>,
+    externals: HashMap<String, Val>,
     options: Vec<LoadedOptionAction>,
 }
 
+fn loaded_from_compiled(
+    path: PathBuf,
+    dependencies: Vec<PathBuf>,
+    sources: SourceDatabase,
+    workspace: WorkspaceSnapshot,
+    main: Arc<FrozenMainWorld>,
+    compiled: CompiledTeloraModule,
+) -> LoadedModule {
+    LoadedModule {
+        path,
+        dependencies,
+        analysis: compiled.analysis,
+        function: compiled.function,
+        sources,
+        workspace,
+        options: compiled.options,
+        runtime: Arc::new(ModuleRuntime {
+            main,
+            externals: compiled.externals,
+        }),
+    }
+}
+
 struct ModuleRuntime {
-    main: FrozenMainWorld,
-    externals: HashMap<String, PersistentValue>,
+    main: Arc<FrozenMainWorld>,
+    externals: HashMap<String, Val>,
+}
+
+fn runtime_roots(roots: &HashMap<String, PersistentValue>) -> HashMap<String, Val> {
+    roots
+        .iter()
+        .map(|(name, root)| (name.clone(), root.runtime()))
+        .collect()
+}
+
+fn install_type_family_roots(roots: &mut HashMap<String, PersistentValue>, analysis: &Analysis) {
+    roots.extend(
+        analysis
+            .runtime_roots
+            .iter()
+            .map(|(name, root)| (name.clone(), *root)),
+    );
+    roots.extend(
+        analysis
+            .type_family_values
+            .iter()
+            .flat_map(|(name, family)| {
+                [
+                    (type_family_link_key(name), family.root()),
+                    (type_family_template_link_key(name), family.template()),
+                ]
+            }),
+    );
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticSlotKind {
+    Func,
+    TypeConstructor,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StaticSlot {
+    local: u32,
+    name: String,
+    kind: StaticSlotKind,
+    type_arity: Option<u32>,
+    declarations: u32,
+    definitions: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImportEdge {
+    local: Option<String>,
+    target: ModuleId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExportPlan {
+    public: String,
+    local: String,
+}
+
+#[derive(Clone, Debug)]
+struct ModuleSkeleton {
+    id: ModuleId,
+    cname: ModuleCName,
+    imports: Vec<ImportEdge>,
+    exports: Vec<ExportPlan>,
+    slots: Vec<StaticSlot>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ModuleBlueprint {
+    imports: Vec<(Option<String>, ModuleCName)>,
+    exports: Vec<ExportPlan>,
+    slots: Vec<StaticSlot>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ModuleGraph {
+    modules: Vec<ModuleSkeleton>,
+    by_cname: HashMap<ModuleCName, ModuleId>,
+}
+
+impl ModuleGraph {
+    fn id(&self, cname: &ModuleCName) -> Option<ModuleId> {
+        self.by_cname.get(cname).copied()
+    }
+
+    fn module(&self, id: ModuleId) -> &ModuleSkeleton {
+        &self.modules[id.index()]
+    }
+
+    fn static_funcs(&self, id: ModuleId) -> HashMap<String, crate::FuncId> {
+        if id.raw() < ModuleId::FIRST_DYNAMIC {
+            return HashMap::new();
+        }
+        self.module(id)
+            .slots
+            .iter()
+            .filter(|slot| slot.kind == StaticSlotKind::Func)
+            .map(|slot| {
+                (
+                    slot.name.clone(),
+                    crate::FuncId {
+                        module: id,
+                        local: slot.local,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn discover(
+        resolver: &ModuleResolver,
+        roots: Vec<ResolvedModule>,
+        synthetic: &BTreeMap<ModuleCName, (PathBuf, String)>,
+        opaque: impl IntoIterator<Item = ModuleCName>,
+        overlays: Option<&BTreeMap<PathBuf, crate::document::DocumentText>>,
+        recover: bool,
+    ) -> Result<Self, ModuleError> {
+        let mut resolved = roots
+            .into_iter()
+            .map(|module| (module.id.clone(), module))
+            .collect::<HashMap<_, _>>();
+        let mut pending = resolved.keys().cloned().collect::<Vec<_>>();
+        pending.extend(synthetic.keys().cloned());
+        pending.extend(opaque);
+        let mut blueprints = HashMap::new();
+        let mut scan_sources = SourceDatabase::default();
+
+        while let Some(cname) = pending.pop() {
+            if blueprints.contains_key(&cname) {
+                continue;
+            }
+            let source = if let Some((context, source)) = synthetic.get(&cname) {
+                Some((context.clone(), source.clone()))
+            } else if let Some(module) = resolved.get(&cname) {
+                match (module.format, module.path()) {
+                    (ModuleFormat::Telora, Some(path)) => Some((
+                        path.to_owned(),
+                        overlays
+                            .and_then(|overlays| overlays.get(path))
+                            .map(ToString::to_string)
+                            .map(Ok)
+                            .unwrap_or_else(|| read(path))?,
+                    )),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let Some((context_path, source)) = source else {
+                blueprints.insert(cname, ModuleBlueprint::default());
+                continue;
+            };
+            let source_id = scan_sources.add(cname.to_string(), source);
+            let parsed = parse_registered(&scan_sources, source_id);
+            if let Some(option) = parsed
+                .options
+                .iter()
+                .find(|option| option.key.value.starts_with("crate.") && !resolver.is_standalone())
+            {
+                return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
+                    format!(
+                        "resolver option {:?} is only allowed in standalone mode",
+                        option.key.value
+                    ),
+                    option.location,
+                ))));
+            }
+            if let Some(option) = parsed.options.iter().find(|_| !resolver.is_root(&cname)) {
+                return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
+                    format!(
+                        "option {:?} is only allowed in the selected root",
+                        option.key.value
+                    ),
+                    option.location,
+                ))));
+            }
+            let mut blueprint = match parsed.program.as_ref() {
+                Some(program) => {
+                    reject_nested_imports(program, &cname.to_string())?;
+                    ModuleBlueprint::from_program(program).map_err(|message| {
+                        ModuleError::new(format!(
+                            "module {cname} has an invalid skeleton: {message}"
+                        ))
+                    })?
+                }
+                None if recover => ModuleBlueprint::default(),
+                None => {
+                    return Err(ModuleError::new(
+                        parsed
+                            .diagnostics
+                            .iter()
+                            .map(|diagnostic| scan_sources.render(diagnostic))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ));
+                }
+            };
+            let bindings = parsed
+                .program
+                .as_ref()
+                .map_or(parsed.recovered.bindings.as_slice(), |program| {
+                    program.value.body.value.bindings.as_slice()
+                });
+            for binding in bindings {
+                if !matches!(
+                    binding.value.kind,
+                    BindingKind::Import | BindingKind::OpenImport
+                ) {
+                    continue;
+                }
+                let ExprKind::String(target) = &binding.value.value.value else {
+                    return Err(ModuleError::new("import path must be a string"));
+                };
+                let imported = match resolver.resolve_import(&cname, target) {
+                    Ok(imported) => imported,
+                    Err(_) if recover => continue,
+                    Err(error) => {
+                        return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
+                            error.to_string(),
+                            binding.value.value.location,
+                        ))));
+                    }
+                };
+                let imported_cname = imported.id.clone();
+                blueprint.imports.push((
+                    (binding.value.kind == BindingKind::Import)
+                        .then(|| binding.value.name.value.clone()),
+                    imported_cname.clone(),
+                ));
+                resolved.entry(imported_cname.clone()).or_insert(imported);
+                pending.push(imported_cname);
+            }
+            if cname.to_string() != PRELUDE_MODULE {
+                let prelude = ModuleCName::builtin(PRELUDE_MODULE);
+                blueprint.imports.push((None, prelude.clone()));
+                pending.push(prelude);
+            }
+            let _ = context_path;
+            blueprints.insert(cname, blueprint);
+        }
+
+        let mut cnames = blueprints.keys().cloned().collect::<Vec<_>>();
+        cnames.sort_by(|left, right| {
+            left.to_string()
+                .as_bytes()
+                .cmp(right.to_string().as_bytes())
+        });
+        let by_cname = cnames
+            .iter()
+            .enumerate()
+            .map(|(index, cname)| (cname.clone(), ModuleId::from_index(index)))
+            .collect::<HashMap<_, _>>();
+        let modules = cnames
+            .into_iter()
+            .map(|cname| {
+                let id = by_cname[&cname];
+                let blueprint = blueprints.remove(&cname).expect("cname was discovered");
+                let imports = blueprint
+                    .imports
+                    .into_iter()
+                    .map(|(local, target)| ImportEdge {
+                        local,
+                        target: by_cname[&target],
+                    })
+                    .collect();
+                ModuleSkeleton {
+                    id,
+                    cname,
+                    imports,
+                    exports: blueprint.exports,
+                    slots: blueprint.slots,
+                }
+            })
+            .collect();
+        Ok(Self { modules, by_cname })
+    }
+}
+
+impl ModuleBlueprint {
+    fn from_program(program: &Program) -> Result<Self, String> {
+        #[derive(Clone, Copy)]
+        enum VisibleBinding {
+            Decl,
+            Def,
+            Other,
+        }
+
+        let mut blueprint = Self::default();
+        let mut next_func = crate::FIRST_DYNAMIC_MODULE_LOCAL;
+        let mut next_type = crate::FIRST_DYNAMIC_MODULE_LOCAL;
+        let mut funcs = HashMap::<String, usize>::new();
+        let mut type_constructors = HashSet::new();
+        let mut visible = HashMap::<String, VisibleBinding>::new();
+        for binding in &program.value.body.value.bindings {
+            let name = binding.value.name.value.clone();
+            match binding.value.kind {
+                BindingKind::Decl => {
+                    if visible.contains_key(&name) {
+                        return Err(format!(
+                            "declaration {name:?} cannot shadow a visible binding"
+                        ));
+                    }
+                    visible.insert(name.clone(), VisibleBinding::Decl);
+                }
+                BindingKind::Def => match visible.get(&name) {
+                    None | Some(VisibleBinding::Decl) => {
+                        visible.insert(name.clone(), VisibleBinding::Def);
+                    }
+                    Some(VisibleBinding::Def | VisibleBinding::Other) => {
+                        return Err(format!(
+                            "definition {name:?} cannot shadow a visible binding"
+                        ));
+                    }
+                },
+                BindingKind::Let => {
+                    visible.insert(name.clone(), VisibleBinding::Other);
+                }
+                BindingKind::Import
+                | BindingKind::Native
+                | BindingKind::NativeType
+                | BindingKind::Type => {
+                    visible.entry(name.clone()).or_insert(VisibleBinding::Other);
+                }
+                BindingKind::OpenImport | BindingKind::Export => {}
+            }
+            match binding.value.kind {
+                BindingKind::Decl | BindingKind::Def
+                    if binding
+                        .value
+                        .annotation
+                        .as_ref()
+                        .and_then(function_contract_arity)
+                        .or_else(|| match &binding.value.value.value {
+                            ExprKind::Closure { parameters, .. } => {
+                                u32::try_from(parameters.len()).ok()
+                            }
+                            _ => None,
+                        })
+                        .is_some() =>
+                {
+                    if let Some(index) = funcs.get(&name).copied() {
+                        let slot = &mut blueprint.slots[index];
+                        slot.declarations += u32::from(binding.value.kind == BindingKind::Decl);
+                        slot.definitions += u32::from(binding.value.kind == BindingKind::Def);
+                    } else {
+                        funcs.insert(name.clone(), blueprint.slots.len());
+                        blueprint.slots.push(StaticSlot {
+                            local: next_func,
+                            name,
+                            kind: StaticSlotKind::Func,
+                            type_arity: None,
+                            declarations: u32::from(binding.value.kind == BindingKind::Decl),
+                            definitions: u32::from(binding.value.kind == BindingKind::Def),
+                        });
+                        next_func += 1;
+                    }
+                }
+                BindingKind::Type
+                    if binding.value.declared_initializer.is_some()
+                        && type_constructors.insert(binding.value.name.value.clone()) =>
+                {
+                    blueprint.slots.push(StaticSlot {
+                        local: next_type,
+                        name: binding.value.name.value.clone(),
+                        kind: StaticSlotKind::TypeConstructor,
+                        type_arity: Some(
+                            u32::try_from(binding.value.type_parameters.len())
+                                .map_err(|_| "type constructor arity exceeds u32".to_owned())?,
+                        ),
+                        declarations: 1,
+                        definitions: 1,
+                    });
+                    next_type += 1;
+                }
+                BindingKind::Export => blueprint.exports.push(ExportPlan {
+                    public: binding.value.name.value.clone(),
+                    local: binding
+                        .value
+                        .imported_name
+                        .as_ref()
+                        .expect("parser exports retain their local name")
+                        .value
+                        .clone(),
+                }),
+                _ => {}
+            }
+        }
+        for slot in &blueprint.slots {
+            if slot.kind != StaticSlotKind::Func {
+                continue;
+            }
+            if slot.declarations > 1 {
+                return Err(format!(
+                    "function {:?} is declared more than once",
+                    slot.name
+                ));
+            }
+            match slot.definitions {
+                0 => return Err(format!("function {:?} has no definition", slot.name)),
+                1 => {}
+                _ => {
+                    return Err(format!(
+                        "function {:?} is defined more than once",
+                        slot.name
+                    ));
+                }
+            }
+        }
+        Ok(blueprint)
+    }
 }
 
 struct MainWorld {
     heap: Heap,
+    modules: ModuleGraph,
+    types: TypeStore,
 }
 
 impl MainWorld {
     fn building() -> Self {
-        Self { heap: Heap::main() }
+        Self::with_modules(ModuleGraph::default())
+    }
+
+    fn with_modules(modules: ModuleGraph) -> Self {
+        let mut heap = Heap::main();
+        for module in &modules.modules {
+            for slot in module
+                .slots
+                .iter()
+                .filter(|slot| slot.kind == StaticSlotKind::Func)
+            {
+                heap.preallocate_func(crate::FuncId {
+                    module: module.id,
+                    local: slot.local,
+                })
+                .expect("module graph contains unique function slots");
+            }
+        }
+        let mut types = TypeStore::default();
+        for module in &modules.modules {
+            for slot in module.slots.iter().filter(|slot| {
+                slot.kind == StaticSlotKind::TypeConstructor && slot.type_arity == Some(0)
+            }) {
+                let constructor = crate::TypeConstructorId {
+                    module: module.id,
+                    local: slot.local,
+                };
+                assert!(matches!(
+                    types.begin(constructor, []),
+                    crate::type_store::InternType::Reserved(_)
+                ));
+            }
+        }
+        Self {
+            heap,
+            modules,
+            types,
+        }
     }
 
     fn seal(self) -> FrozenMainWorld {
-        FrozenMainWorld { heap: self.heap }
+        FrozenMainWorld {
+            heap: Arc::new(self.heap),
+        }
     }
 }
 
 struct FrozenMainWorld {
-    heap: Heap,
+    heap: Arc<Heap>,
 }
 
 fn declared_native_types(
@@ -462,7 +913,7 @@ fn install_native_modules(
     sources: &mut SourceDatabase,
     debug_sink: &Arc<dyn DebugSink>,
     host_modules: &[RegisteredNativeModule],
-) -> Result<HashMap<String, (Value, PersistentValue, ModuleInterface)>, ModuleError> {
+) -> Result<HashMap<String, ModuleArtifact>, ModuleError> {
     install_native_modules_observed(main, sources, debug_sink, host_modules, None)
 }
 
@@ -472,8 +923,8 @@ fn install_native_modules_observed(
     debug_sink: &Arc<dyn DebugSink>,
     host_modules: &[RegisteredNativeModule],
     mut semantic_inputs: Option<&mut BTreeMap<String, SemanticModuleInput>>,
-) -> Result<HashMap<String, (Value, PersistentValue, ModuleInterface)>, ModuleError> {
-    let mut modules: HashMap<String, (Value, PersistentValue, ModuleInterface)> = HashMap::new();
+) -> Result<HashMap<String, ModuleArtifact>, ModuleError> {
+    let mut modules: HashMap<String, ModuleArtifact> = HashMap::new();
     let mut specs = module_specs()
         .into_iter()
         .map(|spec| TrustedNativeModule {
@@ -518,7 +969,7 @@ fn install_native_modules_observed(
             )));
         }
     }
-    let mut default_prelude = None;
+    let mut default_prelude: Option<BTreeMap<String, PersistentValue>> = None;
     for spec in specs {
         let source_name = format!("<{}.native.telora", spec.name);
         let source_id = sources.add(source_name.clone(), &spec.source);
@@ -534,7 +985,6 @@ fn install_native_modules_observed(
             )
         })?;
         let implementations = spec.functions.into_iter().collect::<HashMap<_, _>>();
-        let mut external_values = BTreeMap::new();
         let mut external_roots = HashMap::new();
         let mut external_interfaces = BTreeMap::new();
         for binding in &program.value.body.value.bindings {
@@ -544,48 +994,33 @@ fn install_native_modules_observed(
             let ExprKind::String(request) = &binding.value.value.value else {
                 return Err(ModuleError::new("built-in import path must be a String"));
             };
-            let (module_value, module_root, module_interface) =
-                modules.get(request.as_str()).ok_or_else(|| {
-                    ModuleError::new(sources.render(&Diagnostic::error(
-                        format!(
-                            "built-in module {} imports unavailable earlier built-in {request:?}",
-                            spec.name
-                        ),
-                        binding.value.value.location,
-                    )))
-                })?;
-            let (value, root, interface) =
-                if let Some(imported_name) = binding.value.imported_name.as_ref() {
-                    let (value, interface) = select_import_value(
-                        module_value.clone(),
-                        module_interface.clone(),
-                        Some(imported_name),
-                        &binding.value.name.value,
-                    )?;
-                    let root = module_root
-                        .dict_get(&main.heap, &imported_name.value)
-                        .map_err(|error| ModuleError::new(error.to_string()))?
-                        .ok_or_else(|| {
-                            ModuleError::new(format!(
-                                "built-in module {request:?} has no root for export {:?}",
-                                imported_name.value
-                            ))
-                        })?;
-                    (value, root, interface)
-                } else {
-                    (module_value.clone(), *module_root, module_interface.clone())
-                };
-            external_values.insert(binding.value.name.value.clone(), value);
+            let module = modules.get(request.as_str()).ok_or_else(|| {
+                ModuleError::new(sources.render(&Diagnostic::error(
+                    format!(
+                        "built-in module {} imports unavailable earlier built-in {request:?}",
+                        spec.name
+                    ),
+                    binding.value.value.location,
+                )))
+            })?;
+            let (root, interface) = select_import_root(
+                module.root,
+                module.interface.clone(),
+                binding.value.imported_name.as_deref(),
+                &binding.value.name.value,
+                &main.heap,
+            )?;
             external_roots.insert(binding.value.name.value.clone(), root);
             external_interfaces.insert(binding.value.name.value.clone(), interface);
         }
         let native_module = crate::value::NativeModuleId(spec.id);
         let native_types = declared_native_types(&program, native_module, &spec.name, sources)?;
         for (name, native_type) in native_types.values() {
-            let value = Value::NativeType(native_type.clone());
-            let root = publish_value(&mut main.heap, &value)
+            let value = main.heap.native_type_value(native_type.clone());
+            let root = main
+                .heap
+                .persistent(value)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            external_values.insert(name.clone(), value);
             external_roots.insert(name.clone(), root);
         }
         for binding in &program.value.body.value.bindings {
@@ -619,22 +1054,21 @@ fn install_native_modules_observed(
                     ),
                 )));
             }
-            let value = if let Some(local) = implementation.native_type_local() {
+            let upvalues = if let Some(local) = implementation.native_type_local() {
                 let (_, native_type) = native_types.get(&local).ok_or_else(|| {
                     ModuleError::new(format!(
                         "native symbol {symbol:?} references undeclared native type slot @{local}"
                     ))
                 })?;
-                Value::Func(Arc::new(Closure::native_with_upvalues(
-                    implementation,
-                    vec![Value::NativeType(native_type.clone())],
-                )))
+                vec![main.heap.native_type_value(native_type.clone())]
             } else {
-                Value::Func(Arc::new(Closure::native(implementation)))
+                Vec::new()
             };
-            let root = publish_value(&mut main.heap, &value)
+            let value = main.heap.native_closure(implementation, upvalues);
+            let root = main
+                .heap
+                .persistent(value)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            external_values.insert(symbol.to_owned(), value);
             external_roots.insert(symbol.to_owned(), root);
         }
         if let Some(undeclared) = implementations.keys().find(|symbol| {
@@ -648,17 +1082,32 @@ fn install_native_modules_observed(
                 spec.name
             )));
         }
+        if let Some(prelude) = &default_prelude {
+            for (name, root) in prelude {
+                external_roots.entry(name.clone()).or_insert(*root);
+            }
+        }
         let mut account = QuotaAccount::new(Quota::new(100_000, 1_000, u64::MAX));
-        let mut analysis = analyze_program_with_bindings_observed(
+        let module_id = main
+            .modules
+            .id(&ModuleCName::builtin(&spec.name))
+            .unwrap_or(ModuleId::ANONYMOUS);
+        let analysis = analyze_program_with_bindings_observed(
             &source_name,
+            module_id,
             &program,
             &mut account,
-            &external_values,
+            &external_roots
+                .iter()
+                .map(|(name, root)| (name.clone(), *root))
+                .collect(),
             &HashSet::new(),
             sources,
             &BTreeMap::new(),
             &external_interfaces,
             debug_sink,
+            &mut main.heap,
+            &mut main.types,
         )
         .map_err(|error| {
             error.diagnostic.as_ref().map_or_else(
@@ -666,25 +1115,36 @@ fn install_native_modules_observed(
                 |diagnostic| ModuleError::new(sources.render(diagnostic)),
             )
         })?;
-        if let Some(exports) = &default_prelude {
-            project_default_prelude(&mut analysis, exports);
-        }
-        let function = compile_program_analyzed_in(sources.get(source_id), &program, &analysis)
-            .map_err(|error| ModuleError::new(error.to_string()))?;
+        install_type_family_roots(&mut external_roots, &analysis);
+        let static_funcs = main.modules.static_funcs(module_id);
+        let function = compile_program_analyzed_in_module(
+            sources.get(source_id),
+            &program,
+            &analysis,
+            &static_funcs,
+        )
+        .map_err(|error| ModuleError::new(error.to_string()))?;
         let arena = Vm::new()
             .with_debug_sink(Arc::clone(debug_sink))
-            .execute_in_work(&main.heap, &external_roots, &function, &[], &mut account)
+            .execute_in_work(
+                &main.heap,
+                &runtime_roots(&external_roots),
+                &function,
+                &[],
+                &mut account,
+            )
             .map_err(|error| ModuleError::new(error.with_sources(sources).to_string()))?;
-        let value = arena
-            .export(&main.heap)
-            .map_err(|error| ModuleError::new(error.to_string()))?;
         let root = arena
-            .publish(&mut main.heap)
+            .publish_module(&mut main.heap)
             .map_err(|error| ModuleError::new(error.to_string()))?;
         if spec.name == PRELUDE_MODULE {
             crate::types::audit_default_prelude_interface(&analysis.module_interface)
                 .map_err(ModuleError::new)?;
-            default_prelude = Some(default_prelude_exports(&value, &analysis.module_interface)?);
+            default_prelude = Some(default_prelude_exports(
+                root,
+                &analysis.module_interface,
+                &main.heap,
+            )?);
         }
         let interface = analysis.module_interface.clone();
         if let Some(inputs) = semantic_inputs.as_deref_mut() {
@@ -711,7 +1171,7 @@ fn install_native_modules_observed(
                             binding.value.name.value.clone()
                         },
                         location: binding.value.name.location,
-                        target: ModuleId::builtin(target),
+                        target: ModuleCName::builtin(target),
                         namespace: binding.value.kind != BindingKind::OpenImport
                             && binding.value.imported_name.is_none(),
                     })
@@ -733,59 +1193,50 @@ fn install_native_modules_observed(
                 },
             );
         }
-        modules.insert(spec.name, (value, root, interface));
+        modules.insert(
+            spec.name,
+            ModuleArtifact {
+                root,
+                interface,
+                provenance: None,
+            },
+        );
     }
     Ok(modules)
 }
 
 fn default_prelude_exports(
-    value: &Value,
+    root: PersistentValue,
     interface: &ModuleInterface,
-) -> Result<BTreeMap<String, Value>, ModuleError> {
-    let Value::Dict(exports) = value else {
-        return Err(ModuleError::new("core/prelude must export a Dict"));
-    };
-    let values = exports
-        .shape()
-        .fields()
-        .iter()
-        .cloned()
-        .zip(exports.values().iter().cloned())
-        .collect::<BTreeMap<_, _>>();
-    let value_names = values.keys().collect::<BTreeSet<_>>();
-    let interface_names = interface.exports.keys().collect::<BTreeSet<_>>();
-    if value_names != interface_names {
-        return Err(ModuleError::new(
-            "core/prelude value and interface exports differ",
-        ));
-    }
-    Ok(values)
+    heap: &Heap,
+) -> Result<BTreeMap<String, PersistentValue>, ModuleError> {
+    interface
+        .exports
+        .keys()
+        .map(|name| {
+            root.export_get(heap, name)
+                .map_err(|error| ModuleError::new(error.to_string()))?
+                // Prelude bindings are semantic constants. Their use site, not
+                // the prelude implementation, supplies the root provenance.
+                .map(|value| (name.clone(), value.without_location()))
+                .ok_or_else(|| ModuleError::new(format!("core/prelude has no export {name:?}")))
+        })
+        .collect()
 }
 
-fn project_default_prelude(analysis: &mut Analysis, exports: &BTreeMap<String, Value>) {
-    for (name, value) in exports {
-        analysis.prelude.insert(name.clone(), value.clone());
-    }
-}
-
-fn select_import_value(
-    value: Value,
+fn select_import_root(
+    root: PersistentValue,
     interface: ModuleInterface,
     exported: Option<&crate::ast::Identifier>,
     local: &str,
-) -> Result<(Value, ModuleInterface), ModuleError> {
+    heap: &Heap,
+) -> Result<(PersistentValue, ModuleInterface), ModuleError> {
     let Some(exported) = exported else {
-        return Ok((value, interface));
+        return Ok((root, interface));
     };
-    let Value::Dict(module) = value else {
-        return Err(ModuleError::new(format!(
-            "cannot selectively import {:?} from a non-module value",
-            exported.value
-        )));
-    };
-    let selected = module
-        .get(&exported.value)
-        .cloned()
+    let selected = root
+        .export_get(heap, &exported.value)
+        .map_err(|error| ModuleError::new(error.to_string()))?
         .ok_or_else(|| ModuleError::new(format!("module has no export {:?}", exported.value)))?;
     let scheme = interface
         .exports
@@ -812,44 +1263,6 @@ fn select_import_value(
     ))
 }
 
-fn project_module_value(
-    root: PersistentValue,
-    interface: &ModuleInterface,
-    heap: &Heap,
-) -> Result<Value, ModuleError> {
-    let mut vm = Vm::new();
-    let recursive_projection = TypeDescriptor::Any.to_value(&mut vm);
-    let mut fields = Vec::with_capacity(interface.exports.len());
-    for (name, scheme) in &interface.exports {
-        let field_root = root
-            .dict_get(heap, name)
-            .map_err(|error| ModuleError::new(error.to_string()))?
-            .ok_or_else(|| ModuleError::new(format!("module has no root for export {name:?}")))?;
-        let value = match heap
-            .persistent_contains_up_link(field_root)
-            .map_err(|error| ModuleError::new(error.to_string()))?
-        {
-            true => match &scheme.body {
-                TypeDescriptor::TypeOf(_) => recursive_projection.clone(),
-                _ => match heap
-                    .export_persistent_projecting_up_links(field_root, &recursive_projection)
-                {
-                    Ok(value) => value,
-                    Err(error) if error.is_legacy_cycle() => Value::none(),
-                    Err(error) => return Err(ModuleError::new(error.to_string())),
-                },
-            },
-            false => match heap.export_persistent(field_root) {
-                Ok(value) => value,
-                Err(error) => return Err(ModuleError::new(error.to_string())),
-            },
-        };
-        fields.push((name.clone(), value));
-    }
-    vm.make_dict(fields)
-        .map_err(|error| ModuleError::new(error.to_string()))
-}
-
 impl fmt::Debug for ModuleRuntime {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -858,27 +1271,93 @@ impl fmt::Debug for ModuleRuntime {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn invoke_world_member_in(
+    main: &Heap,
+    externals: &HashMap<String, Val>,
+    sources: &SourceDatabase,
+    world: WorkWorld,
+    member: &str,
+    runtime_arguments: &[Val],
+    retain_module: bool,
+    quota: Quota,
+    debug_sink: Arc<dyn DebugSink>,
+) -> Result<WorkWorld, ModuleError> {
+    let argument_count = runtime_arguments.len();
+    let base = argument_count + 1;
+    let mut instructions = vec![Instruction::GetField {
+        dst: Register(base),
+        dict: Register(0),
+        field: member.to_owned(),
+    }];
+    instructions.extend((0..argument_count).map(|index| Instruction::Move {
+        dst: Register(base + 1 + index),
+        src: Register(1 + index),
+    }));
+    instructions.push(Instruction::Call {
+        base: Register(base),
+        argument_count,
+    });
+    let result = if retain_module {
+        instructions.push(Instruction::MakeTuple {
+            dst: Register(base + 1),
+            items: vec![Register(0), Register(base)],
+        });
+        Register(base + 1)
+    } else {
+        Register(base)
+    };
+    instructions.push(Instruction::Return { src: result });
+    let wrapper = BytecodeFunction::with_signature(
+        format!("<invoke module export {member}>"),
+        argument_count + 1,
+        0,
+        (base + argument_count + 2).max(result.0 + 1),
+        Vec::new(),
+        instructions,
+    );
+    let mut account = QuotaAccount::new(quota);
+    Vm::new()
+        .with_debug_sink(debug_sink)
+        .execute_in_existing_world_with_runtime_args(
+            main,
+            externals,
+            &wrapper,
+            world,
+            runtime_arguments,
+            &[],
+            &mut account,
+        )
+        .map_err(|error| ModuleError::new(error.with_sources(sources).to_string()))
+}
+
 impl LoadedModule {
     pub const fn uses_explicit_exports(&self) -> bool {
         self.analysis.explicit_exports
     }
 
-    pub fn options(&self, key: &str) -> impl Iterator<Item = &Value> {
+    pub fn options(&self, key: &str) -> impl Iterator<Item = crate::ValueRef<'_>> {
         self.options
             .iter()
             .filter(move |option| option.key == key)
-            .map(|option| &option.value)
+            .map(|option| option.value.value())
     }
 
     pub fn option_actions(&self) -> &[LoadedOptionAction] {
         &self.options
     }
 
-    pub fn execute(&self, evaluation_fuel: usize) -> Result<Value, crate::RuntimeError> {
+    pub fn execute(
+        &self,
+        evaluation_fuel: usize,
+    ) -> Result<crate::ExecutionWorld, crate::RuntimeError> {
         self.execute_with_quota(Quota::with_fuel(evaluation_fuel))
     }
 
-    pub fn execute_with_quota(&self, quota: Quota) -> Result<Value, crate::RuntimeError> {
+    pub fn execute_with_quota(
+        &self,
+        quota: Quota,
+    ) -> Result<crate::ExecutionWorld, crate::RuntimeError> {
         self.execute_with_quota_and_debug_sink(quota, Arc::new(DiscardDebugSink))
     }
 
@@ -886,7 +1365,7 @@ impl LoadedModule {
         &self,
         quota: Quota,
         debug_sink: Arc<dyn DebugSink>,
-    ) -> Result<Value, crate::RuntimeError> {
+    ) -> Result<crate::ExecutionWorld, crate::RuntimeError> {
         self.execute_observed(quota, debug_sink).0
     }
 
@@ -922,7 +1401,39 @@ impl LoadedModule {
         &self,
         quota: Quota,
         debug_sink: Arc<dyn DebugSink>,
-    ) -> (Result<Value, crate::RuntimeError>, Vec<Diagnostic>) {
+    ) -> (
+        Result<crate::ExecutionWorld, crate::RuntimeError>,
+        Vec<Diagnostic>,
+    ) {
+        let (result, diagnostics) = self.execute_raw_world_observed(quota, debug_sink);
+        let result = result
+            .map(|world| crate::ExecutionWorld::new(Arc::clone(&self.runtime.main.heap), world));
+        (result, diagnostics)
+    }
+
+    fn execute_world_observed(
+        &self,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> (Result<WorkWorld, crate::RuntimeError>, Vec<Diagnostic>) {
+        let (result, diagnostics) = self.execute_raw_world_observed(quota, debug_sink);
+        let result = result.and_then(|world| {
+            if self.analysis.explicit_exports {
+                world
+                    .seal_module()
+                    .map_err(|error| crate::RuntimeError::from_heap_error(&self.function, error))
+            } else {
+                Ok(world)
+            }
+        });
+        (result, diagnostics)
+    }
+
+    fn execute_raw_world_observed(
+        &self,
+        quota: Quota,
+        debug_sink: Arc<dyn DebugSink>,
+    ) -> (Result<WorkWorld, crate::RuntimeError>, Vec<Diagnostic>) {
         let mut account = QuotaAccount::new(quota);
         let result = Vm::new()
             .with_debug_sink(debug_sink)
@@ -933,108 +1444,57 @@ impl LoadedModule {
                 &[],
                 &mut account,
             )
-            .map_err(|error| error.with_sources(&self.sources))
-            .and_then(|arena| {
-                arena
-                    .export(&self.runtime.main.heap)
-                    .map_err(|error| crate::RuntimeError::from_heap_error(&self.function, error))
-            });
+            .map_err(|error| error.with_sources(&self.sources));
         (result, account.take_diagnostics())
-    }
-
-    pub fn invoke_with_quota_and_debug_sink(
-        &self,
-        callee: &Value,
-        arguments: &[Value],
-        quota: Quota,
-        debug_sink: Arc<dyn DebugSink>,
-    ) -> Result<Value, ModuleError> {
-        let Value::Func(closure) = callee else {
-            return Err(ModuleError::new(format!(
-                "module result must be a function, found {}",
-                callee.type_name()
-            )));
-        };
-        let Prototype::Bytecode(function) = closure.prototype() else {
-            return Err(ModuleError::new(
-                "module result must be an Telora function, found a native function",
-            ));
-        };
-        let mut account = QuotaAccount::new(quota);
-        let arena = Vm::new()
-            .with_debug_sink(debug_sink)
-            .execute_function_with_captures_in_work(
-                &self.runtime.main.heap,
-                &self.runtime.externals,
-                function,
-                closure.upvalues(),
-                arguments,
-                &mut account,
-            )
-            .map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))?;
-        arena
-            .export(&self.runtime.main.heap)
-            .map_err(|error| ModuleError::new(error.to_string()))
     }
 
     fn invoke_reducer_in_work(
         &self,
-        reducer: &Value,
+        reducer: Val,
         state: WorkWorld,
-        event: Value,
+        event: Val,
         quota: Quota,
         debug_sink: Arc<dyn DebugSink>,
     ) -> Result<WorkWorld, ModuleError> {
-        let Value::Func(closure) = reducer else {
-            return Err(ModuleError::new("Entry reducer must be a function"));
-        };
-        let Prototype::Bytecode(function) = closure.prototype() else {
-            return Err(ModuleError::new(
-                "Entry reducer must be a Telora bytecode function",
-            ));
-        };
+        let wrapper = BytecodeFunction::with_signature(
+            "<invoke Entry reducer>",
+            3,
+            0,
+            6,
+            Vec::new(),
+            vec![
+                Instruction::Move {
+                    dst: Register(3),
+                    src: Register(1),
+                },
+                Instruction::Move {
+                    dst: Register(4),
+                    src: Register(0),
+                },
+                Instruction::Move {
+                    dst: Register(5),
+                    src: Register(2),
+                },
+                Instruction::Call {
+                    base: Register(3),
+                    argument_count: 2,
+                },
+                Instruction::Return { src: Register(3) },
+            ],
+        );
         let mut account = QuotaAccount::new(quota);
         let result = Vm::new()
             .with_debug_sink(debug_sink)
-            .execute_function_with_captures_and_work_state_in_work(
+            .execute_in_existing_world_with_runtime_args(
                 &self.runtime.main.heap,
                 &self.runtime.externals,
-                function,
-                closure.upvalues(),
+                &wrapper,
                 state,
-                &[event],
+                &[reducer, event],
+                &[],
                 &mut account,
             );
         result.map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))
-    }
-
-    fn invoke_initialize_in_work(
-        &self,
-        initialize: &Value,
-        main: Value,
-        quota: Quota,
-        debug_sink: Arc<dyn DebugSink>,
-    ) -> Result<WorkWorld, ModuleError> {
-        let Value::Func(closure) = initialize else {
-            return Err(ModuleError::new("Entry.initialize must be a function"));
-        };
-        let Prototype::Bytecode(function) = closure.prototype() else {
-            return Err(ModuleError::new(
-                "Entry.initialize must be a Telora bytecode function",
-            ));
-        };
-        let mut account = QuotaAccount::new(quota);
-        Vm::new()
-            .with_debug_sink(debug_sink)
-            .execute_function_with_captures_in_work(
-                &self.runtime.main.heap,
-                &self.runtime.externals,
-                function,
-                closure.upvalues(),
-                &[main],
-                &mut account,
-            )
-            .map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))
     }
 }
 
@@ -1303,12 +1763,11 @@ impl Engine {
     pub fn load_module(
         &self,
         path: impl AsRef<Path>,
-        external_bindings: BTreeMap<String, Value>,
+        external_bindings: BTreeMap<String, crate::DataWorld>,
     ) -> Result<LoadedModule, ModuleError> {
         load_module_with_native_modules(
             path,
             external_bindings,
-            BTreeMap::new(),
             self.config.module_quota,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
@@ -1320,7 +1779,7 @@ impl Engine {
         &self,
         cwd: impl AsRef<Path>,
         module_id: &str,
-        external_bindings: BTreeMap<String, Value>,
+        external_bindings: BTreeMap<String, crate::DataWorld>,
     ) -> Result<LoadedModule, ModuleError> {
         let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
             .map_err(|error| ModuleError::new(error.to_string()))?
@@ -1328,7 +1787,6 @@ impl Engine {
         load_module_with_resolver(
             resolver,
             external_bindings,
-            BTreeMap::new(),
             self.config.module_quota,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
@@ -1339,7 +1797,7 @@ impl Engine {
     pub fn load_standalone(
         &self,
         path: impl AsRef<Path>,
-        external_bindings: BTreeMap<String, Value>,
+        external_bindings: BTreeMap<String, crate::DataWorld>,
     ) -> Result<LoadedModule, ModuleError> {
         let resolver = ModuleResolver::standalone(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?
@@ -1347,7 +1805,6 @@ impl Engine {
         load_module_with_resolver(
             resolver,
             external_bindings,
-            BTreeMap::new(),
             self.config.module_quota,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
@@ -1419,7 +1876,10 @@ impl Engine {
         })
     }
 
-    pub fn execute(&self, module: &LoadedModule) -> Result<Value, crate::RuntimeError> {
+    pub fn execute(
+        &self,
+        module: &LoadedModule,
+    ) -> Result<crate::ExecutionWorld, crate::RuntimeError> {
         module.execute_with_quota_and_debug_sink(
             self.config.session_quota,
             Arc::clone(&self.debug_sink),
@@ -1440,24 +1900,56 @@ impl Engine {
         module.check_observed(self.config.session_quota, Arc::clone(&self.debug_sink))
     }
 
-    pub fn invoke(
+    pub fn invoke_world(
         &self,
         module: &LoadedModule,
-        callee: &Value,
-        arguments: &[Value],
-    ) -> Result<Value, ModuleError> {
-        module.invoke_with_quota_and_debug_sink(
-            callee,
-            arguments,
-            self.config.session_quota,
-            Arc::clone(&self.debug_sink),
-        )
+        callee: crate::ExecutionWorld,
+        arguments: &[crate::DataWorld],
+    ) -> Result<crate::ExecutionWorld, ModuleError> {
+        let (main, world) = callee.into_parts();
+        if !Arc::ptr_eq(&main, &module.runtime.main.heap) {
+            return Err(ModuleError::new("callable belongs to another Main world"));
+        }
+        let argument_count = arguments.len();
+        let mut instructions = vec![Instruction::Call {
+            base: Register(0),
+            argument_count,
+        }];
+        instructions.push(Instruction::Return { src: Register(0) });
+        let wrapper = BytecodeFunction::with_signature(
+            "<invoke world callable>",
+            argument_count + 1,
+            0,
+            argument_count + 1,
+            Vec::new(),
+            instructions,
+        );
+        let mut world = world;
+        let runtime_arguments = arguments
+            .iter()
+            .map(|argument| argument.relocate_into(world.heap_mut(), &main))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        let mut account = QuotaAccount::new(self.config.session_quota);
+        let world = Vm::new()
+            .with_debug_sink(Arc::clone(&self.debug_sink))
+            .execute_in_existing_world_with_runtime_args(
+                &main,
+                &module.runtime.externals,
+                &wrapper,
+                world,
+                &runtime_arguments,
+                &[],
+                &mut account,
+            )
+            .map_err(|error| ModuleError::new(error.with_sources(&module.sources).to_string()))?;
+        Ok(crate::ExecutionWorld::new(main, world))
     }
 
     pub async fn run_pending(
         &self,
         pending: PendingModule,
-        input: Option<Value>,
+        input: Option<crate::DataWorld>,
         entry_path: Option<&Path>,
     ) -> Result<RunOutcome, ModuleError> {
         self.run_pending_with_host(pending, input, entry_path, &mut NoProcessRunHost)
@@ -1467,7 +1959,7 @@ impl Engine {
     pub async fn run_pending_with_host(
         &self,
         pending: PendingModule,
-        input: Option<Value>,
+        input: Option<crate::DataWorld>,
         entry_path: Option<&Path>,
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
@@ -1488,7 +1980,7 @@ impl Engine {
     async fn run_pending_with_host_inner(
         &self,
         pending: PendingModule,
-        input: Option<Value>,
+        input: Option<crate::DataWorld>,
         entry_path: Option<&Path>,
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
@@ -1502,14 +1994,19 @@ impl Engine {
                     ModuleError::new(format!("cannot resolve entry {}: {error}", path.display()))
                 })?;
                 let source = read(&path)?;
-                (ModuleId::builtin("host/user-entry.telora"), source)
+                (ModuleCName::builtin("host/user-entry.telora"), source)
             }
             None => (
-                ModuleId::builtin("host/run-entry.telora"),
+                ModuleCName::builtin("host/run-entry.telora"),
                 run_entry_source().to_owned(),
             ),
         };
-        let entry = load_selected_entry(
+        let SelectedEntryLoader {
+            mut loader,
+            main_module,
+            main_path,
+            entry: entry_compiled,
+        } = prepare_selected_entry(
             resolver,
             entry_id,
             &entry_source,
@@ -1517,38 +2014,83 @@ impl Engine {
             Arc::clone(&self.debug_sink),
             &self.native_modules,
         )?;
-        let exports = self
-            .execute(&entry)
+        let mut account = QuotaAccount::new(self.config.session_quota);
+        let entry_world = Vm::new()
+            .with_debug_sink(Arc::clone(&self.debug_sink))
+            .execute_in_work(
+                &loader.main.heap,
+                &entry_compiled.externals,
+                &entry_compiled.function,
+                &[],
+                &mut account,
+            )
+            .map_err(|error| ModuleError::new(error.with_sources(&loader.sources).to_string()))?
+            .seal_module()
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let Value::Dict(exports) = exports else {
-            return Err(ModuleError::new("Entry must export a module record"));
-        };
         let expected = ["MainType", "State", "initialize", "prepare"];
-        if exports.shape().fields() != expected {
+        if entry_world
+            .module_fields(&loader.main.heap)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            != expected
+        {
             return Err(ModuleError::new(
                 "Entry must export exactly MainType, State, initialize, and prepare",
             ));
         }
-        let main_type = crate::types::decode_type(
-            exports.get("MainType").expect("field shape checked"),
-            "Entry.MainType",
+        let exports = ["MainType", "State"]
+            .into_iter()
+            .map(|name| {
+                entry_world
+                    .module_member_ref(&loader.main.heap, name)
+                    .map_err(|error| ModuleError::new(error.to_string()))?
+                    .ok_or_else(|| ModuleError::new(format!("Entry has no export {name:?}")))
+                    .map(|value| (name, value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let main_type = crate::types::decode_type_ref(exports["MainType"], "Entry.MainType")
+            .map_err(ModuleError::new)?;
+        let state_type = crate::types::decode_type_ref(exports["State"], "Entry.State")
+            .map_err(ModuleError::new)?;
+        validate_entry_interface(
+            &entry_compiled.analysis.module_interface,
+            &main_type,
+            &state_type,
+        )?;
+        if entry_world
+            .member_function_arity(&loader.main.heap, "prepare")
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            != Some(1)
+        {
+            return Err(ModuleError::new("Entry.prepare must be a unary function"));
+        }
+        let mut entry_world = entry_world;
+        let options =
+            make_system_options(entry_world.heap_mut(), &loader.main.heap, input.as_ref())?;
+        let prepared = invoke_world_member_in(
+            &loader.main.heap,
+            &entry_compiled.externals,
+            &loader.sources,
+            entry_world,
+            "prepare",
+            &[options],
+            true,
+            self.config.session_quota,
+            Arc::clone(&self.debug_sink),
         )
-        .map_err(ModuleError::new)?;
-        let state_type = crate::types::decode_type(
-            exports.get("State").expect("field shape checked"),
-            "Entry.State",
-        )
-        .map_err(ModuleError::new)?;
-        validate_entry_interface(&entry, &main_type, &state_type)?;
-        let prepare = exports.get("prepare").expect("field shape checked");
-        require_function_arity(prepare, 1, "Entry.prepare")?;
-        let options = make_system_options(input.as_ref())?;
-        let caps = self
-            .invoke(&entry, prepare, &[options])
-            .map_err(|error| ModuleError::new(format!("Entry.prepare failed: {error}")))?;
-        let wants_input = parse_system_caps(&caps)?;
+        .map_err(|error| ModuleError::new(format!("Entry.prepare failed: {error}")))?;
+        let (entry_world, caps) = prepared
+            .into_retained_module_result(&loader.main.heap)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        let wants_input = parse_system_caps(entry_world.value_ref(&loader.main.heap, caps))?;
+        let mut bindings = pending.begin_initialization()?;
         match (wants_input, input) {
-            (true, Some(input)) => pending.bind_external("input".into(), input)?,
+            (true, Some(input)) => {
+                if bindings.insert("input".into(), input).is_some() {
+                    return Err(ModuleError::new(
+                        "external binding \"input\" is already installed",
+                    ));
+                }
+            }
             (true, None) => {
                 return Err(ModuleError::new(
                     "Entry requested input, but telora run received no --input",
@@ -1557,15 +2099,17 @@ impl Engine {
             (false, _) => {}
         }
 
-        let main = pending.initialize()?;
-        let actual_main_type = concrete_module_descriptor(&main)?;
-        let main_argument = if matches!(main_type, TypeDescriptor::Dyn) {
-            pack_dyn(
-                main.exports.clone(),
-                actual_main_type,
-                main.module.path.display().to_string(),
-            )
-        } else {
+        let (compiled_main_path, main_compiled) = match loader.compile_root(main_module, bindings) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                pending.finish_initialization(&Err(error.clone()));
+                return Err(error);
+            }
+        };
+        debug_assert_eq!(compiled_main_path, main_path);
+        let actual_main_type =
+            concrete_module_descriptor(&main_compiled.analysis.module_interface)?;
+        if !matches!(main_type, TypeDescriptor::Dyn) {
             if !crate::types::assignable(
                 &crate::types::erase_declared_identity(&actual_main_type),
                 &crate::types::erase_declared_identity(&main_type),
@@ -1576,24 +2120,98 @@ impl Engine {
                     main_type.display_name()
                 )));
             }
-            main.exports.clone()
+        }
+
+        let workspace = WorkspaceSnapshot::build(
+            loader.sources.clone(),
+            loader.semantic_inputs.values().cloned().collect(),
+        );
+        let dependencies = loader.dependencies.iter().cloned().collect::<Vec<_>>();
+        let sources = loader.sources.clone();
+        let shared_main =
+            Arc::new(std::mem::replace(&mut loader.main, MainWorld::building()).seal());
+        let entry = loaded_from_compiled(
+            main_path.clone(),
+            dependencies.clone(),
+            sources.clone(),
+            workspace.clone(),
+            Arc::clone(&shared_main),
+            entry_compiled,
+        );
+        let main = loaded_from_compiled(
+            compiled_main_path,
+            dependencies,
+            sources,
+            workspace,
+            Arc::clone(&shared_main),
+            main_compiled,
+        );
+        let (main_world, _) =
+            main.execute_world_observed(self.config.session_quota, Arc::clone(&self.debug_sink));
+        let mut main_world = match main_world {
+            Ok(world) => world,
+            Err(error) => {
+                let error = ModuleError::new(error.to_string());
+                pending.finish_initialization(&Err(error.clone()));
+                return Err(error);
+            }
         };
-        let initialize = exports.get("initialize").expect("field shape checked");
-        require_function_arity(initialize, 1, "Entry.initialize")?;
-        let initialized = entry
-            .invoke_initialize_in_work(
-                initialize,
-                main_argument,
-                self.config.session_quota,
-                Arc::clone(&self.debug_sink),
-            )
-            .map_err(|error| ModuleError::new(format!("Entry.initialize failed: {error}")))?;
+        if matches!(main_type, TypeDescriptor::Dyn) {
+            main_world = main_world
+                .wrap_root_dyn(
+                    &shared_main.heap,
+                    &actual_main_type,
+                    main.path.display().to_string(),
+                )
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+        }
+        let instantiated = InstantiatedModule {
+            module: Arc::new(main),
+            execution: Arc::new(main_world),
+        };
+        pending.finish_initialization(&Ok(instantiated.clone()));
+        let (entry_world, main_argument) = entry_world
+            .import_world_root(&shared_main.heap, &instantiated.execution)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        if entry_world
+            .member_function_arity(&entry.runtime.main.heap, "initialize")
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            != Some(1)
+        {
+            return Err(ModuleError::new(
+                "Entry.initialize must be a unary function",
+            ));
+        }
+        let initialized = invoke_world_member_in(
+            &entry.runtime.main.heap,
+            &entry.runtime.externals,
+            &entry.sources,
+            entry_world,
+            "initialize",
+            &[main_argument],
+            false,
+            self.config.session_quota,
+            Arc::clone(&self.debug_sink),
+        )
+        .map_err(|error| ModuleError::new(format!("Entry.initialize failed: {error}")))?;
         let (state, reducer) = initialized
-            .into_entry_initialization(&entry.runtime.main.heap)
+            .into_runtime_pair(
+                &entry.runtime.main.heap,
+                "Entry.initialize must return Tuple([State, Reducer])",
+                "Entry.initialize must return exactly State and Reducer",
+            )
             .map_err(|error| ModuleError::new(error.to_string()))?;
         let mut state = state;
-        require_function_arity(&reducer, 2, "Entry reducer")?;
-        let mut events = std::collections::VecDeque::from([Value::atom("Initialize")]);
+        let reducer_arity = state
+            .runtime_function_arity(&entry.runtime.main.heap, reducer)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .ok_or_else(|| ModuleError::new("Entry reducer must be a function"))?;
+        if reducer_arity != 2 {
+            return Err(ModuleError::new(format!(
+                "Entry reducer must accept 2 arguments, found {reducer_arity}"
+            )));
+        }
+        let mut events = std::collections::VecDeque::from([None]);
         let mut output = String::new();
         loop {
             let event = match events.pop_front() {
@@ -1602,15 +2220,15 @@ impl Engine {
                     .next_event()
                     .await
                     .map_err(|error| ModuleError::new(format!("run Host failed: {error}")))?
-                    .map(system_event_value)
-                    .transpose()?
+                    .map(Some)
                     .ok_or_else(|| {
                         ModuleError::new("Entry made no progress and the Host has no pending event")
                     })?,
             };
+            let event = runtime_system_event(state.heap_mut(), &entry.runtime.main.heap, event)?;
             let transition = entry
                 .invoke_reducer_in_work(
-                    &reducer,
+                    reducer,
                     state,
                     event,
                     self.config.session_quota,
@@ -1620,46 +2238,47 @@ impl Engine {
             let (next_state, effects) = transition
                 .into_reducer_transition(&entry.runtime.main.heap)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            let Value::Array(effects) = effects else {
-                return Err(ModuleError::new("Entry reducer effects must be an Array"));
-            };
             state = next_state;
             let mut terminal = None;
-            for effect in effects.iter() {
-                let effect = protocol_value(effect);
+            for effect in effects {
+                let effect = state.value_ref(&entry.runtime.main.heap, effect);
                 if terminal.is_some() {
                     return Err(ModuleError::new(
                         "Entry returned an effect after a terminal effect",
                     ));
                 }
-                match effect {
-                    Value::Tagged { tag, payload } if tag.name() == "SpawnStdioChild" => {
-                        let child = parse_spawn_stdio_child(payload)?;
+                let (tag, payload) = effect
+                    .tagged_parts()
+                    .ok_or_else(|| ModuleError::new("Entry returned an invalid SystemEffect"))?;
+                match tag.as_atom().as_deref() {
+                    Some("SpawnStdioChild") => {
+                        let child = parse_spawn_stdio_child_ref(payload)?;
                         host.spawn_stdio_child(child).await.map_err(|error| {
                             ModuleError::new(format!("cannot spawn stdio child: {error}"))
                         })?;
                     }
-                    Value::Tagged { tag, payload } if tag.name() == "PostStdin" => {
-                        let text = parse_child_text(payload, "PostStdin")?;
+                    Some("PostStdin") => {
+                        let text = parse_child_text_ref(payload, "PostStdin")?;
                         host.post_stdin(text).await.map_err(|error| {
                             ModuleError::new(format!("cannot post child stdin: {error}"))
                         })?;
                     }
-                    Value::Tagged { tag, payload } if tag.name() == "Exec" => {
-                        terminal =
-                            Some(RunTermination::Exec(parse_child_options(payload, "Exec")?));
+                    Some("Exec") => {
+                        terminal = Some(RunTermination::Exec(parse_child_options_ref(
+                            payload, "Exec",
+                        )?));
                     }
-                    Value::Tagged { tag, payload } if tag.name() == "Output" => {
-                        let Value::String(text) = payload.as_ref() else {
-                            return Err(ModuleError::new("Output payload must be String"));
-                        };
-                        output.push_str(text);
+                    Some("Output") => {
+                        let text = payload
+                            .as_str()
+                            .ok_or_else(|| ModuleError::new("Output payload must be String"))?;
+                        output.push_str(text.as_str());
                     }
-                    Value::Tagged { tag, payload } if tag.name() == "Exit" => {
-                        let Value::Int(code) = payload.as_ref() else {
-                            return Err(ModuleError::new("Exit payload must be Int"));
-                        };
-                        terminal = Some(RunTermination::Exit(*code));
+                    Some("Exit") => {
+                        let code = payload
+                            .as_int()
+                            .ok_or_else(|| ModuleError::new("Exit payload must be Int"))?;
+                        terminal = Some(RunTermination::Exit(code));
                     }
                     _ => return Err(ModuleError::new("Entry returned an invalid SystemEffect")),
                 }
@@ -1699,17 +2318,25 @@ impl Engine {
                 Err(_) => return Ok(module.workspace),
             }
         }
-        let mut main = MainWorld::building();
+        let opaque_modules = builtin_list(&self.native_modules)
+            .into_iter()
+            .map(|(name, _)| ModuleCName::builtin(name));
+        let graph = ModuleGraph::discover(
+            &resolver,
+            vec![root_module.clone()],
+            &BTreeMap::new(),
+            opaque_modules,
+            None,
+            true,
+        )?;
+        let mut main = MainWorld::with_modules(graph);
         let mut sources = SourceDatabase::default();
         let core_modules = install_native_modules(
             &mut main,
             &mut sources,
             &self.debug_sink,
             &self.native_modules,
-        )?
-        .into_iter()
-        .map(|(name, (value, root, interface))| (name.to_owned(), (value, root, interface)))
-        .collect();
+        )?;
         let mut builder = RecoverableWorkspaceBuilder {
             engine: self,
             resolver,
@@ -1719,8 +2346,7 @@ impl Engine {
             main,
             core_modules,
             inputs: BTreeMap::new(),
-            values: HashMap::new(),
-            sourced_values: HashMap::new(),
+            provenances: HashMap::new(),
             roots: HashMap::new(),
             interfaces: HashMap::new(),
             visiting: Vec::new(),
@@ -1793,7 +2419,6 @@ impl Engine {
         if let Ok(mut module) = load_module_with_resolver(
             resolver.clone(),
             BTreeMap::new(),
-            BTreeMap::new(),
             self.config.module_quota,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
@@ -1813,17 +2438,25 @@ impl Engine {
                 }
             }
         }
-        let mut main = MainWorld::building();
+        let opaque_modules = builtin_list(&self.native_modules)
+            .into_iter()
+            .map(|(name, _)| ModuleCName::builtin(name));
+        let graph = ModuleGraph::discover(
+            &resolver,
+            vec![root_module.clone()],
+            &BTreeMap::new(),
+            opaque_modules,
+            None,
+            true,
+        )?;
+        let mut main = MainWorld::with_modules(graph);
         let mut sources = SourceDatabase::default();
         let core_modules = install_native_modules(
             &mut main,
             &mut sources,
             &self.debug_sink,
             &self.native_modules,
-        )?
-        .into_iter()
-        .map(|(name, (value, root, interface))| (name.to_owned(), (value, root, interface)))
-        .collect();
+        )?;
         let mut builder = RecoverableWorkspaceBuilder {
             engine: self,
             resolver,
@@ -1833,8 +2466,7 @@ impl Engine {
             main,
             core_modules,
             inputs: BTreeMap::new(),
-            values: HashMap::new(),
-            sourced_values: HashMap::new(),
+            provenances: HashMap::new(),
             roots: HashMap::new(),
             interfaces: HashMap::new(),
             visiting: Vec::new(),
@@ -1870,17 +2502,25 @@ impl Engine {
         let root_module = resolver
             .resolve_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let mut main = MainWorld::building();
+        let opaque_modules = builtin_list(&self.native_modules)
+            .into_iter()
+            .map(|(name, _)| ModuleCName::builtin(name));
+        let graph = ModuleGraph::discover(
+            &resolver,
+            vec![root_module.clone()],
+            &BTreeMap::new(),
+            opaque_modules,
+            Some(overlays),
+            true,
+        )?;
+        let mut main = MainWorld::with_modules(graph);
         let mut sources = SourceDatabase::default();
         let core_modules = install_native_modules(
             &mut main,
             &mut sources,
             &self.debug_sink,
             &self.native_modules,
-        )?
-        .into_iter()
-        .map(|(name, (value, root, interface))| (name.to_owned(), (value, root, interface)))
-        .collect();
+        )?;
         let mut builder = RecoverableWorkspaceBuilder {
             engine: self,
             resolver,
@@ -1890,8 +2530,7 @@ impl Engine {
             main,
             core_modules,
             inputs: BTreeMap::new(),
-            values: HashMap::new(),
-            sourced_values: HashMap::new(),
+            provenances: HashMap::new(),
             roots: HashMap::new(),
             interfaces: HashMap::new(),
             visiting: Vec::new(),
@@ -1917,14 +2556,13 @@ struct RecoverableWorkspaceBuilder<'a> {
     query: Option<&'a crate::query::QueryContext>,
     sources: SourceDatabase,
     main: MainWorld,
-    core_modules: HashMap<String, (Value, PersistentValue, ModuleInterface)>,
+    core_modules: HashMap<String, ModuleArtifact>,
     inputs: BTreeMap<String, SemanticModuleInput>,
-    values: HashMap<ModuleId, Value>,
-    sourced_values: HashMap<ModuleId, SourcedValue>,
-    roots: HashMap<ModuleId, PersistentValue>,
-    interfaces: HashMap<ModuleId, ModuleInterface>,
-    visiting: Vec<ModuleId>,
-    cycle_members: HashSet<ModuleId>,
+    provenances: HashMap<ModuleCName, Provenance>,
+    roots: HashMap<ModuleCName, PersistentValue>,
+    interfaces: HashMap<ModuleCName, ModuleInterface>,
+    visiting: Vec<ModuleCName>,
+    cycle_members: HashSet<ModuleCName>,
     cycle_reported: bool,
 }
 
@@ -1932,7 +2570,7 @@ impl RecoverableWorkspaceBuilder<'_> {
     fn load_telora<'a>(
         &'a mut self,
         module: ResolvedModule,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Value>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<PersistentValue>> + 'a>> {
         Box::pin(async move {
             if let Some(context) = self.query
                 && context.checkpoint().await.is_err()
@@ -1942,8 +2580,8 @@ impl RecoverableWorkspaceBuilder<'_> {
             let path = module.path()?.to_owned();
             let authority = module.authority;
             let module_id = module.id;
-            if let Some(value) = self.values.get(&module_id) {
-                return Some(value.clone());
+            if let Some(root) = self.roots.get(&module_id) {
+                return Some(*root);
             }
             let key = module_id.to_string();
             if self.inputs.contains_key(&key) {
@@ -2008,9 +2646,7 @@ impl RecoverableWorkspaceBuilder<'_> {
 
             self.visiting.push(module_id.clone());
             let mut semantic_imports = Vec::new();
-            let mut external_values = BTreeMap::new();
             let mut external_roots = HashMap::new();
-            let mut external_sourced_values = BTreeMap::new();
             let mut external_interfaces = BTreeMap::new();
             let mut unavailable_imports = HashSet::new();
             let mut open_candidates: BTreeMap<String, Vec<RecoveryOpenImportCandidate>> =
@@ -2075,14 +2711,13 @@ impl RecoverableWorkspaceBuilder<'_> {
                         target: target_module.id.clone(),
                         namespace: !open && imported_name.is_none(),
                     });
-                    if let Some((value, root, interface)) = self.core_modules.get(&target) {
+                    if let Some(module) = self.core_modules.get(&target) {
                         if open {
                             match recovery_open_import_exports(
                                 &target_module.id,
-                                value,
-                                interface,
-                                None,
-                                *root,
+                                &module.interface,
+                                module.provenance.as_ref(),
+                                module.root,
                                 &self.main.heap,
                             ) {
                                 Ok(exports) => {
@@ -2096,22 +2731,15 @@ impl RecoverableWorkspaceBuilder<'_> {
                             }
                             continue;
                         }
-                        match select_import_value(
-                            value.clone(),
-                            interface.clone(),
+                        match select_import_root(
+                            module.root,
+                            module.interface.clone(),
                             imported_name.as_deref(),
                             &name,
+                            &self.main.heap,
                         ) {
-                            Ok((value, interface)) => {
-                                let root = if let Some(imported_name) = imported_name.as_ref() {
-                                    root.dict_get(&self.main.heap, &imported_name.value)
-                                        .expect("built-in module root is valid")
-                                        .expect("selected built-in export has a root")
-                                } else {
-                                    *root
-                                };
+                            Ok((root, interface)) => {
                                 external_roots.insert(name.clone(), root);
-                                external_values.insert(name.clone(), value);
                                 external_interfaces.insert(name, interface);
                             }
                             Err(error) => {
@@ -2138,15 +2766,15 @@ impl RecoverableWorkspaceBuilder<'_> {
                     target: target_module.id.clone(),
                     namespace: !open && imported_name.is_none(),
                 });
-                let value = match target_module.format {
+                let root = match target_module.format {
                     ModuleFormat::Telora => self.load_telora(target_module.clone()).await,
                     ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => {
                         self.load_static_data(target_module.clone()).await
                     }
                 };
-                if let Some(value) = value {
+                if let Some(root) = root {
                     if open {
-                        let sourced = self.sourced_values.get(&target_module.id);
+                        let provenance = self.provenances.get(&target_module.id);
                         let interface = self
                             .interfaces
                             .get(&target_module.id)
@@ -2154,13 +2782,9 @@ impl RecoverableWorkspaceBuilder<'_> {
                             .unwrap_or_default();
                         match recovery_open_import_exports(
                             &target_module.id,
-                            &value,
                             &interface,
-                            sourced,
-                            *self
-                                .roots
-                                .get(&target_module.id)
-                                .expect("loaded module has a root"),
+                            provenance,
+                            root,
                             &self.main.heap,
                         ) {
                             Ok(exports) => {
@@ -2174,28 +2798,21 @@ impl RecoverableWorkspaceBuilder<'_> {
                         }
                         continue;
                     }
-                    if let Some(sourced) = self.sourced_values.get(&target_module.id) {
-                        external_sourced_values.insert(name.clone(), sourced.clone());
-                    }
                     let interface = self
                         .interfaces
                         .get(&target_module.id)
                         .cloned()
                         .unwrap_or_default();
-                    match select_import_value(value, interface, imported_name.as_deref(), &name) {
-                        Ok((value, interface)) => {
-                            if let Some(root) = self.roots.get(&target_module.id).copied() {
-                                let root = if let Some(imported_name) = imported_name.as_ref() {
-                                    root.dict_get(&self.main.heap, &imported_name.value)
-                                        .expect("loaded module root is valid")
-                                        .expect("selected module export has a root")
-                                } else {
-                                    root
-                                };
-                                external_roots.insert(name.clone(), root);
-                            }
+                    match select_import_root(
+                        root,
+                        interface,
+                        imported_name.as_deref(),
+                        &name,
+                        &self.main.heap,
+                    ) {
+                        Ok((root, interface)) => {
+                            external_roots.insert(name.clone(), root);
                             external_interfaces.insert(name.clone(), interface);
-                            external_values.insert(name, value);
                         }
                         Err(error) => {
                             unavailable_imports.insert(name);
@@ -2221,15 +2838,14 @@ impl RecoverableWorkspaceBuilder<'_> {
                 }
             }
             if module_id.to_string() != PRELUDE_MODULE
-                && let Some((value, root, interface)) = self.core_modules.get(PRELUDE_MODULE)
+                && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
             {
-                let provider = ModuleId::Builtin(PRELUDE_MODULE.into());
+                let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
                 if let Ok(exports) = recovery_open_import_exports(
                     &provider,
-                    value,
-                    interface,
-                    None,
-                    *root,
+                    &module.interface,
+                    module.provenance.as_ref(),
+                    module.root,
                     &self.main.heap,
                 ) {
                     for (name, candidate) in exports {
@@ -2250,7 +2866,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                 .map(|binding| binding.value.name.value.as_str())
                 .collect::<HashSet<_>>();
             for (name, mut candidates) in open_candidates {
-                if explicit_names.contains(name.as_str()) || external_values.contains_key(&name) {
+                if explicit_names.contains(name.as_str()) || external_roots.contains_key(&name) {
                     continue;
                 }
                 candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
@@ -2270,9 +2886,6 @@ impl RecoverableWorkspaceBuilder<'_> {
                     continue;
                 }
                 let candidate = candidates.into_iter().next().expect("one candidate");
-                if let Some(sourced) = candidate.sourced {
-                    external_sourced_values.insert(name.clone(), sourced);
-                }
                 external_roots.insert(name.clone(), candidate.root);
                 external_interfaces.insert(
                     name.clone(),
@@ -2285,7 +2898,6 @@ impl RecoverableWorkspaceBuilder<'_> {
                             .unwrap_or_default(),
                     },
                 );
-                external_values.insert(name, candidate.value);
             }
             self.visiting.pop();
 
@@ -2301,7 +2913,11 @@ impl RecoverableWorkspaceBuilder<'_> {
                 &parsed.recovered,
                 parsed.diagnostics,
                 self.engine.config.module_quota,
-                &external_values,
+                &external_roots
+                    .iter()
+                    .map(|(name, root)| (name.clone(), *root))
+                    .collect(),
+                &mut self.main.heap,
                 PartialAnalysisControl {
                     unavailable_imports: &unavailable_imports,
                     query: self.query,
@@ -2309,6 +2925,11 @@ impl RecoverableWorkspaceBuilder<'_> {
             );
             let mut runtime_diagnostics = Vec::new();
             let mut recovered_analysis = None;
+            let runtime_module_id = self
+                .main
+                .modules
+                .id(&module_id)
+                .unwrap_or(ModuleId::ANONYMOUS);
             let strict = if self.cycle_members.contains(&module_id)
                 || !invalid_scoped_options.is_empty()
                 || missing_exports
@@ -2317,15 +2938,15 @@ impl RecoverableWorkspaceBuilder<'_> {
             } else {
                 program.as_ref().and_then(|program| {
                     match self.analyze_and_evaluate(
+                        runtime_module_id,
                         source_id,
                         program,
-                        &external_values,
                         &external_roots,
                         &external_interfaces,
                     ) {
-                        Ok((analysis, value, root, emitted)) => {
+                        Ok((analysis, root, emitted)) => {
                             runtime_diagnostics.extend(emitted);
-                            Some((analysis, value, root))
+                            Some((analysis, root))
                         }
                         Err(RecoveryEvaluationError::Runtime {
                             analysis,
@@ -2342,6 +2963,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                                 runtime_diagnostics.extend(emitted);
                             }
                             self.evaluate_best_effort_module(
+                                runtime_module_id,
                                 source_id,
                                 program,
                                 &analysis,
@@ -2360,13 +2982,13 @@ impl RecoverableWorkspaceBuilder<'_> {
                 partial.hir.definitions().is_empty() && partial.hir.expressions().is_empty();
             let analysis = strict
                 .as_ref()
-                .map(|(analysis, _, _)| analysis.clone())
+                .map(|(analysis, _)| analysis.clone())
                 .or(recovered_analysis);
             let partial = analysis.is_none().then_some(partial);
-            let strict_value = strict.as_ref().map(|(_, value, _)| value);
+            let strict_root = strict.as_ref().map(|(_, root)| root);
             let state = if missing_exports {
                 WorkspaceModuleState::Unavailable
-            } else if strict_value.is_some() {
+            } else if strict_root.is_some() {
                 WorkspaceModuleState::Known
             } else if self.cycle_members.contains(&module_id) || partial_empty {
                 WorkspaceModuleState::Unavailable
@@ -2388,7 +3010,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                     diagnostics,
                 },
             );
-            if let Some((_, value, root)) = strict {
+            if let Some((_, root)) = strict {
                 let interface = self.inputs[&key]
                     .analysis
                     .as_ref()
@@ -2397,15 +3019,14 @@ impl RecoverableWorkspaceBuilder<'_> {
                     .clone();
                 self.interfaces.insert(module_id.clone(), interface);
                 self.roots.insert(module_id.clone(), root);
-                self.values.insert(module_id, value.clone());
-                Some(value)
+                Some(root)
             } else {
                 None
             }
         })
     }
 
-    async fn load_static_data(&mut self, module: ResolvedModule) -> Option<Value> {
+    async fn load_static_data(&mut self, module: ResolvedModule) -> Option<PersistentValue> {
         if let Some(context) = self.query
             && context.checkpoint().await.is_err()
         {
@@ -2413,8 +3034,8 @@ impl RecoverableWorkspaceBuilder<'_> {
         }
         let path = module.path()?.to_owned();
         let module_id = module.id;
-        if let Some(value) = self.values.get(&module_id) {
-            return Some(value.clone());
+        if let Some(root) = self.roots.get(&module_id) {
+            return Some(*root);
         }
         let key = module_id.to_string();
         if self.inputs.contains_key(&key) {
@@ -2437,7 +3058,6 @@ impl RecoverableWorkspaceBuilder<'_> {
             .add_document(path.display().to_string(), source);
         let parsed = parse_static_data_registered(module.format, &self.sources, source_id)?;
         let sourced = parsed.value;
-        let value = sourced.as_ref().map(|sourced| sourced.value.clone());
         self.inputs.insert(
             key.clone(),
             SemanticModuleInput {
@@ -2448,7 +3068,7 @@ impl RecoverableWorkspaceBuilder<'_> {
                 program: None,
                 analysis: None,
                 partial: None,
-                state: if value.is_some() {
+                state: if sourced.is_some() {
                     WorkspaceModuleState::Known
                 } else {
                     WorkspaceModuleState::Unavailable
@@ -2457,31 +3077,26 @@ impl RecoverableWorkspaceBuilder<'_> {
                 diagnostics: parsed.diagnostics,
             },
         );
-        if let Some(value) = &value {
-            self.values.insert(module_id.clone(), value.clone());
-        }
         if let Some(sourced) = sourced {
-            let mut local = Heap::work();
-            let local_root = local
-                .import_sourced_value(Some(&self.main.heap), &sourced)
-                .expect("parsed sourced value imports into a work heap");
-            let root = publish_root(&mut self.main.heap, &local, local_root)
+            let root = sourced
+                .value
+                .publish(&mut self.main.heap)
                 .expect("parsed sourced value publishes into the main heap");
             self.roots.insert(module_id.clone(), root);
-            self.sourced_values.insert(module_id, sourced);
+            self.provenances.insert(module_id, sourced.provenance);
+            return Some(root);
         }
-        value
+        None
     }
 
     fn analyze_and_evaluate(
         &mut self,
+        module_id: ModuleId,
         source_id: crate::SourceId,
         program: &Program,
-        external_values: &BTreeMap<String, Value>,
         external_roots: &HashMap<String, PersistentValue>,
         external_interfaces: &BTreeMap<String, ModuleInterface>,
-    ) -> Result<(crate::Analysis, Value, PersistentValue, Vec<Diagnostic>), RecoveryEvaluationError>
-    {
+    ) -> Result<(crate::Analysis, PersistentValue, Vec<Diagnostic>), RecoveryEvaluationError> {
         let mut account = QuotaAccount::new(self.engine.config.module_quota);
         if let Some(query) = self.query {
             account = account.with_query(query.clone());
@@ -2489,23 +3104,47 @@ impl RecoverableWorkspaceBuilder<'_> {
         let source = self.sources.get(source_id);
         let analysis = analyze_program_with_bindings_observed(
             &source.name,
+            module_id,
             program,
             &mut account,
-            external_values,
+            &external_roots
+                .iter()
+                .map(|(name, root)| (name.clone(), *root))
+                .collect(),
             &HashSet::new(),
             &self.sources,
             &BTreeMap::new(),
             external_interfaces,
             &self.engine.debug_sink,
+            &mut self.main.heap,
+            &mut self.main.types,
         )
         .map_err(|_| RecoveryEvaluationError::Module)?;
-        let function = compile_program_analyzed_in(source, program, &analysis)
-            .map_err(|_| RecoveryEvaluationError::Module)?;
+        let mut execution_roots = external_roots.clone();
+        install_type_family_roots(&mut execution_roots, &analysis);
+        let static_funcs = self.main.modules.static_funcs(module_id);
+        let metadata = metadata_compilation_plan(program);
+        let promoted_types = metadata
+            .as_ref()
+            .map(|metadata| metadata.type_names.iter().cloned().collect())
+            .unwrap_or_default();
+        let erased_bindings = metadata
+            .map(|metadata| metadata.erased_bindings)
+            .unwrap_or_default();
+        let function = compile_program_with_promoted_types_and_static_funcs(
+            source,
+            program,
+            &analysis,
+            &promoted_types,
+            &erased_bindings,
+            &static_funcs,
+        )
+        .map_err(|_| RecoveryEvaluationError::Module)?;
         let arena = match Vm::new()
             .with_debug_sink(Arc::clone(&self.engine.debug_sink))
             .execute_in_work(
                 &self.main.heap,
-                external_roots,
+                &runtime_roots(&execution_roots),
                 &function,
                 &[],
                 &mut account,
@@ -2519,28 +3158,18 @@ impl RecoverableWorkspaceBuilder<'_> {
                 });
             }
         };
-        let root = arena
-            .publish(&mut self.main.heap)
-            .map_err(|_| RecoveryEvaluationError::Module)?;
-        let value = if self
-            .main
-            .heap
-            .persistent_contains_up_link(root)
-            .map_err(|_| RecoveryEvaluationError::Module)?
-        {
-            project_module_value(root, &analysis.module_interface, &self.main.heap)
-                .map_err(|_| RecoveryEvaluationError::Module)?
+        let root = if analysis.explicit_exports {
+            arena.publish_module(&mut self.main.heap)
         } else {
-            self.main
-                .heap
-                .export_persistent(root)
-                .map_err(|_| RecoveryEvaluationError::Module)?
-        };
-        Ok((analysis, value, root, account.take_diagnostics()))
+            arena.publish(&mut self.main.heap)
+        }
+        .map_err(|_| RecoveryEvaluationError::Module)?;
+        Ok((analysis, root, account.take_diagnostics()))
     }
 
     fn evaluate_best_effort_module(
         &self,
+        module_id: ModuleId,
         source_id: crate::SourceId,
         program: &Program,
         analysis: &crate::Analysis,
@@ -2552,16 +3181,33 @@ impl RecoverableWorkspaceBuilder<'_> {
         if let Some(query) = self.query {
             graph_account = graph_account.with_query(query.clone());
         }
-        if let Ok(function) = compile_program_analyzed_in(source, program, analysis)
-            && let Ok(execution) = Vm::new()
-                .with_debug_sink(Arc::clone(&self.engine.debug_sink))
-                .execute_in_work_best_effort(
-                    &self.main.heap,
-                    external_roots,
-                    &function,
-                    &[],
-                    &mut graph_account,
-                )
+        let mut execution_roots = external_roots.clone();
+        install_type_family_roots(&mut execution_roots, analysis);
+        let static_funcs = self.main.modules.static_funcs(module_id);
+        let metadata = metadata_compilation_plan(program);
+        let promoted_types = metadata
+            .as_ref()
+            .map(|metadata| metadata.type_names.iter().cloned().collect())
+            .unwrap_or_default();
+        let erased_bindings = metadata
+            .map(|metadata| metadata.erased_bindings)
+            .unwrap_or_default();
+        if let Ok(function) = compile_program_with_promoted_types_and_static_funcs(
+            source,
+            program,
+            analysis,
+            &promoted_types,
+            &erased_bindings,
+            &static_funcs,
+        ) && let Ok(execution) = Vm::new()
+            .with_debug_sink(Arc::clone(&self.engine.debug_sink))
+            .execute_in_work_best_effort(
+                &self.main.heap,
+                &runtime_roots(&execution_roots),
+                &function,
+                &[],
+                &mut graph_account,
+            )
         {
             merge_runtime_diagnostics(diagnostics, graph_account.take_diagnostics());
             merge_runtime_errors(diagnostics, execution.failures);
@@ -2665,7 +3311,7 @@ fn unavailable_input(key: String, path: PathBuf, kind: WorkspaceModuleKind) -> S
 /// modules must be loaded through [`Engine::load_module`].
 pub fn evaluate_expression_module(
     path: impl AsRef<Path>,
-    external_bindings: BTreeMap<String, Value>,
+    external_bindings: BTreeMap<String, crate::DataWorld>,
     evaluation_fuel: usize,
 ) -> Result<LoadedModule, ModuleError> {
     evaluate_expression_module_with_quota(
@@ -2677,7 +3323,7 @@ pub fn evaluate_expression_module(
 
 pub fn evaluate_expression_module_with_quota(
     path: impl AsRef<Path>,
-    external_bindings: BTreeMap<String, Value>,
+    external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
 ) -> Result<LoadedModule, ModuleError> {
     evaluate_expression_module_with_quota_and_debug_sink(
@@ -2690,14 +3336,13 @@ pub fn evaluate_expression_module_with_quota(
 
 pub fn evaluate_expression_module_with_quota_and_debug_sink(
     path: impl AsRef<Path>,
-    external_bindings: BTreeMap<String, Value>,
+    external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
 ) -> Result<LoadedModule, ModuleError> {
     load_module_with_native_modules(
         path,
         external_bindings,
-        BTreeMap::new(),
         module_quota,
         debug_sink,
         &[],
@@ -2734,8 +3379,7 @@ impl<'a> TeloraModuleSource<'a> {
 
 fn load_module_with_native_modules(
     path: impl AsRef<Path>,
-    external_bindings: BTreeMap<String, Value>,
-    injected_modules: BTreeMap<String, InjectedValueModule>,
+    external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
@@ -2743,12 +3387,10 @@ fn load_module_with_native_modules(
 ) -> Result<LoadedModule, ModuleError> {
     let resolver = ModuleResolver::for_root(path.as_ref())
         .map_err(|error| ModuleError::new(error.to_string()))?
-        .with_builtins(builtin_list(native_modules))
-        .with_virtual_modules(injected_modules.keys().cloned());
+        .with_builtins(builtin_list(native_modules));
     load_module_with_resolver(
         resolver,
         external_bindings,
-        injected_modules,
         module_quota,
         debug_sink,
         native_modules,
@@ -2758,8 +3400,7 @@ fn load_module_with_native_modules(
 
 fn load_module_with_resolver(
     resolver: ModuleResolver,
-    external_bindings: BTreeMap<String, Value>,
-    injected_modules: BTreeMap<String, InjectedValueModule>,
+    external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
@@ -2773,7 +3414,18 @@ fn load_module_with_resolver(
             "root module must have a .telora extension",
         ));
     }
-    let mut main = MainWorld::building();
+    let opaque_modules = builtin_list(native_modules)
+        .into_iter()
+        .map(|(name, _)| ModuleCName::builtin(name));
+    let graph = ModuleGraph::discover(
+        &resolver,
+        vec![root_module.clone()],
+        &BTreeMap::new(),
+        opaque_modules,
+        None,
+        false,
+    )?;
+    let mut main = MainWorld::with_modules(graph);
     let mut sources = SourceDatabase::default();
     let core_modules =
         install_native_modules(&mut main, &mut sources, &debug_sink, native_modules)?;
@@ -2790,248 +3442,257 @@ fn load_module_with_resolver(
         semantic_inputs: BTreeMap::new(),
         source_policy,
     };
-    loader.install_injected_values(injected_modules)?;
     loader.load_root(root_module, external_bindings)
 }
 
-fn expect_protocol_record<'a>(
-    value: &'a Value,
-    path: &str,
-    fields: &[&str],
-) -> Result<&'a crate::Dict, ModuleError> {
-    let value = protocol_value(value);
-    let Value::Dict(record) = value else {
-        return Err(ModuleError::new(format!(
-            "{path} must be a record, found {}",
-            value.type_name()
-        )));
-    };
-    if !record
-        .shape()
-        .fields()
-        .iter()
-        .map(String::as_str)
-        .eq(fields.iter().copied())
-    {
-        return Err(ModuleError::new(format!(
-            "{path} has an invalid field shape"
-        )));
-    }
-    Ok(record)
-}
-
-fn protocol_value(mut value: &Value) -> &Value {
-    while let Value::Declared(declared) = value {
-        value = declared.payload();
+fn protocol_ref(mut value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
+    while let Some((_, payload)) = value.declared_value_parts() {
+        value = payload;
     }
     value
 }
 
-fn protocol_string(value: &Value, path: &str) -> Result<String, ModuleError> {
-    let value = protocol_value(value);
-    let Value::String(value) = value else {
-        return Err(ModuleError::new(format!("{path} must be String")));
-    };
-    Ok(value.to_string())
+fn expect_protocol_record_ref<'a>(
+    value: crate::ValueRef<'a>,
+    path: &str,
+    fields: &[&str],
+) -> Result<crate::ValueRef<'a>, ModuleError> {
+    let value = protocol_ref(value);
+    let actual = value
+        .dict_fields()
+        .ok_or_else(|| ModuleError::new(format!("{path} must be a record")))?;
+    if !actual.iter().copied().eq(fields.iter().copied()) {
+        return Err(ModuleError::new(format!(
+            "{path} has an invalid field shape"
+        )));
+    }
+    Ok(value)
 }
 
-fn protocol_bool(value: &Value, path: &str) -> Result<bool, ModuleError> {
-    let value = protocol_value(value);
-    match value {
-        Value::Atom(value) if value.name() == "True" => Ok(true),
-        Value::Atom(value) if value.name() == "False" => Ok(false),
+fn protocol_string_ref(value: crate::ValueRef<'_>, path: &str) -> Result<String, ModuleError> {
+    protocol_ref(value)
+        .as_str()
+        .map(|value| value.as_str().to_owned())
+        .ok_or_else(|| ModuleError::new(format!("{path} must be String")))
+}
+
+fn protocol_bool_ref(value: crate::ValueRef<'_>, path: &str) -> Result<bool, ModuleError> {
+    match protocol_ref(value).as_atom().as_deref() {
+        Some("True") => Ok(true),
+        Some("False") => Ok(false),
         _ => Err(ModuleError::new(format!("{path} must be Bool"))),
     }
 }
 
-fn protocol_option_string(value: &Value, path: &str) -> Result<Option<String>, ModuleError> {
-    let value = protocol_value(value);
-    match value {
-        Value::Atom(tag) if tag.name() == "None" => Ok(None),
-        Value::Tagged { tag, payload } if tag.name() == "Some" => {
-            protocol_string(payload, path).map(Some)
-        }
-        _ => Err(ModuleError::new(format!("{path} must be Option(String)"))),
+fn protocol_option_string_ref(
+    value: crate::ValueRef<'_>,
+    path: &str,
+) -> Result<Option<String>, ModuleError> {
+    let value = protocol_ref(value);
+    if value.as_atom().as_deref() == Some("None") {
+        return Ok(None);
     }
+    let (tag, payload) = value
+        .tagged_parts()
+        .ok_or_else(|| ModuleError::new(format!("{path} must be Option(String)")))?;
+    if tag.as_atom().as_deref() != Some("Some") {
+        return Err(ModuleError::new(format!("{path} must be Option(String)")));
+    }
+    protocol_string_ref(payload, path).map(Some)
 }
 
-fn parse_child_options(value: &Value, path: &str) -> Result<ChildOptions, ModuleError> {
-    let opts = expect_protocol_record(value, path, &["bin", "clear_env", "cwd", "envs"])?;
-    let Value::Dict(envs) = protocol_value(opts.get("envs").expect("field shape checked")) else {
-        return Err(ModuleError::new(format!("{path}.envs must be a Dict")));
-    };
-    let envs = envs
-        .shape()
-        .fields()
-        .iter()
-        .zip(envs.values())
-        .map(|(name, value)| {
-            protocol_option_string(value, &format!("{path}.envs.{name}"))
-                .map(|value| (name.clone(), value))
+fn parse_child_options_ref(
+    value: crate::ValueRef<'_>,
+    path: &str,
+) -> Result<ChildOptions, ModuleError> {
+    let opts = expect_protocol_record_ref(value, path, &["bin", "clear_env", "cwd", "envs"])?;
+    let envs = protocol_ref(opts.get("envs").expect("field shape checked"));
+    let names = envs
+        .dict_fields()
+        .ok_or_else(|| ModuleError::new(format!("{path}.envs must be a Dict")))?;
+    let envs = names
+        .into_iter()
+        .map(|name| {
+            protocol_option_string_ref(envs.get(name).unwrap(), &format!("{path}.envs.{name}"))
+                .map(|value| (name.to_owned(), value))
         })
         .collect::<Result<_, _>>()?;
     Ok(ChildOptions {
-        bin: protocol_string(
-            opts.get("bin").expect("field shape checked"),
-            &format!("{path}.bin"),
-        )?,
-        cwd: protocol_option_string(
-            opts.get("cwd").expect("field shape checked"),
-            &format!("{path}.cwd"),
-        )?,
+        bin: protocol_string_ref(opts.get("bin").unwrap(), &format!("{path}.bin"))?,
+        cwd: protocol_option_string_ref(opts.get("cwd").unwrap(), &format!("{path}.cwd"))?,
         envs,
-        clear_env: protocol_bool(
-            opts.get("clear_env").expect("field shape checked"),
-            &format!("{path}.clear_env"),
-        )?,
+        clear_env: protocol_bool_ref(opts.get("clear_env").unwrap(), &format!("{path}.clear_env"))?,
     })
 }
 
-fn parse_stdin_mode(value: &Value) -> Result<ChildStdinMode, ModuleError> {
-    let value = protocol_value(value);
-    match value {
-        Value::Atom(tag) if tag.name() == "Piped" => Ok(ChildStdinMode::Piped),
-        Value::Atom(tag) if tag.name() == "Inherit" => Ok(ChildStdinMode::Inherit),
-        Value::Atom(tag) if tag.name() == "Null" => Ok(ChildStdinMode::Null),
+fn parse_stdin_mode_ref(value: crate::ValueRef<'_>) -> Result<ChildStdinMode, ModuleError> {
+    match protocol_ref(value).as_atom().as_deref() {
+        Some("Piped") => Ok(ChildStdinMode::Piped),
+        Some("Inherit") => Ok(ChildStdinMode::Inherit),
+        Some("Null") => Ok(ChildStdinMode::Null),
         _ => Err(ModuleError::new("SpawnStdioChild.stdio.stdin is invalid")),
     }
 }
 
-fn parse_output_mode(value: &Value, path: &str) -> Result<ChildOutputMode, ModuleError> {
-    let value = protocol_value(value);
-    match value {
-        Value::Atom(tag) if tag.name() == "PipedLine" => Ok(ChildOutputMode::PipedLine),
-        Value::Atom(tag) if tag.name() == "PipedToEnd" => Ok(ChildOutputMode::PipedToEnd),
-        Value::Atom(tag) if tag.name() == "Inherit" => Ok(ChildOutputMode::Inherit),
-        Value::Atom(tag) if tag.name() == "Null" => Ok(ChildOutputMode::Null),
+fn parse_output_mode_ref(
+    value: crate::ValueRef<'_>,
+    path: &str,
+) -> Result<ChildOutputMode, ModuleError> {
+    match protocol_ref(value).as_atom().as_deref() {
+        Some("PipedLine") => Ok(ChildOutputMode::PipedLine),
+        Some("PipedToEnd") => Ok(ChildOutputMode::PipedToEnd),
+        Some("Inherit") => Ok(ChildOutputMode::Inherit),
+        Some("Null") => Ok(ChildOutputMode::Null),
         _ => Err(ModuleError::new(format!("{path} is invalid"))),
     }
 }
 
-fn parse_spawn_stdio_child(value: &Value) -> Result<SpawnStdioChild, ModuleError> {
-    let child = expect_protocol_record(value, "SpawnStdioChild", &["key", "opts", "stdio"])?;
-    let stdio = expect_protocol_record(
-        child.get("stdio").expect("field shape checked"),
+fn parse_spawn_stdio_child_ref(value: crate::ValueRef<'_>) -> Result<SpawnStdioChild, ModuleError> {
+    let child = expect_protocol_record_ref(value, "SpawnStdioChild", &["key", "opts", "stdio"])?;
+    let stdio = expect_protocol_record_ref(
+        child.get("stdio").unwrap(),
         "SpawnStdioChild.stdio",
         &["stderr", "stdin", "stdout"],
     )?;
     Ok(SpawnStdioChild {
-        key: protocol_string(
-            child.get("key").expect("field shape checked"),
-            "SpawnStdioChild.key",
-        )?,
-        opts: parse_child_options(
-            child.get("opts").expect("field shape checked"),
-            "SpawnStdioChild.opts",
-        )?,
+        key: protocol_string_ref(child.get("key").unwrap(), "SpawnStdioChild.key")?,
+        opts: parse_child_options_ref(child.get("opts").unwrap(), "SpawnStdioChild.opts")?,
         stdio: ChildStdio {
-            stdin: parse_stdin_mode(stdio.get("stdin").expect("field shape checked"))?,
-            stdout: parse_output_mode(
-                stdio.get("stdout").expect("field shape checked"),
+            stdin: parse_stdin_mode_ref(stdio.get("stdin").unwrap())?,
+            stdout: parse_output_mode_ref(
+                stdio.get("stdout").unwrap(),
                 "SpawnStdioChild.stdio.stdout",
             )?,
-            stderr: parse_output_mode(
-                stdio.get("stderr").expect("field shape checked"),
+            stderr: parse_output_mode_ref(
+                stdio.get("stderr").unwrap(),
                 "SpawnStdioChild.stdio.stderr",
             )?,
         },
     })
 }
 
-fn parse_child_text(value: &Value, path: &str) -> Result<ChildText, ModuleError> {
-    let text = expect_protocol_record(value, path, &["data", "key"])?;
+fn parse_child_text_ref(value: crate::ValueRef<'_>, path: &str) -> Result<ChildText, ModuleError> {
+    let text = expect_protocol_record_ref(value, path, &["data", "key"])?;
     Ok(ChildText {
-        key: protocol_string(
-            text.get("key").expect("field shape checked"),
-            &format!("{path}.key"),
-        )?,
-        data: protocol_option_string(
-            text.get("data").expect("field shape checked"),
-            &format!("{path}.data"),
-        )?,
+        key: protocol_string_ref(text.get("key").unwrap(), &format!("{path}.key"))?,
+        data: protocol_option_string_ref(text.get("data").unwrap(), &format!("{path}.data"))?,
     })
 }
 
-fn protocol_record(fields: Vec<(String, Value)>) -> Result<Value, ModuleError> {
-    Vm::new()
-        .make_dict(fields)
-        .map_err(|error| ModuleError::new(error.to_string()))
+fn runtime_record(heap: &mut Heap, fields: Vec<(&str, Val)>) -> Val {
+    let mut fields = fields;
+    fields.sort_by(|left, right| left.0.cmp(right.0));
+    let names = fields
+        .iter()
+        .map(|(name, _)| heap.intern(name))
+        .collect::<Vec<_>>();
+    let values = fields
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    let shape = heap.intern_shape(names);
+    Val::unknown(DecodedValue::Dict(heap.allocate(Object::Dict {
+        shape,
+        values: values.into_boxed_slice(),
+    })))
 }
 
-fn option_string_value(value: Option<String>) -> Value {
-    value.map_or_else(Value::none, |value| {
-        Value::tagged(Atom::builtin(BuiltinAtom::Some), Value::string(value))
-    })
+fn runtime_string(heap: &mut Heap, main: &Heap, value: &str) -> Val {
+    Val::unknown(heap.string(Some(main), value))
 }
 
-fn child_text_value(text: ChildText) -> Result<Value, ModuleError> {
-    protocol_record(vec![
-        ("key".into(), Value::string(text.key)),
-        ("data".into(), option_string_value(text.data)),
-    ])
+fn runtime_atom(heap: &mut Heap, main: &Heap, value: &str) -> Val {
+    Val::unknown(heap.atom(Some(main), value))
 }
 
-fn system_event_value(event: SystemEvent) -> Result<Value, ModuleError> {
+fn runtime_tagged(heap: &mut Heap, tag: Val, payload: Val) -> Val {
+    Val::unknown(DecodedValue::Tagged(
+        heap.allocate(Object::Tagged { tag, payload }),
+    ))
+}
+
+fn runtime_option_string(heap: &mut Heap, main: &Heap, value: Option<String>) -> Val {
+    match value {
+        None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
+        Some(value) => {
+            let tag = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some));
+            let payload = runtime_string(heap, main, &value);
+            runtime_tagged(heap, tag, payload)
+        }
+    }
+}
+
+fn runtime_child_text(heap: &mut Heap, main: &Heap, text: ChildText) -> Val {
+    let key = runtime_string(heap, main, &text.key);
+    let data = runtime_option_string(heap, main, text.data);
+    runtime_record(heap, vec![("key", key), ("data", data)])
+}
+
+fn runtime_system_event(
+    heap: &mut Heap,
+    main: &Heap,
+    event: Option<SystemEvent>,
+) -> Result<Val, ModuleError> {
+    let Some(event) = event else {
+        return Ok(runtime_atom(heap, main, "Initialize"));
+    };
     let (tag, payload) = match event {
-        SystemEvent::ChildStdout(text) => ("ChildStdout", child_text_value(text)?),
-        SystemEvent::ChildStderr(text) => ("ChildStderr", child_text_value(text)?),
-        SystemEvent::ChildSpawnResult(result) => (
-            "ChildSpawnResult",
-            protocol_record(vec![
-                ("key".into(), Value::string(result.key)),
-                (
-                    "result".into(),
-                    match result.result {
-                        Ok(pid) => Value::tagged(Atom::builtin(BuiltinAtom::Ok), Value::Int(pid)),
-                        Err(error) => {
-                            Value::tagged(Atom::builtin(BuiltinAtom::Err), Value::string(error))
-                        }
-                    },
+        SystemEvent::ChildStdout(text) => ("ChildStdout", runtime_child_text(heap, main, text)),
+        SystemEvent::ChildStderr(text) => ("ChildStderr", runtime_child_text(heap, main, text)),
+        SystemEvent::ChildSpawnResult(result) => {
+            let key = runtime_string(heap, main, &result.key);
+            let (tag, payload) = match result.result {
+                Ok(pid) => (
+                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Ok)),
+                    Val::unknown(DecodedValue::Int(pid)),
                 ),
-            ])?,
-        ),
+                Err(error) => (
+                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Err)),
+                    runtime_string(heap, main, &error),
+                ),
+            };
+            let result = runtime_tagged(heap, tag, payload);
+            (
+                "ChildSpawnResult",
+                runtime_record(heap, vec![("key", key), ("result", result)]),
+            )
+        }
         SystemEvent::ChildExited { key, exited } => {
+            let key = runtime_string(heap, main, &key);
             let exited = match exited {
-                ChildExit::Code(code) => {
-                    Value::tagged(Atom::builtin(BuiltinAtom::Ok), Value::Int(code))
-                }
-                ChildExit::Signal(signal) => Value::tagged(
-                    Atom::builtin(BuiltinAtom::Err),
-                    signal.map_or_else(Value::none, |signal| {
-                        Value::tagged(Atom::builtin(BuiltinAtom::Some), Value::Int(signal))
-                    }),
+                ChildExit::Code(code) => runtime_tagged(
+                    heap,
+                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Ok)),
+                    Val::unknown(DecodedValue::Int(code)),
                 ),
+                ChildExit::Signal(signal) => {
+                    let payload = match signal {
+                        None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
+                        Some(signal) => runtime_tagged(
+                            heap,
+                            Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
+                            Val::unknown(DecodedValue::Int(signal)),
+                        ),
+                    };
+                    runtime_tagged(
+                        heap,
+                        Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Err)),
+                        payload,
+                    )
+                }
             };
             (
                 "ChildExited",
-                protocol_record(vec![
-                    ("key".into(), Value::string(key)),
-                    ("exited".into(), exited),
-                ])?,
+                runtime_record(heap, vec![("key", key), ("exited", exited)]),
             )
         }
     };
-    Ok(Value::tagged(Atom::named(tag), payload))
-}
-
-fn require_function_arity(value: &Value, arity: usize, name: &str) -> Result<(), ModuleError> {
-    let Value::Func(function) = value else {
-        return Err(ModuleError::new(format!("{name} must be a function")));
-    };
-    let actual = match function.prototype() {
-        Prototype::Bytecode(function) => function.parameter_count(),
-        Prototype::Native(function) => function.arity(),
-    };
-    if actual != arity {
-        return Err(ModuleError::new(format!(
-            "{name} must accept {arity} arguments, found {actual}"
-        )));
-    }
-    Ok(())
+    let tag = runtime_atom(heap, main, tag);
+    Ok(runtime_tagged(heap, tag, payload))
 }
 
 fn validate_entry_interface(
-    entry: &LoadedModule,
+    interface: &ModuleInterface,
     main_type: &TypeDescriptor,
     state_type: &TypeDescriptor,
 ) -> Result<(), ModuleError> {
@@ -3166,9 +3827,7 @@ fn validate_entry_interface(
         ),
     ]);
     for (name, expected) in expected {
-        let scheme = entry
-            .analysis
-            .module_interface
+        let scheme = interface
             .exports
             .get(name)
             .ok_or_else(|| ModuleError::new(format!("Entry interface omitted {name}")))?;
@@ -3188,51 +3847,53 @@ fn validate_entry_interface(
     Ok(())
 }
 
-fn pack_dyn(value: Value, descriptor: TypeDescriptor, origin: String) -> Value {
-    let mut values = Vm::new();
-    let descriptor_value = descriptor.to_value(&mut values);
-    Value::Dyn(
-        crate::value::DynValue::from_module_export(
-            descriptor_value,
-            value,
-            crate::TypeScheme {
-                parameters: Vec::new(),
-                body: descriptor,
-            },
-            origin,
-        )
-        .into(),
-    )
-}
-
-fn make_system_options(input: Option<&Value>) -> Result<Value, ModuleError> {
+fn make_system_options(
+    heap: &mut Heap,
+    main: &Heap,
+    input: Option<&crate::DataWorld>,
+) -> Result<Val, ModuleError> {
     let input = match input {
-        Some(input) => Value::tagged(
-            Atom::builtin(BuiltinAtom::Some),
-            pack_dyn(
-                input.clone(),
-                crate::types::infer_value(input),
-                "telora run --input".into(),
-            ),
-        ),
-        None => Value::none(),
+        Some(input) => {
+            let value = input
+                .relocate_into(heap, main)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let descriptor =
+                crate::types::infer_value_ref(crate::ValueRef::work(value, heap, main));
+            let descriptor_value = heap
+                .type_descriptor_value(Some(main), &descriptor)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let value = value.with_value(DecodedValue::Dyn(heap.allocate(Object::Dyn {
+                identity: Arc::new(()),
+                descriptor: descriptor_value,
+                value,
+                scheme: Some(crate::TypeScheme {
+                    parameters: Vec::new(),
+                    body: descriptor,
+                }),
+                origin: Some(Arc::from("telora run --input")),
+            })));
+            runtime_tagged(
+                heap,
+                Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
+                value,
+            )
+        }
+        None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
     };
-    Vm::new()
-        .make_dict(vec![("input".into(), input)])
-        .map_err(|error| ModuleError::new(error.to_string()))
+    Ok(runtime_record(heap, vec![("input", input)]))
 }
 
-fn parse_system_caps(value: &Value) -> Result<bool, ModuleError> {
-    let caps = expect_protocol_record(value, "Entry.prepare result", &["input"])?;
-    protocol_bool(
+fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<bool, ModuleError> {
+    let caps = expect_protocol_record_ref(value, "Entry.prepare result", &["input"])?;
+    protocol_bool_ref(
         caps.get("input").expect("field shape checked"),
         "SystemCaps.input",
     )
 }
 
-fn concrete_module_descriptor(module: &InstantiatedModule) -> Result<TypeDescriptor, ModuleError> {
+fn concrete_module_descriptor(interface: &ModuleInterface) -> Result<TypeDescriptor, ModuleError> {
     let mut fields = BTreeMap::new();
-    for (name, scheme) in &module.module.analysis.module_interface.exports {
+    for (name, scheme) in &interface.exports {
         if !scheme.parameters.is_empty() {
             return Err(ModuleError::new(format!(
                 "Main export {name:?} is generic and has no concrete Entry boundary type"
@@ -3243,14 +3904,21 @@ fn concrete_module_descriptor(module: &InstantiatedModule) -> Result<TypeDescrip
     Ok(TypeDescriptor::Struct(fields))
 }
 
-fn load_selected_entry(
+struct SelectedEntryLoader {
+    loader: ModuleLoader,
+    main_module: ResolvedModule,
+    main_path: PathBuf,
+    entry: CompiledTeloraModule,
+}
+
+fn prepare_selected_entry(
     resolver: ModuleResolver,
-    entry_id: ModuleId,
+    entry_id: ModuleCName,
     source: &str,
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
-) -> Result<LoadedModule, ModuleError> {
+) -> Result<SelectedEntryLoader, ModuleError> {
     let injected_modules = BTreeMap::from([(
         EDGE_RUNTIME_MODULE.to_owned(),
         edge_runtime_source().to_owned(),
@@ -3270,7 +3938,28 @@ fn load_selected_entry(
         .path()
         .ok_or_else(|| ModuleError::new("main module has no physical path"))?
         .to_owned();
-    let mut main = MainWorld::building();
+    let mut synthetic = injected_modules
+        .iter()
+        .map(|(name, source)| {
+            (
+                ModuleCName::builtin(name),
+                (main_path.clone(), source.clone()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    synthetic.insert(entry_id.clone(), (main_path.clone(), source.to_owned()));
+    let opaque_modules = builtin_list(native_modules)
+        .into_iter()
+        .map(|(name, _)| ModuleCName::builtin(name));
+    let graph = ModuleGraph::discover(
+        &resolver,
+        vec![main_module.clone()],
+        &synthetic,
+        opaque_modules,
+        None,
+        false,
+    )?;
+    let mut main = MainWorld::with_modules(graph);
     let mut sources = SourceDatabase::default();
     let core_modules =
         install_native_modules(&mut main, &mut sources, &debug_sink, native_modules)?;
@@ -3288,15 +3977,21 @@ fn load_selected_entry(
         source_policy: ModuleSourcePolicy::ExplicitExports,
     };
     loader.install_injected_modules(&main_path, injected_modules)?;
-    loader.load_entry(main_path, entry_id, source, BTreeMap::new())
+    let entry = loader.compile_entry(&main_path, entry_id, source, BTreeMap::new())?;
+    Ok(SelectedEntryLoader {
+        loader,
+        main_module,
+        main_path,
+        entry,
+    })
 }
 
 struct ModuleLoader {
     resolver: ModuleResolver,
-    cache: HashMap<ModuleId, ModuleState>,
-    core_modules: HashMap<String, (Value, PersistentValue, ModuleInterface)>,
+    cache: HashMap<ModuleCName, ModuleState>,
+    core_modules: HashMap<String, ModuleArtifact>,
     main: MainWorld,
-    visiting: Vec<ModuleId>,
+    visiting: Vec<ModuleCName>,
     dependencies: BTreeSet<PathBuf>,
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
@@ -3307,35 +4002,17 @@ struct ModuleLoader {
 
 #[derive(Clone)]
 enum ModuleState {
-    Ready {
-        root: PersistentValue,
-        sourced: SourcedValue,
-        opaque: bool,
-        interface: ModuleInterface,
-    },
+    Ready(ModuleArtifact),
 }
 
 impl ModuleLoader {
-    fn install_injected_values(
-        &mut self,
-        modules: BTreeMap<String, InjectedValueModule>,
-    ) -> Result<(), ModuleError> {
-        for (name, module) in modules {
-            let root = publish_value(&mut self.main.heap, &module.value)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            self.core_modules
-                .insert(name, (module.value, root, module.interface));
-        }
-        Ok(())
-    }
-
     fn install_injected_modules(
         &mut self,
         context_path: &Path,
         modules: BTreeMap<String, String>,
     ) -> Result<(), ModuleError> {
         for (name, source) in modules {
-            let module_id = ModuleId::builtin(&name);
+            let module_id = ModuleCName::builtin(&name);
             let mut account = QuotaAccount::new(self.module_quota);
             let compiled = self.compile_telora(
                 &module_id,
@@ -3359,25 +4036,28 @@ impl ModuleLoader {
                     &mut account,
                 )
                 .map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))?;
-            let value = arena
-                .export(&self.main.heap)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
             let root = arena
-                .publish(&mut self.main.heap)
+                .publish_module(&mut self.main.heap)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            self.core_modules
-                .insert(name, (value, root, compiled.analysis.module_interface));
+            self.core_modules.insert(
+                name,
+                ModuleArtifact {
+                    root,
+                    interface: compiled.analysis.module_interface,
+                    provenance: None,
+                },
+            );
         }
         Ok(())
     }
 
-    fn load_entry(
+    fn compile_entry(
         &mut self,
-        main_path: PathBuf,
-        module_id: ModuleId,
+        main_path: &Path,
+        module_id: ModuleCName,
         entry_source: &str,
-        external_bindings: BTreeMap<String, Value>,
-    ) -> Result<LoadedModule, ModuleError> {
+        external_bindings: BTreeMap<String, crate::DataWorld>,
+    ) -> Result<CompiledTeloraModule, ModuleError> {
         self.enter(&module_id)?;
         let mut account = QuotaAccount::new(self.module_quota);
         let source_name = module_id.to_string();
@@ -3386,7 +4066,7 @@ impl ModuleLoader {
             ModuleAuthority::RuntimeSystem,
             TeloraModuleSource::Synthetic {
                 name: &source_name,
-                context_path: &main_path,
+                context_path: main_path,
                 source: entry_source,
             },
             external_bindings,
@@ -3394,34 +4074,46 @@ impl ModuleLoader {
             &mut account,
         );
         self.leave(&module_id);
+        result
+    }
+
+    fn load_root(
+        &mut self,
+        module: ResolvedModule,
+        external_bindings: BTreeMap<String, crate::DataWorld>,
+    ) -> Result<LoadedModule, ModuleError> {
+        let (path, compiled) = self.compile_root(module, external_bindings)?;
         let CompiledTeloraModule {
             analysis,
             function,
             externals,
             options,
-        } = result?;
+        } = compiled;
         let workspace = WorkspaceSnapshot::build(
             self.sources.clone(),
             self.semantic_inputs.values().cloned().collect(),
         );
         let main = std::mem::replace(&mut self.main, MainWorld::building()).seal();
         Ok(LoadedModule {
-            path: main_path,
+            path,
             dependencies: self.dependencies.iter().cloned().collect(),
             analysis,
             function,
             sources: self.sources.clone(),
             workspace,
             options,
-            runtime: Arc::new(ModuleRuntime { main, externals }),
+            runtime: Arc::new(ModuleRuntime {
+                main: Arc::new(main),
+                externals,
+            }),
         })
     }
 
-    fn load_root(
+    fn compile_root(
         &mut self,
         module: ResolvedModule,
-        external_bindings: BTreeMap<String, Value>,
-    ) -> Result<LoadedModule, ModuleError> {
+        external_bindings: BTreeMap<String, crate::DataWorld>,
+    ) -> Result<(PathBuf, CompiledTeloraModule), ModuleError> {
         let path = module
             .path()
             .expect("root module has a physical path")
@@ -3440,31 +4132,11 @@ impl ModuleLoader {
             &mut account,
         );
         self.leave(&module_id);
-        let CompiledTeloraModule {
-            analysis,
-            function,
-            externals,
-            options,
-        } = result?;
-        let workspace = WorkspaceSnapshot::build(
-            self.sources.clone(),
-            self.semantic_inputs.values().cloned().collect(),
-        );
-        let main = std::mem::replace(&mut self.main, MainWorld::building()).seal();
-        Ok(LoadedModule {
-            path,
-            dependencies: self.dependencies.iter().cloned().collect(),
-            analysis,
-            function,
-            sources: self.sources.clone(),
-            workspace,
-            options,
-            runtime: Arc::new(ModuleRuntime { main, externals }),
-        })
+        result.map(|compiled| (path, compiled))
     }
 
     #[cfg(test)]
-    fn load_value(&mut self, path: &Path) -> Result<SourcedValue, ModuleError> {
+    fn load_value(&mut self, path: &Path) -> Result<ModuleArtifact, ModuleError> {
         let module = self
             .resolver
             .resolve_root(path)
@@ -3472,7 +4144,10 @@ impl ModuleLoader {
         self.load_resolved_value(module)
     }
 
-    fn load_resolved_value(&mut self, module: ResolvedModule) -> Result<SourcedValue, ModuleError> {
+    fn load_resolved_value(
+        &mut self,
+        module: ResolvedModule,
+    ) -> Result<ModuleArtifact, ModuleError> {
         let format = module.format;
         let authority = module.authority;
         let path = module
@@ -3480,145 +4155,109 @@ impl ModuleLoader {
             .expect("source module has a physical path")
             .to_owned();
         let module_id = module.id;
-        if let Some(ModuleState::Ready { root, sourced, .. }) = self.cache.get(&module_id) {
-            let _persistent_root = root;
-            return Ok(sourced.clone());
+        if let Some(ModuleState::Ready(artifact)) = self.cache.get(&module_id) {
+            return Ok(artifact.clone());
         }
         self.enter(&module_id)?;
         self.dependencies.insert(path.clone());
-        let result: Result<(SourcedValue, PersistentValue, bool, ModuleInterface), ModuleError> =
-            match format {
-                ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => {
-                    let source = read(&path)?;
-                    let source_id = self.sources.add(path.display().to_string(), source);
-                    let StaticDataParse {
-                        value,
-                        diagnostics,
-                        kind,
-                    } = parse_static_data_registered(format, &self.sources, source_id)
-                        .expect("static data format has a frontend");
-                    value
-                        .ok_or_else(|| {
-                            ModuleError::new(
-                                diagnostics
-                                    .iter()
-                                    .map(|diagnostic| self.sources.render(diagnostic))
-                                    .collect::<Vec<_>>()
-                                    .join("\n"),
-                            )
-                        })
-                        .and_then(|sourced| {
-                            let mut local = Heap::work();
-                            let local_root = local
-                                .import_sourced_value(Some(&self.main.heap), &sourced)
-                                .map_err(|error| ModuleError::new(error.to_string()))?;
-                            let root = publish_root(&mut self.main.heap, &local, local_root)
-                                .map_err(|error| ModuleError::new(error.to_string()))?;
-                            let key = module_id.to_string();
-                            self.semantic_inputs.insert(
-                                key.clone(),
-                                SemanticModuleInput {
-                                    key,
-                                    path: Some(path.clone()),
-                                    kind,
-                                    source: Some(source_id),
-                                    program: None,
-                                    analysis: None,
-                                    partial: None,
-                                    state: crate::semantic::WorkspaceModuleState::Known,
-                                    imports: Vec::new(),
-                                    diagnostics: Vec::new(),
-                                },
-                            );
-                            Ok((sourced, root, false, ModuleInterface::default()))
-                        })
-                }
-                ModuleFormat::Telora => {
-                    let mut account = QuotaAccount::new(self.module_quota);
-                    self.compile_telora(
-                        &module_id,
-                        authority,
-                        TeloraModuleSource::File(&path),
-                        BTreeMap::new(),
-                        false,
-                        &mut account,
-                    )
-                    .and_then(|compiled| {
-                        let CompiledTeloraModule {
-                            analysis,
-                            function,
-                            externals,
-                            ..
-                        } = compiled;
-                        let arena = Vm::new()
-                            .with_debug_sink(Arc::clone(&self.debug_sink))
-                            .execute_in_work(
-                                &self.main.heap,
-                                &externals,
-                                &function,
-                                &[],
-                                &mut account,
-                            )
-                            .map_err(|error| {
-                                ModuleError::new(error.with_sources(&self.sources).to_string())
-                            })?;
-                        let root = arena
+        let result: Result<ModuleArtifact, ModuleError> = match format {
+            ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => {
+                let source = read(&path)?;
+                let source_id = self.sources.add(path.display().to_string(), source);
+                let StaticDataParse {
+                    value,
+                    diagnostics,
+                    kind,
+                } = parse_static_data_registered(format, &self.sources, source_id)
+                    .expect("static data format has a frontend");
+                value
+                    .ok_or_else(|| {
+                        ModuleError::new(
+                            diagnostics
+                                .iter()
+                                .map(|diagnostic| self.sources.render(diagnostic))
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )
+                    })
+                    .and_then(|sourced| {
+                        let root = sourced
+                            .value
                             .publish(&mut self.main.heap)
                             .map_err(|error| ModuleError::new(error.to_string()))?;
-                        let interface = analysis.module_interface.clone();
-                        let contains_up_link = self
-                            .main
-                            .heap
-                            .persistent_contains_up_link(root)
-                            .map_err(|error| ModuleError::new(error.to_string()))?;
-                        let (value, opaque) = if contains_up_link && analysis.explicit_exports {
-                            (
-                                project_module_value(root, &interface, &self.main.heap)?,
-                                false,
-                            )
-                        } else if contains_up_link {
-                            (Value::none(), true)
-                        } else {
-                            (
-                                self.main
-                                    .heap
-                                    .export_persistent(root)
-                                    .map_err(|error| ModuleError::new(error.to_string()))?,
-                                false,
-                            )
-                        };
-                        Ok((
-                            SourcedValue {
-                                value,
-                                provenance: Provenance::default(),
+                        let key = module_id.to_string();
+                        self.semantic_inputs.insert(
+                            key.clone(),
+                            SemanticModuleInput {
+                                key,
+                                path: Some(path.clone()),
+                                kind,
+                                source: Some(source_id),
+                                program: None,
+                                analysis: None,
+                                partial: None,
+                                state: crate::semantic::WorkspaceModuleState::Known,
+                                imports: Vec::new(),
+                                diagnostics: Vec::new(),
                             },
+                        );
+                        Ok(ModuleArtifact {
                             root,
-                            opaque,
-                            interface,
-                        ))
+                            interface: ModuleInterface::default(),
+                            provenance: Some(sourced.provenance),
+                        })
                     })
-                }
-            };
+            }
+            ModuleFormat::Telora => {
+                let mut account = QuotaAccount::new(self.module_quota);
+                self.compile_telora(
+                    &module_id,
+                    authority,
+                    TeloraModuleSource::File(&path),
+                    BTreeMap::new(),
+                    false,
+                    &mut account,
+                )
+                .and_then(|compiled| {
+                    let CompiledTeloraModule {
+                        analysis,
+                        function,
+                        externals,
+                        ..
+                    } = compiled;
+                    let arena = Vm::new()
+                        .with_debug_sink(Arc::clone(&self.debug_sink))
+                        .execute_in_work(&self.main.heap, &externals, &function, &[], &mut account)
+                        .map_err(|error| {
+                            ModuleError::new(error.with_sources(&self.sources).to_string())
+                        })?;
+                    let root = if analysis.explicit_exports {
+                        arena.publish_module(&mut self.main.heap)
+                    } else {
+                        arena.publish(&mut self.main.heap)
+                    }
+                    .map_err(|error| ModuleError::new(error.to_string()))?;
+                    Ok(ModuleArtifact {
+                        root,
+                        interface: analysis.module_interface,
+                        provenance: None,
+                    })
+                })
+            }
+        };
         self.leave(&module_id);
-        let (sourced, root, opaque, interface) = result?;
-        self.cache.insert(
-            module_id,
-            ModuleState::Ready {
-                root,
-                sourced: sourced.clone(),
-                opaque,
-                interface,
-            },
-        );
-        Ok(sourced)
+        let artifact = result?;
+        self.cache
+            .insert(module_id, ModuleState::Ready(artifact.clone()));
+        Ok(artifact)
     }
 
     fn compile_telora(
         &mut self,
-        module_id: &ModuleId,
+        module_id: &ModuleCName,
         authority: ModuleAuthority,
         module_source: TeloraModuleSource<'_>,
-        mut external_bindings: BTreeMap<String, Value>,
+        external_bindings: BTreeMap<String, crate::DataWorld>,
         is_root: bool,
         account: &mut QuotaAccount,
     ) -> Result<CompiledTeloraModule, ModuleError> {
@@ -3668,12 +4307,36 @@ impl ModuleLoader {
                     .join("\n"),
             )
         })?;
-        let mut option_vm = Vm::new();
+        let skeleton = if self.main.modules.modules.is_empty() {
+            None
+        } else {
+            let id = self.main.modules.id(module_id).ok_or_else(|| {
+                ModuleError::new(format!(
+                    "module {module_id} was not present during module graph discovery"
+                ))
+            })?;
+            let skeleton = self.main.modules.module(id).clone();
+            let parsed_blueprint = ModuleBlueprint::from_program(&program).map_err(|message| {
+                ModuleError::new(format!(
+                    "module {module_id} has an invalid skeleton: {message}"
+                ))
+            })?;
+            if skeleton.id != id
+                || skeleton.cname != *module_id
+                || skeleton.exports != parsed_blueprint.exports
+                || skeleton.slots != parsed_blueprint.slots
+            {
+                return Err(ModuleError::new(format!(
+                    "module {module_id} changed after its static skeleton was assigned"
+                )));
+            }
+            Some(skeleton)
+        };
         let options = parsed
             .options
             .iter()
             .map(|option| {
-                immediate_value(&option.value, &mut option_vm)
+                immediate_value(&option.value)
                     .map(|value| LoadedOptionAction {
                         key: option.key.value.clone(),
                         value,
@@ -3704,14 +4367,16 @@ impl ModuleLoader {
         let mut external_provenance = BTreeMap::new();
         let mut external_roots = HashMap::new();
         for (name, value) in &external_bindings {
-            let root = publish_value(&mut self.main.heap, value)
+            let root = value
+                .publish(&mut self.main.heap)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
             external_roots.insert(name.clone(), root);
         }
-        let mut opaque_bindings = HashSet::new();
         let mut semantic_imports = Vec::new();
+        let mut graph_imports = Vec::new();
         let mut external_interfaces = BTreeMap::new();
         let mut open_candidates: BTreeMap<String, Vec<OpenImportCandidate>> = BTreeMap::new();
+        let mut direct_import_names = external_bindings.keys().cloned().collect::<HashSet<_>>();
 
         for binding in &program.value.body.value.bindings {
             if !matches!(
@@ -3721,7 +4386,7 @@ impl ModuleLoader {
                 continue;
             }
             if binding.value.kind == BindingKind::Import
-                && external_bindings.contains_key(&binding.value.name.value)
+                && !direct_import_names.insert(binding.value.name.value.clone())
             {
                 return Err(ModuleError::new(format!(
                     "duplicate module binding {:?} in {source_name}",
@@ -3740,14 +4405,26 @@ impl ModuleLoader {
                         binding.value.value.location,
                     )))
                 })?;
+            if skeleton.is_some() {
+                let imported_module_id = self.main.modules.id(&imported.id).ok_or_else(|| {
+                    ModuleError::new(format!(
+                        "imported module {} was not present during module graph discovery",
+                        imported.id
+                    ))
+                })?;
+                graph_imports.push(ImportEdge {
+                    local: (binding.value.kind == BindingKind::Import)
+                        .then(|| binding.value.name.value.clone()),
+                    target: imported_module_id,
+                });
+            }
             if imported.authority == ModuleAuthority::RuntimeSystem {
-                let (value, root, interface) =
-                    self.load_native_module(relative).map_err(|error| {
-                        ModuleError::new(self.sources.render(&Diagnostic::error(
-                            error.to_string(),
-                            binding.value.value.location,
-                        )))
-                    })?;
+                let module = self.load_native_module(relative).map_err(|error| {
+                    ModuleError::new(self.sources.render(&Diagnostic::error(
+                        error.to_string(),
+                        binding.value.value.location,
+                    )))
+                })?;
                 semantic_imports.push(SemanticImport {
                     name: if binding.value.kind == BindingKind::OpenImport {
                         "*".into()
@@ -3762,45 +4439,28 @@ impl ModuleLoader {
                 if binding.value.kind == BindingKind::OpenImport {
                     for (name, candidate) in open_import_exports(
                         &imported.id,
-                        &value,
-                        root,
-                        &interface,
+                        module.root,
+                        &module.interface,
                         &self.main.heap,
-                        None,
-                        false,
+                        module.provenance.as_ref(),
                     )? {
                         open_candidates.entry(name).or_default().push(candidate);
                     }
                     continue;
                 }
-                let selected_root =
-                    binding
-                        .value
-                        .imported_name
-                        .as_ref()
-                        .map_or(Ok(root), |name| {
-                            root.dict_get(&self.main.heap, &name.value)
-                                .map_err(|error| ModuleError::new(error.to_string()))?
-                                .ok_or_else(|| {
-                                    ModuleError::new(format!(
-                                        "module has no export {:?}",
-                                        name.value
-                                    ))
-                                })
-                        })?;
-                let (value, interface) = select_import_value(
-                    value,
-                    interface,
+                let (selected_root, interface) = select_import_root(
+                    module.root,
+                    module.interface,
                     binding.value.imported_name.as_deref(),
                     &binding.value.name.value,
+                    &self.main.heap,
                 )?;
                 external_roots.insert(binding.value.name.value.clone(), selected_root);
                 external_interfaces.insert(binding.value.name.value.clone(), interface);
-                external_bindings.insert(binding.value.name.value.clone(), value);
                 continue;
             }
             let imported_id = imported.id.clone();
-            let sourced = self.load_resolved_value(imported)?;
+            let artifact = self.load_resolved_value(imported)?;
             semantic_imports.push(SemanticImport {
                 name: if binding.value.kind == BindingKind::OpenImport {
                     "*".into()
@@ -3812,73 +4472,62 @@ impl ModuleLoader {
                 namespace: binding.value.kind != BindingKind::OpenImport
                     && binding.value.imported_name.is_none(),
             });
-            let ModuleState::Ready {
-                root,
-                opaque,
-                interface,
-                ..
-            } = self
-                .cache
-                .get(&imported_id)
-                .expect("loaded module has a ready cache entry");
             if binding.value.kind == BindingKind::OpenImport {
-                let provenance =
-                    (!sourced.provenance.values.is_empty()).then_some(&sourced.provenance);
                 for (name, candidate) in open_import_exports(
                     &imported_id,
-                    &sourced.value,
-                    *root,
-                    interface,
+                    artifact.root,
+                    &artifact.interface,
                     &self.main.heap,
-                    provenance,
-                    *opaque,
+                    artifact.provenance.as_ref(),
                 )? {
                     open_candidates.entry(name).or_default().push(candidate);
                 }
                 continue;
             }
-            let selected_root = binding
-                .value
-                .imported_name
-                .as_ref()
-                .map_or(Ok(*root), |name| {
-                    root.dict_get(&self.main.heap, &name.value)
-                        .map_err(|error| ModuleError::new(error.to_string()))?
-                        .ok_or_else(|| {
-                            ModuleError::new(format!("module has no export {:?}", name.value))
-                        })
-                })?;
-            let (selected_value, selected_interface) = select_import_value(
-                sourced.value.clone(),
-                interface.clone(),
+            let (selected_root, selected_interface) = select_import_root(
+                artifact.root,
+                artifact.interface,
                 binding.value.imported_name.as_deref(),
                 &binding.value.name.value,
+                &self.main.heap,
             )?;
             external_roots.insert(binding.value.name.value.clone(), selected_root);
             external_interfaces.insert(binding.value.name.value.clone(), selected_interface);
-            if *opaque {
-                opaque_bindings.insert(binding.value.name.value.clone());
+            if let Some(provenance) = artifact.provenance
+                && !provenance.values.is_empty()
+            {
+                external_provenance.insert(binding.value.name.value.clone(), provenance);
             }
-            if !sourced.provenance.values.is_empty() {
-                external_provenance.insert(binding.value.name.value.clone(), sourced.provenance);
-            }
-            external_bindings.insert(binding.value.name.value.clone(), selected_value);
         }
         if module_id.to_string() != PRELUDE_MODULE
-            && let Some((value, root, interface)) = self.core_modules.get(PRELUDE_MODULE)
+            && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
         {
-            let provider = ModuleId::Builtin(PRELUDE_MODULE.into());
+            let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
+            if skeleton.is_some() {
+                let target = self.main.modules.id(&provider).ok_or_else(|| {
+                    ModuleError::new("prelude was not present during module graph discovery")
+                })?;
+                graph_imports.push(ImportEdge {
+                    local: None,
+                    target,
+                });
+            }
             for (name, candidate) in open_import_exports(
                 &provider,
-                value,
-                *root,
-                interface,
+                module.root,
+                &module.interface,
                 &self.main.heap,
-                None,
-                false,
+                module.provenance.as_ref(),
             )? {
                 open_candidates.entry(name).or_default().push(candidate);
             }
+        }
+        if let Some(skeleton) = &skeleton
+            && skeleton.imports != graph_imports
+        {
+            return Err(ModuleError::new(format!(
+                "module {module_id} import graph changed after static discovery"
+            )));
         }
         let explicit_names = program
             .value
@@ -3895,7 +4544,7 @@ impl ModuleLoader {
             .map(|binding| binding.value.name.value.as_str())
             .collect::<HashSet<_>>();
         for (name, mut candidates) in open_candidates {
-            if explicit_names.contains(name.as_str()) || external_bindings.contains_key(&name) {
+            if explicit_names.contains(name.as_str()) || external_roots.contains_key(&name) {
                 continue;
             }
             candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
@@ -3928,15 +4577,11 @@ impl ModuleLoader {
                         .unwrap_or_default(),
                 },
             );
-            if candidate.opaque {
-                opaque_bindings.insert(name.clone());
-            }
             if let Some(provenance) = candidate.provenance
                 && !provenance.values.is_empty()
             {
                 external_provenance.insert(name.clone(), provenance);
             }
-            external_bindings.insert(name, candidate.value);
         }
         if let Some(binding) = program.value.body.value.bindings.iter().find(|binding| {
             matches!(
@@ -3960,35 +4605,28 @@ impl ModuleLoader {
             )));
         }
 
-        let mut dynamic_bindings = opaque_bindings;
-        if is_root && external_bindings.contains_key("input") {
+        let mut dynamic_bindings = HashSet::new();
+        if is_root && external_roots.contains_key("input") {
             dynamic_bindings.insert("input".to_owned());
         }
-        let has_type_bindings = program
-            .value
-            .body
-            .value
-            .bindings
-            .iter()
-            .any(|binding| binding.value.kind == BindingKind::Type);
-        let bootstrap_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
-        let mut bootstrap_account;
-        let analysis_account = if has_type_bindings {
-            bootstrap_account = QuotaAccount::new(account.quota());
-            &mut bootstrap_account
-        } else {
-            &mut *account
-        };
-        let mut analysis = analyze_program_with_bindings_observed(
+        let analysis = analyze_program_with_bindings_observed(
             &source_name,
+            skeleton
+                .as_ref()
+                .map_or(ModuleId::ANONYMOUS, |skeleton| skeleton.id),
             &program,
-            analysis_account,
-            &external_bindings,
+            account,
+            &external_roots
+                .iter()
+                .map(|(name, root)| (name.clone(), *root))
+                .collect(),
             &dynamic_bindings,
             &self.sources,
             &external_provenance,
             &external_interfaces,
-            &bootstrap_sink,
+            &self.debug_sink,
+            &mut self.main.heap,
+            &mut self.main.types,
         )
         .map_err(|error| {
             error.diagnostic.as_ref().map_or_else(
@@ -3996,93 +4634,27 @@ impl ModuleLoader {
                 |diagnostic| ModuleError::new(self.sources.render(diagnostic)),
             )
         })?;
-        if let Some((value, _, interface)) = self.core_modules.get(PRELUDE_MODULE) {
-            let exports = default_prelude_exports(value, interface)?;
-            project_default_prelude(&mut analysis, &exports);
-        }
+        install_type_family_roots(&mut external_roots, &analysis);
         let source_file = self.sources.get(source_id);
         let mut promoted_types = HashSet::new();
-        let mut promoted_type_roots = BTreeMap::new();
         let mut erased_metadata_bindings = HashSet::new();
-        let declared_initializer_slots = program
-            .value
-            .body
-            .value
-            .bindings
-            .iter()
-            .filter(|binding| binding.value.declared_initializer.is_some())
-            .enumerate()
-            .map(|(slot, binding)| (binding.value.name.value.clone(), slot as u32))
-            .collect::<HashMap<_, _>>();
-        if let Some(metadata) = compile_metadata_initializer(source_file, &program, &analysis)
-            .map_err(|error| ModuleError::new(error.to_string()))?
-        {
+        if let Some(metadata) = metadata_compilation_plan(&program) {
             erased_metadata_bindings = metadata.erased_bindings;
-            let arena = Vm::new()
-                .with_debug_sink(Arc::clone(&self.debug_sink))
-                .execute_in_work(
-                    &self.main.heap,
-                    &external_roots,
-                    &metadata.function,
-                    &[],
-                    account,
-                )
-                .map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))?;
-            let metadata_root = arena
-                .publish(&mut self.main.heap)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            let roots = metadata
-                .type_names
-                .into_iter()
-                .map(|name| {
-                    let root = metadata_root
-                        .dict_get(&self.main.heap, &name)
-                        .map_err(|error| ModuleError::new(error.to_string()))?
-                        .ok_or_else(|| {
-                            ModuleError::new(format!(
-                                "metadata initializer omitted type root {name:?}"
-                            ))
-                        })?;
-                    Ok((name, root))
-                })
-                .collect::<Result<Vec<_>, ModuleError>>()?;
-            let mut declared_replacements = Vec::new();
-            for (name, root) in &roots {
-                if let Some(slot) = declared_initializer_slots.get(name.as_str()) {
-                    let declared = self
-                        .main
-                        .heap
-                        .declare_persistent_type(*root, source_name.as_str(), *slot, name.as_str())
-                        .map_err(|error| ModuleError::new(error.to_string()))?;
-                    declared_replacements.push((*root, declared));
-                }
-            }
-            self.main
-                .heap
-                .rewrite_declared_type_references(&declared_replacements)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            for (name, root) in roots {
-                let root = self
-                    .main
-                    .heap
-                    .canonical_declared_root(root, &declared_replacements);
-                external_roots.insert(type_link_key(&name), root);
-                promoted_type_roots.insert(name.clone(), root);
-                promoted_types.insert(name);
-            }
-            analysis
-                .install_promoted_types(&self.main.heap, &promoted_type_roots)
-                .map_err(ModuleError::new)?;
+            promoted_types.extend(metadata.type_names);
         }
+        let static_funcs = skeleton.as_ref().map_or_else(HashMap::new, |skeleton| {
+            self.main.modules.static_funcs(skeleton.id)
+        });
         let function = if promoted_types.is_empty() {
-            compile_program_analyzed_in(source_file, &program, &analysis)
+            compile_program_analyzed_in_module(source_file, &program, &analysis, &static_funcs)
         } else {
-            compile_program_with_promoted_types(
+            compile_program_with_promoted_types_and_static_funcs(
                 source_file,
                 &program,
                 &analysis,
                 &promoted_types,
                 &erased_metadata_bindings,
+                &static_funcs,
             )
         }
         .map_err(|error| ModuleError::new(error.to_string()))?;
@@ -4105,22 +4677,19 @@ impl ModuleLoader {
         Ok(CompiledTeloraModule {
             analysis,
             function,
-            externals: external_roots,
+            externals: runtime_roots(&external_roots),
             options,
         })
     }
 
-    fn load_native_module(
-        &mut self,
-        name: &str,
-    ) -> Result<(Value, PersistentValue, ModuleInterface), ModuleError> {
+    fn load_native_module(&mut self, name: &str) -> Result<ModuleArtifact, ModuleError> {
         self.core_modules
             .get(name)
-            .map(|(value, root, interface)| (value.clone(), *root, interface.clone()))
+            .cloned()
             .ok_or_else(|| ModuleError::new(format!("unknown built-in module {name:?}")))
     }
 
-    fn enter(&mut self, module_id: &ModuleId) -> Result<(), ModuleError> {
+    fn enter(&mut self, module_id: &ModuleCName) -> Result<(), ModuleError> {
         if let Some(index) = self
             .visiting
             .iter()
@@ -4140,7 +4709,7 @@ impl ModuleLoader {
         Ok(())
     }
 
-    fn leave(&mut self, module_id: &ModuleId) {
+    fn leave(&mut self, module_id: &ModuleCName) {
         let popped = self.visiting.pop();
         debug_assert_eq!(popped.as_ref(), Some(module_id));
     }
@@ -4316,11 +4885,77 @@ mod tests {
     use crate::parse_json;
     use std::sync::Mutex;
 
-    fn named_output(value: Value) -> Value {
-        let Value::Dict(exports) = value else {
-            panic!("explicit module must return an export record")
-        };
-        exports.get("output").cloned().expect("output export")
+    fn module_blueprint(source: &str) -> Result<ModuleBlueprint, String> {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("@test/skeleton.telora", source);
+        let parsed = parse_registered(&sources, source_id);
+        let program = parsed.program.expect("skeleton fixture must parse");
+        ModuleBlueprint::from_program(&program)
+    }
+
+    #[test]
+    fn module_skeleton_assigns_separate_stable_function_and_type_slots() {
+        let blueprint = module_blueprint(
+            "decl call: Fn(Int) -> Int; def call = fn(value) { value }; type Box(T) = struct { value: T }; def other = fn(value) { value }; type State = struct { value: Int }; 0",
+        )
+        .unwrap();
+        let funcs = blueprint
+            .slots
+            .iter()
+            .filter(|slot| slot.kind == StaticSlotKind::Func)
+            .collect::<Vec<_>>();
+        let types = blueprint
+            .slots
+            .iter()
+            .filter(|slot| slot.kind == StaticSlotKind::TypeConstructor)
+            .collect::<Vec<_>>();
+
+        assert_eq!(funcs.len(), 2);
+        assert_eq!(funcs[0].name, "call");
+        assert_eq!(funcs[0].local, crate::FIRST_DYNAMIC_MODULE_LOCAL);
+        assert_eq!((funcs[0].declarations, funcs[0].definitions), (1, 1));
+        assert_eq!(funcs[1].name, "other");
+        assert_eq!(funcs[1].local, crate::FIRST_DYNAMIC_MODULE_LOCAL + 1);
+
+        assert_eq!(types.len(), 2);
+        assert_eq!(types[0].name, "Box");
+        assert_eq!(types[0].local, crate::FIRST_DYNAMIC_MODULE_LOCAL);
+        assert_eq!(types[1].name, "State");
+        assert_eq!(types[1].local, crate::FIRST_DYNAMIC_MODULE_LOCAL + 1);
+    }
+
+    #[test]
+    fn module_skeleton_rejects_incomplete_or_duplicate_function_slots() {
+        let missing = module_blueprint("decl call: Fn(Int) -> Int; 0").unwrap_err();
+        assert!(missing.contains("has no definition"));
+
+        let duplicate = module_blueprint(
+            "decl call: Fn(Int) -> Int; def call = fn(value) { value }; def call = fn(value) { value }; 0",
+        )
+        .unwrap_err();
+        assert!(duplicate.contains("cannot shadow"));
+    }
+
+    #[test]
+    fn module_skeleton_allows_only_let_to_shadow_a_definition() {
+        module_blueprint("def call = fn(value) { value }; let call = 1; call")
+            .expect("let may shadow a definition");
+
+        let direct = module_blueprint(
+            "let call = fn(value) { value }; def call = fn(value) { value }; call",
+        )
+        .unwrap_err();
+        assert!(direct.contains("cannot shadow"));
+
+        let through_let = module_blueprint(
+            "decl call: Fn(Int) -> Int; let call = fn(value) { value }; def call = fn(value) { value }; call",
+        )
+        .unwrap_err();
+        assert!(through_let.contains("cannot shadow"));
+    }
+
+    fn named_output(value: &crate::ExecutionWorld) -> crate::ValueRef<'_> {
+        value.value().dict_get("output").expect("output export")
     }
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -4732,7 +5367,7 @@ import "./library.telora" *;
             .load_module(directory.join("main.telora"), BTreeMap::new())
             .unwrap();
         assert_eq!(
-            named_output(engine.execute(&module).unwrap()).to_string(),
+            named_output(&engine.execute(&module).unwrap()).to_string(),
             "1"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -4774,12 +5409,11 @@ export let output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
         .unwrap();
 
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let Value::Dict(output) = named_output(engine.execute(&module).unwrap()) else {
-            panic!("Host native module test must return a Dict")
-        };
-        assert_eq!(output.get("answer").unwrap().to_string(), "42");
+        let output_world = engine.execute(&module).unwrap();
+        let output = named_output(&output_world);
+        assert_eq!(output.dict_get("answer").unwrap().to_string(), "42");
         assert_eq!(
-            output.get("name").unwrap().to_string(),
+            output.dict_get("name").unwrap().to_string(),
             "'Some(\"acme/runtime#Token\")"
         );
         let host = module
@@ -4958,7 +5592,7 @@ type Independent = String;
             .load_module(directory.join("main.telora"), BTreeMap::new())
             .unwrap();
         assert_eq!(
-            named_output(engine.execute(&module).unwrap()).to_string(),
+            named_output(&engine.execute(&module).unwrap()).to_string(),
             "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
         );
         let events = sink.events.lock().unwrap();
@@ -4969,7 +5603,7 @@ type Independent = String;
         assert_eq!(events[0].line, 3);
         assert_eq!(
             events[0].repr,
-            "{\"items\": [1, 'Ok, (2,)], \"text\": \"line\\nnext\"}"
+            "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
         );
         assert_eq!(events[1].name, "identity");
         assert!(events[1].repr.starts_with("<fn "));
@@ -5019,7 +5653,7 @@ type Independent = String;
             let module = engine.load_module(path, BTreeMap::new()).unwrap();
             assert_eq!(sink.events.lock().unwrap().len(), before, "{name}");
             assert_eq!(
-                named_output(engine.execute(&module).unwrap()).to_string(),
+                named_output(&engine.execute(&module).unwrap()).to_string(),
                 "\"ok\""
             );
             assert_eq!(sink.events.lock().unwrap().len(), before + 1, "{name}");
@@ -5056,10 +5690,8 @@ type Independent = String;
                 &mut exact,
             )
             .unwrap();
-        assert_eq!(
-            named_output(arena.export(&module.runtime.main.heap).unwrap()).to_string(),
-            "42"
-        );
+        let output = crate::ExecutionWorld::new(Arc::clone(&module.runtime.main.heap), arena);
+        assert_eq!(named_output(&output).to_string(), "42");
         assert_eq!(sink.events.lock().unwrap().len(), initial_events + 1);
         fs::remove_dir_all(directory).unwrap();
     }
@@ -5206,7 +5838,24 @@ type Independent = String;
             rendered.contains("contract rule declared here"),
             "{rendered}"
         );
-        assert!(rendered.contains("User.telora:3:46:"), "{rendered}");
+        let rule_location = failure
+            .rule_location()
+            .expect("codec failure must retain the nominal contract location");
+        assert!(
+            module
+                .sources
+                .get(rule_location.source)
+                .name
+                .ends_with("User.telora")
+        );
+        assert_eq!(
+            module
+                .sources
+                .get(rule_location.source)
+                .slice(rule_location)
+                .as_deref(),
+            Some("struct")
+        );
 
         fs::write(
             directory.join("inspect.telora"),
@@ -5219,13 +5868,8 @@ type Independent = String;
             .unwrap()
             .execute(100_000)
             .unwrap();
-        let Value::Tagged { tag, payload } = inspected else {
-            panic!("codec must return a tagged Result")
-        };
-        assert_eq!(tag.name(), "Err");
-        let Value::Dict(payload) = payload.as_ref() else {
-            panic!("codec failure must be an ordinary diagnostic Dict")
-        };
+        let (tag, payload) = inspected.value().tagged_parts().expect("tagged Result");
+        assert_eq!(tag.as_atom().as_deref(), Some("Err"));
         assert!(payload.get("message").is_some());
         assert_eq!(payload.get("data").unwrap().to_string(), "1");
         assert_eq!(payload.get("rule").unwrap().to_string(), "{kind: 'String}");
@@ -5628,6 +6272,26 @@ name = "rustc"
     }
 
     #[test]
+    fn recursive_function_roots_capture_imported_bindings() {
+        let directory = fixture_dir();
+        fs::write(directory.join("base.telora"), "2").unwrap();
+        fs::write(
+            directory.join("countdown.telora"),
+            "import \"./base.telora\" as base; def countdown: Fn(Int) -> Int = fn(n) { if n < 1 { base } else { countdown(n - 1) } }; countdown",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            "import \"./countdown.telora\" as countdown; countdown(4)",
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(module.execute(100_000).unwrap().to_string(), "2");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn external_input_is_any_and_available_at_runtime() {
         let directory = fixture_dir();
         fs::write(directory.join("main.telora"), "input").unwrap();
@@ -5749,14 +6413,14 @@ name = "rustc"
         let counts = loader.main.heap.counts();
         let data_id = loader.resolver.resolve_root(&data).unwrap().id;
         let first_root = match loader.cache.get(&data_id).unwrap() {
-            ModuleState::Ready { root, .. } => *root,
+            ModuleState::Ready(artifact) => artifact.root,
         };
         let second = loader.load_value(&data).unwrap();
         let second_root = match loader.cache.get(&data_id).unwrap() {
-            ModuleState::Ready { root, .. } => *root,
+            ModuleState::Ready(artifact) => artifact.root,
         };
 
-        assert_eq!(first.value.to_string(), second.value.to_string());
+        assert_eq!(first.root, second.root);
         assert_eq!(first_root, second_root);
         assert_eq!(counts, loader.main.heap.counts());
         fs::remove_dir_all(directory).unwrap();
@@ -5839,9 +6503,7 @@ name = "rustc"
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         let value = module.execute(100_000).unwrap();
-        let Value::Dict(result) = value else {
-            panic!("expected Dict result")
-        };
+        let result = value.value();
         assert_eq!(result.get("length").unwrap().to_string(), "3");
         assert_eq!(result.get("first").unwrap().to_string(), "'Some(1)");
         assert_eq!(result.get("last").unwrap().to_string(), "'Some(3)");
@@ -6299,9 +6961,8 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert_eq!(result.get("concat").unwrap().to_string(), "[1, 2, 3]");
         assert_eq!(result.get("any").unwrap().to_string(), "'True");
         assert_eq!(result.get("all").unwrap().to_string(), "'False");
@@ -6405,9 +7066,8 @@ unchanged", "|"),
             module.analysis.display(module.analysis.result_type),
             "{built: Any, decoded: Dict<String>, encoded: Any, env: Dict<String>, schema: Any, values: Array<Any>}"
         );
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict output")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(
             output.get("values").unwrap().to_string(),
             "[\"/tmp\", \"/bin\"]"
@@ -6420,9 +7080,7 @@ unchanged", "|"),
             output.get("encoded").unwrap().to_string(),
             "{SHELL: \"/bin/sh\"}"
         );
-        let Value::Dict(schema) = output.get("schema").unwrap() else {
-            panic!("expected schema Dict")
-        };
+        let schema = output.get("schema").unwrap();
         assert_eq!(schema.get("type").unwrap().to_string(), "\"object\"");
         assert_eq!(
             schema.get("additionalProperties").unwrap().to_string(),
@@ -6635,15 +7293,22 @@ unchanged", "|"),
                 "for(Prefix, Item, Context, Output, Result) Fn(Prefix, Array<Item>, Context, Fn(Prefix, Item, Context) -> Output, Fn(Array<Output>) -> Result) -> Result",
                 "{name}"
             );
-            let Value::Dict(result) = module.execute(100_000).unwrap() else {
-                panic!("{name}: expected exported module Dict")
-            };
+            let (result, _) = module
+                .execute_world_observed(Quota::with_fuel(100_000), Arc::new(DiscardDebugSink));
+            let result = result.unwrap();
             assert!(
-                matches!(result.get("execute"), Some(Value::Func(_))),
+                result
+                    .member_function_arity(&module.runtime.main.heap, "execute")
+                    .unwrap()
+                    .is_some(),
                 "{name}"
             );
             assert!(
-                matches!(result.get("output"), Some(Value::Int(2))),
+                result
+                    .module_member_ref(&module.runtime.main.heap, "output")
+                    .unwrap()
+                    .and_then(ValueRef::as_int)
+                    == Some(2),
                 "{name}"
             );
         }
@@ -6868,16 +7533,15 @@ unchanged", "|"),
                 .display(module.analysis.binding_types["state"]),
             "State"
         );
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("declared boundary test must return a Dict")
-        };
-        assert!(matches!(output.get("left"), Some(Value::Declared(_))));
-        assert!(matches!(output.get("state"), Some(Value::Declared(_))));
-        assert!(matches!(output.get("decoded"), Some(Value::Declared(_))));
-        assert!(matches!(
-            output.get("dyn_desc"),
-            Some(Value::DeclaredType(_))
-        ));
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
+        assert!(output.get("left").unwrap().is_declared());
+        assert!(output.get("state").unwrap().is_declared());
+        assert!(output.get("decoded").unwrap().is_declared());
+        assert_eq!(
+            output.get("dyn_desc").unwrap().kind(),
+            crate::ValueKind::Type
+        );
         assert_eq!(output.get("encoded").unwrap().to_string(), "{value: 3}");
 
         fs::write(
@@ -7161,6 +7825,31 @@ unchanged", "|"),
                 "Output"
             );
         }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn generic_array_callbacks_preserve_recursive_nominal_items() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/array" as array;
+               type Branch = struct {children: Array(Expr)};
+               type Expr = enum {'Leaf(Int), 'Branch(Branch)};
+               def eval: Fn(Expr) -> Int = fn(expr) {
+                   match expr {
+                       'Leaf(value) => value,
+                       'Branch(branch) => array.fold(branch.children, 0, fn(total, child) {
+                           total + eval(child)
+                       }),
+                   }
+               };
+               export let output: Int = eval('Branch({children: ['Leaf(1)]}));"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(module.execute(100_000).unwrap().to_string(), "{output: 1}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -7502,9 +8191,8 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert!(
             result
                 .get("decoded")
@@ -7514,16 +8202,13 @@ unchanged", "|"),
             "{}",
             result.get("decoded").unwrap()
         );
-        let Value::DeclaredType(declared) = result.get("metadata").unwrap() else {
-            panic!("expected declared family metadata")
-        };
-        let Value::Dict(metadata) = declared.body() else {
-            panic!("expected attributed family body")
-        };
+        let metadata = result
+            .get("metadata")
+            .unwrap()
+            .declared_body()
+            .expect("declared family metadata");
         assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
-        let Value::Dict(model_attributes) = metadata.get("attributes").unwrap() else {
-            panic!("expected family model attributes")
-        };
+        let model_attributes = metadata.get("attributes").unwrap();
         assert_eq!(
             model_attributes
                 .get("std/json.rename_all")
@@ -7531,18 +8216,10 @@ unchanged", "|"),
                 .to_string(),
             "'CamelCase"
         );
-        let Value::Dict(struct_metadata) = metadata.get("inner").unwrap() else {
-            panic!("expected family Struct metadata")
-        };
-        let Value::Dict(fields) = struct_metadata.get("fields").unwrap() else {
-            panic!("expected family Struct fields")
-        };
-        let Value::Dict(field) = fields.get("value").unwrap() else {
-            panic!("expected attributed family field")
-        };
-        let Value::Dict(field_attributes) = field.get("attributes").unwrap() else {
-            panic!("expected family field attributes")
-        };
+        let struct_metadata = metadata.get("inner").unwrap();
+        let fields = struct_metadata.get("fields").unwrap();
+        let field = fields.get("value").unwrap();
+        let field_attributes = field.get("attributes").unwrap();
         assert_eq!(
             field_attributes.get("std/json.rename").unwrap().to_string(),
             "\"payload\""
@@ -7592,17 +8269,12 @@ unchanged", "|"),
             100_000,
         )
         .unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected metadata result")
-        };
-        let Value::Dict(captured) = result.get("captured").unwrap() else {
-            panic!("expected Tuple metadata")
-        };
-        let Value::Array(items) = captured.get("items").unwrap() else {
-            panic!("expected Tuple items")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
+        let captured = result.get("captured").unwrap();
+        let items = captured.get("items").unwrap();
         assert_eq!(
-            items[0].to_string(),
+            items.sequence_get(0).unwrap().to_string(),
             result.get("direct").unwrap().to_string()
         );
 
@@ -7634,10 +8306,12 @@ unchanged", "|"),
         .unwrap();
         let module =
             load_module(directory.join("compare.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Tuple(items) = module.execute(100_000).unwrap() else {
-            panic!("expected metadata pair")
-        };
-        assert_eq!(items[0].to_string(), items[1].to_string());
+        let items_world = module.execute(100_000).unwrap();
+        let items = items_world.value();
+        assert_eq!(
+            items.sequence_get(0).unwrap().to_string(),
+            items.sequence_get(1).unwrap().to_string()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -7682,6 +8356,27 @@ unchanged", "|"),
     }
 
     #[test]
+    fn repeated_type_family_application_interns_the_same_type_identity() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"type Ty(Item) = struct {value: Item};
+               type A = Ty(String);
+               type B = Ty(String);
+               {A: A, B: B}"#,
+        )
+        .unwrap();
+
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.binding_types["A"], module.analysis.binding_types["B"],
+            "identical family applications must intern to one AnalysisTypeId",
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_callbacks_share_fuel_allocation_and_tool_stage_execution() {
         let directory = fixture_dir();
         let item_count = 1_500usize;
@@ -7708,12 +8403,12 @@ unchanged", "|"),
             .unwrap();
         assert_eq!(
             exact.requested_allocation_bytes(),
-            item_count as u64 * std::mem::size_of::<Value>() as u64
+            item_count as u64 * std::mem::size_of::<Val>() as u64
         );
-        let Value::Array(mapped) = arena.export(&module.runtime.main.heap).unwrap() else {
-            panic!("expected mapped Array")
-        };
-        assert_eq!(mapped.len(), item_count);
+        assert_eq!(
+            arena.root_ref(&module.runtime.main.heap).sequence_len(),
+            Some(item_count)
+        );
 
         let mut fuel_short = QuotaAccount::new(Quota::new(1_500, 1_000, u64::MAX));
         assert_eq!(
@@ -7731,7 +8426,7 @@ unchanged", "|"),
             crate::RuntimeErrorKind::FuelExhausted
         );
 
-        let requested = item_count as u64 * std::mem::size_of::<Value>() as u64;
+        let requested = item_count as u64 * std::mem::size_of::<Val>() as u64;
         let mut allocation_short = QuotaAccount::new(Quota::new(1_501, 1_000, requested - 1));
         assert_eq!(
             Vm::new()
@@ -7922,7 +8617,7 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let requested = 3 * std::mem::size_of::<Value>() as u64;
+        let requested = 3 * std::mem::size_of::<Val>() as u64;
         let mut exact = QuotaAccount::new(Quota::new(1, 1_000, requested));
         let result = Vm::new()
             .execute_in_work(
@@ -7932,10 +8627,11 @@ unchanged", "|"),
                 &[],
                 &mut exact,
             )
-            .unwrap()
-            .export(&module.runtime.main.heap)
             .unwrap();
-        assert_eq!(result.to_string(), "[1, 2, 3]");
+        assert_eq!(
+            result.root_ref(&module.runtime.main.heap).to_string(),
+            "[1, 2, 3]"
+        );
         assert_eq!(exact.requested_allocation_bytes(), requested);
 
         let mut short = QuotaAccount::new(Quota::new(1, 1_000, requested - 1));
@@ -7971,7 +8667,7 @@ unchanged", "|"),
             .unwrap();
             load_module(&main, BTreeMap::new(), 100_000).unwrap()
         };
-        let value_bytes = std::mem::size_of::<Value>() as u64;
+        let value_bytes = std::mem::size_of::<Val>() as u64;
 
         let some = load("arrays.get(values, 1)");
         let mut exact_some = QuotaAccount::new(Quota::new(1, 1_000, 2 * value_bytes));
@@ -7983,10 +8679,11 @@ unchanged", "|"),
                 &[],
                 &mut exact_some,
             )
-            .unwrap()
-            .export(&some.runtime.main.heap)
             .unwrap();
-        assert_eq!(result.to_string(), "'Some(20)");
+        assert_eq!(
+            result.root_ref(&some.runtime.main.heap).to_string(),
+            "'Some(20)"
+        );
         assert_eq!(exact_some.requested_allocation_bytes(), 2 * value_bytes);
         let mut short_some = QuotaAccount::new(Quota::new(1, 1_000, 2 * value_bytes - 1));
         let failure = match Vm::new().execute_in_work(
@@ -8014,10 +8711,11 @@ unchanged", "|"),
                 &[],
                 &mut no_allocation,
             )
-            .unwrap()
-            .export(&none.runtime.main.heap)
             .unwrap();
-        assert_eq!(result.to_string(), "'None");
+        assert_eq!(
+            result.root_ref(&none.runtime.main.heap).to_string(),
+            "'None"
+        );
         assert_eq!(no_allocation.requested_allocation_bytes(), 0);
 
         let enumerate = load("arrays.enumerate(values)");
@@ -8031,10 +8729,11 @@ unchanged", "|"),
                 &[],
                 &mut exact_enumerate,
             )
-            .unwrap()
-            .export(&enumerate.runtime.main.heap)
             .unwrap();
-        assert_eq!(result.to_string(), "[(0, 10), (1, 20)]");
+        assert_eq!(
+            result.root_ref(&enumerate.runtime.main.heap).to_string(),
+            "[(0, 10), (1, 20)]"
+        );
         assert_eq!(exact_enumerate.requested_allocation_bytes(), requested);
         let mut short_enumerate = QuotaAccount::new(Quota::new(1, 1_000, requested - 1));
         let failure = match Vm::new().execute_in_work(
@@ -8173,9 +8872,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected combinator results")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         let expected = [
             ("option_map", "'Some(3)"),
             ("option_map_none", "'None"),
@@ -8272,9 +8970,8 @@ unchanged", "|"),
                 .display(module.analysis.binding_types["name"]),
             "String"
         );
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("typed boundary test must return a Dict")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("name").unwrap().to_string(), "\"Kai\"");
         assert!(
             output
@@ -8283,13 +8980,8 @@ unchanged", "|"),
                 .to_string()
                 .contains("expected String")
         );
-        let Value::Tagged { tag, payload } = output.get("invalid").unwrap() else {
-            panic!("invalid validation must return a Result")
-        };
-        assert_eq!(tag.name(), "Err");
-        let Value::Dict(error) = payload.as_ref() else {
-            panic!("validation failure must be a structured error")
-        };
+        let (tag, error) = output.get("invalid").unwrap().tagged_parts().unwrap();
+        assert_eq!(tag.as_atom().as_deref(), Some("Err"));
         let message = error.get("message").unwrap().to_string();
         assert!(message.contains("must be String"), "{message}");
         assert_eq!(error.get("data").unwrap().to_string(), "{name: 1}");
@@ -8346,9 +9038,8 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert_eq!(
             result.get("keys").unwrap().to_string(),
             "[\"a\", \"middle\", \"z\"]"
@@ -8410,22 +9101,20 @@ unchanged", "|"),
         let module = engine
             .load_module(directory.join("main.telora"), BTreeMap::new())
             .unwrap();
-        let output = named_output(engine.execute(&module).unwrap());
-        let Value::Dict(output) = output else {
-            panic!("expected output Dict")
-        };
+        let output_world = engine.execute(&module).unwrap();
+        let output = named_output(&output_world);
         assert_eq!(
-            output.get("target").unwrap().to_string(),
+            output.dict_get("target").unwrap().to_string(),
             "'Some(\"aarch64-linux-gnu\")"
         );
-        assert_eq!(output.get("missing").unwrap().to_string(), "'None");
+        assert_eq!(output.dict_get("missing").unwrap().to_string(), "'None");
         assert_eq!(
-            output.get("exact").unwrap().to_string(),
+            output.dict_get("exact").unwrap().to_string(),
             "['True, 'True, 'False]"
         );
-        assert_eq!(output.get("contains").unwrap().to_string(), "'True");
+        assert_eq!(output.dict_get("contains").unwrap().to_string(), "'True");
         assert_eq!(
-            output.get("rewritten").unwrap().to_string(),
+            output.dict_get("rewritten").unwrap().to_string(),
             "'Ok([\"--sysroot=/sdk\", \"-fdebug-prefix-map=/work=.\", \"-c\", \"main.c\"])",
         );
         let rejected = output.get("rejected").unwrap().to_string();
@@ -8445,8 +9134,10 @@ unchanged", "|"),
             r#"import "std/type-desc" as desc;
                import "std/attributes" as attributes;
                import "std/array" as arrays;
+               import "std/result" as result;
                type Node = struct {children: Array(Node)};
-               let struct_nodes = desc.children(Node);
+               let node_body = result.unwrap(desc.resolve(Node));
+               let struct_nodes = desc.children(node_body);
                let field_nodes = arrays.flat_map(struct_nodes, desc.children);
                let array_nodes = arrays.flat_map(field_nodes, desc.children);
                let refs = arrays.flat_map(array_nodes, desc.children);
@@ -8455,6 +9146,8 @@ unchanged", "|"),
                    func_kind: desc.kind(Func([Int], String)),
                    attributed_kind: desc.kind(attributes.add(Int, {doc: "number"})),
                    resolve_int: desc.resolve(Int),
+                   node_kind: desc.kind(Node),
+                   node_body_kind: desc.kind(node_body),
                    ref_kinds: arrays.map(refs, desc.kind),
                    resolved_kinds: arrays.map(refs, fn(reference) {
                        match desc.resolve(reference) {
@@ -8467,9 +9160,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("type descriptor test must return a Dict")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("int_kind").unwrap().to_string(), "'Int");
         assert_eq!(output.get("func_kind").unwrap().to_string(), "'Func");
         assert_eq!(
@@ -8477,18 +9169,18 @@ unchanged", "|"),
             "'WithAttributes"
         );
         assert_eq!(output.get("TypeDesc").unwrap().to_string(), "{kind: 'Type}");
+        assert_eq!(output.get("node_kind").unwrap().to_string(), "'Ref");
+        assert_eq!(
+            output.get("node_body_kind").unwrap().to_string(),
+            "'WithAttributes"
+        );
         assert_eq!(output.get("ref_kinds").unwrap().to_string(), "['Ref]");
         assert_eq!(
             output.get("resolved_kinds").unwrap().to_string(),
             "['WithAttributes]"
         );
-        let Value::Tagged { tag, payload } = output.get("resolve_int").unwrap() else {
-            panic!("resolve must return a Result")
-        };
-        assert_eq!(tag.name(), "Err");
-        let Value::Dict(error) = payload.as_ref() else {
-            panic!("resolve error must be structured")
-        };
+        let (tag, error) = output.get("resolve_int").unwrap().tagged_parts().unwrap();
+        assert_eq!(tag.as_atom().as_deref(), Some("Err"));
         assert_eq!(
             error.get("message").unwrap().to_string(),
             "\"type descriptor is not a recursive reference\""
@@ -8511,9 +9203,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("opaque type test must return a Dict")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("kind").unwrap().to_string(), "'Opaque");
         assert_eq!(output.get("children").unwrap().to_string(), "[]");
         assert_eq!(
@@ -8528,13 +9219,9 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Tagged { tag, payload } = module.execute(100_000).unwrap() else {
-            panic!("opaque JSON decode must return a Result")
-        };
-        assert_eq!(tag.name(), "Err");
-        let Value::Dict(error) = payload.as_ref() else {
-            panic!("opaque JSON decode error must be structured")
-        };
+        let decoded = module.execute(100_000).unwrap();
+        let (tag, error) = decoded.value().tagged_parts().expect("tagged Result");
+        assert_eq!(tag.as_atom().as_deref(), Some("Err"));
         assert_eq!(
             error.get("message").unwrap().to_string(),
             "\"$: Opaque has no JSON codec\""
@@ -8578,14 +9265,14 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("hash state test must return a Dict")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         let digest = |name: &str| {
-            let Value::Bytes(bytes) = output.get(name).unwrap() else {
-                panic!("{name} must be Bytes")
-            };
-            bytes
+            output
+                .get(name)
+                .unwrap()
+                .as_bytes()
+                .unwrap()
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>()
@@ -8648,9 +9335,8 @@ unchanged", "|"),
                 .display(module.analysis.binding_types["int_value"]),
             "Dyn"
         );
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("Dyn test must return a Dict")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("int_type").unwrap().to_string(), "{kind: 'Int}");
         assert_eq!(output.get("int_kind").unwrap().to_string(), "'Int");
         assert_eq!(output.get("func_kind").unwrap().to_string(), "'Func");
@@ -8738,9 +9424,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 200_000).unwrap();
-        let Value::Dict(output) = module.execute(200_000).unwrap() else {
-            panic!("structural Dyn test must return a Dict")
-        };
+        let output_world = module.execute(200_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("name").unwrap().to_string(), "'Some(\"Ada\")");
         assert_eq!(
             output.get("user_fields").unwrap().to_string(),
@@ -8767,13 +9452,8 @@ unchanged", "|"),
             "['Some(2)]"
         );
         for field in ["missing", "wrong_shape"] {
-            let Value::Tagged { tag, payload } = output.get(field).unwrap() else {
-                panic!("observer failure must return Result")
-            };
-            assert_eq!(tag.name(), "Err");
-            let Value::Dict(blame) = payload.as_ref() else {
-                panic!("observer failure must contain BlameError")
-            };
+            let (tag, blame) = output.get(field).unwrap().tagged_parts().unwrap();
+            assert_eq!(tag.as_atom().as_deref(), Some("Err"));
             assert!(blame.get("message").unwrap().to_string().len() > 4);
         }
         fs::remove_dir_all(directory).unwrap();
@@ -8810,9 +9490,8 @@ unchanged", "|"),
                 .display(module.analysis.binding_types["eq_fn"]),
             "Fn(TypeOf(Any)) -> Fn(Any, Any) -> enum {False, True}"
         );
-        let Value::Dict(output) = module.execute(200_000).unwrap() else {
-            panic!("interpreter test must return a Dict")
-        };
+        let output_world = module.execute(200_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("equal").unwrap().to_string(), "'True");
         assert_eq!(output.get("different").unwrap().to_string(), "'False");
         assert_eq!(output.get("inferred").unwrap().to_string(), "'True");
@@ -8919,9 +9598,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 500_000).unwrap();
-        let Value::Dict(output) = module.execute(500_000).unwrap() else {
-            panic!("equality interpreter test must return a Dict")
-        };
+        let output_world = module.execute(500_000).unwrap();
+        let output = output_world.value();
         for field in [
             "int_equal",
             "array_equal",
@@ -8985,9 +9663,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 200_000).unwrap();
-        let Value::Dict(output) = module.execute(200_000).unwrap() else {
-            panic!("eq test must return a Dict")
-        };
+        let output_world = module.execute(200_000).unwrap();
+        let output = output_world.value();
         for field in ["scalar", "nested", "same_function"] {
             assert_eq!(output.get(field).unwrap().to_string(), "('True, 'True)");
         }
@@ -9032,9 +9709,8 @@ unchanged", "|"),
             module.analysis.display(module.analysis.result_type),
             "{empty_filtered: Dict<Int>, empty_folded: Int, empty_mapped: Dict<String>, filtered: Dict<Int>, folded: String, mapped: Dict<String>}"
         );
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert_eq!(
             result.get("mapped").unwrap().to_string(),
             r#"{a: "v1", middle: "v2", z: "v3"}"#
@@ -9111,7 +9787,7 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let requested = 2 * std::mem::size_of::<Value>() as u64 + 5;
+        let requested = 2 * std::mem::size_of::<Val>() as u64 + 5;
         let mut exact = QuotaAccount::new(Quota::new(1, 1_000, requested));
         let arena = Vm::new()
             .execute_in_work(
@@ -9124,7 +9800,7 @@ unchanged", "|"),
             .unwrap();
         assert_eq!(exact.requested_allocation_bytes(), requested);
         assert_eq!(
-            arena.export(&module.runtime.main.heap).unwrap().to_string(),
+            arena.root_ref(&module.runtime.main.heap).to_string(),
             "[\"a\", \"long\"]"
         );
 
@@ -9190,9 +9866,8 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert_eq!(
             result.get("all").unwrap().to_string(),
             "{only_inner: 1, only_outer: 2, shared: \"addition\", vendor:acme.flag: 'True}"
@@ -9206,17 +9881,13 @@ unchanged", "|"),
         assert_eq!(result.get("lacks").unwrap().to_string(), "'False");
         assert_eq!(result.get("stripped").unwrap().to_string(), "42");
 
-        let Value::Dict(normalized) = result.get("normalized").unwrap() else {
-            panic!("expected normalized wrapper")
-        };
+        let normalized = result.get("normalized").unwrap();
         assert_eq!(
             normalized.get("attributes").unwrap().to_string(),
             "{only_inner: 1, only_outer: 2, shared: \"outer\"}"
         );
         assert_eq!(normalized.get("inner").unwrap().to_string(), "42");
-        let Value::Dict(plain) = result.get("plain").unwrap() else {
-            panic!("expected plain wrapper")
-        };
+        let plain = result.get("plain").unwrap();
         assert_eq!(plain.get("attributes").unwrap().to_string(), "{}");
         assert_eq!(plain.get("inner").unwrap().to_string(), "\"plain\"");
         fs::remove_dir_all(directory).unwrap();
@@ -9252,9 +9923,8 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected Dict result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert!(
             result
                 .get("checked")
@@ -9270,16 +9940,13 @@ unchanged", "|"),
                 .starts_with("'Ok(")
         );
 
-        let Value::DeclaredType(declared) = result.get("metadata").unwrap() else {
-            panic!("expected declared type metadata")
-        };
-        let Value::Dict(metadata) = declared.body() else {
-            panic!("expected attributed declared body")
-        };
+        let metadata = result
+            .get("metadata")
+            .unwrap()
+            .declared_body()
+            .expect("attributed declared body");
         assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
-        let Value::Dict(model_attributes) = metadata.get("attributes").unwrap() else {
-            panic!("expected model attributes")
-        };
+        let model_attributes = metadata.get("attributes").unwrap();
         assert_eq!(
             model_attributes
                 .get("vendor:acme.model")
@@ -9287,19 +9954,11 @@ unchanged", "|"),
                 .to_string(),
             "\"User\""
         );
-        let Value::Dict(struct_metadata) = metadata.get("inner").unwrap() else {
-            panic!("expected Struct metadata")
-        };
-        let Value::Dict(fields) = struct_metadata.get("fields").unwrap() else {
-            panic!("expected Struct fields")
-        };
-        let Value::Dict(field) = fields.get("ty").unwrap() else {
-            panic!("expected attributed field metadata")
-        };
+        let struct_metadata = metadata.get("inner").unwrap();
+        let fields = struct_metadata.get("fields").unwrap();
+        let field = fields.get("ty").unwrap();
         assert_eq!(field.get("kind").unwrap().to_string(), "'WithAttributes");
-        let Value::Dict(field_attributes) = field.get("attributes").unwrap() else {
-            panic!("expected field attributes")
-        };
+        let field_attributes = field.get("attributes").unwrap();
         assert_eq!(
             field_attributes.get("std/json.rename").unwrap().to_string(),
             "\"type\""
@@ -9354,9 +10013,8 @@ unchanged", "|"),
         .unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected model result")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         assert!(result.get("unit").unwrap().to_string().starts_with("'Ok("));
         assert!(
             result
@@ -9366,28 +10024,19 @@ unchanged", "|"),
                 .starts_with("'Ok(")
         );
 
-        fn assert_wrapper(value: &Value) -> &crate::Dict {
-            let Value::Dict(wrapper) = value else {
-                panic!("expected WithAttributes wrapper")
-            };
+        fn assert_wrapper(value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
+            let wrapper = value;
             assert_eq!(wrapper.get("kind").unwrap().to_string(), "'WithAttributes");
-            assert!(matches!(wrapper.get("attributes"), Some(Value::Dict(_))));
+            assert!(wrapper.get("attributes").unwrap().dict_fields().is_some());
             wrapper
         }
-        fn declared_body(value: &Value) -> &Value {
-            let Value::DeclaredType(declared) = value else {
-                panic!("expected declared type metadata")
-            };
-            declared.body()
+        fn declared_body(value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
+            value.declared_body().expect("declared type metadata")
         }
         let user = assert_wrapper(declared_body(result.get("user").unwrap()));
-        let Value::Dict(user_metadata) = user.get("inner").unwrap() else {
-            panic!("expected Struct metadata")
-        };
+        let user_metadata = user.get("inner").unwrap();
         assert_eq!(user_metadata.get("kind").unwrap().to_string(), "'Struct");
-        let Value::Dict(fields) = user_metadata.get("fields").unwrap() else {
-            panic!("expected normalized fields")
-        };
+        let fields = user_metadata.get("fields").unwrap();
         let name = assert_wrapper(fields.get("name").unwrap());
         assert_eq!(name.get("attributes").unwrap().to_string(), "{}");
         let role = assert_wrapper(fields.get("role").unwrap());
@@ -9401,14 +10050,10 @@ unchanged", "|"),
         );
 
         let choice = assert_wrapper(declared_body(result.get("choice").unwrap()));
-        let Value::Dict(enum_metadata) = choice.get("inner").unwrap() else {
-            panic!("expected Enum metadata")
-        };
+        let enum_metadata = choice.get("inner").unwrap();
         assert_eq!(enum_metadata.get("kind").unwrap().to_string(), "'Enum");
-        let Value::Dict(variants) = enum_metadata.get("variants").unwrap() else {
-            panic!("expected normalized variants")
-        };
-        for variant in variants.values() {
+        let variants = enum_metadata.get("variants").unwrap();
+        for variant in variants.dict_values().unwrap() {
             assert_wrapper(variant);
         }
         let none = assert_wrapper(variants.get("None").unwrap());
@@ -9419,31 +10064,23 @@ unchanged", "|"),
         );
 
         let scalar = assert_wrapper(result.get("scalar").unwrap());
-        let Value::Dict(union_metadata) = scalar.get("inner").unwrap() else {
-            panic!("expected Union metadata")
-        };
+        let union_metadata = scalar.get("inner").unwrap();
         assert_eq!(union_metadata.get("kind").unwrap().to_string(), "'Union");
-        let Value::Array(union_variants) = union_metadata.get("variants").unwrap() else {
-            panic!("expected normalized Union variants")
-        };
-        assert_eq!(union_variants.len(), 2);
-        let first = assert_wrapper(&union_variants[0]);
+        let union_variants = union_metadata.get("variants").unwrap();
+        assert_eq!(union_variants.sequence_len(), Some(2));
+        let first = assert_wrapper(union_variants.sequence_get(0).unwrap());
         assert_eq!(
             first.get("attributes").unwrap().to_string(),
             "{marker: (\"union\", 4)}"
         );
-        let second = assert_wrapper(&union_variants[1]);
+        let second = assert_wrapper(union_variants.sequence_get(1).unwrap());
         assert_eq!(second.get("attributes").unwrap().to_string(), "{}");
 
         let explicit_union = assert_wrapper(result.get("explicit_union").unwrap());
-        let Value::Dict(explicit_union_metadata) = explicit_union.get("inner").unwrap() else {
-            panic!("expected explicit Union metadata")
-        };
-        let Value::Array(explicit_variants) = explicit_union_metadata.get("variants").unwrap()
-        else {
-            panic!("expected explicit Union variants")
-        };
-        for variant in explicit_variants.iter() {
+        let explicit_union_metadata = explicit_union.get("inner").unwrap();
+        let explicit_variants = explicit_union_metadata.get("variants").unwrap();
+        for index in 0..explicit_variants.sequence_len().unwrap() {
+            let variant = explicit_variants.sequence_get(index).unwrap();
             assert_wrapper(variant);
         }
         fs::remove_dir_all(directory).unwrap();
@@ -9466,9 +10103,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected validation results")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         for field in ["unknown", "missing", "unexpected", "wrong"] {
             assert!(result.get(field).unwrap().to_string().starts_with("'Err("));
         }
@@ -9505,9 +10141,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("expected Enum codec results")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(output.get("idle").unwrap().to_string(), "'Idle");
         assert_eq!(
             output.get("joined").unwrap().to_string(),
@@ -9542,9 +10177,8 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("expected failures")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert!(
             output
                 .get("no_match")
@@ -9601,20 +10235,21 @@ unchanged", "|"),
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("expected vertical model output")
-        };
-        let Value::Dict(schema) = output.get("schema").unwrap() else {
-            panic!("expected schema Dict")
-        };
-        assert_eq!(schema.get("type").unwrap().to_string(), "\"object\"");
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
+        let schema = output.get("schema").unwrap();
+        assert_eq!(schema.get("$ref").unwrap().to_string(), "\"#/$defs/Type0\"");
+        let definitions = schema.get("$defs").unwrap();
+        let model_schema = definitions.get("Type0").unwrap();
+        assert_eq!(model_schema.get("type").unwrap().to_string(), "\"object\"");
         assert_eq!(
-            schema.get("additionalProperties").unwrap().to_string(),
+            model_schema
+                .get("additionalProperties")
+                .unwrap()
+                .to_string(),
             "'False"
         );
-        let Value::Dict(properties) = schema.get("properties").unwrap() else {
-            panic!("expected properties")
-        };
+        let properties = model_schema.get("properties").unwrap();
         for key in [
             "userId",
             "city_name",
@@ -9629,14 +10264,14 @@ unchanged", "|"),
             );
         }
         assert!(
-            schema
+            model_schema
                 .get("required")
                 .unwrap()
                 .to_string()
                 .contains("userId")
         );
         assert!(
-            !schema
+            !model_schema
                 .get("required")
                 .unwrap()
                 .to_string()
@@ -10063,7 +10698,7 @@ unchanged", "|"),
     }
 
     #[test]
-    fn check_keeps_recursive_metadata_before_the_legacy_value_boundary() {
+    fn recursive_metadata_remains_observable_without_a_legacy_value_boundary() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
         fs::write(
@@ -10077,12 +10712,8 @@ export { CallExpr, Expr };"#,
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         engine.check(&module).unwrap();
-        let legacy = engine.execute(&module).unwrap_err();
-        assert!(
-            legacy
-                .message
-                .contains("cyclic heap values cannot cross the legacy Value boundary")
-        );
+        let value = engine.execute(&module).unwrap();
+        assert_eq!(value.value().dict_fields(), Some(vec!["CallExpr", "Expr"]));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -10223,9 +10854,8 @@ export { CallExpr, Expr };"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(result) = module.execute(100_000).unwrap() else {
-            panic!("expected built-in type results")
-        };
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
         for field in ["compared", "none", "some", "ok", "err"] {
             assert!(result.get(field).unwrap().to_string().starts_with("'Ok("));
         }
@@ -10233,34 +10863,24 @@ export { CallExpr, Expr };"#,
             assert!(result.get(field).unwrap().to_string().starts_with("'Err("));
         }
 
-        fn wrapper(value: &Value) -> &crate::Dict {
-            let Value::Dict(wrapper) = value else {
-                panic!("expected WithAttributes wrapper")
-            };
+        fn wrapper(value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
+            let wrapper = value;
             assert_eq!(wrapper.get("kind").unwrap().to_string(), "'WithAttributes");
-            assert!(matches!(wrapper.get("attributes"), Some(Value::Dict(_))));
+            assert!(wrapper.get("attributes").unwrap().dict_fields().is_some());
             wrapper
         }
         for field in ["bool", "maybe", "outcome"] {
             let root = wrapper(result.get(field).unwrap());
-            let Value::Dict(metadata) = root.get("inner").unwrap() else {
-                panic!("expected Enum metadata")
-            };
+            let metadata = root.get("inner").unwrap();
             assert_eq!(metadata.get("kind").unwrap().to_string(), "'Enum");
-            let Value::Dict(variants) = metadata.get("variants").unwrap() else {
-                panic!("expected Enum variants")
-            };
-            for variant in variants.values() {
+            let variants = metadata.get("variants").unwrap();
+            for variant in variants.dict_values().unwrap() {
                 wrapper(variant);
             }
         }
         let maybe = wrapper(result.get("maybe").unwrap());
-        let Value::Dict(metadata) = maybe.get("inner").unwrap() else {
-            panic!("expected Option metadata")
-        };
-        let Value::Dict(variants) = metadata.get("variants").unwrap() else {
-            panic!("expected Option variants")
-        };
+        let metadata = maybe.get("inner").unwrap();
+        let variants = metadata.get("variants").unwrap();
         let some = wrapper(variants.get("Some").unwrap());
         assert_eq!(
             some.get("attributes").unwrap().to_string(),
@@ -10417,15 +11037,9 @@ export { CallExpr, Expr };"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::DeclaredType(declared) = module.execute(100_000).unwrap() else {
-            panic!("expected declared model")
-        };
-        let Value::Dict(root) = declared.body() else {
-            panic!("expected attributed declared body")
-        };
-        let Value::Dict(root_attributes) = root.get("attributes").unwrap() else {
-            panic!("expected root attributes")
-        };
+        let model_world = module.execute(100_000).unwrap();
+        let root = model_world.value().declared_body().expect("declared model");
+        let root_attributes = root.get("attributes").unwrap();
         assert_eq!(
             root_attributes
                 .get("std/json.rename_all")
@@ -10433,21 +11047,14 @@ export { CallExpr, Expr };"#,
                 .to_string(),
             "'CamelCase"
         );
-        let Value::Dict(metadata) = root.get("inner").unwrap() else {
-            panic!("expected Struct metadata")
-        };
-        let Value::Dict(fields) = metadata.get("fields").unwrap() else {
-            panic!("expected fields")
-        };
-        let Value::Dict(value) = fields.get("value_name").unwrap() else {
-            panic!("expected normalized field wrapper")
-        };
-        assert!(
-            !matches!(value.get("inner"), Some(Value::Dict(inner)) if matches!(inner.get("kind"), Some(Value::Atom(kind)) if kind.name() == "WithAttributes"))
+        let metadata = root.get("inner").unwrap();
+        let fields = metadata.get("fields").unwrap();
+        let value = fields.get("value_name").unwrap();
+        assert_ne!(
+            value.get("inner").unwrap().get("kind").unwrap().to_string(),
+            "'WithAttributes"
         );
-        let Value::Dict(attributes) = value.get("attributes").unwrap() else {
-            panic!("expected field attributes")
-        };
+        let attributes = value.get("attributes").unwrap();
         assert_eq!(
             attributes.get("std/json.rename").unwrap().to_string(),
             "\"outerName\""
@@ -10460,12 +11067,8 @@ export { CallExpr, Expr };"#,
                 .to_string(),
             "'None"
         );
-        let Value::Dict(nested) = fields.get("nested").unwrap() else {
-            panic!("expected nested field wrapper")
-        };
-        let Value::Dict(nested_attributes) = nested.get("attributes").unwrap() else {
-            panic!("expected nested attributes")
-        };
+        let nested = fields.get("nested").unwrap();
+        let nested_attributes = nested.get("attributes").unwrap();
         assert_eq!(
             nested_attributes
                 .get("std/json.flatten")
@@ -10519,9 +11122,8 @@ export { CallExpr, Expr };"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let Value::Dict(output) = module.execute(100_000).unwrap() else {
-            panic!("expected codec results")
-        };
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
         assert_eq!(
             output.get("decoded").unwrap().to_string(),
             "{address: {city_name: \"London\", coordinates: {latitude: 51}}, display_name: \"Ada\", extras: {}, hidden: 'False, nickname: 'None, notes: \"\", tags: [], user_id: 7}"
@@ -10815,8 +11417,8 @@ export { CallExpr, Expr };"#,
             .resolve_import(&a_id, "./c.telora")
             .unwrap()
             .id;
-        let root = |id: &ModuleId| match loader.cache.get(id).unwrap() {
-            ModuleState::Ready { root, .. } => *root,
+        let root = |id: &ModuleCName| match loader.cache.get(id).unwrap() {
+            ModuleState::Ready(artifact) => artifact.root,
         };
 
         assert_eq!(root(&a_id), root(&c_id));
@@ -10826,7 +11428,7 @@ export { CallExpr, Expr };"#,
     }
 
     #[test]
-    fn exported_closures_preserve_module_up_links() {
+    fn exported_closures_preserve_module_type_slots() {
         let directory = fixture_dir();
         let library = directory.join("library.telora");
         let main = directory.join("main.telora");
@@ -10901,7 +11503,7 @@ export { CallExpr, Expr };"#,
         let engine = recovery_engine();
         let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
         assert_eq!(
-            named_output(engine.execute(&loaded).unwrap()).to_string(),
+            named_output(&engine.execute(&loaded).unwrap()).to_string(),
             "(41, 42, {args: [\"-c\", \"x.c\"], bin: \"/cache/gcc-2\", cwd: 'Some(\"/work\"), env: {clear: 'False, update: {}}, install: []}, 'True)"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -10933,7 +11535,7 @@ export { CallExpr, Expr };"#,
         let second = pending.initialize().unwrap();
         assert!(std::ptr::eq(first.module(), second.module()));
         assert_eq!(
-            named_output(engine.execute(first.module()).unwrap()).to_string(),
+            named_output(&engine.execute(first.module()).unwrap()).to_string(),
             "42"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -10955,14 +11557,13 @@ export { CallExpr, Expr };"#,
 
         let engine = recovery_engine();
         let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let Value::Dict(exports) = engine.execute(&loaded).unwrap() else {
-            panic!("expected export record")
-        };
-        let factory = exports.get("factory").unwrap();
-        let generated = engine.invoke(&loaded, factory, &[Value::Int(2)]).unwrap();
+        let factory = engine.execute(&loaded).unwrap().select("factory").unwrap();
+        let generated = engine
+            .invoke_world(&loaded, factory, &[crate::DataWorld::int(2)])
+            .unwrap();
         assert_eq!(
             engine
-                .invoke(&loaded, &generated, &[Value::Int(38)])
+                .invoke_world(&loaded, generated, &[crate::DataWorld::int(38)])
                 .unwrap()
                 .to_string(),
             "42"
@@ -11789,7 +12390,7 @@ export let output = (compared, selected);"#,
         .unwrap();
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let output = named_output(engine.execute(&module).unwrap()).to_string();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
         assert!(output.contains("parsed: {answer: 42}"), "{output}");
         assert!(output.contains("decoded: 42"), "{output}");
         assert!(output.contains("failed: 'Err("), "{output}");
@@ -11881,7 +12482,7 @@ export let output = (compared, selected);"#,
         .unwrap();
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let output = named_output(engine.execute(&module).unwrap()).to_string();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
         assert!(
             output.contains("{endpoint: {host: \"localhost\", port: 8080}, name: \"api\"}"),
             "{output}"
@@ -11911,7 +12512,7 @@ export let output = (compared, selected);"#,
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         assert_eq!(
-            named_output(engine.execute(&module).unwrap()).to_string(),
+            named_output(&engine.execute(&module).unwrap()).to_string(),
             "\"api@localhost:8080 {ready} -0 api\""
         );
 
@@ -11977,7 +12578,7 @@ export let output = (compared, selected);"#,
         .unwrap();
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let output = named_output(engine.execute(&module).unwrap()).to_string();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
         assert!(
             output
                 .contains("decoded: {endpoint: {host: \"localhost\", port: 8080}, name: \"dev\"}"),
@@ -12006,7 +12607,7 @@ export let output = (compared, selected);"#,
         .unwrap();
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let output = named_output(engine.execute(&module).unwrap()).to_string();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
         assert!(output.contains("must be used together"), "{output}");
 
         fs::write(
@@ -12058,7 +12659,7 @@ export let output = (compared, selected);"#,
         let engine = recovery_engine();
         let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
         assert_eq!(
-            named_output(engine.execute(&loaded).unwrap()).to_string(),
+            named_output(&engine.execute(&loaded).unwrap()).to_string(),
             "42"
         );
         let names = loaded
@@ -12107,9 +12708,8 @@ export let output = (compared, selected);"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 500_000).unwrap();
-        let Value::Dict(output) = module.execute(500_000).unwrap() else {
-            panic!("show interpreter test must return a Dict")
-        };
+        let output_world = module.execute(500_000).unwrap();
+        let output = output_world.value();
         for (field, expected) in [
             ("inferred", "'Ok(\"42\")"),
             ("explicit", "'Ok(\"42\")"),
@@ -12126,10 +12726,12 @@ export let output = (compared, selected);"#,
         ] {
             assert_eq!(output.get(field).unwrap().to_string(), expected, "{field}");
         }
-        let Value::Tagged { tag, payload } = output.get("function_error").unwrap() else {
-            panic!("unsupported Function must return blame")
-        };
-        assert_eq!(tag.name(), "Err");
+        let (tag, payload) = output
+            .get("function_error")
+            .unwrap()
+            .tagged_parts()
+            .unwrap();
+        assert_eq!(tag.as_atom().as_deref(), Some("Err"));
         assert_eq!(
             payload.to_string(),
             "\"unsupported my_show descriptor: Func\""
@@ -12184,9 +12786,8 @@ export let output = (compared, selected);"#,
         .unwrap();
         let module =
             load_module(directory.join("main.telora"), BTreeMap::new(), 1_000_000).unwrap();
-        let Value::Dict(output) = module.execute(1_000_000).unwrap() else {
-            panic!("hash interpreter test must return a Dict")
-        };
+        let output_world = module.execute(1_000_000).unwrap();
+        let output = output_world.value();
         for field in ["equal", "alias_unchanged", "recursive_equal"] {
             assert_eq!(output.get(field).unwrap().to_string(), "'True", "{field}");
         }
@@ -12249,17 +12850,16 @@ export { output };"#,
         .unwrap();
 
         let module = load_module(&main, BTreeMap::new(), 500_000).unwrap();
-        let Value::Dict(output) = named_output(module.execute(500_000).unwrap()) else {
-            panic!("diagnostic collection test must return a Dict")
-        };
-        assert_eq!(output.get("count").unwrap().to_string(), "3");
-        assert_eq!(output.get("initial_count").unwrap().to_string(), "0");
-        assert_eq!(output.get("unchanged").unwrap().to_string(), "'True");
-        let Value::Array(messages) = output.get("messages").unwrap() else {
-            panic!("messages must be an Array")
-        };
+        let output_world = module.execute(500_000).unwrap();
+        let output = named_output(&output_world);
+        assert_eq!(output.dict_get("count").unwrap().to_string(), "3");
+        assert_eq!(output.dict_get("initial_count").unwrap().to_string(), "0");
+        assert_eq!(output.dict_get("unchanged").unwrap().to_string(), "'True");
+        let messages = output.dict_get("messages").unwrap();
         assert_eq!(
-            messages.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            (0..messages.sequence_len().unwrap())
+                .map(|index| messages.sequence_get(index).unwrap().to_string())
+                .collect::<Vec<_>>(),
             [
                 "\"project name must not be empty\"",
                 "\"package name must not be empty\"",
@@ -12344,9 +12944,8 @@ inspect(User)(checked)"#;
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 200_000).unwrap();
-        let Value::Dict(output) = module.execute(200_000).unwrap() else {
-            panic!("parameter-wise interpreter test must return a Dict")
-        };
+        let output_world = module.execute(200_000).unwrap();
+        let output = output_world.value();
         for (field, expected) in [
             ("unary", "\"unary\""),
             ("mixed", "\"mixed\""),
@@ -12370,7 +12969,7 @@ export let output = reject.should_ok!("old");"#,
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
-            named_output(module.execute(100_000).unwrap()).to_string(),
+            named_output(&module.execute(100_000).unwrap()).to_string(),
             "'None"
         );
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
@@ -12465,7 +13064,7 @@ export let output = reject.must_ok!(42);"#,
 
         let host =
             load_module(examples.join("host-plan.telora"), BTreeMap::new(), 500_000).unwrap();
-        let encoded = named_output(host.execute(500_000).unwrap()).to_string();
+        let encoded = named_output(&host.execute(500_000).unwrap()).to_string();
         assert!(encoded.contains("parameters"), "{encoded}");
         assert!(encoded.contains("customer_region"), "{encoded}");
         assert!(encoded.contains("result_schema"), "{encoded}");

@@ -1,6 +1,7 @@
-use crate::json::{Provenance, SourcedValue, ValuePath, ValuePathSegment};
+use crate::DataWorld;
+use crate::heap::{DecodedValue, Heap, Object, Val};
+use crate::json::{DataScalar, Provenance, SourcedValue, ValuePath, ValuePathSegment};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
-use crate::{BuiltinAtom, Value, Vm};
 use std::collections::BTreeMap;
 
 const MAX_ALIAS_EXPANSIONS: usize = 10_000;
@@ -37,7 +38,7 @@ pub fn parse_yaml_registered(sources: &SourceDatabase, source_id: SourceId) -> Y
 
 #[derive(Clone)]
 enum YamlNode {
-    Scalar(Value, Location),
+    Scalar(DataScalar, Location),
     Sequence(Vec<YamlNode>, Location),
     Mapping(Vec<(String, Location, YamlNode)>, Location),
 }
@@ -120,10 +121,7 @@ impl YamlLowerer {
             self.skip_trivia();
         }
         let node = if self.position == self.lines.len() {
-            YamlNode::Scalar(
-                Value::Atom(crate::Atom::builtin(BuiltinAtom::None)),
-                self.location(0, 0),
-            )
+            YamlNode::Scalar(DataScalar::Atom("None".into()), self.location(0, 0))
         } else {
             let indent = self.lines[self.position].indent;
             self.parse_block(indent)?
@@ -135,12 +133,15 @@ impl YamlLowerer {
                 "YAML module must contain exactly one document",
             ));
         }
-        let mut vm = Vm::new();
+        let mut heap = Heap::work();
         let mut provenance = Provenance::default();
         let mut path = Vec::new();
-        let value = materialize(node, &mut vm, &mut provenance, &mut path)
+        let root = materialize(node, &mut heap, &mut provenance, &mut path)
             .map_err(|message| Diagnostic::error(message, self.location(0, self.source_len)))?;
-        Ok(SourcedValue { value, provenance })
+        Ok(SourcedValue {
+            value: DataWorld::new(heap, root),
+            provenance,
+        })
     }
 
     fn parse_block(&mut self, indent: usize) -> Result<YamlNode, Diagnostic> {
@@ -249,10 +250,7 @@ impl YamlLowerer {
             let value = if rest.is_empty() {
                 self.skip_trivia();
                 if self.position >= self.lines.len() || self.lines[self.position].indent <= indent {
-                    YamlNode::Scalar(
-                        Value::Atom(crate::Atom::builtin(BuiltinAtom::None)),
-                        key_location,
-                    )
+                    YamlNode::Scalar(DataScalar::Atom("None".into()), key_location)
                 } else {
                     self.parse_block(self.lines[self.position].indent)?
                 }
@@ -404,7 +402,7 @@ impl YamlLowerer {
             }
         }
         Ok(YamlNode::Scalar(
-            Value::string(value),
+            DataScalar::String(value),
             self.location(self.lines[line].start, end),
         ))
     }
@@ -493,19 +491,19 @@ fn parse_key(text: &str) -> Result<String, &'static str> {
 
 fn parse_scalar(text: &str, location: Location) -> Result<YamlNode, &'static str> {
     if let Some(value) = decode_quoted(text) {
-        return Ok(YamlNode::Scalar(Value::string(value), location));
+        return Ok(YamlNode::Scalar(DataScalar::String(value), location));
     }
     if text.starts_with(['\'', '"']) {
         return Err("invalid quoted YAML String");
     }
     let value = match text {
-        "" | "~" | "null" | "Null" | "NULL" => Value::Atom(crate::Atom::builtin(BuiltinAtom::None)),
-        "true" | "True" | "TRUE" => Value::bool(true),
-        "false" | "False" | "FALSE" => Value::bool(false),
+        "" | "~" | "null" | "Null" | "NULL" => DataScalar::Atom("None".into()),
+        "true" | "True" | "TRUE" => DataScalar::Atom("True".into()),
+        "false" | "False" | "FALSE" => DataScalar::Atom("False".into()),
         ".inf" | ".Inf" | ".INF" | "-.inf" | "-.Inf" | "-.INF" | ".nan" | ".NaN" | ".NAN" => {
             return Err("YAML Float must be finite");
         }
-        _ if looks_integer(text) => Value::Int(parse_yaml_int(text)?),
+        _ if looks_integer(text) => DataScalar::Int(parse_yaml_int(text)?),
         _ if looks_float(text) => {
             let value = text
                 .replace('_', "")
@@ -514,9 +512,9 @@ fn parse_scalar(text: &str, location: Location) -> Result<YamlNode, &'static str
             if !value.is_finite() {
                 return Err("YAML Float must be finite");
             }
-            Value::Float(value)
+            DataScalar::Float(value)
         }
-        _ => Value::string(text),
+        _ => DataScalar::String(text.into()),
     };
     Ok(YamlNode::Scalar(value, location))
 }
@@ -874,35 +872,54 @@ impl<'a> FlowParser<'a> {
 
 fn materialize(
     node: YamlNode,
-    vm: &mut Vm,
+    heap: &mut Heap,
     provenance: &mut Provenance,
     path: &mut ValuePath,
-) -> Result<Value, String> {
+) -> Result<Val, String> {
     match node {
         YamlNode::Scalar(value, location) => {
             provenance.values.insert(path.clone(), location);
-            Ok(value)
+            Ok(value.lower(heap, location))
         }
         YamlNode::Sequence(values, location) => {
             let mut result = Vec::new();
             for (index, value) in values.into_iter().enumerate() {
                 path.push(ValuePathSegment::Index(index));
-                result.push(materialize(value, vm, provenance, path)?);
+                result.push(materialize(value, heap, provenance, path)?);
                 path.pop();
             }
             provenance.values.insert(path.clone(), location);
-            Ok(Value::Array(result.into()))
+            Ok(Val::original(
+                DecodedValue::Array(heap.allocate(Object::Array(result.into_boxed_slice()))),
+                Some(location.into()),
+            ))
         }
         YamlNode::Mapping(entries, location) => {
             let mut result = Vec::new();
             for (key, key_location, value) in entries {
                 path.push(ValuePathSegment::Key(key.clone()));
                 provenance.keys.insert(path.clone(), key_location);
-                result.push((key, materialize(value, vm, provenance, path)?));
+                result.push((key, materialize(value, heap, provenance, path)?));
                 path.pop();
             }
             provenance.values.insert(path.clone(), location);
-            vm.make_dict(result)
+            result.sort_by(|left, right| left.0.cmp(&right.0));
+            let names = result
+                .iter()
+                .map(|(name, _)| heap.intern(name))
+                .collect::<Vec<_>>();
+            let values = result
+                .into_iter()
+                .map(|(_, value)| value)
+                .collect::<Vec<_>>();
+            let shape = heap.intern_shape(names);
+            Ok(Val::original(
+                DecodedValue::Dict(heap.allocate(Object::Dict {
+                    shape,
+                    values: values.into_boxed_slice(),
+                })),
+                Some(location.into()),
+            ))
         }
     }
 }

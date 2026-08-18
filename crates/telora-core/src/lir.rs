@@ -1,5 +1,5 @@
-use crate::bytecode::{BytecodeFunction, DebugOriginRange, Instruction, Register};
-use crate::{Origin, Value, WithOrigin};
+use crate::bytecode::{BytecodeFunction, Constant, DebugOriginRange, Instruction, Register};
+use crate::{Origin, WithOrigin};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -23,23 +23,27 @@ pub enum Operation {
         dst: RegisterId,
         src: RegisterId,
     },
-    MakeUpLink {
+    AllocFunc {
+        dst: RegisterId,
+        static_id: Option<crate::FuncId>,
+    },
+    SealFunc {
+        target: RegisterId,
+        source: RegisterId,
+    },
+    AllocTypeSlot {
         dst: RegisterId,
     },
-    ReadUpLink {
+    ReadTypeSlot {
         dst: RegisterId,
         link: RegisterId,
     },
-    InitializeUpLink {
+    SealTypeSlot {
         link: RegisterId,
         src: RegisterId,
     },
-    AssertUpLinkReady {
+    AssertTypeSlotReady {
         link: RegisterId,
-    },
-    AssertFunctionArity {
-        value: RegisterId,
-        arity: u32,
     },
     Add {
         dst: RegisterId,
@@ -237,7 +241,7 @@ pub struct Function {
     pub parameter_count: u32,
     pub capture_count: u32,
     pub register_count: u32,
-    pub constants: Vec<Value>,
+    pub constants: Vec<Constant>,
     pub items: Vec<Item>,
 }
 
@@ -301,7 +305,7 @@ pub fn assemble(function: Function) -> Result<BytecodeFunction, AssembleError> {
         ));
     }
     let debug_origins = compress_origins(&origins);
-    Ok(BytecodeFunction::assembled(
+    Ok(BytecodeFunction::assembled_constants(
         function.name,
         parameter_count,
         capture_count,
@@ -355,23 +359,27 @@ fn lower_operation(
             dst: register(dst)?,
             src: register(src)?,
         },
-        Operation::MakeUpLink { dst } => Instruction::MakeUpLink {
+        Operation::AllocFunc { dst, static_id } => Instruction::AllocFunc {
+            dst: register(dst)?,
+            static_id,
+        },
+        Operation::SealFunc { target, source } => Instruction::SealFunc {
+            target: register(target)?,
+            source: register(source)?,
+        },
+        Operation::AllocTypeSlot { dst } => Instruction::AllocTypeSlot {
             dst: register(dst)?,
         },
-        Operation::ReadUpLink { dst, link } => Instruction::ReadUpLink {
+        Operation::ReadTypeSlot { dst, link } => Instruction::ReadTypeSlot {
             dst: register(dst)?,
             link: register(link)?,
         },
-        Operation::InitializeUpLink { link, src } => Instruction::InitializeUpLink {
+        Operation::SealTypeSlot { link, src } => Instruction::SealTypeSlot {
             link: register(link)?,
             src: register(src)?,
         },
-        Operation::AssertUpLinkReady { link } => Instruction::AssertUpLinkReady {
+        Operation::AssertTypeSlotReady { link } => Instruction::AssertTypeSlotReady {
             link: register(link)?,
-        },
-        Operation::AssertFunctionArity { value, arity } => Instruction::AssertFunctionArity {
-            value: register(value)?,
-            arity: usize::try_from(arity).map_err(|_| assembly_error("arity is too large"))?,
         },
         Operation::Add { dst, left, right } => Instruction::Add {
             dst: register(dst)?,
@@ -639,7 +647,7 @@ mod tests {
             parameter_count: 0,
             capture_count: 0,
             register_count: 1,
-            constants: vec![Value::Int(1)],
+            constants: vec![Constant::Int(1)],
             items: vec![
                 Item::Operation(WithOrigin {
                     value: Operation::LoadConst {

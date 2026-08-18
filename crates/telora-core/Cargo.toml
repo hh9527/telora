@@ -9,6 +9,7 @@ path = "src/lib.rs"
 [dependencies]
 codespan-reporting = "0.13"
 crop = { version = "0.4.3", features = ["utf16-metric"] }
+hashbrown = { version = "0.14.5", features = ["raw"] }
 logos = "0.16"
 regex = "1.12"
 regex-syntax = "0.8"

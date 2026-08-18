@@ -1,4 +1,4 @@
-use crate::{Origin, Value};
+use crate::{Atom, NativeFunction, Origin};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,6 +14,17 @@ pub struct TextLinkId(pub usize);
 pub struct ProtoLinkId(pub usize);
 
 #[derive(Clone, Debug)]
+pub enum Constant {
+    Placeholder,
+    Int(i64),
+    Float(f64),
+    String(Arc<str>),
+    Bytes(Arc<[u8]>),
+    Atom(Atom),
+    Native(NativeFunction),
+}
+
+#[derive(Clone, Debug)]
 pub enum Instruction {
     LoadConst {
         dst: Register,
@@ -23,23 +34,27 @@ pub enum Instruction {
         dst: Register,
         src: Register,
     },
-    MakeUpLink {
+    AllocFunc {
+        dst: Register,
+        static_id: Option<crate::FuncId>,
+    },
+    SealFunc {
+        target: Register,
+        source: Register,
+    },
+    AllocTypeSlot {
         dst: Register,
     },
-    ReadUpLink {
+    ReadTypeSlot {
         dst: Register,
         link: Register,
     },
-    InitializeUpLink {
+    SealTypeSlot {
         link: Register,
         src: Register,
     },
-    AssertUpLinkReady {
+    AssertTypeSlotReady {
         link: Register,
-    },
-    AssertFunctionArity {
-        value: Register,
-        arity: usize,
     },
     Add {
         dst: Register,
@@ -235,23 +250,27 @@ pub enum Opcode {
         dst: Register,
         src: Register,
     },
-    MakeUpLink {
+    AllocFunc {
+        dst: Register,
+        static_id: Option<crate::FuncId>,
+    },
+    SealFunc {
+        target: Register,
+        source: Register,
+    },
+    AllocTypeSlot {
         dst: Register,
     },
-    ReadUpLink {
+    ReadTypeSlot {
         dst: Register,
         link: Register,
     },
-    InitializeUpLink {
+    SealTypeSlot {
         link: Register,
         src: Register,
     },
-    AssertUpLinkReady {
+    AssertTypeSlotReady {
         link: Register,
-    },
-    AssertFunctionArity {
-        value: Register,
-        arity: usize,
     },
     Add {
         dst: Register,
@@ -459,14 +478,14 @@ impl FuncByteCode {
 
 #[derive(Clone, Debug, Default)]
 pub struct LinkingTable {
-    values: Vec<Value>,
+    values: Vec<Constant>,
     external_values: Vec<Option<Arc<str>>>,
     text: Vec<Arc<str>>,
     prototypes: Vec<Arc<BytecodeFunction>>,
 }
 
 impl LinkingTable {
-    pub(crate) fn values(&self) -> &[Value] {
+    pub(crate) fn values(&self) -> &[Constant] {
         &self.values
     }
 
@@ -504,27 +523,10 @@ impl BytecodeFunction {
         }
     }
 
-    pub(crate) fn from_linked_parts(
-        code: Arc<FuncByteCode>,
-        values: Vec<Value>,
-        text: Vec<Arc<str>>,
-        prototypes: Vec<Arc<BytecodeFunction>>,
-    ) -> Self {
-        Self {
-            code,
-            links: LinkingTable {
-                values,
-                external_values: Vec::new(),
-                text,
-                prototypes,
-            },
-        }
-    }
-
     pub fn new(
         name: impl Into<Arc<str>>,
         register_count: usize,
-        constants: Vec<Value>,
+        constants: Vec<Constant>,
         instructions: Vec<Instruction>,
     ) -> Self {
         Self::with_signature(name, 0, 0, register_count, constants, instructions)
@@ -535,10 +537,10 @@ impl BytecodeFunction {
         parameter_count: usize,
         capture_count: usize,
         register_count: usize,
-        constants: Vec<Value>,
+        constants: Vec<Constant>,
         instructions: Vec<Instruction>,
     ) -> Self {
-        Self::assembled(
+        Self::assembled_constants(
             name,
             parameter_count,
             capture_count,
@@ -549,12 +551,12 @@ impl BytecodeFunction {
         )
     }
 
-    pub(crate) fn assembled(
+    pub(crate) fn assembled_constants(
         name: impl Into<Arc<str>>,
         parameter_count: usize,
         capture_count: usize,
         register_count: usize,
-        constants: Vec<Value>,
+        constants: Vec<Constant>,
         instructions: Vec<Instruction>,
         debug_origins: Vec<DebugOriginRange>,
     ) -> Self {
@@ -588,7 +590,7 @@ impl BytecodeFunction {
         &self.links
     }
 
-    pub fn value_link(&self, id: ValueLinkId) -> Option<&Value> {
+    pub fn value_link(&self, id: ValueLinkId) -> Option<&Constant> {
         self.links.values.get(id.0)
     }
 
@@ -610,7 +612,7 @@ impl BytecodeFunction {
 
     pub fn relink_with(
         &self,
-        mut value: impl FnMut(&Value) -> Value,
+        mut value: impl FnMut(&Constant) -> Constant,
         mut text: impl FnMut(&str) -> Arc<str>,
         mut prototype: impl FnMut(&Arc<BytecodeFunction>) -> Arc<BytecodeFunction>,
     ) -> Self {
@@ -641,7 +643,7 @@ impl BytecodeFunction {
         self.code.capture_count
     }
 
-    pub fn constants(&self) -> &[Value] {
+    pub fn constants(&self) -> &[Constant] {
         &self.links.values
     }
 
@@ -684,13 +686,12 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
             value: ValueLinkId(constant),
         },
         Instruction::Move { dst, src } => Opcode::Move { dst, src },
-        Instruction::MakeUpLink { dst } => Opcode::MakeUpLink { dst },
-        Instruction::ReadUpLink { dst, link } => Opcode::ReadUpLink { dst, link },
-        Instruction::InitializeUpLink { link, src } => Opcode::InitializeUpLink { link, src },
-        Instruction::AssertUpLinkReady { link } => Opcode::AssertUpLinkReady { link },
-        Instruction::AssertFunctionArity { value, arity } => {
-            Opcode::AssertFunctionArity { value, arity }
-        }
+        Instruction::AllocFunc { dst, static_id } => Opcode::AllocFunc { dst, static_id },
+        Instruction::SealFunc { target, source } => Opcode::SealFunc { target, source },
+        Instruction::AllocTypeSlot { dst } => Opcode::AllocTypeSlot { dst },
+        Instruction::ReadTypeSlot { dst, link } => Opcode::ReadTypeSlot { dst, link },
+        Instruction::SealTypeSlot { link, src } => Opcode::SealTypeSlot { link, src },
+        Instruction::AssertTypeSlotReady { link } => Opcode::AssertTypeSlotReady { link },
         Instruction::Add { dst, left, right } => Opcode::Add { dst, left, right },
         Instruction::Subtract { dst, left, right } => Opcode::Subtract { dst, left, right },
         Instruction::Multiply { dst, left, right } => Opcode::Multiply { dst, left, right },
@@ -802,7 +803,7 @@ mod tests {
         let child = Arc::new(BytecodeFunction::new(
             "child",
             1,
-            vec![Value::Int(1)],
+            vec![Constant::Int(1)],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -814,7 +815,7 @@ mod tests {
         let function = BytecodeFunction::new(
             "parent",
             3,
-            vec![Value::string("constant")],
+            vec![Constant::String("constant".into())],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),
@@ -867,7 +868,7 @@ mod tests {
         let function = BytecodeFunction::new(
             "value",
             1,
-            vec![Value::string("linked")],
+            vec![Constant::String("linked".into())],
             vec![
                 Instruction::LoadConst {
                     dst: Register(0),

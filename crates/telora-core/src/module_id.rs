@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
+use crate::DataWorld;
 use crate::ast::{Expr, ExprKind};
-use crate::{Value, Vm};
+use crate::heap::{DecodedValue, Heap, Object, Val};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ModuleFormat {
@@ -64,8 +65,57 @@ pub enum ModuleAuthority {
     RuntimeSystem,
 }
 
+/// Stable identity assigned after the complete module graph has been discovered.
+///
+/// The numeric value is the module's position in the graph sorted by canonical
+/// module name. It is deliberately distinct from [`ModuleCName`], which is a
+/// resolver-level name and may contain paths.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ModuleId(u32);
+
+impl ModuleId {
+    pub(crate) const ANONYMOUS: Self = Self(0);
+    pub const FIRST_DYNAMIC: u32 = 16;
+
+    pub(crate) fn from_index(index: usize) -> Self {
+        let index = u32::try_from(index).expect("module graph exceeds u32 ID space");
+        Self(
+            Self::FIRST_DYNAMIC
+                .checked_add(index)
+                .expect("module graph exceeds u32 ID space"),
+        )
+    }
+
+    pub(crate) const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn index(self) -> usize {
+        (self.0 - Self::FIRST_DYNAMIC) as usize
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+pub const FIRST_DYNAMIC_MODULE_LOCAL: u32 = 1024;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FuncId {
+    pub module: ModuleId,
+    pub local: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TypeConstructorId {
+    pub module: ModuleId,
+    pub local: u32,
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ModuleId {
+pub enum ModuleCName {
     Source(PathBuf),
     Binary(PathBuf),
     Test(PathBuf),
@@ -74,13 +124,13 @@ pub enum ModuleId {
     Dependency { name: String, path: PathBuf },
 }
 
-impl ModuleId {
+impl ModuleCName {
     pub fn builtin(name: impl Into<String>) -> Self {
         Self::Builtin(name.into())
     }
 }
 
-impl fmt::Display for ModuleId {
+impl fmt::Display for ModuleCName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Source(path) => write!(formatter, "@src/{}", path.display()),
@@ -95,7 +145,7 @@ impl fmt::Display for ModuleId {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ResolvedModule {
-    pub id: ModuleId,
+    pub id: ModuleCName,
     pub format: ModuleFormat,
     pub authority: ModuleAuthority,
     physical_path: Option<PathBuf>,
@@ -179,13 +229,12 @@ pub struct ModuleResolver {
     workspace_root: PathBuf,
     source_root: PathBuf,
     root_path: PathBuf,
-    root_id: ModuleId,
+    root_id: ModuleCName,
     dependencies: BTreeMap<String, PathBuf>,
     formats: BTreeMap<String, ModuleFormat>,
     builtins: BTreeMap<String, u32>,
-    selected_entry: Option<ModuleId>,
+    selected_entry: Option<ModuleCName>,
     injected_modules: BTreeSet<String>,
-    virtual_modules: BTreeSet<String>,
 }
 
 impl ModuleResolver {
@@ -202,13 +251,12 @@ impl ModuleResolver {
             workspace_root: workspace_root.clone(),
             source_root: workspace_root,
             root_path: root_path.clone(),
-            root_id: ModuleId::Standalone(PathBuf::from(name)),
+            root_id: ModuleCName::Standalone(PathBuf::from(name)),
             dependencies: BTreeMap::new(),
             formats: BTreeMap::new(),
             builtins: BTreeMap::new(),
             selected_entry: None,
             injected_modules: BTreeSet::new(),
-            virtual_modules: BTreeSet::new(),
         };
         let source = std::fs::read_to_string(&root_path).map_err(|error| {
             ResolveModuleError::Io(format!("cannot read {}: {error}", root_path.display()))
@@ -216,14 +264,13 @@ impl ModuleResolver {
         let mut sources = crate::SourceDatabase::default();
         let source_id = sources.add(root_path.display().to_string(), source);
         let parsed = crate::parser::parse_registered(&sources, source_id);
-        let mut values = Vm::new();
         for option in parsed
             .options
             .iter()
             .filter(|option| option.key.value.starts_with("crate."))
         {
-            let value = immediate_value(&option.value, &mut values)?;
-            resolver.apply_standalone_option(&option.key.value, &value)?;
+            let value = immediate_value(&option.value)?;
+            resolver.apply_standalone_option(&option.key.value, value.value())?;
         }
         Ok(resolver)
     }
@@ -245,9 +292,9 @@ impl ModuleResolver {
         let (id, path) = logical_root(&workspace_root, &source_root, root_id)?;
         let root_path = resolve_physical(&path)?;
         let expected_root = match &id {
-            ModuleId::Source(_) => source_root.clone(),
-            ModuleId::Binary(_) => resolve_physical(&source_root.join("bin"))?,
-            ModuleId::Test(_) => resolve_physical(&workspace_root.join("tests"))?,
+            ModuleCName::Source(_) => source_root.clone(),
+            ModuleCName::Binary(_) => resolve_physical(&source_root.join("bin"))?,
+            ModuleCName::Test(_) => resolve_physical(&workspace_root.join("tests"))?,
             _ => workspace_root.clone(),
         };
         if !root_path.starts_with(&expected_root) {
@@ -266,7 +313,6 @@ impl ModuleResolver {
             builtins: BTreeMap::new(),
             selected_entry: None,
             injected_modules: BTreeSet::new(),
-            virtual_modules: BTreeSet::new(),
         };
         resolver.load_manifest(&manifest)?;
         // Resolve dependency IDs after loading aliases.
@@ -282,12 +328,12 @@ impl ModuleResolver {
         self.resolve_root(&self.root_path)
     }
 
-    pub fn is_root(&self, id: &ModuleId) -> bool {
+    pub fn is_root(&self, id: &ModuleCName) -> bool {
         id == &self.root_id
     }
 
     pub fn is_standalone(&self) -> bool {
-        matches!(self.root_id, ModuleId::Standalone(_))
+        matches!(self.root_id, ModuleCName::Standalone(_))
     }
 
     pub fn root_path(&self) -> &Path {
@@ -345,7 +391,6 @@ impl ModuleResolver {
             builtins: BTreeMap::new(),
             selected_entry: None,
             injected_modules: BTreeSet::new(),
-            virtual_modules: BTreeSet::new(),
         };
         if let Some(manifest) = manifest {
             resolver.load_manifest(&manifest)?;
@@ -365,7 +410,7 @@ impl ModuleResolver {
 
     pub fn with_entry_context(
         mut self,
-        entry: ModuleId,
+        entry: ModuleCName,
         modules: impl IntoIterator<Item = String>,
     ) -> Self {
         self.selected_entry = Some(entry);
@@ -373,22 +418,14 @@ impl ModuleResolver {
         self
     }
 
-    pub(crate) fn with_virtual_modules(
-        mut self,
-        modules: impl IntoIterator<Item = String>,
-    ) -> Self {
-        self.virtual_modules = modules.into_iter().collect();
-        self
-    }
-
     pub fn resolve_root(&self, path: &Path) -> Result<ResolvedModule, ResolveModuleError> {
         let path = resolve_physical(path)?;
         if path != self.root_path {
-            if matches!(self.root_id, ModuleId::Standalone(_)) {
+            if matches!(self.root_id, ModuleCName::Standalone(_)) {
                 let name = path
                     .file_name()
                     .ok_or_else(|| ResolveModuleError::InvalidImport(path.display().to_string()))?;
-                let id = ModuleId::Standalone(PathBuf::from(name));
+                let id = ModuleCName::Standalone(PathBuf::from(name));
                 return Ok(ResolvedModule {
                     format: self.format_for(&id, &path)?,
                     id,
@@ -416,27 +453,19 @@ impl ModuleResolver {
 
     pub fn resolve_import(
         &self,
-        importer: &ModuleId,
+        importer: &ModuleCName,
         target: &str,
     ) -> Result<ResolvedModule, ResolveModuleError> {
         if target.is_empty() {
             return Err(ResolveModuleError::EmptyPath);
         }
         let privileged = self.selected_entry.as_ref() == Some(importer);
-        if self.virtual_modules.contains(target) {
-            return Ok(ResolvedModule {
-                id: ModuleId::builtin(target),
-                format: ModuleFormat::Telora,
-                authority: ModuleAuthority::RuntimeSystem,
-                physical_path: None,
-            });
-        }
         if self.injected_modules.contains(target) {
             if !privileged {
                 return Err(ResolveModuleError::PrivateModuleAccess(target.into()));
             }
             return Ok(ResolvedModule {
-                id: ModuleId::builtin(target),
+                id: ModuleCName::builtin(target),
                 format: ModuleFormat::Telora,
                 authority: ModuleAuthority::RuntimeSystem,
                 physical_path: None,
@@ -448,7 +477,7 @@ impl ModuleResolver {
         {
             self.resolve_dependency(target, target, privileged)?;
             return Ok(ResolvedModule {
-                id: ModuleId::builtin(target),
+                id: ModuleCName::builtin(target),
                 format: ModuleFormat::Telora,
                 authority: ModuleAuthority::RuntimeSystem,
                 physical_path: None,
@@ -456,7 +485,7 @@ impl ModuleResolver {
         }
         if !target.starts_with(['.', '@']) && self.builtins.contains_key(target) {
             return Ok(ResolvedModule {
-                id: ModuleId::builtin(target),
+                id: ModuleCName::builtin(target),
                 format: ModuleFormat::Telora,
                 authority: ModuleAuthority::RuntimeSystem,
                 physical_path: None,
@@ -482,31 +511,31 @@ impl ModuleResolver {
         }
         if target.starts_with("./") || target.starts_with("../") {
             return match importer {
-                ModuleId::Binary(_) | ModuleId::Test(_) => {
+                ModuleCName::Binary(_) | ModuleCName::Test(_) => {
                     return Err(ResolveModuleError::InvalidImport(format!(
                         "{target}; binary and test roots must import crate sources with @src/..."
                     )));
                 }
-                ModuleId::Standalone(_) => {
+                ModuleCName::Standalone(_) => {
                     let logical = lexical_normalize_relative(Path::new(target))
                         .ok_or_else(|| ResolveModuleError::CrateEscape(target.into()))?;
                     self.resolve_source(logical, target)
                 }
-                ModuleId::Source(path) => {
+                ModuleCName::Source(path) => {
                     let logical = lexical_normalize_relative(
                         &path.parent().unwrap_or_else(|| Path::new("")).join(target),
                     )
                     .ok_or_else(|| ResolveModuleError::CrateEscape(target.into()))?;
                     self.resolve_source(logical, target)
                 }
-                ModuleId::Dependency { name, path } => {
+                ModuleCName::Dependency { name, path } => {
                     let logical = lexical_normalize_relative(
                         &path.parent().unwrap_or_else(|| Path::new("")).join(target),
                     )
                     .ok_or_else(|| ResolveModuleError::CrateEscape(target.into()))?;
                     self.resolve_dependency_parts(name, logical, target, true)
                 }
-                ModuleId::Builtin(_) => Err(ResolveModuleError::InvalidImport(
+                ModuleCName::Builtin(_) => Err(ResolveModuleError::InvalidImport(
                     "built-in modules cannot use relative imports".into(),
                 )),
             };
@@ -525,60 +554,52 @@ impl ModuleResolver {
             crate::json::parse_json(&manifest.display().to_string(), &source).map_err(|error| {
                 ResolveModuleError::Manifest(format!("invalid {}: {error}", manifest.display()))
             })?;
-        self.apply_manifest(&value)
+        self.apply_manifest(value.value())
     }
 
-    fn apply_manifest(&mut self, value: &Value) -> Result<(), ResolveModuleError> {
-        let Value::Dict(manifest_value) = value else {
+    fn apply_manifest(&mut self, value: crate::ValueRef<'_>) -> Result<(), ResolveModuleError> {
+        if value.kind() != crate::ValueKind::Dict {
             return Err(ResolveModuleError::Manifest(
                 "dependency manifest must be a JSON object".into(),
             ));
-        };
-        if let Some(dependencies) = manifest_value.get("dependencies") {
-            let Value::Dict(dependencies) = dependencies else {
+        }
+        if let Some(dependencies) = value.get("dependencies") {
+            let Some(names) = dependencies.dict_fields() else {
                 return Err(ResolveModuleError::Manifest(
                     "manifest field \"dependencies\" must be an object".into(),
                 ));
             };
-            for (name, specification) in dependencies
-                .shape()
-                .fields()
-                .iter()
-                .zip(dependencies.values())
-            {
-                let path = match specification {
-                    Value::Dict(specification) => match specification.get("path") {
-                        Some(Value::String(path)) => path.as_ref(),
-                        _ => {
-                            return Err(ResolveModuleError::Manifest(format!(
-                                "dependency {name:?} must have a String path"
-                            )));
-                        }
-                    },
-                    _ => {
-                        return Err(ResolveModuleError::Manifest(format!(
-                            "dependency {name:?} must be an object"
-                        )));
-                    }
-                };
-                let root = resolve_physical(&self.workspace_root.join(path))?;
+            for name in names {
+                let specification = dependencies.get(name).expect("Dict field exists");
+                let path = specification
+                    .get("path")
+                    .and_then(crate::ValueRef::as_str)
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(format!(
+                            "dependency {name:?} must have a String path"
+                        ))
+                    })?;
+                let root = resolve_physical(&self.workspace_root.join(path.as_str()))?;
                 self.dependencies.insert(name.to_owned(), root);
             }
         }
-        if let Some(formats) = manifest_value.get("formats") {
-            let Value::Dict(formats) = formats else {
+        if let Some(formats) = value.get("formats") {
+            let Some(modules) = formats.dict_fields() else {
                 return Err(ResolveModuleError::Manifest(
                     "manifest field \"formats\" must be an object".into(),
                 ));
             };
-            for (module, format) in formats.shape().fields().iter().zip(formats.values()) {
-                let Value::String(format) = format else {
-                    return Err(ResolveModuleError::Manifest(format!(
-                        "format override {module:?} must be a String"
-                    )));
-                };
+            for module in modules {
+                let format = formats
+                    .get(module)
+                    .and_then(crate::ValueRef::as_str)
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(format!(
+                            "format override {module:?} must be a String"
+                        ))
+                    })?;
                 self.formats
-                    .insert(module.to_owned(), ModuleFormat::parse(format.as_ref())?);
+                    .insert(module.to_owned(), ModuleFormat::parse(format.as_str())?);
             }
         }
         Ok(())
@@ -587,74 +608,73 @@ impl ModuleResolver {
     fn apply_standalone_option(
         &mut self,
         key: &str,
-        value: &Value,
+        value: crate::ValueRef<'_>,
     ) -> Result<(), ResolveModuleError> {
-        let Value::Dict(fields) = value else {
+        if value.kind() != crate::ValueKind::Dict {
             return Err(ResolveModuleError::Manifest(format!(
                 "option {key:?} must contain a Dict"
             )));
-        };
+        }
         match key {
             "crate.dependency" => {
-                let name = match fields.get("name") {
-                    Some(Value::String(name)) => name.as_ref(),
-                    _ => {
-                        return Err(ResolveModuleError::Manifest(
+                let name = value
+                    .get("name")
+                    .and_then(crate::ValueRef::as_str)
+                    .map(|value| value.as_str().to_owned())
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(
                             "crate.dependency field \"name\" must be a String".into(),
-                        ));
-                    }
-                };
-                let path = match fields.get("source") {
-                    Some(Value::Tagged { tag, payload }) if tag.name() == "Path" => {
-                        let Value::Dict(source) = payload.as_ref() else {
-                            return Err(ResolveModuleError::Manifest(
-                                "crate.dependency Path payload must be a Dict".into(),
-                            ));
-                        };
-                        match source.get("path") {
-                            Some(Value::String(path)) => path.as_ref(),
-                            _ => {
-                                return Err(ResolveModuleError::Manifest(
-                                    "crate.dependency Path field \"path\" must be a String".into(),
-                                ));
-                            }
-                        }
-                    }
-                    _ => {
-                        return Err(ResolveModuleError::Manifest(
+                        )
+                    })?;
+                let source = value
+                    .get("source")
+                    .and_then(crate::ValueRef::tagged_parts)
+                    .filter(|(tag, _)| tag.as_atom().as_deref() == Some("Path"))
+                    .map(|(_, payload)| payload)
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(
                             "crate.dependency field \"source\" must be 'Path({path: String})"
                                 .into(),
-                        ));
-                    }
-                };
-                if self.dependencies.contains_key(name) {
+                        )
+                    })?;
+                let path = source
+                    .get("path")
+                    .and_then(crate::ValueRef::as_str)
+                    .map(|value| value.as_str().to_owned())
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(
+                            "crate.dependency Path field \"path\" must be a String".into(),
+                        )
+                    })?;
+                if self.dependencies.contains_key(&name) {
                     return Err(ResolveModuleError::Manifest(format!(
                         "duplicate crate dependency {name:?}"
                     )));
                 }
-                self.dependencies.insert(
-                    name.into(),
-                    resolve_physical(&self.workspace_root.join(path))?,
-                );
+                self.dependencies
+                    .insert(name, resolve_physical(&self.workspace_root.join(&path))?);
             }
             "crate.format" => {
-                let module = match fields.get("module") {
-                    Some(Value::String(value)) => value.as_ref(),
-                    _ => {
-                        return Err(ResolveModuleError::Manifest(
+                let module = value
+                    .get("module")
+                    .and_then(crate::ValueRef::as_str)
+                    .map(|value| value.as_str().to_owned())
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(
                             "crate.format field \"module\" must be a String".into(),
-                        ));
-                    }
-                };
-                let format = match fields.get("format") {
-                    Some(Value::String(value)) => ModuleFormat::parse(value)?,
-                    _ => {
-                        return Err(ResolveModuleError::Manifest(
+                        )
+                    })?;
+                let format = value
+                    .get("format")
+                    .and_then(crate::ValueRef::as_str)
+                    .map(|value| ModuleFormat::parse(value.as_str()))
+                    .transpose()?
+                    .ok_or_else(|| {
+                        ResolveModuleError::Manifest(
                             "crate.format field \"format\" must be a String".into(),
-                        ));
-                    }
-                };
-                if self.formats.insert(module.into(), format).is_some() {
+                        )
+                    })?;
+                if self.formats.insert(module.clone(), format).is_some() {
                     return Err(ResolveModuleError::Manifest(format!(
                         "duplicate crate format module {module:?}"
                     )));
@@ -688,21 +708,21 @@ impl ModuleResolver {
 
     fn resolve_in_owner(
         &self,
-        importer: &ModuleId,
+        importer: &ModuleCName,
         path: &Path,
         original: &str,
     ) -> Result<ResolvedModule, ResolveModuleError> {
         let path = lexical_normalize_relative(path)
             .ok_or_else(|| ResolveModuleError::CrateEscape(original.into()))?;
         match importer {
-            ModuleId::Source(_)
-            | ModuleId::Binary(_)
-            | ModuleId::Test(_)
-            | ModuleId::Standalone(_) => self.resolve_source(path, original),
-            ModuleId::Dependency { name, .. } => {
+            ModuleCName::Source(_)
+            | ModuleCName::Binary(_)
+            | ModuleCName::Test(_)
+            | ModuleCName::Standalone(_) => self.resolve_source(path, original),
+            ModuleCName::Dependency { name, .. } => {
                 self.resolve_dependency_parts(name, path, original, true)
             }
-            ModuleId::Builtin(_) => Err(ResolveModuleError::InvalidImport(
+            ModuleCName::Builtin(_) => Err(ResolveModuleError::InvalidImport(
                 "@src is unavailable to built-in modules".into(),
             )),
         }
@@ -723,7 +743,7 @@ impl ModuleResolver {
         {
             return Err(ResolveModuleError::CrateEscape(original.into()));
         }
-        let id = ModuleId::Source(path);
+        let id = ModuleCName::Source(path);
         let format = self.format_for(&id, &physical)?;
         Ok(ResolvedModule {
             id,
@@ -760,7 +780,7 @@ impl ModuleResolver {
             return Err(ResolveModuleError::CrateEscape(original.into()));
         }
         let private = is_private_module_path(&path);
-        let id = ModuleId::Dependency {
+        let id = ModuleCName::Dependency {
             name: name.into(),
             path,
         };
@@ -779,7 +799,7 @@ impl ModuleResolver {
 
     fn format_for(
         &self,
-        id: &ModuleId,
+        id: &ModuleCName,
         physical: &Path,
     ) -> Result<ModuleFormat, ResolveModuleError> {
         let configured = self.formats.get(&id.to_string()).copied();
@@ -802,7 +822,7 @@ fn logical_root(
     workspace_root: &Path,
     source_root: &Path,
     value: &str,
-) -> Result<(ModuleId, PathBuf), ResolveModuleError> {
+) -> Result<(ModuleCName, PathBuf), ResolveModuleError> {
     let parse = |prefix: &str| -> Result<PathBuf, ResolveModuleError> {
         let raw = value
             .strip_prefix(prefix)
@@ -826,19 +846,19 @@ fn logical_root(
         {
             return Err(ResolveModuleError::InvalidImport(value.into()));
         }
-        return Ok((ModuleId::Source(path.clone()), source_root.join(path)));
+        return Ok((ModuleCName::Source(path.clone()), source_root.join(path)));
     }
     if value.starts_with("@bin/") {
         let path = parse("@bin/")?;
         return Ok((
-            ModuleId::Binary(path.clone()),
+            ModuleCName::Binary(path.clone()),
             source_root.join("bin").join(path),
         ));
     }
     if value.starts_with("@test/") {
         let path = parse("@test/")?;
         return Ok((
-            ModuleId::Test(path.clone()),
+            ModuleCName::Test(path.clone()),
             workspace_root.join("tests").join(path),
         ));
     }
@@ -847,7 +867,7 @@ fn logical_root(
     }
     // Dependency path is resolved after the manifest is loaded.
     Ok((
-        ModuleId::builtin("<pending>"),
+        ModuleCName::builtin("<pending>"),
         workspace_root.join("<pending>"),
     ))
 }
@@ -856,52 +876,71 @@ pub fn resolve_root_module(path: &Path) -> Result<ResolvedModule, ResolveModuleE
     ModuleResolver::for_root(path)?.resolve_root(path)
 }
 
-pub(crate) fn immediate_value(expression: &Expr, vm: &mut Vm) -> Result<Value, ResolveModuleError> {
-    match &expression.value {
-        ExprKind::Int(value) => Ok(Value::Int(*value)),
-        ExprKind::Float(value) if value.is_finite() => Ok(Value::Float(*value)),
-        ExprKind::String(value) => Ok(Value::string(value.as_str())),
-        ExprKind::Atom(name) => Ok(Value::atom(name.clone())),
-        ExprKind::Array(values) => values
-            .iter()
-            .map(|value| immediate_value(value, vm))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|values| Value::Array(values.into())),
-        ExprKind::Dict(fields) => {
-            let entries = fields
-                .iter()
-                .map(|field| {
-                    immediate_value(&field.value.value, vm).map(|value| {
-                        (
-                            field
-                                .value
-                                .name
-                                .as_ref()
-                                .expect("manifest fields have names")
-                                .value
-                                .clone(),
-                            value,
-                        )
+pub(crate) fn immediate_value(expression: &Expr) -> Result<DataWorld, ResolveModuleError> {
+    fn lower(expression: &Expr, heap: &mut Heap) -> Result<Val, ResolveModuleError> {
+        let value = match &expression.value {
+            ExprKind::Int(value) => DecodedValue::Int(*value),
+            ExprKind::Float(value) if value.is_finite() => DecodedValue::Float(*value),
+            ExprKind::String(value) => heap.string(None, value.as_str()),
+            ExprKind::Atom(name) => heap.atom(None, name),
+            ExprKind::Array(values) => {
+                let values = values
+                    .iter()
+                    .map(|value| lower(value, heap))
+                    .collect::<Result<Vec<_>, _>>()?;
+                DecodedValue::Array(heap.allocate(Object::Array(values.into_boxed_slice())))
+            }
+            ExprKind::Dict(fields) => {
+                let mut entries = fields
+                    .iter()
+                    .map(|field| {
+                        lower(&field.value.value, heap).map(|value| {
+                            (
+                                field
+                                    .value
+                                    .name
+                                    .as_ref()
+                                    .expect("manifest fields have names")
+                                    .value
+                                    .clone(),
+                                value,
+                            )
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            vm.make_dict(entries).map_err(ResolveModuleError::Manifest)
-        }
-        ExprKind::Call { callee, arguments }
-            if matches!(callee.value, ExprKind::Atom(_)) && arguments.len() == 1 =>
-        {
-            let ExprKind::Atom(tag) = &callee.value else {
-                unreachable!("guarded above")
-            };
-            Ok(Value::tagged(
-                crate::value::Atom::named(tag.clone()),
-                immediate_value(&arguments[0], vm)?,
-            ))
-        }
-        _ => Err(ResolveModuleError::Manifest(
-            "option accepts only immediate values".into(),
-        )),
+                    .collect::<Result<Vec<_>, _>>()?;
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+                let names = entries.iter().map(|(name, _)| heap.intern(name)).collect();
+                let values = entries
+                    .into_iter()
+                    .map(|(_, value)| value)
+                    .collect::<Vec<_>>();
+                let shape = heap.intern_shape(names);
+                DecodedValue::Dict(heap.allocate(Object::Dict {
+                    shape,
+                    values: values.into_boxed_slice(),
+                }))
+            }
+            ExprKind::Call { callee, arguments }
+                if matches!(callee.value, ExprKind::Atom(_)) && arguments.len() == 1 =>
+            {
+                let ExprKind::Atom(tag) = &callee.value else {
+                    unreachable!("guarded above")
+                };
+                let tag = Val::new(heap.atom(None, tag), Some(callee.location.into()));
+                let payload = lower(&arguments[0], heap)?;
+                DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload }))
+            }
+            _ => {
+                return Err(ResolveModuleError::Manifest(
+                    "option accepts only immediate values".into(),
+                ));
+            }
+        };
+        Ok(Val::new(value, Some(expression.location.into())))
     }
+    let mut heap = Heap::work();
+    let root = lower(expression, &mut heap)?;
+    Ok(DataWorld::new(heap, root))
 }
 
 fn absolute_normalized(path: &Path) -> Result<PathBuf, ResolveModuleError> {
@@ -951,20 +990,23 @@ fn module_id_for_physical_root(
     workspace_root: &Path,
     source_root: &Path,
     crate_mode: bool,
-) -> Result<(ModuleId, bool), ResolveModuleError> {
+) -> Result<(ModuleCName, bool), ResolveModuleError> {
     if !crate_mode {
         let name = root
             .file_name()
             .ok_or_else(|| ResolveModuleError::InvalidImport(root.display().to_string()))?;
-        return Ok((ModuleId::Standalone(PathBuf::from(name)), true));
+        return Ok((ModuleCName::Standalone(PathBuf::from(name)), true));
     }
     let tests_root = resolve_physical(&workspace_root.join("tests"))?;
     let binary_root = resolve_physical(&source_root.join("bin"))?;
     if let Ok(path) = root.strip_prefix(&binary_root) {
-        return Ok((ModuleId::Binary(validate_root_relative(path, root)?), true));
+        return Ok((
+            ModuleCName::Binary(validate_root_relative(path, root)?),
+            true,
+        ));
     }
     if let Ok(path) = root.strip_prefix(&tests_root) {
-        return Ok((ModuleId::Test(validate_root_relative(path, root)?), true));
+        return Ok((ModuleCName::Test(validate_root_relative(path, root)?), true));
     }
     if let Ok(path) = root.strip_prefix(source_root) {
         let path = validate_root_relative(path, root)?;
@@ -977,12 +1019,12 @@ fn module_id_for_physical_root(
                 root.display().to_string(),
             ));
         }
-        return Ok((ModuleId::Source(path), false));
+        return Ok((ModuleCName::Source(path), false));
     }
     let name = root
         .file_name()
         .ok_or_else(|| ResolveModuleError::InvalidImport(root.display().to_string()))?;
-    Ok((ModuleId::Standalone(PathBuf::from(name)), true))
+    Ok((ModuleCName::Standalone(PathBuf::from(name)), true))
 }
 
 fn validate_root_relative(path: &Path, original: &Path) -> Result<PathBuf, ResolveModuleError> {
@@ -1069,7 +1111,7 @@ mod tests {
 
     #[test]
     fn formats_logical_ids_without_physical_paths() {
-        let id = ModuleId::Source(PathBuf::from("a file.yml"));
+        let id = ModuleCName::Source(PathBuf::from("a file.yml"));
         assert_eq!(id.to_string(), "@src/a file.yml");
         assert_eq!(
             ModuleFormat::from_path(Path::new("a.yaml")),
@@ -1139,7 +1181,7 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ModuleId::builtin("host/run-entry.telora");
+        let entry = ModuleCName::builtin("host/run-entry.telora");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_builtins([
@@ -1149,7 +1191,7 @@ mod tests {
             .with_entry_context(entry.clone(), std::iter::empty());
         let root = resolver.resolve_root(&main).unwrap();
         let builtin = resolver.resolve_import(&root.id, "std/array").unwrap();
-        assert_eq!(builtin.id, ModuleId::builtin("std/array"));
+        assert_eq!(builtin.id, ModuleCName::builtin("std/array"));
         assert_eq!(builtin.authority, ModuleAuthority::RuntimeSystem);
 
         let local = resolver
@@ -1174,7 +1216,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             entry_private.id,
-            ModuleId::Dependency {
+            ModuleCName::Dependency {
                 name: "dep".into(),
                 path: "internal.priv.telora".into(),
             }
@@ -1230,12 +1272,12 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ModuleId::builtin("host/run-entry.telora");
+        let entry = ModuleCName::builtin("host/run-entry.telora");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_entry_context(entry.clone(), ["std/rt.priv.telora".to_owned()]);
         let root = resolver.resolve_root(&main).unwrap();
-        assert_eq!(root.id, ModuleId::Binary(PathBuf::from("tool.telora")));
+        assert_eq!(root.id, ModuleCName::Binary(PathBuf::from("tool.telora")));
         assert_eq!(root.to_string(), "@bin/tool.telora");
 
         let local = resolver
@@ -1269,14 +1311,14 @@ mod tests {
                 .resolve_import(&entry, "@bin/tool.telora")
                 .unwrap()
                 .id,
-            ModuleId::Binary(PathBuf::from("tool.telora"))
+            ModuleCName::Binary(PathBuf::from("tool.telora"))
         );
         assert_eq!(
             resolver
                 .resolve_import(&entry, "std/rt.priv.telora")
                 .unwrap()
                 .id,
-            ModuleId::builtin("std/rt.priv.telora")
+            ModuleCName::builtin("std/rt.priv.telora")
         );
         assert!(matches!(
             resolver.resolve_import(&root.id, "std/rt.priv.telora"),

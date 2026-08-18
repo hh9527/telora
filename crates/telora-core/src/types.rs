@@ -3,7 +3,7 @@ use crate::ast::{
     TypeArgumentKind, UnaryOperator, located,
 };
 use crate::compiler::compile_expression_with_external_bindings;
-use crate::heap::{Handle, Heap, PersistentValue};
+use crate::heap::{Handle, Heap, PersistentValue, Val, publish_root};
 use crate::hir::{HirDefinitionId, HirDefinitionKind, HirExpressionId, HirProgram, HirResolution};
 use crate::json::{Provenance, ValuePath, ValuePathSegment};
 use crate::lexer::{FrontendError, SourceLocation};
@@ -14,111 +14,374 @@ use crate::semantic::{
     UnknownReason,
 };
 use crate::source::{Diagnostic, SourceDatabase};
+use crate::type_store::{InternType, TypeId, TypeShape, TypeStore};
 use crate::value::{
-    Atom, Closure, CoreBuiltinTypeFunction, CoreDiagnosticFunction, CoreDynFunction,
-    CoreModelFunction, NativeError, NativeFunction, Value,
+    Atom, CoreBuiltinTypeFunction, CoreDiagnosticFunction, CoreDynFunction, CoreModelFunction,
+    NativeError, NativeFunction,
 };
 use crate::{
     BuiltinAtom, CallContext, DebugSink, DiscardDebugSink, Quota, QuotaAccount, ValueKind,
     ValueRef, Vm,
 };
+use hashbrown::raw::RawTable;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 
 const DEFAULT_TOOL_FUEL: usize = 100_000;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TypeId(u32);
+pub struct AnalysisTypeId(u32);
 
 fn display_named_type(name: &str) -> &str {
     name.rsplit(':').next().unwrap_or(name)
 }
 
-impl TypeId {
+impl AnalysisTypeId {
     pub const fn index(self) -> usize {
         self.0 as usize
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum TypeNode {
     Pending,
-    Ref(TypeId),
+    Ref(AnalysisTypeId),
     Bound(TypeParameterId),
     Named(String),
     Declared {
         id: crate::value::DeclaredTypeId,
         name: String,
-        body: TypeId,
+        body: AnalysisTypeId,
     },
     Any,
     Never,
     Type,
     Dyn,
-    TypeOf(TypeId),
+    TypeOf(AnalysisTypeId),
     Int,
     Float,
     String,
     Bytes,
     Opaque(crate::NativeType),
     Atom(Atom),
-    Array(TypeId),
-    Dict(TypeId),
+    Array(AnalysisTypeId),
+    Dict(AnalysisTypeId),
     Tagged {
         tag: Atom,
-        payload: TypeId,
+        payload: AnalysisTypeId,
     },
-    Tuple(Vec<TypeId>),
-    Struct(BTreeMap<String, TypeId>),
-    Enum(BTreeMap<String, Option<TypeId>>),
-    Union(Vec<TypeId>),
+    Tuple(Vec<AnalysisTypeId>),
+    Struct(BTreeMap<String, AnalysisTypeId>),
+    Enum(BTreeMap<String, Option<AnalysisTypeId>>),
+    Union(Vec<AnalysisTypeId>),
     Function {
-        parameters: Vec<TypeId>,
-        result: TypeId,
+        parameters: Vec<AnalysisTypeId>,
+        result: AnalysisTypeId,
     },
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct TypeGraph {
     nodes: Vec<TypeNode>,
-    names: BTreeMap<String, TypeId>,
+    names: BTreeMap<String, AnalysisTypeId>,
+    declared: HashMap<crate::value::DeclaredTypeId, AnalysisTypeId>,
+    interned: RawTable<AnalysisTypeId>,
+    interner_hasher: std::collections::hash_map::RandomState,
+}
+
+impl std::fmt::Debug for TypeGraph {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TypeGraph")
+            .field("nodes", &self.nodes)
+            .field("names", &self.names)
+            .finish_non_exhaustive()
+    }
+}
+
+fn type_nodes_canonically_equal(left: &TypeNode, right: &TypeNode) -> bool {
+    match (left, right) {
+        (TypeNode::Declared { id: left, .. }, TypeNode::Declared { id: right, .. }) => {
+            left == right
+        }
+        _ => left == right,
+    }
+}
+
+fn type_node_hash(hash_builder: &std::collections::hash_map::RandomState, node: &TypeNode) -> u64 {
+    let mut state = hash_builder.build_hasher();
+    std::mem::discriminant(node).hash(&mut state);
+    match node {
+        TypeNode::Declared { id, .. } => id.hash(&mut state),
+        _ => node.hash(&mut state),
+    }
+    state.finish()
 }
 
 impl TypeGraph {
-    pub fn node(&self, id: TypeId) -> &TypeNode {
+    pub fn node(&self, id: AnalysisTypeId) -> &TypeNode {
         &self.nodes[id.index()]
     }
 
-    pub fn named(&self, name: &str) -> Option<TypeId> {
+    pub fn named(&self, name: &str) -> Option<AnalysisTypeId> {
         self.names.get(name).copied()
     }
 
-    pub fn names(&self) -> impl Iterator<Item = (&str, TypeId)> {
+    pub fn names(&self) -> impl Iterator<Item = (&str, AnalysisTypeId)> {
         self.names.iter().map(|(name, id)| (name.as_str(), *id))
     }
 
-    pub fn nodes(&self) -> impl ExactSizeIterator<Item = (TypeId, &TypeNode)> {
+    pub fn nodes(&self) -> impl ExactSizeIterator<Item = (AnalysisTypeId, &TypeNode)> {
         self.nodes
             .iter()
             .enumerate()
-            .map(|(index, node)| (TypeId(index as u32), node))
+            .map(|(index, node)| (AnalysisTypeId(index as u32), node))
     }
 
-    pub fn display(&self, id: TypeId) -> String {
+    pub fn display(&self, id: AnalysisTypeId) -> String {
         self.display_with(id, &mut HashSet::new())
     }
 
-    pub fn is_assignable(&self, actual: TypeId, expected: TypeId) -> bool {
+    pub fn is_assignable(&self, actual: AnalysisTypeId, expected: AnalysisTypeId) -> bool {
         self.assignable_with(actual, expected, &mut HashSet::new())
     }
 
-    fn push(&mut self, node: TypeNode) -> TypeId {
-        let id = TypeId(u32::try_from(self.nodes.len()).expect("type graph exceeds u32"));
+    fn root_model_kind(&self, root: AnalysisTypeId) -> Option<crate::ast::DeclaredInitializerKind> {
+        let mut current = root;
+        let mut visited = HashSet::new();
+        while visited.insert(current) {
+            match self.node(current) {
+                TypeNode::Ref(target) => current = *target,
+                TypeNode::Declared { body, .. } => current = *body,
+                TypeNode::Struct(_) => {
+                    return Some(crate::ast::DeclaredInitializerKind::Struct);
+                }
+                TypeNode::Enum(_) => return Some(crate::ast::DeclaredInitializerKind::Enum),
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    fn canonicalize(&self, root: AnalysisTypeId, store: &mut TypeStore) -> Result<TypeId, String> {
+        fn visit(
+            graph: &TypeGraph,
+            id: AnalysisTypeId,
+            store: &mut TypeStore,
+            canonical: &mut HashMap<AnalysisTypeId, TypeId>,
+            visiting: &mut HashSet<AnalysisTypeId>,
+        ) -> Result<TypeId, String> {
+            if let Some(id) = canonical.get(&id) {
+                return Ok(*id);
+            }
+            if !visiting.insert(id) {
+                return Err(format!(
+                    "recursive structural type at graph node {id:?} has no canonical nominal ID"
+                ));
+            }
+            let result = match graph.node(id) {
+                TypeNode::Pending => Err("type graph contains an open node".into()),
+                TypeNode::Ref(target) => visit(graph, *target, store, canonical, visiting),
+                TypeNode::Bound(_) => Err("cannot canonicalize an unbound type parameter".into()),
+                TypeNode::Named(name) => Err(format!(
+                    "cannot canonicalize unresolved named type {name:?}"
+                )),
+                TypeNode::Declared {
+                    id: declared,
+                    name,
+                    body,
+                } => {
+                    let arguments = declared
+                        .arguments()
+                        .iter()
+                        .map(|argument| store.intern_descriptor(argument))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let type_id = match store.begin(declared.constructor(), arguments) {
+                        InternType::Existing(id) | InternType::Reserved(id) => id,
+                    };
+                    canonical.insert(id, type_id);
+                    if store.is_pending(type_id) {
+                        let shape = nominal_shape(graph, *body, store, canonical, visiting)?;
+                        store.seal_shape(type_id, name.clone(), shape)?;
+                    }
+                    Ok(type_id)
+                }
+                TypeNode::Any => Ok(TypeId::ANY),
+                TypeNode::Never => Ok(TypeId::NEVER),
+                TypeNode::Type => Ok(TypeId::TYPE),
+                TypeNode::Dyn => Ok(TypeId::DYN),
+                TypeNode::Int => Ok(TypeId::INT),
+                TypeNode::Float => Ok(TypeId::FLOAT),
+                TypeNode::String => Ok(TypeId::STRING),
+                TypeNode::Bytes => Ok(TypeId::BYTES),
+                TypeNode::TypeOf(inner) => visit(graph, *inner, store, canonical, visiting)
+                    .map(|inner| store.intern_structural(TypeShape::TypeOf(inner))),
+                TypeNode::Opaque(native) => {
+                    Ok(store
+                        .intern_structural(TypeShape::Opaque(native.qualified_name().to_owned())))
+                }
+                TypeNode::Atom(atom) => {
+                    Ok(store.intern_structural(TypeShape::Atom(atom.name().to_owned())))
+                }
+                TypeNode::Array(item) => visit(graph, *item, store, canonical, visiting)
+                    .map(|item| store.intern_structural(TypeShape::Array(item))),
+                TypeNode::Dict(item) => visit(graph, *item, store, canonical, visiting)
+                    .map(|item| store.intern_structural(TypeShape::Dict(item))),
+                TypeNode::Tagged { tag, payload } => {
+                    let payload = visit(graph, *payload, store, canonical, visiting)?;
+                    Ok(store.intern_structural(TypeShape::Tagged {
+                        tag: tag.name().to_owned(),
+                        payload,
+                    }))
+                }
+                TypeNode::Tuple(items) => {
+                    let items = items
+                        .iter()
+                        .map(|item| visit(graph, *item, store, canonical, visiting))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(store.intern_structural(TypeShape::Tuple(items.into())))
+                }
+                TypeNode::Struct(fields) => {
+                    let fields = fields
+                        .iter()
+                        .map(|(name, field)| {
+                            visit(graph, *field, store, canonical, visiting)
+                                .map(|field| (name.clone(), field))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(store.intern_structural(TypeShape::Struct(fields.into())))
+                }
+                TypeNode::Enum(variants) => {
+                    let variants = variants
+                        .iter()
+                        .map(|(name, payload)| {
+                            payload
+                                .map(|payload| visit(graph, payload, store, canonical, visiting))
+                                .transpose()
+                                .map(|payload| (name.clone(), payload))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(store.intern_structural(TypeShape::Enum(variants.into())))
+                }
+                TypeNode::Union(variants) => {
+                    let variants = variants
+                        .iter()
+                        .map(|variant| visit(graph, *variant, store, canonical, visiting))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(store.intern_structural(TypeShape::Union(variants.into())))
+                }
+                TypeNode::Function { parameters, result } => {
+                    let parameters = parameters
+                        .iter()
+                        .map(|parameter| visit(graph, *parameter, store, canonical, visiting))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let result = visit(graph, *result, store, canonical, visiting)?;
+                    Ok(store.intern_structural(TypeShape::Function {
+                        parameters: parameters.into(),
+                        result,
+                    }))
+                }
+            };
+            visiting.remove(&id);
+            let result = result?;
+            canonical.insert(id, result);
+            Ok(result)
+        }
+
+        fn nominal_shape(
+            graph: &TypeGraph,
+            root: AnalysisTypeId,
+            store: &mut TypeStore,
+            canonical: &mut HashMap<AnalysisTypeId, TypeId>,
+            visiting: &mut HashSet<AnalysisTypeId>,
+        ) -> Result<TypeShape, String> {
+            match graph.node(root) {
+                TypeNode::Ref(target) => nominal_shape(graph, *target, store, canonical, visiting),
+                TypeNode::Struct(fields) => fields
+                    .iter()
+                    .map(|(name, field)| {
+                        visit(graph, *field, store, canonical, visiting)
+                            .map(|field| (name.clone(), field))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|fields| TypeShape::Struct(fields.into())),
+                TypeNode::Enum(variants) => variants
+                    .iter()
+                    .map(|(name, payload)| {
+                        payload
+                            .map(|payload| visit(graph, payload, store, canonical, visiting))
+                            .transpose()
+                            .map(|payload| (name.clone(), payload))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|variants| TypeShape::Enum(variants.into())),
+                _ => Err("nominal type body must be a struct or enum".into()),
+            }
+        }
+
+        visit(self, root, store, &mut HashMap::new(), &mut HashSet::new())
+    }
+
+    fn push(&mut self, node: TypeNode) -> AnalysisTypeId {
+        let id = AnalysisTypeId(u32::try_from(self.nodes.len()).expect("type graph exceeds u32"));
         self.nodes.push(node);
         id
     }
 
-    fn intern_descriptor(&mut self, descriptor: &TypeDescriptor) -> TypeId {
+    fn intern_node(&mut self, node: TypeNode) -> AnalysisTypeId {
+        let hash = type_node_hash(&self.interner_hasher, &node);
+        if let Some(id) = self.interned.get(hash, |id| {
+            type_nodes_canonically_equal(&self.nodes[id.index()], &node)
+        }) {
+            return *id;
+        }
+        let id = self.push(node);
+        let nodes = &self.nodes;
+        let hasher = &self.interner_hasher;
+        self.interned
+            .insert(hash, id, |id| type_node_hash(hasher, &nodes[id.index()]));
+        id
+    }
+
+    fn interned_node(&self, node: &TypeNode) -> Option<AnalysisTypeId> {
+        let hash = type_node_hash(&self.interner_hasher, node);
+        self.interned
+            .get(hash, |id| {
+                type_nodes_canonically_equal(&self.nodes[id.index()], node)
+            })
+            .copied()
+    }
+
+    fn record_interned_node(&mut self, id: AnalysisTypeId) {
+        let hash = type_node_hash(&self.interner_hasher, &self.nodes[id.index()]);
+        let nodes = &self.nodes;
+        let hasher = &self.interner_hasher;
+        self.interned
+            .insert(hash, id, |id| type_node_hash(hasher, &nodes[id.index()]));
+    }
+
+    fn finish_reserved_node(&mut self, reserved: AnalysisTypeId, node: TypeNode) -> AnalysisTypeId {
+        self.nodes[reserved.index()] = node;
+        reserved
+    }
+
+    fn intern_descriptor(&mut self, descriptor: &TypeDescriptor) -> AnalysisTypeId {
+        if let TypeDescriptor::Declared(declared) = descriptor {
+            if let Some(id) = self.declared.get(&declared.id) {
+                return *id;
+            }
+            let id = self.push(TypeNode::Pending);
+            self.declared.insert(declared.id.clone(), id);
+            let body = self.intern_descriptor(&declared.body);
+            self.nodes[id.index()] = TypeNode::Declared {
+                id: declared.id.clone(),
+                name: declared.name.clone(),
+                body,
+            };
+            self.record_interned_node(id);
+            return id;
+        }
         let node = match descriptor {
             TypeDescriptor::Bound(parameter) => TypeNode::Bound(*parameter),
             TypeDescriptor::Named(name) => self
@@ -126,11 +389,7 @@ impl TypeGraph {
                 .get(name)
                 .copied()
                 .map_or_else(|| TypeNode::Named(name.clone()), TypeNode::Ref),
-            TypeDescriptor::Declared(declared) => TypeNode::Declared {
-                id: declared.id.clone(),
-                name: declared.name.clone(),
-                body: self.intern_descriptor(&declared.body),
-            },
+            TypeDescriptor::Declared(_) => unreachable!("declared descriptors return above"),
             TypeDescriptor::Inference(_) => {
                 unreachable!("solver descriptors must be explicitly erased before interning")
             }
@@ -188,17 +447,118 @@ impl TypeGraph {
                 result: self.intern_descriptor(result),
             },
         };
-        self.push(node)
+        self.intern_node(node)
     }
 
-    fn intern_erased_descriptor(&mut self, descriptor: &TypeDescriptor) -> TypeId {
+    fn intern_erased_descriptor(&mut self, descriptor: &TypeDescriptor) -> AnalysisTypeId {
         self.intern_descriptor(&erase_type_variables(descriptor))
+    }
+
+    fn descriptor(&self, root: AnalysisTypeId) -> Result<TypeDescriptor, String> {
+        fn build(
+            graph: &TypeGraph,
+            id: AnalysisTypeId,
+            visiting: &mut HashSet<AnalysisTypeId>,
+        ) -> Result<TypeDescriptor, String> {
+            if !visiting.insert(id) {
+                return match graph.node(id) {
+                    TypeNode::Declared { id, name, .. } => {
+                        Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                            id: id.clone(),
+                            name: name.clone(),
+                            body: Arc::new(TypeDescriptor::Never),
+                        }))
+                    }
+                    _ => Err("recursive structural type has no nominal identity".into()),
+                };
+            }
+            let descriptor = match graph.node(id) {
+                TypeNode::Pending => return Err("type graph contains an open node".into()),
+                TypeNode::Ref(target) => build(graph, *target, visiting)?,
+                TypeNode::Bound(parameter) => TypeDescriptor::Bound(*parameter),
+                TypeNode::Named(name) => TypeDescriptor::Named(name.clone()),
+                TypeNode::Declared { id, name, body } => {
+                    let body = build(graph, *body, visiting)?;
+                    TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                        id: id.clone(),
+                        name: name.clone(),
+                        body: Arc::new(body),
+                    })
+                }
+                TypeNode::Any => TypeDescriptor::Any,
+                TypeNode::Never => TypeDescriptor::Never,
+                TypeNode::Type => TypeDescriptor::Type,
+                TypeNode::Dyn => TypeDescriptor::Dyn,
+                TypeNode::TypeOf(inner) => {
+                    TypeDescriptor::TypeOf(Box::new(build(graph, *inner, visiting)?))
+                }
+                TypeNode::Int => TypeDescriptor::Int,
+                TypeNode::Float => TypeDescriptor::Float,
+                TypeNode::String => TypeDescriptor::String,
+                TypeNode::Bytes => TypeDescriptor::Bytes,
+                TypeNode::Opaque(native) => TypeDescriptor::Opaque(native.clone()),
+                TypeNode::Atom(atom) => TypeDescriptor::Atom(atom.clone()),
+                TypeNode::Array(item) => {
+                    TypeDescriptor::Array(Box::new(build(graph, *item, visiting)?))
+                }
+                TypeNode::Dict(item) => {
+                    TypeDescriptor::Dict(Box::new(build(graph, *item, visiting)?))
+                }
+                TypeNode::Tagged { tag, payload } => TypeDescriptor::Tagged {
+                    tag: tag.clone(),
+                    payload: Box::new(build(graph, *payload, visiting)?),
+                },
+                TypeNode::Tuple(items) => TypeDescriptor::Tuple(
+                    items
+                        .iter()
+                        .map(|item| build(graph, *item, visiting))
+                        .collect::<Result<_, _>>()?,
+                ),
+                TypeNode::Struct(fields) => TypeDescriptor::Struct(
+                    fields
+                        .iter()
+                        .map(|(name, item)| Ok((name.clone(), build(graph, *item, visiting)?)))
+                        .collect::<Result<_, String>>()?,
+                ),
+                TypeNode::Enum(variants) => TypeDescriptor::Enum(
+                    variants
+                        .iter()
+                        .map(|(name, payload)| {
+                            Ok((
+                                name.clone(),
+                                payload
+                                    .map(|payload| build(graph, payload, visiting))
+                                    .transpose()?
+                                    .map(Box::new),
+                            ))
+                        })
+                        .collect::<Result<_, String>>()?,
+                ),
+                TypeNode::Union(items) => TypeDescriptor::Union(
+                    items
+                        .iter()
+                        .map(|item| build(graph, *item, visiting))
+                        .collect::<Result<_, _>>()?,
+                ),
+                TypeNode::Function { parameters, result } => TypeDescriptor::Function {
+                    parameters: parameters
+                        .iter()
+                        .map(|parameter| build(graph, *parameter, visiting))
+                        .collect::<Result<_, _>>()?,
+                    result: Box::new(build(graph, *result, visiting)?),
+                },
+            };
+            visiting.remove(&id);
+            Ok(descriptor)
+        }
+
+        build(self, root, &mut HashSet::new())
     }
 
     fn install_named_descriptors(
         &mut self,
         descriptors: &BTreeMap<String, TypeDescriptor>,
-    ) -> BTreeMap<String, TypeId> {
+    ) -> BTreeMap<String, AnalysisTypeId> {
         let roots = descriptors
             .keys()
             .map(|name| {
@@ -218,18 +578,31 @@ impl TypeGraph {
         &mut self,
         value: ValueRef<'_>,
         path: &str,
-        links: &mut HashMap<Handle, TypeId>,
-    ) -> Result<TypeId, String> {
-        if let Some(handle) = value.hidden_up_link_handle() {
+        links: &mut HashMap<Handle, AnalysisTypeId>,
+    ) -> Result<AnalysisTypeId, String> {
+        if let Some(handle) = value.hidden_type_slot_handle() {
             if let Some(id) = links.get(&handle) {
                 return Ok(*id);
             }
-            let resolved = value.resolve_hidden_up_link().map_err(|message| {
+            let id = self.push(TypeNode::Pending);
+            links.insert(handle, id);
+            let resolved = value.resolve_hidden_type_slot().map_err(|message| {
                 format!("{path} contains an uninitialized recursive type link: {message}")
             })?;
-            let id = self.decode_persistent(resolved, path, links)?;
+            let target = self.decode_persistent(resolved, path, links)?;
+            self.nodes[id.index()] = TypeNode::Ref(target);
             links.insert(handle, id);
             return Ok(id);
+        }
+        if let Some((declared_id, name, _)) = value.declared_type_parts() {
+            let identity = TypeNode::Declared {
+                id: declared_id.clone(),
+                name: name.to_owned(),
+                body: AnalysisTypeId(0),
+            };
+            if let Some(id) = self.interned_node(&identity) {
+                return Ok(id);
+            }
         }
         if let Some(handle) = value.object_handle() {
             if let Some(id) = links.get(&handle) {
@@ -238,8 +611,12 @@ impl TypeGraph {
             let id = self.push(TypeNode::Pending);
             links.insert(handle, id);
             let node = self.decode_persistent_node(value, path, links)?;
-            self.nodes[id.index()] = node;
-            return Ok(id);
+            let canonical = self.finish_reserved_node(id, node);
+            if matches!(self.nodes[canonical.index()], TypeNode::Declared { .. }) {
+                self.record_interned_node(canonical);
+            }
+            links.insert(handle, canonical);
+            return Ok(canonical);
         }
         let node = self.decode_persistent_node(value, path, links)?;
         Ok(self.push(node))
@@ -249,7 +626,7 @@ impl TypeGraph {
         &mut self,
         mut value: ValueRef<'_>,
         path: &str,
-        links: &mut HashMap<Handle, TypeId>,
+        links: &mut HashMap<Handle, AnalysisTypeId>,
     ) -> Result<TypeNode, String> {
         if let Some(native_type) = value.as_native_type() {
             return Ok(TypeNode::Opaque(native_type.clone()));
@@ -280,7 +657,7 @@ impl TypeGraph {
                 return Err(format!("{path}.attributes must be a Dict"));
             }
             value = value.dict_get("inner").expect("wrapper field exists");
-            if value.is_hidden_up_link()
+            if value.is_hidden_type_slot()
                 || value.as_native_type().is_some()
                 || value.declared_type_parts().is_some()
             {
@@ -498,7 +875,7 @@ impl TypeGraph {
         })
     }
 
-    fn display_with(&self, id: TypeId, active: &mut HashSet<TypeId>) -> String {
+    fn display_with(&self, id: AnalysisTypeId, active: &mut HashSet<AnalysisTypeId>) -> String {
         if !active.insert(id) {
             return self
                 .names
@@ -582,9 +959,9 @@ impl TypeGraph {
 
     fn assignable_with(
         &self,
-        actual: TypeId,
-        expected: TypeId,
-        visited: &mut HashSet<(TypeId, TypeId)>,
+        actual: AnalysisTypeId,
+        expected: AnalysisTypeId,
+        visited: &mut HashSet<(AnalysisTypeId, AnalysisTypeId)>,
     ) -> bool {
         if !visited.insert((actual, expected)) {
             return true;
@@ -677,6 +1054,12 @@ impl TypeParameterId {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct InferenceVariableId(u32);
 
+impl InferenceVariableId {
+    const fn index(self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypeParameter {
     pub id: TypeParameterId,
@@ -756,7 +1139,10 @@ impl ModuleInterface {
                         name.clone(),
                         TypeFamilyTemplate {
                             parameters: family.parameters.clone(),
-                            metadata: rename_named_type_metadata(&family.metadata, &names),
+                            template: family.template,
+                            root: family.root,
+                            rebuild_at_runtime: family.rebuild_at_runtime,
+                            constructor: family.constructor.clone(),
                         },
                     )
                 })
@@ -768,101 +1154,34 @@ impl ModuleInterface {
 #[derive(Clone, Debug)]
 pub(crate) struct TypeFamilyTemplate {
     parameters: Vec<TypeParameter>,
-    metadata: Value,
+    template: PersistentValue,
+    root: PersistentValue,
+    rebuild_at_runtime: bool,
+    constructor: Option<NominalTypeConstructor>,
 }
 
-fn rename_named_type_metadata(metadata: &Value, names: &HashMap<String, String>) -> Value {
-    if let Value::DeclaredType(declared) = metadata {
-        return Value::DeclaredType(crate::DeclaredType {
-            id: declared.id().clone(),
-            name: Arc::from(declared.name()),
-            body: Box::new(rename_named_type_metadata(declared.body(), names)),
-        });
-    }
-    let Value::Dict(fields) = metadata else {
-        return metadata.clone();
-    };
-    let Some(Value::Atom(kind)) = fields.get("kind") else {
-        return metadata.clone();
-    };
-    if kind.name() == "Named" {
-        let Some(Value::String(name)) = fields.get("name") else {
-            return metadata.clone();
-        };
-        let Some(renamed) = names.get(name.as_ref()) else {
-            return metadata.clone();
-        };
-        let values = fields
-            .shape()
-            .fields()
-            .iter()
-            .zip(fields.values())
-            .map(|(field, value)| {
-                if field == "name" {
-                    Value::string(renamed.as_str())
-                } else {
-                    value.clone()
-                }
-            })
-            .collect();
-        return Value::Dict(crate::Dict::new(fields.shape().clone(), values));
+#[derive(Clone, Debug)]
+pub(crate) struct NominalTypeConstructor {
+    pub(crate) id: crate::TypeConstructorId,
+    pub(crate) name: String,
+}
+
+impl TypeFamilyTemplate {
+    pub(crate) fn template(self: &Self) -> PersistentValue {
+        self.template
     }
 
-    let values = fields
-        .shape()
-        .fields()
-        .iter()
-        .zip(fields.values())
-        .map(|(field, value)| match (kind.name(), field.as_str()) {
-            ("WithAttributes", "inner")
-            | ("TypeOf", "instance")
-            | ("Array" | "Dict", "item")
-            | ("Tagged", "payload")
-            | ("Func", "result") => rename_named_type_metadata(value, names),
-            ("Tuple", "items") | ("Union", "variants") | ("Func", "parameters") => {
-                rename_named_type_metadata_array(value, names)
-            }
-            ("Struct", "fields") => rename_named_type_metadata_dict(value, false, names),
-            ("Enum", "variants") => rename_named_type_metadata_dict(value, true, names),
-            _ => value.clone(),
-        })
-        .collect();
-    Value::Dict(crate::Dict::new(fields.shape().clone(), values))
-}
+    pub(crate) fn root(self: &Self) -> PersistentValue {
+        self.root
+    }
 
-fn rename_named_type_metadata_array(metadata: &Value, names: &HashMap<String, String>) -> Value {
-    let Value::Array(values) = metadata else {
-        return metadata.clone();
-    };
-    Value::Array(
-        values
-            .iter()
-            .map(|value| rename_named_type_metadata(value, names))
-            .collect::<Vec<_>>()
-            .into(),
-    )
-}
+    pub(crate) fn rebuild_at_runtime(&self) -> bool {
+        self.rebuild_at_runtime
+    }
 
-fn rename_named_type_metadata_dict(
-    metadata: &Value,
-    optional: bool,
-    names: &HashMap<String, String>,
-) -> Value {
-    let Value::Dict(fields) = metadata else {
-        return metadata.clone();
-    };
-    let values = fields
-        .values()
-        .iter()
-        .map(|value| {
-            if optional && optional_type_metadata_is_none(value) {
-                value.clone()
-            } else {
-                rename_named_type_metadata(value, names)
-            }
-        })
-        .collect();
-    Value::Dict(crate::Dict::new(fields.shape().clone(), values))
+    pub(crate) fn constructor(&self) -> Option<&NominalTypeConstructor> {
+        self.constructor.as_ref()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -908,6 +1227,115 @@ pub struct DeclaredTypeDescriptor {
     pub(crate) body: Arc<TypeDescriptor>,
 }
 
+/// Stable identity for a type expression before all type-family parameters
+/// have become concrete `TypeId`s. Nominal references use constructor IDs;
+/// source names are deliberately not representable here.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum TypeExprId {
+    Bound(u32),
+    Declared(crate::TypeConstructorId, Box<[TypeExprId]>),
+    Inference(u32),
+    Any,
+    Never,
+    Type,
+    Dyn,
+    TypeOf(Box<TypeExprId>),
+    Int,
+    Float,
+    String,
+    Bytes,
+    Opaque(crate::value::NativeTypeId),
+    Atom(String),
+    Array(Box<TypeExprId>),
+    Dict(Box<TypeExprId>),
+    Tagged(String, Box<TypeExprId>),
+    Tuple(Box<[TypeExprId]>),
+    Struct(Box<[(String, TypeExprId)]>),
+    Enum(Box<[(String, Option<TypeExprId>)]>),
+    Union(Box<[TypeExprId]>),
+    Function {
+        parameters: Box<[TypeExprId]>,
+        result: Box<TypeExprId>,
+    },
+}
+
+impl TypeExprId {
+    pub(crate) fn from_descriptor(descriptor: &TypeDescriptor) -> Self {
+        match descriptor {
+            TypeDescriptor::Bound(parameter) => Self::Bound(parameter.index()),
+            TypeDescriptor::Named(name) => {
+                panic!("unresolved named type {name:?} cannot participate in nominal identity")
+            }
+            TypeDescriptor::Declared(declared) => Self::Declared(
+                declared.id.constructor(),
+                declared
+                    .id
+                    .arguments()
+                    .iter()
+                    .map(Self::from_descriptor)
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            TypeDescriptor::Inference(variable) => Self::Inference(variable.index()),
+            TypeDescriptor::Any => Self::Any,
+            TypeDescriptor::Never => Self::Never,
+            TypeDescriptor::Type => Self::Type,
+            TypeDescriptor::Dyn => Self::Dyn,
+            TypeDescriptor::TypeOf(inner) => Self::TypeOf(Box::new(Self::from_descriptor(inner))),
+            TypeDescriptor::Int => Self::Int,
+            TypeDescriptor::Float => Self::Float,
+            TypeDescriptor::String => Self::String,
+            TypeDescriptor::Bytes => Self::Bytes,
+            TypeDescriptor::Opaque(native) => Self::Opaque(native.id()),
+            TypeDescriptor::Atom(atom) => Self::Atom(atom.name().to_owned()),
+            TypeDescriptor::Array(item) => Self::Array(Box::new(Self::from_descriptor(item))),
+            TypeDescriptor::Dict(item) => Self::Dict(Box::new(Self::from_descriptor(item))),
+            TypeDescriptor::Tagged { tag, payload } => Self::Tagged(
+                tag.name().to_owned(),
+                Box::new(Self::from_descriptor(payload)),
+            ),
+            TypeDescriptor::Tuple(items) => Self::Tuple(
+                items
+                    .iter()
+                    .map(Self::from_descriptor)
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            TypeDescriptor::Struct(fields) => Self::Struct(
+                fields
+                    .iter()
+                    .map(|(name, field)| (name.clone(), Self::from_descriptor(field)))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            TypeDescriptor::Enum(variants) => Self::Enum(
+                variants
+                    .iter()
+                    .map(|(name, payload)| {
+                        (name.clone(), payload.as_deref().map(Self::from_descriptor))
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            TypeDescriptor::Union(variants) => Self::Union(
+                variants
+                    .iter()
+                    .map(Self::from_descriptor)
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            TypeDescriptor::Function { parameters, result } => Self::Function {
+                parameters: parameters
+                    .iter()
+                    .map(Self::from_descriptor)
+                    .collect::<Vec<_>>()
+                    .into(),
+                result: Box::new(Self::from_descriptor(result)),
+            },
+        }
+    }
+}
+
 impl DeclaredTypeDescriptor {
     pub fn name(&self) -> &str {
         &self.name
@@ -919,196 +1347,6 @@ impl DeclaredTypeDescriptor {
 }
 
 impl TypeDescriptor {
-    pub(crate) fn identity_key(&self) -> String {
-        fn sequence<'a>(tag: &str, items: impl IntoIterator<Item = &'a TypeDescriptor>) -> String {
-            let items = items
-                .into_iter()
-                .map(TypeDescriptor::identity_key)
-                .map(|item| format!("{}:{item}", item.len()))
-                .collect::<String>();
-            format!("{tag}{}:{items}", items.len())
-        }
-
-        match self {
-            Self::Bound(parameter) => format!("b{}", parameter.0),
-            Self::Named(name) => format!("n{}:{name}", name.len()),
-            Self::Declared(declared) => format!("d{}", declared.id.identity_key()),
-            Self::Inference(variable) => format!("i{}", variable.0),
-            Self::Any => "a".into(),
-            Self::Never => "v".into(),
-            Self::Type => "t".into(),
-            Self::Dyn => "y".into(),
-            Self::TypeOf(instance) => sequence("o", [instance.as_ref()]),
-            Self::Int => "I".into(),
-            Self::Float => "F".into(),
-            Self::String => "S".into(),
-            Self::Bytes => "B".into(),
-            Self::Opaque(native_type) => {
-                let name = native_type.qualified_name();
-                format!("p{}:{name}", name.len())
-            }
-            Self::Atom(atom) => {
-                let name = atom.name();
-                format!("m{}:{name}", name.len())
-            }
-            Self::Array(item) => sequence("r", [item.as_ref()]),
-            Self::Dict(item) => sequence("c", [item.as_ref()]),
-            Self::Tagged { tag, payload } => {
-                let name = tag.name();
-                format!("g{}:{name}{}", name.len(), sequence("", [payload.as_ref()]))
-            }
-            Self::Tuple(items) => sequence("u", items),
-            Self::Struct(fields) => {
-                let fields = fields
-                    .iter()
-                    .map(|(name, field)| {
-                        let field = field.identity_key();
-                        format!("{}:{name}{}:{field}", name.len(), field.len())
-                    })
-                    .collect::<String>();
-                format!("s{}:{fields}", fields.len())
-            }
-            Self::Enum(variants) => {
-                let variants = variants
-                    .iter()
-                    .map(|(name, payload)| {
-                        let payload = payload
-                            .as_deref()
-                            .map(TypeDescriptor::identity_key)
-                            .unwrap_or_default();
-                        format!("{}:{name}{}:{payload}", name.len(), payload.len())
-                    })
-                    .collect::<String>();
-                format!("e{}:{variants}", variants.len())
-            }
-            Self::Union(variants) => sequence("j", variants),
-            Self::Function { parameters, result } => {
-                format!(
-                    "f{}{}",
-                    sequence("", parameters),
-                    sequence("", [result.as_ref()])
-                )
-            }
-        }
-    }
-
-    pub fn to_value(&self, vm: &mut Vm) -> Value {
-        let entries = match self {
-            Self::Bound(parameter) => vec![
-                kind_entry("Bound"),
-                ("parameter".into(), Value::Int(i64::from(parameter.0))),
-            ],
-            Self::Named(name) => vec![
-                kind_entry("Named"),
-                ("name".into(), Value::string(name.as_str())),
-            ],
-            Self::Declared(declared) => {
-                return Value::DeclaredType(crate::DeclaredType {
-                    id: declared.id.clone(),
-                    name: Arc::from(declared.name.as_str()),
-                    body: Box::new(declared.body.to_value(vm)),
-                });
-            }
-            Self::Inference(_) => panic!("inference variables are not runtime type metadata"),
-            Self::Any => vec![kind_entry("Any")],
-            Self::Never => vec![kind_entry("Never")],
-            Self::Type => vec![kind_entry("Type")],
-            Self::Dyn => vec![kind_entry("Dyn")],
-            Self::TypeOf(instance) => {
-                vec![
-                    kind_entry("TypeOf"),
-                    ("instance".into(), instance.to_value(vm)),
-                ]
-            }
-            Self::Int => vec![kind_entry("Int")],
-            Self::Float => vec![kind_entry("Float")],
-            Self::String => vec![kind_entry("String")],
-            Self::Bytes => vec![kind_entry("Bytes")],
-            Self::Opaque(native_type) => return Value::NativeType(native_type.clone()),
-            Self::Atom(tag) => vec![kind_entry("Atom"), ("tag".into(), Value::Atom(tag.clone()))],
-            Self::Array(item) => vec![kind_entry("Array"), ("item".into(), item.to_value(vm))],
-            Self::Dict(item) => vec![kind_entry("Dict"), ("item".into(), item.to_value(vm))],
-            Self::Tagged { tag, payload } => vec![
-                kind_entry("Tagged"),
-                ("tag".into(), Value::Atom(tag.clone())),
-                ("payload".into(), payload.to_value(vm)),
-            ],
-            Self::Tuple(items) => vec![
-                kind_entry("Tuple"),
-                (
-                    "items".into(),
-                    Value::Array(
-                        items
-                            .iter()
-                            .map(|item| item.to_value(vm))
-                            .collect::<Vec<_>>()
-                            .into(),
-                    ),
-                ),
-            ],
-            Self::Struct(fields) => {
-                let field_values = fields
-                    .iter()
-                    .map(|(name, field)| (name.clone(), field.to_value(vm)))
-                    .collect::<Vec<_>>();
-                let fields = vm
-                    .make_dict(field_values)
-                    .expect("Type Struct fields are unique");
-                vec![kind_entry("Struct"), ("fields".into(), fields)]
-            }
-            Self::Enum(variants) => {
-                let variants = variants
-                    .iter()
-                    .map(|(name, payload)| {
-                        (
-                            name.clone(),
-                            payload
-                                .as_ref()
-                                .map_or_else(Value::none, |payload| payload.to_value(vm)),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let variants = vm
-                    .make_dict(variants)
-                    .expect("Type Enum variants are unique");
-                vec![kind_entry("Enum"), ("variants".into(), variants)]
-            }
-            Self::Union(variants) => vec![
-                kind_entry("Union"),
-                (
-                    "variants".into(),
-                    Value::Array(
-                        variants
-                            .iter()
-                            .map(|variant| variant.to_value(vm))
-                            .collect::<Vec<_>>()
-                            .into(),
-                    ),
-                ),
-            ],
-            Self::Function { parameters, result } => vec![
-                kind_entry("Func"),
-                (
-                    "parameters".into(),
-                    Value::Array(
-                        parameters
-                            .iter()
-                            .map(|parameter| parameter.to_value(vm))
-                            .collect::<Vec<_>>()
-                            .into(),
-                    ),
-                ),
-                ("result".into(), result.to_value(vm)),
-            ],
-        };
-        vm.make_dict(entries)
-            .expect("Type metadata fields are unique")
-    }
-
-    pub fn from_value(value: &Value) -> Result<Self, String> {
-        decode_type(value, "Type")
-    }
-
     pub fn display_name(&self) -> String {
         match self {
             Self::Bound(parameter) => format!("T{}", parameter.0),
@@ -1262,22 +1500,22 @@ fn display_scheme_descriptor(
 #[derive(Clone, Debug)]
 pub struct Analysis {
     pub types: TypeGraph,
-    pub declared_types: BTreeMap<String, TypeId>,
-    pub binding_types: BTreeMap<String, TypeId>,
-    pub result_type: TypeId,
+    pub declared_types: BTreeMap<String, AnalysisTypeId>,
+    pub binding_types: BTreeMap<String, AnalysisTypeId>,
+    pub result_type: AnalysisTypeId,
     pub hir: HirProgram,
-    pub definition_types: BTreeMap<HirDefinitionId, TypeId>,
+    pub definition_types: BTreeMap<HirDefinitionId, AnalysisTypeId>,
     pub definition_schemes: BTreeMap<HirDefinitionId, TypeScheme>,
-    pub expression_types: BTreeMap<HirExpressionId, TypeId>,
+    pub expression_types: BTreeMap<HirExpressionId, AnalysisTypeId>,
     pub module_interface: ModuleInterface,
     pub explicit_exports: bool,
     pub(crate) propagation_families: HashMap<crate::Location, PropagationFamily>,
     pub(crate) not_families: HashMap<crate::Location, NotFamily>,
-    pub(crate) prelude: BTreeMap<String, Value>,
-    pub(crate) external_values: BTreeMap<String, Value>,
+    pub(crate) runtime_roots: BTreeMap<String, PersistentValue>,
+    pub(crate) external_bindings: HashSet<String>,
     pub(crate) dynamic_bindings: HashSet<String>,
-    pub(crate) type_family_values: BTreeMap<String, Value>,
-    pub(crate) declared_value_owners: HashMap<crate::Location, Value>,
+    pub(crate) type_family_values: BTreeMap<String, TypeFamilyTemplate>,
+    pub(crate) declared_value_owners: HashMap<crate::Location, String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1308,43 +1546,15 @@ pub struct SemanticDependencyGraph {
 pub struct PartialAnalysis {
     pub hir: HirProgram,
     pub dependencies: SemanticDependencyGraph,
-    pub definition_facts: BTreeMap<HirDefinitionId, SemanticFact<TypeId>>,
+    pub definition_facts: BTreeMap<HirDefinitionId, SemanticFact<AnalysisTypeId>>,
     pub definition_schemes: BTreeMap<HirDefinitionId, TypeScheme>,
     pub diagnostics: Vec<Diagnostic>,
     pub types: TypeGraph,
 }
 
 impl Analysis {
-    pub fn display(&self, id: TypeId) -> String {
+    pub fn display(&self, id: AnalysisTypeId) -> String {
         self.types.display(id)
-    }
-
-    pub(crate) fn install_promoted_types(
-        &mut self,
-        heap: &Heap,
-        roots: &BTreeMap<String, PersistentValue>,
-    ) -> Result<(), String> {
-        let mut links = HashMap::<Handle, TypeId>::new();
-        for (name, root) in roots {
-            let id = self.types.decode_persistent(
-                ValueRef::persistent(*root, heap),
-                &format!("type {name}"),
-                &mut links,
-            )?;
-            let witness = self.types.push(TypeNode::TypeOf(id));
-            self.types.names.insert(name.clone(), id);
-            self.declared_types.insert(name.clone(), id);
-            self.binding_types.insert(name.clone(), witness);
-            for definition in self.hir.definitions() {
-                if definition.top_level
-                    && definition.kind == HirDefinitionKind::Type
-                    && definition.name == *name
-                {
-                    self.definition_types.insert(definition.id, witness);
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1398,7 +1608,7 @@ pub fn analyze_partial_types_with_bindings(
     source_name: &str,
     source: &str,
     quota: Quota,
-    external_values: &BTreeMap<String, Value>,
+    external_values: &BTreeMap<String, crate::DataWorld>,
 ) -> PartialAnalysis {
     let mut sources = SourceDatabase::default();
     let source_id = sources.add(source_name, source);
@@ -1409,7 +1619,7 @@ pub(crate) fn analyze_partial_types_registered(
     sources: &SourceDatabase,
     source_id: crate::SourceId,
     quota: Quota,
-    external_values: &BTreeMap<String, Value>,
+    external_values: &BTreeMap<String, crate::DataWorld>,
     unavailable_imports: &HashSet<String>,
 ) -> PartialAnalysis {
     let parsed = parse_registered(sources, source_id);
@@ -1430,16 +1640,27 @@ pub(crate) fn analyze_partial_types_recovered(
     recovered: &crate::parser::RecoveredProgram,
     initial_diagnostics: Vec<Diagnostic>,
     quota: Quota,
-    external_values: &BTreeMap<String, Value>,
+    external_values: &BTreeMap<String, crate::DataWorld>,
     unavailable_imports: &HashSet<String>,
 ) -> PartialAnalysis {
+    let mut tool_heap = Heap::main();
+    let external_roots = external_values
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .publish(&mut tool_heap)
+                .ok()
+                .map(|root| (name.clone(), root))
+        })
+        .collect();
     analyze_partial_types_recovered_with_query(
         sources,
         source_id,
         recovered,
         initial_diagnostics,
         quota,
-        external_values,
+        &external_roots,
+        &mut tool_heap,
         PartialAnalysisControl {
             unavailable_imports,
             query: None,
@@ -1458,20 +1679,21 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     recovered: &crate::parser::RecoveredProgram,
     initial_diagnostics: Vec<Diagnostic>,
     quota: Quota,
-    external_values: &BTreeMap<String, Value>,
+    external_roots: &BTreeMap<String, PersistentValue>,
+    tool_heap: &mut Heap,
     control: PartialAnalysisControl<'_>,
 ) -> PartialAnalysis {
     let source_name = sources.get(source_id).name.to_string();
-    let mut vm = Vm::new();
-    let prelude = BootstrapPrelude::new(&mut vm);
+    let module_id = crate::ModuleId::ANONYMOUS;
+    let prelude = BootstrapPrelude::new();
     let hir = HirProgram::resolve_recovered(
         recovered,
         prelude
-            .values
+            .schemes
             .keys()
             .filter(|name| source_name.ends_with(".native.telora") || name.as_str() != "BlameError")
-            .filter(|name| !external_values.contains_key(*name))
-            .chain(external_values.keys())
+            .filter(|name| !external_roots.contains_key(*name))
+            .chain(external_roots.keys())
             .cloned()
             .collect::<Vec<_>>(),
     );
@@ -1481,7 +1703,13 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         .iter()
         .filter(|binding| binding.value.declared_initializer.is_some())
         .enumerate()
-        .map(|(slot, binding)| (binding.value.name.location, slot as u32))
+        .map(|(slot, binding)| {
+            let slot = u32::try_from(slot)
+                .expect("type constructor count exceeds u32")
+                .checked_add(crate::FIRST_DYNAMIC_MODULE_LOCAL)
+                .expect("type constructor slot exceeds u32");
+            (binding.value.name.location, slot)
+        })
         .collect::<HashMap<_, _>>();
     let type_definitions = bindings.keys().copied().collect::<HashSet<_>>();
     let import_definitions = hir
@@ -1504,9 +1732,8 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         }
     }
     let dependencies = type_dependency_graph(&hir, &type_definitions);
-
     let mut diagnostics = initial_diagnostics;
-    let mut facts: BTreeMap<HirDefinitionId, SemanticFact<TypeId>> = BTreeMap::new();
+    let mut facts: BTreeMap<HirDefinitionId, SemanticFact<AnalysisTypeId>> = BTreeMap::new();
     let mut definition_schemes = BTreeMap::new();
     for (definition, import) in unavailable_dependencies {
         let cause = FactIdentity::HirDefinition(import);
@@ -1516,18 +1743,15 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     }
     let mut types = TypeGraph::default();
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
-    let mut evaluator = ToolEvaluator::new(Arc::clone(&debug_sink));
+    let mut evaluator = ToolEvaluator::new(Arc::clone(&debug_sink), tool_heap);
     let mut tool_values = evaluator
-        .publish_map(&prelude.values)
+        .install_bootstrap()
         .expect("core prelude values can enter the tool Main world");
-    tool_values.extend(external_values.iter().map(|(name, value)| {
-        (
-            name.clone(),
-            evaluator
-                .publish(value)
-                .expect("external values can enter the tool Main world"),
-        )
-    }));
+    tool_values.extend(
+        external_roots
+            .iter()
+            .map(|(name, root)| (name.clone(), root.runtime())),
+    );
     let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in bindings.values() {
         tool_values.insert(binding.value.name.value.clone(), any_metadata);
@@ -1539,11 +1763,10 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             && dependency_reaches(&dependencies, node.definition, node.definition)
         {
             let name = binding.value.name.value.clone();
-            let value = TypeDescriptor::Named(name.clone()).to_value(&mut vm);
             tool_values.insert(
-                name,
+                name.clone(),
                 evaluator
-                    .publish(&value)
+                    .descriptor(&TypeDescriptor::Named(name.clone()))
                     .expect("named metadata can enter the tool Main world"),
             );
         }
@@ -1613,11 +1836,10 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                     name: parameter.value.clone(),
                     location: parameter.location,
                 });
-                let value = TypeDescriptor::Bound(id).to_value(&mut vm);
                 evaluation_bindings.insert(
                     parameter.value.clone(),
                     evaluator
-                        .publish(&value)
+                        .descriptor(&TypeDescriptor::Bound(id))
                         .expect("bound metadata can enter the tool Main world"),
                 );
             }
@@ -1637,32 +1859,39 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                 let value = if parameters.is_empty() {
                     declare_metadata_value(
                         &source_name,
+                        module_id,
                         binding,
                         &declared_initializer_slots,
                         value,
                         &mut evaluator,
                     )?
-                } else if binding.value.declared_initializer.is_some() {
-                    let arguments = parameters
-                        .iter()
-                        .map(|parameter| TypeDescriptor::Bound(parameter.id))
-                        .collect::<Vec<_>>();
-                    evaluator
-                        .heap
-                        .declare_persistent_type_application(
-                            value,
-                            source_name.as_str(),
-                            declared_initializer_slots[&binding.value.name.location],
-                            binding.value.name.value.as_str(),
-                            &arguments,
-                        )
-                        .map_err(|error| frontend_error(&source_name, error.to_string()))?
                 } else {
                     value
                 };
                 evaluator
                     .decode_type(value, "Type")
-                    .map(|descriptor| (value, descriptor))
+                    .map(|descriptor| {
+                        let descriptor = if !parameters.is_empty()
+                            && binding.value.declared_initializer.is_some()
+                        {
+                            let arguments = parameters
+                                .iter()
+                                .map(|parameter| TypeDescriptor::Bound(parameter.id))
+                                .collect::<Vec<_>>();
+                            TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                                id: crate::value::DeclaredTypeId::applied(
+                                    module_id,
+                                    declared_initializer_slots[&binding.value.name.location],
+                                    &arguments,
+                                ),
+                                name: binding.value.name.value.clone(),
+                                body: Arc::new(descriptor),
+                            })
+                        } else {
+                            descriptor
+                        };
+                        (value, descriptor)
+                    })
                     .map_err(|message| {
                         FrontendError::from_diagnostic(
                             sources,
@@ -1705,12 +1934,24 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                             progressed = true;
                             continue;
                         }
-                        let metadata = evaluator
-                            .export(value)
-                            .expect("type-family metadata can cross the legacy analysis boundary");
+                        let constructor = binding.value.declared_initializer.as_ref().map(|_| {
+                            NominalTypeConstructor {
+                                id: crate::TypeConstructorId {
+                                    module: module_id,
+                                    local: declared_initializer_slots[&binding.value.name.location],
+                                },
+                                name: binding.value.name.value.clone(),
+                            }
+                        });
+                        let (family_value, template_root, family_root) = evaluator
+                            .create_type_family(value, parameters.len(), constructor.as_ref())
+                            .expect("type-family closure can enter the tool Main world");
                         let family = TypeFamilyTemplate {
                             parameters: parameters.clone(),
-                            metadata,
+                            template: template_root,
+                            root: family_root,
+                            rebuild_at_runtime: contains_named_type(&descriptor),
+                            constructor,
                         };
                         let scheme = TypeScheme {
                             parameters,
@@ -1729,11 +1970,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         };
                         let erased = erase_type_variables(&scheme.body);
                         definition_schemes.insert(node.definition, scheme);
-                        let family_value = type_family_value(&family);
-                        let published = evaluator
-                            .publish(&family_value)
-                            .expect("type-family closure can enter the tool Main world");
-                        (erased, published)
+                        (erased, family_value)
                     };
                     let id = types.intern_descriptor(&definition_descriptor);
                     tool_values.insert(binding.value.name.value.clone(), published_value);
@@ -2054,84 +2291,133 @@ pub(crate) fn analyze_program_with_bindings(
     source_name: &str,
     program: &Program,
     account: &mut QuotaAccount,
-    external_values: &BTreeMap<String, Value>,
+    external_values: &BTreeMap<String, crate::DataWorld>,
     dynamic_bindings: &HashSet<String>,
     sources: &SourceDatabase,
     external_provenance: &BTreeMap<String, Provenance>,
 ) -> Result<Analysis, FrontendError> {
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+    let mut tool_heap = Heap::main();
+    let mut type_store = TypeStore::default();
+    let external_roots = external_values
+        .iter()
+        .map(|(name, value)| {
+            value
+                .publish(&mut tool_heap)
+                .map(|root| (name.clone(), root))
+                .map_err(|error| frontend_error(source_name, error.to_string()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     analyze_program_with_bindings_observed(
         source_name,
+        crate::ModuleId::ANONYMOUS,
         program,
         account,
-        external_values,
+        &external_roots,
         dynamic_bindings,
         sources,
         external_provenance,
         &BTreeMap::new(),
         &debug_sink,
+        &mut tool_heap,
+        &mut type_store,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn analyze_program_with_bindings_observed(
     source_name: &str,
+    module_id: crate::ModuleId,
     program: &Program,
     account: &mut QuotaAccount,
-    external_values: &BTreeMap<String, Value>,
+    external_roots: &BTreeMap<String, PersistentValue>,
     dynamic_bindings: &HashSet<String>,
     sources: &SourceDatabase,
     external_provenance: &BTreeMap<String, Provenance>,
     external_interfaces: &BTreeMap<String, ModuleInterface>,
     debug_sink: &Arc<dyn DebugSink>,
+    tool_heap: &mut Heap,
+    type_store: &mut TypeStore,
 ) -> Result<Analysis, FrontendError> {
-    let mut tool_vm = Vm::new();
-    let prelude = BootstrapPrelude::new(&mut tool_vm);
+    let prelude = BootstrapPrelude::new();
     let hir = HirProgram::resolve(
         program,
         prelude
-            .values
+            .types
             .keys()
             .filter(|name| source_name.ends_with(".native.telora") || name.as_str() != "BlameError")
-            .filter(|name| !external_values.contains_key(*name))
-            .chain(external_values.keys())
+            .filter(|name| !external_roots.contains_key(*name))
+            .chain(external_roots.keys())
             .cloned()
             .collect::<Vec<_>>(),
     );
-    let prelude_values = prelude
-        .values
-        .iter()
-        .filter(|(name, _)| !external_values.contains_key(*name))
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect();
+    let prelude_value_names = prelude
+        .types
+        .keys()
+        .filter(|name| !external_roots.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
     let native_abi = source_name.ends_with(".native.telora");
     let prelude_names = prelude
-        .values
+        .types
         .keys()
         .filter(|name| native_abi || name.as_str() != "BlameError")
         .cloned()
         .collect::<Vec<_>>();
     let BootstrapPrelude {
-        values: bootstrap_values,
         types: mut static_environment,
         schemes: mut binding_schemes,
     } = prelude;
-    let mut evaluator = ToolEvaluator::new(Arc::clone(debug_sink));
-    let mut tool_values = evaluator.publish_map(&bootstrap_values)?;
+    let cached_bootstrap_root = tool_heap.bootstrap_root();
+    let mut evaluator = ToolEvaluator::new(Arc::clone(debug_sink), tool_heap);
+    let mut tool_values = if let Some(root) = cached_bootstrap_root {
+        prelude_value_names
+            .iter()
+            .map(|name| {
+                let value = root
+                    .export_get(evaluator.main, name)
+                    .expect("bootstrap exports root is a Dict")
+                    .expect("bootstrap exports root is complete");
+                (name.clone(), value.runtime())
+            })
+            .collect()
+    } else {
+        evaluator.install_bootstrap()?
+    };
     let mut declared_types = BTreeMap::new();
     let mut binding_types = BTreeMap::new();
     let mut declared_type_spans = HashMap::new();
     let mut expression_descriptors = HashMap::new();
-    let declared_initializer_slots = program
-        .value
-        .body
-        .value
-        .bindings
-        .iter()
-        .filter(|binding| binding.value.declared_initializer.is_some())
-        .enumerate()
-        .map(|(slot, binding)| (binding.value.name.location, slot as u32))
-        .collect::<HashMap<_, _>>();
+    let mut next_type_constructor = crate::FIRST_DYNAMIC_MODULE_LOCAL;
+    let mut declared_initializer_slots = HashMap::new();
+    for binding in &program.value.body.value.bindings {
+        if binding.value.kind != BindingKind::Type || binding.value.declared_initializer.is_none() {
+            continue;
+        }
+        declared_initializer_slots.insert(binding.value.name.location, next_type_constructor);
+        next_type_constructor = next_type_constructor
+            .checked_add(1)
+            .expect("type constructor slot exceeds u32");
+    }
+    let mut canonical_nominals = HashMap::<crate::Location, TypeId>::new();
+    let mut canonical_nominal_names = HashMap::<String, TypeId>::new();
+    for binding in &program.value.body.value.bindings {
+        if binding.value.kind != BindingKind::Type
+            || binding.value.declared_initializer.is_none()
+            || !binding.value.type_parameters.is_empty()
+        {
+            continue;
+        }
+        let constructor = crate::TypeConstructorId {
+            module: module_id,
+            local: declared_initializer_slots[&binding.value.name.location],
+        };
+        let id = match type_store.begin(constructor, []) {
+            InternType::Existing(id) | InternType::Reserved(id) => id,
+        };
+        canonical_nominals.insert(binding.value.name.location, id);
+        canonical_nominal_names.insert(binding.value.name.value.clone(), id);
+    }
     let qualified_external_interfaces = external_interfaces
         .iter()
         .map(|(name, interface)| (name.clone(), interface.qualified(name)))
@@ -2151,7 +2437,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .map(|binding| binding.value.name.value.as_str())
         .collect::<HashSet<_>>();
-    for (name, value) in external_values {
+    for (name, root) in external_roots {
         if authored_names.contains(name.as_str()) {
             continue;
         }
@@ -2159,9 +2445,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let scheme = interface
             .and_then(|interface| interface.exports.get(name))
             .cloned();
-        let tool_value = authoritative_imported_value(value, interface, name, &mut tool_vm);
-        tool_values.insert(name.clone(), evaluator.publish(&tool_value)?);
-        let inferred = imported_static_descriptor(value, interface, name);
+        tool_values.insert(name.clone(), root.runtime());
+        let inferred = imported_static_descriptor(
+            ValueRef::persistent(*root, evaluator.main),
+            interface,
+            name,
+        );
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
         if let Some(scheme) = scheme {
@@ -2172,7 +2461,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .values()
         .flat_map(|interface| interface.concrete_types.clone())
         .collect::<BTreeMap<_, _>>();
-    validate_export_references(program, prelude_names.iter(), external_values, sources)?;
+    validate_export_references(program, prelude_names.iter(), external_roots, sources)?;
 
     let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in &program.value.body.value.bindings {
@@ -2187,7 +2476,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     for name in dynamic_bindings {
-        if !external_values.contains_key(name) {
+        if !external_roots.contains_key(name) {
             return Err(frontend_error(
                 source_name,
                 format!("dynamic binding {name:?} has no value"),
@@ -2205,12 +2494,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             continue;
         }
         let name = &binding.value.name.value;
-        let value = external_values.get(name).cloned().ok_or_else(|| {
+        let value = external_roots.get(name).copied().ok_or_else(|| {
             frontend_error(source_name, format!("import {name} has not been resolved"))
         })?;
-        let interface = qualified_external_interfaces.get(name);
-        let value = authoritative_imported_value(&value, interface, name, &mut tool_vm);
-        tool_values.insert(name.clone(), evaluator.publish(&value)?);
+        tool_values.insert(name.clone(), value.runtime());
     }
 
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
@@ -2223,8 +2510,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
             && dependency_reaches(&type_dependencies, node.definition, node.definition)
         {
             let name = binding.value.name.value.clone();
-            let value = TypeDescriptor::Named(name.clone()).to_value(&mut tool_vm);
-            tool_values.insert(name, evaluator.publish(&value)?);
+            let value = evaluator.descriptor(&TypeDescriptor::Named(name.clone()))?;
+            tool_values.insert(name, value);
         }
     }
     let contract_type_definitions = program
@@ -2260,6 +2547,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut scheduled_types = BTreeSet::new();
     let mut frontier = family_dependents;
     frontier.extend(contract_type_definitions);
+    frontier.extend(
+        type_definitions
+            .iter()
+            .copied()
+            .filter(|definition| dependency_reaches(&type_dependencies, *definition, *definition)),
+    );
     while let Some(definition) = frontier.pop() {
         if !scheduled_types.insert(definition) {
             continue;
@@ -2305,23 +2598,39 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 )?;
                 let value = declare_metadata_value(
                     source_name,
+                    module_id,
                     binding,
                     &declared_initializer_slots,
                     value,
                     &mut evaluator,
                 )?;
-                let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
-                    FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!(
-                                "type {} produced invalid metadata: {message}",
-                                binding.value.name.value
-                            ),
-                            binding.value.value.location,
+                let (graph, root) =
+                    evaluator
+                        .decode_type_graph(value, "Type")
+                        .map_err(|message| {
+                            FrontendError::from_diagnostic(
+                                sources,
+                                Diagnostic::error(
+                                    format!(
+                                        "type {} produced invalid metadata: {message}",
+                                        binding.value.name.value
+                                    ),
+                                    binding.value.value.location,
+                                ),
+                            )
+                        })?;
+                let descriptor = graph.descriptor(root).map_err(|message| {
+                    frontend_error(
+                        source_name,
+                        format!(
+                            "type {} produced invalid metadata: {message}",
+                            binding.value.name.value
                         ),
                     )
                 })?;
+                graph
+                    .canonicalize(root, type_store)
+                    .map_err(|message| frontend_error(source_name, message))?;
                 let name = binding.value.name.value.clone();
                 declared_types.insert(name.clone(), descriptor.clone());
                 declared_type_spans.insert(name.clone(), binding.location);
@@ -2365,8 +2674,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     name: parameter.value.clone(),
                     location: parameter.location,
                 });
-                let value = TypeDescriptor::Bound(parameter_id).to_value(&mut tool_vm);
-                bindings.insert(parameter.value.clone(), evaluator.publish(&value)?);
+                let value = evaluator.descriptor(&TypeDescriptor::Bound(parameter_id))?;
+                bindings.insert(parameter.value.clone(), value);
             }
             let value = evaluate_tool_expression(
                 source_name,
@@ -2376,24 +2685,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 sources,
                 &mut evaluator,
             )?;
-            let value = if binding.value.declared_initializer.is_some() {
-                let arguments = parameters
-                    .iter()
-                    .map(|parameter| TypeDescriptor::Bound(parameter.id))
-                    .collect::<Vec<_>>();
-                evaluator
-                    .heap
-                    .declare_persistent_type_application(
-                        value,
-                        source_name,
-                        declared_initializer_slots[&binding.value.name.location],
-                        binding.value.name.value.as_str(),
-                        &arguments,
-                    )
-                    .map_err(|error| frontend_error(source_name, error.to_string()))?
-            } else {
-                value
-            };
             let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
                 FrontendError::from_diagnostic(
                     sources,
@@ -2406,6 +2697,36 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     ),
                 )
             })?;
+            let constructor =
+                binding
+                    .value
+                    .declared_initializer
+                    .as_ref()
+                    .map(|_| NominalTypeConstructor {
+                        id: crate::TypeConstructorId {
+                            module: module_id,
+                            local: declared_initializer_slots[&binding.value.name.location],
+                        },
+                        name: binding.value.name.value.clone(),
+                    });
+            let descriptor = if let Some(constructor) = &constructor {
+                let arguments = parameters
+                    .iter()
+                    .map(|parameter| TypeDescriptor::Bound(parameter.id))
+                    .collect::<Vec<_>>();
+                let descriptor = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                    id: crate::value::DeclaredTypeId::applied(
+                        constructor.id.module,
+                        constructor.id.local,
+                        &arguments,
+                    ),
+                    name: constructor.name.clone(),
+                    body: Arc::new(descriptor),
+                });
+                descriptor
+            } else {
+                descriptor
+            };
             let mut bounds = Vec::new();
             collect_bound_parameters(&descriptor, &mut bounds);
             if let Some(foreign) = bounds
@@ -2423,11 +2744,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     ),
                 ));
             }
+            let (family_value, template_root, family_root) =
+                evaluator.create_type_family(value, parameters.len(), constructor.as_ref())?;
             let family = TypeFamilyTemplate {
                 parameters: parameters.clone(),
-                metadata: evaluator.export(value)?,
+                template: template_root,
+                root: family_root,
+                rebuild_at_runtime: contains_named_type(&descriptor),
+                constructor,
             };
-            let family_value = type_family_value(&family);
             let scheme = TypeScheme {
                 parameters,
                 body: TypeDescriptor::Function {
@@ -2442,15 +2767,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 },
             };
             let erased = erase_type_variables(&scheme.body);
-            tool_values.insert(
-                binding.value.name.value.clone(),
-                evaluator.publish(&family_value)?,
-            );
+            tool_values.insert(binding.value.name.value.clone(), family_value);
             static_environment.insert(binding.value.name.value.clone(), erased.clone());
             binding_types.insert(binding.value.name.value.clone(), erased);
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
             type_family_templates.insert(binding.value.name.value.clone(), family.clone());
-            type_family_values.insert(binding.value.name.value.clone(), family_value);
+            type_family_values.insert(binding.value.name.value.clone(), family.clone());
             pending_types.remove(&definition);
             evaluated_types.insert(definition);
             progressed = true;
@@ -2478,12 +2800,33 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let contains_family = component
                 .iter()
                 .any(|definition| !type_bindings[definition].value.type_parameters.is_empty());
+            let contains_nominal = component.iter().any(|definition| {
+                type_bindings[definition]
+                    .value
+                    .declared_initializer
+                    .is_some()
+            });
             let concrete_decorated = !contains_family
                 && component
                     .iter()
                     .all(|definition| !type_bindings[definition].value.decorators.is_empty());
             if concrete_decorated {
-                for definition in component {
+                let mut type_refs = BTreeMap::new();
+                for definition in &component {
+                    let binding = type_bindings[definition];
+                    let name = binding.value.name.value.clone();
+                    let placeholder = tool_values[&name];
+                    let type_ref = evaluator.work.reserve_type_ref(
+                        module_id,
+                        declared_initializer_slots[&binding.value.name.location],
+                        name.as_str(),
+                        placeholder,
+                    );
+                    tool_values.insert(name.clone(), type_ref);
+                    type_refs.insert(*definition, type_ref);
+                }
+                let mut bodies = BTreeMap::new();
+                for definition in &component {
                     let binding = type_bindings[&definition];
                     let value = evaluate_tool_expression(
                         source_name,
@@ -2493,14 +2836,31 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         sources,
                         &mut evaluator,
                     )?;
-                    let value = declare_metadata_value(
-                        source_name,
-                        binding,
-                        &declared_initializer_slots,
-                        value,
-                        &mut evaluator,
-                    )?;
-                    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
+                    validate_declared_metadata(source_name, binding, value, &evaluator)?;
+                    bodies.insert(*definition, value);
+                }
+                for definition in &component {
+                    evaluator
+                        .work
+                        .seal_type_ref(type_refs[definition], bodies[definition])
+                        .map_err(|error| frontend_error(source_name, error.to_string()))?;
+                }
+                for definition in component {
+                    let binding = type_bindings[&definition];
+                    let value = type_refs[&definition];
+                    let (graph, root) =
+                        evaluator
+                            .decode_type_graph(value, "Type")
+                            .map_err(|message| {
+                                frontend_error(
+                                    source_name,
+                                    format!(
+                                        "type {} produced invalid metadata: {message}",
+                                        binding.value.name.value
+                                    ),
+                                )
+                            })?;
+                    let descriptor = graph.descriptor(root).map_err(|message| {
                         frontend_error(
                             source_name,
                             format!(
@@ -2509,6 +2869,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
+                    graph
+                        .canonicalize(root, type_store)
+                        .map_err(|message| frontend_error(source_name, message))?;
                     let name = binding.value.name.value.clone();
                     declared_types.insert(name.clone(), descriptor.clone());
                     declared_type_spans.insert(name.clone(), binding.location);
@@ -2529,7 +2892,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 }
                 continue;
             }
-            let message = if contains_family {
+            let message = if !contains_nominal {
+                format!(
+                    "recursive type alias component containing {names:?} does not reach a struct or enum constructor"
+                )
+            } else if contains_family {
                 format!("recursive type family component containing {names:?} is not supported")
             } else {
                 format!(
@@ -2592,8 +2959,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 name: parameter.value.clone(),
                 location: parameter.location,
             });
-            let value = TypeDescriptor::Bound(id).to_value(&mut tool_vm);
-            contract_values.insert(parameter.value.clone(), evaluator.publish(&value)?);
+            let value = evaluator.descriptor(&TypeDescriptor::Bound(id))?;
+            contract_values.insert(parameter.value.clone(), value);
         }
         let metadata = evaluate_tool_expression(
             source_name,
@@ -2676,9 +3043,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             BindingKind::OpenImport | BindingKind::Export => continue,
             BindingKind::Decl => continue,
             BindingKind::Native | BindingKind::NativeType => {
-                let value = external_values
+                let value = external_roots
                     .get(&binding.value.name.value)
-                    .cloned()
+                    .copied()
                     .ok_or_else(|| {
                         FrontendError::from_diagnostic(
                             sources,
@@ -2691,7 +3058,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
-                tool_values.insert(binding.value.name.value.clone(), evaluator.publish(&value)?);
+                tool_values.insert(binding.value.name.value.clone(), value.runtime());
                 if binding.value.kind == BindingKind::NativeType {
                     let value = tool_values[&binding.value.name.value];
                     let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
@@ -2735,6 +3102,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 )?;
                 let value = declare_metadata_value(
                     source_name,
+                    module_id,
                     binding,
                     &declared_initializer_slots,
                     value,
@@ -2789,6 +3157,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         )
                     })?;
                     if !contains_named_type(&expected)
+                        && !same_nominal_head_with_erased_arguments(&inferred, &expected)
                         && !assignable(&inferred, &expected)
                         && !is_declared_literal_construction(
                             &binding.value.value,
@@ -2838,7 +3207,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 static_environment.insert(binding.value.name.value.clone(), checked.clone());
                 binding_types.insert(binding.value.name.value.clone(), checked);
 
-                if let Ok(value) = evaluate_tool_expression(
+                if let Ok(value) = evaluate_tool_expression_silent(
                     source_name,
                     &binding.value.value,
                     &tool_values,
@@ -2858,7 +3227,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .unwrap_or(inferred);
                 static_environment.insert(name.clone(), checked.clone());
                 binding_types.insert(name.clone(), checked);
-                if let Ok(value) = evaluate_tool_expression(
+                if let Ok(value) = evaluate_tool_expression_silent(
                     source_name,
                     &binding.value.value,
                     &tool_values,
@@ -2870,9 +3239,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 }
             }
             BindingKind::Import => {
-                let value = external_values
+                let value = external_roots
                     .get(&binding.value.name.value)
-                    .cloned()
+                    .copied()
                     .ok_or_else(|| {
                         frontend_error(
                             source_name,
@@ -2883,33 +3252,18 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 let scheme = interface
                     .and_then(|interface| interface.exports.get(&binding.value.name.value))
                     .cloned();
-                let inferred =
-                    imported_static_descriptor(&value, interface, &binding.value.name.value);
+                let inferred = imported_static_descriptor(
+                    ValueRef::persistent(value, evaluator.main),
+                    interface,
+                    &binding.value.name.value,
+                );
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
-                    let tool_value = authoritative_imported_value(
-                        &value,
-                        interface,
-                        &binding.value.name.value,
-                        &mut tool_vm,
-                    );
                     binding_schemes.insert(binding.value.name.value.clone(), scheme);
-                    tool_values.insert(
-                        binding.value.name.value.clone(),
-                        evaluator.publish(&tool_value)?,
-                    );
+                    tool_values.insert(binding.value.name.value.clone(), value.runtime());
                 } else {
-                    let tool_value = authoritative_imported_value(
-                        &value,
-                        interface,
-                        &binding.value.name.value,
-                        &mut tool_vm,
-                    );
-                    tool_values.insert(
-                        binding.value.name.value.clone(),
-                        evaluator.publish(&tool_value)?,
-                    );
+                    tool_values.insert(binding.value.name.value.clone(), value.runtime());
                 }
             }
         }
@@ -2941,8 +3295,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     for binding in &program.value.body.value.bindings {
         let mut annotation_values = tool_values.clone();
         for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-            let value = TypeDescriptor::Bound(TypeParameterId(index as u32)).to_value(&mut tool_vm);
-            annotation_values.insert(parameter.value.clone(), evaluator.publish(&value)?);
+            let value =
+                evaluator.descriptor(&TypeDescriptor::Bound(TypeParameterId(index as u32)))?;
+            annotation_values.insert(parameter.value.clone(), value);
         }
         collect_nested_annotation_types(
             source_name,
@@ -2971,7 +3326,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &qualified_external_interfaces,
         &named_types,
         &local_annotations,
-        !external_values.contains_key("Tuple"),
+        !external_roots.contains_key("Tuple"),
         account.query_context(),
     );
     let mut checked_environment = static_environment.clone();
@@ -3384,6 +3739,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             )
         })?;
     }
+    let interface_binding_types = binding_types
+        .iter()
+        .map(|(name, descriptor)| (name.clone(), inference.resolve(descriptor)))
+        .collect::<BTreeMap<_, _>>();
     let mut types = TypeGraph::default();
     let declared_type_names = declared_types.keys().cloned().collect::<Vec<_>>();
     let installed_named_types = types.install_named_descriptors(&named_types);
@@ -3391,7 +3750,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .into_iter()
         .map(|name| (name.clone(), installed_named_types[&name]))
         .collect::<BTreeMap<_, _>>();
-    let binding_types: BTreeMap<String, TypeId> = binding_types
+    let binding_types: BTreeMap<String, AnalysisTypeId> = binding_types
         .into_iter()
         .map(|(name, descriptor)| {
             let descriptor = inference.resolve(&descriptor);
@@ -3399,7 +3758,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .collect();
     let result_type = types.intern_erased_descriptor(&resolved_result);
-    let expression_types: BTreeMap<HirExpressionId, TypeId> = hir
+    let expression_types: BTreeMap<HirExpressionId, AnalysisTypeId> = hir
         .expressions()
         .iter()
         .filter_map(|expression| {
@@ -3480,6 +3839,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     binding_schemes
                         .get(&binding.value)
                         .cloned()
+                        .or_else(|| {
+                            interface_binding_types
+                                .get(&binding.value)
+                                .map(|body| TypeScheme {
+                                    parameters: Vec::new(),
+                                    body: body.clone(),
+                                })
+                        })
+                        .or_else(|| {
+                            checked_environment
+                                .get(&binding.value)
+                                .map(|body| TypeScheme {
+                                    parameters: Vec::new(),
+                                    body: inference.resolve(body),
+                                })
+                        })
                         .and_then(|scheme| {
                             field
                                 .value
@@ -3528,10 +3903,87 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let propagation_families = std::mem::take(&mut inference.propagation_families);
     let not_families = std::mem::take(&mut inference.not_families);
-    let declared_value_owners = expression_descriptors
+    let bootstrap_root = if let Some(root) = cached_bootstrap_root {
+        root
+    } else {
+        let root = evaluator.persist_table(prelude_value_names.iter().map(|name| {
+            (
+                name.clone(),
+                *tool_values
+                    .get(name)
+                    .unwrap_or_else(|| panic!("core prelude runtime value {name:?} is available")),
+            )
+        }))?;
+        evaluator.main.set_bootstrap_root(root);
+        root
+    };
+    let mut runtime_roots = prelude_value_names
+        .iter()
+        .map(|name| {
+            let root = bootstrap_root
+                .export_get(evaluator.main, name)
+                .expect("bootstrap exports root is a Dict")
+                .expect("bootstrap exports root is complete");
+            (name.clone(), root)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let concrete_type_names = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| {
+            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+        })
+        .map(|binding| binding.value.name.value.clone())
+        .collect::<Vec<_>>();
+    if !concrete_type_names.is_empty() {
+        let roots = evaluator.persist_table(concrete_type_names.iter().map(|name| {
+            (
+                name.clone(),
+                *tool_values
+                    .get(name)
+                    .expect("analyzed concrete Type has a runtime root"),
+            )
+        }))?;
+        for name in concrete_type_names {
+            let root = roots
+                .export_get(evaluator.main, &name)
+                .expect("concrete Type root table is a Module")
+                .expect("concrete Type root is present");
+            runtime_roots.insert(crate::compiler::type_link_key(&name), root);
+        }
+    }
+    let mut pending_owner_roots = Vec::new();
+    let mut declared_value_owners = HashMap::new();
+    for (location, descriptor) in expression_descriptors
         .iter()
         .filter(|(_, descriptor)| matches!(descriptor, TypeDescriptor::Declared(_)))
-        .map(|(location, descriptor)| (*location, descriptor.to_value(&mut tool_vm)))
+    {
+        let key = crate::compiler::declared_owner_link_key(*location);
+        let value = evaluator.descriptor(descriptor)?;
+        pending_owner_roots.push((key.clone(), value));
+        declared_value_owners.insert(*location, key);
+    }
+    if !pending_owner_roots.is_empty() {
+        let names = pending_owner_roots
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let root = evaluator.persist_table(pending_owner_roots)?;
+        for name in names {
+            let value = root
+                .export_get(evaluator.main, &name)
+                .expect("analysis runtime exports root is a Dict")
+                .expect("analysis runtime export is present");
+            runtime_roots.insert(name, value);
+        }
+    }
+    let external_bindings = external_roots
+        .keys()
+        .chain(runtime_roots.keys())
+        .cloned()
         .collect();
     Ok(Analysis {
         types,
@@ -3552,81 +4004,32 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .any(|binding| binding.value.kind == BindingKind::Export),
         propagation_families,
         not_families,
-        prelude: prelude_values,
-        external_values: external_values.clone(),
+        runtime_roots,
+        external_bindings,
         dynamic_bindings: dynamic_bindings.clone(),
         type_family_values,
         declared_value_owners,
     })
 }
 
-fn authoritative_imported_metadata(
-    value: &Value,
-    scheme: Option<&TypeScheme>,
-    vm: &mut Vm,
-) -> Value {
-    let Some(TypeDescriptor::TypeOf(expected)) = scheme.map(|scheme| &scheme.body) else {
-        return value.clone();
-    };
-    match TypeDescriptor::from_value(value) {
-        Ok(actual) if actual == **expected => value.clone(),
-        _ => expected.to_value(vm),
-    }
-}
-
 fn imported_static_descriptor(
-    value: &Value,
+    value: ValueRef<'_>,
     interface: Option<&ModuleInterface>,
     local: &str,
 ) -> TypeDescriptor {
     let Some(interface) = interface.filter(|interface| !interface.exports.is_empty()) else {
-        return infer_value(value);
+        return infer_value_ref(value);
     };
     if let Some(scheme) = interface.exports.get(local) {
         return erase_type_variables(&scheme.body);
     }
-    let mut fields = match infer_value(value) {
-        TypeDescriptor::Struct(fields) => fields,
-        _ => BTreeMap::new(),
-    };
-    for (name, scheme) in &interface.exports {
-        fields.insert(name.clone(), erase_type_variables(&scheme.body));
-    }
-    TypeDescriptor::Struct(fields)
-}
-
-fn authoritative_imported_value(
-    value: &Value,
-    interface: Option<&ModuleInterface>,
-    local: &str,
-    vm: &mut Vm,
-) -> Value {
-    let Some(interface) = interface else {
-        return value.clone();
-    };
-    if let Some(family) = interface.type_family_templates.get(local) {
-        return type_family_value(family);
-    }
-    if let Some(scheme) = interface.exports.get(local) {
-        return authoritative_imported_metadata(value, Some(scheme), vm);
-    }
-    let Value::Dict(fields) = value else {
-        return value.clone();
-    };
-    let values = fields
-        .shape()
-        .fields()
-        .iter()
-        .zip(fields.values())
-        .map(|(name, value)| {
-            if let Some(family) = interface.type_family_templates.get(name) {
-                type_family_value(family)
-            } else {
-                authoritative_imported_metadata(value, interface.exports.get(name), vm)
-            }
-        })
-        .collect();
-    Value::Dict(crate::Dict::new(fields.shape().clone(), values))
+    TypeDescriptor::Struct(
+        interface
+            .exports
+            .iter()
+            .map(|(name, scheme)| (name.clone(), erase_type_variables(&scheme.body)))
+            .collect(),
+    )
 }
 
 fn validate_interpreter_contract(
@@ -3729,87 +4132,154 @@ fn validate_interpreter_contract(
     Ok(())
 }
 
-pub(crate) fn infer_value(value: &Value) -> TypeDescriptor {
-    match value {
-        Value::Int(_) => TypeDescriptor::Int,
-        Value::Float(_) => TypeDescriptor::Float,
-        Value::String(_) => TypeDescriptor::String,
-        Value::Bytes(_) => TypeDescriptor::Bytes,
-        Value::NativeType(native_type) => {
-            TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Opaque(native_type.clone())))
+pub(crate) fn infer_value_ref(value: ValueRef<'_>) -> TypeDescriptor {
+    infer_value_ref_with(value, &mut HashSet::new())
+}
+
+fn infer_value_ref_with(
+    value: ValueRef<'_>,
+    visiting_type_slots: &mut HashSet<Handle>,
+) -> TypeDescriptor {
+    if let Some(handle) = value.hidden_type_slot_handle() {
+        if !visiting_type_slots.insert(handle) {
+            return TypeDescriptor::Any;
         }
-        Value::DeclaredType(value) => TypeDescriptor::TypeOf(Box::new(
-            TypeDescriptor::from_value(&Value::DeclaredType(value.clone()))
-                .unwrap_or(TypeDescriptor::Any),
+        let inferred = value
+            .resolve_hidden_type_slot()
+            .map(|resolved| infer_value_ref_with(resolved, visiting_type_slots))
+            .unwrap_or(TypeDescriptor::Any);
+        visiting_type_slots.remove(&handle);
+        return inferred;
+    }
+    if let Some((owner, payload)) = value.declared_value_parts() {
+        return decode_type_ref(owner, "declared value owner")
+            .unwrap_or_else(|_| infer_value_ref_with(payload, visiting_type_slots));
+    }
+    match value.kind() {
+        ValueKind::Int => TypeDescriptor::Int,
+        ValueKind::Float => TypeDescriptor::Float,
+        ValueKind::String => TypeDescriptor::String,
+        ValueKind::Bytes => TypeDescriptor::Bytes,
+        ValueKind::Type => TypeDescriptor::TypeOf(Box::new(
+            decode_type_ref(value, "Type").unwrap_or(TypeDescriptor::Any),
         )),
-        Value::Declared(value) => {
-            TypeDescriptor::from_value(&Value::DeclaredType(value.owner().clone()))
-                .unwrap_or_else(|_| infer_value(value.payload()))
+        ValueKind::Opaque => value
+            .opaque_native_type()
+            .cloned()
+            .map(TypeDescriptor::Opaque)
+            .unwrap_or(TypeDescriptor::Any),
+        ValueKind::Atom => value
+            .as_atom()
+            .map(|atom| TypeDescriptor::Atom(atom_from_name(atom.as_str())))
+            .unwrap_or(TypeDescriptor::Any),
+        ValueKind::Array => {
+            let items = (0..value.sequence_len().unwrap_or_default())
+                .filter_map(|index| value.sequence_get(index))
+                .map(|item| infer_value_ref_with(item, visiting_type_slots))
+                .collect();
+            TypeDescriptor::Array(Box::new(common_type(items).unwrap_or(TypeDescriptor::Any)))
         }
-        Value::Opaque(value) => TypeDescriptor::Opaque(value.native_type().clone()),
-        Value::Atom(atom) => TypeDescriptor::Atom(atom.clone()),
-        Value::Array(items) => {
-            let item =
-                common_type(items.iter().map(infer_value).collect()).unwrap_or(TypeDescriptor::Any);
-            TypeDescriptor::Array(Box::new(item))
-        }
-        Value::Tagged { tag, payload } => TypeDescriptor::Tagged {
-            tag: tag.clone(),
-            payload: Box::new(infer_value(payload)),
-        },
-        Value::Tuple(items) => TypeDescriptor::Tuple(items.iter().map(infer_value).collect()),
-        Value::Dict(fields) => TypeDescriptor::Struct(
-            fields
-                .shape()
-                .fields()
-                .iter()
-                .zip(fields.values())
-                .map(|(name, value)| (name.clone(), infer_value(value)))
+        ValueKind::Tagged => value
+            .tagged_parts()
+            .and_then(|(tag, payload)| {
+                Some(TypeDescriptor::Tagged {
+                    tag: atom_from_name(tag.as_atom()?.as_str()),
+                    payload: Box::new(infer_value_ref_with(payload, visiting_type_slots)),
+                })
+            })
+            .unwrap_or(TypeDescriptor::Any),
+        ValueKind::Tuple => TypeDescriptor::Tuple(
+            (0..value.sequence_len().unwrap_or_default())
+                .filter_map(|index| value.sequence_get(index))
+                .map(|item| infer_value_ref_with(item, visiting_type_slots))
                 .collect(),
         ),
-        Value::Func(closure) => {
-            let arity = match closure.prototype() {
-                crate::Prototype::Bytecode(function) => function.parameter_count(),
-                crate::Prototype::Native(function) => function.arity(),
-            };
-            TypeDescriptor::Function {
-                parameters: vec![TypeDescriptor::Any; arity],
-                result: Box::new(TypeDescriptor::Any),
-            }
-        }
-        Value::Dyn(_) => TypeDescriptor::Dyn,
+        ValueKind::Dict => TypeDescriptor::Struct(
+            value
+                .dict_fields()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|name| {
+                    value.dict_get(name).map(|field| {
+                        (
+                            name.to_owned(),
+                            infer_value_ref_with(field, visiting_type_slots),
+                        )
+                    })
+                })
+                .collect(),
+        ),
+        ValueKind::Func => TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Any; value.function_arity().unwrap_or_default()],
+            result: Box::new(TypeDescriptor::Any),
+        },
+        ValueKind::Dyn => TypeDescriptor::Dyn,
+        ValueKind::Module => TypeDescriptor::Struct(
+            value
+                .module_fields()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|name| {
+                    value.module_get(name).map(|field| {
+                        (
+                            name.to_owned(),
+                            infer_value_ref_with(field, visiting_type_slots),
+                        )
+                    })
+                })
+                .collect(),
+        ),
     }
 }
 
 fn declare_metadata_value(
     source_name: &str,
+    module_id: crate::ModuleId,
     binding: &Binding,
     slots: &HashMap<crate::Location, u32>,
-    value: PersistentValue,
+    value: Val,
     evaluator: &mut ToolEvaluator,
-) -> Result<PersistentValue, FrontendError> {
-    let Some(kind) = binding.value.declared_initializer else {
+) -> Result<Val, FrontendError> {
+    if binding.value.declared_initializer.is_none() {
         return Ok(value);
-    };
-    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
-        frontend_error(
-            source_name,
-            format!(
-                "declared type {} produced invalid metadata: {message}",
-                binding.value.name.value
-            ),
+    }
+    validate_declared_metadata(source_name, binding, value, evaluator)?;
+    let slot = slots
+        .get(&binding.value.name.location)
+        .copied()
+        .expect("direct declared initializer has a declaration slot");
+    Ok(evaluator
+        .work
+        .declare_type(value, module_id, slot, binding.value.name.value.as_str()))
+}
+
+fn validate_declared_metadata(
+    source_name: &str,
+    binding: &Binding,
+    value: Val,
+    evaluator: &ToolEvaluator,
+) -> Result<(), FrontendError> {
+    let kind = binding
+        .value
+        .declared_initializer
+        .expect("declared metadata validation requires a declared initializer");
+    let mut graph = TypeGraph::default();
+    let root = graph
+        .decode_persistent(
+            ValueRef::work(value, &evaluator.work, evaluator.main),
+            "Type",
+            &mut HashMap::new(),
         )
-    })?;
-    let valid = matches!(
-        (kind, &descriptor),
-        (
-            crate::ast::DeclaredInitializerKind::Struct,
-            TypeDescriptor::Struct(_)
-        ) | (
-            crate::ast::DeclaredInitializerKind::Enum,
-            TypeDescriptor::Enum(_)
-        )
-    );
+        .map_err(|message| {
+            frontend_error(
+                source_name,
+                format!(
+                    "declared type {} produced invalid metadata: {message}",
+                    binding.value.name.value
+                ),
+            )
+        })?;
+    let valid = graph.root_model_kind(root) == Some(kind);
     if !valid {
         return Err(frontend_error(
             source_name,
@@ -3819,14 +4289,7 @@ fn declare_metadata_value(
             ),
         ));
     }
-    let slot = slots
-        .get(&binding.value.name.location)
-        .copied()
-        .expect("direct declared initializer has a declaration slot");
-    evaluator
-        .heap
-        .declare_persistent_type(value, source_name, slot, binding.value.name.value.as_str())
-        .map_err(|error| frontend_error(source_name, error.to_string()))
+    Ok(())
 }
 
 fn is_declared_literal_construction(
@@ -3864,11 +4327,51 @@ fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) ->
 fn evaluate_tool_expression(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, PersistentValue>,
+    bindings: &BTreeMap<String, Val>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
-) -> Result<PersistentValue, FrontendError> {
+) -> Result<Val, FrontendError> {
+    evaluate_tool_expression_with_debug(
+        source_name,
+        expression,
+        bindings,
+        account,
+        sources,
+        evaluator,
+        true,
+    )
+}
+
+fn evaluate_tool_expression_silent(
+    source_name: &str,
+    expression: &Expr,
+    bindings: &BTreeMap<String, Val>,
+    account: &mut QuotaAccount,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator,
+) -> Result<Val, FrontendError> {
+    evaluate_tool_expression_with_debug(
+        source_name,
+        expression,
+        bindings,
+        account,
+        sources,
+        evaluator,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_tool_expression_with_debug(
+    source_name: &str,
+    expression: &Expr,
+    bindings: &BTreeMap<String, Val>,
+    account: &mut QuotaAccount,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator,
+    observed: bool,
+) -> Result<Val, FrontendError> {
     let function = compile_expression_with_external_bindings(
         source_name,
         "<tool-stage>",
@@ -3880,72 +4383,180 @@ fn evaluate_tool_expression(
         .iter()
         .map(|(name, value)| (name.clone(), *value))
         .collect::<HashMap<_, _>>();
-    let world = evaluator
-        .vm
-        .execute_in_work(&evaluator.heap, &externals, &function, &[], account)
-        .map_err(|error| {
-            frontend_error(
-                source_name,
-                format!(
-                    "tool-stage evaluation failed: {}",
-                    error.with_sources(sources)
-                ),
-            )
-        })?;
-    world.publish(&mut evaluator.heap).map_err(|error| {
-        frontend_error(
-            source_name,
-            format!("tool-stage publication failed: {error}"),
-        )
-    })
+    let work = std::mem::replace(&mut evaluator.work, Heap::work_for(evaluator.main));
+    let vm = if observed {
+        &mut evaluator.observed_vm
+    } else {
+        &mut evaluator.silent_vm
+    };
+    let root =
+        match vm.execute_in_existing_work(evaluator.main, &externals, &function, work, account) {
+            Ok((work, root)) => {
+                evaluator.work = work;
+                root
+            }
+            Err((work, error)) => {
+                evaluator.work = work;
+                return Err(frontend_error(
+                    source_name,
+                    format!(
+                        "tool-stage evaluation failed: {}",
+                        error.with_sources(sources)
+                    ),
+                ));
+            }
+        };
+    Ok(root)
 }
 
-struct ToolEvaluator {
-    vm: Vm,
-    heap: Heap,
+struct ToolEvaluator<'a> {
+    observed_vm: Vm,
+    silent_vm: Vm,
+    main: &'a mut Heap,
+    work: Heap,
 }
 
-impl ToolEvaluator {
-    fn new(debug_sink: Arc<dyn DebugSink>) -> Self {
+impl<'a> ToolEvaluator<'a> {
+    fn new(debug_sink: Arc<dyn DebugSink>, main: &'a mut Heap) -> Self {
+        let work = Heap::work_for(main);
         Self {
-            vm: Vm::new().with_debug_sink(debug_sink),
-            heap: Heap::main(),
+            observed_vm: Vm::new().with_debug_sink(debug_sink),
+            silent_vm: Vm::new().with_debug_sink(Arc::new(DiscardDebugSink)),
+            main,
+            work,
         }
     }
 
-    fn publish(&mut self, value: &Value) -> Result<PersistentValue, FrontendError> {
-        crate::heap::publish_value(&mut self.heap, value)
+    fn descriptor(&mut self, descriptor: &TypeDescriptor) -> Result<Val, FrontendError> {
+        self.work
+            .type_descriptor_value(Some(self.main), descriptor)
             .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
     }
 
-    fn publish_map(
+    fn install_bootstrap(&mut self) -> Result<BTreeMap<String, Val>, FrontendError> {
+        let mut values = BTreeMap::new();
+        for (name, descriptor) in [
+            ("Type", TypeDescriptor::Type),
+            ("Dyn", TypeDescriptor::Dyn),
+            ("Any", TypeDescriptor::Any),
+            ("Never", TypeDescriptor::Never),
+            ("Int", TypeDescriptor::Int),
+            ("Float", TypeDescriptor::Float),
+            ("String", TypeDescriptor::String),
+            ("Bytes", TypeDescriptor::Bytes),
+            ("BlameError", blame_error_descriptor()),
+        ] {
+            values.insert(name.into(), self.descriptor(&descriptor)?);
+        }
+        values.insert(
+            "Bool".into(),
+            self.work
+                .normalized_bool_type_value(Some(self.main))
+                .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?,
+        );
+        for function in [
+            NativeFunction::core_model(CoreModelFunction::Struct),
+            NativeFunction::core_model(CoreModelFunction::Enum),
+            NativeFunction::core_model(CoreModelFunction::Union),
+            NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Option),
+            NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Result),
+            NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::FoldControl),
+            NativeFunction::new("Atom", 1, native_atom_type),
+            NativeFunction::new("Array", 1, native_array_type),
+            NativeFunction::new("Dict", 1, native_dict_type),
+            NativeFunction::new("TypeOf", 1, native_type_of_type),
+            NativeFunction::new("Tagged", 2, native_tagged_type),
+            NativeFunction::new("Tuple", 1, native_tuple_type),
+            NativeFunction::new("Func", 2, native_function_type),
+            NativeFunction::new("validate", 2, native_validate),
+            NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
+        ] {
+            values.insert(
+                function.name().into(),
+                self.work
+                    .native_closure(function, Vec::<Val>::new().into_boxed_slice()),
+            );
+        }
+        let pack = NativeFunction::core_dyn(CoreDynFunction::Pack);
+        values.insert(
+            "\0telora_pack_dyn".into(),
+            self.work
+                .native_closure(pack, Vec::<Val>::new().into_boxed_slice()),
+        );
+        Ok(values)
+    }
+
+    fn persist_table(
         &mut self,
-        values: &BTreeMap<String, Value>,
-    ) -> Result<BTreeMap<String, PersistentValue>, FrontendError> {
-        values
-            .iter()
-            .map(|(name, value)| self.publish(value).map(|value| (name.clone(), value)))
-            .collect()
-    }
-
-    fn decode_type(&self, value: PersistentValue, path: &str) -> Result<TypeDescriptor, String> {
-        decode_type_ref(ValueRef::persistent(value, &self.heap), path)
-    }
-
-    fn export(&self, value: PersistentValue) -> Result<Value, FrontendError> {
-        self.heap
-            .export_persistent(value)
+        entries: impl IntoIterator<Item = (String, Val)>,
+    ) -> Result<PersistentValue, FrontendError> {
+        let root = self
+            .work
+            .module(entries)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
+        publish_root(self.main, &self.work, root)
             .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
     }
-}
 
-pub(crate) fn type_family_value(family: &TypeFamilyTemplate) -> Value {
-    let arity = family.parameters.len();
-    let arity_value = i64::try_from(arity).expect("type-family arity was already bounded by u32");
-    Value::Func(Arc::new(Closure::native_with_upvalues(
-        NativeFunction::new("type-family.apply", arity, native_apply_type_family),
-        vec![family.metadata.clone(), Value::Int(arity_value)],
-    )))
+    fn decode_type(&self, value: Val, path: &str) -> Result<TypeDescriptor, String> {
+        decode_type_ref(ValueRef::work(value, &self.work, self.main), path)
+    }
+
+    fn decode_type_graph(
+        &self,
+        value: Val,
+        path: &str,
+    ) -> Result<(TypeGraph, AnalysisTypeId), String> {
+        let mut graph = TypeGraph::default();
+        let root = graph.decode_persistent(
+            ValueRef::work(value, &self.work, self.main),
+            path,
+            &mut HashMap::new(),
+        )?;
+        Ok((graph, root))
+    }
+
+    fn create_type_family(
+        &mut self,
+        metadata: Val,
+        arity: usize,
+        constructor: Option<&NominalTypeConstructor>,
+    ) -> Result<(Val, PersistentValue, PersistentValue), FrontendError> {
+        let arity_value = i64::try_from(arity)
+            .map_err(|_| frontend_error("<tool-stage>", "type-family arity exceeds Int"))?;
+        let template = publish_root(self.main, &self.work, metadata)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
+        let module = constructor.map_or(-1, |constructor| i64::from(constructor.id.module.raw()));
+        let local = constructor.map_or(0, |constructor| i64::from(constructor.id.local));
+        let name = constructor.map_or("", |constructor| constructor.name.as_str());
+        let work_name = Val::unknown(self.work.string(Some(self.main), name));
+        let main_name = Val::unknown(self.main.string(None, name));
+        let family = self.work.native_closure(
+            NativeFunction::new("type-family.apply", arity, native_apply_type_family),
+            vec![
+                metadata,
+                self.work.int(arity_value),
+                self.work.int(module),
+                self.work.int(local),
+                work_name,
+            ],
+        );
+        let persistent_family = self.main.native_closure(
+            NativeFunction::new("type-family.apply", arity, native_apply_type_family),
+            vec![
+                template.runtime(),
+                self.main.int(arity_value),
+                self.main.int(module),
+                self.main.int(local),
+                main_name,
+            ],
+        );
+        let root = self
+            .main
+            .persistent(persistent_family)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
+        Ok((family, template, root))
+    }
 }
 
 fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -3970,30 +4581,60 @@ fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), Nat
         &argument_registers,
         &argument_descriptors,
     )?;
+    let module = context
+        .value(context.upvalue(2)?)?
+        .as_int()
+        .ok_or_else(|| NativeError::new("invalid type-constructor module ID"))?;
+    if module >= 0 {
+        let module = u32::try_from(module)
+            .map(crate::ModuleId::from_raw)
+            .map_err(|_| NativeError::new("invalid type-constructor module ID"))?;
+        let local = context
+            .value(context.upvalue(3)?)?
+            .as_int()
+            .and_then(|local| u32::try_from(local).ok())
+            .ok_or_else(|| NativeError::new("invalid type-constructor local ID"))?;
+        let name = context
+            .value(context.upvalue(4)?)?
+            .as_str()
+            .ok_or_else(|| NativeError::new("invalid type-constructor name"))?
+            .to_string();
+        let id = crate::value::DeclaredTypeId::applied(module, local, &argument_descriptors);
+        context.make_declared_type_application(result, id, name, result, &argument_registers)?;
+    }
     context.mark_at_call_site(result)
 }
 
 pub(crate) fn native_declare_type_family(
     context: &mut CallContext<'_, '_>,
 ) -> Result<(), NativeError> {
-    let template = context.argument(0)?;
-    let body = context.argument(1)?;
-    let (head, name, _) = context
-        .value(template)?
-        .declared_type_parts()
-        .ok_or_else(|| NativeError::new("type-family declaration template is not declared"))?;
-    let head = head.clone();
-    let name = name.to_owned();
-    let arity = context.argument_count().saturating_sub(2);
+    let body = context.argument(0)?;
+    let module = context
+        .value(context.argument(1)?)?
+        .as_int()
+        .and_then(|module| u32::try_from(module).ok())
+        .map(crate::ModuleId::from_raw)
+        .ok_or_else(|| NativeError::new("invalid type-constructor module ID"))?;
+    let local = context
+        .value(context.argument(2)?)?
+        .as_int()
+        .and_then(|local| u32::try_from(local).ok())
+        .ok_or_else(|| NativeError::new("invalid type-constructor local ID"))?;
+    let name = context
+        .value(context.argument(3)?)?
+        .as_str()
+        .ok_or_else(|| NativeError::new("invalid type-constructor name"))?
+        .to_string();
+    let arity = context.argument_count().saturating_sub(4);
     let mut argument_registers = Vec::with_capacity(arity);
     let mut argument_descriptors = Vec::with_capacity(arity);
     for index in 0..arity {
-        let register = context.argument(index + 2)?;
+        let register = context.argument(index + 4)?;
         let argument = native_type_argument_descriptor(context, register, index)?;
         argument_registers.push(register);
         argument_descriptors.push(argument);
     }
-    let id = apply_declared_type_arguments(&head, &argument_descriptors);
+    let id = crate::value::DeclaredTypeId::applied(module, local, &argument_descriptors);
     context.make_declared_type_application(
         context.result(),
         id,
@@ -4009,54 +4650,20 @@ fn native_type_argument_descriptor(
     register: RegisterId,
     index: usize,
 ) -> Result<TypeDescriptor, NativeError> {
-    validate_native_type(context.value(register)?).map_err(|error| {
+    decode_native_type(context.value(register)?).map_err(|error| {
         NativeError::new(format!(
             "type-family argument {} is not valid TypeMetadata: {}",
             index + 1,
             error.message
         ))
-    })?;
-    let is_cyclic = |error: &NativeError| {
-        error
-            .message
-            .contains("cyclic heap values cannot cross the legacy Value boundary")
-    };
-    let value = match context.export_value(register) {
-        Ok(value) => Some(value),
-        Err(error) if is_cyclic(&error) => match context.export_type_identity(register) {
-            Ok(value) => Some(value),
-            Err(error) if is_cyclic(&error) => None,
-            Err(error) => return Err(error),
-        },
-        Err(error) => return Err(error),
-    };
-    value.map_or(Ok(TypeDescriptor::Any), |value| {
-        TypeDescriptor::from_value(&value).map_err(|message| {
-            NativeError::new(format!(
-                "invalid type-family argument {}: {message}",
-                index + 1
-            ))
-        })
     })
-}
-
-fn optional_type_metadata_is_none(metadata: &Value) -> bool {
-    if matches!(metadata, Value::Atom(atom) if atom.name() == "None") {
-        return true;
-    }
-    matches!(
-        metadata,
-        Value::Dict(fields)
-            if matches!(fields.get("kind"), Some(Value::Atom(kind)) if kind.name() == "WithAttributes")
-                && matches!(fields.get("inner"), Some(Value::Atom(inner)) if inner.name() == "None")
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn collect_nested_annotation_types(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, PersistentValue>,
+    bindings: &BTreeMap<String, Val>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     debug_sink: &mut ToolEvaluator,
@@ -4439,7 +5046,7 @@ fn collect_nested_annotation_types(
 fn collect_block_annotation_types(
     source_name: &str,
     block: &Block,
-    bindings: &BTreeMap<String, PersistentValue>,
+    bindings: &BTreeMap<String, Val>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     debug_sink: &mut ToolEvaluator,
@@ -4493,70 +5100,24 @@ fn collect_block_annotation_types(
 }
 
 struct BootstrapPrelude {
-    values: BTreeMap<String, Value>,
     types: HashMap<String, TypeDescriptor>,
     schemes: HashMap<String, TypeScheme>,
 }
 
 impl BootstrapPrelude {
-    fn new(vm: &mut Vm) -> Self {
+    fn new() -> Self {
         let artifact = Self {
-            values: core_prelude_values(vm),
             types: core_prelude_types(),
             schemes: core_prelude_schemes(),
         };
-        debug_assert!(artifact.schemes.keys().all(|name| {
-            artifact.values.contains_key(name) && artifact.types.contains_key(name)
-        }));
+        debug_assert!(
+            artifact
+                .schemes
+                .keys()
+                .all(|name| artifact.types.contains_key(name))
+        );
         artifact
     }
-}
-
-fn core_prelude_values(vm: &mut Vm) -> BTreeMap<String, Value> {
-    let mut prelude = BTreeMap::new();
-    for (name, descriptor) in [
-        ("Type", TypeDescriptor::Type),
-        ("Dyn", TypeDescriptor::Dyn),
-        ("Any", TypeDescriptor::Any),
-        ("Never", TypeDescriptor::Never),
-        ("Int", TypeDescriptor::Int),
-        ("Float", TypeDescriptor::Float),
-        ("String", TypeDescriptor::String),
-        ("Bytes", TypeDescriptor::Bytes),
-    ] {
-        prelude.insert(name.into(), descriptor.to_value(vm));
-    }
-    prelude.insert("Bool".into(), normalized_bool_value(vm));
-    prelude.insert("BlameError".into(), blame_error_descriptor().to_value(vm));
-    for function in [
-        NativeFunction::core_model(CoreModelFunction::Struct),
-        NativeFunction::core_model(CoreModelFunction::Enum),
-        NativeFunction::core_model(CoreModelFunction::Union),
-        NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Option),
-        NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Result),
-        NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::FoldControl),
-        NativeFunction::new("Atom", 1, native_atom_type),
-        NativeFunction::new("Array", 1, native_array_type),
-        NativeFunction::new("Dict", 1, native_dict_type),
-        NativeFunction::new("TypeOf", 1, native_type_of_type),
-        NativeFunction::new("Tagged", 2, native_tagged_type),
-        NativeFunction::new("Tuple", 1, native_tuple_type),
-        NativeFunction::new("Func", 2, native_function_type),
-        NativeFunction::new("validate", 2, native_validate),
-        NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
-    ] {
-        prelude.insert(
-            function.name().into(),
-            Value::Func(std::sync::Arc::new(Closure::native(function))),
-        );
-    }
-    prelude.insert(
-        "\0telora_pack_dyn".into(),
-        Value::Func(Arc::new(Closure::native(NativeFunction::core_dyn(
-            CoreDynFunction::Pack,
-        )))),
-    );
-    prelude
 }
 
 fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
@@ -4631,8 +5192,11 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         );
     }
     prelude.insert(
-        "Union".into(),
-        function(vec![TypeDescriptor::Any], metadata.clone()),
+        "union".into(),
+        function(
+            vec![TypeDescriptor::Any, TypeDescriptor::Any],
+            metadata.clone(),
+        ),
     );
     prelude.insert(
         "Option".into(),
@@ -4811,40 +5375,11 @@ fn fold_control_descriptor(state: TypeDescriptor, result: TypeDescriptor) -> Typ
     ]))
 }
 
-fn normalized_bool_value(vm: &mut Vm) -> Value {
-    let variants = ["False", "True"]
-        .into_iter()
-        .map(|name| (name.into(), normalized_legacy_value(vm, Value::none())))
-        .collect::<Vec<_>>();
-    let variants = vm
-        .make_dict(variants)
-        .expect("Bool variant names are unique");
-    let metadata = vm
-        .make_dict(vec![
-            ("kind".into(), Value::atom("Enum")),
-            ("variants".into(), variants),
-        ])
-        .expect("Bool metadata fields are unique");
-    normalized_legacy_value(vm, metadata)
-}
-
 fn normalized_bool_descriptor() -> TypeDescriptor {
     TypeDescriptor::Enum(BTreeMap::from([
         ("False".into(), None),
         ("True".into(), None),
     ]))
-}
-
-fn normalized_legacy_value(vm: &mut Vm, inner: Value) -> Value {
-    let attributes = vm
-        .make_dict(Vec::new())
-        .expect("empty attributes are unique");
-    vm.make_dict(vec![
-        ("attributes".into(), attributes),
-        ("inner".into(), inner),
-        ("kind".into(), Value::atom("WithAttributes")),
-    ])
-    .expect("WithAttributes fields are unique")
 }
 
 fn native_atom_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -4859,7 +5394,7 @@ fn native_atom_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError
 fn native_array_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let item = context.argument(0)?;
     let value = context.value(item)?;
-    if !value.is_hidden_up_link() {
+    if !value.is_hidden_type_slot() {
         validate_native_type(value)?;
     }
     write_native_type_record(context, "Array", &[("item", item)])
@@ -4868,7 +5403,7 @@ fn native_array_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeErro
 fn native_dict_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let item = context.argument(0)?;
     let value = context.value(item)?;
-    if !value.is_hidden_up_link() {
+    if !value.is_hidden_type_slot() {
         validate_native_type(value)?;
     }
     write_native_type_record(context, "Dict", &[("item", item)])
@@ -4877,7 +5412,7 @@ fn native_dict_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError
 fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let instance = context.argument(0)?;
     let value = context.value(instance)?;
-    if !value.is_hidden_up_link() {
+    if !value.is_hidden_type_slot() {
         validate_native_type(value)?;
     }
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
@@ -4890,7 +5425,7 @@ fn native_tagged_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeErr
     }
     let payload = context.argument(1)?;
     let value = context.value(payload)?;
-    if !value.is_hidden_up_link() {
+    if !value.is_hidden_type_slot() {
         validate_native_type(value)?;
     }
     write_native_type_record(context, "Tagged", &[("tag", tag), ("payload", payload)])
@@ -4903,7 +5438,7 @@ fn native_tuple_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeErro
     }
     for index in 0..value.sequence_len().expect("Array has a length") {
         let item = value.sequence_get(index).expect("valid Array index");
-        if !item.is_hidden_up_link() {
+        if !item.is_hidden_type_slot() {
             validate_native_type(item)?;
         }
     }
@@ -4919,13 +5454,13 @@ fn native_function_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeE
         let parameter = parameters_value
             .sequence_get(index)
             .expect("valid Array index");
-        if !parameter.is_hidden_up_link() {
+        if !parameter.is_hidden_type_slot() {
             validate_native_type(parameter)?;
         }
     }
     let result = context.argument(1)?;
     let result_value = context.value(result)?;
-    if !result_value.is_hidden_up_link() {
+    if !result_value.is_hidden_type_slot() {
         validate_native_type(result_value)?;
     }
     write_native_type_record(
@@ -5000,8 +5535,10 @@ fn validate_native_type(value: ValueRef<'_>) -> Result<(), NativeError> {
         .map_err(NativeError::new)
 }
 
-fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, String> {
-    decode_type_ref_with(value, path, false)
+pub(crate) fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDescriptor, String> {
+    let mut graph = TypeGraph::default();
+    let root = graph.decode_persistent(value, path, &mut HashMap::new())?;
+    graph.descriptor(root)
 }
 
 fn decode_type_ref_with(
@@ -5009,19 +5546,35 @@ fn decode_type_ref_with(
     path: &str,
     shallow_declared_types: bool,
 ) -> Result<TypeDescriptor, String> {
-    let value = value.resolve_hidden_up_link()?;
+    decode_type_ref_with_visiting(value, path, shallow_declared_types, &mut HashSet::new())
+}
+
+fn decode_type_ref_with_visiting(
+    value: ValueRef<'_>,
+    path: &str,
+    shallow_declared_types: bool,
+    visiting_declared: &mut HashSet<crate::value::DeclaredTypeId>,
+) -> Result<TypeDescriptor, String> {
+    let value = value.resolve_hidden_type_slot()?;
     if let Some(native_type) = value.as_native_type() {
         return Ok(TypeDescriptor::Opaque(native_type.clone()));
     }
     if let Some((id, name, body)) = value.declared_type_parts() {
+        let recursive = !visiting_declared.insert(id.clone());
+        if recursive {
+            return Ok(TypeDescriptor::Named(name.to_owned()));
+        }
+        let decoded_body = if shallow_declared_types {
+            TypeDescriptor::Any
+        } else {
+            let body = decode_type_ref_with_visiting(body, path, false, visiting_declared)?;
+            visiting_declared.remove(id);
+            body
+        };
         return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: id.clone(),
             name: name.to_owned(),
-            body: Arc::new(if shallow_declared_types {
-                TypeDescriptor::Any
-            } else {
-                decode_type_ref_with(body, path, false)?
-            }),
+            body: Arc::new(decoded_body),
         }));
     }
     let fields = value
@@ -5043,10 +5596,11 @@ fn decode_type_ref_with(
         if attributes.kind() != ValueKind::Dict {
             return Err(format!("{path}.attributes must be a Dict"));
         }
-        return decode_type_ref_with(
+        return decode_type_ref_with_visiting(
             value.dict_get("inner").expect("validated wrapper field"),
             path,
             shallow_declared_types,
+            visiting_declared,
         );
     }
     let require = |expected: &[&str]| -> Result<(), String> {
@@ -5095,10 +5649,11 @@ fn decode_type_ref_with(
             let instance = value
                 .dict_get("instance")
                 .ok_or_else(|| format!("{path}.instance is missing"))?;
-            TypeDescriptor::TypeOf(Box::new(decode_type_ref_with(
+            TypeDescriptor::TypeOf(Box::new(decode_type_ref_with_visiting(
                 instance,
                 &format!("{path}.instance"),
                 shallow_declared_types,
+                visiting_declared,
             )?))
         }
         "Int" => {
@@ -5130,10 +5685,11 @@ fn decode_type_ref_with(
             let item = value
                 .dict_get("item")
                 .ok_or_else(|| format!("{path}.item is missing"))?;
-            TypeDescriptor::Array(Box::new(decode_type_ref_with(
+            TypeDescriptor::Array(Box::new(decode_type_ref_with_visiting(
                 item,
                 &format!("{path}.item"),
                 shallow_declared_types,
+                visiting_declared,
             )?))
         }
         "Dict" => {
@@ -5141,10 +5697,11 @@ fn decode_type_ref_with(
             let item = value
                 .dict_get("item")
                 .ok_or_else(|| format!("{path}.item is missing"))?;
-            TypeDescriptor::Dict(Box::new(decode_type_ref_with(
+            TypeDescriptor::Dict(Box::new(decode_type_ref_with_visiting(
                 item,
                 &format!("{path}.item"),
                 shallow_declared_types,
+                visiting_declared,
             )?))
         }
         "Tagged" => {
@@ -5158,10 +5715,11 @@ fn decode_type_ref_with(
                 .ok_or_else(|| format!("{path}.payload is missing"))?;
             TypeDescriptor::Tagged {
                 tag: atom_from_name(tag.as_str()),
-                payload: Box::new(decode_type_ref_with(
+                payload: Box::new(decode_type_ref_with_visiting(
                     payload,
                     &format!("{path}.payload"),
                     shallow_declared_types,
+                    visiting_declared,
                 )?),
             }
         }
@@ -5180,10 +5738,11 @@ fn decode_type_ref_with(
             }
             let values = (0..sequence.sequence_len().expect("Array has a length"))
                 .map(|index| {
-                    decode_type_ref_with(
+                    decode_type_ref_with_visiting(
                         sequence.sequence_get(index).expect("valid Array index"),
                         &format!("{path}.{field}[{index}]"),
                         shallow_declared_types,
+                        visiting_declared,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -5211,10 +5770,11 @@ fn decode_type_ref_with(
                         let field = fields_value.dict_get(name).expect("Dict field exists");
                         Ok((
                             (*name).to_owned(),
-                            decode_type_ref_with(
+                            decode_type_ref_with_visiting(
                                 field,
                                 &format!("{path}.fields.{name}"),
                                 shallow_declared_types,
+                                visiting_declared,
                             )?,
                         ))
                     })
@@ -5242,10 +5802,11 @@ fn decode_type_ref_with(
                         let payload = if inner.as_atom().is_some_and(|atom| atom == "None") {
                             None
                         } else {
-                            Some(Box::new(decode_type_ref_with(
+                            Some(Box::new(decode_type_ref_with_visiting(
                                 inner,
                                 &variant_path,
                                 shallow_declared_types,
+                                visiting_declared,
                             )?))
                         };
                         Ok(((*name).to_owned(), payload))
@@ -5263,10 +5824,11 @@ fn decode_type_ref_with(
             }
             let parameters = (0..parameters.sequence_len().expect("Array has a length"))
                 .map(|index| {
-                    decode_type_ref_with(
+                    decode_type_ref_with_visiting(
                         parameters.sequence_get(index).expect("valid Array index"),
                         &format!("{path}.parameters[{index}]"),
                         shallow_declared_types,
+                        visiting_declared,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -5275,10 +5837,11 @@ fn decode_type_ref_with(
                 .ok_or_else(|| format!("{path}.result is missing"))?;
             TypeDescriptor::Function {
                 parameters,
-                result: Box::new(decode_type_ref_with(
+                result: Box::new(decode_type_ref_with_visiting(
                     result,
                     &format!("{path}.result"),
                     shallow_declared_types,
+                    visiting_declared,
                 )?),
             }
         }
@@ -5488,263 +6051,77 @@ fn validate_value_ref(
     }
 }
 
-fn kind_entry(kind: &str) -> (String, Value) {
-    ("kind".into(), Value::atom(kind))
-}
-
-pub(crate) fn decode_type(value: &Value, path: &str) -> Result<TypeDescriptor, String> {
-    if let Value::NativeType(native_type) = value {
-        return Ok(TypeDescriptor::Opaque(native_type.clone()));
-    }
-    if let Value::DeclaredType(declared) = value {
-        return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
-            id: declared.id().clone(),
-            name: declared.name().to_owned(),
-            body: Arc::new(decode_type(declared.body(), path)?),
-        }));
-    }
-    let Value::Dict(metadata) = value else {
-        return Err(format!("{path} must be a Dict"));
-    };
-    let kind = metadata
-        .get("kind")
-        .ok_or_else(|| format!("{path}.kind is missing"))?;
-    let Value::Atom(kind) = kind else {
-        return Err(format!("{path}.kind must be an Atom"));
-    };
-    if kind.name() == "WithAttributes" {
-        require_fields(metadata, path, &["attributes", "inner", "kind"])?;
-        if !matches!(metadata.get("attributes"), Some(Value::Dict(_))) {
-            return Err(format!("{path}.attributes must be a Dict"));
-        }
-        return decode_type(metadata.get("inner").expect("required field"), path);
-    }
-    let descriptor = match kind.name() {
-        "Bound" | "'Bound" => {
-            require_fields(metadata, path, &["kind", "parameter"])?;
-            let Some(Value::Int(parameter)) = metadata.get("parameter") else {
-                return Err(format!("{path}.parameter must be an Int"));
-            };
-            TypeDescriptor::Bound(TypeParameterId(
-                u32::try_from(*parameter)
-                    .map_err(|_| format!("{path}.parameter must be a non-negative Int"))?,
-            ))
-        }
-        "Named" => {
-            require_fields(metadata, path, &["kind", "name"])?;
-            let Some(Value::String(name)) = metadata.get("name") else {
-                return Err(format!("{path}.name must be a String"));
-            };
-            TypeDescriptor::Named(name.to_string())
-        }
-        "Any" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Any
-        }
-        "Never" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Never
-        }
-        "Type" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Type
-        }
-        "Dyn" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Dyn
-        }
-        "TypeOf" => {
-            require_fields(metadata, path, &["instance", "kind"])?;
-            TypeDescriptor::TypeOf(Box::new(decode_type(
-                metadata.get("instance").expect("required field"),
-                &format!("{path}.instance"),
-            )?))
-        }
-        "Int" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Int
-        }
-        "Float" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Float
-        }
-        "String" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::String
-        }
-        "Bytes" => {
-            require_fields(metadata, path, &["kind"])?;
-            TypeDescriptor::Bytes
-        }
-        "Atom" => {
-            require_fields(metadata, path, &["kind", "tag"])?;
-            let Value::Atom(tag) = metadata.get("tag").expect("required field") else {
-                return Err(format!("{path}.tag must be an Atom"));
-            };
-            TypeDescriptor::Atom(tag.clone())
-        }
-        "Array" => {
-            require_fields(metadata, path, &["item", "kind"])?;
-            TypeDescriptor::Array(Box::new(decode_type(
-                metadata.get("item").expect("required field"),
-                &format!("{path}.item"),
-            )?))
-        }
-        "Dict" => {
-            require_fields(metadata, path, &["item", "kind"])?;
-            TypeDescriptor::Dict(Box::new(decode_type(
-                metadata.get("item").expect("required field"),
-                &format!("{path}.item"),
-            )?))
-        }
-        "Tagged" => {
-            require_fields(metadata, path, &["kind", "payload", "tag"])?;
-            let Value::Atom(tag) = metadata.get("tag").expect("required field") else {
-                return Err(format!("{path}.tag must be an Atom"));
-            };
-            TypeDescriptor::Tagged {
-                tag: tag.clone(),
-                payload: Box::new(decode_type(
-                    metadata.get("payload").expect("required field"),
-                    &format!("{path}.payload"),
-                )?),
-            }
-        }
-        "Tuple" => {
-            require_fields(metadata, path, &["items", "kind"])?;
-            let Value::Array(items) = metadata.get("items").expect("required field") else {
-                return Err(format!("{path}.items must be an Array"));
-            };
-            TypeDescriptor::Tuple(
-                items
-                    .iter()
-                    .enumerate()
-                    .map(|(index, item)| decode_type(item, &format!("{path}.items[{index}]")))
-                    .collect::<Result<_, _>>()?,
-            )
-        }
-        "Struct" => {
-            require_fields(metadata, path, &["fields", "kind"])?;
-            let Value::Dict(fields) = metadata.get("fields").expect("required field") else {
-                return Err(format!("{path}.fields must be a Dict"));
-            };
-            let fields = fields
-                .shape()
-                .fields()
-                .iter()
-                .zip(fields.values())
-                .map(|(name, field)| {
-                    Ok((
-                        name.clone(),
-                        decode_type(field, &format!("{path}.fields.{name}"))?,
-                    ))
-                })
-                .collect::<Result<_, String>>()?;
-            TypeDescriptor::Struct(fields)
-        }
-        "Enum" => {
-            require_fields(metadata, path, &["kind", "variants"])?;
-            let Value::Dict(variants) = metadata.get("variants").expect("required field") else {
-                return Err(format!("{path}.variants must be a Dict"));
-            };
-            if variants.values().is_empty() {
-                return Err(format!("{path}.variants must not be empty"));
-            }
-            TypeDescriptor::Enum(
-                variants
-                    .shape()
-                    .fields()
-                    .iter()
-                    .zip(variants.values())
-                    .map(|(name, variant)| {
-                        let variant_path = format!("{path}.variants.{name}");
-                        let inner = strip_attributes_value(variant, &variant_path)?;
-                        let payload = if matches!(inner, Value::Atom(atom) if atom.name() == "None")
-                        {
-                            None
-                        } else {
-                            Some(Box::new(decode_type(inner, &variant_path)?))
-                        };
-                        Ok((name.clone(), payload))
-                    })
-                    .collect::<Result<_, String>>()?,
-            )
-        }
-        "Union" => {
-            require_fields(metadata, path, &["kind", "variants"])?;
-            let Value::Array(variants) = metadata.get("variants").expect("required field") else {
-                return Err(format!("{path}.variants must be an Array"));
-            };
-            if variants.is_empty() {
-                return Err(format!("{path}.variants must not be empty"));
-            }
-            TypeDescriptor::Union(
-                variants
-                    .iter()
-                    .enumerate()
-                    .map(|(index, variant)| {
-                        decode_type(variant, &format!("{path}.variants[{index}]"))
-                    })
-                    .collect::<Result<_, _>>()?,
-            )
-        }
-        "Func" => {
-            require_fields(metadata, path, &["kind", "parameters", "result"])?;
-            let Value::Array(parameters) = metadata.get("parameters").expect("required field")
-            else {
-                return Err(format!("{path}.parameters must be an Array"));
-            };
-            TypeDescriptor::Function {
-                parameters: parameters
-                    .iter()
-                    .enumerate()
-                    .map(|(index, parameter)| {
-                        decode_type(parameter, &format!("{path}.parameters[{index}]"))
-                    })
-                    .collect::<Result<_, _>>()?,
-                result: Box::new(decode_type(
-                    metadata.get("result").expect("required field"),
-                    &format!("{path}.result"),
-                )?),
-            }
-        }
-        other => return Err(format!("{path}.kind has unknown value '{other}")),
-    };
-    Ok(descriptor)
-}
-
-fn strip_attributes_value<'a>(mut value: &'a Value, path: &str) -> Result<&'a Value, String> {
-    loop {
-        let Value::Dict(metadata) = value else {
-            return Ok(value);
-        };
-        if !matches!(metadata.get("kind"), Some(Value::Atom(kind)) if kind.name() == "WithAttributes")
-        {
-            return Ok(value);
-        }
-        require_fields(metadata, path, &["attributes", "inner", "kind"])?;
-        if !matches!(metadata.get("attributes"), Some(Value::Dict(_))) {
-            return Err(format!("{path}.attributes must be a Dict"));
-        }
-        value = metadata.get("inner").expect("required field");
-    }
-}
-
-fn require_fields(metadata: &crate::Dict, path: &str, fields: &[&str]) -> Result<(), String> {
-    let actual = metadata
-        .shape()
-        .fields()
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    if actual != fields {
-        return Err(format!("{path} has fields {actual:?}, expected {fields:?}"));
-    }
-    Ok(())
-}
-
 fn infer_expr(expression: &Expr, environment: &HashMap<String, TypeDescriptor>) -> TypeDescriptor {
     infer_expr_with(expression, environment, &mut |_, _| {})
+}
+
+fn collect_declared_bodies(
+    descriptor: &TypeDescriptor,
+    bodies: &mut HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
+    visiting: &mut HashSet<crate::value::DeclaredTypeId>,
+) {
+    let visit = |descriptor: &TypeDescriptor,
+                 bodies: &mut HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
+                 visiting: &mut HashSet<crate::value::DeclaredTypeId>| {
+        collect_declared_bodies(descriptor, bodies, visiting)
+    };
+    match descriptor {
+        TypeDescriptor::Declared(declared) => {
+            if matches!(
+                declared.body.as_ref(),
+                TypeDescriptor::Struct(_) | TypeDescriptor::Enum(_)
+            ) {
+                bodies
+                    .entry(declared.id.clone())
+                    .or_insert_with(|| Arc::clone(&declared.body));
+            }
+            if visiting.insert(declared.id.clone()) {
+                visit(&declared.body, bodies, visiting);
+                visiting.remove(&declared.id);
+            }
+            for argument in declared.id.arguments() {
+                visit(argument, bodies, visiting);
+            }
+        }
+        TypeDescriptor::TypeOf(inner)
+        | TypeDescriptor::Array(inner)
+        | TypeDescriptor::Dict(inner) => visit(inner, bodies, visiting),
+        TypeDescriptor::Tagged { payload, .. } => visit(payload, bodies, visiting),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            for item in items {
+                visit(item, bodies, visiting);
+            }
+        }
+        TypeDescriptor::Struct(fields) => {
+            for field in fields.values() {
+                visit(field, bodies, visiting);
+            }
+        }
+        TypeDescriptor::Enum(variants) => {
+            for payload in variants.values().flatten() {
+                visit(payload, bodies, visiting);
+            }
+        }
+        TypeDescriptor::Function { parameters, result } => {
+            for parameter in parameters {
+                visit(parameter, bodies, visiting);
+            }
+            visit(result, bodies, visiting);
+        }
+        TypeDescriptor::Bound(_)
+        | TypeDescriptor::Named(_)
+        | TypeDescriptor::Inference(_)
+        | TypeDescriptor::Any
+        | TypeDescriptor::Never
+        | TypeDescriptor::Type
+        | TypeDescriptor::Dyn
+        | TypeDescriptor::Int
+        | TypeDescriptor::Float
+        | TypeDescriptor::String
+        | TypeDescriptor::Bytes
+        | TypeDescriptor::Opaque(_)
+        | TypeDescriptor::Atom(_) => {}
+    }
 }
 
 struct GenericInference<'a> {
@@ -5756,6 +6133,7 @@ struct GenericInference<'a> {
     hir: &'a HirProgram,
     external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     named_types: &'a BTreeMap<String, TypeDescriptor>,
+    declared_bodies: HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
     local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
@@ -5957,6 +6335,18 @@ impl<'a> GenericInference<'a> {
         builtin_tuple_available: bool,
         query: Option<crate::query::QueryContext>,
     ) -> Self {
+        let mut declared_bodies = HashMap::new();
+        for descriptor in named_types.values() {
+            collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
+        }
+        for interface in external_interfaces.values() {
+            for descriptor in interface.concrete_types.values() {
+                collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
+            }
+            for scheme in interface.exports.values() {
+                collect_declared_bodies(&scheme.body, &mut declared_bodies, &mut HashSet::new());
+            }
+        }
         Self {
             schemes: schemes.clone(),
             scheme_scopes: vec![HashMap::new()],
@@ -5966,6 +6356,7 @@ impl<'a> GenericInference<'a> {
             hir,
             external_interfaces,
             named_types,
+            declared_bodies,
             local_annotations,
             builtin_tuple_available,
             query,
@@ -5995,6 +6386,36 @@ impl<'a> GenericInference<'a> {
         self.failure_location.take().unwrap_or(fallback)
     }
 
+    fn declared_body<'b>(&'b self, declared: &'b DeclaredTypeDescriptor) -> &'b TypeDescriptor {
+        if matches!(declared.body.as_ref(), TypeDescriptor::Never) {
+            self.declared_bodies
+                .get(&declared.id)
+                .map_or(declared.body.as_ref(), Arc::as_ref)
+        } else {
+            declared.body.as_ref()
+        }
+    }
+
+    fn complete_declared(&self, descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
+        let mut current = descriptor;
+        let mut visited = HashSet::new();
+        while let TypeDescriptor::Named(name) = current {
+            if !visited.insert(name.clone()) {
+                return None;
+            }
+            current = self.named_type(name)?;
+        }
+        let TypeDescriptor::Declared(declared) = current else {
+            return None;
+        };
+        let body = self.declared_body(declared);
+        Some(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: declared.id.clone(),
+            name: declared.name.clone(),
+            body: Arc::new(body.clone()),
+        }))
+    }
+
     fn expose_named(&self, ty: &TypeDescriptor) -> TypeDescriptor {
         let mut current = self.resolve(ty);
         let mut visited = HashSet::new();
@@ -6006,6 +6427,9 @@ impl<'a> GenericInference<'a> {
                 break;
             };
             current = self.resolve(target);
+        }
+        if let Some(completed) = self.complete_declared(&current) {
+            current = completed;
         }
         current
     }
@@ -6915,6 +7339,43 @@ impl<'a> GenericInference<'a> {
         if let Some(query) = &self.query {
             query.check().map_err(|error| error.to_string())?;
         }
+        let completed_left = self.complete_declared(left);
+        let completed_right = self.complete_declared(right);
+        let left = completed_left.as_ref().unwrap_or(left);
+        let right = completed_right.as_ref().unwrap_or(right);
+        if matches!(left, TypeDescriptor::Never) {
+            return Ok(());
+        }
+        if let TypeDescriptor::Inference(variable) = left
+            && let Some(existing) = self.substitutions.get(variable).cloned()
+            && self.declared_identity(right).is_some()
+        {
+            if matches!(existing, TypeDescriptor::Inference(_)) {
+                return self.unify(&existing, right);
+            }
+            let compatibility = match right {
+                TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+                _ => right,
+            };
+            self.check(&existing, compatibility)?;
+            self.substitutions.insert(*variable, right.clone());
+            return Ok(());
+        }
+        if let TypeDescriptor::Inference(variable) = right
+            && let Some(existing) = self.substitutions.get(variable).cloned()
+            && self.declared_identity(left).is_some()
+        {
+            if matches!(existing, TypeDescriptor::Inference(_)) {
+                return self.unify(left, &existing);
+            }
+            let compatibility = match left {
+                TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+                _ => left,
+            };
+            self.check(&existing, compatibility)?;
+            self.substitutions.insert(*variable, left.clone());
+            return Ok(());
+        }
         if let (Some(left), Some(right)) =
             (self.declared_identity(left), self.declared_identity(right))
             && left.has_same_head(&right)
@@ -6925,8 +7386,26 @@ impl<'a> GenericInference<'a> {
             }
             return Ok(());
         }
+        if let (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) = (left, right) {
+            return self.unify(left, right);
+        }
         let left = self.resolve(left);
         let right = self.resolve(right);
+        match (&left, &right) {
+            (TypeDescriptor::Declared(declared), other)
+                if !matches!(other, TypeDescriptor::Declared(_))
+                    && declared.body.as_ref() == other =>
+            {
+                return Ok(());
+            }
+            (other, TypeDescriptor::Declared(declared))
+                if !matches!(other, TypeDescriptor::Declared(_))
+                    && other == declared.body.as_ref() =>
+            {
+                return Ok(());
+            }
+            _ => {}
+        }
         if let (TypeDescriptor::Struct(fields), TypeDescriptor::Dict(item)) = (&left, &right) {
             for field in fields.values() {
                 self.unify(field, item)?;
@@ -6968,7 +7447,19 @@ impl<'a> GenericInference<'a> {
             (TypeDescriptor::Any, _) | (_, TypeDescriptor::Any) => Ok(()),
             (TypeDescriptor::TypeOf(_), TypeDescriptor::Type) => Ok(()),
             (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
-                self.unify(left, right)
+                match (left.as_ref(), right.as_ref()) {
+                    (TypeDescriptor::Declared(declared), other)
+                        if !matches!(other, TypeDescriptor::Declared(_)) =>
+                    {
+                        self.unify(&declared.body, other)
+                    }
+                    (other, TypeDescriptor::Declared(declared))
+                        if !matches!(other, TypeDescriptor::Declared(_)) =>
+                    {
+                        self.unify(other, &declared.body)
+                    }
+                    _ => self.unify(left, right),
+                }
             }
             (TypeDescriptor::Declared(left), TypeDescriptor::Declared(right))
                 if left.id.has_same_head(&right.id)
@@ -7001,6 +7492,13 @@ impl<'a> GenericInference<'a> {
             | (TypeDescriptor::Enum(variants), TypeDescriptor::Atom(tag))
                 if variants.get(tag.name()).is_some_and(Option::is_none) =>
             {
+                Ok(())
+            }
+            (TypeDescriptor::Union(variants), expected @ TypeDescriptor::Enum(_))
+            | (expected @ TypeDescriptor::Enum(_), TypeDescriptor::Union(variants)) => {
+                for variant in variants {
+                    self.unify(variant, expected)?;
+                }
                 Ok(())
             }
             (TypeDescriptor::Atom(tag), TypeDescriptor::Function { parameters, result })
@@ -7071,6 +7569,10 @@ impl<'a> GenericInference<'a> {
     }
 
     fn check(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
+        let completed_actual = self.complete_declared(actual);
+        let completed_expected = self.complete_declared(expected);
+        let actual = completed_actual.as_ref().unwrap_or(actual);
+        let expected = completed_expected.as_ref().unwrap_or(expected);
         if let (Some(actual), Some(expected)) = (
             self.declared_identity(actual),
             self.declared_identity(expected),
@@ -7081,6 +7583,44 @@ impl<'a> GenericInference<'a> {
                 self.check(actual, expected)?;
             }
             return Ok(());
+        }
+        match (actual, expected) {
+            (TypeDescriptor::Declared(declared), other)
+                if !matches!(other, TypeDescriptor::Declared(_))
+                    && declared.body.as_ref() == other =>
+            {
+                return Ok(());
+            }
+            (other, TypeDescriptor::Declared(declared))
+                if !matches!(other, TypeDescriptor::Declared(_))
+                    && other == declared.body.as_ref() =>
+            {
+                return Ok(());
+            }
+            _ => {}
+        }
+        if let TypeDescriptor::Declared(actual) = actual
+            && !matches!(expected, TypeDescriptor::Declared(_))
+        {
+            if matches!(expected, TypeDescriptor::Inference(_)) {
+                return self.unify(expected, &TypeDescriptor::Declared(actual.clone()));
+            }
+            return self.check(&actual.body, expected);
+        }
+        if let TypeDescriptor::Declared(expected) = expected
+            && !matches!(actual, TypeDescriptor::Declared(_))
+        {
+            if matches!(actual, TypeDescriptor::Any | TypeDescriptor::Never) {
+                return Ok(());
+            }
+            if matches!(actual, TypeDescriptor::Inference(_)) {
+                return self.unify(actual, &TypeDescriptor::Declared(expected.clone()));
+            }
+            return Err(format!(
+                "cannot unify {} with {}",
+                actual.display_name(),
+                expected.name
+            ));
         }
         if let (TypeDescriptor::Named(actual), TypeDescriptor::Named(expected)) = (actual, expected)
         {
@@ -7429,23 +7969,39 @@ impl<'a> GenericInference<'a> {
         environment: &HashMap<String, TypeDescriptor>,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
-        let declared_construction = expected.and_then(|expected| {
+        let constructs_declared_value =
+            matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_))
+                || matches!(
+                    &expression.value,
+                    ExprKind::Call { callee, .. } if matches!(callee.value, ExprKind::Atom(_))
+                );
+        let expected_declared = expected.and_then(|expected| {
             let TypeDescriptor::Declared(declared) = self.expose_named(expected) else {
                 return None;
             };
-            let constructible = declared_body_accepts_expression(&declared.body, expression);
-            constructible.then_some(declared)
+            Some(declared)
         });
-        let structural_expected = declared_construction
+        let structural_expected = expected_declared
             .as_ref()
+            .filter(|_| constructs_declared_value)
             .map(|declared| declared.body.as_ref());
         let result = self.infer_inner(expression, environment, structural_expected.or(expected));
         let result = result.map(|inferred| {
-            declared_construction.map_or(inferred, |declared| {
-                let declared = TypeDescriptor::Declared(declared);
-                self.records.insert(expression.location, declared.clone());
-                declared
-            })
+            let Some(declared) = expected_declared else {
+                return inferred;
+            };
+            if self
+                .declared_identity(&inferred)
+                .is_some_and(|actual| actual == declared.id)
+            {
+                return inferred;
+            }
+            if !constructs_declared_value && inferred != *declared.body {
+                return inferred;
+            }
+            let declared = TypeDescriptor::Declared(declared);
+            self.records.insert(expression.location, declared.clone());
+            declared
         });
         if result.is_err() && self.failure_location.is_none() {
             self.failure_location = Some(expression.location);
@@ -7968,8 +8524,15 @@ impl<'a> GenericInference<'a> {
                         for index in argument_order {
                             let argument = &arguments[index];
                             let parameter = &parameters[index];
+                            let inference_expected = if contains_exposed_type_variable(parameter)
+                                && matches!(argument.value, ExprKind::Variable(_))
+                            {
+                                None
+                            } else {
+                                Some(parameter)
+                            };
                             let argument_type =
-                                self.infer(argument, environment, Some(parameter))?;
+                                self.infer(argument, environment, inference_expected)?;
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.resolve(&argument_type));
                             partial_tagged_evidence |= matches!(
@@ -7979,7 +8542,11 @@ impl<'a> GenericInference<'a> {
                             if matches!(self.resolve(&argument_type), TypeDescriptor::Any) {
                                 self.default_inference_variables_to_any(parameter);
                             }
-                            self.check(&argument_type, parameter)?;
+                            if contains_exposed_type_variable(parameter) {
+                                self.unify(&argument_type, parameter)?;
+                            } else {
+                                self.check(&argument_type, parameter)?;
+                            }
                         }
                         self.materialize_field_requirements(&TypeDescriptor::Tuple(
                             parameters.clone(),
@@ -8310,7 +8877,8 @@ impl<'a> GenericInference<'a> {
                     } else {
                         (environment.clone(), None, None)
                     };
-                    let analysis = crate::pattern::analyze_pattern(&arm.value.pattern, &value_type);
+                    let analysis =
+                        crate::pattern::analyze_pattern(&arm.value.pattern, &resolved_value_type);
                     if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                         && !arm.value.irrefutable_required
                         && analysis.problems.is_empty()
@@ -8492,6 +9060,25 @@ impl<'a> GenericInference<'a> {
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         let mut environment = environment.clone();
+        let declared_contracts = block
+            .value
+            .bindings
+            .iter()
+            .filter(|binding| binding.value.kind == BindingKind::Decl)
+            .filter_map(|binding| {
+                binding
+                    .value
+                    .annotation
+                    .as_ref()
+                    .and_then(|annotation| self.local_annotations.get(&annotation.location))
+                    .cloned()
+                    .map(|contract| (binding.value.name.value.clone(), contract))
+            })
+            .collect::<HashMap<_, _>>();
+        for (name, contract) in &declared_contracts {
+            environment.insert(name.clone(), contract.clone());
+            self.set_local_scheme(name.clone(), None);
+        }
         let mut delayed = Vec::new();
         let mut recursive_skeletons = HashMap::new();
         let component_plan = definition_component_plan(block, self.hir);
@@ -8503,7 +9090,9 @@ impl<'a> GenericInference<'a> {
             .bindings
             .iter()
             .filter(|binding| {
-                binding.value.kind == BindingKind::Def && binding.value.annotation.is_none()
+                binding.value.kind == BindingKind::Def
+                    && binding.value.annotation.is_none()
+                    && !declared_contracts.contains_key(&binding.value.name.value)
             })
             .map(|binding| binding.value.name.value.clone())
             .collect::<HashSet<_>>();
@@ -8597,6 +9186,9 @@ impl<'a> GenericInference<'a> {
             }
         }
         for binding in &block.value.bindings {
+            if binding.value.kind == BindingKind::Decl {
+                continue;
+            }
             if recursive_skeletons.contains_key(&binding.value.name.value) {
                 continue;
             }
@@ -8612,14 +9204,19 @@ impl<'a> GenericInference<'a> {
                 .as_ref()
                 .and_then(|annotation| self.local_annotations.get(&annotation.location));
             let binding_expected = annotated_expected.or_else(|| {
-                recursive_skeletons
+                declared_contracts
                     .get(&binding.value.name.value)
-                    .map(|(skeleton, _)| skeleton)
+                    .or_else(|| {
+                        recursive_skeletons
+                            .get(&binding.value.name.value)
+                            .map(|(skeleton, _)| skeleton)
+                    })
             });
             let is_recursive = recursive_skeletons.contains_key(&binding.value.name.value);
             if binding.value.kind == BindingKind::Def
                 && binding.value.annotation.is_none()
                 && !is_recursive
+                && !declared_contracts.contains_key(&binding.value.name.value)
                 && expression_references_names(
                     &binding.value.value,
                     &uncontracted_definition_names,
@@ -9170,6 +9767,34 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
     }
 }
 
+fn contains_exposed_type_variable(ty: &TypeDescriptor) -> bool {
+    match ty {
+        TypeDescriptor::Inference(_) => true,
+        TypeDescriptor::Declared(declared) => declared
+            .id
+            .arguments()
+            .iter()
+            .any(contains_exposed_type_variable),
+        TypeDescriptor::Array(item)
+        | TypeDescriptor::Dict(item)
+        | TypeDescriptor::TypeOf(item)
+        | TypeDescriptor::Tagged { payload: item, .. } => contains_exposed_type_variable(item),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            items.iter().any(contains_exposed_type_variable)
+        }
+        TypeDescriptor::Struct(fields) => fields.values().any(contains_exposed_type_variable),
+        TypeDescriptor::Enum(variants) => variants
+            .values()
+            .flatten()
+            .any(|payload| contains_exposed_type_variable(payload)),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters.iter().any(contains_exposed_type_variable)
+                || contains_exposed_type_variable(result)
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Named(_) => true,
@@ -9194,6 +9819,29 @@ pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
         }
         _ => false,
     }
+}
+
+fn same_nominal_head_with_erased_arguments(
+    actual: &TypeDescriptor,
+    expected: &TypeDescriptor,
+) -> bool {
+    let (TypeDescriptor::Declared(actual), TypeDescriptor::Declared(expected)) = (actual, expected)
+    else {
+        return false;
+    };
+    actual.id.has_same_head(&expected.id)
+        && actual.id.arguments().len() == expected.id.arguments().len()
+        && actual
+            .id
+            .arguments()
+            .iter()
+            .zip(expected.id.arguments())
+            .all(|(actual, expected)| {
+                assignable(
+                    &erase_declared_identity(actual),
+                    &erase_declared_identity(expected),
+                )
+            })
 }
 
 fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
@@ -9382,10 +10030,10 @@ pub(crate) fn program_references_name(program: &Program, name: &str) -> bool {
         })
 }
 
-fn validate_export_references<'a>(
+fn validate_export_references<'a, T>(
     program: &Program,
     prelude: impl Iterator<Item = &'a String>,
-    external_values: &BTreeMap<String, Value>,
+    external_values: &BTreeMap<String, T>,
     sources: &SourceDatabase,
 ) -> Result<(), FrontendError> {
     let authored = program
@@ -10637,59 +11285,10 @@ fn frontend_error(source_name: &str, message: impl Into<String>) -> FrontendErro
 mod tests {
     use super::*;
 
-    fn validate_legacy_value(descriptor: &TypeDescriptor, value: &Value) -> Result<(), String> {
-        crate::vm::with_legacy_value_ref(value, |value| {
-            validate_value_ref(descriptor, value, "value")
-        })
-    }
-
-    #[test]
-    fn declared_validation_trusts_matching_owners_but_not_raw_values() {
-        let body =
-            TypeDescriptor::Struct(BTreeMap::from([("value".to_owned(), TypeDescriptor::Int)]));
-        let mut vm = Vm::new();
-        let owner = crate::DeclaredType::bind("test", 1, "Number", body.to_value(&mut vm));
-        let expected = TypeDescriptor::Declared(DeclaredTypeDescriptor {
-            id: owner.id().clone(),
-            name: owner.name().to_owned(),
-            body: Arc::new(body.clone()),
-        });
-        let invalid_payload = vm
-            .make_dict([("value".to_owned(), Value::string("not an Int"))])
-            .unwrap();
-        let trusted = Value::Declared(crate::DeclaredValue::new(
-            owner.clone(),
-            invalid_payload.clone(),
-        ));
-        assert_eq!(validate_legacy_value(&expected, &trusted), Ok(()));
-
-        let raw_error = validate_legacy_value(&expected, &invalid_payload).unwrap_err();
-        assert!(raw_error.contains("value.value must be Int"), "{raw_error}");
-
-        let other_owner =
-            crate::DeclaredType::bind("test", 2, "OtherNumber", body.to_value(&mut vm));
-        let other = Value::Declared(crate::DeclaredValue::new(other_owner, invalid_payload));
-        let identity_error = validate_legacy_value(&expected, &other).unwrap_err();
-        assert!(
-            identity_error.contains("different declared type identity"),
-            "{identity_error}"
-        );
-
-        let valid_raw = vm.make_dict([("value".to_owned(), Value::Int(3))]).unwrap();
-        assert_eq!(validate_legacy_value(&expected, &valid_raw), Ok(()));
-    }
-
     #[test]
     fn bootstrap_prelude_keeps_public_projections_consistent() {
-        let mut vm = Vm::new();
-        let prelude = BootstrapPrelude::new(&mut vm);
-        assert!(prelude.values.keys().any(|name| name.starts_with('\0')));
-        assert!(prelude.values.contains_key("\0telora_pack_dyn"));
+        let prelude = BootstrapPrelude::new();
         for name in prelude.schemes.keys() {
-            assert!(
-                prelude.values.contains_key(name),
-                "missing value for {name}"
-            );
             assert!(prelude.types.contains_key(name), "missing type for {name}");
         }
     }
@@ -10707,33 +11306,41 @@ mod tests {
                 parsed.diagnostics
             )
         });
-        let external_values = natives
+        let mut tool_heap = Heap::main();
+        let mut work = Heap::work_for(&tool_heap);
+        let external_roots = natives
             .iter()
             .map(|(name, arity)| {
-                (
-                    (*name).to_owned(),
-                    Value::Func(Arc::new(Closure::native(NativeFunction::new(
-                        name,
-                        *arity,
-                        native_validate,
-                    )))),
-                )
+                let value = work.native_closure(
+                    NativeFunction::new(name, *arity, native_validate),
+                    Vec::<Val>::new().into_boxed_slice(),
+                );
+                publish_root(&mut tool_heap, &work, value)
+                    .map(|value| ((*name).to_owned(), value))
+                    .unwrap()
             })
             .collect();
-        analyze_program_with_bindings(
+        let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+        let mut type_store = TypeStore::default();
+        analyze_program_with_bindings_observed(
             "generic-native.telora",
+            crate::ModuleId::ANONYMOUS,
             &program,
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
-            &external_values,
+            &external_roots,
             &HashSet::new(),
             &sources,
             &BTreeMap::new(),
+            &BTreeMap::new(),
+            &debug_sink,
+            &mut tool_heap,
+            &mut type_store,
         )
     }
 
     fn analyze_with_host_binding(
         source: &str,
-        value: Value,
+        native_arity: Option<usize>,
         dynamic: bool,
         interface: Option<TypeScheme>,
     ) -> Result<Analysis, FrontendError> {
@@ -10746,7 +11353,21 @@ mod tests {
                 parsed.diagnostics
             )
         });
-        let external_values = BTreeMap::from([("host".to_owned(), value)]);
+        let mut tool_heap = Heap::main();
+        let mut work = Heap::work_for(&tool_heap);
+        let value = native_arity.map_or_else(
+            || Val::unknown(crate::heap::DecodedValue::Int(1)),
+            |arity| {
+                work.native_closure(
+                    NativeFunction::new("host", arity, native_validate),
+                    Vec::<Val>::new().into_boxed_slice(),
+                )
+            },
+        );
+        let external_roots = BTreeMap::from([(
+            "host".to_owned(),
+            publish_root(&mut tool_heap, &work, value).unwrap(),
+        )]);
         let dynamic_bindings = if dynamic {
             HashSet::from(["host".to_owned()])
         } else {
@@ -10765,30 +11386,26 @@ mod tests {
             })
             .unwrap_or_default();
         let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+        let mut type_store = TypeStore::default();
         analyze_program_with_bindings_observed(
             "host-binding.telora",
+            crate::ModuleId::ANONYMOUS,
             &program,
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
-            &external_values,
+            &external_roots,
             &dynamic_bindings,
             &sources,
             &BTreeMap::new(),
             &external_interfaces,
             &debug_sink,
+            &mut tool_heap,
+            &mut type_store,
         )
     }
 
     #[test]
     fn host_bindings_distinguish_erased_dynamic_and_declared_interfaces() {
-        let function = || {
-            Value::Func(Arc::new(Closure::native(NativeFunction::new(
-                "host",
-                1,
-                native_validate,
-            ))))
-        };
-
-        let erased = analyze_with_host_binding("host(1)", function(), false, None).unwrap();
+        let erased = analyze_with_host_binding("host(1)", Some(1), false, None).unwrap();
         assert_eq!(
             erased.display(erased.binding_types["host"]),
             "Fn(Any) -> Any"
@@ -10801,7 +11418,7 @@ mod tests {
         let parameter = TypeParameterId(37);
         let declared = analyze_with_host_binding(
             "host(1)",
-            function(),
+            Some(1),
             false,
             Some(TypeScheme {
                 parameters: vec![TypeParameter {
@@ -10823,7 +11440,7 @@ mod tests {
             "a consumed Host interface is not implicitly re-exported"
         );
 
-        let dynamic = analyze_with_host_binding("host", Value::Int(1), true, None).unwrap();
+        let dynamic = analyze_with_host_binding("host", None, true, None).unwrap();
         assert_eq!(dynamic.display(dynamic.binding_types["host"]), "Any");
         assert_eq!(dynamic.display(dynamic.result_type), "Any");
 
@@ -11162,7 +11779,7 @@ mod tests {
             assert!(
                 error
                     .message
-                    .contains("recursive type component required by a definition contract"),
+                    .contains("does not reach a struct or enum constructor"),
                 "{error}"
             );
             for participant in participants {
@@ -12926,6 +13543,13 @@ mod tests {
 
     #[test]
     fn metadata_round_trips() {
+        fn round_trip(descriptor: &TypeDescriptor) {
+            let mut heap = Heap::work();
+            let value = heap.type_descriptor_value(None, descriptor).unwrap();
+            let world = crate::DataWorld::new(heap, value);
+            assert_eq!(decode_type_ref(world.value(), "Type").unwrap(), *descriptor);
+        }
+
         let descriptor = TypeDescriptor::Function {
             parameters: vec![TypeDescriptor::Struct(BTreeMap::from([
                 ("age".into(), TypeDescriptor::Int),
@@ -12936,31 +13560,21 @@ mod tests {
                 ("Some".into(), Some(Box::new(TypeDescriptor::String))),
             ]))),
         };
-        let value = descriptor.to_value(&mut Vm::new());
-        assert!(matches!(
-            &value,
-            Value::Dict(fields)
-                if matches!(fields.get("kind"), Some(Value::Atom(kind)) if kind.name() == "Func")
-        ));
-        assert_eq!(TypeDescriptor::from_value(&value).unwrap(), descriptor);
+        round_trip(&descriptor);
 
         let bound = TypeDescriptor::Array(Box::new(TypeDescriptor::Bound(TypeParameterId(7))));
-        let value = bound.to_value(&mut Vm::new());
-        assert_eq!(TypeDescriptor::from_value(&value).unwrap(), bound);
+        round_trip(&bound);
 
         let metatype = TypeDescriptor::Type;
-        let value = metatype.to_value(&mut Vm::new());
-        assert_eq!(TypeDescriptor::from_value(&value).unwrap(), metatype);
+        round_trip(&metatype);
 
         let never = TypeDescriptor::Never;
-        let value = never.to_value(&mut Vm::new());
-        assert_eq!(TypeDescriptor::from_value(&value).unwrap(), never);
+        round_trip(&never);
 
         let witness = TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Array(Box::new(
             TypeDescriptor::Int,
         ))));
-        let value = witness.to_value(&mut Vm::new());
-        assert_eq!(TypeDescriptor::from_value(&value).unwrap(), witness);
+        round_trip(&witness);
     }
 
     #[test]
@@ -13121,10 +13735,7 @@ mod tests {
         assert_ne!(declared_id("PhantomInt"), declared_id("PhantomText"));
         assert_eq!(declared_id("Nested").arguments().len(), 1);
         assert_eq!(declared_id("Optional").arguments().len(), 1);
-        assert_ne!(
-            declared_id("Nested").identity_key(),
-            declared_id("Optional").identity_key()
-        );
+        assert_ne!(declared_id("Nested"), declared_id("Optional"));
 
         let error = analyze_source(
             "phantom-mismatch.telora",
@@ -13478,14 +14089,14 @@ mod tests {
 
         let direct =
             analyze_source("recursive-family.telora", "type Loop(A) = Loop(A); 0").unwrap_err();
-        assert!(direct.message.contains("recursive type family component"));
+        assert!(direct.message.contains("recursive type alias component"));
 
         let mutual = analyze_source(
             "mutual-family.telora",
             "type Left(A) = Right(A); type Right(A) = Left(A); 0",
         )
         .unwrap_err();
-        assert!(mutual.message.contains("recursive type family component"));
+        assert!(mutual.message.contains("recursive type alias component"));
 
         let mixed = analyze_source(
             "mixed-recursive-family.telora",
@@ -13495,7 +14106,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            mixed.message.contains("recursive type family component")
+            mixed.message.contains("recursive type alias component")
                 && mixed.message.contains("Family")
                 && mixed.message.contains("Concrete"),
             "{}",
@@ -13510,8 +14121,8 @@ mod tests {
         let valid =
             crate::compile_source("valid-type.telora", "validate(Type, Array(Int))").unwrap();
         assert!(
-            Vm::new()
-                .execute(&valid, 100_000)
+            valid
+                .execute_with_quota(&mut Vm::new(), Quota::with_fuel(100_000))
                 .unwrap()
                 .to_string()
                 .starts_with("'Ok(")
@@ -13522,7 +14133,10 @@ mod tests {
             "validate(Type, {kind: 'Array, item: 1})",
         )
         .unwrap();
-        let output = Vm::new().execute(&invalid, 100_000).unwrap().to_string();
+        let output = invalid
+            .execute_with_quota(&mut Vm::new(), Quota::with_fuel(100_000))
+            .unwrap()
+            .to_string();
         assert!(output.starts_with("'Err("), "{output}");
         assert!(output.contains("value.item must be a Dict"), "{output}");
     }
@@ -14015,11 +14629,12 @@ mod tests {
 
     #[test]
     fn partial_type_evaluation_accepts_explicit_linked_capabilities() {
-        let mut vm = Vm::new();
-        let bindings = BTreeMap::from([(
-            "LinkedType".to_owned(),
-            TypeDescriptor::Int.to_value(&mut vm),
-        )]);
+        let mut heap = Heap::work();
+        let root = heap
+            .type_descriptor_value(None, &TypeDescriptor::Int)
+            .unwrap();
+        let bindings =
+            BTreeMap::from([("LinkedType".to_owned(), crate::DataWorld::new(heap, root))]);
         let partial = analyze_partial_types_with_bindings(
             "linked.telora",
             "type Linked = LinkedType; 0",
@@ -14096,10 +14711,16 @@ mod tests {
             100_000,
         )
         .unwrap();
-        assert!(matches!(
-            accepted,
-            Value::Tagged { tag, .. } if tag.name() == "Ok"
-        ));
+        assert_eq!(
+            accepted
+                .value()
+                .tagged_parts()
+                .unwrap()
+                .0
+                .as_atom()
+                .unwrap(),
+            "Ok"
+        );
 
         let rejected = crate::run_source(
             "test",
@@ -14108,10 +14729,16 @@ mod tests {
             100_000,
         )
         .unwrap();
-        assert!(matches!(
-            rejected,
-            Value::Tagged { tag, .. } if tag.name() == "Err"
-        ));
+        assert_eq!(
+            rejected
+                .value()
+                .tagged_parts()
+                .unwrap()
+                .0
+                .as_atom()
+                .unwrap(),
+            "Err"
+        );
 
         let family = crate::run_source(
             "test",
@@ -14120,10 +14747,10 @@ mod tests {
             100_000,
         )
         .unwrap();
-        assert!(matches!(
-            family,
-            Value::Tagged { tag, .. } if tag.name() == "Ok"
-        ));
+        assert_eq!(
+            family.value().tagged_parts().unwrap().0.as_atom().unwrap(),
+            "Ok"
+        );
     }
 
     #[test]
@@ -14140,20 +14767,24 @@ mod tests {
     }
 
     #[test]
-    fn program_bytecode_retains_declared_ownership_metadata_and_explicit_witnesses() {
+    fn program_bytecode_externalizes_type_metadata_and_retains_explicit_witnesses() {
         let erased = crate::compile_source(
             "test",
             "type User = struct {name: String}; let user: User = {name: \"Ada\"}; user.name",
         )
         .unwrap();
-        assert!(erased.constants().iter().any(is_type_metadata));
+        assert!(!erased.constants().is_empty());
 
         let retained =
             crate::compile_source("test", "type User = struct {name: String}; User").unwrap();
-        assert!(retained.constants().iter().any(is_type_metadata));
-    }
-
-    fn is_type_metadata(value: &Value) -> bool {
-        TypeDescriptor::from_value(value).is_ok()
+        assert!(
+            retained
+                .constants()
+                .iter()
+                .all(|constant| matches!(constant, crate::bytecode::Constant::Placeholder))
+        );
+        let witness =
+            crate::run_source("test", "type User = struct {name: String}; User", 100_000).unwrap();
+        assert_eq!(witness.value().kind(), crate::ValueKind::Type);
     }
 }

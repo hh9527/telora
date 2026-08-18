@@ -1,14 +1,10 @@
-use crate::json::{SourcedValue, ValuePath, ValuePathSegment};
+use crate::bytecode::Constant;
 use crate::source::Loc;
-use crate::value::{DeclaredType, DeclaredValue, DynValue};
-use crate::{
-    Atom, BuiltinAtom, BytecodeFunction, Closure, Dict, FuncByteCode, NativeFunction, Prototype,
-    Shape, Value,
-};
+use crate::{BuiltinAtom, BytecodeFunction, FuncByteCode, NativeFunction};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const INLINE_TEXT_BYTES: usize = 7;
 
@@ -24,7 +20,7 @@ const TRAIT_REFERENCE: u16 = 1 << 0;
 const TRAIT_TEXT: u16 = 1 << 1;
 const TRAIT_INLINE: u16 = 1 << 2;
 const TRAIT_HEAP: u16 = 1 << 3;
-const TRAIT_UPLINK: u16 = 1 << 4;
+const TRAIT_TYPE_SLOT: u16 = 1 << 4;
 const TRAIT_TRACE: u16 = 1 << 5;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -45,7 +41,8 @@ enum FlatKind {
     Atom,
     NativeType,
     Heap,
-    UpLink,
+    TypeSlot,
+    FuncRef,
     Invalid = 63,
 }
 
@@ -61,18 +58,21 @@ impl FlatKind {
             6 => Self::Atom,
             7 => Self::NativeType,
             8 => Self::Heap,
-            9 => Self::UpLink,
+            9 => Self::TypeSlot,
+            10 => Self::FuncRef,
             _ => Self::Invalid,
         }
     }
 
     const fn traits(self) -> u16 {
         match self {
-            Self::Never | Self::Int | Self::Float | Self::NativeType => TRAIT_INLINE,
+            Self::Never | Self::Int | Self::Float | Self::NativeType | Self::FuncRef => {
+                TRAIT_INLINE
+            }
             Self::InlineString | Self::InlineAtom => TRAIT_INLINE | TRAIT_TEXT,
             Self::String | Self::Atom => TRAIT_REFERENCE | TRAIT_TEXT,
             Self::Heap => TRAIT_REFERENCE | TRAIT_HEAP,
-            Self::UpLink => TRAIT_REFERENCE | TRAIT_UPLINK | TRAIT_TRACE,
+            Self::TypeSlot => TRAIT_REFERENCE | TRAIT_TYPE_SLOT | TRAIT_TRACE,
             Self::Invalid => 0,
         }
     }
@@ -91,6 +91,7 @@ enum HeapKind {
     Dict,
     Func,
     Dyn,
+    Module,
 }
 
 impl HeapKind {
@@ -105,6 +106,7 @@ impl HeapKind {
             7 => Self::Dict,
             8 => Self::Func,
             9 => Self::Dyn,
+            10 => Self::Module,
             _ => Self::None,
         }
     }
@@ -117,7 +119,8 @@ impl HeapKind {
             | Self::Dict
             | Self::Func
             | Self::DeclaredType
-            | Self::Dyn => TRAIT_TRACE,
+            | Self::Dyn
+            | Self::Module => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
         }
     }
@@ -406,7 +409,9 @@ pub(crate) enum DecodedValue {
     Dict(Handle),
     Func(Handle),
     Dyn(Handle),
-    UpLink(Handle),
+    Module(Handle),
+    TypeSlot(Handle),
+    FuncRef(crate::FuncId),
 }
 
 impl DecodedValue {
@@ -448,10 +453,16 @@ impl DecodedValue {
             Self::Dict(handle) => heap_parts(handle, HeapKind::Dict),
             Self::Func(handle) => heap_parts(handle, HeapKind::Func),
             Self::Dyn(handle) => heap_parts(handle, HeapKind::Dyn),
-            Self::UpLink(handle) => (
-                FlatKind::UpLink,
+            Self::Module(handle) => heap_parts(handle, HeapKind::Module),
+            Self::TypeSlot(handle) => (
+                FlatKind::TypeSlot,
                 HeapKind::None,
                 ScopedId::new(handle.storage, handle.slot).raw(),
+            ),
+            Self::FuncRef(id) => (
+                FlatKind::FuncRef,
+                HeapKind::None,
+                u64::from(id.module.raw()) | (u64::from(id.local) << 32),
             ),
         };
         (Meta::new(kind, sub_kind, Provenance::Unknown), raw)
@@ -598,7 +609,12 @@ impl Val {
             (FlatKind::Heap, HeapKind::Dict) => DecodedValue::Dict(handle()),
             (FlatKind::Heap, HeapKind::Func) => DecodedValue::Func(handle()),
             (FlatKind::Heap, HeapKind::Dyn) => DecodedValue::Dyn(handle()),
-            (FlatKind::UpLink, _) => DecodedValue::UpLink(handle()),
+            (FlatKind::Heap, HeapKind::Module) => DecodedValue::Module(handle()),
+            (FlatKind::TypeSlot, _) => DecodedValue::TypeSlot(handle()),
+            (FlatKind::FuncRef, _) => DecodedValue::FuncRef(crate::FuncId {
+                module: crate::ModuleId::from_raw(self.raw as u32),
+                local: (self.raw >> 32) as u32,
+            }),
             _ => unreachable!("invalid runtime Meta combination"),
         }
     }
@@ -656,17 +672,28 @@ impl From<DecodedValue> for Val {
 pub(crate) struct PersistentValue(Val);
 
 impl PersistentValue {
-    pub(crate) fn dict_get(self, heap: &Heap, name: &str) -> Result<Option<Self>, HeapError> {
+    pub(crate) fn export_get(self, heap: &Heap, name: &str) -> Result<Option<Self>, HeapError> {
         if heap.storage != Storage::Main {
             return Err(HeapError("persistent values require a Main world"));
         }
-        let DecodedValue::Dict(handle) = self.0.value() else {
-            return Err(HeapError("persistent value is not a Dict"));
+        let (shape, values) = match self.0.value() {
+            DecodedValue::Module(handle) => {
+                let Object::Module { exports } = heap.object(handle)? else {
+                    return Err(HeapError(
+                        "persistent Module handle has another object kind",
+                    ));
+                };
+                (exports.shape, exports.values.as_ref())
+            }
+            DecodedValue::Dict(handle) => {
+                let Object::Dict { shape, values } = heap.object(handle)? else {
+                    return Err(HeapError("persistent Dict handle has another object kind"));
+                };
+                (*shape, values.as_ref())
+            }
+            _ => return Err(HeapError("persistent value has no exports")),
         };
-        let Object::Dict { shape, values } = heap.object(handle)? else {
-            return Err(HeapError("persistent Dict handle has another object kind"));
-        };
-        for (field, value) in heap.shape(*shape)?.iter().zip(values) {
+        for (field, value) in heap.shape(shape)?.iter().zip(values) {
             if heap.resolve_text(*field)? == name {
                 return Ok(Some(Self(*value)));
             }
@@ -676,200 +703,351 @@ impl PersistentValue {
 }
 
 impl Heap {
-    pub(crate) fn declare_persistent_type(
+    fn record_value(
         &mut self,
-        body: PersistentValue,
-        module: impl Into<Arc<str>>,
+        entries: impl IntoIterator<Item = (String, Val)>,
+    ) -> Result<Val, HeapError> {
+        let mut entries = entries.into_iter().collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        let fields = entries
+            .iter()
+            .map(|(name, _)| self.intern(name))
+            .collect::<Vec<_>>();
+        let values = entries
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>();
+        let shape = self.intern_shape(fields);
+        Ok(Val::unknown(DecodedValue::Dict(self.allocate(
+            Object::Dict {
+                shape,
+                values: values.into_boxed_slice(),
+            },
+        ))))
+    }
+
+    pub(crate) fn normalized_bool_type_value(
+        &mut self,
+        background: Option<&Heap>,
+    ) -> Result<Val, HeapError> {
+        fn wrap(heap: &mut Heap, background: Option<&Heap>, inner: Val) -> Result<Val, HeapError> {
+            let attributes = heap.record_value([])?;
+            let kind = Val::unknown(heap.atom(background, "WithAttributes"));
+            heap.record_value([
+                ("attributes".into(), attributes),
+                ("inner".into(), inner),
+                ("kind".into(), kind),
+            ])
+        }
+
+        let none = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None));
+        let false_variant = wrap(self, background, none)?;
+        let true_variant = wrap(self, background, none)?;
+        let variants = self.record_value([
+            ("False".into(), false_variant),
+            ("True".into(), true_variant),
+        ])?;
+        let kind = Val::unknown(self.atom(background, "Enum"));
+        let metadata = self.record_value([("kind".into(), kind), ("variants".into(), variants)])?;
+        wrap(self, background, metadata)
+    }
+
+    pub(crate) fn type_descriptor_value(
+        &mut self,
+        background: Option<&Heap>,
+        descriptor: &crate::types::TypeDescriptor,
+    ) -> Result<Val, HeapError> {
+        fn record(
+            heap: &mut Heap,
+            entries: impl IntoIterator<Item = (String, Val)>,
+        ) -> Result<Val, HeapError> {
+            let mut entries = entries.into_iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            let fields = entries
+                .iter()
+                .map(|(name, _)| heap.intern(name))
+                .collect::<Vec<_>>();
+            let values = entries
+                .into_iter()
+                .map(|(_, value)| value)
+                .collect::<Vec<_>>();
+            let shape = heap.intern_shape(fields);
+            Ok(Val::unknown(DecodedValue::Dict(heap.allocate(
+                Object::Dict {
+                    shape,
+                    values: values.into_boxed_slice(),
+                },
+            ))))
+        }
+
+        fn build(
+            heap: &mut Heap,
+            background: Option<&Heap>,
+            descriptor: &crate::types::TypeDescriptor,
+            declared: &mut HashMap<crate::value::DeclaredTypeId, Val>,
+        ) -> Result<Val, HeapError> {
+            use crate::types::TypeDescriptor as T;
+
+            let atom = |heap: &mut Heap, text: &str| Val::unknown(heap.atom(background, text));
+            let kind = |heap: &mut Heap, name: &str| {
+                let name = atom(heap, name);
+                record(heap, [("kind".into(), name)])
+            };
+            match descriptor {
+                T::Bound(parameter) => {
+                    let kind = atom(heap, "Bound");
+                    record(
+                        heap,
+                        [
+                            ("kind".into(), kind),
+                            (
+                                "parameter".into(),
+                                Val::unknown(DecodedValue::Int(i64::from(parameter.index()))),
+                            ),
+                        ],
+                    )
+                }
+                T::Inference(_) => Err(HeapError(
+                    "non-concrete type metadata cannot enter the runtime",
+                )),
+                T::Named(name) => {
+                    let kind = atom(heap, "Named");
+                    let name = Val::unknown(heap.string(background, name));
+                    record(heap, [("kind".into(), kind), ("name".into(), name)])
+                }
+                T::Declared(value) => {
+                    if let Some(existing) = declared.get(&value.id) {
+                        return Ok(*existing);
+                    }
+                    let placeholder = kind(heap, "Any")?;
+                    let owner = heap.reserve_declared_type(
+                        value.id.clone(),
+                        value.name.as_str(),
+                        placeholder,
+                    );
+                    declared.insert(value.id.clone(), owner);
+                    let body = build(heap, background, &value.body, declared)?;
+                    heap.seal_type_ref(owner, body)
+                }
+                T::Any => kind(heap, "Any"),
+                T::Never => kind(heap, "Never"),
+                T::Type => kind(heap, "Type"),
+                T::Dyn => kind(heap, "Dyn"),
+                T::Int => kind(heap, "Int"),
+                T::Float => kind(heap, "Float"),
+                T::String => kind(heap, "String"),
+                T::Bytes => kind(heap, "Bytes"),
+                T::TypeOf(instance) => {
+                    let instance = build(heap, background, instance, declared)?;
+                    let kind = atom(heap, "TypeOf");
+                    record(heap, [("kind".into(), kind), ("instance".into(), instance)])
+                }
+                T::Opaque(native) => Ok(heap.native_type_value(native.clone())),
+                T::Atom(tag) => {
+                    let kind = atom(heap, "Atom");
+                    let tag = atom(heap, tag.name());
+                    record(heap, [("kind".into(), kind), ("tag".into(), tag)])
+                }
+                T::Array(item) | T::Dict(item) => {
+                    let item = build(heap, background, item, declared)?;
+                    let name = if matches!(descriptor, T::Array(_)) {
+                        "Array"
+                    } else {
+                        "Dict"
+                    };
+                    let kind = atom(heap, name);
+                    record(heap, [("kind".into(), kind), ("item".into(), item)])
+                }
+                T::Tagged { tag, payload } => {
+                    let payload = build(heap, background, payload, declared)?;
+                    let kind = atom(heap, "Tagged");
+                    let tag = atom(heap, tag.name());
+                    record(
+                        heap,
+                        [
+                            ("kind".into(), kind),
+                            ("tag".into(), tag),
+                            ("payload".into(), payload),
+                        ],
+                    )
+                }
+                T::Tuple(items) | T::Union(items) => {
+                    let items = items
+                        .iter()
+                        .map(|item| build(heap, background, item, declared))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let items = Val::unknown(DecodedValue::Array(
+                        heap.allocate(Object::Array(items.into_boxed_slice())),
+                    ));
+                    let (name, field) = if matches!(descriptor, T::Tuple(_)) {
+                        ("Tuple", "items")
+                    } else {
+                        ("Union", "variants")
+                    };
+                    let kind = atom(heap, name);
+                    record(heap, [("kind".into(), kind), (field.into(), items)])
+                }
+                T::Struct(fields) => {
+                    let fields = fields
+                        .iter()
+                        .map(|(name, value)| {
+                            build(heap, background, value, declared)
+                                .map(|value| (name.clone(), value))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let fields = record(heap, fields)?;
+                    let kind = atom(heap, "Struct");
+                    record(heap, [("kind".into(), kind), ("fields".into(), fields)])
+                }
+                T::Enum(variants) => {
+                    let variants = variants
+                        .iter()
+                        .map(|(name, payload)| {
+                            let value = match payload {
+                                Some(payload) => build(heap, background, payload, declared)?,
+                                None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
+                            };
+                            Ok((name.clone(), value))
+                        })
+                        .collect::<Result<Vec<_>, HeapError>>()?;
+                    let variants = record(heap, variants)?;
+                    let kind = atom(heap, "Enum");
+                    record(heap, [("kind".into(), kind), ("variants".into(), variants)])
+                }
+                T::Function { parameters, result } => {
+                    let parameters = parameters
+                        .iter()
+                        .map(|item| build(heap, background, item, declared))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let parameters = Val::unknown(DecodedValue::Array(
+                        heap.allocate(Object::Array(parameters.into_boxed_slice())),
+                    ));
+                    let result = build(heap, background, result, declared)?;
+                    let kind = atom(heap, "Func");
+                    record(
+                        heap,
+                        [
+                            ("kind".into(), kind),
+                            ("parameters".into(), parameters),
+                            ("result".into(), result),
+                        ],
+                    )
+                }
+            }
+        }
+
+        build(self, background, descriptor, &mut HashMap::new())
+    }
+
+    pub(crate) fn int(&self, value: i64) -> Val {
+        Val::unknown(DecodedValue::Int(value))
+    }
+
+    pub(crate) fn native_closure(
+        &mut self,
+        function: NativeFunction,
+        upvalues: impl Into<Box<[Val]>>,
+    ) -> Val {
+        let handle = self.allocate(Object::Closure {
+            identity: Arc::new(()),
+            prototype: RuntimePrototype::Native(function),
+            upvalues: upvalues.into(),
+        });
+        Val::unknown(DecodedValue::Func(handle))
+    }
+
+    pub(crate) fn native_type_value(&mut self, value: crate::NativeType) -> Val {
+        let id = self.intern_native_type(value);
+        Val::unknown(DecodedValue::NativeType(id))
+    }
+
+    pub(crate) fn persistent(&self, value: Val) -> Result<PersistentValue, HeapError> {
+        if self.storage != Storage::Main {
+            return Err(HeapError("persistent value must belong to the Main world"));
+        }
+        Ok(PersistentValue(value))
+    }
+
+    pub(crate) fn declare_type(
+        &mut self,
+        body: Val,
+        module: crate::ModuleId,
         declaration: u32,
         name: impl Into<Arc<str>>,
-    ) -> Result<PersistentValue, HeapError> {
-        if self.storage != Storage::Main {
-            return Err(HeapError("declared type roots require a Main world"));
-        }
-        let body = body.runtime();
+    ) -> Val {
+        let id = crate::value::DeclaredTypeId::concrete(module, declaration);
+        let type_id = self.canonical_declared_type_id(&id).ok();
         let handle = self.allocate(Object::DeclaredType {
-            id: crate::value::DeclaredTypeId::concrete(module, declaration),
+            type_id,
+            id,
             name: name.into(),
             body,
+            sealed: true,
             application_arguments: None,
         });
-        Ok(PersistentValue(Val::unknown(DecodedValue::DeclaredType(
-            handle,
-        ))))
+        Val::unknown(DecodedValue::DeclaredType(handle))
     }
 
-    pub(crate) fn declare_persistent_type_application(
+    pub(crate) fn reserve_type_ref(
         &mut self,
-        body: PersistentValue,
-        module: impl Into<Arc<str>>,
+        module: crate::ModuleId,
         declaration: u32,
         name: impl Into<Arc<str>>,
-        arguments: &[crate::types::TypeDescriptor],
-    ) -> Result<PersistentValue, HeapError> {
-        if self.storage != Storage::Main {
-            return Err(HeapError("declared type roots require a Main world"));
-        }
+        placeholder: Val,
+    ) -> Val {
+        let id = crate::value::DeclaredTypeId::concrete(module, declaration);
+        self.reserve_declared_type(id, name, placeholder)
+    }
+
+    fn reserve_declared_type(
+        &mut self,
+        id: crate::value::DeclaredTypeId,
+        name: impl Into<Arc<str>>,
+        placeholder: Val,
+    ) -> Val {
+        let type_id = self.canonical_declared_type_id(&id).ok();
         let handle = self.allocate(Object::DeclaredType {
-            id: crate::value::DeclaredTypeId::applied(module, declaration, arguments),
+            type_id,
+            id,
             name: name.into(),
-            body: body.runtime(),
+            body: placeholder,
+            sealed: false,
             application_arguments: None,
         });
-        Ok(PersistentValue(Val::unknown(DecodedValue::DeclaredType(
-            handle,
-        ))))
+        Val::unknown(DecodedValue::DeclaredType(handle))
     }
 
-    pub(crate) fn rewrite_declared_type_references(
-        &mut self,
-        replacements: &[(PersistentValue, PersistentValue)],
-    ) -> Result<(), HeapError> {
-        if self.storage != Storage::Main {
-            return Err(HeapError("declared type rewriting requires a Main world"));
-        }
-        let replace = |value: &mut Val| {
-            if let Some((_, replacement)) = replacements
-                .iter()
-                .find(|(candidate, _)| candidate.runtime().value() == value.value())
-            {
-                *value = replacement.runtime().with_loc(value.loc());
-            }
+    pub(crate) fn seal_type_ref(&mut self, target: Val, body: Val) -> Result<Val, HeapError> {
+        let DecodedValue::DeclaredType(handle) = target.value() else {
+            return Err(HeapError("type ref target is not a declared Type"));
         };
-        let replacement_arguments = replacements
-            .iter()
-            .filter_map(|(candidate, replacement)| {
-                let candidate = runtime_object_handle(candidate.runtime().value())?;
-                let DecodedValue::DeclaredType(handle) = replacement.runtime().value() else {
-                    return None;
-                };
-                let Object::DeclaredType { id, name, body, .. } = self.object(handle).ok()? else {
-                    return None;
-                };
-                let id = id.clone();
-                let name = name.to_string();
-                let body = *body;
-                let body = HeapView {
-                    current: self,
-                    background: None,
-                }
-                .export_value(body)
-                .ok()
-                .and_then(|body| crate::types::TypeDescriptor::from_value(&body).ok())
-                .unwrap_or(crate::types::TypeDescriptor::Any);
-                Some((
-                    candidate,
-                    crate::types::TypeDescriptor::Declared(crate::types::DeclaredTypeDescriptor {
-                        id,
-                        name,
-                        body: Arc::new(body),
-                    }),
-                ))
-            })
-            .collect::<HashMap<_, _>>();
-        let up_links = self
-            .objects
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, object)| {
-                let Object::UpLink { value: Some(value) } = object else {
-                    return None;
-                };
-                Some((
-                    Handle {
-                        storage: self.storage,
-                        slot: slot as u32,
-                    },
-                    value.value(),
-                ))
-            })
-            .collect::<HashMap<_, _>>();
-        for object in &mut self.objects {
-            match object {
-                Object::Array(values) | Object::Tuple(values) => {
-                    for value in values.iter_mut() {
-                        replace(value);
-                    }
-                }
-                Object::Tagged { tag, payload } => {
-                    replace(tag);
-                    replace(payload);
-                }
-                Object::Dict { values, .. } => {
-                    for value in values.iter_mut() {
-                        replace(value);
-                    }
-                }
-                Object::Closure { upvalues, .. } => {
-                    for value in upvalues.iter_mut() {
-                        replace(value);
-                    }
-                }
-                Object::Dyn {
-                    descriptor, value, ..
-                } => {
-                    replace(descriptor);
-                    replace(value);
-                }
-                Object::UpLink { value } => {
-                    if let Some(value) = value {
-                        replace(value);
-                    }
-                }
-                Object::ByteCodeProto { values, .. } => {
-                    for value in values.iter_mut() {
-                        replace(value);
-                    }
-                }
-                Object::DeclaredType {
-                    id,
-                    application_arguments: Some(arguments),
-                    ..
-                } => {
-                    let mut applied = id.arguments().to_vec();
-                    for (index, argument) in arguments.iter().enumerate() {
-                        let value = match argument.value() {
-                            DecodedValue::UpLink(handle) => {
-                                up_links.get(&handle).copied().unwrap_or(argument.value())
-                            }
-                            value => value,
-                        };
-                        if let Some(handle) = runtime_object_handle(value)
-                            && let Some(declared) = replacement_arguments.get(&handle)
-                            && let Some(target) = applied.get_mut(index)
-                        {
-                            *target = declared.clone();
-                        }
-                    }
-                    *id = id.reapply(&applied);
-                }
-                // The body edge owns the structural definition and must not become
-                // a self-reference to its own declaration wrapper.
-                Object::DeclaredType { .. }
-                | Object::Reserved
-                | Object::Bytes(_)
-                | Object::Opaque(_) => {}
-            }
+        if handle.storage != Storage::Work {
+            return Err(HeapError(
+                "type refs can only be sealed in their Work world",
+            ));
         }
-        Ok(())
-    }
-
-    pub(crate) fn canonical_declared_root(
-        &self,
-        value: PersistentValue,
-        replacements: &[(PersistentValue, PersistentValue)],
-    ) -> PersistentValue {
-        replacements
-            .iter()
-            .find_map(|(candidate, replacement)| {
-                (candidate.runtime().value() == value.runtime().value()).then_some(*replacement)
-            })
-            .unwrap_or(value)
+        let Object::DeclaredType {
+            body: slot, sealed, ..
+        } = self.object_mut(handle)?
+        else {
+            return Err(HeapError("type ref target is not a declared Type"));
+        };
+        if *sealed {
+            return Err(HeapError("type ref is already sealed"));
+        }
+        *slot = body;
+        *sealed = true;
+        Ok(target)
     }
 }
 
 impl PersistentValue {
     pub(crate) const fn runtime(self) -> Val {
         self.0
+    }
+
+    pub(crate) fn without_location(self) -> Self {
+        Self(self.0.with_loc(None))
     }
 }
 
@@ -880,13 +1058,22 @@ pub(crate) enum RuntimePrototype {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct ExportTable {
+    shape: ShapeId,
+    values: Box<[Val]>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum Object {
     Reserved,
+    OpenFunc,
     Bytes(Box<[u8]>),
     DeclaredType {
+        type_id: Option<crate::TypeId>,
         id: crate::value::DeclaredTypeId,
         name: Arc<str>,
         body: Val,
+        sealed: bool,
         application_arguments: Option<Box<[Val]>>,
     },
     Opaque(crate::value::OpaqueValue),
@@ -900,6 +1087,9 @@ pub(crate) enum Object {
         shape: ShapeId,
         values: Box<[Val]>,
     },
+    Module {
+        exports: ExportTable,
+    },
     Closure {
         identity: Arc<()>,
         prototype: RuntimePrototype,
@@ -912,7 +1102,7 @@ pub(crate) enum Object {
         scheme: Option<crate::TypeScheme>,
         origin: Option<Arc<str>>,
     },
-    UpLink {
+    TypeSlot {
         value: Option<Val>,
     },
     ByteCodeProto {
@@ -929,13 +1119,6 @@ pub(crate) struct HeapError(&'static str);
 impl HeapError {
     pub(crate) const fn new(message: &'static str) -> Self {
         Self(message)
-    }
-
-    pub(crate) fn is_legacy_cycle(&self) -> bool {
-        matches!(
-            self.0,
-            "cyclic heap values cannot cross the legacy Value boundary"
-        )
     }
 }
 
@@ -974,33 +1157,167 @@ impl TextTable {
 
 pub(crate) struct Heap {
     storage: Storage,
+    types: crate::type_store::SharedTypeStore,
     objects: Vec<Object>,
     text: TextTable,
     native_types: HashMap<crate::value::NativeTypeId, crate::NativeType>,
     shapes: Vec<Box<[InternId]>>,
     shape_slots: HashMap<Vec<InternId>, u32>,
-    exported_shapes: Mutex<HashMap<u32, Arc<Shape>>>,
+    bootstrap_root: Option<PersistentValue>,
+    functions: HashMap<crate::FuncId, Option<Val>>,
 }
 
 impl Heap {
-    fn new(storage: Storage) -> Self {
+    fn new(storage: Storage, types: crate::type_store::SharedTypeStore) -> Self {
         Self {
             storage,
+            types,
             objects: Vec::new(),
             text: TextTable::default(),
             native_types: HashMap::new(),
             shapes: Vec::new(),
             shape_slots: HashMap::new(),
-            exported_shapes: Mutex::new(HashMap::new()),
+            bootstrap_root: None,
+            functions: HashMap::new(),
         }
     }
 
+    pub(crate) fn preallocate_func(&mut self, id: crate::FuncId) -> Result<(), HeapError> {
+        if self.storage != Storage::Main {
+            return Err(HeapError(
+                "static function slots must be preallocated in Main world",
+            ));
+        }
+        if self.functions.insert(id, None).is_some() {
+            return Err(HeapError("duplicate static function slot"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn seal_static_func(
+        &mut self,
+        id: crate::FuncId,
+        value: Val,
+    ) -> Result<(), HeapError> {
+        if !matches!(
+            value.value(),
+            DecodedValue::Func(_) | DecodedValue::FuncRef(_)
+        ) {
+            return Err(HeapError(
+                "static function definition did not produce a closure",
+            ));
+        }
+        match self.functions.entry(id) {
+            std::collections::hash_map::Entry::Vacant(entry) if self.storage == Storage::Work => {
+                entry.insert(Some(value));
+                Ok(())
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) if entry.get().is_none() => {
+                entry.insert(Some(value));
+                Ok(())
+            }
+            std::collections::hash_map::Entry::Vacant(_) => {
+                Err(HeapError("unknown static function slot"))
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                Err(HeapError("static function slot is already sealed"))
+            }
+        }
+    }
+
+    pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
+        self.functions.get(&id).copied().flatten()
+    }
+
+    pub(crate) fn bootstrap_root(&self) -> Option<PersistentValue> {
+        self.bootstrap_root
+    }
+
+    pub(crate) fn set_bootstrap_root(&mut self, root: PersistentValue) {
+        debug_assert!(self.bootstrap_root.is_none());
+        self.bootstrap_root = Some(root);
+    }
+
+    pub(crate) fn module(
+        &mut self,
+        entries: impl IntoIterator<Item = (String, Val)>,
+    ) -> Result<Val, HeapError> {
+        let mut entries = entries.into_iter().collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(HeapError("Module exports contain a duplicate field"));
+        }
+        let mut fields = Vec::with_capacity(entries.len());
+        let mut values = Vec::with_capacity(entries.len());
+        for (field, value) in entries {
+            fields.push(self.intern(&field));
+            values.push(value);
+        }
+        let shape = self.intern_shape(fields);
+        let handle = self.allocate(Object::Module {
+            exports: ExportTable {
+                shape,
+                values: values.into_boxed_slice(),
+            },
+        });
+        Ok(Val::unknown(DecodedValue::Module(handle)))
+    }
+
+    pub(crate) fn seal_module(&mut self, root: Val) -> Result<Val, HeapError> {
+        if matches!(root.value(), DecodedValue::Module(_)) {
+            return Ok(root);
+        }
+        let DecodedValue::Dict(handle) = root.value() else {
+            return Err(HeapError(
+                "module evaluation must produce a Dict of exports",
+            ));
+        };
+        if handle.storage != self.storage {
+            return Err(HeapError("module exports Dict belongs to another world"));
+        }
+        let object = self
+            .objects
+            .get_mut(handle.slot as usize)
+            .ok_or(HeapError("module exports Dict is out of bounds"))?;
+        let Object::Dict { shape, values } = std::mem::replace(object, Object::Reserved) else {
+            return Err(HeapError("module exports handle has another object kind"));
+        };
+        *object = Object::Module {
+            exports: ExportTable { shape, values },
+        };
+        Ok(root.with_value(DecodedValue::Module(handle)))
+    }
+
     pub(crate) fn work() -> Self {
-        Self::new(Storage::Work)
+        Self::new(Storage::Work, crate::type_store::shared_type_store())
     }
 
     pub(crate) fn main() -> Self {
-        Self::new(Storage::Main)
+        Self::new(Storage::Main, crate::type_store::shared_type_store())
+    }
+
+    pub(crate) fn work_for(background: &Self) -> Self {
+        Self::new(Storage::Work, Arc::clone(&background.types))
+    }
+
+    pub(crate) fn canonical_declared_type_id(
+        &self,
+        declared: &crate::value::DeclaredTypeId,
+    ) -> Result<crate::TypeId, HeapError> {
+        let mut types = self
+            .types
+            .lock()
+            .map_err(|_| HeapError("type store poisoned"))?;
+        let arguments = declared
+            .arguments()
+            .iter()
+            .map(|argument| types.intern_descriptor(argument))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| HeapError("declared type argument is not canonical"))?;
+        Ok(match types.begin(declared.constructor(), arguments) {
+            crate::type_store::InternType::Existing(id)
+            | crate::type_store::InternType::Reserved(id) => id,
+        })
     }
 
     #[cfg(test)]
@@ -1033,107 +1350,6 @@ impl Heap {
             .ok_or(HeapError("native type ID is not registered in this world"))
     }
 
-    pub(crate) fn export_persistent(&self, value: PersistentValue) -> Result<Value, HeapError> {
-        HeapView {
-            current: self,
-            background: None,
-        }
-        .export_value(value.runtime())
-    }
-
-    pub(crate) fn export_persistent_projecting_up_links(
-        &self,
-        value: PersistentValue,
-        projection: &Value,
-    ) -> Result<Value, HeapError> {
-        HeapView {
-            current: self,
-            background: None,
-        }
-        .export_value_projecting_up_links(value.runtime(), projection)
-    }
-
-    pub(crate) fn persistent_contains_up_link(
-        &self,
-        value: PersistentValue,
-    ) -> Result<bool, HeapError> {
-        let mut pending = vec![value.runtime()];
-        let mut visited = HashSet::new();
-        while let Some(value) = pending.pop() {
-            if let Some(witness) = value.type_witness() {
-                pending.push(Val::unknown(DecodedValue::DeclaredType(witness)));
-            }
-            let handle = match value.value() {
-                DecodedValue::Failed(_) => continue,
-                DecodedValue::UpLink(_) => return Ok(true),
-                DecodedValue::NativeType(_) => continue,
-                DecodedValue::Bytes(handle)
-                | DecodedValue::DeclaredType(handle)
-                | DecodedValue::Opaque(handle)
-                | DecodedValue::Array(handle)
-                | DecodedValue::Tuple(handle)
-                | DecodedValue::Tagged(handle)
-                | DecodedValue::Dict(handle)
-                | DecodedValue::Func(handle)
-                | DecodedValue::Dyn(handle) => handle,
-                DecodedValue::Int(_)
-                | DecodedValue::Float(_)
-                | DecodedValue::BuiltinAtom(_)
-                | DecodedValue::InlineAtom(_)
-                | DecodedValue::Atom(_)
-                | DecodedValue::InlineString(_)
-                | DecodedValue::ShortString(_) => continue,
-            };
-            if !visited.insert(handle) {
-                continue;
-            }
-            match self.object(handle)? {
-                Object::Array(values) | Object::Tuple(values) => {
-                    pending.extend(values.iter().copied());
-                }
-                Object::Tagged { tag, payload } => {
-                    pending.push(*tag);
-                    pending.push(*payload);
-                }
-                Object::Dict { values, .. } => {
-                    pending.extend(values.iter().copied());
-                }
-                Object::Closure {
-                    prototype,
-                    upvalues,
-                    ..
-                } => {
-                    pending.extend(upvalues.iter().copied());
-                    if let RuntimePrototype::Bytecode(handle) = prototype {
-                        pending.push(Val::unknown(DecodedValue::Func(*handle)));
-                    }
-                }
-                Object::Dyn {
-                    descriptor, value, ..
-                } => {
-                    pending.push(*descriptor);
-                    pending.push(*value);
-                }
-                Object::DeclaredType { body, .. } => pending.push(*body),
-                Object::ByteCodeProto {
-                    values, prototypes, ..
-                } => {
-                    pending.extend(values.iter().copied());
-                    pending.extend(prototypes.iter().filter_map(|prototype| match prototype {
-                        RuntimePrototype::Bytecode(handle) => {
-                            Some(Val::unknown(DecodedValue::Func(*handle)))
-                        }
-                        RuntimePrototype::Native(_) => None,
-                    }));
-                }
-                Object::Reserved => return Err(HeapError("heap object is uninitialized")),
-                Object::UpLink { .. } => return Ok(true),
-                Object::Bytes(_) | Object::Opaque(_) => {}
-            }
-        }
-        Ok(false)
-    }
-
     pub(crate) fn reserve(&mut self) -> Handle {
         self.allocate(Object::Reserved)
     }
@@ -1147,7 +1363,7 @@ impl Heap {
         Ok(())
     }
 
-    pub(crate) fn initialize_up_link(
+    pub(crate) fn initialize_type_slot(
         &mut self,
         handle: Handle,
         value: Val,
@@ -1155,13 +1371,35 @@ impl Heap {
         if handle.storage != Storage::Work {
             return Err(HeapError("Main up-links are read-only"));
         }
-        let Object::UpLink { value: slot } = self.object_mut(handle)? else {
+        let Object::TypeSlot { value: slot } = self.object_mut(handle)? else {
             return Err(HeapError("handle is not an up-link"));
         };
         if slot.is_some() {
             return Err(HeapError("up-link is already initialized"));
         }
         *slot = Some(value);
+        Ok(())
+    }
+
+    pub(crate) fn seal_local_func(
+        &mut self,
+        target: Handle,
+        source: Handle,
+    ) -> Result<(), HeapError> {
+        if target.storage != Storage::Work || source.storage != Storage::Work {
+            return Err(HeapError(
+                "function refs can only be sealed in their Work world",
+            ));
+        }
+        let closure = match self.object(source)? {
+            Object::Closure { .. } => self.object(source)?.clone(),
+            _ => return Err(HeapError("function ref source is not a sealed function")),
+        };
+        let slot = self.object_mut(target)?;
+        if !matches!(slot, Object::OpenFunc) {
+            return Err(HeapError("function ref is already sealed"));
+        }
+        *slot = closure;
         Ok(())
     }
 
@@ -1256,301 +1494,11 @@ impl Heap {
             .ok_or(HeapError("shape ID is out of bounds"))
     }
 
-    pub(crate) fn import_value(
-        &mut self,
-        background: Option<&Heap>,
-        value: &Value,
-    ) -> Result<Val, HeapError> {
-        let mut prototypes = HashMap::new();
-        self.import_value_with(background, value, &HashMap::new(), &mut prototypes, None)
-    }
-
-    pub(crate) fn import_sourced_value(
-        &mut self,
-        background: Option<&Heap>,
-        sourced: &SourcedValue,
-    ) -> Result<Val, HeapError> {
-        self.import_sourced_at(
-            background,
-            &sourced.value,
-            &sourced.provenance,
-            &mut Vec::new(),
-        )
-    }
-
-    fn import_sourced_at(
-        &mut self,
-        background: Option<&Heap>,
-        value: &Value,
-        provenance: &crate::json::Provenance,
-        path: &mut ValuePath,
-    ) -> Result<Val, HeapError> {
-        let loc = provenance.values.get(path).copied();
-        let value = match value {
-            Value::Int(value) => DecodedValue::Int(*value),
-            Value::Float(value) if value.is_finite() => DecodedValue::Float(*value),
-            Value::Float(_) => return Err(HeapError("Telora Float must be finite")),
-            Value::String(value) => self.string(background, value),
-            Value::Bytes(value) => {
-                DecodedValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
-            }
-            Value::NativeType(value) => {
-                DecodedValue::NativeType(self.intern_native_type(value.clone()))
-            }
-            Value::DeclaredType(value) => {
-                let body = self.import_sourced_at(background, value.body(), provenance, path)?;
-                DecodedValue::DeclaredType(self.allocate(Object::DeclaredType {
-                    id: value.id().clone(),
-                    name: Arc::from(value.name()),
-                    body,
-                    application_arguments: None,
-                }))
-            }
-            Value::Declared(value) => {
-                let owner = self.import_sourced_at(
-                    background,
-                    &Value::DeclaredType(value.owner().clone()),
-                    provenance,
-                    path,
-                )?;
-                let payload =
-                    self.import_sourced_at(background, value.payload(), provenance, path)?;
-                return Ok(payload.with_type_witness(owner)?.with_loc(loc));
-            }
-            Value::Opaque(value) => {
-                DecodedValue::Opaque(self.allocate(Object::Opaque(value.clone())))
-            }
-            Value::Atom(Atom::Builtin(atom)) => DecodedValue::BuiltinAtom(*atom),
-            Value::Atom(Atom::Named(name)) => self.atom(background, name),
-            Value::Tagged { tag, payload } => {
-                let tag = match tag {
-                    Atom::Builtin(atom) => DecodedValue::BuiltinAtom(*atom),
-                    Atom::Named(name) => self.atom(background, name),
-                };
-                path.push(ValuePathSegment::Index(0));
-                let payload = self.import_sourced_at(background, payload, provenance, path)?;
-                path.pop();
-                DecodedValue::Tagged(self.allocate(Object::Tagged {
-                    tag: Val::original(tag, loc),
-                    payload,
-                }))
-            }
-            Value::Array(values) => {
-                let mut imported = Vec::with_capacity(values.len());
-                for (index, value) in values.iter().enumerate() {
-                    path.push(ValuePathSegment::Index(index));
-                    imported.push(self.import_sourced_at(background, value, provenance, path)?);
-                    path.pop();
-                }
-                DecodedValue::Array(self.allocate(Object::Array(imported.into())))
-            }
-            Value::Tuple(values) => {
-                let mut imported = Vec::with_capacity(values.len());
-                for (index, value) in values.iter().enumerate() {
-                    path.push(ValuePathSegment::Index(index));
-                    imported.push(self.import_sourced_at(background, value, provenance, path)?);
-                    path.pop();
-                }
-                DecodedValue::Tuple(self.allocate(Object::Tuple(imported.into())))
-            }
-            Value::Dict(dict) => {
-                let mut fields = Vec::with_capacity(dict.values().len());
-                let mut values = Vec::with_capacity(dict.values().len());
-                for (field, value) in dict.shape().fields().iter().zip(dict.values()) {
-                    fields.push(
-                        background
-                            .and_then(|heap| heap.find_text(field))
-                            .unwrap_or_else(|| self.intern(field)),
-                    );
-                    path.push(ValuePathSegment::Key(field.clone()));
-                    values.push(self.import_sourced_at(background, value, provenance, path)?);
-                    path.pop();
-                }
-                let shape = self.intern_shape(fields);
-                DecodedValue::Dict(self.allocate(Object::Dict {
-                    shape,
-                    values: values.into(),
-                }))
-            }
-            Value::Func(_) => {
-                return Err(HeapError("sourced data cannot contain Func"));
-            }
-            Value::Dyn(_) => {
-                return Err(HeapError("sourced data cannot contain Dyn"));
-            }
-        };
-        Ok(Val::original(value, loc))
-    }
-
-    fn import_value_with(
-        &mut self,
-        background: Option<&Heap>,
-        value: &Value,
-        externals: &HashMap<String, PersistentValue>,
-        prototypes: &mut HashMap<*const BytecodeFunction, Handle>,
-        location: Option<crate::Loc>,
-    ) -> Result<Val, HeapError> {
-        Ok(Val::new(
-            match value {
-                Value::Int(value) => DecodedValue::Int(*value),
-                Value::Float(value) if value.is_finite() => DecodedValue::Float(*value),
-                Value::Float(_) => return Err(HeapError("Telora Float must be finite")),
-                Value::String(value) => self.string(background, value),
-                Value::Bytes(value) => {
-                    DecodedValue::Bytes(self.allocate(Object::Bytes(value.as_ref().into())))
-                }
-                Value::NativeType(value) => {
-                    DecodedValue::NativeType(self.intern_native_type(value.clone()))
-                }
-                Value::DeclaredType(value) => {
-                    let body = self.import_value_with(
-                        background,
-                        value.body(),
-                        externals,
-                        prototypes,
-                        location,
-                    )?;
-                    DecodedValue::DeclaredType(self.allocate(Object::DeclaredType {
-                        id: value.id().clone(),
-                        name: Arc::from(value.name()),
-                        body,
-                        application_arguments: None,
-                    }))
-                }
-                Value::Declared(value) => {
-                    let owner = self.import_value_with(
-                        background,
-                        &Value::DeclaredType(value.owner().clone()),
-                        externals,
-                        prototypes,
-                        location,
-                    )?;
-                    let payload = self.import_value_with(
-                        background,
-                        value.payload(),
-                        externals,
-                        prototypes,
-                        location,
-                    )?;
-                    return payload.with_type_witness(owner);
-                }
-                Value::Opaque(value) => {
-                    DecodedValue::Opaque(self.allocate(Object::Opaque(value.clone())))
-                }
-                Value::Atom(Atom::Builtin(atom)) => DecodedValue::BuiltinAtom(*atom),
-                Value::Atom(Atom::Named(name)) => self.atom(background, name),
-                Value::Tagged { tag, payload } => {
-                    let tag = match tag {
-                        Atom::Builtin(atom) => DecodedValue::BuiltinAtom(*atom),
-                        Atom::Named(name) => self.atom(background, name),
-                    };
-                    let payload = self
-                        .import_value_with(background, payload, externals, prototypes, location)?;
-                    DecodedValue::Tagged(self.allocate(Object::Tagged {
-                        tag: Val::new(tag, location),
-                        payload,
-                    }))
-                }
-                Value::Array(values) => {
-                    let values = values
-                        .iter()
-                        .map(|value| {
-                            self.import_value_with(
-                                background, value, externals, prototypes, location,
-                            )
-                        })
-                        .collect::<Result<Box<[_]>, _>>()?;
-                    DecodedValue::Array(self.allocate(Object::Array(values)))
-                }
-                Value::Tuple(values) => {
-                    let values = values
-                        .iter()
-                        .map(|value| {
-                            self.import_value_with(
-                                background, value, externals, prototypes, location,
-                            )
-                        })
-                        .collect::<Result<Box<[_]>, _>>()?;
-                    DecodedValue::Tuple(self.allocate(Object::Tuple(values)))
-                }
-                Value::Dict(dict) => {
-                    let fields = dict
-                        .shape()
-                        .fields()
-                        .iter()
-                        .map(|field| {
-                            Ok(background
-                                .and_then(|heap| heap.find_text(field))
-                                .unwrap_or_else(|| self.intern(field)))
-                        })
-                        .collect::<Result<Vec<_>, HeapError>>()?;
-                    let shape = self.intern_shape(fields);
-                    let values = dict
-                        .values()
-                        .iter()
-                        .map(|value| {
-                            self.import_value_with(
-                                background, value, externals, prototypes, location,
-                            )
-                        })
-                        .collect::<Result<Box<[_]>, _>>()?;
-                    DecodedValue::Dict(self.allocate(Object::Dict { shape, values }))
-                }
-                Value::Func(closure) => {
-                    let prototype = match closure.prototype() {
-                        Prototype::Bytecode(function) => RuntimePrototype::Bytecode(
-                            self.link_bytecode_with(background, function, externals, prototypes)?,
-                        ),
-                        Prototype::Native(function) => RuntimePrototype::Native(*function),
-                    };
-                    let upvalues = closure
-                        .upvalues()
-                        .iter()
-                        .map(|value| {
-                            self.import_value_with(
-                                background, value, externals, prototypes, location,
-                            )
-                        })
-                        .collect::<Result<Box<[_]>, _>>()?;
-                    DecodedValue::Func(self.allocate(Object::Closure {
-                        identity: Arc::clone(closure.identity()),
-                        prototype,
-                        upvalues,
-                    }))
-                }
-                Value::Dyn(dyn_value) => {
-                    let descriptor = self.import_value_with(
-                        background,
-                        dyn_value.descriptor(),
-                        externals,
-                        prototypes,
-                        location,
-                    )?;
-                    let value = self.import_value_with(
-                        background,
-                        dyn_value.value(),
-                        externals,
-                        prototypes,
-                        location,
-                    )?;
-                    DecodedValue::Dyn(self.allocate(Object::Dyn {
-                        identity: Arc::clone(dyn_value.identity()),
-                        descriptor,
-                        value,
-                        scheme: dyn_value.scheme().cloned(),
-                        origin: dyn_value.origin().map(Arc::from),
-                    }))
-                }
-            },
-            location,
-        ))
-    }
-
     pub(crate) fn link_bytecode_resolved(
         &mut self,
         background: Option<&Heap>,
         function: &BytecodeFunction,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
     ) -> Result<Handle, HeapError> {
         self.link_bytecode_with(background, function, externals, &mut HashMap::new())
     }
@@ -1559,7 +1507,7 @@ impl Heap {
         &mut self,
         background: Option<&Heap>,
         function: &BytecodeFunction,
-        externals: &HashMap<String, PersistentValue>,
+        externals: &HashMap<String, Val>,
         forwarded: &mut HashMap<*const BytecodeFunction, Handle>,
     ) -> Result<Handle, HeapError> {
         let identity = std::ptr::from_ref(function);
@@ -1575,13 +1523,35 @@ impl Heap {
             .enumerate()
             .map(|(index, value)| {
                 if let Some(key) = function.links().external_value(index) {
-                    return externals
+                    let resolved = externals
                         .get(key)
                         .copied()
-                        .map(PersistentValue::runtime)
-                        .ok_or(HeapError("external value link is unresolved"));
+                        .ok_or(HeapError("external value link is unresolved"))?;
+                    if key.starts_with("\0declared-owner:")
+                        && !matches!(resolved.value(), DecodedValue::DeclaredType(_))
+                    {
+                        return Err(HeapError(
+                            "declared owner external link did not resolve to a TypeRef",
+                        ));
+                    }
+                    return Ok(resolved);
                 }
-                self.import_value_with(background, value, externals, forwarded, None)
+                Ok(match value {
+                    Constant::Placeholder => {
+                        return Err(HeapError("unresolved bytecode constant placeholder"));
+                    }
+                    Constant::Int(value) => Val::unknown(DecodedValue::Int(*value)),
+                    Constant::Float(value) if value.is_finite() => {
+                        Val::unknown(DecodedValue::Float(*value))
+                    }
+                    Constant::Float(_) => return Err(HeapError("Telora Float must be finite")),
+                    Constant::String(value) => Val::unknown(self.string(background, value)),
+                    Constant::Bytes(value) => Val::unknown(DecodedValue::Bytes(
+                        self.allocate(Object::Bytes(value.as_ref().into())),
+                    )),
+                    Constant::Atom(value) => Val::unknown(self.atom(background, value.name())),
+                    Constant::Native(function) => self.native_closure(*function, []),
+                })
             })
             .collect::<Result<Box<[_]>, _>>()?;
         let text = function
@@ -1630,6 +1600,36 @@ type BytecodeLinks<'a> = (
 );
 
 impl<'a> HeapView<'a> {
+    pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
+        self.current
+            .static_func(id)
+            .or_else(|| self.background.and_then(|heap| heap.static_func(id)))
+    }
+
+    pub(crate) fn resolve_func(&self, mut value: Val) -> Result<Option<Handle>, HeapError> {
+        let mut visited = HashSet::new();
+        loop {
+            match value.value() {
+                DecodedValue::Func(handle) => return Ok(Some(handle)),
+                DecodedValue::FuncRef(id) => {
+                    if !visited.insert(id) {
+                        return Err(HeapError("cyclic static function alias"));
+                    }
+                    value = self
+                        .static_func(id)
+                        .ok_or(HeapError("static function slot is not sealed"))?;
+                }
+                _ => return Ok(None),
+            }
+        }
+    }
+
+    pub(crate) fn resolved_function_arity(&self, value: Val) -> Result<Option<usize>, HeapError> {
+        self.resolve_func(value)?
+            .map(|handle| self.function_arity(handle))
+            .transpose()
+    }
+
     fn heap(&self, storage: Storage) -> Result<&'a Heap, HeapError> {
         match storage {
             Storage::Work if self.current.storage == Storage::Work => Ok(self.current),
@@ -1726,8 +1726,8 @@ impl<'a> HeapView<'a> {
         }
     }
 
-    pub(crate) fn up_link(&self, handle: Handle) -> Result<Option<Val>, HeapError> {
-        let Object::UpLink { value } = self.object(handle)? else {
+    pub(crate) fn type_slot(&self, handle: Handle) -> Result<Option<Val>, HeapError> {
+        let Object::TypeSlot { value } = self.object(handle)? else {
             return Err(HeapError("handle is not an up-link"));
         };
         Ok(*value)
@@ -1783,6 +1783,38 @@ impl<'a> HeapView<'a> {
         Ok(index.and_then(|index| values.get(index).copied()))
     }
 
+    pub(crate) fn exports_get(
+        &self,
+        handle: Handle,
+        field: InternId,
+    ) -> Result<Option<Val>, HeapError> {
+        let Object::Module { exports, .. } = self.object(handle)? else {
+            return Err(HeapError("handle is not a Module"));
+        };
+        let wanted = self.text(field)?;
+        let fields = self.shape(exports.shape)?;
+        let index = fields
+            .binary_search_by(|candidate| {
+                if *candidate == field {
+                    Ordering::Equal
+                } else {
+                    self.text(*candidate).unwrap_or("").cmp(wanted)
+                }
+            })
+            .ok();
+        Ok(index.and_then(|index| exports.values.get(index).copied()))
+    }
+
+    pub(crate) fn exports_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
+        let Object::Module { exports, .. } = self.object(handle)? else {
+            return Err(HeapError("handle is not a Module"));
+        };
+        self.shape(exports.shape)?
+            .iter()
+            .map(|field| self.text(*field))
+            .collect()
+    }
+
     pub(crate) fn dict_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
         let Object::Dict { shape, .. } = self.object(handle)? else {
             return Err(HeapError("handle is not a Dict"));
@@ -1791,6 +1823,31 @@ impl<'a> HeapView<'a> {
             .iter()
             .map(|field| self.text(*field))
             .collect()
+    }
+
+    pub(crate) fn module_fields(&self, handle: Handle) -> Result<Vec<&'a str>, HeapError> {
+        let Object::Module { exports } = self.object(handle)? else {
+            return Err(HeapError("handle is not a Module"));
+        };
+        self.shape(exports.shape)?
+            .iter()
+            .map(|field| self.text(*field))
+            .collect()
+    }
+
+    pub(crate) fn module_get_text(
+        &self,
+        handle: Handle,
+        field: &str,
+    ) -> Result<Option<Val>, HeapError> {
+        let Object::Module { exports } = self.object(handle)? else {
+            return Err(HeapError("handle is not a Module"));
+        };
+        let fields = self.shape(exports.shape)?;
+        let index = fields
+            .binary_search_by(|candidate| self.text(*candidate).unwrap_or("").cmp(field))
+            .ok();
+        Ok(index.and_then(|index| exports.values.get(index).copied()))
     }
 
     pub(crate) fn dict_parts(
@@ -1853,7 +1910,8 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Tuple(handle)
                 | DecodedValue::Tagged(handle)
                 | DecodedValue::Dict(handle)
-                | DecodedValue::Dyn(handle) => handle,
+                | DecodedValue::Dyn(handle)
+                | DecodedValue::Module(handle) => handle,
                 DecodedValue::Int(_)
                 | DecodedValue::Float(_)
                 | DecodedValue::BuiltinAtom(_)
@@ -1866,7 +1924,8 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::NativeType(_)
                 | DecodedValue::DeclaredType(_)
                 | DecodedValue::Func(_)
-                | DecodedValue::UpLink(_) => continue,
+                | DecodedValue::TypeSlot(_)
+                | DecodedValue::FuncRef(_) => continue,
             };
             if !visited.insert(handle) {
                 continue;
@@ -1882,6 +1941,9 @@ impl<'a> HeapView<'a> {
                 Object::Dict { values, .. } => {
                     pending.extend(values.iter().rev().copied());
                 }
+                Object::Module { exports, .. } => {
+                    pending.extend(exports.values.iter().rev().copied());
+                }
                 Object::Dyn {
                     descriptor, value, ..
                 } => {
@@ -1892,8 +1954,9 @@ impl<'a> HeapView<'a> {
                 | Object::Opaque(_)
                 | Object::DeclaredType { .. }
                 | Object::Closure { .. }
-                | Object::UpLink { .. }
+                | Object::TypeSlot { .. }
                 | Object::ByteCodeProto { .. }
+                | Object::OpenFunc
                 | Object::Reserved => {}
             }
         }
@@ -1908,13 +1971,32 @@ impl<'a> HeapView<'a> {
     ) -> Result<bool, HeapError> {
         match (left.type_witness(), right.type_witness()) {
             (Some(left_owner), Some(right_owner)) => {
-                let Object::DeclaredType { id: left_id, .. } = self.object(left_owner)? else {
+                let Object::DeclaredType {
+                    type_id: left_id, ..
+                } = self.object(left_owner)?
+                else {
                     return Err(HeapError("type witness refers to another object kind"));
                 };
-                let Object::DeclaredType { id: right_id, .. } = self.object(right_owner)? else {
+                let Object::DeclaredType {
+                    type_id: right_id, ..
+                } = self.object(right_owner)?
+                else {
                     return Err(HeapError("type witness refers to another object kind"));
                 };
-                if left_id != right_id {
+                let identities_match = match (left_id, right_id) {
+                    (Some(left), Some(right)) => left == right,
+                    _ => {
+                        let Object::DeclaredType { id: left, .. } = self.object(left_owner)? else {
+                            unreachable!()
+                        };
+                        let Object::DeclaredType { id: right, .. } = self.object(right_owner)?
+                        else {
+                            unreachable!()
+                        };
+                        left == right
+                    }
+                };
+                if !identities_match {
                     return Ok(false);
                 }
             }
@@ -1939,6 +2021,26 @@ impl<'a> HeapView<'a> {
         }
         let left = left.without_type_witness();
         let right = right.without_type_witness();
+        if matches!(left.value(), DecodedValue::FuncRef(_))
+            || matches!(right.value(), DecodedValue::FuncRef(_))
+        {
+            let Some(left) = self.resolve_func(left)? else {
+                return Ok(false);
+            };
+            let Some(right) = self.resolve_func(right)? else {
+                return Ok(false);
+            };
+            let Object::Closure { identity: left, .. } = self.object(left)? else {
+                return Err(HeapError("Func handle refers to another object kind"));
+            };
+            let Object::Closure {
+                identity: right, ..
+            } = self.object(right)?
+            else {
+                return Err(HeapError("Func handle refers to another object kind"));
+            };
+            return Ok(Arc::ptr_eq(left, right));
+        }
         match (left.value(), right.value()) {
             (DecodedValue::Func(left), DecodedValue::Func(right)) => {
                 let Object::Closure { identity: left, .. } = self.object(left)? else {
@@ -1957,7 +2059,7 @@ impl<'a> HeapView<'a> {
                 let (right, _, _) = self.dyn_parts(right)?;
                 Ok(Arc::ptr_eq(left, right))
             }
-            (DecodedValue::UpLink(_), _) | (_, DecodedValue::UpLink(_)) => {
+            (DecodedValue::TypeSlot(_), _) | (_, DecodedValue::TypeSlot(_)) => {
                 Err(HeapError("up-link escaped into equality"))
             }
             (DecodedValue::Int(left), DecodedValue::Int(right)) => Ok(left == right),
@@ -2000,17 +2102,32 @@ impl<'a> HeapView<'a> {
             }
             (DecodedValue::NativeType(left), DecodedValue::NativeType(right)) => Ok(left == right),
             (DecodedValue::DeclaredType(left), DecodedValue::DeclaredType(right)) => {
-                let Object::DeclaredType { id: left, .. } = self.object(left)? else {
+                let left_handle = left;
+                let right_handle = right;
+                let Object::DeclaredType { type_id: left, .. } = self.object(left_handle)? else {
                     return Err(HeapError(
                         "DeclaredType handle refers to another object kind",
                     ));
                 };
-                let Object::DeclaredType { id: right, .. } = self.object(right)? else {
+                let Object::DeclaredType { type_id: right, .. } = self.object(right_handle)? else {
                     return Err(HeapError(
                         "DeclaredType handle refers to another object kind",
                     ));
                 };
-                Ok(left == right)
+                match (left, right) {
+                    (Some(left), Some(right)) => Ok(left == right),
+                    _ => {
+                        let Object::DeclaredType { id: left, .. } = self.object(left_handle)?
+                        else {
+                            unreachable!()
+                        };
+                        let Object::DeclaredType { id: right, .. } = self.object(right_handle)?
+                        else {
+                            unreachable!()
+                        };
+                        Ok(left == right)
+                    }
+                }
             }
             (DecodedValue::Array(left), DecodedValue::Array(right))
             | (DecodedValue::Tuple(left), DecodedValue::Tuple(right)) => {
@@ -2109,430 +2226,6 @@ impl<'a> HeapView<'a> {
             }
         }
         Ok(true)
-    }
-
-    pub(crate) fn export_value(&self, value: Val) -> Result<Value, HeapError> {
-        self.export_value_with(value, &mut HashSet::new(), &mut HashMap::new(), None, false)
-    }
-
-    pub(crate) fn export_type_identity(&self, value: Val) -> Result<Value, HeapError> {
-        self.export_value_with(value, &mut HashSet::new(), &mut HashMap::new(), None, true)
-    }
-
-    fn export_value_projecting_up_links(
-        &self,
-        value: Val,
-        projection: &Value,
-    ) -> Result<Value, HeapError> {
-        self.export_value_with(
-            value,
-            &mut HashSet::new(),
-            &mut HashMap::new(),
-            Some(projection),
-            false,
-        )
-    }
-
-    fn export_value_with(
-        &self,
-        value: Val,
-        visiting: &mut HashSet<Handle>,
-        completed: &mut HashMap<Handle, Value>,
-        up_link_projection: Option<&Value>,
-        shallow_declared_types: bool,
-    ) -> Result<Value, HeapError> {
-        if let Some(owner_handle) = value.type_witness() {
-            let Object::DeclaredType { id, name, .. } = self.object(owner_handle)? else {
-                return Err(HeapError("type witness refers to another object kind"));
-            };
-            let any_shape = Arc::new(Shape::from_sorted_fields(vec!["kind".into()]));
-            let any_body = Value::Dict(Dict::new(any_shape, vec![Value::atom("Any")]));
-            let owner = DeclaredType {
-                id: id.clone(),
-                name: Arc::clone(name),
-                body: Box::new(any_body),
-            };
-            let payload = self.export_value_with(
-                value.without_type_witness(),
-                visiting,
-                completed,
-                up_link_projection,
-                shallow_declared_types,
-            )?;
-            return Ok(Value::Declared(DeclaredValue::new(owner, payload)));
-        }
-        let runtime = value.value();
-        let handle = runtime_object_handle(runtime);
-        if let Some(value) = handle.and_then(|handle| completed.get(&handle)) {
-            return Ok(value.clone());
-        }
-        let exported = match runtime {
-            DecodedValue::Failed(_) => {
-                return Err(HeapError(
-                    "failed evaluation node cannot cross a value boundary",
-                ));
-            }
-            DecodedValue::Int(value) => Value::Int(value),
-            DecodedValue::Float(value) if value.is_finite() => Value::Float(value),
-            DecodedValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
-            DecodedValue::BuiltinAtom(atom) => Value::Atom(Atom::builtin(atom)),
-            DecodedValue::InlineAtom(text) => Value::atom(text.as_str()),
-            DecodedValue::Atom(id) => Value::atom(self.text(id)?),
-            DecodedValue::InlineString(text) => Value::string(text.as_str()),
-            DecodedValue::ShortString(id) => Value::string(self.text(id)?),
-            DecodedValue::Bytes(handle) => {
-                let Object::Bytes(value) = self.enter_object(handle, visiting)? else {
-                    return Err(HeapError("Bytes handle refers to another object kind"));
-                };
-                let value = Value::Bytes(value.clone().into());
-                visiting.remove(&handle);
-                value
-            }
-            DecodedValue::Opaque(handle) => {
-                let Object::Opaque(value) = self.enter_object(handle, visiting)? else {
-                    return Err(HeapError("Opaque handle refers to another object kind"));
-                };
-                let value = Value::Opaque(value.clone());
-                visiting.remove(&handle);
-                value
-            }
-            DecodedValue::NativeType(id) => Value::NativeType(self.native_type(id)?.clone()),
-            DecodedValue::DeclaredType(handle) => {
-                if shallow_declared_types {
-                    let Object::DeclaredType { id, name, .. } = self.object(handle)? else {
-                        return Err(HeapError(
-                            "DeclaredType handle refers to another object kind",
-                        ));
-                    };
-                    let any_shape = Arc::new(Shape::from_sorted_fields(vec!["kind".into()]));
-                    let body = Value::Dict(Dict::new(any_shape, vec![Value::atom("Any")]));
-                    return Ok(Value::DeclaredType(DeclaredType {
-                        id: id.clone(),
-                        name: Arc::clone(name),
-                        body: Box::new(body),
-                    }));
-                }
-                let Object::DeclaredType { id, name, body, .. } =
-                    self.enter_object(handle, visiting)?
-                else {
-                    return Err(HeapError(
-                        "DeclaredType handle refers to another object kind",
-                    ));
-                };
-                let body = self.export_value_with(
-                    *body,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                let value = Value::DeclaredType(DeclaredType {
-                    id: id.clone(),
-                    name: Arc::clone(name),
-                    body: Box::new(body),
-                });
-                visiting.remove(&handle);
-                value
-            }
-            DecodedValue::Array(handle) | DecodedValue::Tuple(handle) => {
-                let tuple = matches!(runtime, DecodedValue::Tuple(_));
-                let object = self.enter_object(handle, visiting)?;
-                let values = match object {
-                    Object::Array(values) if !tuple => values,
-                    Object::Tuple(values) if tuple => values,
-                    _ => return Err(HeapError("sequence handle refers to another object kind")),
-                };
-                let values = values
-                    .iter()
-                    .map(|value| {
-                        self.export_value_with(
-                            *value,
-                            visiting,
-                            completed,
-                            up_link_projection,
-                            shallow_declared_types,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                visiting.remove(&handle);
-                if tuple {
-                    Value::Tuple(values.into())
-                } else {
-                    Value::Array(values.into())
-                }
-            }
-            DecodedValue::Tagged(handle) => {
-                let Object::Tagged { tag, payload } = self.enter_object(handle, visiting)? else {
-                    return Err(HeapError("Tagged handle refers to another object kind"));
-                };
-                let tag = match self.export_value_with(
-                    *tag,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )? {
-                    Value::Atom(tag) => tag,
-                    _ => return Err(HeapError("Tagged tag is not an Atom")),
-                };
-                let payload = self.export_value_with(
-                    *payload,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                visiting.remove(&handle);
-                Value::tagged(tag, payload)
-            }
-            DecodedValue::Dict(handle) => {
-                let Object::Dict { shape, values } = self.enter_object(handle, visiting)? else {
-                    return Err(HeapError("Dict handle refers to another object kind"));
-                };
-                let fields = self
-                    .shape(*shape)?
-                    .iter()
-                    .map(|field| self.text(*field).map(str::to_owned))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let values = values
-                    .iter()
-                    .map(|value| {
-                        self.export_value_with(
-                            *value,
-                            visiting,
-                            completed,
-                            up_link_projection,
-                            shallow_declared_types,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                visiting.remove(&handle);
-                let owner = self.heap(shape.storage)?;
-                let mut exported_shapes = owner
-                    .exported_shapes
-                    .lock()
-                    .map_err(|_| HeapError("exported shape cache is poisoned"))?;
-                let shape = if let Some(shape) = exported_shapes.get(&shape.slot) {
-                    Arc::clone(shape)
-                } else {
-                    let shape_value = Arc::new(Shape::from_sorted_fields(fields));
-                    exported_shapes.insert(shape.slot, Arc::clone(&shape_value));
-                    shape_value
-                };
-                Value::Dict(Dict::new(shape, values))
-            }
-            DecodedValue::Func(handle) => {
-                let Object::Closure {
-                    identity,
-                    prototype,
-                    upvalues,
-                } = self.enter_object(handle, visiting)?
-                else {
-                    return Err(HeapError("Func handle refers to another object kind"));
-                };
-                let prototype = self.export_prototype(
-                    prototype,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                let upvalues = upvalues
-                    .iter()
-                    .map(|value| {
-                        self.export_value_with(
-                            *value,
-                            visiting,
-                            completed,
-                            up_link_projection,
-                            shallow_declared_types,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                visiting.remove(&handle);
-                Value::Func(Arc::new(Closure::from_parts_with_identity(
-                    Arc::clone(identity),
-                    prototype,
-                    upvalues,
-                )))
-            }
-            DecodedValue::Dyn(handle) => {
-                let Object::Dyn {
-                    identity,
-                    descriptor,
-                    value,
-                    scheme,
-                    origin,
-                } = self.enter_object(handle, visiting)?
-                else {
-                    return Err(HeapError("Dyn handle refers to another object kind"));
-                };
-                let descriptor = self.export_value_with(
-                    *descriptor,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                let value = self.export_value_with(
-                    *value,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                visiting.remove(&handle);
-                Value::Dyn(Arc::new(DynValue::from_parts_with_metadata(
-                    Arc::clone(identity),
-                    descriptor,
-                    value,
-                    scheme.clone(),
-                    origin.clone(),
-                )))
-            }
-            DecodedValue::UpLink(handle) => {
-                let linked = self
-                    .up_link(handle)?
-                    .ok_or(HeapError("up-link is uninitialized"))?;
-                if let Some(projection) = up_link_projection
-                    && self.is_type_metadata_root(linked.value())?
-                {
-                    return Ok(projection.clone());
-                }
-                if !visiting.insert(handle) {
-                    return Err(HeapError(
-                        "cyclic heap values cannot cross the legacy Value boundary",
-                    ));
-                }
-                let value = self.export_value_with(
-                    linked,
-                    visiting,
-                    completed,
-                    up_link_projection,
-                    shallow_declared_types,
-                )?;
-                visiting.remove(&handle);
-                value
-            }
-        };
-        if let Some(handle) = handle {
-            completed.insert(handle, exported.clone());
-        }
-        Ok(exported)
-    }
-
-    fn is_type_metadata_root(&self, value: DecodedValue) -> Result<bool, HeapError> {
-        let DecodedValue::Dict(handle) = value else {
-            return Ok(false);
-        };
-        let Some(kind) = self.dict_get_text(handle, "kind")? else {
-            return Ok(false);
-        };
-        let kind = match kind.value() {
-            DecodedValue::BuiltinAtom(atom) => atom.name(),
-            DecodedValue::Atom(id) => self.text(id)?,
-            _ => return Ok(false),
-        };
-        Ok(matches!(
-            kind,
-            "Any"
-                | "Never"
-                | "Type"
-                | "Dyn"
-                | "TypeOf"
-                | "Int"
-                | "Float"
-                | "String"
-                | "Bytes"
-                | "Atom"
-                | "Array"
-                | "Dict"
-                | "Tagged"
-                | "Tuple"
-                | "Struct"
-                | "Enum"
-                | "Union"
-                | "Func"
-                | "WithAttributes"
-                | "Bound"
-        ))
-    }
-
-    fn enter_object<'view>(
-        &'view self,
-        handle: Handle,
-        visiting: &mut HashSet<Handle>,
-    ) -> Result<&'view Object, HeapError> {
-        if !visiting.insert(handle) {
-            return Err(HeapError(
-                "cyclic heap values cannot cross the legacy Value boundary",
-            ));
-        }
-        self.object(handle)
-    }
-
-    fn export_prototype(
-        &self,
-        prototype: &RuntimePrototype,
-        visiting: &mut HashSet<Handle>,
-        completed: &mut HashMap<Handle, Value>,
-        up_link_projection: Option<&Value>,
-        shallow_declared_types: bool,
-    ) -> Result<Prototype, HeapError> {
-        Ok(match prototype {
-            RuntimePrototype::Native(function) => Prototype::Native(*function),
-            RuntimePrototype::Bytecode(handle) => {
-                let Object::ByteCodeProto {
-                    code,
-                    values,
-                    text,
-                    prototypes,
-                } = self.enter_object(*handle, visiting)?
-                else {
-                    return Err(HeapError("prototype handle refers to another object kind"));
-                };
-                let values = values
-                    .iter()
-                    .map(|value| {
-                        self.export_value_with(
-                            *value,
-                            visiting,
-                            completed,
-                            up_link_projection,
-                            shallow_declared_types,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let text = text
-                    .iter()
-                    .map(|id| self.text(*id).map(Arc::<str>::from))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let prototypes = prototypes
-                    .iter()
-                    .map(|prototype| {
-                        match self.export_prototype(
-                            prototype,
-                            visiting,
-                            completed,
-                            up_link_projection,
-                            shallow_declared_types,
-                        )? {
-                            Prototype::Bytecode(function) => Ok(function),
-                            Prototype::Native(_) => Err(HeapError(
-                                "native prototype cannot occupy a bytecode link slot",
-                            )),
-                        }
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                visiting.remove(handle);
-                Prototype::Bytecode(Arc::new(BytecodeFunction::from_linked_parts(
-                    Arc::clone(code),
-                    values,
-                    text,
-                    prototypes,
-                )))
-            }
-        })
     }
 }
 
@@ -2636,18 +2329,25 @@ fn bound_type_replacements(
             }
         }
         let children = match object {
-            Object::DeclaredType { body, .. } => vec![*body],
+            Object::DeclaredType {
+                body, sealed: true, ..
+            } => vec![*body],
+            Object::DeclaredType { sealed: false, .. } => {
+                return Err(HeapError("type ref is not sealed"));
+            }
             Object::Array(values) | Object::Tuple(values) => values.to_vec(),
             Object::Tagged { tag, payload } => vec![*tag, *payload],
             Object::Dict { values, .. } => values.to_vec(),
+            Object::Module { exports } => exports.values.to_vec(),
             Object::Closure { upvalues, .. } => upvalues.to_vec(),
             Object::Dyn {
                 descriptor, value, ..
             } => vec![*descriptor, *value],
-            Object::UpLink { value } => {
+            Object::TypeSlot { value } => {
                 vec![value.ok_or(HeapError("uninitialized type metadata up-link"))?]
             }
             Object::ByteCodeProto { values, .. } => values.to_vec(),
+            Object::OpenFunc => return Err(HeapError("function ref is not sealed")),
             Object::Reserved | Object::Bytes(_) | Object::Opaque(_) => Vec::new(),
         };
         for child in children {
@@ -2678,9 +2378,10 @@ fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
         | DecodedValue::Dict(handle)
+        | DecodedValue::Module(handle)
         | DecodedValue::Func(handle)
         | DecodedValue::Dyn(handle)
-        | DecodedValue::UpLink(handle) => Some(handle),
+        | DecodedValue::TypeSlot(handle) => Some(handle),
         DecodedValue::Failed(_)
         | DecodedValue::Int(_)
         | DecodedValue::Float(_)
@@ -2688,7 +2389,8 @@ fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
         | DecodedValue::InlineAtom(_)
         | DecodedValue::Atom(_)
         | DecodedValue::InlineString(_)
-        | DecodedValue::ShortString(_) => None,
+        | DecodedValue::ShortString(_)
+        | DecodedValue::FuncRef(_) => None,
     }
 }
 
@@ -2737,13 +2439,49 @@ pub(crate) fn publish_root(
     Ok(PersistentValue(roots[0]))
 }
 
-pub(crate) fn publish_value(
+pub(crate) fn publish_module_root(
     target: &mut Heap,
-    value: &Value,
+    current: &Heap,
+    root: Val,
 ) -> Result<PersistentValue, HeapError> {
-    let mut local = Heap::work();
-    let root = local.import_value(Some(target), value)?;
-    publish_root(target, &local, root)
+    if target.storage != Storage::Main || current.storage != Storage::Work {
+        return Err(HeapError(
+            "module publication requires a Work world and Main world",
+        ));
+    }
+    let mut functions = current
+        .functions
+        .iter()
+        .filter_map(|(id, value)| value.map(|value| (*id, value)))
+        .collect::<Vec<_>>();
+    functions.sort_by_key(|(id, _)| *id);
+    for (id, _) in &functions {
+        match target.functions.get(id) {
+            Some(None) => {}
+            Some(Some(_)) => return Err(HeapError("static function slot is already sealed")),
+            None => return Err(HeapError("unknown static function slot")),
+        }
+    }
+    let mut roots = Vec::with_capacity(functions.len() + 1);
+    roots.push(root);
+    roots.extend(functions.iter().map(|(_, value)| *value));
+    let copied = copy_roots(
+        target,
+        HeapView {
+            current,
+            background: None,
+        },
+        &roots,
+    )?;
+    for ((id, _), value) in functions.into_iter().zip(copied.iter().skip(1).copied()) {
+        let slot = target
+            .functions
+            .get_mut(&id)
+            .expect("static function slots were validated before copying");
+        debug_assert!(slot.is_none());
+        *slot = Some(value);
+    }
+    Ok(PersistentValue(copied[0]))
 }
 
 struct PendingCopy {
@@ -2831,7 +2569,8 @@ impl PendingCopy {
             DecodedValue::Int(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
-            | DecodedValue::InlineString(_) => value.value(),
+            | DecodedValue::InlineString(_)
+            | DecodedValue::FuncRef(_) => value.value(),
             DecodedValue::Float(float) if float.is_finite() => value.value(),
             DecodedValue::Float(_) => return Err(HeapError("Telora Float must be finite")),
             DecodedValue::Atom(id) => DecodedValue::Atom(self.copy_text(target, source, id)?),
@@ -2863,14 +2602,17 @@ impl PendingCopy {
             DecodedValue::Dict(handle) => {
                 DecodedValue::Dict(self.copy_object(target, source, handle)?)
             }
+            DecodedValue::Module(handle) => {
+                DecodedValue::Module(self.copy_object(target, source, handle)?)
+            }
             DecodedValue::Func(handle) => {
                 DecodedValue::Func(self.copy_object(target, source, handle)?)
             }
             DecodedValue::Dyn(handle) => {
                 DecodedValue::Dyn(self.copy_object(target, source, handle)?)
             }
-            DecodedValue::UpLink(handle) => {
-                DecodedValue::UpLink(self.copy_object(target, source, handle)?)
+            DecodedValue::TypeSlot(handle) => {
+                DecodedValue::TypeSlot(self.copy_object(target, source, handle)?)
             }
         };
         let mut copied = value.with_value(copied).without_type_witness();
@@ -2929,15 +2671,22 @@ impl PendingCopy {
                 .collect::<Result<Box<[_]>, _>>()
         };
         Ok(match object {
-            Object::Reserved => return Err(HeapError("cannot copy an uninitialized object")),
+            Object::Reserved | Object::OpenFunc => {
+                return Err(HeapError("cannot copy an uninitialized object"));
+            }
             Object::Bytes(value) => Object::Bytes(value.clone()),
             Object::Opaque(value) => Object::Opaque(value.clone()),
             Object::DeclaredType {
                 id,
                 name,
                 body,
+                sealed,
                 application_arguments,
+                ..
             } => {
+                if !sealed {
+                    return Err(HeapError("cannot copy an unsealed type ref"));
+                }
                 let type_argument_values = self.type_argument_values.clone();
                 let application_arguments = if let Some(arguments) = type_argument_values {
                     Some(arguments.as_ref().into())
@@ -2951,13 +2700,17 @@ impl PendingCopy {
                 } else {
                     None
                 };
+                let id = self.type_arguments.as_ref().map_or_else(
+                    || id.clone(),
+                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
+                );
+                let type_id = target.canonical_declared_type_id(&id).ok();
                 Object::DeclaredType {
-                    id: self.type_arguments.as_ref().map_or_else(
-                        || id.clone(),
-                        |arguments| crate::types::apply_declared_type_arguments(id, arguments),
-                    ),
+                    type_id,
+                    id,
                     name: Arc::clone(name),
                     body: self.copy_value(target, source, *body)?,
+                    sealed: true,
                     application_arguments,
                 }
             }
@@ -2970,6 +2723,12 @@ impl PendingCopy {
             Object::Dict { shape, values } => Object::Dict {
                 shape: self.copy_shape(target, source, *shape)?,
                 values: copy_values(self, values)?,
+            },
+            Object::Module { exports } => Object::Module {
+                exports: ExportTable {
+                    shape: self.copy_shape(target, source, exports.shape)?,
+                    values: copy_values(self, &exports.values)?,
+                },
             },
             Object::Closure {
                 identity,
@@ -2993,7 +2752,7 @@ impl PendingCopy {
                 scheme: scheme.clone(),
                 origin: origin.clone(),
             },
-            Object::UpLink { value } => Object::UpLink {
+            Object::TypeSlot { value } => Object::TypeSlot {
                 value: Some(self.copy_value(
                     target,
                     source,
@@ -3163,15 +2922,17 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
         | DecodedValue::Dict(handle)
+        | DecodedValue::Module(handle)
         | DecodedValue::Func(handle)
         | DecodedValue::Dyn(handle)
-        | DecodedValue::UpLink(handle) => handle.storage != target,
+        | DecodedValue::TypeSlot(handle) => handle.storage != target,
         DecodedValue::Failed(_)
         | DecodedValue::Int(_)
         | DecodedValue::Float(_)
         | DecodedValue::BuiltinAtom(_)
         | DecodedValue::InlineAtom(_)
-        | DecodedValue::InlineString(_) => false,
+        | DecodedValue::InlineString(_)
+        | DecodedValue::FuncRef(_) => false,
     }
 }
 
@@ -3200,15 +2961,17 @@ fn object_contains_disallowed(
             | DecodedValue::Tuple(handle)
             | DecodedValue::Tagged(handle)
             | DecodedValue::Dict(handle)
+            | DecodedValue::Module(handle)
             | DecodedValue::Func(handle)
             | DecodedValue::Dyn(handle)
-            | DecodedValue::UpLink(handle) => foreign(handle.storage),
+            | DecodedValue::TypeSlot(handle) => foreign(handle.storage),
             DecodedValue::Failed(_)
             | DecodedValue::Int(_)
             | DecodedValue::Float(_)
             | DecodedValue::BuiltinAtom(_)
             | DecodedValue::InlineAtom(_)
-            | DecodedValue::InlineString(_) => false,
+            | DecodedValue::InlineString(_)
+            | DecodedValue::FuncRef(_) => false,
         };
         payload_is_foreign
             || value
@@ -3216,7 +2979,8 @@ fn object_contains_disallowed(
                 .is_some_and(|handle| foreign(handle.storage))
     };
     match object {
-        Object::Reserved => true,
+        Object::Reserved | Object::OpenFunc => true,
+        Object::DeclaredType { sealed: false, .. } => true,
         Object::Array(values) | Object::Tuple(values) => {
             values.iter().any(|value| value_foreign(*value))
         }
@@ -3224,12 +2988,16 @@ fn object_contains_disallowed(
         Object::Dict { shape, values } => {
             foreign(shape.storage) || values.iter().any(|value| value_foreign(*value))
         }
+        Object::Module { exports } => {
+            foreign(exports.shape.storage)
+                || exports.values.iter().any(|value| value_foreign(*value))
+        }
         Object::Closure { upvalues, .. } => upvalues.iter().any(|value| value_foreign(*value)),
         Object::Dyn {
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
         Object::DeclaredType { body, .. } => value_foreign(*body),
-        Object::UpLink { value } => value.is_none_or(value_foreign),
+        Object::TypeSlot { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,
             text,
@@ -3375,36 +3143,6 @@ mod tests {
                 .loc(),
             Some(call_loc)
         );
-    }
-
-    #[test]
-    fn sourced_import_marks_root_and_children_original() {
-        let root_loc = location("data", 0..5);
-        let item_loc = location("data-item", 1..2);
-        let sourced = SourcedValue {
-            value: Value::Array(vec![Value::Int(7)].into()),
-            provenance: crate::json::Provenance {
-                values: [
-                    (Vec::new(), root_loc),
-                    (vec![ValuePathSegment::Index(0)], item_loc),
-                ]
-                .into_iter()
-                .collect(),
-                keys: Default::default(),
-            },
-        };
-        let mut heap = Heap::work();
-        let root = heap.import_sourced_value(None, &sourced).unwrap();
-        assert!(root.is_original());
-        assert_eq!(root.loc(), Some(root_loc));
-        let DecodedValue::Array(handle) = root.value() else {
-            panic!("expected imported Array")
-        };
-        let Object::Array(items) = heap.object(handle).unwrap() else {
-            panic!("expected Array object")
-        };
-        assert!(items[0].is_original());
-        assert_eq!(items[0].loc(), Some(item_loc));
     }
 
     #[test]
@@ -3593,7 +3331,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_nodes_relocate_between_work_worlds_but_cannot_enter_main_or_value() {
+    fn failed_nodes_relocate_between_work_worlds_but_cannot_enter_main() {
         let main = Heap::main();
         let mut source = Heap::work();
         let root = Val::unknown(DecodedValue::Array(source.allocate(Object::Array(
@@ -3609,15 +3347,6 @@ mod tests {
             panic!("expected relocated Array object")
         };
         assert!(matches!(items[0].value(), DecodedValue::Failed(7)));
-        assert!(
-            HeapView {
-                current: &target,
-                background: Some(&main),
-            }
-            .export_value(relocated[0])
-            .is_err()
-        );
-
         let mut destination = Heap::main();
         assert!(publish_root(&mut destination, &source, root).is_err());
     }
@@ -3625,9 +3354,9 @@ mod tests {
     #[test]
     fn publication_preserves_main_edges_and_relocates_work_edges() {
         let mut main = Heap::main();
-        let stable = publish_value(&mut main, &Value::Bytes(vec![1, 2, 3].into()))
-            .unwrap()
-            .runtime();
+        let stable = rv(DecodedValue::Bytes(
+            main.allocate(Object::Bytes(vec![1, 2, 3].into_boxed_slice())),
+        ));
         let mut work = Heap::work();
         let work_root = work.allocate(Object::Array(vec![stable].into()));
 
@@ -3647,133 +3376,6 @@ mod tests {
         assert_eq!(stable_bytes.storage, Storage::Main);
         assert_eq!(main.counts(), (2, 0, 0));
     }
-
-    #[test]
-    fn scalar_equality_compares_contents_across_storage() {
-        let value = Value::string("same string that is too long for the short string form");
-        let mut world = Heap::main();
-        let persistent = publish_value(&mut world, &value).unwrap().runtime();
-        let mut local = Heap::work();
-        let local_value = local.import_value(Some(&world), &value).unwrap();
-        assert!(
-            HeapView {
-                current: &local,
-                background: Some(&world),
-            }
-            .values_equal(local_value, persistent)
-            .unwrap()
-        );
-
-        let persistent_atom = publish_value(&mut world, &Value::atom("custom"))
-            .unwrap()
-            .runtime();
-        let local_atom = local.import_value(None, &Value::atom("custom")).unwrap();
-        assert!(
-            HeapView {
-                current: &local,
-                background: Some(&world),
-            }
-            .values_equal(local_atom, persistent_atom)
-            .unwrap()
-        );
-
-        let bytes = Value::Bytes(Arc::from(&b"same bytes"[..]));
-        let persistent_bytes = publish_value(&mut world, &bytes).unwrap().runtime();
-        let local_bytes = local.import_value(None, &bytes).unwrap();
-        assert!(
-            HeapView {
-                current: &local,
-                background: Some(&world),
-            }
-            .values_equal(local_bytes, persistent_bytes)
-            .unwrap()
-        );
-    }
-
-    #[test]
-    fn opaque_values_preserve_nominal_identity_and_logical_equality() {
-        let module = crate::value::NativeModuleId(7);
-        let token_type = crate::NativeType::bind(
-            crate::value::NativeTypeId { module, local: 0 },
-            "fixture#Token",
-        );
-        let other_native_type = crate::NativeType::bind(
-            crate::value::NativeTypeId { module, local: 1 },
-            "fixture#Other",
-        );
-        let token = Value::Opaque(crate::OpaqueValue::new(token_type.clone(), 42_u64));
-        let other_type = Value::Opaque(crate::OpaqueValue::new(other_native_type.clone(), 42_u64));
-        let mut main = Heap::main();
-        let persistent = publish_value(&mut main, &token).unwrap().runtime();
-        let mut work = Heap::work();
-        let local = work.import_value(Some(&main), &token).unwrap();
-        let other = work.import_value(Some(&main), &other_type).unwrap();
-        let view = HeapView {
-            current: &work,
-            background: Some(&main),
-        };
-        assert!(view.values_equal(local, persistent).unwrap());
-        assert!(!view.values_equal(local, other).unwrap());
-        let exported = view.export_value(local).unwrap();
-        let Value::Opaque(exported) = exported else {
-            panic!("expected Opaque value")
-        };
-        assert_eq!(exported.native_type().qualified_name(), "fixture#Token");
-        assert_eq!(exported.downcast_ref::<u64>(&token_type), Some(&42));
-        assert!(exported.downcast_ref::<u64>(&other_native_type).is_none());
-    }
-
-    #[test]
-    fn composite_equality_uses_function_identity_at_func_leaves() {
-        let tagged =
-            Value::Tuple(vec![Value::atom("Ok"), Value::Array(vec![Value::Int(42)].into())].into());
-        let mut world = Heap::main();
-        let persistent = publish_value(&mut world, &tagged).unwrap().runtime();
-        let mut local = Heap::work();
-        let local_tagged = local.import_value(Some(&world), &tagged).unwrap();
-        let function = Arc::new(crate::compile_source("test", "fn() { 1 }").unwrap());
-        let closure = Arc::new(Closure::new(function, Vec::new()));
-        let with_function = Value::Dict(Dict::new(
-            Arc::new(Shape::from_sorted_fields(vec!["value".into()])),
-            vec![Value::Array(vec![Value::Func(Arc::clone(&closure))].into())],
-        ));
-        let with_function = local.import_value(None, &with_function).unwrap();
-        let same_identity = local
-            .import_value(None, &Value::Func(Arc::clone(&closure)))
-            .unwrap();
-        let same_identity_again = local
-            .import_value(None, &Value::Func(Arc::clone(&closure)))
-            .unwrap();
-        let promoted = publish_root(&mut world, &local, same_identity)
-            .unwrap()
-            .runtime();
-        let different_identity = local
-            .import_value(
-                None,
-                &Value::Func(Arc::new(Closure::new(
-                    Arc::new(crate::compile_source("test", "fn() { 1 }").unwrap()),
-                    Vec::new(),
-                ))),
-            )
-            .unwrap();
-        let view = HeapView {
-            current: &local,
-            background: Some(&world),
-        };
-        assert!(view.values_equal(local_tagged, persistent).unwrap());
-        assert!(view.values_equal(with_function, with_function).unwrap());
-        assert!(
-            view.values_equal(same_identity, same_identity_again)
-                .unwrap()
-        );
-        assert!(view.values_equal(same_identity, promoted).unwrap());
-        assert!(
-            !view
-                .values_equal(same_identity, different_identity)
-                .unwrap()
-        );
-    }
-
     #[test]
     fn structural_equality_terminates_on_internal_cycles() {
         let mut local = Heap::work();
@@ -3806,16 +3408,16 @@ mod tests {
     }
 
     #[test]
-    fn promotion_copies_ready_up_links_and_rejects_uninitialized_links() {
+    fn promotion_copies_ready_type_slots_and_rejects_uninitialized_links() {
         let mut local = Heap::work();
-        let link = local.allocate(Object::UpLink { value: None });
-        let array = local.allocate(Object::Array(vec![rv(DecodedValue::UpLink(link))].into()));
+        let link = local.allocate(Object::TypeSlot { value: None });
+        let array = local.allocate(Object::Array(vec![rv(DecodedValue::TypeSlot(link))].into()));
         local
-            .initialize_up_link(link, rv(DecodedValue::Array(array)))
+            .initialize_type_slot(link, rv(DecodedValue::Array(array)))
             .unwrap();
         let mut world = Heap::main();
-        let DecodedValue::UpLink(persistent_link) =
-            publish_root(&mut world, &local, rv(DecodedValue::UpLink(link)))
+        let DecodedValue::TypeSlot(persistent_link) =
+            publish_root(&mut world, &local, rv(DecodedValue::TypeSlot(link)))
                 .unwrap()
                 .runtime()
                 .value()
@@ -3828,7 +3430,7 @@ mod tests {
             background: Some(&world),
         };
         let DecodedValue::Array(array) = view
-            .up_link(persistent_link)
+            .type_slot(persistent_link)
             .unwrap()
             .expect("published up-link is ready")
             .value()
@@ -3837,235 +3439,13 @@ mod tests {
         };
         assert_eq!(
             view.sequence(array, false).unwrap(),
-            &[rv(DecodedValue::UpLink(persistent_link))]
+            &[rv(DecodedValue::TypeSlot(persistent_link))]
         );
 
         let mut uninitialized = Heap::work();
-        let link = uninitialized.allocate(Object::UpLink { value: None });
-        assert!(publish_root(&mut world, &uninitialized, rv(DecodedValue::UpLink(link))).is_err());
-    }
-
-    #[test]
-    fn dict_lookup_binary_searches_across_storage() {
-        let value = Value::Dict(Dict::new(
-            Arc::new(Shape::from_sorted_fields(vec![
-                "a".into(),
-                "b".into(),
-                "c".into(),
-            ])),
-            vec![Value::Int(1), Value::Int(2), Value::Int(3)],
-        ));
-        let mut world = Heap::main();
-        let DecodedValue::Dict(dict) = publish_value(&mut world, &value).unwrap().runtime().value()
-        else {
-            panic!("expected persistent Dict")
-        };
-        let mut local = Heap::work();
-        let field = local.intern("b");
-        let view = HeapView {
-            current: &local,
-            background: Some(&world),
-        };
-        assert_eq!(
-            view.dict_get(dict, field).unwrap(),
-            Some(rv(DecodedValue::Int(2)))
-        );
-        assert_eq!(
-            view.dict_get_text(dict, "c").unwrap(),
-            Some(rv(DecodedValue::Int(3)))
-        );
-    }
-
-    #[test]
-    fn linked_prototype_copy_shares_code_and_rebuilds_links() {
-        let function = Arc::new(crate::compile_source("test", "fn(value) { value }").unwrap());
-        let closure = Value::Func(Arc::new(Closure::new(
-            Arc::clone(&function),
-            vec![Value::string("capture")],
-        )));
-        let mut current = Heap::work();
-        let root = current.import_value(None, &closure).unwrap();
-        let mut world = Heap::main();
-        let copied = copy_roots(
-            &mut world,
-            HeapView {
-                current: &current,
-                background: None,
-            },
-            &[root],
-        )
-        .unwrap()[0];
-        let local = Heap::work();
-        let exported = HeapView {
-            current: &local,
-            background: Some(&world),
-        }
-        .export_value(copied)
-        .unwrap();
-        let Value::Func(exported) = exported else {
-            panic!("expected exported closure")
-        };
-        let Prototype::Bytecode(exported_function) = exported.prototype() else {
-            panic!("expected bytecode prototype")
-        };
-        assert!(Arc::ptr_eq(function.code(), exported_function.code()));
+        let link = uninitialized.allocate(Object::TypeSlot { value: None });
         assert!(
-            matches!(exported.upvalues(), [Value::String(value)] if value.as_ref() == "capture")
+            publish_root(&mut world, &uninitialized, rv(DecodedValue::TypeSlot(link))).is_err()
         );
-    }
-
-    #[test]
-    fn legacy_value_boundary_round_trips_heap_values() {
-        let value = Value::Tuple(
-            vec![
-                Value::Int(42),
-                Value::string("short"),
-                Value::Atom(Atom::named("Custom")),
-                Value::Array(vec![Value::Float(1.5)].into()),
-            ]
-            .into(),
-        );
-        let mut heap = Heap::work();
-        let runtime = heap.import_value(None, &value).unwrap();
-        let exported = HeapView {
-            current: &heap,
-            background: None,
-        }
-        .export_value(runtime)
-        .unwrap();
-        assert_eq!(exported.to_string(), value.to_string());
-    }
-
-    #[test]
-    fn declared_witnesses_replace_payload_wrappers_across_equality_and_boundaries() {
-        let number = DeclaredType::bind("test", 1, "Number", Value::Int(0));
-        let other = DeclaredType::bind("test", 2, "Other", Value::Int(0));
-        let declared =
-            |owner: DeclaredType, payload| Value::Declared(DeclaredValue::new(owner, payload));
-        let mut source = Heap::work();
-        let left = source
-            .import_value(None, &declared(number.clone(), Value::Int(7)))
-            .unwrap();
-        let right = source
-            .import_value(None, &declared(number.clone(), Value::Int(7)))
-            .unwrap();
-        let different = source
-            .import_value(None, &declared(other, Value::Int(7)))
-            .unwrap();
-        assert_eq!(left.value(), DecodedValue::Int(7));
-        assert!(left.type_witness().is_some());
-        let view = HeapView {
-            current: &source,
-            background: None,
-        };
-        assert!(view.values_equal(left, right).unwrap());
-        assert!(!view.values_equal(left, different).unwrap());
-
-        let exported = view.export_value(left).unwrap();
-        let Value::Declared(exported) = exported else {
-            panic!("declared witness was not reconstructed at the Host boundary")
-        };
-        assert_eq!(exported.owner().id(), number.id());
-        assert!(matches!(exported.payload(), Value::Int(7)));
-
-        let mut main = Heap::main();
-        let copied = copy_roots(&mut main, view, &[left]).unwrap()[0];
-        assert_eq!(copied.value(), DecodedValue::Int(7));
-        assert_eq!(copied.type_witness().unwrap().storage, Storage::Main);
-        let main_view = HeapView {
-            current: &main,
-            background: None,
-        };
-        let Value::Declared(copied) = main_view.export_value(copied).unwrap() else {
-            panic!("copied witness was not reconstructed at the Host boundary")
-        };
-        assert_eq!(copied.owner().id(), number.id());
-        assert!(matches!(copied.payload(), Value::Int(7)));
-    }
-
-    #[test]
-    fn declared_atoms_keep_raw_atom_equality() {
-        let owner = DeclaredType::bind("test", 1, "Flag", Value::atom("Atom"));
-        let mut heap = Heap::work();
-        let declared = heap
-            .import_value(
-                None,
-                &Value::Declared(DeclaredValue::new(owner, Value::atom("Ready"))),
-            )
-            .unwrap();
-        let raw = Val::unknown(heap.atom(None, "Ready"));
-        let view = HeapView {
-            current: &heap,
-            background: None,
-        };
-        assert!(view.values_equal(declared, raw).unwrap());
-        assert!(view.values_equal(raw, declared).unwrap());
-    }
-
-    #[test]
-    fn legacy_projection_reuses_completed_dag_nodes_and_rejects_cycles() {
-        let mut heap = Heap::work();
-        let shared = heap.allocate(Object::Array(
-            vec![rv(DecodedValue::Int(1)), rv(DecodedValue::Int(2))].into(),
-        ));
-        let root = heap.allocate(Object::Tuple(
-            vec![
-                rv(DecodedValue::Array(shared)),
-                rv(DecodedValue::Array(shared)),
-            ]
-            .into(),
-        ));
-        let exported = HeapView {
-            current: &heap,
-            background: None,
-        }
-        .export_value(rv(DecodedValue::Tuple(root)))
-        .unwrap();
-        let Value::Tuple(items) = exported else {
-            panic!("expected exported Tuple")
-        };
-        let [Value::Array(left), Value::Array(right)] = items.as_ref() else {
-            panic!("expected two exported Arrays")
-        };
-        assert!(Arc::ptr_eq(left, right));
-
-        let cycle = heap.reserve();
-        heap.initialize(
-            cycle,
-            Object::Array(vec![rv(DecodedValue::Array(cycle))].into()),
-        )
-        .unwrap();
-        let error = HeapView {
-            current: &heap,
-            background: None,
-        }
-        .export_value(rv(DecodedValue::Array(cycle)))
-        .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "cyclic heap values cannot cross the legacy Value boundary"
-        );
-    }
-
-    #[test]
-    fn legacy_value_boundary_rejects_non_finite_float() {
-        let mut heap = Heap::work();
-        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let error = heap.import_value(None, &Value::Float(value)).unwrap_err();
-            assert_eq!(error.to_string(), "Telora Float must be finite");
-        }
-
-        let runtime = Val::unknown(DecodedValue::Float(f64::NAN));
-        let error = HeapView {
-            current: &heap,
-            background: None,
-        }
-        .export_value(runtime)
-        .unwrap_err();
-        assert_eq!(error.to_string(), "Telora Float must be finite");
-
-        let mut world = Heap::main();
-        let error = publish_root(&mut world, &heap, runtime).unwrap_err();
-        assert_eq!(error.to_string(), "Telora Float must be finite");
     }
 }

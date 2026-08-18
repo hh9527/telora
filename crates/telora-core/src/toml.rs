@@ -1,8 +1,9 @@
-use crate::json::{Provenance, SourcedValue, ValuePath, ValuePathSegment};
+use crate::DataWorld;
+use crate::heap::{DecodedValue, Heap, Object, Val};
+use crate::json::{DataScalar, Provenance, SourcedValue, ValuePath, ValuePathSegment};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::toml::lexer::Token;
 use crate::syntax::toml::parser::{CstData, Node, NodeRef, Rule};
-use crate::{Atom, Value, Vm};
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
@@ -42,7 +43,7 @@ struct Entry {
 
 #[derive(Clone)]
 enum TomlNode {
-    Scalar(Value, Location),
+    Scalar(DataScalar, Location),
     Array(Vec<TomlNode>, Location, bool),
     Table(Table),
 }
@@ -96,12 +97,15 @@ impl<'a> TomlLowerer<'a> {
         for statement in statements {
             self.statement(&mut root, statement)?;
         }
-        let mut vm = Vm::new();
+        let mut heap = Heap::work();
         let mut provenance = Provenance::default();
         let mut path = Vec::new();
-        let value = materialize_table(root, &mut vm, &mut provenance, &mut path)
+        let root = materialize_table(root, &mut heap, &mut provenance, &mut path)
             .map_err(|message| self.error(NodeRef::ROOT, message))?;
-        Ok(SourcedValue { value, provenance })
+        Ok(SourcedValue {
+            value: DataWorld::new(heap, root),
+            provenance,
+        })
     }
 
     fn collect_statements(&self, node: NodeRef, output: &mut Vec<NodeRef>) {
@@ -216,7 +220,7 @@ impl<'a> TomlLowerer<'a> {
         };
         match self.cst.get(node) {
             Node::Token(Token::String, _) => Ok(TomlNode::Scalar(
-                Value::string(self.decode_string(node)?),
+                DataScalar::String(self.decode_string(node)?),
                 self.location(node),
             )),
             Node::Token(Token::Atom, _) => self.atom(node),
@@ -230,14 +234,14 @@ impl<'a> TomlLowerer<'a> {
         let text = self.text(node);
         let location = self.location(node);
         let value = match text.as_ref() {
-            "true" => Value::bool(true),
-            "false" => Value::bool(false),
+            "true" => DataScalar::Atom("True".into()),
+            "false" => DataScalar::Atom("False".into()),
             _ => {
                 if let Some(temporal) = parse_temporal(&text) {
                     let (tag, canonical) = temporal.map_err(|message| self.error(node, message))?;
-                    Value::Tagged {
-                        tag: Atom::named(tag),
-                        payload: Box::new(Value::string(canonical)),
+                    DataScalar::TaggedString {
+                        tag: tag.into(),
+                        value: canonical,
                     }
                 } else {
                     parse_number(&text).map_err(|message| self.error(node, message))?
@@ -517,48 +521,66 @@ fn seal_table(table: &mut Table) {
 
 fn materialize_table(
     table: Table,
-    vm: &mut Vm,
+    heap: &mut Heap,
     provenance: &mut Provenance,
     path: &mut ValuePath,
-) -> Result<Value, String> {
+) -> Result<Val, String> {
     let mut fields = Vec::with_capacity(table.fields.len());
     for (name, entry) in table.fields {
         path.push(ValuePathSegment::Key(name.clone()));
         provenance.keys.insert(path.clone(), entry.key_location);
-        let value = materialize_node(entry.node, vm, provenance, path)?;
+        let value = materialize_node(entry.node, heap, provenance, path)?;
         path.pop();
         fields.push((name, value));
     }
     provenance.values.insert(path.clone(), table.location);
-    vm.make_dict(fields)
+    let names = fields
+        .iter()
+        .map(|(name, _)| heap.intern(name))
+        .collect::<Vec<_>>();
+    let values = fields
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    let shape = heap.intern_shape(names);
+    Ok(Val::original(
+        DecodedValue::Dict(heap.allocate(Object::Dict {
+            shape,
+            values: values.into_boxed_slice(),
+        })),
+        Some(table.location.into()),
+    ))
 }
 
 fn materialize_node(
     node: TomlNode,
-    vm: &mut Vm,
+    heap: &mut Heap,
     provenance: &mut Provenance,
     path: &mut ValuePath,
-) -> Result<Value, String> {
+) -> Result<Val, String> {
     match node {
         TomlNode::Scalar(value, location) => {
             provenance.values.insert(path.clone(), location);
-            Ok(value)
+            Ok(value.lower(heap, location))
         }
         TomlNode::Array(values, location, _) => {
             let mut output = Vec::with_capacity(values.len());
             for (index, value) in values.into_iter().enumerate() {
                 path.push(ValuePathSegment::Index(index));
-                output.push(materialize_node(value, vm, provenance, path)?);
+                output.push(materialize_node(value, heap, provenance, path)?);
                 path.pop();
             }
             provenance.values.insert(path.clone(), location);
-            Ok(Value::Array(output.into()))
+            Ok(Val::original(
+                DecodedValue::Array(heap.allocate(Object::Array(output.into_boxed_slice()))),
+                Some(location.into()),
+            ))
         }
-        TomlNode::Table(table) => materialize_table(table, vm, provenance, path),
+        TomlNode::Table(table) => materialize_table(table, heap, provenance, path),
     }
 }
 
-fn parse_number(text: &str) -> Result<Value, &'static str> {
+fn parse_number(text: &str) -> Result<DataScalar, &'static str> {
     validate_numeric_underscores(text)?;
     let normalized = text.replace('_', "");
     match normalized.as_str() {
@@ -583,7 +605,7 @@ fn parse_number(text: &str) -> Result<Value, &'static str> {
         return value.and_then(|value| {
             value
                 .is_finite()
-                .then_some(Value::Float(value))
+                .then_some(DataScalar::Float(value))
                 .ok_or("TOML Float must be finite")
         });
     }
@@ -609,7 +631,7 @@ fn parse_number(text: &str) -> Result<Value, &'static str> {
     let magnitude = i128::from_str_radix(digits, radix).map_err(|_| "invalid TOML integer")?;
     let signed = if negative { -magnitude } else { magnitude };
     i64::try_from(signed)
-        .map(Value::Int)
+        .map(DataScalar::Int)
         .map_err(|_| "TOML integer is outside the i64 range")
 }
 

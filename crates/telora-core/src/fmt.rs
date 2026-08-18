@@ -35,9 +35,9 @@ fn resolve(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
             metadata = body;
             continue;
         }
-        if metadata.is_hidden_up_link() {
+        if metadata.is_hidden_type_slot() {
             metadata = metadata
-                .resolve_hidden_up_link()
+                .resolve_hidden_type_slot()
                 .map_err(NativeError::new)?;
             continue;
         }

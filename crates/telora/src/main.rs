@@ -10,8 +10,8 @@ use std::process::{Command as ProcessCommand, Stdio as ProcessStdio};
 use std::sync::Arc;
 use telora_core::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
-    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location, Quota,
-    RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent, Value,
+    DataWorld, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
+    Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent,
     WorkspaceModuleState, WorkspaceSnapshot, parse_json,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -1068,7 +1068,7 @@ fn show_at(
     Ok(())
 }
 
-fn read_input(path: &str) -> Result<Value, String> {
+fn read_input(path: &str) -> Result<DataWorld, String> {
     let (source_name, source) = if path == "-" {
         let mut source = String::new();
         io::stdin()

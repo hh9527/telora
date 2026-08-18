@@ -1,4 +1,3 @@
-use crate::bytecode::BytecodeFunction;
 use crate::vm::CallContext;
 use std::any::Any;
 use std::fmt;
@@ -50,44 +49,14 @@ impl Atom {
     }
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Shape {
-    fields: Arc<[String]>,
-}
-
-impl Shape {
-    pub(crate) fn from_sorted_fields(fields: Vec<String>) -> Self {
-        debug_assert!(fields.windows(2).all(|pair| pair[0] < pair[1]));
-        Self {
-            fields: fields.into(),
-        }
-    }
-
-    pub fn fields(&self) -> &[String] {
-        &self.fields
-    }
-
-    pub fn field_index(&self, field: &str) -> Option<usize> {
-        self.fields
-            .binary_search_by(|candidate| candidate.as_str().cmp(field))
-            .ok()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Dict {
-    shape: Arc<Shape>,
-    values: Arc<[Value]>,
-}
-
 type OpaquePayload = dyn Any + Send + Sync;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct NativeModuleId(pub(crate) u32);
 
 pub(crate) const RESERVED_NATIVE_MODULE_MAX: u32 = 1023;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct NativeTypeId {
     pub(crate) module: NativeModuleId,
     pub(crate) local: u32,
@@ -101,62 +70,56 @@ pub struct NativeType {
 
 #[derive(Clone, Debug)]
 pub struct DeclaredTypeId {
-    module: Arc<str>,
+    module: crate::ModuleId,
     declaration: u32,
     arguments: Arc<[crate::types::TypeDescriptor]>,
-    argument_keys: Arc<[String]>,
+    argument_ids: Arc<[crate::types::TypeExprId]>,
 }
 
 impl DeclaredTypeId {
-    pub(crate) fn concrete(module: impl Into<Arc<str>>, declaration: u32) -> Self {
+    pub(crate) fn concrete(module: crate::ModuleId, declaration: u32) -> Self {
         Self {
-            module: module.into(),
+            module,
             declaration,
             arguments: Arc::new([]),
-            argument_keys: Arc::new([]),
+            argument_ids: Arc::new([]),
         }
     }
 
     pub(crate) fn applied(
-        module: impl Into<Arc<str>>,
+        module: crate::ModuleId,
         declaration: u32,
         arguments: &[crate::types::TypeDescriptor],
     ) -> Self {
         Self {
-            module: module.into(),
+            module,
             declaration,
             arguments: arguments.into(),
-            argument_keys: arguments
+            argument_ids: arguments
                 .iter()
-                .map(crate::types::TypeDescriptor::identity_key)
+                .map(crate::types::TypeExprId::from_descriptor)
                 .collect::<Vec<_>>()
                 .into(),
         }
     }
 
     pub(crate) fn reapply(&self, arguments: &[crate::types::TypeDescriptor]) -> Self {
-        Self::applied(Arc::clone(&self.module), self.declaration, arguments)
+        Self::applied(self.module, self.declaration, arguments)
     }
 
     pub(crate) fn arguments(&self) -> &[crate::types::TypeDescriptor] {
         &self.arguments
     }
 
-    pub(crate) fn has_same_head(&self, other: &Self) -> bool {
-        self.module == other.module && self.declaration == other.declaration
+    pub(crate) fn constructor(&self) -> crate::TypeConstructorId {
+        crate::TypeConstructorId {
+            module: self.module,
+            local: self.declaration,
+        }
     }
 
-    pub(crate) fn identity_key(&self) -> String {
-        format!(
-            "{}:{}:{}:{}",
-            self.module.len(),
-            self.module,
-            self.declaration,
-            self.argument_keys
-                .iter()
-                .map(|argument| format!("{}:{argument}", argument.len()))
-                .collect::<String>()
-        )
+    pub(crate) fn has_same_head(&self, other: &Self) -> bool {
+        self.module == other.module && self.declaration == other.declaration
     }
 }
 
@@ -164,7 +127,7 @@ impl PartialEq for DeclaredTypeId {
     fn eq(&self, other: &Self) -> bool {
         self.module == other.module
             && self.declaration == other.declaration
-            && self.argument_keys == other.argument_keys
+            && self.argument_ids == other.argument_ids
     }
 }
 
@@ -174,7 +137,7 @@ impl std::hash::Hash for DeclaredTypeId {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.module.hash(state);
         self.declaration.hash(state);
-        self.argument_keys.hash(state);
+        self.argument_ids.hash(state);
     }
 }
 
@@ -186,83 +149,11 @@ impl PartialOrd for DeclaredTypeId {
 
 impl Ord for DeclaredTypeId {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.module, self.declaration, &self.argument_keys).cmp(&(
+        (&self.module, self.declaration, &self.argument_ids).cmp(&(
             &other.module,
             other.declaration,
-            &other.argument_keys,
+            &other.argument_ids,
         ))
-    }
-}
-
-#[derive(Clone)]
-pub struct DeclaredType {
-    pub(crate) id: DeclaredTypeId,
-    pub(crate) name: Arc<str>,
-    pub(crate) body: Box<Value>,
-}
-
-impl DeclaredType {
-    #[cfg(test)]
-    pub(crate) fn bind(
-        module: impl Into<Arc<str>>,
-        declaration: u32,
-        name: impl Into<Arc<str>>,
-        body: Value,
-    ) -> Self {
-        Self {
-            id: DeclaredTypeId::concrete(module, declaration),
-            name: name.into(),
-            body: Box::new(body),
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn id(&self) -> &DeclaredTypeId {
-        &self.id
-    }
-
-    pub(crate) fn body(&self) -> &Value {
-        &self.body
-    }
-}
-
-impl PartialEq for DeclaredType {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for DeclaredType {}
-
-impl std::hash::Hash for DeclaredType {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-#[derive(Clone)]
-pub struct DeclaredValue {
-    pub(crate) owner: DeclaredType,
-    pub(crate) payload: Box<Value>,
-}
-
-impl DeclaredValue {
-    pub(crate) fn new(owner: DeclaredType, payload: Value) -> Self {
-        Self {
-            owner,
-            payload: Box::new(payload),
-        }
-    }
-
-    pub fn owner(&self) -> &DeclaredType {
-        &self.owner
-    }
-
-    pub fn payload(&self) -> &Value {
-        &self.payload
     }
 }
 
@@ -351,13 +242,6 @@ impl fmt::Debug for OpaqueValue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "<opaque {}>", self.native_type.qualified_name)
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Closure {
-    identity: Arc<()>,
-    prototype: Prototype,
-    upvalues: Arc<[Value]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1095,388 +979,4 @@ impl fmt::Debug for NativeFunction {
             .field("kind", &self.kind)
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum Prototype {
-    Bytecode(Arc<BytecodeFunction>),
-    Native(NativeFunction),
-}
-
-pub type Callable = Prototype;
-
-impl Closure {
-    pub(crate) fn from_parts(prototype: Prototype, upvalues: Vec<Value>) -> Self {
-        Self {
-            identity: Arc::new(()),
-            prototype,
-            upvalues: upvalues.into(),
-        }
-    }
-
-    pub(crate) fn from_parts_with_identity(
-        identity: Arc<()>,
-        prototype: Prototype,
-        upvalues: Vec<Value>,
-    ) -> Self {
-        Self {
-            identity,
-            prototype,
-            upvalues: upvalues.into(),
-        }
-    }
-
-    pub fn new(function: Arc<BytecodeFunction>, captures: Vec<Value>) -> Self {
-        Self::from_parts(Prototype::Bytecode(function), captures)
-    }
-
-    pub fn native(function: NativeFunction) -> Self {
-        Self::native_with_upvalues(function, Vec::new())
-    }
-
-    pub fn native_with_upvalues(function: NativeFunction, upvalues: Vec<Value>) -> Self {
-        Self::from_parts(Prototype::Native(function), upvalues)
-    }
-
-    pub fn prototype(&self) -> &Prototype {
-        &self.prototype
-    }
-
-    pub fn upvalues(&self) -> &[Value] {
-        &self.upvalues
-    }
-
-    pub(crate) fn identity(&self) -> &Arc<()> {
-        &self.identity
-    }
-}
-
-impl Dict {
-    pub(crate) fn new(shape: Arc<Shape>, values: Vec<Value>) -> Self {
-        debug_assert_eq!(shape.fields().len(), values.len());
-        Self {
-            shape,
-            values: values.into(),
-        }
-    }
-
-    pub fn shape(&self) -> &Arc<Shape> {
-        &self.shape
-    }
-
-    pub fn values(&self) -> &[Value] {
-        &self.values
-    }
-
-    pub fn get(&self, field: &str) -> Option<&Value> {
-        self.shape
-            .field_index(field)
-            .map(|index| &self.values[index])
-    }
-
-    pub fn shares_shape_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.shape, &other.shape)
-    }
-}
-
-#[derive(Clone)]
-pub struct DynValue {
-    identity: Arc<()>,
-    descriptor: Box<Value>,
-    value: Box<Value>,
-    scheme: Option<crate::TypeScheme>,
-    origin: Option<Arc<str>>,
-}
-
-impl DynValue {
-    pub(crate) fn from_module_export(
-        descriptor: Value,
-        value: Value,
-        scheme: crate::TypeScheme,
-        origin: impl Into<Arc<str>>,
-    ) -> Self {
-        Self {
-            identity: Arc::new(()),
-            descriptor: Box::new(descriptor),
-            value: Box::new(value),
-            scheme: Some(scheme),
-            origin: Some(origin.into()),
-        }
-    }
-
-    pub(crate) fn from_parts_with_metadata(
-        identity: Arc<()>,
-        descriptor: Value,
-        value: Value,
-        scheme: Option<crate::TypeScheme>,
-        origin: Option<Arc<str>>,
-    ) -> Self {
-        Self {
-            identity,
-            descriptor: Box::new(descriptor),
-            value: Box::new(value),
-            scheme,
-            origin,
-        }
-    }
-
-    pub(crate) fn identity(&self) -> &Arc<()> {
-        &self.identity
-    }
-
-    pub(crate) fn descriptor(&self) -> &Value {
-        &self.descriptor
-    }
-
-    pub(crate) fn value(&self) -> &Value {
-        &self.value
-    }
-
-    pub(crate) fn scheme(&self) -> Option<&crate::TypeScheme> {
-        self.scheme.as_ref()
-    }
-
-    pub(crate) fn origin(&self) -> Option<&str> {
-        self.origin.as_deref()
-    }
-}
-
-#[derive(Clone)]
-pub enum Value {
-    Int(i64),
-    Float(f64),
-    String(Arc<str>),
-    Bytes(Arc<[u8]>),
-    NativeType(NativeType),
-    DeclaredType(DeclaredType),
-    Declared(DeclaredValue),
-    Opaque(OpaqueValue),
-    Dict(Dict),
-    Array(Arc<[Value]>),
-    Atom(Atom),
-    Tagged { tag: Atom, payload: Box<Value> },
-    Tuple(Arc<[Value]>),
-    Func(Arc<Closure>),
-    Dyn(Arc<DynValue>),
-}
-
-impl Value {
-    pub const fn bool(value: bool) -> Self {
-        Self::Atom(Atom::Builtin(if value {
-            BuiltinAtom::True
-        } else {
-            BuiltinAtom::False
-        }))
-    }
-
-    pub const fn none() -> Self {
-        Self::Atom(Atom::Builtin(BuiltinAtom::None))
-    }
-
-    pub fn string(value: impl Into<Arc<str>>) -> Self {
-        Self::String(value.into())
-    }
-
-    pub fn atom(name: impl Into<Arc<str>>) -> Self {
-        Self::Atom(Atom::named(name))
-    }
-
-    pub fn tagged(tag: Atom, payload: Value) -> Self {
-        Self::Tagged {
-            tag,
-            payload: Box::new(payload),
-        }
-    }
-
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Self::Int(_) => "Int",
-            Self::Float(_) => "Float",
-            Self::String(_) => "String",
-            Self::Bytes(_) => "Bytes",
-            Self::NativeType(_) => "Type",
-            Self::DeclaredType(_) => "Type",
-            Self::Declared(value) => value.payload().type_name(),
-            Self::Opaque(_) => "Opaque",
-            Self::Dict(_) => "Dict",
-            Self::Array(_) => "Array",
-            Self::Atom(_) => "Atom",
-            Self::Tagged { .. } => "Tagged",
-            Self::Tuple(_) => "Tuple",
-            Self::Func(_) => "Func",
-            Self::Dyn(_) => "Dyn",
-        }
-    }
-
-    pub fn to_telora_literal(&self) -> Result<String, String> {
-        fn render(value: &Value, output: &mut String) -> Result<(), String> {
-            match value {
-                Value::Int(value) => output.push_str(&value.to_string()),
-                Value::Float(value) if value.is_finite() => output.push_str(&format!("{value:?}")),
-                Value::Float(_) => return Err("non-finite Float has no Telora literal".into()),
-                Value::String(value) => output.push_str(&format!("{value:?}")),
-                Value::Bytes(value) => {
-                    output.push_str("b\"");
-                    for byte in value.iter() {
-                        output.push_str(&format!("\\x{byte:02x}"));
-                    }
-                    output.push('"');
-                }
-                Value::Dict(dict) => {
-                    output.push('{');
-                    for (index, (field, value)) in
-                        dict.shape().fields().iter().zip(dict.values()).enumerate()
-                    {
-                        if !is_telora_identifier(field) {
-                            return Err(format!(
-                                "Dict field {field:?} cannot be represented as a Telora literal"
-                            ));
-                        }
-                        if index > 0 {
-                            output.push_str(", ");
-                        }
-                        output.push_str(field);
-                        output.push_str(": ");
-                        render(value, output)?;
-                    }
-                    output.push('}');
-                }
-                Value::Array(values) => render_values("[", "]", values, output)?,
-                Value::Atom(atom) => {
-                    if !is_telora_identifier(atom.name()) {
-                        return Err(format!(
-                            "Atom {:?} cannot be represented as a Telora literal",
-                            atom.name()
-                        ));
-                    }
-                    output.push('\'');
-                    output.push_str(atom.name());
-                }
-                Value::Tagged { tag, payload } => {
-                    if !is_telora_identifier(tag.name()) {
-                        return Err(format!(
-                            "Tagged constructor {:?} cannot be represented as a Telora literal",
-                            tag.name()
-                        ));
-                    }
-                    output.push('\'');
-                    output.push_str(tag.name());
-                    output.push('(');
-                    render(payload, output)?;
-                    output.push(')');
-                }
-                Value::Tuple(values) => render_values("(", ")", values, output)?,
-                Value::Declared(value) => render(value.payload(), output)?,
-                Value::NativeType(_)
-                | Value::DeclaredType(_)
-                | Value::Opaque(_)
-                | Value::Func(_)
-                | Value::Dyn(_) => {
-                    return Err(format!(
-                        "{} cannot be represented as a Telora literal",
-                        value.type_name()
-                    ));
-                }
-            }
-            Ok(())
-        }
-
-        fn render_values(
-            start: &str,
-            end: &str,
-            values: &[Value],
-            output: &mut String,
-        ) -> Result<(), String> {
-            output.push_str(start);
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    output.push_str(", ");
-                }
-                render(value, output)?;
-            }
-            if start == "(" && values.len() == 1 {
-                output.push(',');
-            }
-            output.push_str(end);
-            Ok(())
-        }
-
-        fn is_telora_identifier(value: &str) -> bool {
-            let mut characters = value.chars();
-            characters
-                .next()
-                .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
-                && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
-        }
-
-        let mut output = String::new();
-        render(self, &mut output)?;
-        Ok(output)
-    }
-}
-
-impl fmt::Debug for Value {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, formatter)
-    }
-}
-
-impl fmt::Display for Value {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Int(value) => write!(formatter, "{value}"),
-            Self::Float(value) => write!(formatter, "{value:?}"),
-            Self::String(value) => write!(formatter, "{value:?}"),
-            Self::Bytes(value) => {
-                write!(formatter, "b\"")?;
-                for byte in value.iter() {
-                    write!(formatter, "\\x{byte:02x}")?;
-                }
-                write!(formatter, "\"")
-            }
-            Self::Opaque(value) => write!(formatter, "{value:?}"),
-            Self::NativeType(value) => write!(formatter, "<type {}>", value.qualified_name()),
-            Self::DeclaredType(value) => write!(formatter, "<type {}>", value.name()),
-            Self::Declared(value) => write!(formatter, "{}", value.payload()),
-            Self::Dict(dict) => {
-                write!(formatter, "{{")?;
-                for (index, (field, value)) in
-                    dict.shape().fields().iter().zip(dict.values()).enumerate()
-                {
-                    if index > 0 {
-                        write!(formatter, ", ")?;
-                    }
-                    write!(formatter, "{field}: {value}")?;
-                }
-                write!(formatter, "}}")
-            }
-            Self::Array(values) => format_sequence(formatter, "[", "]", values),
-            Self::Atom(atom) => write!(formatter, "'{}", atom.name()),
-            Self::Tagged { tag, payload } => write!(formatter, "'{}({payload})", tag.name()),
-            Self::Tuple(values) => format_sequence(formatter, "(", ")", values),
-            Self::Func(closure) => match closure.prototype() {
-                Prototype::Bytecode(function) => {
-                    write!(formatter, "<fn {}>", function.name())
-                }
-                Prototype::Native(function) => write!(formatter, "<native fn {}>", function.name()),
-            },
-            Self::Dyn(_) => formatter.write_str("<dyn>"),
-        }
-    }
-}
-
-fn format_sequence(
-    formatter: &mut fmt::Formatter<'_>,
-    start: &str,
-    end: &str,
-    values: &[Value],
-) -> fmt::Result {
-    write!(formatter, "{start}")?;
-    for (index, value) in values.iter().enumerate() {
-        if index > 0 {
-            write!(formatter, ", ")?;
-        }
-        write!(formatter, "{value}")?;
-    }
-    write!(formatter, "{end}")
 }

@@ -1,8 +1,8 @@
 use crate::ast::Program;
 use crate::hir::{HirDefinitionId, HirProgram, HirResolution};
-use crate::module_id::ModuleId;
+use crate::module_id::ModuleCName;
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
-use crate::types::{Analysis, PartialAnalysis, TypeGraph, TypeId, TypeNode};
+use crate::types::{Analysis, AnalysisTypeId, PartialAnalysis, TypeGraph, TypeNode};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -938,12 +938,12 @@ impl WorkspaceSnapshot {
             .iter()
             .flat_map(|input| input.imports.iter())
             .filter_map(|import| match &import.target {
-                ModuleId::Builtin(name) => Some(name.clone()),
-                ModuleId::Source(_)
-                | ModuleId::Binary(_)
-                | ModuleId::Test(_)
-                | ModuleId::Standalone(_)
-                | ModuleId::Dependency { .. } => None,
+                ModuleCName::Builtin(name) => Some(name.clone()),
+                ModuleCName::Source(_)
+                | ModuleCName::Binary(_)
+                | ModuleCName::Test(_)
+                | ModuleCName::Standalone(_)
+                | ModuleCName::Dependency { .. } => None,
             })
             .collect::<HashSet<_>>();
         for name in core_names.drain() {
@@ -1271,14 +1271,14 @@ fn contains(range: Location, point: Location) -> bool {
 }
 
 fn map_partial_fact(
-    fact: &SemanticFact<TypeId>,
+    fact: &SemanticFact<AnalysisTypeId>,
     type_map: &[WorkspaceTypeId],
 ) -> SemanticFact<WorkspaceTypeId> {
     map_partial_fact_with_base(fact, type_map, 0, None)
 }
 
 fn map_partial_fact_with_base(
-    fact: &SemanticFact<TypeId>,
+    fact: &SemanticFact<AnalysisTypeId>,
     type_map: &[WorkspaceTypeId],
     definition_base: usize,
     diagnostic_map: Option<&[DiagnosticId]>,
@@ -1338,7 +1338,7 @@ fn merge_type_graph(
 }
 
 fn merge_type_node(
-    id: TypeId,
+    id: AnalysisTypeId,
     source: &TypeGraph,
     target: &mut WorkspaceTypeGraph,
     mapped: &mut [Option<WorkspaceTypeId>],
@@ -1420,7 +1420,7 @@ fn merge_type_node(
 pub(crate) struct SemanticImport {
     pub name: String,
     pub location: Location,
-    pub target: ModuleId,
+    pub target: ModuleCName,
     pub namespace: bool,
 }
 

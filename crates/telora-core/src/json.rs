@@ -1,7 +1,8 @@
+use crate::heap::{DecodedValue, Heap, Object, Val};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::json::lexer::Token;
 use crate::syntax::json::parser::{CstData, Node, NodeRef, Rule};
-use crate::{BuiltinAtom, Value, Vm};
+use crate::{BuiltinAtom, DataWorld};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -33,6 +34,32 @@ pub enum ValuePathSegment {
 
 pub type ValuePath = Vec<ValuePathSegment>;
 
+#[derive(Clone, Debug)]
+pub(crate) enum DataScalar {
+    Int(i64),
+    Float(f64),
+    String(String),
+    Atom(String),
+    TaggedString { tag: String, value: String },
+}
+
+impl DataScalar {
+    pub(crate) fn lower(self, heap: &mut Heap, location: Location) -> Val {
+        let value = match self {
+            Self::Int(value) => DecodedValue::Int(value),
+            Self::Float(value) => DecodedValue::Float(value),
+            Self::String(value) => heap.string(None, &value),
+            Self::Atom(value) => heap.atom(None, &value),
+            Self::TaggedString { tag, value } => {
+                let tag = Val::original(heap.atom(None, &tag), Some(location.into()));
+                let payload = Val::original(heap.string(None, &value), Some(location.into()));
+                DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload }))
+            }
+        };
+        Val::original(value, Some(location.into()))
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Provenance {
     pub values: BTreeMap<ValuePath, Location>,
@@ -41,7 +68,7 @@ pub struct Provenance {
 
 #[derive(Clone, Debug)]
 pub struct SourcedValue {
-    pub value: Value,
+    pub value: DataWorld,
     pub provenance: Provenance,
 }
 
@@ -52,7 +79,7 @@ pub struct JsonParse {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub fn parse_json(source_name: &str, source: &str) -> Result<Value, JsonError> {
+pub fn parse_json(source_name: &str, source: &str) -> Result<DataWorld, JsonError> {
     parse_json_with_provenance(source_name, source).map(|parsed| parsed.value)
 }
 
@@ -115,7 +142,7 @@ struct JsonLowerer<'a> {
     source_id: SourceId,
     source: &'a crate::document::DocumentText,
     cst: &'a CstData,
-    vm: Vm,
+    heap: Heap,
     path: ValuePath,
     provenance: Provenance,
 }
@@ -130,7 +157,7 @@ impl<'a> JsonLowerer<'a> {
             source_id,
             source,
             cst,
-            vm: Vm::new(),
+            heap: Heap::work(),
             path: Vec::new(),
             provenance: Provenance::default(),
         }
@@ -141,19 +168,22 @@ impl<'a> JsonLowerer<'a> {
             .children(NodeRef::ROOT)
             .find(|node| self.is_value(*node))
             .ok_or_else(|| self.error(NodeRef::ROOT, "expected a JSON value"))?;
-        let value = self.value(value_node)?;
+        let root = self.value(value_node)?;
         Ok(SourcedValue {
-            value,
+            value: DataWorld::new(self.heap, root),
             provenance: self.provenance,
         })
     }
 
-    fn value(&mut self, node: NodeRef) -> Result<Value, Diagnostic> {
+    fn value(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
+        let location = self.location(node);
         let value = match self.cst.get(node) {
-            Node::Token(Token::Null, _) => Value::none(),
-            Node::Token(Token::True, _) => Value::Atom(crate::Atom::builtin(BuiltinAtom::True)),
-            Node::Token(Token::False, _) => Value::Atom(crate::Atom::builtin(BuiltinAtom::False)),
-            Node::Rule(Rule::StringLiteral, _) => Value::string(self.decode_string(node)?),
+            Node::Token(Token::Null, _) => DecodedValue::BuiltinAtom(BuiltinAtom::None),
+            Node::Token(Token::True, _) => DecodedValue::BuiltinAtom(BuiltinAtom::True),
+            Node::Token(Token::False, _) => DecodedValue::BuiltinAtom(BuiltinAtom::False),
+            Node::Rule(Rule::StringLiteral, _) => {
+                self.heap.string(None, &self.decode_string(node)?)
+            }
             Node::Token(Token::Number, _) => self.number(node)?,
             Node::Rule(Rule::Literal | Rule::Value, _) => {
                 let child = self
@@ -162,17 +192,17 @@ impl<'a> JsonLowerer<'a> {
                     .ok_or_else(|| self.error(node, "empty JSON value"))?;
                 return self.value(child);
             }
-            Node::Rule(Rule::Array, _) => self.array(node)?,
-            Node::Rule(Rule::Object, _) => self.object(node)?,
+            Node::Rule(Rule::Array, _) => return self.array(node),
+            Node::Rule(Rule::Object, _) => return self.object(node),
             _ => return Err(self.error(node, "expected a JSON value")),
         };
         self.provenance
             .values
             .insert(self.path.clone(), self.location(node));
-        Ok(value)
+        Ok(Val::original(value, Some(location.into())))
     }
 
-    fn array(&mut self, node: NodeRef) -> Result<Value, Diagnostic> {
+    fn array(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
         let children = self
             .children(node)
             .filter(|child| self.is_value(*child))
@@ -183,10 +213,16 @@ impl<'a> JsonLowerer<'a> {
             values.push(self.value(child)?);
             self.path.pop();
         }
-        Ok(Value::Array(values.into()))
+        self.provenance
+            .values
+            .insert(self.path.clone(), self.location(node));
+        Ok(Val::original(
+            DecodedValue::Array(self.heap.allocate(Object::Array(values.into_boxed_slice()))),
+            Some(self.location(node).into()),
+        ))
     }
 
-    fn object(&mut self, node: NodeRef) -> Result<Value, Diagnostic> {
+    fn object(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
         let members = self
             .rule_children(node)
             .filter(|child| self.rule(*child) == Some(Rule::Member))
@@ -218,12 +254,25 @@ impl<'a> JsonLowerer<'a> {
             key_spans.insert(key.clone(), key_span);
             fields.insert(key, value);
         }
-        self.vm
-            .make_dict(fields)
-            .map_err(|message| self.error(node, message))
+        let names = fields
+            .keys()
+            .map(|name| self.heap.intern(name))
+            .collect::<Vec<_>>();
+        let values = fields.into_values().collect::<Vec<_>>();
+        let shape = self.heap.intern_shape(names);
+        self.provenance
+            .values
+            .insert(self.path.clone(), self.location(node));
+        Ok(Val::original(
+            DecodedValue::Dict(self.heap.allocate(Object::Dict {
+                shape,
+                values: values.into_boxed_slice(),
+            })),
+            Some(self.location(node).into()),
+        ))
     }
 
-    fn number(&self, node: NodeRef) -> Result<Value, Diagnostic> {
+    fn number(&self, node: NodeRef) -> Result<DecodedValue, Diagnostic> {
         let text = self.text(node);
         if text.contains(['.', 'e', 'E']) {
             let value = text
@@ -232,10 +281,10 @@ impl<'a> JsonLowerer<'a> {
             if !value.is_finite() {
                 return Err(self.error(node, "JSON Float must be finite"));
             }
-            Ok(Value::Float(value))
+            Ok(DecodedValue::Float(value))
         } else {
             text.parse::<i64>()
-                .map(Value::Int)
+                .map(DecodedValue::Int)
                 .map_err(|_| self.error(node, "JSON integer is outside the i64 range"))
         }
     }

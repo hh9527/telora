@@ -22,6 +22,7 @@ mod sha256;
 pub mod source;
 pub mod syntax;
 pub mod toml;
+mod type_store;
 pub mod types;
 pub mod value;
 pub mod vm;
@@ -54,8 +55,8 @@ pub use module::{
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
-    ModuleAuthority, ModuleFormat, ModuleId, ModuleResolver, ResolveModuleError, ResolvedModule,
-    resolve_root_module,
+    FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleAuthority, ModuleCName, ModuleFormat, ModuleId,
+    ModuleResolver, ResolveModuleError, ResolvedModule, TypeConstructorId, resolve_root_module,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use semantic::{
@@ -71,19 +72,17 @@ pub use source::{
     WithOrigin,
 };
 pub use toml::{TomlParse, parse_toml_registered};
+pub use type_store::TypeId;
 pub use types::{
-    Analysis, DeclaredTypeDescriptor, ModuleInterface, PartialAnalysis, SemanticDependencyGraph,
-    SemanticDependencyNode, TypeGraph, TypeId, TypeNode, TypeParameter, TypeParameterId,
-    TypeScheme, analyze_partial_types, analyze_partial_types_with_bindings, analyze_source,
-    analyze_source_with_fuel, analyze_source_with_quota,
+    Analysis, AnalysisTypeId, DeclaredTypeDescriptor, ModuleInterface, PartialAnalysis,
+    SemanticDependencyGraph, SemanticDependencyNode, TypeGraph, TypeNode, TypeParameter,
+    TypeParameterId, TypeScheme, analyze_partial_types, analyze_partial_types_with_bindings,
+    analyze_source, analyze_source_with_fuel, analyze_source_with_quota,
 };
-pub use value::{
-    Atom, BuiltinAtom, Callable, Closure, DeclaredType, DeclaredValue, Dict, NativeError,
-    NativeFunction, NativeType, OpaqueValue, Prototype, Shape, Value,
-};
+pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{
-    CallContext, DebugEvent, DebugSink, DiscardDebugSink, Quota, QuotaAccount, RuntimeError,
-    RuntimeErrorKind, RuntimeFrame, ValueKind, ValueRef, Vm,
+    CallContext, DataWorld, DebugEvent, DebugSink, DiscardDebugSink, ExecutionWorld, Quota,
+    QuotaAccount, RuntimeError, RuntimeErrorKind, RuntimeFrame, ValueKind, ValueRef, Vm,
 };
 pub use workspace::{Workspace, WorkspaceError};
 pub use yaml::{YamlParse, parse_yaml_registered};

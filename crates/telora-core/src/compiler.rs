@@ -1,25 +1,28 @@
 use crate::ast::{
-    BinaryOperator, BindingKind, Block, BlockKind, DictField, DictFieldKind, Expr, ExprKind,
-    Identifier, MatchArm, Pattern, PatternKind, Program, ProgramKind, StringPartKind,
-    UnaryOperator, located,
+    BinaryOperator, BindingKind, Block, BlockKind, DictField, Expr, ExprKind, Identifier, MatchArm,
+    Pattern, PatternKind, Program, StringPartKind, UnaryOperator, located,
 };
-use crate::bytecode::BytecodeFunction;
+use crate::bytecode::{BytecodeFunction, Constant};
+#[cfg(test)]
+use crate::heap::Val;
+use crate::heap::{Heap, PersistentValue};
 use crate::hir::HirProgram;
 use crate::lexer::{FrontendError, SourceLocation};
 use crate::lir::{self, ConstantId, Item, LabelId, Operation, RegisterId};
 use crate::parser::parse_registered;
 use crate::source::{Diagnostic, Location, Origin, SourceDatabase, SourceFile, WithOrigin};
-use crate::types::{Analysis, TypeDescriptor, analyze_program_registered, contains_named_type};
-use crate::value::{Atom, BuiltinAtom, Closure, CoreModelFunction, NativeFunction, Value};
-use crate::{RuntimeError, Vm};
+use crate::types::{Analysis, NominalTypeConstructor, analyze_program_with_bindings_observed};
+use crate::value::{Atom, BuiltinAtom, CoreModelFunction, NativeFunction};
+use crate::{DiscardDebugSink, ExecutionWorld, Quota, QuotaAccount, RuntimeError, Vm};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
+use std::sync::Arc;
 
 struct NestedEnvironment<'a> {
     captures: &'a [String],
-    up_links: &'a HashSet<String>,
+    type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
-    declared_value_owners: &'a HashMap<Location, Value>,
+    declared_value_owners: &'a HashMap<Location, String>,
 }
 
 #[derive(Debug)]
@@ -51,7 +54,58 @@ impl From<RuntimeError> for ExecutionError {
     }
 }
 
-pub fn compile_source(source_name: &str, source: &str) -> Result<BytecodeFunction, FrontendError> {
+pub struct CompiledSource {
+    function: BytecodeFunction,
+    main: Arc<Heap>,
+    externals: HashMap<String, crate::heap::Val>,
+}
+
+impl fmt::Debug for CompiledSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CompiledSource")
+            .field("function", &self.function)
+            .finish_non_exhaustive()
+    }
+}
+
+impl CompiledSource {
+    pub fn function(&self) -> &BytecodeFunction {
+        &self.function
+    }
+
+    pub fn into_function(self) -> BytecodeFunction {
+        self.function
+    }
+
+    pub(crate) fn execute_with_account(
+        &self,
+        vm: &mut Vm,
+        account: &mut QuotaAccount,
+    ) -> Result<ExecutionWorld, RuntimeError> {
+        let work = vm.execute_in_work(&self.main, &self.externals, &self.function, &[], account)?;
+        Ok(ExecutionWorld::new(Arc::clone(&self.main), work))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn execute_with_quota(
+        &self,
+        vm: &mut Vm,
+        quota: Quota,
+    ) -> Result<ExecutionWorld, RuntimeError> {
+        self.execute_with_account(vm, &mut QuotaAccount::new(quota))
+    }
+}
+
+impl std::ops::Deref for CompiledSource {
+    type Target = BytecodeFunction;
+
+    fn deref(&self) -> &Self::Target {
+        &self.function
+    }
+}
+
+pub fn compile_source(source_name: &str, source: &str) -> Result<CompiledSource, FrontendError> {
     let mut sources = SourceDatabase::default();
     let source_id = sources.add(source_name, source);
     let parsed = parse_registered(&sources, source_id);
@@ -65,21 +119,81 @@ pub fn compile_source(source_name: &str, source: &str) -> Result<BytecodeFunctio
                 .expect("failed parse has a diagnostic"),
         )
     })?;
-    let analysis = analyze_program_registered(source_name, &sources, &program, 100_000)?;
-    compile_program_analyzed_in(sources.get(source_id), &program, &analysis)
+    let mut main = Heap::main();
+    let mut type_store = crate::type_store::TypeStore::default();
+    let mut account = QuotaAccount::new(Quota::with_fuel(100_000));
+    let debug_sink: std::sync::Arc<dyn crate::DebugSink> = std::sync::Arc::new(DiscardDebugSink);
+    let analysis = analyze_program_with_bindings_observed(
+        source_name,
+        crate::ModuleId::ANONYMOUS,
+        &program,
+        &mut account,
+        &BTreeMap::new(),
+        &HashSet::new(),
+        &sources,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &debug_sink,
+        &mut main,
+        &mut type_store,
+    )?;
+    let promoted_types = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| {
+            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+        })
+        .map(|binding| binding.value.name.value.clone())
+        .collect::<HashSet<_>>();
+    let erased_bindings = metadata_compilation_plan(&program)
+        .map(|metadata| metadata.erased_bindings)
+        .unwrap_or_default();
+    let function = compile_program_with_promoted_types(
+        sources.get(source_id),
+        &program,
+        &analysis,
+        &promoted_types,
+        &erased_bindings,
+    )?;
+    let mut roots = analysis.runtime_roots.clone();
+    roots.extend(
+        analysis
+            .type_family_values
+            .iter()
+            .flat_map(|(name, family)| {
+                [
+                    (type_family_link_key(name), family.root()),
+                    (type_family_template_link_key(name), family.template()),
+                ]
+            }),
+    );
+    let externals = roots
+        .into_iter()
+        .map(|(name, root): (String, PersistentValue)| (name, root.runtime()))
+        .collect();
+    Ok(CompiledSource {
+        function,
+        main: Arc::new(main),
+        externals,
+    })
 }
 
-pub(crate) fn compile_program_analyzed_in(
+pub(crate) fn compile_program_analyzed_in_module(
     source_file: &SourceFile,
     program: &Program,
     analysis: &Analysis,
+    static_funcs: &HashMap<String, crate::FuncId>,
 ) -> Result<BytecodeFunction, FrontendError> {
-    compile_program_with_promoted_types(
+    compile_program_with_promoted_types_and_static_funcs(
         source_file,
         program,
         analysis,
         &HashSet::new(),
         &HashSet::new(),
+        static_funcs,
     )
 }
 
@@ -89,6 +203,24 @@ pub(crate) fn compile_program_with_promoted_types(
     analysis: &Analysis,
     promoted_types: &HashSet<String>,
     erased_bindings: &HashSet<String>,
+) -> Result<BytecodeFunction, FrontendError> {
+    compile_program_with_promoted_types_and_static_funcs(
+        source_file,
+        program,
+        analysis,
+        promoted_types,
+        erased_bindings,
+        &HashMap::new(),
+    )
+}
+
+pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
+    source_file: &SourceFile,
+    program: &Program,
+    analysis: &Analysis,
+    promoted_types: &HashSet<String>,
+    erased_bindings: &HashSet<String>,
+    static_funcs: &HashMap<String, crate::FuncId>,
 ) -> Result<BytecodeFunction, FrontendError> {
     validate_hir(source_file, &analysis.hir)?;
     let mut program = program.clone();
@@ -107,6 +239,7 @@ pub(crate) fn compile_program_with_promoted_types(
         &program,
         analysis,
         promoted_types.clone(),
+        static_funcs.clone(),
     )
 }
 
@@ -114,17 +247,24 @@ pub(crate) fn type_link_key(name: &str) -> String {
     format!("type:{name}")
 }
 
-pub(crate) struct MetadataInitializer {
-    pub(crate) function: BytecodeFunction,
+pub(crate) fn type_family_link_key(name: &str) -> String {
+    format!("type-family:{name}")
+}
+
+pub(crate) fn type_family_template_link_key(name: &str) -> String {
+    format!("type-family-template:{name}")
+}
+
+pub(crate) fn declared_owner_link_key(location: Location) -> String {
+    format!("\0declared-owner:{}:{}", location.start, location.end)
+}
+
+pub(crate) struct MetadataCompilationPlan {
     pub(crate) type_names: Vec<String>,
     pub(crate) erased_bindings: HashSet<String>,
 }
 
-pub(crate) fn compile_metadata_initializer(
-    source_file: &SourceFile,
-    program: &Program,
-    analysis: &Analysis,
-) -> Result<Option<MetadataInitializer>, FrontendError> {
+pub(crate) fn metadata_compilation_plan(program: &Program) -> Option<MetadataCompilationPlan> {
     let mut type_names = program
         .value
         .body
@@ -137,7 +277,7 @@ pub(crate) fn compile_metadata_initializer(
         .map(|binding| binding.value.name.value.clone())
         .collect::<Vec<_>>();
     if type_names.is_empty() {
-        return Ok(None);
+        return None;
     }
     type_names.sort();
     type_names.dedup();
@@ -147,6 +287,9 @@ pub(crate) fn compile_metadata_initializer(
         let before = needed.len();
         for binding in &program.value.body.value.bindings {
             if needed.contains(&binding.value.name.value) {
+                for decorator in &binding.value.decorators {
+                    collect_decorator_runtime_names(decorator, &mut needed);
+                }
                 collect_runtime_names(&binding.value.value, &mut needed);
                 if let Some(annotation) = &binding.value.annotation {
                     collect_runtime_names(annotation, &mut needed);
@@ -185,82 +328,23 @@ pub(crate) fn compile_metadata_initializer(
         .filter(|name| !type_name_set.contains(*name) && !runtime_needed.contains(*name))
         .cloned()
         .collect();
-    let bindings = program
-        .value
-        .body
-        .value
-        .bindings
-        .iter()
-        .filter(|binding| needed.contains(&binding.value.name.value))
-        .cloned()
-        .collect();
-    let result = located(
-        ExprKind::Dict(
-            type_names
-                .iter()
-                .map(|name| {
-                    located(
-                        DictFieldKind {
-                            decorators: Vec::new(),
-                            name: Some(located(name.clone(), program.location)),
-                            value: located(
-                                ExprKind::Variable(located(name.clone(), program.location)),
-                                program.location,
-                            ),
-                        },
-                        program.location,
-                    )
-                })
-                .collect(),
-        ),
-        program.location,
-    );
-    let metadata_program = located(
-        ProgramKind {
-            options: Vec::new(),
-            body: located(
-                BlockKind {
-                    bindings,
-                    result: Box::new(result),
-                },
-                program.value.body.location,
-            ),
-            authored_result: true,
-        },
-        program.location,
-    );
-    let metadata_hir = HirProgram::resolve(
-        &metadata_program,
-        analysis
-            .prelude
-            .keys()
-            .chain(analysis.external_values.keys())
-            .cloned()
-            .collect::<Vec<_>>(),
-    );
-    validate_hir(source_file, &metadata_hir)?;
-    // Metadata initializers construct Type values, not ordinary values of those
-    // types. Runtime ownership wrappers therefore do not apply in this phase.
-    let mut metadata_analysis = analysis.clone();
-    metadata_analysis.declared_value_owners.clear();
-    let function = compile_program_analyzed_in(source_file, &metadata_program, &metadata_analysis)?;
-    Ok(Some(MetadataInitializer {
-        function,
+    Some(MetadataCompilationPlan {
         type_names,
         erased_bindings,
-    }))
+    })
 }
 
 pub fn run_source(
     source_name: &str,
     source: &str,
     evaluation_fuel: usize,
-) -> Result<Value, ExecutionError> {
-    let function = compile_source(source_name, source)?;
+) -> Result<ExecutionWorld, ExecutionError> {
+    let compiled = compile_source(source_name, source)?;
     let mut sources = SourceDatabase::default();
     sources.add(source_name, source);
-    Vm::new()
-        .execute(&function, evaluation_fuel)
+    let mut account = QuotaAccount::new(Quota::with_fuel(evaluation_fuel));
+    compiled
+        .execute_with_account(&mut Vm::new(), &mut account)
         .map_err(|error| ExecutionError::Runtime(error.with_sources(&sources)))
 }
 
@@ -278,9 +362,9 @@ pub(crate) fn compile_expression_with_external_bindings(
         source_name,
         function_name: function_name.to_owned(),
         environment: HashMap::new(),
-        up_link_bindings: HashSet::new(),
-        ready_up_link_bindings: HashSet::new(),
-        preserved_up_link_reads: HashSet::new(),
+        type_slot_bindings: HashSet::new(),
+        ready_type_slot_bindings: HashSet::new(),
+        preserved_type_slot_reads: HashSet::new(),
         definition_bindings: HashSet::new(),
         constants: Vec::new(),
         external_constant_links: Vec::new(),
@@ -290,17 +374,16 @@ pub(crate) fn compile_expression_with_external_bindings(
         parameter_count: 0,
         capture_count: 0,
         closure_index: 0,
-        located_constants: HashMap::new(),
         retained_names: HashSet::new(),
         promoted_types: HashSet::new(),
-        external_values: BTreeMap::new(),
+        external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
         declared_value_owners: HashMap::new(),
+        static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
     for name in bindings {
-        let register =
-            compiler.load_external_constant(Value::none(), name.clone(), expression.location);
+        let register = compiler.load_external_constant(name.clone(), expression.location);
         compiler.environment.insert(name, register);
     }
     compiler.compile_tail_expr(expression)?;
@@ -329,11 +412,11 @@ struct Compiler<'a> {
     source_name: &'a str,
     function_name: String,
     environment: HashMap<String, RegisterId>,
-    up_link_bindings: HashSet<String>,
-    ready_up_link_bindings: HashSet<String>,
-    preserved_up_link_reads: HashSet<String>,
+    type_slot_bindings: HashSet<String>,
+    ready_type_slot_bindings: HashSet<String>,
+    preserved_type_slot_reads: HashSet<String>,
     definition_bindings: HashSet<String>,
-    constants: Vec<Value>,
+    constants: Vec<Constant>,
     external_constant_links: Vec<(usize, String)>,
     items: Vec<Item>,
     next_register: u32,
@@ -341,12 +424,12 @@ struct Compiler<'a> {
     parameter_count: u32,
     capture_count: u32,
     closure_index: usize,
-    located_constants: HashMap<String, Value>,
     retained_names: HashSet<String>,
     promoted_types: HashSet<String>,
-    external_values: BTreeMap<String, Value>,
-    type_family_values: BTreeMap<String, Value>,
-    declared_value_owners: HashMap<Location, Value>,
+    external_bindings: HashSet<String>,
+    type_family_values: BTreeMap<String, crate::types::TypeFamilyTemplate>,
+    declared_value_owners: HashMap<Location, String>,
+    static_funcs: HashMap<String, crate::FuncId>,
     source_file: Option<&'a SourceFile>,
 }
 
@@ -377,6 +460,7 @@ impl<'a> Compiler<'a> {
         program: &Program,
         analysis: &Analysis,
         promoted_types: HashSet<String>,
+        static_funcs: HashMap<String, crate::FuncId>,
     ) -> Result<BytecodeFunction, FrontendError> {
         let mut retained_names = HashSet::new();
         collect_runtime_names_block(&program.value.body, &mut retained_names);
@@ -397,9 +481,9 @@ impl<'a> Compiler<'a> {
             source_name,
             function_name: source_name.to_owned(),
             environment: HashMap::new(),
-            up_link_bindings: HashSet::new(),
-            ready_up_link_bindings: HashSet::new(),
-            preserved_up_link_reads: HashSet::new(),
+            type_slot_bindings: HashSet::new(),
+            ready_type_slot_bindings: HashSet::new(),
+            preserved_type_slot_reads: HashSet::new(),
             definition_bindings: HashSet::new(),
             constants: Vec::new(),
             external_constant_links: Vec::new(),
@@ -409,34 +493,23 @@ impl<'a> Compiler<'a> {
             parameter_count: 0,
             capture_count: 0,
             closure_index: 0,
-            located_constants: HashMap::new(),
             retained_names,
             promoted_types,
-            external_values: analysis.external_values.clone(),
+            external_bindings: analysis.external_bindings.clone(),
             type_family_values: analysis.type_family_values.clone(),
             declared_value_owners: analysis.declared_value_owners.clone(),
+            static_funcs,
             source_file,
         };
-        for (name, value) in &analysis.prelude {
+        for name in analysis.runtime_roots.keys() {
             if compiler.retained_names.contains(name) {
-                if matches!(value, Value::Func(_)) {
-                    let register = compiler.load_constant(value.clone(), program.location);
-                    compiler.environment.insert(name.clone(), register);
-                } else {
-                    compiler
-                        .located_constants
-                        .insert(name.clone(), value.clone());
-                }
+                let register = compiler.load_external_constant(name.clone(), program.location);
+                compiler.environment.insert(name.clone(), register);
             }
         }
         for name in &analysis.dynamic_bindings {
             if compiler.retained_names.contains(name) {
-                let value = analysis
-                    .external_values
-                    .get(name)
-                    .expect("analyzed dynamic binding")
-                    .clone();
-                let register = compiler.load_constant(value, program.location);
+                let register = compiler.load_external_constant(name.clone(), program.location);
                 compiler.environment.insert(name.clone(), register);
             }
         }
@@ -454,13 +527,12 @@ impl<'a> Compiler<'a> {
             })
             .map(|binding| binding.value.name.value.as_str())
             .collect::<HashSet<_>>();
-        for (name, value) in &analysis.external_values {
+        for name in &analysis.external_bindings {
             if !authored_names.contains(name.as_str())
                 && compiler.retained_names.contains(name)
                 && !compiler.environment.contains_key(name)
             {
-                let register =
-                    compiler.load_external_constant(value.clone(), name.clone(), program.location);
+                let register = compiler.load_external_constant(name.clone(), program.location);
                 compiler.environment.insert(name.clone(), register);
             }
         }
@@ -477,7 +549,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Self, FrontendError> {
         let NestedEnvironment {
             captures,
-            up_links: captured_up_links,
+            type_slots: captured_type_slots,
             definitions: captured_definitions,
             declared_value_owners,
         } = nested_environment;
@@ -519,9 +591,9 @@ impl<'a> Compiler<'a> {
             source_name,
             function_name,
             environment,
-            up_link_bindings: captured_up_links.clone(),
-            ready_up_link_bindings: HashSet::new(),
-            preserved_up_link_reads: HashSet::new(),
+            type_slot_bindings: captured_type_slots.clone(),
+            ready_type_slot_bindings: HashSet::new(),
+            preserved_type_slot_reads: HashSet::new(),
             definition_bindings: captured_definitions.clone(),
             constants: Vec::new(),
             external_constant_links: Vec::new(),
@@ -534,12 +606,12 @@ impl<'a> Compiler<'a> {
             capture_count: u32::try_from(captures.len())
                 .map_err(|_| frontend_error(source_name, "too many closure captures"))?,
             closure_index: 0,
-            located_constants: HashMap::new(),
             retained_names: HashSet::new(),
             promoted_types: HashSet::new(),
-            external_values: BTreeMap::new(),
+            external_bindings: HashSet::new(),
             type_family_values: BTreeMap::new(),
             declared_value_owners: declared_value_owners.clone(),
+            static_funcs: HashMap::new(),
             source_file,
         })
     }
@@ -582,13 +654,66 @@ impl<'a> Compiler<'a> {
         tail: bool,
     ) -> Result<Option<RegisterId>, FrontendError> {
         let outer = self.environment.clone();
-        let outer_up_links = self.up_link_bindings.clone();
-        let outer_ready_up_links = self.ready_up_link_bindings.clone();
+        let outer_type_slots = self.type_slot_bindings.clone();
+        let outer_ready_type_slots = self.ready_type_slot_bindings.clone();
         let outer_definitions = self.definition_bindings.clone();
-        let mut declared = HashMap::<String, (RegisterId, Location, Option<u32>)>::new();
+        let mut declared = HashMap::<String, (RegisterId, Location)>::new();
         let mut type_links = HashMap::<String, (RegisterId, Location)>::new();
         let mut native_declarations = HashMap::<String, Location>::new();
         let mut definition_counts = HashMap::<String, usize>::new();
+
+        #[derive(Clone, Copy)]
+        enum VisibleFunctionBinding {
+            Decl,
+            Def,
+            Other,
+        }
+
+        // Function slots are allocated before the block is emitted so recursive
+        // definitions can refer to one another. Validate the source-order binding
+        // semantics separately: only `let` may shadow, and a later `def` may not
+        // reach through that shadow to initialize an earlier declaration.
+        let mut visible_function_bindings = HashMap::<String, VisibleFunctionBinding>::new();
+        for binding in &block.value.bindings {
+            let name = &binding.value.name.value;
+            match binding.value.kind {
+                BindingKind::Decl => {
+                    if outer.contains_key(name) || visible_function_bindings.contains_key(name) {
+                        return Err(self.error_at(
+                            binding.location,
+                            format!("declaration {name:?} cannot shadow a visible binding"),
+                        ));
+                    }
+                    visible_function_bindings.insert(name.clone(), VisibleFunctionBinding::Decl);
+                }
+                BindingKind::Def => match visible_function_bindings.get(name) {
+                    Some(VisibleFunctionBinding::Decl) => {
+                        visible_function_bindings.insert(name.clone(), VisibleFunctionBinding::Def);
+                    }
+                    None if !outer.contains_key(name) => {
+                        visible_function_bindings.insert(name.clone(), VisibleFunctionBinding::Def);
+                    }
+                    Some(VisibleFunctionBinding::Def | VisibleFunctionBinding::Other) | None => {
+                        return Err(self.error_at(
+                            binding.location,
+                            format!("definition {name:?} cannot shadow a visible binding"),
+                        ));
+                    }
+                },
+                BindingKind::Let => {
+                    visible_function_bindings.insert(name.clone(), VisibleFunctionBinding::Other);
+                }
+                BindingKind::Import
+                | BindingKind::Native
+                | BindingKind::NativeType
+                | BindingKind::Type => {
+                    visible_function_bindings
+                        .entry(name.clone())
+                        .or_insert(VisibleFunctionBinding::Other);
+                }
+                BindingKind::OpenImport | BindingKind::Export => {}
+            }
+        }
 
         for binding in &block.value.bindings {
             if binding.value.kind != BindingKind::Native {
@@ -632,11 +757,26 @@ impl<'a> Compiler<'a> {
             if binding.value.kind == BindingKind::Def {
                 *definition_counts.entry(name.clone()).or_default() += 1;
             }
-            if binding.value.kind == BindingKind::Decl
-                || binding.value.kind == BindingKind::Def && binding.value.annotation.is_some()
-                || binding.value.kind == BindingKind::Def
-                    && matches!(binding.value.value.value, ExprKind::Closure { .. })
-                    && !declared.contains_key(name)
+            let function_arity = binding
+                .value
+                .annotation
+                .as_ref()
+                .and_then(function_contract_arity)
+                .or_else(|| match &binding.value.value.value {
+                    ExprKind::Closure { parameters, .. } => u32::try_from(parameters.len()).ok(),
+                    _ => None,
+                });
+            if binding.value.kind == BindingKind::Decl && function_arity.is_none() {
+                return Err(self.error_at(binding.location, "decl requires a function contract"));
+            }
+            if binding.value.kind == BindingKind::Decl && declared.contains_key(name) {
+                return Err(
+                    self.error_at(binding.location, format!("duplicate declaration {name:?}"))
+                );
+            }
+            if matches!(binding.value.kind, BindingKind::Decl | BindingKind::Def)
+                && function_arity.is_some()
+                && !declared.contains_key(name)
             {
                 if declared.contains_key(name) {
                     return Err(
@@ -650,22 +790,16 @@ impl<'a> Compiler<'a> {
                     ));
                 }
                 let link = self.allocate();
-                self.emit(Operation::MakeUpLink { dst: link }, binding.location);
+                self.emit(
+                    Operation::AllocFunc {
+                        dst: link,
+                        static_id: self.static_funcs.get(name).copied(),
+                    },
+                    binding.location,
+                );
                 self.environment.insert(name.clone(), link);
-                self.up_link_bindings.insert(name.clone());
                 self.definition_bindings.insert(name.clone());
-                let arity = binding
-                    .value
-                    .annotation
-                    .as_ref()
-                    .and_then(function_contract_arity)
-                    .or_else(|| match &binding.value.value.value {
-                        ExprKind::Closure { parameters, .. } => {
-                            u32::try_from(parameters.len()).ok()
-                        }
-                        _ => None,
-                    });
-                declared.insert(name.clone(), (link, binding.location, arity));
+                declared.insert(name.clone(), (link, binding.location));
             }
         }
         for binding in &block.value.bindings {
@@ -683,9 +817,9 @@ impl<'a> Compiler<'a> {
                 ));
             }
             let link = self.allocate();
-            self.emit(Operation::MakeUpLink { dst: link }, binding.location);
+            self.emit(Operation::AllocTypeSlot { dst: link }, binding.location);
             self.environment.insert(name.clone(), link);
-            self.up_link_bindings.insert(name.clone());
+            self.type_slot_bindings.insert(name.clone());
             type_links.insert(name.clone(), (link, binding.location));
         }
         for (name, count) in &definition_counts {
@@ -705,7 +839,10 @@ impl<'a> Compiler<'a> {
             }
             let name = &binding.value.name.value;
             if declared.contains_key(name)
-                && !matches!(binding.value.kind, BindingKind::Decl | BindingKind::Def)
+                && !matches!(
+                    binding.value.kind,
+                    BindingKind::Decl | BindingKind::Def | BindingKind::Let
+                )
             {
                 return Err(self.error_at(
                     binding.location,
@@ -722,35 +859,15 @@ impl<'a> Compiler<'a> {
                     if self.retained_names.contains(&binding.value.name.value) {
                         let name = binding.value.name.value.clone();
                         if self.promoted_types.contains(&name) {
-                            let register = self.load_external_constant(
-                                Value::none(),
-                                type_link_key(&name),
-                                binding.location,
-                            );
+                            let register =
+                                self.load_external_constant(type_link_key(&name), binding.location);
                             self.environment.insert(name, register);
                         } else if !binding.value.type_parameters.is_empty() {
-                            let value = self
+                            let family = self
                                 .type_family_values
                                 .get(&name)
-                                .expect("analyzed type family has a callable value")
-                                .clone();
-                            let has_named_metadata = match &value {
-                                Value::Func(closure) => closure
-                                    .upvalues()
-                                    .first()
-                                    .and_then(|metadata| TypeDescriptor::from_value(metadata).ok())
-                                    .is_some_and(|metadata| contains_named_type(&metadata)),
-                                _ => false,
-                            };
-                            let register = if has_named_metadata {
-                                let template = match &value {
-                                    Value::Func(closure) => closure
-                                        .upvalues()
-                                        .first()
-                                        .expect("type family closure carries its template")
-                                        .clone(),
-                                    _ => unreachable!("type family value is callable"),
-                                };
+                                .expect("analyzed type family has runtime roots");
+                            let register = if family.rebuild_at_runtime() {
                                 let body = located(
                                     BlockKind {
                                         bindings: Vec::new(),
@@ -762,60 +879,56 @@ impl<'a> Compiler<'a> {
                                     &binding.value.type_parameters,
                                     &body,
                                     binding.location,
-                                    Some(template),
+                                    family.constructor().cloned(),
                                 )?
                             } else {
-                                self.load_constant(value, binding.location)
+                                self.load_external_constant(
+                                    type_family_link_key(&name),
+                                    binding.location,
+                                )
                             };
                             let (link, _) = type_links[&binding.value.name.value];
                             self.emit(
-                                Operation::InitializeUpLink {
+                                Operation::SealTypeSlot {
                                     link,
                                     src: register,
                                 },
                                 binding.location,
                             );
-                            self.ready_up_link_bindings.insert(name);
+                            self.ready_type_slot_bindings.insert(name);
                         } else {
-                            self.preserved_up_link_reads = type_links
+                            self.preserved_type_slot_reads = type_links
                                 .keys()
                                 .filter(|name| !self.type_family_values.contains_key(*name))
                                 .cloned()
                                 .collect();
                             let register = self.compile_expr(&binding.value.value)?;
-                            self.preserved_up_link_reads.clear();
+                            self.preserved_type_slot_reads.clear();
                             let (link, _) = type_links[&binding.value.name.value];
                             self.emit(
-                                Operation::InitializeUpLink {
+                                Operation::SealTypeSlot {
                                     link,
                                     src: register,
                                 },
                                 binding.location,
                             );
-                            self.ready_up_link_bindings.insert(name);
+                            self.ready_type_slot_bindings.insert(name);
                         }
                     }
                     continue;
                 }
                 BindingKind::Import | BindingKind::Native | BindingKind::NativeType => {
-                    let value = self
-                        .external_values
-                        .get(&binding.value.name.value)
-                        .cloned()
-                        .ok_or_else(|| {
-                            frontend_error(
-                                self.source_name,
-                                format!(
-                                    "external binding {} has not been resolved",
-                                    binding.value.name.value
-                                ),
-                            )
-                        })?;
-                    let register = self.load_external_constant(
-                        value,
-                        binding.value.name.value.clone(),
-                        binding.location,
-                    );
+                    if !self.external_bindings.contains(&binding.value.name.value) {
+                        return Err(frontend_error(
+                            self.source_name,
+                            format!(
+                                "external binding {} has not been resolved",
+                                binding.value.name.value
+                            ),
+                        ));
+                    }
+                    let register = self
+                        .load_external_constant(binding.value.name.value.clone(), binding.location);
                     self.environment
                         .insert(binding.value.name.value.clone(), register);
                     continue;
@@ -837,28 +950,18 @@ impl<'a> Compiler<'a> {
             let value = self.compile_expr(&binding.value.value)?;
             let name = binding.value.name.value.clone();
             if binding.value.kind == BindingKind::Def
-                && let Some((link, _, arity)) = declared.get(&name)
+                && let Some((link, _)) = declared.get(&name)
             {
-                if let Some(arity) = arity {
-                    self.emit(
-                        Operation::AssertFunctionArity {
-                            value,
-                            arity: *arity,
-                        },
-                        binding.location,
-                    );
-                }
                 self.emit(
-                    Operation::InitializeUpLink {
-                        link: *link,
-                        src: value,
+                    Operation::SealFunc {
+                        target: *link,
+                        source: value,
                     },
                     binding.location,
                 );
-                self.ready_up_link_bindings.insert(name);
             } else {
                 self.environment.insert(name.clone(), value);
-                self.up_link_bindings.remove(&name);
+                self.type_slot_bindings.remove(&name);
                 if binding.value.kind == BindingKind::Def {
                     self.definition_bindings.insert(name);
                 } else if binding.value.kind == BindingKind::Let {
@@ -866,11 +969,8 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        for (link, location, _) in declared.values() {
-            self.emit(Operation::AssertUpLinkReady { link: *link }, *location);
-        }
         for (link, location) in type_links.values() {
-            self.emit(Operation::AssertUpLinkReady { link: *link }, *location);
+            self.emit(Operation::AssertTypeSlotReady { link: *link }, *location);
         }
         let result = if tail {
             self.compile_tail_expr(&block.value.result)?;
@@ -879,8 +979,8 @@ impl<'a> Compiler<'a> {
             Some(self.compile_expr(&block.value.result)?)
         };
         self.environment = outer;
-        self.up_link_bindings = outer_up_links;
-        self.ready_up_link_bindings = outer_ready_up_links;
+        self.type_slot_bindings = outer_type_slots;
+        self.ready_type_slot_bindings = outer_ready_type_slots;
         self.definition_bindings = outer_definitions;
         Ok(result)
     }
@@ -900,12 +1000,14 @@ impl<'a> Compiler<'a> {
             return Ok(payload);
         };
         let callee = self.load_constant(
-            Value::Func(std::sync::Arc::new(Closure::native(
-                NativeFunction::core_model(CoreModelFunction::Own),
-            ))),
+            Constant::Native(NativeFunction::core_model(CoreModelFunction::Own)),
             expression.location,
         );
-        let owner = self.load_constant(owner, expression.location);
+        let owner = self
+            .environment
+            .get(&owner)
+            .copied()
+            .unwrap_or_else(|| self.load_external_constant(owner, expression.location));
         let base = self.allocate();
         self.emit(
             Operation::Move {
@@ -936,19 +1038,21 @@ impl<'a> Compiler<'a> {
 
     fn compile_expr_unowned(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
         match &expression.value {
-            ExprKind::Int(value) => Ok(self.load_constant(Value::Int(*value), expression.location)),
+            ExprKind::Int(value) => {
+                Ok(self.load_constant(Constant::Int(*value), expression.location))
+            }
             ExprKind::Float(value) => {
-                Ok(self.load_constant(Value::Float(*value), expression.location))
+                Ok(self.load_constant(Constant::Float(*value), expression.location))
             }
             ExprKind::String(value) => {
-                Ok(self.load_constant(Value::string(value.clone()), expression.location))
+                Ok(self.load_constant(Constant::String(value.clone().into()), expression.location))
             }
             ExprKind::InterpolatedString(parts) => {
                 let mut registers = Vec::with_capacity(parts.len());
                 for part in parts {
                     registers.push(match &part.value {
                         StringPartKind::Text(text) => {
-                            self.load_constant(Value::string(text.clone()), part.location)
+                            self.load_constant(Constant::String(text.clone().into()), part.location)
                         }
                         StringPartKind::Expression(expression) => self.compile_expr(expression)?,
                     });
@@ -964,25 +1068,24 @@ impl<'a> Compiler<'a> {
                 Ok(dst)
             }
             ExprKind::Bytes(value) => {
-                Ok(self.load_constant(Value::Bytes(value.clone().into()), expression.location))
+                Ok(self.load_constant(Constant::Bytes(value.clone().into()), expression.location))
             }
-            ExprKind::Atom(name) => Ok(self.load_constant(atom_value(name), expression.location)),
+            ExprKind::Atom(name) => {
+                Ok(self.load_constant(atom_constant(name), expression.location))
+            }
             ExprKind::Variable(name) => {
-                if let Some(value) = self.located_constants.get(&name.value).cloned() {
-                    return Ok(self.load_constant(value, expression.location));
-                }
                 let register = self.environment.get(&name.value).copied().ok_or_else(|| {
                     self.error_at(
                         expression.location,
                         format!("unknown binding {:?}", name.value),
                     )
                 })?;
-                if self.up_link_bindings.contains(&name.value)
-                    && !self.preserved_up_link_reads.contains(&name.value)
+                if self.type_slot_bindings.contains(&name.value)
+                    && !self.preserved_type_slot_reads.contains(&name.value)
                 {
                     let dst = self.allocate();
                     self.emit(
-                        Operation::ReadUpLink {
+                        Operation::ReadTypeSlot {
                             dst,
                             link: register,
                         },
@@ -1377,7 +1480,7 @@ impl<'a> Compiler<'a> {
         parameters: &[Identifier],
         body: &Block,
         location: Location,
-        declared_template: Option<Value>,
+        nominal_constructor: Option<NominalTypeConstructor>,
     ) -> Result<RegisterId, FrontendError> {
         let mut bound = parameters
             .iter()
@@ -1391,23 +1494,21 @@ impl<'a> Compiler<'a> {
         }
         let mut free = BTreeSet::new();
         free_block(body, &mut bound, &mut free);
-        let captures = free.into_iter().collect::<Vec<_>>();
+        let mut captures = free.into_iter().collect::<Vec<_>>();
         let mut capture_registers = Vec::with_capacity(captures.len());
         for name in &captures {
             let register = if let Some(register) = self.environment.get(name).copied() {
                 register
-            } else if let Some(value) = self.located_constants.get(name).cloned() {
-                self.load_constant(value, location)
             } else {
                 return Err(frontend_error(
                     self.source_name,
                     format!("unknown binding {name:?}"),
                 ));
             };
-            if self.ready_up_link_bindings.contains(name) {
+            if self.ready_type_slot_bindings.contains(name) {
                 let value = self.allocate();
                 self.emit(
-                    Operation::ReadUpLink {
+                    Operation::ReadTypeSlot {
                         dst: value,
                         link: register,
                     },
@@ -1418,11 +1519,33 @@ impl<'a> Compiler<'a> {
                 capture_registers.push(register);
             }
         }
-        let captured_up_links = captures
+        for owner in self
+            .declared_value_owners
+            .iter()
+            .filter(|(owner_location, _)| {
+                body.location.start <= owner_location.start
+                    && owner_location.end <= body.location.end
+            })
+            .map(|(_, owner)| owner)
+            .cloned()
+            .collect::<BTreeSet<_>>()
+        {
+            if captures.contains(&owner) {
+                continue;
+            }
+            let register = self
+                .environment
+                .get(&owner)
+                .copied()
+                .unwrap_or_else(|| self.load_external_constant(owner.clone(), location));
+            captures.push(owner);
+            capture_registers.push(register);
+        }
+        let captured_type_slots = captures
             .iter()
             .filter(|name| {
-                self.up_link_bindings.contains(*name)
-                    && !self.ready_up_link_bindings.contains(*name)
+                self.type_slot_bindings.contains(*name)
+                    && !self.ready_type_slot_bindings.contains(*name)
             })
             .cloned()
             .collect::<HashSet<_>>();
@@ -1441,20 +1564,26 @@ impl<'a> Compiler<'a> {
             parameters,
             NestedEnvironment {
                 captures: &captures,
-                up_links: &captured_up_links,
+                type_slots: &captured_type_slots,
                 definitions: &captured_definitions,
                 declared_value_owners: &self.declared_value_owners,
             },
         )?;
-        if let Some(template) = declared_template {
+        if let Some(constructor) = nominal_constructor {
             let structural = nested.compile_block(body)?;
-            let native = Value::Func(std::sync::Arc::new(Closure::native(NativeFunction::new(
+            let native = Constant::Native(NativeFunction::new(
                 "type-family.declare",
-                parameters.len() + 2,
+                parameters.len() + 4,
                 crate::types::native_declare_type_family,
-            ))));
+            ));
             let native = nested.load_constant(native, location);
-            let template = nested.load_constant(template, location);
+            let module = nested.load_constant(
+                Constant::Int(i64::from(constructor.id.module.raw())),
+                location,
+            );
+            let local =
+                nested.load_constant(Constant::Int(i64::from(constructor.id.local)), location);
+            let name = nested.load_constant(Constant::String(constructor.name.into()), location);
             let base = nested.allocate();
             nested.emit(
                 Operation::Move {
@@ -1463,8 +1592,10 @@ impl<'a> Compiler<'a> {
                 },
                 location,
             );
-            for source in std::iter::once(template)
-                .chain(std::iter::once(structural))
+            for source in std::iter::once(structural)
+                .chain(std::iter::once(module))
+                .chain(std::iter::once(local))
+                .chain(std::iter::once(name))
                 .chain((0..parameters.len()).map(|index| RegisterId(index as u32)))
             {
                 let destination = nested.allocate();
@@ -1479,7 +1610,7 @@ impl<'a> Compiler<'a> {
             nested.emit(
                 Operation::Call {
                     base,
-                    argument_count: u32::try_from(parameters.len() + 2).map_err(|_| {
+                    argument_count: u32::try_from(parameters.len() + 4).map_err(|_| {
                         frontend_error(self.source_name, "too many type parameters")
                     })?,
                 },
@@ -1691,23 +1822,24 @@ impl<'a> Compiler<'a> {
                 self.environment.insert(name.value.clone(), value);
             }
             PatternKind::Int(item) => {
-                let expected = self.load_constant(Value::Int(*item), pattern.location);
+                let expected = self.load_constant(Constant::Int(*item), pattern.location);
                 self.emit_pattern_equality(value, expected, failures, pattern.location);
             }
             PatternKind::Float(item) => {
-                let expected = self.load_constant(Value::Float(*item), pattern.location);
+                let expected = self.load_constant(Constant::Float(*item), pattern.location);
                 self.emit_pattern_equality(value, expected, failures, pattern.location);
             }
             PatternKind::String(item) => {
-                let expected = self.load_constant(Value::string(item.clone()), pattern.location);
+                let expected =
+                    self.load_constant(Constant::String(item.clone().into()), pattern.location);
                 self.emit_pattern_equality(value, expected, failures, pattern.location);
             }
             PatternKind::Atom(item) => {
-                let expected = self.load_constant(atom_value(item), pattern.location);
+                let expected = self.load_constant(atom_constant(item), pattern.location);
                 self.emit_pattern_equality(value, expected, failures, pattern.location);
             }
             PatternKind::Tagged { tag, payload } => {
-                let expected = self.load_constant(atom_value(tag), pattern.location);
+                let expected = self.load_constant(atom_constant(tag), pattern.location);
                 let condition = self.allocate();
                 self.emit(
                     Operation::TaggedTagEquals {
@@ -1855,7 +1987,7 @@ impl<'a> Compiler<'a> {
         failures.push(failure);
     }
 
-    fn load_constant(&mut self, value: Value, location: Location) -> RegisterId {
+    fn load_constant(&mut self, value: Constant, location: Location) -> RegisterId {
         let constant = self.constants.len();
         self.constants.push(value);
         let dst = self.allocate();
@@ -1869,14 +2001,9 @@ impl<'a> Compiler<'a> {
         dst
     }
 
-    fn load_external_constant(
-        &mut self,
-        value: Value,
-        key: String,
-        location: Location,
-    ) -> RegisterId {
+    fn load_external_constant(&mut self, key: String, location: Location) -> RegisterId {
         let index = self.constants.len();
-        let register = self.load_constant(value, location);
+        let register = self.load_constant(Constant::Placeholder, location);
         self.external_constant_links.push((index, key));
         register
     }
@@ -1920,7 +2047,7 @@ impl<'a> Compiler<'a> {
     }
 }
 
-fn atom_value(name: &str) -> Value {
+fn atom_constant(name: &str) -> Constant {
     let builtin = match name {
         "None" => Some(BuiltinAtom::None),
         "Some" => Some(BuiltinAtom::Some),
@@ -1930,7 +2057,7 @@ fn atom_value(name: &str) -> Value {
         "False" => Some(BuiltinAtom::False),
         _ => None,
     };
-    Value::Atom(match builtin {
+    Constant::Atom(match builtin {
         Some(builtin) => Atom::builtin(builtin),
         None => Atom::named(name),
     })
@@ -2125,6 +2252,13 @@ fn collect_runtime_names_block(block: &Block, names: &mut HashSet<String>) {
     collect_runtime_names(&block.value.result, names);
 }
 
+fn collect_decorator_runtime_names(decorator: &crate::ast::Decorator, names: &mut HashSet<String>) {
+    collect_runtime_names(&decorator.value.callee, names);
+    for argument in &decorator.value.arguments {
+        collect_runtime_names(argument, names);
+    }
+}
+
 pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<String>) {
     match &expression.value {
         ExprKind::Variable(name) => {
@@ -2145,6 +2279,9 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
         }
         ExprKind::Dict(fields) => {
             for field in fields {
+                for decorator in &field.value.decorators {
+                    collect_decorator_runtime_names(decorator, names);
+                }
                 collect_runtime_names(&field.value.value, names);
             }
         }
@@ -2240,14 +2377,22 @@ mod tests {
     use super::*;
     use crate::{Quota, RuntimeErrorKind};
 
-    fn run(source: &str) -> Result<Value, ExecutionError> {
+    fn run(source: &str) -> Result<ExecutionWorld, ExecutionError> {
         run_source("test", source, 10_000)
+    }
+
+    fn assert_int(value: &ExecutionWorld, expected: i64) {
+        assert_eq!(value.value().as_int(), Some(expected));
+    }
+
+    fn assert_atom(value: &ExecutionWorld, expected: &str) {
+        assert_eq!(value.value().as_atom().as_deref(), Some(expected));
     }
 
     #[test]
     fn executes_precedence_blocks_and_dict_access() {
         let value = run("let x = 2 + 3 * 4; {b: x, a: 1}.b").unwrap();
-        assert!(matches!(value, Value::Int(14)));
+        assert_int(&value, 14);
     }
 
     #[test]
@@ -2280,14 +2425,8 @@ let decorators = {
 
     #[test]
     fn compares_tagged_tuples_structurally() {
-        assert!(matches!(
-            run("('Ok, 42) == ('Ok, 42)").unwrap(),
-            Value::Atom(Atom::Builtin(BuiltinAtom::True))
-        ));
-        assert!(matches!(
-            run("('Ok, 42) == ('Err, 42)").unwrap(),
-            Value::Atom(Atom::Builtin(BuiltinAtom::False))
-        ));
+        assert_atom(&run("('Ok, 42) == ('Ok, 42)").unwrap(), "True");
+        assert_atom(&run("('Ok, 42) == ('Err, 42)").unwrap(), "False");
     }
 
     #[test]
@@ -2296,16 +2435,16 @@ let decorators = {
             "let f: Fn(Any) -> Any = fn(x) { x }; let same = f == f; let distinct = f == fn(x) { x }; (same, distinct)",
         )
         .unwrap();
-        let Value::Tuple(values) = value else {
-            panic!("expected tuple")
-        };
-        assert!(matches!(
-            values.as_ref(),
-            [
-                Value::Atom(Atom::Builtin(BuiltinAtom::True)),
-                Value::Atom(Atom::Builtin(BuiltinAtom::False))
-            ]
-        ));
+        let values = value.value();
+        assert_eq!(values.sequence_len(), Some(2));
+        assert_eq!(
+            values.sequence_get(0).unwrap().as_atom().as_deref(),
+            Some("True")
+        );
+        assert_eq!(
+            values.sequence_get(1).unwrap().as_atom().as_deref(),
+            Some("False")
+        );
     }
 
     #[test]
@@ -2382,35 +2521,56 @@ let decorators = {
             "decl countdown: Fn(Int) -> Int; def countdown = fn(n) { if n < 1 { 0 } else { countdown(n - 1) } }; countdown(4)",
         )
         .unwrap();
-        assert!(matches!(explicit, Value::Int(0)));
+        assert_int(&explicit, 0);
 
         let mutual = run(
             "decl even: Fn(Int) -> Int; decl odd: Fn(Int) -> Int; def even = fn(n) { if n < 1 { 0 } else { odd(n - 1) } }; def odd = fn(n) { if n < 1 { 1 } else { even(n - 1) } }; even(4)",
         )
         .unwrap();
-        assert!(matches!(mutual, Value::Int(0)));
+        assert_int(&mutual, 0);
 
         let higher_order = run(
             "decl loop: Fn(Int) -> Int; let build = fn(body) { body }; def loop = build(fn(n) { if n < 1 { 0 } else { loop(n - 1) } }); loop(3)",
         )
         .unwrap();
-        assert!(matches!(higher_order, Value::Int(0)));
+        assert_int(&higher_order, 0);
 
         let passed_as_value = run(
             "decl countdown: Fn(Int) -> Int; def countdown = fn(n) { if n < 1 { 0 } else { countdown(n - 1) } }; let invoke = fn(f, n) { f(n) }; invoke(countdown, 4)",
         )
         .unwrap();
-        assert!(matches!(passed_as_value, Value::Int(0)));
+        assert_int(&passed_as_value, 0);
 
         let named = run(
             "def loop: Fn(Int) -> Int = fn(n) { if n < 1 { 0 } else { loop(n - 1) } }; loop(3)",
         )
         .unwrap();
-        assert!(matches!(named, Value::Int(0)));
+        assert_int(&named, 0);
 
         let annotated =
             run("def increment: Fn(Int) -> Int = fn(value) { value + 1 }; increment(41)").unwrap();
-        assert!(matches!(annotated, Value::Int(42)));
+        assert_int(&annotated, 42);
+    }
+
+    #[test]
+    fn recursive_definitions_capture_their_lexical_context() {
+        let fib = run(
+            "let base = 10; decl fib: Fn(Int) -> Int; def fib = fn(v) { if v < 2 { base } else { fib(v - 1) + fib(v - 2) } }; fib(4)",
+        )
+        .unwrap();
+        assert_int(&fib, 50);
+
+        let prior_let = run(
+            "let base = 2; decl countdown: Fn(Int) -> Int; def countdown = fn(n) { if n < 1 { base } else { countdown(n - 1) } }; countdown(3)",
+        )
+        .unwrap();
+        assert_int(&prior_let, 2);
+
+        let nested = run(
+            "let outer = 40; { let local = 2; decl answer: Fn(Int) -> Int; def answer = fn(n) { if n < 1 { outer + local } else { answer(n - 1) } }; answer(3) }",
+        )
+        .unwrap();
+        assert_int(&nested, 42);
     }
 
     #[test]
@@ -2419,7 +2579,7 @@ let decorators = {
                  if value < 1 { 0 } else { countdown(value - 1) }\
              }; countdown(4)")
         .unwrap();
-        assert!(matches!(direct, Value::Int(0)));
+        assert_int(&direct, 0);
 
         let mutual = run("def even = fn(value) {\
                  if value < 1 { 'True } else { odd(value - 1) }\
@@ -2428,10 +2588,7 @@ let decorators = {
                  if value < 1 { 'False } else { even(value - 1) }\
              }; even(4)")
         .unwrap();
-        assert!(matches!(
-            mutual,
-            Value::Atom(Atom::Builtin(BuiltinAtom::True))
-        ));
+        assert_atom(&mutual, "True");
     }
 
     #[test]
@@ -2439,25 +2596,25 @@ let decorators = {
         let direct =
             run("def countdown: Fn(Int) -> Int = fn(n) { if n < 1 { 0 } else { countdown(n - 1) } }; countdown(1500)")
                 .unwrap();
-        assert!(matches!(direct, Value::Int(0)));
+        assert_int(&direct, 0);
 
         let mutual = run(
             "decl even: Fn(Int) -> Int; decl odd: Fn(Int) -> Int; def even = fn(n) { if n < 1 { 0 } else { odd(n - 1) } }; def odd = fn(n) { if n < 1 { 1 } else { even(n - 1) } }; even(1500)",
         )
         .unwrap();
-        assert!(matches!(mutual, Value::Int(0)));
+        assert_int(&mutual, 0);
 
         let matched = run(
             "def countdown: Fn(Int) -> Int = fn(n) { match n { 0 => 0, value => countdown(value - 1) } }; countdown(1500)",
         )
         .unwrap();
-        assert!(matches!(matched, Value::Int(0)));
+        assert_int(&matched, 0);
 
         let higher_order = run(
             "let iterate: Fn(Any, Int) -> Int = fn(step, n) { if n < 1 { 0 } else { step(step, n - 1) } }; iterate(iterate, 1500)",
         )
         .unwrap();
-        assert!(matches!(higher_order, Value::Int(0)));
+        assert_int(&higher_order, 0);
 
         let non_tail =
             run("def descend: Fn(Int) -> Int = fn(n) { if n < 1 { 0 } else { 1 + descend(n - 1) } }; descend(1500)")
@@ -2520,14 +2677,12 @@ let decorators = {
                 .contains("declared but never initialized")
         );
 
-        let early_read = run("decl value: Int; def value = value + 1; value").unwrap_err();
-        assert!(matches!(
-            early_read,
-            ExecutionError::Runtime(RuntimeError {
-                kind: RuntimeErrorKind::UninitializedDefinition,
-                ..
-            })
-        ));
+        let non_function = run("decl value: Int; def value = value + 1; value").unwrap_err();
+        assert!(
+            non_function
+                .to_string()
+                .contains("decl requires a function contract")
+        );
 
         let shadow = run("def value = 1; { def value = 2; value }").unwrap_err();
         assert!(shadow.to_string().contains("cannot shadow"));
@@ -2537,7 +2692,7 @@ let decorators = {
 
         let declaration_conflict =
             run("decl value: Int; let value = 1; def value = 2; value").unwrap_err();
-        assert!(declaration_conflict.to_string().contains("conflicts"));
+        assert!(declaration_conflict.to_string().contains("cannot shadow"));
 
         let wrong_arity = run(
             "decl f: Fn(Int) -> Int; let build = fn(value) { value }; def f = build(fn(a, b) { a + b }); f",
@@ -2556,20 +2711,47 @@ let decorators = {
     }
 
     #[test]
+    fn let_may_shadow_a_definition_but_def_may_not_shadow() {
+        assert_eq!(
+            run("def value = 1; let value = 2; value")
+                .unwrap()
+                .to_string(),
+            "2"
+        );
+
+        assert_eq!(
+            run("decl value: Fn(Int) -> Int; def value = fn(x) { x + 1 }; let value = fn(x) { x + 2 }; value(1)")
+                .unwrap()
+                .to_string(),
+            "3"
+        );
+
+        let shadow =
+            run("let value = fn(x) { x }; def value = fn(x) { x + 1 }; value(1)").unwrap_err();
+        assert!(shadow.to_string().contains("cannot shadow"));
+
+        let hidden_declaration = run(
+            "decl value: Fn(Int) -> Int; let value = fn(x) { x }; def value = fn(x) { x + 1 }; value(1)",
+        )
+        .unwrap_err();
+        assert!(hidden_declaration.to_string().contains("cannot shadow"));
+    }
+
+    #[test]
     fn allocation_and_stack_quotas_keep_source_origins() {
         let source = "[1, 2]";
         let function = compile_source("quota.telora", source).unwrap();
         let mut sources = SourceDatabase::default();
         sources.add("quota.telora", source);
-        let allocation = Vm::new()
-            .execute_with_quota(&function, Quota::new(0, 100, 0))
+        let allocation = function
+            .execute_with_quota(&mut Vm::new(), Quota::new(0, 100, 0))
             .unwrap_err()
             .with_sources(&sources);
         assert_eq!(allocation.kind, RuntimeErrorKind::AllocationQuotaExceeded);
         assert!(allocation.to_string().contains("quota.telora:1:1"));
 
-        let stack = Vm::new()
-            .execute_with_quota(&function, Quota::new(0, 1, u64::MAX))
+        let stack = function
+            .execute_with_quota(&mut Vm::new(), Quota::new(0, 1, u64::MAX))
             .unwrap_err()
             .with_sources(&sources);
         assert_eq!(stack.kind, RuntimeErrorKind::StackLimitExceeded);
@@ -2577,8 +2759,8 @@ let decorators = {
 
         let native_source = "validate(Int, \"wrong\")";
         let native = compile_source("native-quota.telora", native_source).unwrap();
-        let native_error = Vm::new()
-            .execute_with_quota(&native, Quota::new(1, 100, 0))
+        let native_error = native
+            .execute_with_quota(&mut Vm::new(), Quota::new(1, 100, 0))
             .unwrap_err();
         assert_eq!(native_error.kind, RuntimeErrorKind::AllocationQuotaExceeded);
     }
@@ -2586,13 +2768,13 @@ let decorators = {
     #[test]
     fn captures_values_and_calls_closures() {
         let value = run("let base = 40; let add = fn(value) { base + value }; add(2)").unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
     }
 
     #[test]
     fn executes_partially_annotated_closures_without_runtime_annotation_work() {
         let value = run("(fn(value: Int) -> Int { value + 1 })(41)").unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
     }
 
     #[test]
@@ -2601,7 +2783,7 @@ let decorators = {
              def identity = fn(value) { value };\
              identity@[Int](42)")
         .unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
     }
 
     #[test]
@@ -2609,24 +2791,21 @@ let decorators = {
         let value = run("let identity = fn(value) { value };\
              (identity(42), identity(\"value\"), identity@[Int](7))")
         .unwrap();
-        assert!(matches!(
-            value,
-            Value::Tuple(items)
-                if matches!(items[0], Value::Int(42))
-                    && matches!(&items[1], Value::String(text) if text.as_ref() == "value")
-                    && matches!(items[2], Value::Int(7))
-        ));
+        let items = value.value();
+        assert_eq!(items.sequence_get(0).unwrap().as_int(), Some(42));
+        assert_eq!(
+            items.sequence_get(1).unwrap().as_str().as_deref(),
+            Some("value")
+        );
+        assert_eq!(items.sequence_get(2).unwrap().as_int(), Some(7));
     }
 
     #[test]
     fn indexes_arrays_and_projects_tuples() {
         let value = run("let values = [10, 20, 30]; (values[1], (\"left\", 42).1)").unwrap();
-        assert!(matches!(
-            value,
-            Value::Tuple(items)
-                if matches!(items[0], Value::Int(20))
-                    && matches!(items[1], Value::Int(42))
-        ));
+        let items = value.value();
+        assert_eq!(items.sequence_get(0).unwrap().as_int(), Some(20));
+        assert_eq!(items.sequence_get(1).unwrap().as_int(), Some(42));
     }
 
     #[test]
@@ -2641,9 +2820,9 @@ let decorators = {
         }
 
         let function = compile_source("test", "[1][1]").unwrap();
-        let array_only = std::mem::size_of::<Value>() as u64;
-        let allocation = Vm::new()
-            .execute_with_quota(&function, Quota::new(0, 100, array_only))
+        let array_only = std::mem::size_of::<Val>() as u64;
+        let allocation = function
+            .execute_with_quota(&mut Vm::new(), Quota::new(0, 100, array_only))
             .unwrap_err();
         assert_eq!(allocation.kind, RuntimeErrorKind::AllocationQuotaExceeded);
 
@@ -2651,26 +2830,24 @@ let decorators = {
             .checked_mul(6)
             .and_then(|bytes| bytes.checked_add(15))
             .unwrap();
-        let blame = Vm::new()
-            .execute_with_quota(&function, Quota::new(0, 100, complete_failure))
+        let blame = function
+            .execute_with_quota(&mut Vm::new(), Quota::new(0, 100, complete_failure))
             .unwrap_err();
         assert_eq!(blame.kind, RuntimeErrorKind::RaisedBlame);
     }
 
     #[test]
     fn dynamic_projection_boundaries_check_runtime_values() {
-        assert!(matches!(
-            run("let pair = (0, (1, \"ok\")); pair.1.0").unwrap(),
-            Value::Int(1)
-        ));
-        assert!(matches!(
-            run("let values: Any = [1, 2]; values[1]").unwrap(),
-            Value::Int(2)
-        ));
-        assert!(matches!(
-            run("let pair: Any = (1, \"x\"); pair.1").unwrap(),
-            Value::String(text) if text.as_ref() == "x"
-        ));
+        assert_int(&run("let pair = (0, (1, \"ok\")); pair.1.0").unwrap(), 1);
+        assert_int(&run("let values: Any = [1, 2]; values[1]").unwrap(), 2);
+        assert_eq!(
+            run("let pair: Any = (1, \"x\"); pair.1")
+                .unwrap()
+                .value()
+                .as_str()
+                .as_deref(),
+            Some("x")
+        );
 
         for source in [
             "let value: Any = 1; value[0]",
@@ -2711,12 +2888,12 @@ let decorators = {
     #[test]
     fn pipeline_is_uniform_reverse_application() {
         let value = run("let add = fn(a) { fn(b) { a + b } }; 40 |> add(2)").unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
 
         let chained = run("let ops = { increment: fn(value) { value + 1 } }; \
              40 |> ops.increment |> fn(value) { value + 1 }")
         .unwrap();
-        assert!(matches!(chained, Value::Int(42)));
+        assert_int(&chained, 42);
 
         let error = run("let add = fn(a, b) { a + b }; 40 |> add(2)").unwrap_err();
         assert!(
@@ -2731,43 +2908,40 @@ let decorators = {
         let bare = run("let combine = fn(a, middle, b) { a + middle + b }; \
              let section = combine\\(_, 10, _); section(1, 2)")
         .unwrap();
-        assert!(matches!(bare, Value::Int(13)));
+        assert_int(&bare, 13);
 
         let reordered = run("let subtract = fn(a, b) { a - b }; \
              let flipped = subtract\\(_1, _0); flipped(2, 10)")
         .unwrap();
-        assert!(matches!(reordered, Value::Int(8)));
+        assert_int(&reordered, 8);
 
         let repeated =
             run("let add = fn(a, b) { a + b }; let twice = add\\(_0, _0); twice(21)").unwrap();
-        assert!(matches!(repeated, Value::Int(42)));
+        assert_int(&repeated, 42);
 
         let nested = run("let increment = fn(value) { value + 1 }; \
              let apply = fn(callback, value) { callback(value) }; \
              apply(increment\\(_), 41)")
         .unwrap();
-        assert!(matches!(nested, Value::Int(42)));
+        assert_int(&nested, 42);
 
         let piped = run("let add = fn(a, b) { a + b }; \
              40 |> add\\(_, 2)")
         .unwrap();
-        assert!(matches!(piped, Value::Int(42)));
+        assert_int(&piped, 42);
 
         let native = run("let array_type = Array\\(_); array_type(Int)").unwrap();
-        let Value::Dict(metadata) = native else {
-            panic!("expected Array metadata")
-        };
-        assert_eq!(metadata.get("kind").unwrap().to_string(), "'Array");
+        assert_eq!(
+            native.value().dict_get("kind").unwrap().to_string(),
+            "'Array"
+        );
 
         let reevaluated = run("let second = fn(first, second) { second }; \
              let make: Fn() -> Fn(Any) -> Any = fn() { fn(value) { value } }; \
              let section = second\\(_, make()); \
              section(1) == section(2)")
         .unwrap();
-        assert!(matches!(
-            reevaluated,
-            Value::Atom(Atom::Builtin(BuiltinAtom::False))
-        ));
+        assert_atom(&reevaluated, "False");
     }
 
     #[test]
@@ -2776,12 +2950,13 @@ let decorators = {
             r#"let name = "Ada"; let count = 3; let ratio = 3.0; let small = 1.25e-3; let zero = -0.0; let state = 'Ok; `hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`"#,
         )
         .unwrap();
-        assert!(
-            matches!(&value, Value::String(text) if text.as_ref() == "hi, Ada count=3 ratio=3 small=0.00125 zero=-0 state=Ok")
+        assert_eq!(
+            value.value().as_str().as_deref(),
+            Some("hi, Ada count=3 ratio=3 small=0.00125 zero=-0 state=Ok")
         );
 
         let nested = run(r#"`value=\{if 'True { "yes" } else { "no" }}`"#).unwrap();
-        assert!(matches!(&nested, Value::String(text) if text.as_ref() == "value=yes"));
+        assert_eq!(nested.value().as_str().as_deref(), Some("value=yes"));
     }
 
     #[test]
@@ -2817,7 +2992,7 @@ let decorators = {
     #[test]
     fn if_evaluates_only_the_selected_branch() {
         let value = run("if 'True { 42 } else { 1 / 0 }").unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
     }
 
     #[test]
@@ -2828,7 +3003,7 @@ let decorators = {
             "let choose = fn(value: Bool) { if 'False { 1 } else match value { 'True => 3, 'False => 4 } }; choose('True)",
         ];
         for source in cases {
-            assert!(matches!(run(source).unwrap(), Value::Int(3)));
+            assert_int(&run(source).unwrap(), 3);
         }
 
         let returned = run(
@@ -2841,7 +3016,7 @@ let decorators = {
     #[test]
     fn match_destructures_tagged_tuples() {
         let value = run("match ('Ok, 42) { ('Ok, value) => value }").unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
     }
 
     #[test]
@@ -2849,7 +3024,7 @@ let decorators = {
         let value = run("let Some = 'Some; let option: Option(Int) = Some(42);\
              match option { 'None => 0, 'Some(value) => value }")
         .unwrap();
-        assert!(matches!(value, Value::Int(42)));
+        assert_int(&value, 42);
     }
 
     #[test]
@@ -3018,8 +3193,8 @@ let decorators = {
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
-        let value = Vm::new()
-            .execute_with_account(&function, &[], &mut account)
+        let value = function
+            .execute_with_account(&mut Vm::new(), &mut account)
             .unwrap();
         assert_eq!(value.to_string(), "'None");
         assert_eq!(account.diagnostics().len(), 1);
@@ -3035,8 +3210,8 @@ let decorators = {
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
-        let value = Vm::new()
-            .execute_with_account(&discarded, &[], &mut account)
+        let value = discarded
+            .execute_with_account(&mut Vm::new(), &mut account)
             .unwrap();
         assert_eq!(value.to_string(), "0");
         assert_eq!(account.diagnostics().len(), 1);
@@ -3051,8 +3226,8 @@ let decorators = {
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
-        let value = Vm::new()
-            .execute_with_account(&function, &[], &mut account)
+        let value = function
+            .execute_with_account(&mut Vm::new(), &mut account)
             .unwrap();
         assert_eq!(value.to_string(), "7");
         assert!(account.diagnostics().is_empty());
@@ -3088,8 +3263,8 @@ let decorators = {
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
-        let value = Vm::new()
-            .execute_with_account(&function, &[], &mut account)
+        let value = function
+            .execute_with_account(&mut Vm::new(), &mut account)
             .unwrap();
         assert_eq!(value.to_string(), "'None");
         assert_eq!(account.diagnostics().len(), 1);
