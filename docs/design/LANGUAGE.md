@@ -715,17 +715,68 @@ options。其他静态 `option` 可声明模块或 Host 协议配置，必须位
 ### 8.2 静态数据模块
 
 JSON、TOML 和 YAML 与 Telora 文件共同进入模块图。它们不是运行时文件读取：Host
-在封闭世界建立时加载并注册源码，解析结果是带字段来源的不可变值。
+在封闭世界建立时加载并注册源码。每个静态数据文件都是只导出 `data: Value` 的
+Module，不是一个 raw root：
+
+```telora
+import "./request.json" { data as request };
+import "./policy.yaml" { data as policy };
+import "./config.toml" { data as config };
+```
+
+`Value` 是 `std/value` 定义的唯一 nominal recursive semantic sum：
+
+```telora
+type Value = enum {
+    'None, 'True, 'False,
+    'Int(Int), 'Float(Float), 'String(String), 'Bytes(Bytes),
+    'Array(Array(Value)), 'Object(Dict(Value)),
+    'LocalDate(String), 'LocalTime(String),
+    'LocalDateTime(String), 'OffsetDateTime(String),
+};
+```
+
+每个递归子节点都携带同一个 canonical `Value` TypeId，因此可以用闭合 `match`
+穷尽处理。它是规范化后的语义数据，不是 lossless AST：不保留注释、anchor/alias
+身份、原始标量拼写或 table 拼写，也不暴露 VM 的 meta/runtime layout。
 
 当前格式行为包括：
 
-- JSON 严格解析数字、字符串和重复 key，并保留字段路径来源；
-- TOML 支持 1.0 的核心值与表结构，日期和时间保留为不同 tagged representation；
-- YAML 采用保守的 1.2 Core Schema，mapping key 必须是 String，拒绝 custom tag、
-  merge key 及会引入歧义的行为；旧式隐式 bool 和时间戳按 String 处理。
+- JSON 严格解析数字、字符串和重复 key；Int 越界或非有限 Float 失败；
+- TOML 支持 1.0 的核心值与表结构，四种 date/time 类别规范化为独立 Value variant；
+- YAML 使用固定的保守 schema：mapping key 必须是 String，拒绝 custom tag 和非有限
+  Float；标准 `!!binary` 经过 canonical base64 校验后成为 Bytes；alias 有深度与总
+  展开量限制；merge 只接受 mapping 或 mapping sequence，显式字段覆盖 merged 字段，
+  未被显式覆盖的重复 effective key 失败；旧式隐式 bool 和时间戳按 String 处理。
+
+运行时文本解析使用同一边界：
+
+```telora
+json.parse(text)  # Result(Value, BlameError)
+yaml.parse(text)  # Result(Value, BlameError)
+toml.parse(text)  # Result(Value, BlameError)
+```
+
+Typed model 与 Value 之间只通过 codec 重建数据图：
+
+```telora
+let model = codec.decode(Model, request) |> result.unwrap;
+let value = codec.encode(Value, model) |> result.unwrap;
+```
+
+`cast!` 只做表示不变的 checked refinement，不移除 Value variant、不解析 String，也
+不应用 rename/default/flatten。`Any` 是显式静态擦除，`Dyn` 是带 canonical witness
+的存在类型；二者都不是公共数据交换模型。JSON stringify 只接受 Value，但 JSON
+没有 Bytes 或 temporal scalar，因此含这些 variant 的 Value 必须先由显式领域 codec
+转换为 JSON 可表达的模型。
 
 解析失败的静态数据模块不能供严格执行使用，但 workspace recovery 仍保留其 source、
 syntax diagnostic 和不依赖成功值的事实。
+
+格式 frontend 可以在内部建立 raw graph，但发布前必须一次性规范化为 Value。Variant
+wrapper 不增加 provenance path segment；数组索引、对象 key 和原始 scalar 位置继续
+指向输入数据。Strict load、recovery、`check` 和 `show` 观察同一个 `{data: Value}`
+接口。
 
 ### 8.3 初始化和发布
 
@@ -927,24 +978,25 @@ Tool stage 执行 annotation、type initializer、decorator、module interface �
 静态 annotation 和 witness 默认从程序执行中擦除；当程序显式把 TypeMetadata 当作
 普通值使用时，该值会保留到运行时。
 
-`codec.encode(witness, value)` 等需要 `TypeOf(A)` 的运行时边界必须收到实际、受检查
-的 TypeMetadata 值。语言不从普通值的运行时表示反射其已擦除静态类型，也不允许从
-`Any` 或 `Dyn` 伪造 witness。复杂 concrete family 的定义模块应拥有一次完整实例化，
-并导出 concrete alias 或 typed boundary function：
+`codec.decode(Target, value)` 的首个参数是受检查的 `TypeOf(Target)`；
+`codec.encode(Value, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
+已经携带的 nominal witness 选择 schema。语言不从擦除后的 `Any` 或 `Dyn` 猜测
+model 类型。复杂 concrete family 的定义模块应拥有一次完整实例化，并导出 concrete
+alias 或 typed boundary function：
 
 ```telora
 type Rejection = RejectionPayload(Entity, Dimension, Intent, Expr, Plan, Sql);
 
 def encode_rejection = fn(value: Rejection) {
-    codec.encode(Rejection, value)
+    codec.encode(Value, value)
 };
 
 export { Rejection, encode_rejection };
 ```
 
-下游调用 `encode_rejection(value)`，不重复 family 实参；函数契约仍严格检查 value 与
-witness 对应。该模块/API 方案适用于跨模块和包含封闭递归参数的 family，不引入隐式
-反射或新的表面语法。
+下游调用 `encode_rejection(value)`，不重复 family 实参；函数契约仍严格检查 value，
+其 canonical witness 随值跨模块传播。该模块/API 方案适用于包含封闭递归参数的
+family，不引入隐式反射或新的表面语法。
 
 ### 10.2 Fuel 和配额
 

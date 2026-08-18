@@ -196,8 +196,9 @@ container form:
 type Endpoint = { host: String, port: Int };
 ```
 
-`codec.decode` then accepts a String, `codec.encode` produces a String, and
-JSON Schema describes `Endpoint` as a string even when nested. The two bridge
+Within the semantic `Value` boundary, `codec.decode(Endpoint, value)` accepts a
+`'String(...)` variant and `codec.encode(Value, endpoint)` produces one. JSON
+Schema describes `Endpoint` as a string even when nested. The two bridge
 declarations are paired and currently apply only to a type container; field
 overrides are intentionally deferred.
 
@@ -219,12 +220,17 @@ uses ordinary Telora codecs and formatters to produce output text.
 
 ### Static data as source
 
-JSON, TOML, and YAML modules enter the same immutable graph as Telora code. TOML
-temporal categories retain distinct tagged representations. YAML follows the
-1.2 Core Schema conservatively: legacy implicit booleans and timestamps remain
-Strings, mapping keys must be Strings, and custom tags and merge keys are
-rejected. Ambiguous format behavior is rejected or delegated to explicit
-library policy.
+JSON, TOML, and YAML modules enter the same immutable graph as Telora code and
+export exactly `{ data: Value }`. `std/value.Value` is one nominal recursive
+tagged sum shared by static imports and `json/yaml/toml.parse`; it is semantic
+data, not a lossless syntax tree. Typed models cross this boundary through
+`codec.decode(Model, value)` and `codec.encode(Value, model)`.
+
+TOML temporal categories retain distinct Value variants. YAML uses a fixed
+conservative schema: legacy implicit booleans and timestamps remain Strings,
+mapping keys must be Strings, custom tags are rejected, aliases are bounded,
+and mapping merge keys are expanded deterministically. Standard `!!binary`
+maps to Bytes after strict base64 validation.
 
 ### Conservative local polymorphism
 

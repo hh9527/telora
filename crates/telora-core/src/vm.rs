@@ -1,7 +1,8 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
     DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, Val, publish_module_root,
-    publish_root, relocate_work_roots,
+    publish_root, relocate_work_roots, semantic_value_unwrap_bytes, semantic_value_wrapper_bytes,
+    unwrap_semantic_value, wrap_semantic_value,
 };
 use crate::lir::RegisterId;
 use crate::value::{
@@ -7823,6 +7824,10 @@ struct CodecEnumVariant {
 #[derive(Clone, Debug)]
 enum CodecNode {
     Existing(Val),
+    SemanticValue {
+        owner: Val,
+        raw: Box<Self>,
+    },
     Declared {
         owner: Val,
         payload: Box<Self>,
@@ -7890,6 +7895,7 @@ struct PredicateRequest {
 struct JsonEncodeContinuation {
     schema: CodecType,
     input: Val,
+    value_owner: Val,
     decisions: BTreeMap<String, bool>,
     pending_path: String,
     pending_rule: Val,
@@ -7943,12 +7949,122 @@ fn run_core_codec(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    let view = HeapView {
-        current,
-        background: Some(background),
+    let direction = match operation {
+        CoreCodecFunction::Decode => CodecDirection::Decode,
+        CoreCodecFunction::Encode => CodecDirection::Encode,
     };
-    propagate_data_failures(&[arguments[1]], &view, function, pc)?;
-    let schema = decode_runtime_type(arguments[0], current, background)
+    if matches!(direction, CodecDirection::Encode) {
+        let source_owner = {
+            let view = HeapView {
+                current,
+                background: Some(background),
+            };
+            propagate_data_failures(&[arguments[1]], &view, function, pc)?;
+            view.type_witness(arguments[1]).map_err(|heap_error| {
+                error(
+                    RuntimeErrorKind::TypeMismatch,
+                    heap_error.to_string(),
+                    function,
+                    pc,
+                )
+            })?
+        };
+        if source_owner.is_none() {
+            semantic_value_wrapper_bytes(current, Some(background), arguments[1]).map_err(
+                |heap_error| {
+                    error(
+                        RuntimeErrorKind::TypeMismatch,
+                        heap_error.to_string(),
+                        function,
+                        pc,
+                    )
+                },
+            )?;
+            return finish_codec_result(
+                Ok(CodecNode::SemanticValue {
+                    owner: arguments[0],
+                    raw: Box::new(CodecNode::Existing(arguments[1])),
+                }),
+                arguments[1],
+                return_target,
+                function,
+                pc,
+                current,
+                background,
+                account,
+            );
+        }
+    }
+    let (schema_owner, value_owner) = {
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        propagate_data_failures(&[arguments[1]], &view, function, pc)?;
+        match direction {
+            CodecDirection::Decode => {
+                let owner = view
+                    .type_witness(arguments[1])
+                    .map_err(|heap_error| {
+                        error(
+                            RuntimeErrorKind::TypeMismatch,
+                            heap_error.to_string(),
+                            function,
+                            pc,
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        error(
+                            RuntimeErrorKind::TypeMismatch,
+                            "std/codec.decode expects std/value.Value input",
+                            function,
+                            pc,
+                        )
+                    })?;
+                (arguments[0], owner)
+            }
+            CodecDirection::Encode => {
+                let owner = view
+                    .type_witness(arguments[1])
+                    .map_err(|heap_error| {
+                        error(
+                            RuntimeErrorKind::TypeMismatch,
+                            heap_error.to_string(),
+                            function,
+                            pc,
+                        )
+                    })?
+                    .expect("unowned encode inputs returned above");
+                (owner, arguments[0])
+            }
+        }
+    };
+    let identity = {
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        matches!(
+            (
+                view.declared_type_id(schema_owner),
+                view.declared_type_id(value_owner),
+            ),
+            (Ok(schema), Ok(value)) if schema == value
+        )
+    };
+    if identity {
+        return finish_codec_result(
+            Ok(CodecNode::Existing(arguments[1])),
+            arguments[1],
+            return_target,
+            function,
+            pc,
+            current,
+            background,
+            account,
+        );
+    }
+    let schema = decode_runtime_type(schema_owner, current, background)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
     assert_codec_graph_ready(&schema, current, background).map_err(
         |graph_error| match graph_error {
@@ -7963,14 +8079,11 @@ fn run_core_codec(
             }
         },
     )?;
-    let direction = match operation {
-        CoreCodecFunction::Decode => CodecDirection::Decode,
-        CoreCodecFunction::Encode => CodecDirection::Encode,
-    };
     if matches!(direction, CodecDirection::Encode) {
         return continue_json_encode(
             schema,
             arguments[1],
+            value_owner,
             BTreeMap::new(),
             return_target,
             Arc::new(function.clone()),
@@ -7980,9 +8093,31 @@ fn run_core_codec(
             account,
         );
     }
+    let unwrap_bytes =
+        semantic_value_unwrap_bytes(current, Some(background), arguments[1], value_owner).map_err(
+            |heap_error| {
+                error(
+                    RuntimeErrorKind::TypeMismatch,
+                    heap_error.to_string(),
+                    function,
+                    pc,
+                )
+            },
+        )?;
+    charge_allocation(account, unwrap_bytes, function, pc)?;
+    let raw = unwrap_semantic_value(current, Some(background), arguments[1], value_owner).map_err(
+        |heap_error| {
+            error(
+                RuntimeErrorKind::TypeMismatch,
+                heap_error.to_string(),
+                function,
+                pc,
+            )
+        },
+    )?;
     let result = transform_codec(
         &schema,
-        arguments[1],
+        raw,
         direction,
         "$",
         &BTreeMap::new(),
@@ -8005,6 +8140,7 @@ fn run_core_codec(
 fn continue_json_encode(
     schema: CodecType,
     input: Val,
+    value_owner: Val,
     decisions: BTreeMap<String, bool>,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
@@ -8028,6 +8164,7 @@ fn continue_json_encode(
         let continuation = JsonEncodeContinuation {
             schema,
             input,
+            value_owner,
             decisions,
             pending_path: request.path.clone(),
             pending_rule: failure.rule,
@@ -8048,6 +8185,10 @@ fn continue_json_encode(
             call_pc,
         });
     }
+    let result = result.map(|raw| CodecNode::SemanticValue {
+        owner: value_owner,
+        raw: Box::new(raw),
+    });
     finish_codec_result(
         result,
         input,
@@ -8087,6 +8228,7 @@ fn resume_json_encode_continuation(
     continue_json_encode(
         continuation.schema,
         continuation.input,
+        continuation.value_owner,
         continuation.decisions,
         continuation.return_target,
         continuation.call_function,
@@ -8125,13 +8267,21 @@ fn finish_codec_result(
             )
         }
     };
-    let bytes = codec_node_bytes(&payload)
+    let bytes = codec_node_bytes(&payload, current, background)
         .and_then(|bytes| {
             bytes
                 .checked_add(logical_value_bytes(2)?)
                 .ok_or_else(|| NativeError::allocation_limit("codec Result size overflowed"))
         })
-        .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
+        .map_err(|native_error| match native_error.limit() {
+            Some(_) => allocation_error(native_error.message, function, pc),
+            None => error(
+                RuntimeErrorKind::TypeMismatch,
+                native_error.message,
+                function,
+                pc,
+            ),
+        })?;
     charge_allocation(account, bytes, function, pc)?;
     let payload = materialize_codec_node(payload, current, background);
     let value = Val::new(
@@ -10606,27 +10756,38 @@ fn codec_type_name(schema: &CodecType) -> &'static str {
     }
 }
 
-fn codec_node_bytes(node: &CodecNode) -> Result<u64, NativeError> {
+fn codec_node_bytes(
+    node: &CodecNode,
+    current: &Heap,
+    background: &Heap,
+) -> Result<u64, NativeError> {
     match node {
         CodecNode::Existing(_) | CodecNode::Atom(_, _) => Ok(0),
-        CodecNode::Declared { payload, .. } => codec_node_bytes(payload),
+        CodecNode::SemanticValue { raw, .. } => codec_node_bytes(raw, current, background)?
+            .checked_add(semantic_codec_wrapper_bytes(raw, current, background)?)
+            .ok_or_else(|| NativeError::allocation_limit("codec output size overflowed")),
+        CodecNode::Declared { payload, .. } => codec_node_bytes(payload, current, background),
         CodecNode::NamedAtom(value, _) | CodecNode::String(value, _) => Ok(value.len() as u64),
         CodecNode::Array(items, _) | CodecNode::Tuple(items, _) => {
             let own = logical_value_bytes(items.len())?;
             items.iter().try_fold(own, |total, item| {
                 total
-                    .checked_add(codec_node_bytes(item)?)
+                    .checked_add(codec_node_bytes(item, current, background)?)
                     .ok_or_else(|| NativeError::allocation_limit("codec output size overflowed"))
             })
         }
-        CodecNode::Tagged { tag, payload, .. } => logical_value_bytes(2)?
-            .checked_add(codec_node_bytes(tag)?)
-            .and_then(|total| total.checked_add(codec_node_bytes(payload).ok()?))
-            .ok_or_else(|| NativeError::allocation_limit("codec output size overflowed")),
+        CodecNode::Tagged { tag, payload, .. } => {
+            let tag = codec_node_bytes(tag, current, background)?;
+            let payload = codec_node_bytes(payload, current, background)?;
+            logical_value_bytes(2)?
+                .checked_add(tag)
+                .and_then(|total| total.checked_add(payload))
+                .ok_or_else(|| NativeError::allocation_limit("codec output size overflowed"))
+        }
         CodecNode::Dict(fields, _) => {
             let own = logical_value_bytes(fields.len())?;
             fields.iter().try_fold(own, |total, (name, value)| {
-                let value_bytes = codec_node_bytes(value)?;
+                let value_bytes = codec_node_bytes(value, current, background)?;
                 total
                     .checked_add(name.len() as u64)
                     .and_then(|total| total.checked_add(value_bytes))
@@ -10636,9 +10797,81 @@ fn codec_node_bytes(node: &CodecNode) -> Result<u64, NativeError> {
     }
 }
 
+fn semantic_codec_wrapper_bytes(
+    node: &CodecNode,
+    current: &Heap,
+    background: &Heap,
+) -> Result<u64, NativeError> {
+    fn add(left: u64, right: u64) -> Result<u64, NativeError> {
+        left.checked_add(right)
+            .ok_or_else(|| NativeError::allocation_limit("semantic Value size overflowed"))
+    }
+
+    let tagged_bytes = logical_value_bytes(2)?;
+    match node {
+        CodecNode::Existing(value) => {
+            semantic_value_wrapper_bytes(current, Some(background), *value)
+                .map_err(|error| NativeError::new(error.to_string()))
+        }
+        CodecNode::Declared { payload, .. } => {
+            semantic_codec_wrapper_bytes(payload, current, background)
+        }
+        CodecNode::Atom(BuiltinAtom::None | BuiltinAtom::True | BuiltinAtom::False, _) => Ok(0),
+        CodecNode::String(_, _) => Ok(tagged_bytes),
+        CodecNode::Array(items, _) => {
+            let mut bytes = add(logical_value_bytes(items.len())?, tagged_bytes)?;
+            for item in items {
+                bytes = add(
+                    bytes,
+                    semantic_codec_wrapper_bytes(item, current, background)?,
+                )?;
+            }
+            Ok(bytes)
+        }
+        CodecNode::Dict(fields, _) => {
+            let mut bytes = add(logical_value_bytes(fields.len())?, tagged_bytes)?;
+            for (_, value) in fields {
+                bytes = add(
+                    bytes,
+                    semantic_codec_wrapper_bytes(value, current, background)?,
+                )?;
+            }
+            Ok(bytes)
+        }
+        CodecNode::Tagged { tag, payload, .. } => {
+            let CodecNode::NamedAtom(tag, _) = tag.as_ref() else {
+                return Err(NativeError::new("semantic temporal tag is not an Atom"));
+            };
+            if !matches!(
+                tag.as_str(),
+                "LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime"
+            ) || !matches!(
+                payload.as_ref(),
+                CodecNode::String(_, _) | CodecNode::Existing(_)
+            ) {
+                return Err(NativeError::new(
+                    "raw data graph contains unsupported tagged value",
+                ));
+            }
+            Ok(tagged_bytes)
+        }
+        CodecNode::SemanticValue { .. }
+        | CodecNode::NamedAtom(_, _)
+        | CodecNode::Tuple(_, _)
+        | CodecNode::Atom(_, _) => Err(NativeError::new(
+            "raw data graph contains an unsupported semantic Value",
+        )),
+    }
+}
+
 fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap) -> Val {
     match node {
         CodecNode::Existing(value) => value,
+        CodecNode::SemanticValue { owner, raw } => {
+            let raw = materialize_codec_node(*raw, current, background);
+            wrap_semantic_value(current, Some(background), raw, owner)
+                .expect("codec Value owner and raw output were validated")
+        }
         CodecNode::Declared {
             owner,
             payload,
@@ -10830,9 +11063,12 @@ fn run_core_json(
 ) -> Result<VmAction, RuntimeError> {
     if matches!(
         operation,
-        CoreJsonFunction::Parse | CoreJsonFunction::Decode
+        CoreJsonFunction::Parse
+            | CoreJsonFunction::ParseYaml
+            | CoreJsonFunction::ParseToml
+            | CoreJsonFunction::Decode
     ) {
-        let input_index = usize::from(operation == CoreJsonFunction::Decode);
+        let input_index = 1;
         let view = HeapView {
             current,
             background: Some(background),
@@ -10850,7 +11086,35 @@ fn run_core_json(
                 pc,
             ));
         };
-        let parsed = crate::json::parse_json("<json string>", source.as_str());
+        let parsed = match operation {
+            CoreJsonFunction::Parse | CoreJsonFunction::Decode => {
+                crate::json::parse_json("<json string>", source.as_str())
+                    .map_err(|error| error.message)
+            }
+            CoreJsonFunction::ParseYaml => {
+                let mut sources = SourceDatabase::default();
+                let source_id = sources.add("<yaml string>", source.as_str());
+                let parsed = crate::yaml::parse_yaml_registered(&sources, source_id);
+                parsed.value.map(|value| value.value).ok_or_else(|| {
+                    parsed.diagnostics.first().map_or_else(
+                        || "invalid YAML".into(),
+                        |diagnostic| diagnostic.message.clone(),
+                    )
+                })
+            }
+            CoreJsonFunction::ParseToml => {
+                let mut sources = SourceDatabase::default();
+                let source_id = sources.add("<toml string>", source.as_str());
+                let parsed = crate::toml::parse_toml_registered(&sources, source_id);
+                parsed.value.map(|value| value.value).ok_or_else(|| {
+                    parsed.diagnostics.first().map_or_else(
+                        || "invalid TOML".into(),
+                        |diagnostic| diagnostic.message.clone(),
+                    )
+                })
+            }
+            _ => unreachable!(),
+        };
         let parsed = match parsed {
             Ok(value) => {
                 charge_allocation(account, source.len() as u64, function, pc)?;
@@ -10867,12 +11131,19 @@ fn run_core_json(
             }
             Err(parse_error) => {
                 let rule = Val::new(
-                    current.atom(Some(background), "Json"),
+                    current.atom(
+                        Some(background),
+                        match operation {
+                            CoreJsonFunction::ParseYaml => "Yaml",
+                            CoreJsonFunction::ParseToml => "Toml",
+                            _ => "Json",
+                        },
+                    ),
                     arguments[input_index].loc(),
                 );
                 return finish_codec_result(
                     Err(CodecFailure {
-                        message: parse_error.message,
+                        message: parse_error,
                         data: arguments[input_index],
                         rule,
                         predicate: None,
@@ -10887,7 +11158,29 @@ fn run_core_json(
                 );
             }
         };
-        if operation == CoreJsonFunction::Parse {
+        if matches!(
+            operation,
+            CoreJsonFunction::Parse | CoreJsonFunction::ParseYaml | CoreJsonFunction::ParseToml
+        ) {
+            let wrapper_bytes = semantic_value_wrapper_bytes(current, Some(background), parsed)
+                .map_err(|heap_error| {
+                    error(
+                        RuntimeErrorKind::TypeMismatch,
+                        heap_error.to_string(),
+                        function,
+                        pc,
+                    )
+                })?;
+            charge_allocation(account, wrapper_bytes, function, pc)?;
+            let parsed = wrap_semantic_value(current, Some(background), parsed, arguments[0])
+                .map_err(|heap_error| {
+                    error(
+                        RuntimeErrorKind::TypeMismatch,
+                        heap_error.to_string(),
+                        function,
+                        pc,
+                    )
+                })?;
             return finish_codec_result(
                 Ok(CodecNode::Existing(parsed)),
                 arguments[input_index],
@@ -11016,7 +11309,7 @@ fn run_core_json(
                 arguments[0].loc(),
             ),
         ));
-        let bytes = codec_node_bytes(&node)
+        let bytes = codec_node_bytes(&node, current, background)
             .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
         charge_allocation(account, bytes, function, pc)?;
         let value = materialize_codec_node(node, current, background);
@@ -11153,6 +11446,8 @@ fn run_core_json(
         },
         CoreJsonFunction::StringifyPretty
         | CoreJsonFunction::Parse
+        | CoreJsonFunction::ParseYaml
+        | CoreJsonFunction::ParseToml
         | CoreJsonFunction::Decode
         | CoreJsonFunction::Rename
         | CoreJsonFunction::RenameDecorator
@@ -11166,14 +11461,59 @@ fn run_core_json(
         | CoreJsonFunction::SkipSerializingIf
         | CoreJsonFunction::SkipSerializingIfDecorator => unreachable!(),
     };
-    let view = HeapView {
-        current,
-        background: Some(background),
+    let owner = {
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        propagate_data_failures(&[arguments[0]], &view, function, pc)?;
+        view.type_witness(arguments[0])
+            .map_err(|heap_error| {
+                error(
+                    RuntimeErrorKind::TypeMismatch,
+                    heap_error.to_string(),
+                    function,
+                    pc,
+                )
+            })?
+            .ok_or_else(|| {
+                error(
+                    RuntimeErrorKind::TypeMismatch,
+                    "std/json.stringify expects std/value.Value",
+                    function,
+                    pc,
+                )
+            })?
     };
-    propagate_data_failures(&[arguments[0]], &view, function, pc)?;
-    let mut writer = JsonWriter::new(view, indent);
+    let unwrap_bytes = semantic_value_unwrap_bytes(current, Some(background), arguments[0], owner)
+        .map_err(|heap_error| {
+            error(
+                RuntimeErrorKind::TypeMismatch,
+                heap_error.to_string(),
+                function,
+                pc,
+            )
+        })?;
+    charge_allocation(account, unwrap_bytes, function, pc)?;
+    let raw = unwrap_semantic_value(current, Some(background), arguments[0], owner).map_err(
+        |heap_error| {
+            error(
+                RuntimeErrorKind::TypeMismatch,
+                heap_error.to_string(),
+                function,
+                pc,
+            )
+        },
+    )?;
+    let mut writer = JsonWriter::new(
+        HeapView {
+            current,
+            background: Some(background),
+        },
+        indent,
+    );
     writer
-        .value(arguments[0], 0)
+        .value(raw, 0)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
     let output = writer.output;
     charge_allocation(account, output.len() as u64, function, pc)?;
@@ -12353,6 +12693,20 @@ mod tests {
             &BytecodeFunction::new("test", registers, constants, instructions),
             1_000,
         )
+    }
+
+    #[test]
+    fn semantic_value_measurement_does_not_report_invalid_graphs_as_quota_failures() {
+        let current = Heap::work();
+        let background = Heap::main();
+        let error = semantic_codec_wrapper_bytes(
+            &CodecNode::Tuple(Vec::new(), None),
+            &current,
+            &background,
+        )
+        .unwrap_err();
+        assert_eq!(error.limit(), None);
+        assert!(error.message.contains("unsupported semantic Value"));
     }
 
     #[test]

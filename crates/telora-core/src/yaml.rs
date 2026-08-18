@@ -209,6 +209,7 @@ impl YamlLowerer {
             |(index, _)| self.lines[*index].start + self.lines[*index].indent + 2,
         );
         let mut entries = Vec::new();
+        let mut merged = Vec::new();
         let mut seen = BTreeMap::<String, Location>::new();
         let mut pending = first;
         loop {
@@ -236,11 +237,10 @@ impl YamlLowerer {
                     self.location(key_offset, key_offset + key_text.len()),
                 )
             })?;
-            if key == "<<" {
-                return Err(self.line_error(index, "YAML merge keys are not supported"));
-            }
             let key_location = self.location(key_offset, key_offset + key_text.len());
-            if let Some(previous) = seen.insert(key.clone(), key_location) {
+            if key != "<<"
+                && let Some(previous) = seen.insert(key.clone(), key_location)
+            {
                 return Err(
                     Diagnostic::error(format!("duplicate YAML key {key:?}"), key_location)
                         .with_secondary("first defined here", previous),
@@ -260,8 +260,34 @@ impl YamlLowerer {
                 let value_offset = self.lines[index].end.saturating_sub(rest.len());
                 self.parse_inline_value(index, rest.to_owned(), value_offset)?
             };
-            entries.push((key, key_location, value));
+            if key == "<<" {
+                collect_merge_entries(value, &mut merged)
+                    .map_err(|message| Diagnostic::error(message, key_location))?;
+            } else {
+                entries.push((key, key_location, value));
+            }
         }
+        let explicit = entries
+            .iter()
+            .map(|(key, _, _)| key.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut effective = Vec::new();
+        let mut merged_seen = BTreeMap::new();
+        for (key, location, value) in merged {
+            if explicit.contains(key.as_str()) {
+                continue;
+            }
+            if let Some(previous) = merged_seen.insert(key.clone(), location) {
+                return Err(Diagnostic::error(
+                    format!("duplicate effective YAML merge key {key:?}"),
+                    location,
+                )
+                .with_secondary("first merged here", previous));
+            }
+            effective.push((key, location, value));
+        }
+        effective.extend(entries);
+        let entries = effective;
         let end = entries
             .last()
             .map_or(start, |(_, _, value)| node_end(value));
@@ -275,6 +301,16 @@ impl YamlLowerer {
         offset: usize,
     ) -> Result<YamlNode, Diagnostic> {
         let text = strip_comment(&text).trim().to_owned();
+        if let Some(encoded) = text.strip_prefix("!!binary") {
+            let encoded = encoded.trim();
+            if encoded.is_empty() {
+                return Err(self.line_error(line, "YAML !!binary requires base64 data"));
+            }
+            let location = self.location(offset, offset + text.len());
+            let bytes =
+                decode_base64(encoded).map_err(|message| Diagnostic::error(message, location))?;
+            return Ok(YamlNode::Scalar(DataScalar::Bytes(bytes), location));
+        }
         if text.starts_with('!') {
             return Err(self.line_error(line, "custom YAML tags are not supported"));
         }
@@ -519,6 +555,80 @@ fn parse_scalar(text: &str, location: Location) -> Result<YamlNode, &'static str
     Ok(YamlNode::Scalar(value, location))
 }
 
+fn collect_merge_entries(
+    value: YamlNode,
+    output: &mut Vec<(String, Location, YamlNode)>,
+) -> Result<(), &'static str> {
+    match value {
+        YamlNode::Mapping(entries, _) => {
+            output.extend(entries);
+            Ok(())
+        }
+        YamlNode::Sequence(values, _) => {
+            for value in values {
+                let YamlNode::Mapping(entries, _) = value else {
+                    return Err("YAML merge sequence items must be mappings");
+                };
+                output.extend(entries);
+            }
+            Ok(())
+        }
+        _ => Err("YAML merge value must be a mapping or sequence of mappings"),
+    }
+}
+
+fn decode_base64(text: &str) -> Result<Vec<u8>, &'static str> {
+    fn digit(byte: u8) -> Option<u8> {
+        match byte {
+            b'A'..=b'Z' => Some(byte - b'A'),
+            b'a'..=b'z' => Some(byte - b'a' + 26),
+            b'0'..=b'9' => Some(byte - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let compact = text
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if compact.is_empty() || compact.len() % 4 != 0 {
+        return Err("YAML !!binary contains invalid base64 data");
+    }
+    let mut output = Vec::with_capacity(compact.len() / 4 * 3);
+    for (index, chunk) in compact.chunks_exact(4).enumerate() {
+        let last = index + 1 == compact.len() / 4;
+        let padding = usize::from(chunk[3] == b'=') + usize::from(chunk[2] == b'=');
+        if padding > 0 && !last || padding == 1 && chunk[2] == b'=' || padding > 2 {
+            return Err("YAML !!binary contains invalid base64 padding");
+        }
+        let a = digit(chunk[0]).ok_or("YAML !!binary contains invalid base64 data")?;
+        let b = digit(chunk[1]).ok_or("YAML !!binary contains invalid base64 data")?;
+        let c = if chunk[2] == b'=' {
+            0
+        } else {
+            digit(chunk[2]).ok_or("YAML !!binary contains invalid base64 data")?
+        };
+        let d = if chunk[3] == b'=' {
+            0
+        } else {
+            digit(chunk[3]).ok_or("YAML !!binary contains invalid base64 data")?
+        };
+        if padding == 2 && b & 0x0f != 0 || padding == 1 && c & 0x03 != 0 {
+            return Err("YAML !!binary contains non-canonical base64 data");
+        }
+        output.push((a << 2) | (b >> 4));
+        if padding < 2 {
+            output.push((b << 4) | (c >> 2));
+        }
+        if padding == 0 {
+            output.push((c << 6) | d);
+        }
+    }
+    Ok(output)
+}
+
 fn looks_integer(text: &str) -> bool {
     let unsigned = text.trim_start_matches(['+', '-']);
     !unsigned.is_empty()
@@ -756,6 +866,7 @@ impl<'a> FlowParser<'a> {
             Some('{') => {
                 self.bump();
                 let mut entries = Vec::new();
+                let mut merged = Vec::new();
                 let mut seen = BTreeMap::new();
                 loop {
                     self.ws();
@@ -766,30 +877,62 @@ impl<'a> FlowParser<'a> {
                     let key_text = self.scalar_text(&[':'])?;
                     let key = parse_key(key_text.trim()).map_err(|m| self.error(m))?;
                     let key_loc = self.loc(key_start, self.pos);
-                    if let Some(previous) = seen.insert(key.clone(), key_loc) {
+                    if key != "<<"
+                        && let Some(previous) = seen.insert(key.clone(), key_loc)
+                    {
                         return Err(Diagnostic::error(
                             format!("duplicate YAML key {key:?}"),
                             key_loc,
                         )
                         .with_secondary("first defined here", previous));
                     }
-                    if key == "<<" {
-                        return Err(self.error("YAML merge keys are not supported"));
-                    }
                     self.expect(':')?;
                     let value = self.value()?;
-                    entries.push((key, key_loc, value));
+                    if key == "<<" {
+                        collect_merge_entries(value, &mut merged)
+                            .map_err(|message| self.error(message))?;
+                    } else {
+                        entries.push((key, key_loc, value));
+                    }
                     self.ws();
                     if self.take('}') {
                         break;
                     }
                     self.expect(',')?;
                 }
-                Ok(YamlNode::Mapping(entries, self.loc(start, self.pos)))
+                let explicit = entries
+                    .iter()
+                    .map(|(key, _, _)| key.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                let mut effective = Vec::new();
+                let mut merged_seen = BTreeMap::new();
+                for (key, location, value) in merged {
+                    if explicit.contains(key.as_str()) {
+                        continue;
+                    }
+                    if let Some(previous) = merged_seen.insert(key.clone(), location) {
+                        return Err(Diagnostic::error(
+                            format!("duplicate effective YAML merge key {key:?}"),
+                            location,
+                        )
+                        .with_secondary("first merged here", previous));
+                    }
+                    effective.push((key, location, value));
+                }
+                effective.extend(entries);
+                Ok(YamlNode::Mapping(effective, self.loc(start, self.pos)))
             }
             _ => {
                 let raw = self.scalar_text(&[',', ']', '}'])?.trim();
                 let loc = self.loc(start, self.pos);
+                if let Some(encoded) = raw.strip_prefix("!!binary") {
+                    let bytes =
+                        decode_base64(encoded.trim()).map_err(|message| self.error(message))?;
+                    return Ok(YamlNode::Scalar(DataScalar::Bytes(bytes), loc));
+                }
+                if raw.starts_with('!') {
+                    return Err(self.error("custom YAML tags are not supported"));
+                }
                 if let Some(name) = raw.strip_prefix('*') {
                     let anchored = self
                         .anchors
@@ -955,6 +1098,50 @@ mod tests {
             let parsed = parse(source);
             assert!(parsed.value.is_none(), "accepted {source}");
         }
+    }
+
+    #[test]
+    fn expands_mapping_merges_and_decodes_the_standard_binary_tag() {
+        let parsed = parse(
+            "defaults: &defaults {a: 1, b: 2}\nitem:\n  <<: *defaults\n  b: 3\n  bytes: !!binary SGk=\nflow: {<<: *defaults, b: 4}\n",
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+        let value = parsed.value.unwrap().value.to_string();
+        assert!(
+            value.contains("item: {a: 1, b: 3, bytes: b\"\\x48\\x69\"}"),
+            "{value}"
+        );
+        assert!(value.contains("flow: {a: 1, b: 4}"), "{value}");
+
+        for source in [
+            "value: !!binary SGk\n",
+            "value: !!binary SG==\n",
+            "value: {tagged: !custom x}\n",
+            "value: {1: text}\n",
+            "base: &base {a: 1}\nvalue: {<<: [*base, 1]}\n",
+            "a: &a {x: 1}\nb: &b {x: 2}\nvalue: {<<: [*a, *b]}\n",
+            "root: &root {self: *root}\n",
+        ] {
+            let parsed = parse(source);
+            assert!(parsed.value.is_none(), "accepted invalid YAML: {source}");
+            assert!(!parsed.diagnostics.is_empty(), "{source}");
+        }
+
+        let anchored = std::iter::repeat("0")
+            .take(100)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let aliases = std::iter::repeat("*base")
+            .take(101)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let limited = parse(&format!("base: &base [{anchored}]\nitems: [{aliases}]\n"));
+        assert!(limited.value.is_none());
+        assert!(
+            limited.diagnostics[0]
+                .message
+                .contains("alias expansion limit")
+        );
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub(crate) const CODEC_MODULE: &str = "std/codec";
 pub(crate) const OPTION_MODULE: &str = "std/option";
 pub(crate) const RESULT_MODULE: &str = "std/result";
 pub(crate) const JSON_MODULE: &str = "std/json";
+pub(crate) const VALUE_MODULE: &str = "std/value";
+pub(crate) const YAML_MODULE: &str = "std/yaml";
 pub(crate) const HASH_MODULE: &str = "std/hash";
 pub(crate) const STRING_MODULE: &str = "std/string";
 pub(crate) const PATH_MODULE: &str = "std/path";
@@ -43,6 +45,12 @@ pub(crate) struct CoreModuleSpec {
 
 pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
     vec![
+        CoreModuleSpec {
+            native_id: 23,
+            name: VALUE_MODULE,
+            source: include_str!("../modules/std/value.telora"),
+            functions: vec![],
+        },
         CoreModuleSpec {
             native_id: 1,
             name: EQ_MODULE,
@@ -314,7 +322,19 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             native_id: 9,
             name: TOML_MODULE,
             source: include_str!("../modules/std/toml.telora"),
-            functions: vec![],
+            functions: vec![(
+                "parse_raw",
+                NativeFunction::core_json(CoreJsonFunction::ParseToml),
+            )],
+        },
+        CoreModuleSpec {
+            native_id: 24,
+            name: YAML_MODULE,
+            source: include_str!("../modules/std/yaml.native.telora"),
+            functions: vec![(
+                "parse_raw",
+                NativeFunction::core_json(CoreJsonFunction::ParseYaml),
+            )],
         },
         CoreModuleSpec {
             native_id: 11,
@@ -413,7 +433,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             name: JSON_MODULE,
             source: include_str!("../modules/std/json.native.telora"),
             functions: vec![
-                ("parse", NativeFunction::core_json(CoreJsonFunction::Parse)),
+                (
+                    "parse_raw",
+                    NativeFunction::core_json(CoreJsonFunction::Parse),
+                ),
                 (
                     "decode",
                     NativeFunction::core_json(CoreJsonFunction::Decode),

@@ -2,7 +2,9 @@ use crate::ast::Program;
 use crate::hir::{HirDefinitionId, HirProgram, HirResolution};
 use crate::module_id::ModuleCName;
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
-use crate::types::{Analysis, AnalysisTypeId, PartialAnalysis, TypeGraph, TypeNode};
+use crate::types::{
+    Analysis, AnalysisTypeId, ModuleInterface, PartialAnalysis, TypeGraph, TypeNode,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -961,6 +963,7 @@ impl WorkspaceSnapshot {
                 program: None,
                 analysis: None,
                 partial: None,
+                interface: None,
                 state: WorkspaceModuleState::Available,
                 imports: Vec::new(),
                 diagnostics: Vec::new(),
@@ -981,6 +984,7 @@ impl WorkspaceSnapshot {
                 .as_ref()
                 .map(|analysis| &analysis.types)
                 .or_else(|| input.partial.as_ref().map(|partial| &partial.types))
+                .or_else(|| input.interface.as_ref().map(|interface| &interface.types))
                 .map_or_else(Vec::new, |graph| {
                     merge_type_graph(&input.key, graph, &mut types)
                 });
@@ -1003,7 +1007,13 @@ impl WorkspaceSnapshot {
             let result_type = input
                 .analysis
                 .as_ref()
-                .map(|analysis| type_maps[index][analysis.result_type.index()]);
+                .map(|analysis| type_maps[index][analysis.result_type.index()])
+                .or_else(|| {
+                    input
+                        .interface
+                        .as_ref()
+                        .map(|interface| type_maps[index][interface.result_type.index()])
+                });
             let options = input
                 .program
                 .as_ref()
@@ -1044,6 +1054,12 @@ impl WorkspaceSnapshot {
                             .iter()
                             .map(|(name, scheme)| (name.clone(), scheme.display_name()))
                             .collect()
+                    })
+                    .or_else(|| {
+                        input
+                            .interface
+                            .as_ref()
+                            .map(|interface| interface.export_schemes.clone())
                     })
                     .unwrap_or_default(),
             });
@@ -1448,9 +1464,33 @@ pub(crate) struct SemanticModuleInput {
     pub program: Option<Program>,
     pub analysis: Option<Analysis>,
     pub partial: Option<PartialAnalysis>,
+    pub interface: Option<SemanticModuleInterface>,
     pub state: WorkspaceModuleState,
     pub imports: Vec<SemanticImport>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SemanticModuleInterface {
+    types: TypeGraph,
+    result_type: AnalysisTypeId,
+    export_schemes: BTreeMap<String, String>,
+}
+
+impl SemanticModuleInterface {
+    pub(crate) fn new(interface: &ModuleInterface) -> Self {
+        let (types, result_type) = TypeGraph::from_module_interface(interface);
+        let export_schemes = interface
+            .exports
+            .iter()
+            .map(|(name, scheme)| (name.clone(), scheme.display_name()))
+            .collect();
+        Self {
+            types,
+            result_type,
+            export_schemes,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1761,6 +1801,7 @@ mod tests {
                 program: Some(program),
                 analysis: Some(analysis),
                 partial: None,
+                interface: None,
                 state: WorkspaceModuleState::Available,
                 imports: Vec::new(),
                 diagnostics: Vec::new(),

@@ -1,6 +1,6 @@
 import "./b2b-model.telora" { compile };
 import "./execution.telora" { ExecutionPlan, encode_plan };
-import "./restriction.json" as restriction;
+import "./restriction.json" { data as restriction };
 
 let compilation = compile(restriction, {
     measures: ['NetRevenue],

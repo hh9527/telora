@@ -1,0 +1,17 @@
+type Value = enum {
+    'None,
+    'True,
+    'False,
+    'Int(Int),
+    'Float(Float),
+    'String(String),
+    'Bytes(Bytes),
+    'Array(Array(Value)),
+    'Object(Dict(Value)),
+    'LocalDate(String),
+    'LocalTime(String),
+    'LocalDateTime(String),
+    'OffsetDateTime(String),
+};
+
+export { Value };

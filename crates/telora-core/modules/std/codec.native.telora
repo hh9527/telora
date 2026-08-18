@@ -1,7 +1,10 @@
-native decode: for(A) Fn(TypeOf(A), Any) -> Result(A, BlameError);
-native encode: for(A) Fn(TypeOf(A), A) -> Result(Any, BlameError);
+import "std/value" { Value };
+
+native decode: for(A) Fn(TypeOf(A), Value) -> Result(A, BlameError);
+native encode: for(A) Fn(TypeOf(Value), A) -> Result(Value, BlameError);
 def format_error: Fn(BlameError) -> String = fn(error) { error.message };
 export {
+    Value,
     decode,
     encode,
     format_error,

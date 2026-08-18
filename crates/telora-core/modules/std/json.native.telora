@@ -1,7 +1,9 @@
-native parse: Fn(String) -> Result(Any, BlameError);
+import "std/value" { Value };
+
+native parse_raw: Fn(Type, String) -> Result(Value, BlameError);
 native decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError);
-native stringify: Fn(Any) -> String;
-native stringify_pretty: Fn(Int) -> Fn(Any) -> String;
+native stringify: Fn(Value) -> String;
+native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
 native rename: Fn(String) -> Fn(Any, Any) -> Any;
 native rename_all: Fn(Any) -> Fn(Any, Any) -> Any;
 native flatten: Fn(Any, Any) -> Any;
@@ -9,6 +11,9 @@ native untagged: Fn(Any, Any) -> Any;
 native schema: Fn(Any) -> Any;
 native default: Fn(Any) -> Fn(Any, Any) -> Any;
 native skip_serializing_if: Fn(Any) -> Fn(Any, Any) -> Any;
+def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
+    parse_raw(Value, text)
+};
 export {
     parse,
     decode,
