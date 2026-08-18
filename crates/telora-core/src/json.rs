@@ -39,6 +39,7 @@ pub(crate) enum DataScalar {
     Int(i64),
     Float(f64),
     String(String),
+    Bytes(Vec<u8>),
     Atom(String),
     TaggedString { tag: String, value: String },
 }
@@ -49,6 +50,9 @@ impl DataScalar {
             Self::Int(value) => DecodedValue::Int(value),
             Self::Float(value) => DecodedValue::Float(value),
             Self::String(value) => heap.string(None, &value),
+            Self::Bytes(value) => {
+                DecodedValue::Bytes(heap.allocate(Object::Bytes(value.into_boxed_slice())))
+            }
             Self::Atom(value) => heap.atom(None, &value),
             Self::TaggedString { tag, value } => {
                 let tag = Val::original(heap.atom(None, &tag), Some(location.into()));
@@ -451,7 +455,18 @@ mod tests {
 
         let large = sources.add("large.json", "9223372036854775808");
         let parsed = parse_json_registered(&sources, large);
+        assert!(parsed.value.is_none());
+        assert!(
+            parsed.diagnostics[0]
+                .message
+                .contains("outside the i64 range")
+        );
         assert_eq!(parsed.diagnostics[0].labels[0].location.range(), 0..19);
+
+        let non_finite = sources.add("non-finite.json", "1e9999");
+        let parsed = parse_json_registered(&sources, non_finite);
+        assert!(parsed.value.is_none());
+        assert!(parsed.diagnostics[0].message.contains("must be finite"));
     }
 
     #[test]

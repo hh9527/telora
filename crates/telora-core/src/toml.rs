@@ -908,6 +908,7 @@ mod tests {
         let parsed = parse(
             r#"title = "Telora"
 when = 1979-05-27 07:32:00+00:00
+local = 1979-05-27T07:32:00
 dates = [1979-05-27, 07:32:00.1200]
 point = { x = 1, y = 2 }
 [owner]
@@ -921,7 +922,7 @@ name = "two"
         assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
         assert_eq!(
             parsed.value.unwrap().value.to_string(),
-            "{dates: ['LocalDate(\"1979-05-27\"), 'LocalTime(\"07:32:00.1200\")], owner: {name: \"Ada\"}, point: {x: 1, y: 2}, products: [{name: \"one\"}, {name: \"two\"}], title: \"Telora\", when: 'OffsetDateTime(\"1979-05-27T07:32:00Z\")}"
+            "{dates: ['LocalDate(\"1979-05-27\"), 'LocalTime(\"07:32:00.1200\")], local: 'LocalDateTime(\"1979-05-27T07:32:00\"), owner: {name: \"Ada\"}, point: {x: 1, y: 2}, products: [{name: \"one\"}, {name: \"two\"}], title: \"Telora\", when: 'OffsetDateTime(\"1979-05-27T07:32:00Z\")}"
         );
     }
 
@@ -1005,5 +1006,13 @@ name = "two"
             assert!(parsed.value.is_none(), "accepted {source}");
             assert!(parsed.diagnostics[0].message.contains("must be finite"));
         }
+
+        let overflow = parse("value = 9223372036854775808\n");
+        assert!(overflow.value.is_none());
+        assert!(
+            overflow.diagnostics[0]
+                .message
+                .contains("outside the i64 range")
+        );
     }
 }

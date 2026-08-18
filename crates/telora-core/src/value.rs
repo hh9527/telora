@@ -582,6 +582,8 @@ impl CoreResultFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreJsonFunction {
     Parse,
+    ParseYaml,
+    ParseToml,
     Decode,
     Stringify,
     StringifyPretty,
@@ -603,6 +605,8 @@ impl CoreJsonFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Parse => "std/json.parse",
+            Self::ParseYaml => "std/yaml.parse",
+            Self::ParseToml => "std/toml.parse",
             Self::Decode => "std/json.decode",
             Self::Stringify => "std/json.stringify",
             Self::StringifyPretty => "std/json.stringify_pretty",
@@ -623,7 +627,7 @@ impl CoreJsonFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Decode => 2,
+            Self::Parse | Self::ParseYaml | Self::ParseToml | Self::Decode => 2,
             Self::Flatten
             | Self::Untagged
             | Self::RenameDecorator

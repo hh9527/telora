@@ -7,7 +7,7 @@ use crate::compiler::{
 use crate::core::{
     EDGE_RUNTIME_MODULE, PRELUDE_MODULE, edge_runtime_source, module_specs, run_entry_source,
 };
-use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val};
+use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, wrap_semantic_value};
 use crate::json::{Provenance, SourcedValue, parse_json_registered};
 use crate::module_id::{
     ModuleAuthority, ModuleCName, ModuleFormat, ModuleId, ModuleResolver, ResolvedModule,
@@ -15,15 +15,15 @@ use crate::module_id::{
 };
 use crate::parser::parse_registered;
 use crate::semantic::{
-    SemanticImport, SemanticModuleInput, WorkspaceModuleKind, WorkspaceModuleState,
-    WorkspaceSnapshot,
+    SemanticImport, SemanticModuleInput, SemanticModuleInterface, WorkspaceModuleKind,
+    WorkspaceModuleState, WorkspaceSnapshot,
 };
 use crate::source::{Diagnostic, SourceDatabase};
 use crate::toml::parse_toml_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
     Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor, TypeFamilyTemplate,
-    analyze_partial_types_recovered_with_query, analyze_program_with_bindings_observed,
+    TypeScheme, analyze_partial_types_recovered_with_query, analyze_program_with_bindings_observed,
     program_references_name, recovered_reference_locations,
 };
 #[cfg(test)]
@@ -169,6 +169,64 @@ fn parse_static_data_registered(
         diagnostics,
         kind,
     })
+}
+
+fn semantic_value_contract(
+    core_modules: &HashMap<String, ModuleArtifact>,
+    heap: &Heap,
+) -> Result<(PersistentValue, TypeDescriptor), ModuleError> {
+    let module = core_modules
+        .get(crate::core::VALUE_MODULE)
+        .ok_or_else(|| ModuleError::new("std/value is not installed"))?;
+    let owner = module
+        .root
+        .export_get(heap, "Value")
+        .map_err(|error| ModuleError::new(error.to_string()))?
+        .ok_or_else(|| ModuleError::new("std/value has no Value export"))?;
+    let descriptor = module
+        .interface
+        .exports
+        .get("Value")
+        .and_then(|scheme| match &scheme.body {
+            TypeDescriptor::TypeOf(descriptor) => Some(descriptor.as_ref().clone()),
+            _ => None,
+        })
+        .ok_or_else(|| ModuleError::new("std/value Value export is not TypeOf(Value)"))?;
+    Ok((owner, descriptor))
+}
+
+fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
+    ModuleInterface {
+        exports: BTreeMap::from([(
+            "data".into(),
+            TypeScheme {
+                parameters: Vec::new(),
+                body: descriptor.clone(),
+            },
+        )]),
+        concrete_types: BTreeMap::from([("Value".into(), descriptor)]),
+        type_family_templates: BTreeMap::new(),
+    }
+}
+
+fn publish_static_data_module(
+    sourced: &SourcedValue,
+    core_modules: &HashMap<String, ModuleArtifact>,
+    heap: &mut Heap,
+) -> Result<(PersistentValue, ModuleInterface), ModuleError> {
+    let (owner, descriptor) = semantic_value_contract(core_modules, heap)?;
+    let raw = sourced
+        .value
+        .publish(heap)
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+    let data = wrap_semantic_value(heap, None, raw.runtime(), owner.runtime())
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+    let root = heap
+        .module([("data".into(), data)])
+        .and_then(|value| heap.persistent(value))
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+    let interface = static_data_interface(descriptor);
+    Ok((root, interface))
 }
 
 #[derive(Clone, Debug)]
@@ -1116,10 +1174,20 @@ fn install_native_modules_observed(
         })?;
         install_type_family_roots(&mut external_roots, &analysis);
         let static_funcs = main.modules.static_funcs(module_id);
-        let function = compile_program_analyzed_in_module(
+        let metadata = metadata_compilation_plan(&program);
+        let promoted_types = metadata
+            .as_ref()
+            .map(|metadata| metadata.type_names.iter().cloned().collect())
+            .unwrap_or_default();
+        let erased_bindings = metadata
+            .map(|metadata| metadata.erased_bindings)
+            .unwrap_or_default();
+        let function = compile_program_with_promoted_types_and_static_funcs(
             sources.get(source_id),
             &program,
             &analysis,
+            &promoted_types,
+            &erased_bindings,
             &static_funcs,
         )
         .map_err(|error| ModuleError::new(error.to_string()))?;
@@ -1186,6 +1254,7 @@ fn install_native_modules_observed(
                     program: Some(program),
                     analysis: Some(analysis),
                     partial: None,
+                    interface: None,
                     state: WorkspaceModuleState::Available,
                     imports,
                     diagnostics: Vec::new(),
@@ -2912,6 +2981,7 @@ impl WorkspaceBuilder<'_> {
                     program,
                     analysis,
                     partial,
+                    interface: None,
                     state,
                     imports: semantic_imports,
                     diagnostics,
@@ -2965,6 +3035,9 @@ impl WorkspaceBuilder<'_> {
             .add_document(path.display().to_string(), source);
         let parsed = parse_static_data_registered(module.format, &self.sources, source_id)?;
         let sourced = parsed.value;
+        let (_, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
+            .expect("std/value provides the static data interface");
+        let interface = static_data_interface(descriptor);
         self.inputs.insert(
             key.clone(),
             SemanticModuleInput {
@@ -2975,16 +3048,17 @@ impl WorkspaceBuilder<'_> {
                 program: None,
                 analysis: None,
                 partial: None,
+                interface: Some(SemanticModuleInterface::new(&interface)),
                 state: WorkspaceModuleState::Available,
                 imports: Vec::new(),
                 diagnostics: parsed.diagnostics,
             },
         );
         if let Some(sourced) = sourced {
-            let root = sourced
-                .value
-                .publish(&mut self.main.heap)
-                .expect("parsed sourced value publishes into the main heap");
+            let (root, interface) =
+                publish_static_data_module(&sourced, &self.core_modules, &mut self.main.heap)
+                    .expect("parsed sourced value publishes into the main heap");
+            self.interfaces.insert(module_id.clone(), interface);
             self.roots.insert(module_id.clone(), root);
             self.provenances.insert(module_id, sourced.provenance);
             return Some(root);
@@ -3232,6 +3306,7 @@ fn unavailable_input(key: String, path: PathBuf, kind: WorkspaceModuleKind) -> S
         program: None,
         analysis: None,
         partial: None,
+        interface: None,
         state: WorkspaceModuleState::Unavailable,
         imports: Vec::new(),
         diagnostics: Vec::new(),
@@ -4114,10 +4189,11 @@ impl ModuleLoader {
                         )
                     })
                     .and_then(|sourced| {
-                        let root = sourced
-                            .value
-                            .publish(&mut self.main.heap)
-                            .map_err(|error| ModuleError::new(error.to_string()))?;
+                        let (root, interface) = publish_static_data_module(
+                            &sourced,
+                            &self.core_modules,
+                            &mut self.main.heap,
+                        )?;
                         let key = module_id.to_string();
                         self.semantic_inputs.insert(
                             key.clone(),
@@ -4129,6 +4205,7 @@ impl ModuleLoader {
                                 program: None,
                                 analysis: None,
                                 partial: None,
+                                interface: Some(SemanticModuleInterface::new(&interface)),
                                 state: crate::semantic::WorkspaceModuleState::Available,
                                 imports: Vec::new(),
                                 diagnostics: Vec::new(),
@@ -4136,7 +4213,7 @@ impl ModuleLoader {
                         );
                         Ok(ModuleArtifact {
                             root,
-                            interface: ModuleInterface::default(),
+                            interface,
                             provenance: Some(sourced.provenance),
                         })
                     })
@@ -4602,6 +4679,7 @@ impl ModuleLoader {
                 program: Some(program),
                 analysis: Some(analysis.clone()),
                 partial: None,
+                interface: None,
                 state: crate::semantic::WorkspaceModuleState::Available,
                 imports: semantic_imports,
                 diagnostics: Vec::new(),
@@ -5743,17 +5821,18 @@ type Independent = String;
             directory.join("User.telora"),
             r#"import "std/codec" as codec;
                import "std/result" as result;
+               import "std/value" { Value };
                type User = struct {v: Option(String)};
                let decode = fn(value) { codec.decode(User, value) };
                let encode = fn(value) {
-                   codec.encode(User, value) |> result.unwrap
+                   codec.encode(Value, value) |> result.unwrap
                };
                {Type: User, decode: decode, encode: encode}"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./abc.json" as data;
+            r#"import "./abc.json" { data };
                import "./User.telora" as User;
                import "std/result" as result;
                import "std/json" as json;
@@ -5824,7 +5903,7 @@ type Independent = String;
 
         fs::write(
             directory.join("inspect.telora"),
-            r#"import "./abc.json" as data;
+            r#"import "./abc.json" { data };
                import "./User.telora" as User;
                data |> User.decode"#,
         )
@@ -5847,7 +5926,7 @@ type Independent = String;
         fs::write(directory.join("data.json"), r#"{"v":"plain"}"#).unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./data.json" as data;
+            r#"import "./data.json" { data };
                import "std/codec" as codec;
                import "std/result" as result;
                type StringRule = {kind: 'String};
@@ -5883,19 +5962,21 @@ type Independent = String;
                 r#"import "std/codec" as codec;
                    import "std/result" as result;
                    type T = struct {name: String};
-                   codec.decode(T, {}) |> result.unwrap"#,
+                   codec.decode(T, codec.encode(codec.Value, {}) |> result.unwrap) |> result.unwrap"#,
                 "$.name: missing required field",
             ),
             (
                 r#"import "std/codec" as codec;
                    import "std/result" as result;
                    type T = struct {name: String};
-                   codec.decode(T, {name: "Ada", extra: 1}) |> result.unwrap"#,
+                   codec.decode(T, codec.encode(codec.Value, {name: "Ada", extra: 1}) |> result.unwrap) |> result.unwrap"#,
                 "$.extra: unknown field",
             ),
             (
-                r#"import "std/json" as json; json.stringify((1, 2))"#,
-                "JSON cannot encode Tuple",
+                r#"import "std/codec" as codec;
+                   import "std/result" as result;
+                   codec.encode(codec.Value, (1, 2)) |> result.unwrap"#,
+                "unsupported Tuple",
             ),
             (
                 r#"import "std/json" as json; json.stringify_pretty(17)"#,
@@ -5913,8 +5994,11 @@ type Independent = String;
         let path = directory.join("compact.telora");
         fs::write(
             &path,
-            r#"import "std/json" as json;
-               json.stringify({z: [1, 'True], a: "line\nnext"})"#,
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+               let value = codec.encode(codec.Value, {z: [1, 'True], a: "line\nnext"}) |> result.unwrap;
+               json.stringify(value)"#,
         )
         .unwrap();
         let module = load_module(path, BTreeMap::new(), 100_000).unwrap();
@@ -5939,11 +6023,12 @@ type Independent = String;
         fs::write(directory.join("answer.telora"), "40 + 2").unwrap();
         fs::write(
             directory.join("main.telora"),
-            "import \"./user.json\" as user;\
+            "import \"./user.json\" { data as user };\
              import \"./answer.telora\" as answer;\
+             import \"std/codec\" as codec;\
              import \"std/result\" as result;\
              type User = struct {name: String, age: Int};\
-             let checked = validate(User, user) |> result.unwrap;\
+             let checked = codec.decode(User, user) |> result.unwrap;\
              (checked.name, answer)",
         )
         .unwrap();
@@ -5975,11 +6060,16 @@ name = "rustc"
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./config.toml" as config;
-               import "./sub/../config.toml" as same;
-               import "std/toml" as toml;
+            r#"import "./config.toml" { data as config };
+               import "./sub/../config.toml" { data as same };
+               import "std/codec" as codec;
                import "std/result" as result;
-               type TomlDate = toml.DateTime;
+               type TomlDate = enum {
+                   'OffsetDateTime(String),
+                   'LocalDateTime(String),
+                   'LocalDate(String),
+                   'LocalTime(String),
+               };
                type Tool = struct {name: String};
                type Config = struct {
                    title: String,
@@ -5987,8 +6077,9 @@ name = "rustc"
                    environment: Dict(String),
                    tools: Array(Tool),
                };
-               let checked = validate(Config, config) |> result.unwrap;
-               (checked.released, checked.tools, same.title)"#,
+               let checked = codec.decode(Config, config) |> result.unwrap;
+               let same_checked = codec.decode(Config, same) |> result.unwrap;
+               (checked.released, checked.tools, same_checked.title)"#,
         )
         .unwrap();
 
@@ -6017,24 +6108,25 @@ name = "rustc"
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            "import \"./user.toml\" as user;\n\
+            "import \"./user.toml\" { data as user };\n\
+             import \"std/codec\" as codec;\n\
              import \"std/result\" as result;\n\
              type User = struct {name: String, age: Int};\n\
-             let checked = validate(User, user) |> result.unwrap;\n\
+             let checked = codec.decode(User, user) |> result.unwrap;\n\
              checked",
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
-        assert!(message.contains("user.toml:1:1"), "{message}");
-        assert!(message.contains("main.telora:3:1"), "{message}");
+        assert!(message.contains("user.toml:2:7"), "{message}");
+        assert!(message.contains("main.telora:4:"), "{message}");
 
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/result" as result;
-               import "./user.toml" as user;
+               import "./user.toml" { data as user };
                type User = struct {name: String, age: Int};
                codec.decode(User, user) |> result.unwrap"#,
         )
@@ -6053,7 +6145,7 @@ name = "rustc"
         let main = directory.join("main.telora");
         let config = directory.join("config.toml");
         fs::write(&config, "name = \"first\"\nname = \"second\"\n").unwrap();
-        fs::write(&main, "import \"./config.toml\" as config; config").unwrap();
+        fs::write(&main, "import \"./config.toml\" { data as config }; config").unwrap();
 
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
         let config = snapshot
@@ -6084,7 +6176,16 @@ name = "rustc"
         .unwrap();
         fs::write(
             &main,
-            "import \"./config.yaml\" as config; (config.name, config.features, config.legacy)",
+            r#"import "./config.yaml" { data as config };
+               import "std/codec" as codec;
+               import "std/result" as result;
+               type Config = struct {
+                   name: String,
+                   features: Array(String),
+                   legacy: String,
+               };
+               let checked = codec.decode(Config, config) |> result.unwrap;
+               (checked.name, checked.features, checked.legacy)"#,
         )
         .unwrap();
 
@@ -6284,18 +6385,19 @@ name = "rustc"
         fs::write(directory.join("user.json"), r#"{"name":"Ada","age":"old"}"#).unwrap();
         fs::write(
             directory.join("main.telora"),
-            "import \"./user.json\" as user;\n\
+            "import \"./user.json\" { data as user };\n\
+             import \"std/codec\" as codec;\n\
              import \"std/result\" as result;\n\
              type User = struct {name: String, age: Int};\n\
-             let checked = validate(User, user) |> result.unwrap;\n\
+             let checked = codec.decode(User, user) |> result.unwrap;\n\
              checked",
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
-        assert!(message.contains("user.json:1:1"), "{message}");
-        assert!(message.contains("main.telora:3:1"), "{message}");
+        assert!(message.contains("user.json:1:21"), "{message}");
+        assert!(message.contains("main.telora:4:"), "{message}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -6360,16 +6462,21 @@ name = "rustc"
         let directory = fixture_dir();
         let data = directory.join("data.json");
         fs::write(&data, r#"{"name":"Ada","items":[1,2,3]}"#).unwrap();
+        let mut main = MainWorld::building();
+        let mut sources = SourceDatabase::default();
+        let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
+        let core_modules =
+            install_native_modules(&mut main, &mut sources, &debug_sink, &[]).unwrap();
         let mut loader = ModuleLoader {
             resolver: ModuleResolver::for_root(&data).unwrap(),
             cache: HashMap::new(),
-            core_modules: HashMap::new(),
-            main: MainWorld::building(),
+            core_modules,
+            main,
             visiting: Vec::new(),
             dependencies: BTreeSet::new(),
             module_quota: Quota::with_fuel(100_000),
-            debug_sink: Arc::new(DiscardDebugSink),
-            sources: SourceDatabase::default(),
+            debug_sink,
+            sources,
             semantic_inputs: BTreeMap::new(),
             source_policy: ModuleSourcePolicy::ExpressionHarness,
         };
@@ -7014,13 +7121,16 @@ unchanged", "|"),
                import "std/result" as result;
                type Env = Dict(String);
                let env: Env = {PATH: "/bin", HOME: "/tmp"};
-               let decoded = codec.decode(Env, {SHELL: "/bin/sh"}) |> result.unwrap;
+               let decoded = codec.decode(
+                   Env,
+                   codec.encode(codec.Value, {SHELL: "/bin/sh"}) |> result.unwrap,
+               ) |> result.unwrap;
                {
                    env: env,
                    decoded: decoded,
                    values: dicts.values(env),
                    built: dicts.from_pairs([("A", "one"), ("B", "two")]),
-                   encoded: codec.encode(Env, decoded) |> result.unwrap,
+                   encoded: codec.encode(codec.Value, decoded) |> result.unwrap,
                    schema: json.schema(Env),
                }"#,
         )
@@ -7029,7 +7139,7 @@ unchanged", "|"),
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             module.analysis.display(module.analysis.result_type),
-            "{built: Any, decoded: Dict<String>, encoded: Any, env: Dict<String>, schema: Any, values: Array<Any>}"
+            "{built: Any, decoded: Dict<String>, encoded: Value, env: Dict<String>, schema: Any, values: Array<Any>}"
         );
         let output_world = module.execute(100_000).unwrap();
         let output = output_world.value();
@@ -7043,7 +7153,7 @@ unchanged", "|"),
         );
         assert_eq!(
             output.get("encoded").unwrap().to_string(),
-            "{SHELL: \"/bin/sh\"}"
+            "'Object({SHELL: 'String(\"/bin/sh\")})"
         );
         let schema = output.get("schema").unwrap();
         assert_eq!(schema.get("type").unwrap().to_string(), "\"object\"");
@@ -7474,13 +7584,16 @@ unchanged", "|"),
                type State = enum {'Idle, 'Ready(Int)};
                let left: Left = {value: 1};
                let state: State = 'Ready(2);
-               let decoded = codec.decode(Left, {value: 3}) |> result.unwrap;
+               let decoded = codec.decode(
+                   Left,
+                   codec.encode(codec.Value, {value: 3}) |> result.unwrap,
+               ) |> result.unwrap;
                let packed = dyn.pack(Left, decoded);
                {
                    left: left,
                    state: state,
                    decoded: decoded,
-                   encoded: codec.encode(Left, decoded) |> result.unwrap,
+                   encoded: codec.encode(codec.Value, decoded) |> result.unwrap,
                    dyn_desc: dyn.desc(packed),
                }"#,
         )
@@ -7507,7 +7620,10 @@ unchanged", "|"),
             output.get("dyn_desc").unwrap().kind(),
             crate::ValueKind::Type
         );
-        assert_eq!(output.get("encoded").unwrap().to_string(), "{value: 3}");
+        assert_eq!(
+            output.get("encoded").unwrap().to_string(),
+            "'Object({value: 'Int(3)})"
+        );
 
         fs::write(
             directory.join("wrong.telora"),
@@ -7528,17 +7644,14 @@ unchanged", "|"),
             r#"import "std/codec" as codec;
                type Left = struct {value: Int};
                let raw: Any = {value: 1};
-               codec.encode(Left, raw)"#,
+               codec.encode(codec.Value, raw)"#,
         )
         .unwrap();
         let erased =
             load_module(directory.join("erased.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert!(
-            erased
-                .execute(100_000)
-                .unwrap()
-                .to_string()
-                .contains("'Err")
+        assert_eq!(
+            erased.execute(100_000).unwrap().to_string(),
+            "'Ok('Object({value: 'Int(1)}))"
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -8253,13 +8366,14 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/json" as json;
+               import "std/result" as result;
                @json.rename_all('CamelCase)
                type Box(Item) = struct {
                    @json.rename("payload") value: Item,
                };
                {
                    metadata: Box(String),
-                   decoded: codec.decode(Box(String), {payload: "ready"}),
+               decoded: codec.decode(Box(String), codec.encode(codec.Value, {payload: "ready"}) |> result.unwrap),
                }"#,
         )
         .unwrap();
@@ -8312,9 +8426,10 @@ unchanged", "|"),
         fs::write(
             directory.join("imported.telora"),
             r#"import "std/codec" as codec;
+               import "std/result" as result;
                import "./family.telora" {Box};
                type StringBox = Box(String);
-               codec.decode(StringBox, {payload: "imported"})"#,
+               codec.decode(StringBox, codec.encode(codec.Value, {payload: "imported"}) |> result.unwrap)"#,
         )
         .unwrap();
         let imported =
@@ -8397,7 +8512,7 @@ unchanged", "|"),
         fs::write(&data, r#"{"value":42}"#).unwrap();
         fs::write(
             &main,
-            r#"import "./data.json" as data;
+            r#"import "./data.json" { data };
                import "std/codec" as codec;
                import "std/result" as result;
                type Box(Item) = struct {value: Item};
@@ -8455,15 +8570,18 @@ unchanged", "|"),
         let directory = fixture_dir();
         let item_count = 1_500usize;
         let data = format!("[{}]", vec!["1"; item_count].join(","));
-        fs::write(directory.join("values.json"), data).unwrap();
         fs::write(
             directory.join("main.telora"),
             r#"import "std/array" as arrays;
-               import "./values.json" as values;
                arrays.map(values, fn(value) { value + 1 })"#,
         )
         .unwrap();
-        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let module = load_module(
+            directory.join("main.telora"),
+            BTreeMap::from([("values".into(), parse_json("values.json", &data).unwrap())]),
+            100_000,
+        )
+        .unwrap();
 
         let mut exact = QuotaAccount::new(Quota::new(1_501, 1_000, u64::MAX));
         let arena = Vm::new()
@@ -8641,8 +8759,10 @@ unchanged", "|"),
         let data = directory.join("data.json");
         let main = directory.join("main.telora");
         let source = r#"import "std/array" as arrays;
+                        import "std/codec" as codec;
                         import "std/result" as result;
-                        import "./data.json" as data;
+                        import "./data.json" { data };
+                        let data = codec.decode(Array(Int), data) |> result.unwrap;
                         let values = arrays.push(data, APPENDED);
                         arrays.map(values, fn(value) {
                             if value == TARGET {
@@ -8675,22 +8795,28 @@ unchanged", "|"),
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(appended.contains("main.telora:4:"), "{appended}");
+        assert!(appended.contains("main.telora:6:"), "{appended}");
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn array_push_charges_the_complete_logical_result() {
         let directory = fixture_dir();
-        fs::write(directory.join("values.json"), "[1, 2]").unwrap();
         fs::write(
             directory.join("main.telora"),
             r#"import "std/array" as arrays;
-               import "./values.json" as values;
                arrays.push(values, 3)"#,
         )
         .unwrap();
-        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let module = load_module(
+            directory.join("main.telora"),
+            BTreeMap::from([(
+                "values".into(),
+                parse_json("values.json", "[1, 2]").unwrap(),
+            )]),
+            100_000,
+        )
+        .unwrap();
         let requested = 3 * std::mem::size_of::<Val>() as u64;
         let mut exact = QuotaAccount::new(Quota::new(1, 1_000, requested));
         let result = Vm::new()
@@ -8730,16 +8856,21 @@ unchanged", "|"),
     fn array_get_and_enumerate_obey_exact_allocation_and_tool_stage_contracts() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
-        fs::write(directory.join("values.json"), "[10, 20]").unwrap();
         let load = |expression: &str| {
             fs::write(
                 &main,
-                format!(
-                    "import \"std/array\" as arrays;\nimport \"./values.json\" as values;\n{expression}"
-                ),
+                format!("import \"std/array\" as arrays;\n{expression}"),
             )
             .unwrap();
-            load_module(&main, BTreeMap::new(), 100_000).unwrap()
+            load_module(
+                &main,
+                BTreeMap::from([(
+                    "values".into(),
+                    parse_json("values.json", "[10, 20]").unwrap(),
+                )]),
+                100_000,
+            )
+            .unwrap()
         };
         let value_bytes = std::mem::size_of::<Val>() as u64;
 
@@ -8855,8 +8986,10 @@ unchanged", "|"),
         fs::write(
             &main,
             r#"import "std/array" as arrays;
+               import "std/codec" as codec;
                import "std/result" as result;
-               import "./data.json" as data;
+               import "./data.json" { data };
+               let data = codec.decode(Array(Int), data) |> result.unwrap;
                match arrays.get(data, 0) {
                    'Some(value) => fail!("selected", value),
                    'None => 0,
@@ -8874,8 +9007,10 @@ unchanged", "|"),
         fs::write(
             &main,
             r#"import "std/array" as arrays;
+               import "std/codec" as codec;
                import "std/result" as result;
-               import "./data.json" as data;
+               import "./data.json" { data };
+               let data = codec.decode(Array(Int), data) |> result.unwrap;
                let indexed = arrays.enumerate(data);
                arrays.map(indexed, fn(entry) {
                    let (index, value) = entry;
@@ -8896,8 +9031,10 @@ unchanged", "|"),
         fs::write(
             &main,
             r#"import "std/array" as arrays;
+               import "std/codec" as codec;
                import "std/result" as result;
-               import "./data.json" as data;
+               import "./data.json" { data };
+               let data = codec.decode(Array(Int), data) |> result.unwrap;
                let indexed = arrays.enumerate(data);
                let first = arrays.get(indexed, 0);
                match first {
@@ -8912,7 +9049,7 @@ unchanged", "|"),
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(failure.contains("main.telora:4:"), "{failure}");
+        assert!(failure.contains("main.telora:6:"), "{failure}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -8980,20 +9117,21 @@ unchanged", "|"),
             r#"import "std/codec" as codec;
                import "std/result" as result;
                type User = struct {name: String};
-               let decoded = codec.decode(User, {name: "Ada"});
-               let encoded = codec.encode(User, {name: "Lin"});
+               let as_value = fn(value) { codec.encode(codec.Value, value) |> result.unwrap };
+               let decoded = codec.decode(User, as_value({name: "Ada"}));
+               let encoded = codec.encode(codec.Value, {name: "Lin"});
                let checked = validate(User, {name: "Grace"});
                let invalid = validate(User, {name: 1});
                let formatted = result.map_err(
-                   codec.decode(User, {name: 1}),
+                   codec.decode(User, as_value({name: 1})),
                    codec.format_error,
                );
                let chained = result.flat_map(
-                   codec.decode(User, {name: "Mira"}),
+                   codec.decode(User, as_value({name: "Mira"})),
                    fn(user) { validate(User, user) },
                );
                let name = result.unwrap(result.map(
-                   codec.decode(User, {name: "Kai"}),
+                   codec.decode(User, as_value({name: "Kai"})),
                    fn(user) { user.name },
                ));
                {
@@ -9024,7 +9162,7 @@ unchanged", "|"),
             module
                 .analysis
                 .display(module.analysis.binding_types["encoded"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok(Any)}"
+            "enum {Err({data: Any, message: String, rule: Any}), Ok(Value)}"
         );
         assert_eq!(
             module
@@ -9066,7 +9204,8 @@ unchanged", "|"),
             directory.join("wrong-encode.telora"),
             r#"import "std/codec" as codec;
                type User = struct {name: String};
-               codec.encode(User, {name: 1})"#,
+               let user: User = {name: 1};
+               codec.encode(codec.Value, user)"#,
         )
         .unwrap();
         let error = load_module(
@@ -9934,15 +10073,21 @@ unchanged", "|"),
     #[test]
     fn core_dict_supports_tool_stage_and_exact_output_quota() {
         let directory = fixture_dir();
-        fs::write(directory.join("data.json"), r#"{"a":1,"long":2}"#).unwrap();
         fs::write(
             directory.join("main.telora"),
             r#"import "std/dict" as dicts;
-               import "./data.json" as data;
                dicts.keys(data)"#,
         )
         .unwrap();
-        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let module = load_module(
+            directory.join("main.telora"),
+            BTreeMap::from([(
+                "data".into(),
+                parse_json("data.json", r#"{"a":1,"long":2}"#).unwrap(),
+            )]),
+            100_000,
+        )
+        .unwrap();
         let requested = 2 * std::mem::size_of::<Val>() as u64 + 5;
         let mut exact = QuotaAccount::new(Quota::new(1, 1_000, requested));
         let arena = Vm::new()
@@ -10056,6 +10201,7 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/attributes" as attributes;
                import "std/codec" as codec;
+               import "std/result" as result;
                let rename = fn(name) {
                    let decorate: Fn(Any, Any) -> Any = fn(ctx, value) {
                        attributes.add(value, { "std/json.rename": name })
@@ -10073,7 +10219,7 @@ unchanged", "|"),
                {
                    metadata: User,
                    checked: validate(User, user),
-                   decoded: codec.decode(User, { "type": "member" }),
+                   decoded: codec.decode(User, codec.encode(codec.Value, { "type": "member" }) |> result.unwrap),
                }"#,
         )
         .unwrap();
@@ -10248,13 +10394,14 @@ unchanged", "|"),
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
+               import "std/result" as result;
                type Choice = enum {'None, 'Number(Int)};
                {
                    unknown: validate(Choice, 'Other),
                    missing: validate(Choice, 'Number),
                    unexpected: validate(Choice, 'None(1)),
                    wrong: validate(Choice, 'Number("one")),
-                   codec: codec.decode(Choice, "None"),
+                   codec: codec.decode(Choice, codec.encode(codec.Value, "None") |> result.unwrap),
                }"#,
         )
         .unwrap();
@@ -10286,13 +10433,16 @@ unchanged", "|"),
                @json.untagged
                type Scalar = enum {'Text(String), 'Count(Int)};
                type Envelope = struct {event: Event};
+               let fatal: Event = 'FatalError("boom");
+               let nested: Envelope = {event: 'UserJoined({name: "Lin"})};
+               let count: Scalar = 'Count(3);
                {
-                   idle: codec.decode(Event, "idle") |> result.unwrap,
-                   joined: codec.decode(Event, {userJoined: {name: "Ada"}}) |> result.unwrap,
-                   fatal: codec.encode(Event, 'FatalError("boom")) |> result.unwrap,
-                   nested: codec.encode(Envelope, {event: 'UserJoined({name: "Lin"})}) |> result.unwrap,
-                   text: codec.decode(Scalar, "hello") |> result.unwrap,
-                   count: codec.encode(Scalar, 'Count(3)) |> result.unwrap,
+                   idle: codec.decode(Event, codec.encode(codec.Value, "idle") |> result.unwrap) |> result.unwrap,
+                   joined: codec.decode(Event, codec.encode(codec.Value, {userJoined: {name: "Ada"}}) |> result.unwrap) |> result.unwrap,
+                   fatal: codec.encode(codec.Value, fatal) |> result.unwrap,
+                   nested: codec.encode(codec.Value, nested) |> result.unwrap,
+                   text: codec.decode(Scalar, codec.encode(codec.Value, "hello") |> result.unwrap) |> result.unwrap,
+                   count: codec.encode(codec.Value, count) |> result.unwrap,
                }"#,
         )
         .unwrap();
@@ -10306,14 +10456,14 @@ unchanged", "|"),
         );
         assert_eq!(
             output.get("fatal").unwrap().to_string(),
-            "{fatal: \"boom\"}"
+            "'Object({fatal: 'String(\"boom\")})"
         );
         assert_eq!(
             output.get("nested").unwrap().to_string(),
-            "{event: {userJoined: {name: \"Lin\"}}}"
+            "'Object({event: 'Object({userJoined: 'Object({name: 'String(\"Lin\")})})})"
         );
         assert_eq!(output.get("text").unwrap().to_string(), "'Text(\"hello\")");
-        assert_eq!(output.get("count").unwrap().to_string(), "3");
+        assert_eq!(output.get("count").unwrap().to_string(), "'Int(3)");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -10324,11 +10474,12 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/json" as json;
+               import "std/result" as result;
                @json.untagged type Scalar = enum {'Text(String), 'Count(Int)};
                @json.untagged type Ambiguous = enum {'Anything(Any), 'Text(String)};
                {
-                   no_match: codec.decode(Scalar, []),
-                   ambiguous: codec.decode(Ambiguous, "text"),
+                   no_match: codec.decode(Scalar, codec.encode(codec.Value, []) |> result.unwrap),
+                   ambiguous: codec.decode(Ambiguous, codec.encode(codec.Value, "text") |> result.unwrap),
                }"#,
         )
         .unwrap();
@@ -10362,7 +10513,7 @@ unchanged", "|"),
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./data.json" as data;
+            r#"import "./data.json" { data };
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
@@ -10382,11 +10533,12 @@ unchanged", "|"),
                };
                let decoded = codec.decode(Model, data) |> result.unwrap;
                let schema = json.schema(Model);
+               let schema_value = codec.encode(codec.Value, schema) |> result.unwrap;
                {
                    decoded: decoded,
-                   encoded: codec.encode(Model, decoded) |> result.unwrap,
+                   encoded: codec.encode(codec.Value, decoded) |> result.unwrap,
                    schema: schema,
-                   schema_text: json.stringify(schema),
+                   schema_text: json.stringify(schema_value),
                }"#,
         )
         .unwrap();
@@ -10502,10 +10654,10 @@ unchanged", "|"),
                import "std/json" as json;
                import "std/result" as result;
                {
-                   boolean: codec.decode(Bool, 'True) |> result.unwrap,
-                   none: codec.decode(Option(Int), 'None) |> result.unwrap,
-                   some: codec.decode(Option(Int), 3) |> result.unwrap,
-                   encoded: codec.encode(Option(Int), 'Some(4)) |> result.unwrap,
+                   boolean: codec.decode(Bool, codec.encode(codec.Value, 'True) |> result.unwrap) |> result.unwrap,
+                   none: codec.decode(Option(Int), codec.encode(codec.Value, 'None) |> result.unwrap) |> result.unwrap,
+                   some: codec.decode(Option(Int), codec.encode(codec.Value, 3) |> result.unwrap) |> result.unwrap,
+                   encoded: codec.encode(codec.Value, 4) |> result.unwrap,
                    bool_schema: json.schema(Bool),
                    option_schema: json.schema(Option(Int)),
                }"#,
@@ -10516,7 +10668,7 @@ unchanged", "|"),
         assert!(output.contains("boolean: 'True"), "{output}");
         assert!(output.contains("none: 'None"), "{output}");
         assert!(output.contains("some: 'Some(3)"), "{output}");
-        assert!(output.contains("encoded: 4"), "{output}");
+        assert!(output.contains("encoded: 'Int(4)"), "{output}");
         assert!(output.contains("type: \"boolean\""), "{output}");
         assert!(output.contains("type: \"null\""), "{output}");
         fs::remove_dir_all(directory).unwrap();
@@ -10564,16 +10716,16 @@ unchanged", "|"),
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               let node = codec.decode(Types.Node, {
+               let node = codec.decode(Types.Node, codec.encode(codec.Value, {
                    value: 1,
                    children: [{value: 2, children: []}],
-               }) |> result.unwrap;
-               let pair = codec.decode(Types.Left, {
+               }) |> result.unwrap) |> result.unwrap;
+               let pair = codec.decode(Types.Left, codec.encode(codec.Value, {
                    rightValue: {left: 'None},
-               }) |> result.unwrap;
+               }) |> result.unwrap) |> result.unwrap;
                {
                    node: node,
-                   encoded: codec.encode(Types.Node, node) |> result.unwrap,
+                   encoded: codec.encode(codec.Value, node) |> result.unwrap,
                    pair: pair,
                    schema: json.schema(Types.Node),
                    mutual_schema: json.schema(Types.Left),
@@ -10601,7 +10753,7 @@ unchanged", "|"),
         .unwrap();
         fs::write(
             directory.join("bad.telora"),
-            r#"import "./bad.json" as data;
+            r#"import "./bad.json" { data };
                import "./Types.telora" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
@@ -10617,8 +10769,9 @@ unchanged", "|"),
         fs::write(
             directory.join("leak.telora"),
             r#"import "./Types.telora" as Types;
-               import "std/json" as json;
-               json.stringify(Types.Node)"#,
+               import "std/codec" as codec;
+               import "std/result" as result;
+               codec.encode(codec.Value, Types.Node) |> result.unwrap"#,
         )
         .unwrap();
         let leak = load_module(directory.join("leak.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -10666,7 +10819,7 @@ unchanged", "|"),
                let packed = dyn.pack(Node, root);
                let decoded: Node = codec.decode(
                    Node,
-                   codec.encode(Node, root) |> result.unwrap,
+                   codec.encode(codec.Value, root) |> result.unwrap,
                ) |> result.unwrap;
                export let output = {
                    sum,
@@ -10770,7 +10923,7 @@ unchanged", "|"),
                    })}},
                };
                 {
-                    encoded: codec.encode(Use, relation)
+                    encoded: codec.encode(codec.Value, relation)
                        |> result.unwrap
                        |> json.stringify,
                     schema: json.schema(Use),
@@ -10802,7 +10955,7 @@ unchanged", "|"),
                    Int, String, Bool, Float, Expr, Array(Int), Option(String)
                );
                def encode_rejection = fn(value: Rejection) {
-                   codec.encode(Rejection, value)
+                   codec.encode(codec.Value, value)
                };
                export {Expr, Rejection, encode_rejection};"#,
         )
@@ -10968,8 +11121,9 @@ export { CallExpr, Expr };"#,
         fs::write(
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
+               import "std/result" as result;
                type Forward = struct {next: Later};
-               let premature = codec.decode(Forward, {next: 1});
+               let premature = codec.decode(Forward, codec.encode(codec.Value, {next: 1}) |> result.unwrap);
                type Later = Int;
                premature"#,
         )
@@ -11264,7 +11418,7 @@ export { CallExpr, Expr };"#,
                    @json.skip_serializing_if('Empty) tags: Array(String),
                    @json.skip_serializing_if('Empty) extras: Any,
                };
-               let decoded = codec.decode(User, {
+               let decoded = codec.decode(User, codec.encode(codec.Value, {
                    userId: 7,
                    display: "Ada",
                    city_name: "London",
@@ -11273,8 +11427,8 @@ export { CallExpr, Expr };"#,
                    notes: "",
                    tags: [],
                    extras: {},
-               }) |> result.unwrap;
-               { decoded: decoded, encoded: codec.encode(User, decoded) |> result.unwrap }"#,
+               }) |> result.unwrap) |> result.unwrap;
+               { decoded: decoded, encoded: codec.encode(codec.Value, decoded) |> result.unwrap }"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -11286,7 +11440,7 @@ export { CallExpr, Expr };"#,
         );
         assert_eq!(
             output.get("encoded").unwrap().to_string(),
-            "{city_name: \"London\", display: \"Ada\", latitude: 51, userId: 7}"
+            "'Object({city_name: 'String(\"London\"), display: 'String(\"Ada\"), latitude: 'Int(51), userId: 'Int(7)})"
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -11298,6 +11452,7 @@ export { CallExpr, Expr };"#,
             directory.join("main.telora"),
             r#"import "std/codec" as codec;
                import "std/json" as json;
+               import "std/result" as result;
                let zero = 0;
                def is_zero: Fn(Int) -> Bool = fn(value) { value == zero };
                type Model = struct {
@@ -11305,11 +11460,12 @@ export { CallExpr, Expr };"#,
                    @json.skip_serializing_if(is_zero) retained: Int,
                    @json.skip_serializing_if('False) native_omitted: Bool,
                };
-               codec.encode(Model, {
+               let model: Model = {
                    omitted: 0,
                    retained: 7,
                    native_omitted: 'False,
-               })"#,
+               };
+               codec.encode(codec.Value, model)"#,
         )
         .unwrap();
         let module = load_module_with_quota_and_debug_sink(
@@ -11322,7 +11478,7 @@ export { CallExpr, Expr };"#,
         let failure = module.execute_with_quota(Quota::with_fuel(2)).unwrap_err();
         assert_eq!(failure.kind, crate::RuntimeErrorKind::FuelExhausted);
         let value = module.execute_with_quota(Quota::with_fuel(4)).unwrap();
-        assert_eq!(value.to_string(), "'Ok({retained: 7})");
+        assert_eq!(value.to_string(), "'Ok('Object({retained: 'Int(7)}))");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -11351,7 +11507,8 @@ export { CallExpr, Expr };"#,
                type Model = struct {
                    @json.skip_serializing_if(identity) value: Int,
                };
-               codec.encode(Model, {value: 1})"#,
+               let model: Model = {value: 1};
+               codec.encode(codec.Value, model)"#,
         )
         .unwrap();
         let module =
@@ -11374,7 +11531,8 @@ export { CallExpr, Expr };"#,
                type Model = struct {
                    @json.skip_serializing_if(fails) value: Int,
                };
-               codec.encode(Model, {value: 1})"#,
+               let model: Model = {value: 1};
+               codec.encode(codec.Value, model)"#,
         )
         .unwrap();
         let callback =
@@ -11414,16 +11572,17 @@ export { CallExpr, Expr };"#,
                    @json.skip_serializing_if(always)
                    @json.flatten nested: Nested,
                };
-               codec.encode(Model, {
+               let model: Model = {
                    items: [{value: 0}, {value: 2}],
                    nested: {required: "present"},
-               })"#,
+               };
+               codec.encode(codec.Value, model)"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             module.execute(100_000).unwrap().to_string(),
-            "'Ok({items: [{}, {value: 2}]})"
+            "'Ok('Object({items: 'Array(['Object({}), 'Object({value: 'Int(2)})])}))"
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -11436,38 +11595,42 @@ export { CallExpr, Expr };"#,
                 "collision.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
+                   import "std/result" as result;
                    type T = struct {
                        @json.rename("same") first: Int,
                        @json.rename("same") second: Int,
                    };
-                   codec.decode(T, {same: 1})"#,
+                   codec.decode(T, codec.encode(codec.Value, {same: 1}) |> result.unwrap)"#,
                 "duplicate external field name",
             ),
             (
                 "flatten-type.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
+                   import "std/result" as result;
                    type T = struct {@json.flatten value: Int};
-                   codec.decode(T, {})"#,
+                   codec.decode(T, codec.encode(codec.Value, {}) |> result.unwrap)"#,
                 "flatten requires Struct metadata",
             ),
             (
                 "flatten-rename.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
+                   import "std/result" as result;
                    type Inner = struct {value: Int};
                    type T = struct {
                        @json.flatten @json.rename("x") inner: Inner,
                    };
-                   codec.decode(T, {value: 1})"#,
+                   codec.decode(T, codec.encode(codec.Value, {value: 1}) |> result.unwrap)"#,
                 "flatten cannot be combined",
             ),
             (
                 "default.telora",
                 r#"import "std/codec" as codec;
                    import "std/json" as json;
+                   import "std/result" as result;
                    type T = struct {@json.default("wrong") value: Int};
-                   codec.decode(T, {})"#,
+                   codec.decode(T, codec.encode(codec.Value, {}) |> result.unwrap)"#,
                 "expected Int",
             ),
         ];
@@ -11871,8 +12034,11 @@ export { CallExpr, Expr };"#,
         fs::write(
             &main,
             r#"import "std/result" as result;
-               import "./data.json" as data;
-               let output = fail!("invalid name", data.name);
+               import "std/codec" as codec;
+               import "./data.json" { data };
+               type Input = struct {name: String};
+               let checked = codec.decode(Input, data) |> result.unwrap;
+               let output = fail!("invalid name", checked.name);
                export { output };"#,
         )
         .unwrap();
@@ -12539,14 +12705,13 @@ export let output = (compared, selected);"#,
         fs::write(&model, "type Shared = String; export { Shared };").unwrap();
         fs::write(
             &main,
-            "import \"./data.json\" as data;\
+            "import \"./data.json\" { data };\
              import \"./model.telora\" as model;\
              import \"std/attributes\" as attributes;\
-             type FromData = if data.kind == \"int\" { Int } else { String };\
              type FromTelora = model.Shared;\
              type FromCore = attributes.strip(String);\
              type Broken = missing(Int);\
-             export { FromData as output };",
+             export { FromTelora as output };",
         )
         .unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();
@@ -12561,17 +12726,31 @@ export let output = (compared, selected);"#,
                 .unwrap()
                 .ty
         };
-        for (name, expected) in [
-            ("FromData", "Int"),
-            ("FromTelora", "String"),
-            ("FromCore", "String"),
-        ] {
-            assert_eq!(fact(name).state, crate::FactState::Known, "{name}");
+        for (name, expected) in [("FromTelora", "String"), ("FromCore", "String")] {
+            assert_eq!(
+                fact(name).state,
+                crate::FactState::Known,
+                "{name}: {:#?}",
+                snapshot.diagnostics()
+            );
             assert_eq!(
                 snapshot.types().display(fact(name).value.unwrap()).unwrap(),
                 expected
             );
         }
+        let data_binding = snapshot
+            .definitions()
+            .iter()
+            .find(|definition| definition.module == root.id && definition.name == "data")
+            .expect("static data import binding");
+        assert_eq!(data_binding.ty.state, crate::FactState::Known);
+        assert_eq!(
+            snapshot
+                .types()
+                .display(data_binding.ty.value.unwrap())
+                .unwrap(),
+            "Value"
+        );
         assert!(snapshot.modules().iter().any(|module| {
             module.kind == WorkspaceModuleKind::Json
                 && module.state == WorkspaceModuleState::Available
@@ -12636,8 +12815,17 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/json" as json;
                import "std/result" as result;
+               let parsed = result.unwrap(json.parse("{\"answer\": 42}"));
+               let answer = match parsed {
+                   'Object(fields) => match fields.answer {
+                       'Int(value) => value,
+                       _ => 0,
+                   },
+                   _ => 0,
+               };
                export let output = {
-                   parsed: result.unwrap(json.parse("{\"answer\": 42}")),
+                   parsed: parsed,
+                   answer: answer,
                    decoded: result.unwrap(json.decode(Int, "42")),
                    failed: json.parse("{")
                };"#,
@@ -12646,11 +12834,303 @@ export let output = (compared, selected);"#,
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         let output = named_output(&engine.execute(&module).unwrap()).to_string();
-        assert!(output.contains("parsed: {answer: 42}"), "{output}");
+        assert!(
+            output.contains("parsed: 'Object({answer: 'Int(42)})"),
+            "{output}"
+        );
+        assert!(output.contains("answer: 42"), "{output}");
         assert!(output.contains("decoded: 42"), "{output}");
         assert!(output.contains("failed: 'Err("), "{output}");
         assert!(output.contains("data: \"{\""), "{output}");
         assert!(output.contains("rule: 'Json"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn runtime_data_parsers_share_the_recursive_value_contract() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/yaml" as yaml;
+               import "std/toml" as toml;
+               import "std/result" as result;
+               let yaml_value = result.unwrap(yaml.parse("item: !!binary SGk="));
+               let toml_value = result.unwrap(toml.parse("when = 2026-08-18"));
+               let yaml_ok = match yaml_value {
+                   'Object(fields) => match fields.item {
+                       'Bytes(_) => 'True,
+                       _ => 'False,
+                   },
+                   _ => 'False,
+               };
+               let toml_ok = match toml_value {
+                   'Object(fields) => match fields.when {
+                       'LocalDate("2026-08-18") => 'True,
+                       _ => 'False,
+                   },
+                   _ => 'False,
+               };
+               export let output = {
+                   yaml_ok: yaml_ok,
+                   toml_ok: toml_ok,
+                   custom_tag: yaml.parse("item: !custom value"),
+                   non_finite: toml.parse("value = nan"),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(output.contains("yaml_ok: 'True"), "{output}");
+        assert!(output.contains("toml_ok: 'True"), "{output}");
+        assert!(output.contains("custom_tag: 'Err("), "{output}");
+        assert!(output.contains("custom YAML tags"), "{output}");
+        assert!(output.contains("non_finite: 'Err("), "{output}");
+        assert!(output.contains("must be finite"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn semantic_value_has_one_recursive_identity_and_static_module_shape() {
+        fn assert_value_graph<'a>(
+            value: crate::ValueRef<'a>,
+            expected: &crate::value::DeclaredTypeId,
+        ) {
+            let (owner, raw) = value
+                .declared_value_parts()
+                .expect("every semantic Value node has a nominal witness");
+            let (actual, name, _) = owner
+                .declared_type_parts()
+                .expect("Value witness is a declared Type");
+            assert_eq!(name, "Value");
+            assert_eq!(actual, expected);
+            let Some((tag, payload)) = raw.tagged_parts() else {
+                assert!(matches!(
+                    raw.as_atom().as_deref(),
+                    Some("None" | "True" | "False")
+                ));
+                return;
+            };
+            match tag.as_atom().as_deref() {
+                Some("Array") => {
+                    for index in 0..payload.sequence_len().expect("Value.Array payload") {
+                        assert_value_graph(payload.sequence_get(index).unwrap(), expected);
+                    }
+                }
+                Some("Object") => {
+                    for child in payload.dict_values().expect("Value.Object payload") {
+                        assert_value_graph(child, expected);
+                    }
+                }
+                Some(
+                    "Int" | "Float" | "String" | "Bytes" | "LocalDate" | "LocalTime"
+                    | "LocalDateTime" | "OffsetDateTime",
+                ) => {}
+                other => panic!("unexpected Value variant {other:?}"),
+            }
+        }
+
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("data.json"),
+            r#"{"none":null,"true":true,"false":false,"int":1,"float":1.5,"string":"x","array":[2],"object":{"item":3}}"#,
+        )
+        .unwrap();
+        fs::write(directory.join("data.yaml"), "bytes: !!binary SGk=\n").unwrap();
+        fs::write(
+            directory.join("data.toml"),
+            "date = 2026-08-18\ntime = 12:34:56\nlocal = 2026-08-18T12:34:56\noffset = 2026-08-18T12:34:56+08:00\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./data.json" as json_module;
+               import "./data.yaml" as yaml_module;
+               import "./data.toml" as toml_module;
+               import "./data.json" { data as json_data };
+               import "./data.yaml" { data as yaml_data };
+               import "./data.toml" { data as toml_data };
+               import "std/codec" as codec;
+               import "std/result" as result;
+               import "std/value" { Value };
+               def classify: Fn(Value) -> String = fn(value) {
+                   match value {
+                       'None => "None",
+                       'True => "True",
+                       'False => "False",
+                       'Int(_) => "Int",
+                       'Float(_) => "Float",
+                       'String(_) => "String",
+                       'Bytes(_) => "Bytes",
+                       'Array(_) => "Array",
+                       'Object(_) => "Object",
+                       'LocalDate(_) => "LocalDate",
+                       'LocalTime(_) => "LocalTime",
+                       'LocalDateTime(_) => "LocalDateTime",
+                       'OffsetDateTime(_) => "OffsetDateTime",
+                   }
+               };
+               let json: Dict(Value) = match json_data {'Object(fields) => fields, _ => {}};
+               let yaml: Dict(Value) = match yaml_data {'Object(fields) => fields, _ => {}};
+               let toml: Dict(Value) = match toml_data {'Object(fields) => fields, _ => {}};
+               let encoded_identity = codec.encode(Value, json_data) |> result.unwrap;
+               let decoded_identity = codec.decode(Value, encoded_identity) |> result.unwrap;
+               export let output = {
+                   json_module,
+                   yaml_module,
+                   toml_module,
+                   identity: decoded_identity == json_data,
+                   labels: [
+                       classify(json.none), classify(json.true), classify(json.false),
+                       classify(json.int), classify(json.float), classify(json.string),
+                       classify(yaml.bytes), classify(json.array), classify(json.object),
+                       classify(toml.date), classify(toml.time), classify(toml.local),
+                       classify(toml.offset),
+                   ],
+               };"#,
+        )
+        .unwrap();
+
+        let engine = recovery_engine();
+        let module = engine
+            .load_module(directory.join("main.telora"), BTreeMap::new())
+            .unwrap();
+        for name in ["json_data", "yaml_data", "toml_data"] {
+            assert_eq!(
+                module.analysis.display(module.analysis.binding_types[name]),
+                "Value"
+            );
+        }
+        let execution = engine.execute(&module).unwrap();
+        let output = named_output(&execution);
+        assert_eq!(
+            output.get("labels").unwrap().to_string(),
+            "[\"None\", \"True\", \"False\", \"Int\", \"Float\", \"String\", \"Bytes\", \"Array\", \"Object\", \"LocalDate\", \"LocalTime\", \"LocalDateTime\", \"OffsetDateTime\"]"
+        );
+        assert_eq!(output.get("identity").unwrap().to_string(), "'True");
+        let mut expected = None;
+        for name in ["json_module", "yaml_module", "toml_module"] {
+            let namespace = output.get(name).unwrap();
+            assert_eq!(namespace.module_fields().unwrap(), vec!["data"]);
+            let data = namespace.module_get("data").unwrap();
+            let (owner, _) = data.declared_value_parts().unwrap();
+            let (id, _, _) = owner.declared_type_parts().unwrap();
+            if let Some(expected) = expected {
+                assert_eq!(id, expected);
+            } else {
+                expected = Some(id);
+            }
+            assert_value_graph(data, id);
+        }
+
+        let snapshot = engine
+            .recover_workspace(directory.join("main.telora"))
+            .unwrap();
+        let root = snapshot
+            .module_by_path(&canonicalize(&directory.join("main.telora")).unwrap())
+            .unwrap();
+        for file in ["data.json", "data.yaml", "data.toml"] {
+            let module = snapshot
+                .module_by_path(&canonicalize(&directory.join(file)).unwrap())
+                .unwrap();
+            let exports = snapshot.exports_of(module.id);
+            assert_eq!(exports.len(), 1, "{file}");
+            assert_eq!(exports[0].name, "data", "{file}");
+            assert_eq!(
+                snapshot.types().display(exports[0].ty).unwrap(),
+                "Value",
+                "{file}"
+            );
+        }
+        for name in ["json_data", "yaml_data", "toml_data"] {
+            let definition = snapshot
+                .definitions()
+                .iter()
+                .find(|definition| definition.module == root.id && definition.name == name)
+                .unwrap();
+            assert_eq!(definition.ty.state, crate::FactState::Known);
+            assert_eq!(
+                snapshot
+                    .types()
+                    .display(definition.ty.value.unwrap())
+                    .unwrap(),
+                "Value"
+            );
+        }
+
+        fs::write(directory.join("data.yaml"), "value: [\n").unwrap();
+        let recovered = recovery_engine()
+            .recover_workspace(directory.join("main.telora"))
+            .unwrap();
+        let yaml = recovered
+            .module_by_path(&canonicalize(&directory.join("data.yaml")).unwrap())
+            .unwrap();
+        let exports = recovered.exports_of(yaml.id);
+        assert_eq!(exports.len(), 1);
+        assert_eq!(exports[0].name, "data");
+        assert_eq!(recovered.types().display(exports[0].ty).unwrap(), "Value");
+        assert!(!recovered.diagnostics().is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn semantic_value_parsing_and_encoding_charge_complete_wrapper_graphs() {
+        fn execute_with_allocation(
+            module: &LoadedModule,
+            allocation_bytes: u64,
+        ) -> (Result<(), crate::RuntimeError>, u64) {
+            let mut account = QuotaAccount::new(Quota::new(10, 1_000, allocation_bytes));
+            let result = Vm::new().execute_in_work(
+                &module.runtime.main.heap,
+                &module.runtime.externals,
+                &module.function,
+                &[],
+                &mut account,
+            );
+            (result.map(|_| ()), account.requested_allocation_bytes())
+        }
+
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        let value_bytes = std::mem::size_of::<Val>() as u64;
+
+        fs::write(&main, r#"import "std/json" as json; json.parse("[1]")"#).unwrap();
+        let parsed = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let parse_bytes = 3 + 7 * value_bytes;
+        let (result, requested) = execute_with_allocation(&parsed, parse_bytes);
+        assert!(result.is_ok());
+        assert_eq!(requested, parse_bytes);
+        let (result, _) = execute_with_allocation(&parsed, parse_bytes - 1);
+        assert_eq!(
+            result.err().expect("one byte short must fail").kind,
+            crate::RuntimeErrorKind::AllocationQuotaExceeded
+        );
+
+        fs::write(
+            &main,
+            r#"import "std/codec" as codec; codec.encode(codec.Value, value)"#,
+        )
+        .unwrap();
+        let encoded = load_module(
+            &main,
+            BTreeMap::from([(
+                "value".into(),
+                parse_json("value.json", r#"{"item":[1]}"#).unwrap(),
+            )]),
+            100_000,
+        )
+        .unwrap();
+        let encode_bytes = 10 * value_bytes;
+        let (result, requested) = execute_with_allocation(&encoded, encode_bytes);
+        assert!(result.is_ok());
+        assert_eq!(requested, encode_bytes);
+        let (result, _) = execute_with_allocation(&encoded, encode_bytes - 1);
+        assert_eq!(
+            result.err().expect("one byte short must fail").kind,
+            crate::RuntimeErrorKind::AllocationQuotaExceeded
+        );
+
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -12819,14 +13299,14 @@ export let output = (compared, selected);"#,
                type Endpoint = struct { host: String, port: Int };
 
                type Config = struct { endpoint: Endpoint, name: String };
-               let decoded = result.unwrap(codec.decode(Config, {
+               let decoded = result.unwrap(codec.decode(Config, codec.encode(codec.Value, {
                    endpoint: "localhost:8080",
                    name: "dev",
-               }));
+               }) |> result.unwrap));
                export let output = {
                    decoded,
-                   encoded: result.unwrap(codec.encode(Config, decoded)),
-                   direct: result.unwrap(codec.decode(Endpoint, "example.com:443")),
+                   encoded: result.unwrap(codec.encode(codec.Value, decoded)),
+                   direct: result.unwrap(codec.decode(Endpoint, codec.encode(codec.Value, "example.com:443") |> result.unwrap)),
                    schema: json.schema(Config),
                };"#,
         )
@@ -12840,7 +13320,9 @@ export let output = (compared, selected);"#,
             "{output}"
         );
         assert!(
-            output.contains("encoded: {endpoint: \"localhost:8080\", name: \"dev\"}"),
+            output.contains(
+                "encoded: 'Object({endpoint: 'String(\"localhost:8080\"), name: 'String(\"dev\")})"
+            ),
             "{output}"
         );
         assert!(
@@ -12853,11 +13335,12 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/codec" as codec;
                import "std/regex" as re;
+               import "std/result" as result;
                import "std/string" as string;
                @string.decode_by_parse
                @re.parse_by(re.compile(r"^(?P<value>\d+)$"))
                type Bad = struct { value: Int };
-               export let output = codec.decode(Bad, "42");"#,
+               export let output = codec.decode(Bad, codec.encode(codec.Value, "42") |> result.unwrap);"#,
         )
         .unwrap();
         let engine = recovery_engine();
@@ -13089,9 +13572,10 @@ export let output = (compared, selected);"#,
             r#"import "./explicit-diagnostics.telora" as validation;
 import "std/array" as arrays;
 import "std/result" as result;
-import "./project.json" as project;
+import "./project.json" { data as project };
 let initial: Array(validation.DiagnosticRecord) = [];
-let checked_input = validate(validation.Project, project) |> result.unwrap;
+import "std/codec" as codec;
+let checked_input = codec.decode(validation.Project, project) |> result.unwrap;
 let output = match validation.validate_project(checked_input, initial) {
     (checked, diagnostics) => {
         count: arrays.length(diagnostics),
@@ -13132,7 +13616,8 @@ export { output };"#,
     fn fail_intrinsic_preserves_data_and_authored_rule_locations() {
         let directory = fixture_dir();
         fs::write(directory.join("user.json"), r#"{"age":42}"#).unwrap();
-        let source = r#"import "./user.json" as user;
+        let source = r#"import "./user.json" { data as user };
+import "std/codec" as codec;
 import "std/result" as result;
 import "std/dyn" as dyn;
 type User = struct {age: Int};
@@ -13143,7 +13628,7 @@ def inspect_i: Fn(Dyn) -> Int = fn(value) {
     }
 };
 def inspect: for(A) Fn(TypeOf(A)) -> Fn(A) -> Int = interpreter!(inspect_i);
-let checked = validate(User, user) |> result.unwrap;
+let checked = codec.decode(User, user) |> result.unwrap;
 inspect(User)(checked)"#;
         fs::write(directory.join("main.telora"), source).unwrap();
 
@@ -13166,7 +13651,7 @@ inspect(User)(checked)"#;
         );
         let rendered = error.to_string();
         assert!(rendered.contains("user.json:1:8"), "{rendered}");
-        assert!(rendered.contains("main.telora:7:21"), "{rendered}");
+        assert!(rendered.contains("main.telora:8:21"), "{rendered}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -13268,7 +13753,12 @@ export let output = reject.must_ok!(42);"#,
                     || diagnostic.message.contains("ordered dimension")
             })
             .collect::<Vec<_>>();
-        assert_eq!(diagnostics.len(), 4, "{diagnostics:#?}");
+        assert_eq!(
+            diagnostics.len(),
+            4,
+            "filtered: {diagnostics:#?}\nall: {:#?}",
+            snapshot.diagnostics()
+        );
         assert!(
             diagnostics
                 .iter()

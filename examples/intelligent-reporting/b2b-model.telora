@@ -523,7 +523,7 @@ def verify_relationships: Fn(PathPlan, Array(GroupRequirement)) -> Bool = fn(pat
     )
 };
 
-def decode_restriction: Fn(Any) -> Restriction = fn(raw) {
+def decode_restriction: Fn(codec.Value) -> Restriction = fn(raw) {
     match codec.decode(Restriction, raw) {
         'Ok(restriction) => restriction,
         'Err(error) => fail!(error.message, error),
@@ -630,7 +630,7 @@ def compile_render: Fn(RenderIntent, Array(ResultField)) -> Option(RenderPlan) =
     }
 };
 
-export def compile: Fn(Any, ReportIntent) -> Option(ExecutionPlan) = fn(raw_restriction, intent) {
+export def compile: Fn(codec.Value, ReportIntent) -> Option(ExecutionPlan) = fn(raw_restriction, intent) {
     let restriction = decode_restriction(raw_restriction);
     let order_valid = verify_order(intent);
     let filter_requirements = compile_filters(intent.filters);

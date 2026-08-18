@@ -1,5 +1,5 @@
 import "./b2b-model.telora" { compile };
-import "./restriction.json" as restriction;
+import "./restriction.json" { data as restriction };
 
 export let output = compile(restriction, {
     measures: ['NetRevenue],

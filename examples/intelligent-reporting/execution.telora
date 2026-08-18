@@ -1,5 +1,7 @@
 import "std/json" as json;
 import "std/array" as array;
+import "std/codec" as codec;
+import "std/result" as result;
 
 type SqlDialect = enum { 'Sqlite };
 type OutputMode = enum { 'Table, 'Json };
@@ -45,7 +47,7 @@ def encode_result_field: Fn(ResultField) -> EncodedResultField = fn(field) {
 def encode_plan: Fn(ExecutionPlan) -> String = fn(plan) {
     let dialect = match plan.dialect { 'Sqlite => "sqlite" };
     let output = match plan.render.mode { 'Table => "table", 'Json => "json" };
-    json.stringify({
+    let value = codec.encode(codec.Value, {
         version: plan.version,
         restriction_revision: plan.restriction_revision,
         dialect,
@@ -54,7 +56,8 @@ def encode_plan: Fn(ExecutionPlan) -> String = fn(plan) {
         result_schema: array.map(plan.result_schema, encode_result_field),
         render: {mode: output, fields: plan.render.fields},
         read_only: plan.read_only,
-    })
+    }) |> result.unwrap;
+    json.stringify(value)
 };
 
 export {

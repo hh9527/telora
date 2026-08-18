@@ -332,6 +332,32 @@ crate 根目录使用 `telora-deps.json`：
 可见；`.native.telora` 承载 Host 注册的 native 声明并具有更严格边界。用户态 eDSL
 通常只需要普通 `.telora`。
 
+### 静态数据与 Value
+
+JSON、YAML 和 TOML 文件也是模块，并且只导出 `data: Value`：
+
+```telora
+import "./request.json" { data as request };
+import "./policy.yaml" { data as policy };
+import "std/codec" as codec;
+import "std/result" as result;
+import "std/value" { Value };
+
+type Request = struct { subject: String, limit: Int };
+let model: Request = codec.decode(Request, request) |> result.unwrap;
+let encoded: Value = codec.encode(Value, model) |> result.unwrap;
+```
+
+`Value` 是普通的 nominal recursive enum，包含 None/Bool、数值、String、Bytes、
+Array/Object 以及 TOML 的四种时间 variant。`json.parse`、`yaml.parse` 和
+`toml.parse` 也返回 `Result(Value, BlameError)`。Value 是规范化语义数据，不保留
+注释、alias 身份或原始 scalar 写法。
+
+`codec.decode(Model, value)` 负责移除 Value variant 并按 model schema 重建值；
+`codec.encode(Value, model)` 做反向转换。`cast!` 不执行这种转换，`Any` 和 `Dyn`
+也不是数据交换格式。`json.stringify` 只接受 Value；Bytes 和 temporal variant 没有
+隐式 JSON 表示，需要领域代码先显式转换。
+
 ## 8. 诊断和 best-effort recovery
 
 Telora 诊断会携带 source span，并能同时指向输入和规则位置。

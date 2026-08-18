@@ -139,6 +139,21 @@ impl TypeGraph {
             .map(|(index, node)| (AnalysisTypeId(index as u32), node))
     }
 
+    pub(crate) fn from_module_interface(interface: &ModuleInterface) -> (Self, AnalysisTypeId) {
+        let mut graph = Self::default();
+        for (name, descriptor) in &interface.concrete_types {
+            let ty = graph.intern_descriptor(descriptor);
+            graph.names.insert(name.clone(), ty);
+        }
+        let fields = interface
+            .exports
+            .iter()
+            .map(|(name, scheme)| (name.clone(), graph.intern_descriptor(&scheme.body)))
+            .collect();
+        let result = graph.intern_node(TypeNode::Struct(fields));
+        (graph, result)
+    }
+
     pub fn display(&self, id: AnalysisTypeId) -> String {
         self.display_with(id, &mut HashSet::new())
     }
@@ -2118,6 +2133,26 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             continue;
         }
         break;
+    }
+    for definition in hir
+        .definitions()
+        .iter()
+        .filter(|definition| definition.top_level && definition.kind == HirDefinitionKind::Import)
+    {
+        if facts.contains_key(&definition.id)
+            || control.unavailable_imports.contains(&definition.name)
+        {
+            continue;
+        }
+        let Some(root) = external_roots.get(&definition.name) else {
+            continue;
+        };
+        if root.runtime().type_id().is_none() {
+            continue;
+        }
+        let descriptor = infer_value_ref(ValueRef::persistent(*root, evaluator.main));
+        let ty = types.intern_descriptor(&descriptor);
+        facts.insert(definition.id, SemanticFact::known(ty));
     }
     let mut indexed_diagnostics = diagnostics.into_iter().enumerate().collect::<Vec<_>>();
     indexed_diagnostics.sort_by_key(|(_, diagnostic)| {
