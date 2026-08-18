@@ -1308,6 +1308,14 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_tail_expr(&mut self, expression: &Expr) -> Result<(), FrontendError> {
+        if self
+            .declared_value_owners
+            .contains_key(&expression.location)
+        {
+            let result = self.compile_expr(expression)?;
+            self.emit_synthetic(Operation::Return { src: result }, expression.location);
+            return Ok(());
+        }
         match &expression.value {
             ExprKind::Call { callee, arguments } => {
                 let (base, argument_count) =

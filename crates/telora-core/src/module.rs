@@ -10941,6 +10941,65 @@ unchanged", "|"),
     }
 
     #[test]
+    fn cross_module_recursive_enum_rebuild_preserves_declared_codec_witness() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"type Call = struct {args: Array(Expr)};
+               type Expr = enum {'Int(Int), 'Call(Call)};
+               type Plan = struct {grouping: Array(Expr)};
+               export {Expr, Plan};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("creator.telora"),
+            r#"import "./types.telora" as types;
+               import "std/array" as array;
+               def normalize_expr: Fn(types.Expr) -> types.Expr = fn(expr) {
+                   match expr {
+                       'Int(value) => 'Int(value),
+                       'Call(call) => 'Call({
+                           args: array.map(call.args, normalize_expr),
+                       }),
+                   }
+               };
+               def make_plan: Fn(types.Expr) -> types.Plan = fn(expr) {
+                   {grouping: [normalize_expr(expr)]}
+               };
+               export {make_plan};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               import "./creator.telora" as creator;
+               import "std/codec" as codec;
+               import "std/result" as result;
+               import "std/value" {Value};
+               let expr: types.Expr = 'Call({args: [
+                   'Call({args: ['Int(1)]}),
+                   'Int(2),
+               ]});
+               let produced: types.Plan = creator.make_plan(expr);
+               let direct: types.Plan = {grouping: [expr]};
+               let direct_encoded = codec.encode(Value, direct) |> result.unwrap;
+               let produced_encoded = codec.encode(Value, produced) |> result.unwrap;
+               {
+                   direct: codec.decode(types.Plan, direct_encoded) |> result.unwrap,
+                   produced: codec.decode(types.Plan, produced_encoded) |> result.unwrap,
+               }"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("produced"), "{output}");
+        assert!(output.contains("grouping"), "{output}");
+        assert!(output.contains("'Int(2)"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn exported_codec_boundary_owns_complex_family_witness() {
         let directory = fixture_dir();
         fs::write(
