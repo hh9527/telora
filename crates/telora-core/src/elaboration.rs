@@ -113,6 +113,20 @@ impl Elaborator<'_> {
                 self.expression(index);
             }
             ExprKind::TupleProjection { receiver, .. } => self.expression(receiver),
+            ExprKind::TypeAscription { value, target }
+            | ExprKind::CheckedCast { value, target } => {
+                self.expression(value);
+                self.expression(target);
+            }
+            ExprKind::DynProject {
+                namespace,
+                target,
+                value,
+            } => {
+                self.expression(namespace);
+                self.expression(target);
+                self.expression(value);
+            }
             ExprKind::Call { callee, arguments } => {
                 self.expression(callee);
                 for argument in arguments {

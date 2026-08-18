@@ -6650,6 +6650,63 @@ fn run_core_dyn(
         });
     }
 
+    if operation == CoreDynFunction::ProjectWith {
+        let DecodedValue::Dyn(handle) = arguments[1].value() else {
+            return Err(runtime_shallow_type_error(
+                "Dyn",
+                arguments[1],
+                function,
+                pc,
+            ));
+        };
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        let (_, packaged_descriptor, payload) = view
+            .dyn_parts(handle)
+            .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
+        let target = crate::types::decode_type_ref(
+            ValueRef::work(arguments[0], current, background),
+            "std/dyn.project_with target",
+        )
+        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+        let packaged = crate::types::decode_type_ref(
+            ValueRef::work(packaged_descriptor, current, background),
+            "std/dyn.project_with package",
+        )
+        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+        let target_id = current
+            .canonical_descriptor_type_id(&target)
+            .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
+        let packaged_id = current
+            .canonical_descriptor_type_id(&packaged)
+            .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
+        if target_id != packaged_id {
+            return Ok(VmAction::Return {
+                value: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), payload.loc()),
+                return_target,
+            });
+        }
+        charge_allocation(
+            account,
+            logical_value_bytes(2)
+                .map_err(|native_error| allocation_error(native_error.message, function, pc))?,
+            function,
+            pc,
+        )?;
+        return Ok(VmAction::Return {
+            value: Val::new(
+                DecodedValue::Tagged(current.allocate(Object::Tagged {
+                    tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Some), payload.loc()),
+                    payload,
+                })),
+                payload.loc(),
+            ),
+            return_target,
+        });
+    }
+
     let DecodedValue::Dyn(handle) = arguments[0].value() else {
         return Err(runtime_shallow_type_error(
             "Dyn",
@@ -6666,7 +6723,9 @@ fn run_core_dyn(
         .dyn_parts(handle)
         .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
     match operation {
-        CoreDynFunction::Pack => unreachable!("pack handled above"),
+        CoreDynFunction::Pack | CoreDynFunction::ProjectWith => {
+            unreachable!("operation handled above")
+        }
         CoreDynFunction::Desc => Ok(VmAction::Return {
             value: descriptor,
             return_target,
