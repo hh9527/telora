@@ -2340,6 +2340,20 @@ pub(crate) fn analyze_program_with_bindings_observed(
     type_store: &mut TypeStore,
 ) -> Result<Analysis, FrontendError> {
     let prelude = BootstrapPrelude::new();
+    let authored_names = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| {
+            !matches!(
+                binding.value.kind,
+                BindingKind::OpenImport | BindingKind::Export
+            )
+        })
+        .map(|binding| binding.value.name.value.as_str())
+        .collect::<HashSet<_>>();
     let hir = HirProgram::resolve(
         program,
         prelude
@@ -2355,6 +2369,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .types
         .keys()
         .filter(|name| !external_roots.contains_key(*name))
+        .filter(|name| !authored_names.contains(name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
     let native_abi = source_name.ends_with(".native.telora");
@@ -2377,7 +2392,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 let value = root
                     .export_get(evaluator.main, name)
                     .expect("bootstrap exports root is a Dict")
-                    .expect("bootstrap exports root is complete");
+                    .unwrap_or_else(|| panic!("bootstrap exports root is missing {name:?}"));
                 (name.clone(), value.runtime())
             })
             .collect()

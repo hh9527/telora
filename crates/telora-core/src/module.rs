@@ -5066,6 +5066,26 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
                 .to_string()
                 .contains("duplicate module binding \"item\"")
         );
+
+        fs::write(
+            directory.join("local.telora"),
+            r#"import "core/prelude" { validate as builtin_validate };
+import "std/result" as result;
+type Plan = struct {revision: Int};
+type Profile = struct {enabled: Bool};
+def default_profile: Profile = {enabled: 'True};
+def validate: Fn(Plan, Profile) -> Plan = fn(plan, profile) { plan };
+let plan: Plan = {revision: 1};
+let checked = validate(plan, default_profile);
+let builtin_checked = result.unwrap(builtin_validate(Int, checked.revision));
+export def output: Int = checked.revision + builtin_checked;"#,
+        )
+        .unwrap();
+        let local = load_module(directory.join("local.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            named_output(&local.execute(100_000).unwrap()).to_string(),
+            "2"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

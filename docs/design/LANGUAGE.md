@@ -583,6 +583,15 @@ import "package/path.telora" as model, { User };
 支持 namespace、选择性、alias 和 open import。所有形式必须观察同一个 export
 scheme，不能因导入写法不同而丢失泛型关系。
 
+默认 prelude 等价于一个隐式 open import：它只向尚未被本模块声明的名字提供
+fallback binding，不是保留名称集合，也不形成不可遮蔽的词法外层。本地 `let`、
+`def`、`type` 等 binding 正常遮蔽同名 prelude 项。若同一模块还需要访问被遮蔽的
+prelude 项，应显式使用 namespace 或 selective alias import，例如：
+
+```telora
+import "core/prelude" { validate as builtin_validate };
+```
+
 `import` 永远只在当前模块建立 local binding；它本身不改变当前 Module 的公共接口，
 也不存在 implicit public import。只有显式 `export` 才把一个当前可见的 local binding
 映射到 Module interface：

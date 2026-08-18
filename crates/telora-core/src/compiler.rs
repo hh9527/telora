@@ -501,18 +501,6 @@ impl<'a> Compiler<'a> {
             static_funcs,
             source_file,
         };
-        for name in analysis.runtime_roots.keys() {
-            if compiler.retained_names.contains(name) {
-                let register = compiler.load_external_constant(name.clone(), program.location);
-                compiler.environment.insert(name.clone(), register);
-            }
-        }
-        for name in &analysis.dynamic_bindings {
-            if compiler.retained_names.contains(name) {
-                let register = compiler.load_external_constant(name.clone(), program.location);
-                compiler.environment.insert(name.clone(), register);
-            }
-        }
         let authored_names = program
             .value
             .body
@@ -527,6 +515,18 @@ impl<'a> Compiler<'a> {
             })
             .map(|binding| binding.value.name.value.as_str())
             .collect::<HashSet<_>>();
+        for name in analysis.runtime_roots.keys() {
+            if !authored_names.contains(name.as_str()) && compiler.retained_names.contains(name) {
+                let register = compiler.load_external_constant(name.clone(), program.location);
+                compiler.environment.insert(name.clone(), register);
+            }
+        }
+        for name in &analysis.dynamic_bindings {
+            if !authored_names.contains(name.as_str()) && compiler.retained_names.contains(name) {
+                let register = compiler.load_external_constant(name.clone(), program.location);
+                compiler.environment.insert(name.clone(), register);
+            }
+        }
         for name in &analysis.external_bindings {
             if !authored_names.contains(name.as_str())
                 && compiler.retained_names.contains(name)
