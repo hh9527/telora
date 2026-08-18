@@ -171,6 +171,7 @@ pub enum ResolveModuleError {
     UnknownExtension(String),
     UnknownFormat(String),
     UnknownDependency(String),
+    ModuleNotFound(String),
     InvalidImport(String),
     InvalidModuleSuffix(String),
     CrateEscape(String),
@@ -195,6 +196,7 @@ impl fmt::Display for ResolveModuleError {
             }
             Self::UnknownFormat(format) => write!(formatter, "unknown module format {format:?}"),
             Self::UnknownDependency(name) => write!(formatter, "unknown dependency {name:?}"),
+            Self::ModuleNotFound(module) => write!(formatter, "module {module:?} not found"),
             Self::InvalidImport(request) => write!(formatter, "invalid module import {request:?}"),
             Self::InvalidModuleSuffix(name) => write!(
                 formatter,
@@ -320,6 +322,11 @@ impl ModuleResolver {
             let resolved = resolver.resolve_dependency(root_id, root_id, true)?;
             resolver.root_id = resolved.id;
             resolver.root_path = resolved.physical_path.expect("dependency root has a path");
+        }
+        if !resolver.root_path.is_file() {
+            return Err(ResolveModuleError::ModuleNotFound(
+                resolver.root_id.to_string(),
+            ));
         }
         Ok(resolver)
     }

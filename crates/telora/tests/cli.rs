@@ -117,9 +117,16 @@ fn show_selects_registered_standard_library_modules() {
         .output()
         .unwrap();
     assert!(!missing.status.success());
-    let stderr = String::from_utf8_lossy(&missing.stderr);
-    assert!(stderr.contains("unknown built-in module \"std/not-present\""));
-    assert!(!stderr.contains("unknown dependency"));
+    assert!(missing.stderr.is_empty());
+    let records = jsonl(&missing.stdout);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["record"], "diagnostic");
+    assert_eq!(records[0]["module"], "std/not-present");
+    assert_eq!(records[0]["severity"], "error");
+    assert_eq!(
+        records[0]["message"],
+        "unknown built-in module \"std/not-present\""
+    );
 }
 
 #[test]
@@ -357,7 +364,8 @@ fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
         cwd.join("src/recursive.telora"),
         r#"type CallExpr = struct { args: Array(Expr) };
 type Expr = enum { 'Call(CallExpr), 'Text(String) };
-export { CallExpr, Expr };"#,
+def identity: Fn(Expr) -> Expr = fn(value) { value };
+export { CallExpr, Expr, identity };"#,
     )
     .unwrap();
 
@@ -382,10 +390,72 @@ export { CallExpr, Expr };"#,
         .unwrap();
     assert!(show.status.success());
     let exports = jsonl(&show.stdout);
-    assert_eq!(exports.len(), 2);
+    assert_eq!(exports.len(), 3);
     assert!(exports.iter().all(|record| {
         record["authority"] == "authoritative" && !record["type"].as_str().unwrap().contains("Any")
     }));
+    assert_eq!(
+        exports
+            .iter()
+            .find(|record| record["name"] == "identity")
+            .unwrap()["type"],
+        "Fn(Expr) -> Expr"
+    );
+}
+
+#[test]
+fn show_rejects_a_missing_dependency_module_without_leaking_its_path() {
+    let cwd = fixture();
+    let dependency = cwd.join("query-builder");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::write(
+        cwd.join("telora-deps.json"),
+        r#"{"dependencies":{"query-builder":{"path":"query-builder"}}}"#,
+    )
+    .unwrap();
+    fs::write(dependency.join("telora-deps.json"), "{}").unwrap();
+    fs::write(
+        dependency.join("src/query-builder.telora"),
+        "type Plan = struct {sql: String}; export {Plan};",
+    )
+    .unwrap();
+
+    let missing_id = "query-builder/src/query-builder.telora";
+    let missing = telora(&cwd)
+        .args(["show", missing_id, "--exports"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stderr.is_empty());
+    let records = jsonl(&missing.stdout);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["record"], "diagnostic");
+    assert_eq!(records[0]["module"], missing_id);
+    assert_eq!(
+        records[0]["message"],
+        format!("module {missing_id:?} not found")
+    );
+    assert!(
+        !records[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains(cwd.to_str().unwrap())
+    );
+
+    let found = telora(&cwd)
+        .args(["show", "query-builder/query-builder.telora", "-p", "Plan"])
+        .output()
+        .unwrap();
+    assert!(found.status.success());
+    assert_eq!(jsonl(&found.stdout).len(), 1);
+
+    let no_match = telora(&cwd)
+        .args(["show", "query-builder/query-builder.telora", "-p", "Absent"])
+        .output()
+        .unwrap();
+    assert!(no_match.status.success());
+    assert!(no_match.stdout.is_empty());
+    assert!(no_match.stderr.is_empty());
 }
 
 #[test]

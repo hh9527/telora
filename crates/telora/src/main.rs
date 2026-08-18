@@ -643,7 +643,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(arguments)),
         Command::Check(arguments) => check_command(arguments),
-        Command::Show(arguments) => show_command(arguments).map(|()| 0),
+        Command::Show(arguments) => show_command(arguments),
         Command::Lsp => lsp_command().map(|()| 0),
     }
 }
@@ -786,16 +786,26 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
     Ok(i32::from(failed))
 }
 
-fn show_command(arguments: ShowArgs) -> Result<(), String> {
+fn show_command(arguments: ShowArgs) -> Result<i32, String> {
     let context = command_context(arguments.context)?;
     let workspace = if arguments.module_id.starts_with("std/") {
-        engine()
-            .recover_builtin_workspace(&arguments.module_id)
-            .map_err(|error| error.to_string())?
+        engine().recover_builtin_workspace(&arguments.module_id)
     } else {
-        engine()
-            .recover_workspace_id(context, &arguments.module_id)
-            .map_err(|error| error.to_string())?
+        engine().recover_workspace_id(context, &arguments.module_id)
+    };
+    let workspace = match workspace {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            emit(json!({
+                "schema": "telora.show/v1",
+                "module": arguments.module_id,
+                "record": "diagnostic",
+                "authority": "recovery",
+                "severity": "error",
+                "message": error.to_string(),
+            }))?;
+            return Ok(1);
+        }
     };
     let root = workspace
         .modules()
@@ -824,7 +834,8 @@ fn show_command(arguments: ShowArgs) -> Result<(), String> {
             arguments.pattern.as_deref(),
             arguments.kinds.as_ref().map(|set| set.0.as_slice()),
         )
-    }
+    }?;
+    Ok(0)
 }
 
 fn kind_of(kind: DefinitionKind) -> Option<ShowKind> {
