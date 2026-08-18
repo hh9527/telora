@@ -27,6 +27,10 @@ impl TypeId {
         Self(raw)
     }
 
+    pub(crate) const fn from_raw(raw: u32) -> Option<Self> {
+        if raw == 0 { None } else { Some(Self(raw)) }
+    }
+
     fn from_index(index: usize) -> Self {
         let index = u32::try_from(index).expect("type store exceeds u32 ID space");
         Self(

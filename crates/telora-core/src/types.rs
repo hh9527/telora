@@ -10843,7 +10843,7 @@ pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor
     }
 }
 
-fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
+pub(crate) fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
     match descriptor {
         TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) => TypeDescriptor::Any,
         TypeDescriptor::Declared(declared) => {

@@ -251,25 +251,6 @@ impl ScopedId {
     fn raw(self) -> u64 {
         u64::from(self.0)
     }
-
-    fn optional(storage: Storage, slot: u32) -> Self {
-        assert!(
-            slot < SCOPED_ID_SLOT_MASK,
-            "arena slot exceeds optional scoped ID range"
-        );
-        Self::new(storage, slot + 1)
-    }
-
-    fn optional_handle(raw: u32) -> Option<Handle> {
-        if raw == 0 {
-            return None;
-        }
-        let id = Self(raw);
-        Some(Handle {
-            storage: id.storage(),
-            slot: id.slot() - 1,
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -619,21 +600,18 @@ impl Val {
         }
     }
 
-    pub(crate) fn type_witness(self) -> Option<Handle> {
-        ScopedId::optional_handle(self.ty)
+    pub(crate) fn type_id(self) -> Option<crate::TypeId> {
+        crate::TypeId::from_raw(self.ty)
     }
 
-    pub(crate) fn with_type_witness(self, owner: Val) -> Result<Self, HeapError> {
-        let DecodedValue::DeclaredType(handle) = owner.value() else {
-            return Err(HeapError("declared value owner is not a declared Type"));
-        };
-        Ok(Self {
-            ty: ScopedId::optional(handle.storage, handle.slot).0,
+    pub(crate) fn with_type_id(self, ty: crate::TypeId) -> Self {
+        Self {
+            ty: ty.raw(),
             ..self
-        })
+        }
     }
 
-    pub(crate) fn without_type_witness(self) -> Self {
+    pub(crate) fn without_type_id(self) -> Self {
         Self { ty: 0, ..self }
     }
 
@@ -977,7 +955,7 @@ impl Heap {
     ) -> Val {
         let id = crate::value::DeclaredTypeId::concrete(module, declaration);
         let type_id = self.canonical_declared_type_id(&id).ok();
-        let handle = self.allocate(Object::DeclaredType {
+        let handle = self.allocate_declared_type(Object::DeclaredType {
             type_id,
             id,
             name: name.into(),
@@ -1006,7 +984,7 @@ impl Heap {
         placeholder: Val,
     ) -> Val {
         let type_id = self.canonical_declared_type_id(&id).ok();
-        let handle = self.allocate(Object::DeclaredType {
+        let handle = self.allocate_declared_type(Object::DeclaredType {
             type_id,
             id,
             name: name.into(),
@@ -1165,6 +1143,7 @@ pub(crate) struct Heap {
     shape_slots: HashMap<Vec<InternId>, u32>,
     bootstrap_root: Option<PersistentValue>,
     functions: HashMap<crate::FuncId, Option<Val>>,
+    declared_types: HashMap<crate::TypeId, Val>,
 }
 
 impl Heap {
@@ -1179,6 +1158,7 @@ impl Heap {
             shape_slots: HashMap::new(),
             bootstrap_root: None,
             functions: HashMap::new(),
+            declared_types: HashMap::new(),
         }
     }
 
@@ -1311,13 +1291,24 @@ impl Heap {
         let arguments = declared
             .arguments()
             .iter()
-            .map(|argument| types.intern_descriptor(argument))
+            .map(|argument| types.intern_descriptor(&crate::types::erase_type_variables(argument)))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| HeapError("declared type argument is not canonical"))?;
         Ok(match types.begin(declared.constructor(), arguments) {
             crate::type_store::InternType::Existing(id)
             | crate::type_store::InternType::Reserved(id) => id,
         })
+    }
+
+    pub(crate) fn canonical_type_name(
+        &self,
+        type_id: crate::TypeId,
+    ) -> Result<Option<String>, HeapError> {
+        let types = self
+            .types
+            .lock()
+            .map_err(|_| HeapError("type store poisoned"))?;
+        Ok(types.get(type_id).map(|data| data.name.clone()))
     }
 
     #[cfg(test)]
@@ -1335,6 +1326,20 @@ impl Heap {
             slot: self.objects.len() as u32,
         };
         self.objects.push(object);
+        handle
+    }
+
+    pub(crate) fn allocate_declared_type(&mut self, object: Object) -> Handle {
+        let Object::DeclaredType { type_id, .. } = &object else {
+            panic!("allocate_declared_type requires declared type metadata")
+        };
+        let type_id = *type_id;
+        let handle = self.allocate(object);
+        if let Some(type_id) = type_id {
+            self.declared_types
+                .entry(type_id)
+                .or_insert_with(|| Val::unknown(DecodedValue::DeclaredType(handle)));
+        }
         handle
     }
 
@@ -1647,23 +1652,54 @@ impl<'a> HeapView<'a> {
     }
 
     pub(crate) fn unwrap_declared(&self, mut value: Val) -> Result<Val, HeapError> {
-        if let Some(handle) = value.type_witness() {
-            if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
-                return Err(HeapError("type witness refers to another object kind"));
-            }
-            value = value.without_type_witness();
+        if value.type_id().is_some() {
+            self.type_witness(value)?;
+            value = value.without_type_id();
         }
         Ok(value)
     }
 
     pub(crate) fn type_witness(&self, value: Val) -> Result<Option<Val>, HeapError> {
-        let Some(handle) = value.type_witness() else {
+        let Some(type_id) = value.type_id() else {
             return Ok(None);
         };
+        let owner = self
+            .current
+            .declared_types
+            .get(&type_id)
+            .or_else(|| self.background?.declared_types.get(&type_id))
+            .copied();
+        let owner = owner.ok_or(HeapError("canonical type ID has no metadata in this world"))?;
+        let DecodedValue::DeclaredType(handle) = owner.value() else {
+            return Err(HeapError("type metadata has another value kind"));
+        };
         if !matches!(self.object(handle)?, Object::DeclaredType { .. }) {
-            return Err(HeapError("type witness refers to another object kind"));
+            return Err(HeapError("type metadata refers to another object kind"));
         }
-        Ok(Some(Val::unknown(DecodedValue::DeclaredType(handle))))
+        Ok(Some(owner))
+    }
+
+    pub(crate) fn declared_type_id(&self, owner: Val) -> Result<crate::TypeId, HeapError> {
+        let DecodedValue::DeclaredType(handle) = owner.value() else {
+            return Err(HeapError("declared value owner is not a declared Type"));
+        };
+        let Object::DeclaredType {
+            type_id, sealed, ..
+        } = self.object(handle)?
+        else {
+            return Err(HeapError("declared value owner has another object kind"));
+        };
+        if !sealed {
+            return Err(HeapError("declared value owner is not sealed"));
+        }
+        type_id.ok_or(HeapError("declared value owner has no concrete TypeId"))
+    }
+
+    pub(crate) fn canonical_type_name(
+        &self,
+        type_id: crate::TypeId,
+    ) -> Result<Option<String>, HeapError> {
+        self.current.canonical_type_name(type_id)
     }
 
     pub(crate) fn text(&self, id: InternId) -> Result<&'a str, HeapError> {
@@ -1969,44 +2005,19 @@ impl<'a> HeapView<'a> {
         right: Val,
         visited: &mut HashSet<(Handle, Handle)>,
     ) -> Result<bool, HeapError> {
-        match (left.type_witness(), right.type_witness()) {
-            (Some(left_owner), Some(right_owner)) => {
-                let Object::DeclaredType {
-                    type_id: left_id, ..
-                } = self.object(left_owner)?
-                else {
-                    return Err(HeapError("type witness refers to another object kind"));
-                };
-                let Object::DeclaredType {
-                    type_id: right_id, ..
-                } = self.object(right_owner)?
-                else {
-                    return Err(HeapError("type witness refers to another object kind"));
-                };
-                let identities_match = match (left_id, right_id) {
-                    (Some(left), Some(right)) => left == right,
-                    _ => {
-                        let Object::DeclaredType { id: left, .. } = self.object(left_owner)? else {
-                            unreachable!()
-                        };
-                        let Object::DeclaredType { id: right, .. } = self.object(right_owner)?
-                        else {
-                            unreachable!()
-                        };
-                        left == right
-                    }
-                };
-                if !identities_match {
+        match (left.type_id(), right.type_id()) {
+            (Some(left_id), Some(right_id)) => {
+                if left_id != right_id {
                     return Ok(false);
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
-                let raw = if left.type_witness().is_some() {
+                let raw = if left.type_id().is_some() {
                     left
                 } else {
                     right
                 }
-                .without_type_witness()
+                .without_type_id()
                 .value();
                 if !matches!(
                     raw,
@@ -2019,8 +2030,8 @@ impl<'a> HeapView<'a> {
             }
             (None, None) => {}
         }
-        let left = left.without_type_witness();
-        let right = right.without_type_witness();
+        let left = left.without_type_id();
+        let right = right.without_type_id();
         if matches!(left.value(), DecodedValue::FuncRef(_))
             || matches!(right.value(), DecodedValue::FuncRef(_))
         {
@@ -2116,17 +2127,9 @@ impl<'a> HeapView<'a> {
                 };
                 match (left, right) {
                     (Some(left), Some(right)) => Ok(left == right),
-                    _ => {
-                        let Object::DeclaredType { id: left, .. } = self.object(left_handle)?
-                        else {
-                            unreachable!()
-                        };
-                        let Object::DeclaredType { id: right, .. } = self.object(right_handle)?
-                        else {
-                            unreachable!()
-                        };
-                        Ok(left == right)
-                    }
+                    _ => Err(HeapError(
+                        "unfrozen type metadata cannot participate in runtime equality",
+                    )),
                 }
             }
             (DecodedValue::Array(left), DecodedValue::Array(right))
@@ -2615,12 +2618,39 @@ impl PendingCopy {
                 DecodedValue::TypeSlot(self.copy_object(target, source, handle)?)
             }
         };
-        let mut copied = value.with_value(copied).without_type_witness();
-        if let Some(owner) = value.type_witness() {
-            let owner = self.copy_object(target, source, owner)?;
-            copied = copied.with_type_witness(Val::unknown(DecodedValue::DeclaredType(owner)))?;
+        let mut copied = value.with_value(copied).without_type_id();
+        if let Some(type_id) = value.type_id() {
+            if self.type_arguments.is_none() && target.declared_types.contains_key(&type_id) {
+                return Ok(copied.with_type_id(type_id));
+            }
+            let owner = source
+                .type_witness(value)?
+                .expect("value with a TypeId has registered metadata");
+            let DecodedValue::DeclaredType(owner_handle) = owner.value() else {
+                unreachable!("type metadata is a declared Type")
+            };
+            let Object::DeclaredType { id, .. } = source.object(owner_handle)? else {
+                unreachable!("type metadata is a declared Type")
+            };
+            let copied_id = self.canonical_declared_type_id(target, id);
+            self.copy_object(target, source, owner_handle)?;
+            if let Some(copied_id) = copied_id {
+                copied = copied.with_type_id(copied_id);
+            }
         }
         Ok(copied)
+    }
+
+    fn canonical_declared_type_id(
+        &self,
+        target: &Heap,
+        id: &crate::value::DeclaredTypeId,
+    ) -> Option<crate::TypeId> {
+        let id = self.type_arguments.as_ref().map_or_else(
+            || id.clone(),
+            |arguments| crate::types::apply_declared_type_arguments(id, arguments),
+        );
+        target.canonical_declared_type_id(&id).ok()
     }
 
     fn copy_object(
@@ -2899,8 +2929,29 @@ impl PendingCopy {
     }
 
     fn commit(self, target: &mut Heap) {
+        let declared_types = self
+            .objects
+            .iter()
+            .enumerate()
+            .filter_map(|(index, object)| match object {
+                Object::DeclaredType {
+                    type_id: Some(type_id),
+                    ..
+                } => Some((
+                    *type_id,
+                    Val::unknown(DecodedValue::DeclaredType(Handle {
+                        storage: self.target_storage,
+                        slot: self.object_base + index as u32,
+                    })),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         target.objects.extend(self.objects);
         target.native_types.extend(self.native_types);
+        for (type_id, value) in declared_types {
+            target.declared_types.entry(type_id).or_insert(value);
+        }
         for value in self.text.values {
             target.text.insert(&value);
         }
@@ -2939,9 +2990,6 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
 #[cfg(test)]
 fn val_contains_foreign(value: Val, target: Storage) -> bool {
     value_contains_foreign(value.value(), target)
-        || value
-            .type_witness()
-            .is_some_and(|handle| handle.storage != target)
 }
 
 fn object_contains_disallowed(
@@ -2974,9 +3022,6 @@ fn object_contains_disallowed(
             | DecodedValue::FuncRef(_) => false,
         };
         payload_is_foreign
-            || value
-                .type_witness()
-                .is_some_and(|handle| foreign(handle.storage))
     };
     match object {
         Object::Reserved | Object::OpenFunc => true,
@@ -3102,14 +3147,10 @@ mod tests {
     }
 
     #[test]
-    fn scoped_type_id_is_independent_from_value_storage() {
+    fn canonical_type_id_is_independent_from_value_storage() {
         let raw = Val::unknown(DecodedValue::Int(1));
-        let typed = Val {
-            ty: ScopedId::new(Storage::Work, 7).0,
-            ..raw
-        };
-        assert_eq!(ScopedId(typed.ty).storage(), Storage::Work);
-        assert_eq!(ScopedId(typed.ty).slot(), 7);
+        let typed = raw.with_type_id(crate::TypeId::builtin(7));
+        assert_eq!(typed.type_id(), Some(crate::TypeId::builtin(7)));
         assert_eq!(typed.value(), DecodedValue::Int(1));
     }
 

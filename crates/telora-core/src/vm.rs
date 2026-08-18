@@ -460,7 +460,7 @@ impl<'a> ValueRef<'a> {
                 view: self.view,
             },
             ValueRef {
-                value: self.value.without_type_witness(),
+                value: self.value.without_type_id(),
                 view: self.view,
             },
         ))
@@ -861,7 +861,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .collect::<Result<Box<[_]>, _>>()?;
         self.charge_sequence(arguments.len().saturating_add(1))?;
         let type_id = self.current.canonical_declared_type_id(&id).ok();
-        let handle = self.current.allocate(Object::DeclaredType {
+        let handle = self.current.allocate_declared_type(Object::DeclaredType {
             type_id,
             id,
             name: name.into(),
@@ -888,12 +888,13 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             ));
         }
         let payload = self.owned(payload)?;
-        self.set(
-            destination,
-            payload
-                .with_type_witness(owner)
-                .map_err(|error| NativeError::new(error.to_string()))?,
-        )
+        let type_id = HeapView {
+            current: self.current,
+            background: self.background,
+        }
+        .declared_type_id(owner)
+        .map_err(|error| NativeError::new(error.to_string()))?;
+        self.set(destination, payload.with_type_id(type_id))
     }
 
     pub fn copy(&mut self, destination: RegisterId, source: RegisterId) -> Result<(), NativeError> {
@@ -6208,10 +6209,14 @@ fn run_core_model(
                 pc,
             ));
         };
+        let type_id = HeapView {
+            current,
+            background: Some(background),
+        }
+        .declared_type_id(arguments[0])
+        .map_err(|error| core_dict_heap_error(error, function, pc))?;
         return Ok(VmAction::Return {
-            value: arguments[1]
-                .with_type_witness(arguments[0])
-                .map_err(|error| core_dict_heap_error(error, function, pc))?,
+            value: arguments[1].with_type_id(type_id),
             return_target,
         });
     }
@@ -8554,7 +8559,7 @@ fn transform_codec(
                 }
                 transform_codec(
                     &structural,
-                    value.without_type_witness(),
+                    value.without_type_id(),
                     direction,
                     path,
                     predicate_decisions,
@@ -10508,10 +10513,13 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
             loc,
         } => {
             let payload = materialize_codec_node(*payload, current, background);
-            payload
-                .with_type_witness(owner)
-                .expect("codec declared owner was decoded as a declared Type")
-                .with_loc(loc)
+            let type_id = HeapView {
+                current,
+                background: Some(background),
+            }
+            .declared_type_id(owner)
+            .expect("codec declared owner was decoded as a concrete declared Type");
+            payload.with_type_id(type_id).with_loc(loc)
         }
         CodecNode::Atom(atom, loc) => Val::new(DecodedValue::BuiltinAtom(atom), loc),
         CodecNode::NamedAtom(value, loc) => Val::new(current.atom(Some(background), &value), loc),
@@ -11409,9 +11417,13 @@ impl<'a> DebugValueFormatter<'a> {
                 self.push(">");
             }
             DecodedValue::DeclaredType(handle) => match self.view.object(handle)? {
-                Object::DeclaredType { name, .. } => {
+                Object::DeclaredType { type_id, name, .. } => {
+                    let canonical_name = type_id
+                        .map(|type_id| self.view.canonical_type_name(type_id))
+                        .transpose()?
+                        .flatten();
                     self.push("<type ");
-                    self.push(name);
+                    self.push(canonical_name.as_deref().unwrap_or(name));
                     self.push(">");
                 }
                 _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
