@@ -148,23 +148,33 @@ class ConfigStateTest(unittest.TestCase):
         plan = repo / "experiments" / "ontology-3"
         model = "deepseek/deepseek-v4-flash"
         self.assertEqual(json.loads((plan / "opencode.json").read_text())["model"], model)
-        for role in ("coordinator", "a1", "a2", "a3"):
+        for role in ("coordinator", "a1", "a2", "a3", "a4"):
             text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
             self.assertIn(f'model: "{model}"', text)
         coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
-        self.assertIn("同时启动 A1、A2、A3 各一次", coordinator)
+        self.assertIn("同时启动 A1、A2、A3、A4 各一次", coordinator)
         self.assertNotIn("touch", coordinator)
         manifest = load_manifest(repo, "ontology-3")
+        self.assertEqual(
+            [phase["name"] for phase in manifest.metrics["roles"]["a3"]["work_phases"]],
+            ["modeling", "query_surface_design"],
+        )
         self.assertEqual(manifest.workflow["schema"], "telora.opencode-node-workflow/v1")
         self.assertEqual(manifest.workflow["start_nodes"], ["lang.ready", "domain.ready"])
-        self.assertEqual(manifest.workflow["finish_node"], "ent-1-model.ready")
-        self.assertEqual(len(manifest.workflow["nodes"]), 14)
-        self.assertEqual(len(manifest.workflow["tasks"]), 7)
+        self.assertEqual(manifest.workflow["finish_node"], "intent-1.ready")
+        self.assertEqual(len(manifest.workflow["nodes"]), 20)
+        self.assertEqual(len(manifest.workflow["tasks"]), 10)
         nodes = {item["id"]: item for item in manifest.workflow["nodes"]}
         tasks = {item["id"]: item for item in manifest.workflow["tasks"]}
         self.assertEqual(nodes["qb.rc"]["role"], "a1")
         self.assertEqual(nodes["edsl.rc"]["role"], "a2")
         self.assertEqual(nodes["ent-1-model.rc"]["role"], "a3")
+        self.assertEqual(nodes["ent-1-query-surface.rc"]["role"], "a3")
+        self.assertEqual(nodes["intent-1.rc"]["role"], "a4")
+        self.assertEqual(nodes["intent-1.rc"]["needs"],
+                         ["lang-learn-a4.rc", "ent-1-query-surface.ready"])
+        self.assertEqual(nodes["ent-1-query-feedback-a4.feedback"]["observes"],
+                         "ent-1-query-surface.rc")
         self.assertEqual(nodes["qb.ready"]["needs"], ["qb.rc"])
         self.assertEqual(nodes["qb-review-a2.rc"]["role"], "a2")
         self.assertEqual(nodes["qb-review-a3.rc"]["role"], "a3")
@@ -179,10 +189,26 @@ class ConfigStateTest(unittest.TestCase):
                          "target/release/telora")
         self.assertIn("./bin/oc-task next a1", manifest.permission_preflight["a1"])
         self.assertIn("./bin/oc-task mark-done a2 qb-review-a2.rc", manifest.permission_preflight["a2"])
+        self.assertIn("./bin/oc-task mark-done a4 intent-1.rc", manifest.permission_preflight["a4"])
+        a4 = (plan / ".opencode" / "agents" / "a4.md").read_text(encoding="utf-8")
+        a4_permission_line = next(
+            line.removeprefix("permission: ")
+            for line in a4.splitlines()
+            if line.startswith("permission: ")
+        )
+        a4_permissions = json.loads(a4_permission_line)
+        self.assertEqual(a4_permissions["read"]["*"], "deny")
+        self.assertNotIn("ent-1/**", a4_permissions["read"])
+        self.assertNotIn("./bin/telora show * -C intent-1", a4_permissions["bash"])
+        self.assertEqual(
+            a4_permissions["bash"]["./bin/telora show @bin/main.telora -C intent-1"],
+            "allow",
+        )
         self.assertFalse(any("mark-blocked" in command for commands in manifest.permission_preflight.values()
                              for command in commands))
         self.assertEqual((plan / "ontology" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
         self.assertEqual((plan / "ent-1" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
+        self.assertEqual((plan / "intent-1" / "FEEDBACK.md").stat().st_size, 0)
         domain = (plan / "ent-1" / "DOMAIN.md").read_text(encoding="utf-8")
         ontology_goal = (plan / "ontology" / "GOAL.md").read_text(encoding="utf-8")
         self.assertNotIn("一次结果必须同时保留", domain)
@@ -402,6 +428,45 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual([(phase["name"], phase["kind"]) for phase in role["phases"]],
                          [("unclassified", "unclassified")])
         self.assertEqual(result["aggregate"]["phases"]["unclassified"]["tokens"]["fresh"], 3)
+
+    def test_collects_multiple_work_phases_at_first_matching_writes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            messages = [
+                {"info": {"role": "assistant", "time": {"created": 1, "completed": 2},
+                          "tokens": {"input": 1}}, "parts": []},
+                {"info": {"role": "assistant", "time": {"created": 3, "completed": 4},
+                          "tokens": {"input": 2}},
+                 "parts": [{"type": "tool", "tool": "write", "state": {
+                     "input": {"filePath": str(workspace / "model" / "src.telora")}
+                 }}]},
+                {"info": {"role": "assistant", "time": {"created": 5, "completed": 6},
+                          "tokens": {"input": 3}}, "parts": []},
+                {"info": {"role": "assistant", "time": {"created": 7, "completed": 8},
+                          "tokens": {"input": 4}},
+                 "parts": [{"type": "tool", "tool": "edit", "state": {
+                     "input": {"filePath": str(workspace / "public" / "query.telora")}
+                 }}]},
+                {"info": {"role": "assistant", "time": {"created": 9, "completed": 10},
+                          "tokens": {"input": 5}}, "parts": []},
+            ]
+            definition = {"roles": {"worker": {
+                "learning_phases": ["learning"],
+                "work_phases": [
+                    {"name": "modeling", "files": ["model/**"]},
+                    {"name": "public_surface", "files": ["public/**"]},
+                ],
+                "artifacts": {},
+            }}}
+            children = [{"id": "ses_worker", "agent": "worker"}]
+            result = collect_metrics(
+                "run", "idle", workspace, children, lambda _session: messages, definition
+            )
+            phases = result["roles"][0]["phases"]
+            self.assertEqual(
+                [(phase["name"], phase["tokens"]["fresh"]) for phase in phases],
+                [("learning", 1), ("modeling", 5), ("public_surface", 9)],
+            )
 
     def test_stats_reads_frozen_child_messages(self):
         with tempfile.TemporaryDirectory() as temporary:

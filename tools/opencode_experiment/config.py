@@ -150,7 +150,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         validate_identifier(role, "metrics role")
         if not isinstance(definition, dict):
             raise ControlError(f"metrics.roles.{role} must be an object")
-        _keys(definition, {"learning_phases", "work_phase", "work_files", "artifacts"}, f"metrics.roles.{role}")
+        _keys(definition, {"learning_phases", "work_phase", "work_files", "work_phases", "artifacts"}, f"metrics.roles.{role}")
         learning_phases = _string_array(definition.get("learning_phases", []), f"metrics.roles.{role}.learning_phases")
         for phase in learning_phases:
             validate_identifier(phase, "metrics learning phase")
@@ -161,6 +161,34 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         work_files = _string_array(definition.get("work_files", []), f"metrics.roles.{role}.work_files")
         for pattern in work_files:
             safe_relative(pattern, "metrics work file pattern")
+        work_phases = definition.get("work_phases")
+        if work_phases is not None and ("work_phase" in definition or "work_files" in definition):
+            raise ControlError(
+                f"metrics.roles.{role} cannot combine work_phases with work_phase/work_files"
+            )
+        normalized_work_phases = []
+        if work_phases is not None:
+            if not isinstance(work_phases, list) or not work_phases:
+                raise ControlError(f"metrics.roles.{role}.work_phases must be a non-empty array")
+            seen_work_phases = set()
+            for index, phase in enumerate(work_phases):
+                context = f"metrics.roles.{role}.work_phases[{index}]"
+                if not isinstance(phase, dict):
+                    raise ControlError(f"{context} must be an object")
+                _keys(phase, {"name", "files"}, context)
+                name = phase.get("name")
+                if not isinstance(name, str):
+                    raise ControlError(f"{context}.name must be a string")
+                validate_identifier(name, "metrics work phase")
+                if name in seen_work_phases:
+                    raise ControlError(f"duplicate metrics work phase: {name}")
+                seen_work_phases.add(name)
+                files = _string_array(phase.get("files", []), f"{context}.files")
+                if not files:
+                    raise ControlError(f"{context}.files must not be empty")
+                for pattern in files:
+                    safe_relative(pattern, "metrics work file pattern")
+                normalized_work_phases.append({"name": name, "files": files})
         artifact_kinds = definition.get("artifacts", {})
         if not isinstance(artifact_kinds, dict):
             raise ControlError(f"metrics.roles.{role}.artifacts must be an object")
@@ -177,12 +205,16 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
                     safe_relative(pattern, "metrics artifact pattern")
                 normalized_categories[category] = values
             normalized_artifacts[kind] = normalized_categories
-        normalized_metric_roles[role] = {
+        normalized_definition = {
             "learning_phases": learning_phases,
-            "work_phase": work_phase,
-            "work_files": work_files,
             "artifacts": normalized_artifacts,
         }
+        if normalized_work_phases:
+            normalized_definition["work_phases"] = normalized_work_phases
+        else:
+            normalized_definition["work_phase"] = work_phase
+            normalized_definition["work_files"] = work_files
+        normalized_metric_roles[role] = normalized_definition
     for name, value in environment.items():
         validator = OPENCODE_ENVIRONMENT.get(name)
         if validator is None:

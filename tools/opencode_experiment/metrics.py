@@ -66,8 +66,10 @@ def _phase_messages(
         return [("unclassified", "unclassified", assistants)] if assistants else []
 
     learning_names = definition.get("learning_phases", [])
-    work_name = definition.get("work_phase", "work")
-    work_files = definition.get("work_files", [])
+    work_phases = definition.get("work_phases") or [{
+        "name": definition.get("work_phase", "work"),
+        "files": definition.get("work_files", []),
+    }]
     turn = -1
     assistant_turns: list[tuple[int, dict[str, Any]]] = []
     for message in messages:
@@ -77,18 +79,24 @@ def _phase_messages(
         elif role == "assistant":
             assistant_turns.append((max(turn, 0), message))
 
-    work_at: int | None = None
-    for index, (_turn, message) in enumerate(assistant_turns):
-        paths = (_relative_tool_path(path, workspace) for path in _write_paths(message))
-        if any(relative is not None and _matches(relative, work_files) for relative in paths):
-            work_at = index
-            break
+    boundaries = []
+    for order, phase in enumerate(work_phases):
+        for index, (_turn, message) in enumerate(assistant_turns):
+            paths = (_relative_tool_path(path, workspace) for path in _write_paths(message))
+            if any(
+                relative is not None and _matches(relative, phase["files"])
+                for relative in paths
+            ):
+                boundaries.append((index, order, phase["name"]))
+                break
+    boundaries.sort()
 
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     order: list[tuple[str, str]] = []
     for index, (message_turn, message) in enumerate(assistant_turns):
-        if work_at is not None and index >= work_at:
-            key = (work_name, "work")
+        active_work = [boundary for boundary in boundaries if boundary[0] <= index]
+        if active_work:
+            key = (active_work[-1][2], "work")
         else:
             name = learning_names[message_turn] if message_turn < len(learning_names) else f"learning_{message_turn + 1}"
             key = (name, "learning")
