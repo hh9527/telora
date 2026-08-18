@@ -1,6 +1,6 @@
 # RFC 0252: Static Ascription, Checked Cast, and Exact Dyn Projection
 
-- Status: Accepted
+- Status: Implemented
 - Tracking issue: #99
 - Depends on: RFC 0052, RFC 0055, RFC 0178, RFC 0248, RFC 0250
 

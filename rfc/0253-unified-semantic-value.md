@@ -1,6 +1,6 @@
 # RFC 0253: Unified semantic `Value` for data formats
 
-- Status: Accepted
+- Status: Implemented
 - Scope: JSON, YAML, TOML, static data modules, and codec boundaries
 - Tracking: #100, #101
 
