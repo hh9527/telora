@@ -987,11 +987,10 @@ impl<'a> Compiler<'a> {
 
     fn compile_expr(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
         let payload = self.compile_expr_unowned(expression)?;
-        let constructible = matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_))
-            || matches!(
-                &expression.value,
-                ExprKind::Call { callee, .. } if matches!(callee.value, ExprKind::Atom(_))
-            );
+        let constructible = matches!(
+            expression.value,
+            ExprKind::Dict(_) | ExprKind::Atom(_) | ExprKind::Call { .. }
+        );
         let Some(owner) = constructible
             .then(|| self.declared_value_owners.get(&expression.location))
             .flatten()

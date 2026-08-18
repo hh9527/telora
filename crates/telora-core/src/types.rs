@@ -2831,12 +2831,20 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     let binding = type_bindings[definition];
                     let name = binding.value.name.value.clone();
                     let placeholder = tool_values[&name];
-                    let type_ref = evaluator.work.reserve_type_ref(
-                        module_id,
-                        declared_initializer_slots[&binding.value.name.location],
-                        name.as_str(),
-                        placeholder,
-                    );
+                    let type_ref = evaluator
+                        .work
+                        .reserve_type_ref(
+                            module_id,
+                            declared_initializer_slots[&binding.value.name.location],
+                            name.as_str(),
+                            placeholder,
+                        )
+                        .map_err(|error| {
+                            frontend_error(
+                                source_name,
+                                format!("declared type reservation failed: {error}"),
+                            )
+                        })?;
                     tool_values.insert(name.clone(), type_ref);
                     type_refs.insert(*definition, type_ref);
                 }
@@ -3972,10 +3980,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let mut pending_owner_roots = Vec::new();
     let mut declared_value_owners = HashMap::new();
-    for (location, descriptor) in expression_descriptors
-        .iter()
-        .filter(|(_, descriptor)| matches!(descriptor, TypeDescriptor::Declared(_)))
-    {
+    for (location, descriptor) in expression_descriptors.iter().filter(|(_, descriptor)| {
+        matches!(descriptor, TypeDescriptor::Declared(_)) && !type_identity_is_symbolic(descriptor)
+    }) {
         let key = crate::compiler::declared_owner_link_key(*location);
         let value = evaluator.descriptor(descriptor)?;
         pending_owner_roots.push((key.clone(), value));
@@ -4263,9 +4270,15 @@ fn declare_metadata_value(
         .get(&binding.value.name.location)
         .copied()
         .expect("direct declared initializer has a declaration slot");
-    Ok(evaluator
+    evaluator
         .work
-        .declare_type(value, module_id, slot, binding.value.name.value.as_str()))
+        .declare_type(value, module_id, slot, binding.value.name.value.as_str())
+        .map_err(|error| {
+            frontend_error(
+                source_name,
+                format!("declared type construction failed: {error}"),
+            )
+        })
 }
 
 fn validate_declared_metadata(
@@ -10855,6 +10868,41 @@ pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor
         TypeDescriptor::Named(_)
         | TypeDescriptor::Inference(_)
         | TypeDescriptor::Any
+        | TypeDescriptor::Never
+        | TypeDescriptor::Type
+        | TypeDescriptor::Dyn
+        | TypeDescriptor::Int
+        | TypeDescriptor::Float
+        | TypeDescriptor::String
+        | TypeDescriptor::Bytes
+        | TypeDescriptor::Opaque(_)
+        | TypeDescriptor::Atom(_) => false,
+    }
+}
+
+pub(crate) fn type_identity_is_symbolic(descriptor: &TypeDescriptor) -> bool {
+    match descriptor {
+        TypeDescriptor::Bound(_) | TypeDescriptor::Named(_) | TypeDescriptor::Inference(_) => true,
+        TypeDescriptor::Declared(declared) => declared
+            .id
+            .arguments()
+            .iter()
+            .any(type_identity_is_symbolic),
+        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+            type_identity_is_symbolic(item)
+        }
+        TypeDescriptor::Tagged { payload, .. } => type_identity_is_symbolic(payload),
+        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            items.iter().any(type_identity_is_symbolic)
+        }
+        TypeDescriptor::Struct(fields) => fields.values().any(type_identity_is_symbolic),
+        TypeDescriptor::Enum(variants) => variants
+            .values()
+            .any(|payload| payload.as_deref().is_some_and(type_identity_is_symbolic)),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters.iter().any(type_identity_is_symbolic) || type_identity_is_symbolic(result)
+        }
+        TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn

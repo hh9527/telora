@@ -312,6 +312,7 @@ impl<'a> ValueRef<'a> {
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
             | DecodedValue::DeclaredType(handle)
+            | DecodedValue::SymbolicType(handle)
             | DecodedValue::Array(handle)
             | DecodedValue::Tagged(handle)
             | DecodedValue::Tuple(handle)
@@ -351,7 +352,7 @@ impl<'a> ValueRef<'a> {
             DecodedValue::InlineString(_) | DecodedValue::ShortString(_) => ValueKind::String,
             DecodedValue::Bytes(_) => ValueKind::Bytes,
             DecodedValue::NativeType(_) => ValueKind::Type,
-            DecodedValue::DeclaredType(_) => ValueKind::Type,
+            DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => ValueKind::Type,
             DecodedValue::Opaque(_) => ValueKind::Opaque,
             DecodedValue::Dict(_) => ValueKind::Dict,
             DecodedValue::Array(_) => ValueKind::Array,
@@ -423,11 +424,13 @@ impl<'a> ValueRef<'a> {
     pub(crate) fn declared_type_parts(
         self,
     ) -> Option<(&'a crate::value::DeclaredTypeId, &'a str, ValueRef<'a>)> {
-        let DecodedValue::DeclaredType(handle) = self.value.value() else {
-            return None;
+        let handle = match self.value.value() {
+            DecodedValue::DeclaredType(handle) | DecodedValue::SymbolicType(handle) => handle,
+            _ => return None,
         };
         let (id, name, body) = match self.view.object(handle).ok()? {
             Object::DeclaredType { id, name, body, .. } => (id, name, *body),
+            Object::SymbolicType { id, name, body, .. } => (id, name, *body),
             _ => return None,
         };
         Some((
@@ -860,19 +863,36 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
             .map(|argument| self.owned(*argument))
             .collect::<Result<Box<[_]>, _>>()?;
         self.charge_sequence(arguments.len().saturating_add(1))?;
-        let type_id = self.current.canonical_declared_type_id(&id).ok();
-        let handle = self.current.allocate_declared_type(Object::DeclaredType {
-            type_id,
-            id,
-            name: name.into(),
-            body,
-            sealed: true,
-            application_arguments: Some(arguments),
-        });
-        self.set(
-            destination,
-            Val::unknown(DecodedValue::DeclaredType(handle)),
-        )
+        let name = name.into();
+        let value = if id
+            .arguments()
+            .iter()
+            .any(crate::types::type_identity_is_symbolic)
+        {
+            let handle = self.current.allocate(Object::SymbolicType {
+                id,
+                name,
+                body,
+                sealed: true,
+                application_arguments: Some(arguments),
+            });
+            DecodedValue::SymbolicType(handle)
+        } else {
+            let type_id = self
+                .current
+                .canonical_declared_type_id(&id)
+                .map_err(|error| NativeError::new(error.to_string()))?;
+            let handle = self.current.allocate_declared_type(Object::DeclaredType {
+                type_id,
+                id,
+                name,
+                body,
+                sealed: true,
+                application_arguments: Some(arguments),
+            });
+            DecodedValue::DeclaredType(handle)
+        };
+        self.set(destination, Val::unknown(value))
     }
 
     pub(crate) fn make_declared_value(
@@ -882,6 +902,11 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         payload: RegisterId,
     ) -> Result<(), NativeError> {
         let owner = self.owned(owner)?;
+        if matches!(owner.value(), DecodedValue::SymbolicType(_)) {
+            return Err(NativeError::new(
+                "symbolic type metadata cannot own a runtime value",
+            ));
+        }
         if !matches!(owner.value(), DecodedValue::DeclaredType(_)) {
             return Err(NativeError::new(
                 "declared value owner is not a declared Type",
@@ -6287,7 +6312,9 @@ fn run_core_model(
             CoreModelFunction::Struct => {
                 if !matches!(
                     inner.value(),
-                    DecodedValue::DeclaredType(_) | DecodedValue::TypeSlot(_)
+                    DecodedValue::DeclaredType(_)
+                        | DecodedValue::SymbolicType(_)
+                        | DecodedValue::TypeSlot(_)
                 ) {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
@@ -6306,7 +6333,9 @@ fn run_core_model(
                 if !unit
                     && !matches!(
                         inner.value(),
-                        DecodedValue::DeclaredType(_) | DecodedValue::TypeSlot(_)
+                        DecodedValue::DeclaredType(_)
+                            | DecodedValue::SymbolicType(_)
+                            | DecodedValue::TypeSlot(_)
                     )
                 {
                     decode_runtime_type_at(inner, &path, current, background).map_err(
@@ -6387,7 +6416,10 @@ fn run_core_type_desc(
     };
     match operation {
         CoreTypeDescFunction::Kind => {
-            let kind = if matches!(input.value(), DecodedValue::DeclaredType(_)) {
+            let kind = if matches!(
+                input.value(),
+                DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_)
+            ) {
                 "Ref".to_owned()
             } else if matches!(input.value(), DecodedValue::NativeType(_)) {
                 "Opaque".to_owned()
@@ -6518,7 +6550,10 @@ fn run_core_type_desc(
             })
         }
         CoreTypeDescFunction::Resolve => {
-            let result = if matches!(input.value(), DecodedValue::DeclaredType(_)) {
+            let result = if matches!(
+                input.value(),
+                DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_)
+            ) {
                 declared_type_body(input, &view).map_err(|message| {
                     error(RuntimeErrorKind::InvalidBytecode, message, function, pc)
                 })?
@@ -6636,7 +6671,7 @@ fn run_core_dyn(
                 DecodedValue::Bytes(_) => "Bytes",
                 DecodedValue::Opaque(_) => "Opaque",
                 DecodedValue::NativeType(_) => "Type",
-                DecodedValue::DeclaredType(_) => "Type",
+                DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => "Type",
                 DecodedValue::Dict(_) => "Dict",
                 DecodedValue::Array(_) => "Array",
                 DecodedValue::BuiltinAtom(_)
@@ -7291,19 +7326,22 @@ fn dyn_descriptor_leaf_kind(mut descriptor: Val, view: &HeapView<'_>) -> Result<
 }
 
 fn declared_type_body(value: Val, view: &HeapView<'_>) -> Result<Val, String> {
-    let DecodedValue::DeclaredType(handle) = value.value() else {
-        return Ok(value);
+    let handle = match value.value() {
+        DecodedValue::DeclaredType(handle) | DecodedValue::SymbolicType(handle) => handle,
+        _ => return Ok(value),
     };
-    let Object::DeclaredType { body, .. } =
-        view.object(handle).map_err(|error| error.to_string())?
-    else {
-        return Err("declared Type handle refers to another object kind".into());
+    let body = match view.object(handle).map_err(|error| error.to_string())? {
+        Object::DeclaredType { body, .. } | Object::SymbolicType { body, .. } => body,
+        _ => return Err("declared Type handle refers to another object kind".into()),
     };
     Ok(*body)
 }
 
 fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, String> {
-    if matches!(input.value(), DecodedValue::DeclaredType(_)) {
+    if matches!(
+        input.value(),
+        DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_)
+    ) {
         return Ok(Vec::new());
     }
     if matches!(input.value(), DecodedValue::NativeType(_)) {
@@ -8085,11 +8123,12 @@ fn assert_codec_graph_ready(
                     current,
                     background: Some(background),
                 };
-                let Object::DeclaredType { body, .. } = view
+                let body = match view
                     .object(*handle)
                     .map_err(|error| CodecGraphError::Invalid(error.to_string()))?
-                else {
-                    return Err(CodecGraphError::Pending);
+                {
+                    Object::DeclaredType { body, .. } | Object::SymbolicType { body, .. } => body,
+                    _ => return Err(CodecGraphError::Pending),
                 };
                 let resolved = decode_runtime_type(*body, current, background)
                     .map_err(CodecGraphError::Invalid)?;
@@ -8153,7 +8192,7 @@ fn decode_runtime_type_at(
         current,
         background: Some(background),
     };
-    if let DecodedValue::DeclaredType(handle) = value.value() {
+    if let DecodedValue::DeclaredType(handle) | DecodedValue::SymbolicType(handle) = value.value() {
         return Ok(CodecType {
             kind: CodecKind::TypeRef(handle),
             rule: value,
@@ -11191,7 +11230,9 @@ impl<'a> JsonWriter<'a> {
             DecodedValue::Bytes(_) => return Err("JSON cannot encode Bytes".into()),
             DecodedValue::Opaque(_) => return Err("JSON cannot encode Opaque values".into()),
             DecodedValue::NativeType(_) => return Err("JSON cannot encode Type values".into()),
-            DecodedValue::DeclaredType(_) => return Err("JSON cannot encode Type values".into()),
+            DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => {
+                return Err("JSON cannot encode Type values".into());
+            }
             DecodedValue::Tuple(_) => {
                 return Err("JSON cannot encode Tuple; use a codec first".into());
             }
@@ -11441,15 +11482,20 @@ impl<'a> DebugValueFormatter<'a> {
             }
             DecodedValue::DeclaredType(handle) => match self.view.object(handle)? {
                 Object::DeclaredType { type_id, name, .. } => {
-                    let canonical_name = type_id
-                        .map(|type_id| self.view.canonical_type_name(type_id))
-                        .transpose()?
-                        .flatten();
+                    let canonical_name = self.view.canonical_type_name(*type_id)?;
                     self.push("<type ");
                     self.push(canonical_name.as_deref().unwrap_or(name));
                     self.push(">");
                 }
                 _ => return Err(crate::heap::HeapError::new("invalid DeclaredType handle")),
+            },
+            DecodedValue::SymbolicType(handle) => match self.view.object(handle)? {
+                Object::SymbolicType { name, .. } => {
+                    self.push("<symbolic-type ");
+                    self.push(name);
+                    self.push(">");
+                }
+                _ => return Err(crate::heap::HeapError::new("invalid SymbolicType handle")),
             },
             DecodedValue::Array(handle) => self.sequence(handle, false, depth, "[", "]")?,
             DecodedValue::Tuple(handle) => self.sequence(handle, true, depth, "(", ")")?,
@@ -11967,7 +12013,7 @@ fn runtime_value_kind(actual: Val) -> &'static str {
         DecodedValue::Bytes(_) => "Bytes",
         DecodedValue::Opaque(_) => "Opaque",
         DecodedValue::NativeType(_) => "Type",
-        DecodedValue::DeclaredType(_) => "Type",
+        DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) => "Type",
         DecodedValue::Array(_) => "Array",
         DecodedValue::Tuple(_) => "Tuple",
         DecodedValue::Tagged(_) => "Tagged",
