@@ -1994,6 +1994,26 @@ impl Vm {
                                 let value = *read_register(&registers, *src, function, pc)?;
                                 write_register(&mut registers, *dst, value, function, pc)?;
                             }
+                            Opcode::OwnDeclared { dst, owner, value } => {
+                                let owner = *read_register(&registers, *owner, function, pc)?;
+                                let value = *read_register(&registers, *value, function, pc)?;
+                                let type_id =
+                                    view.declared_type_id(owner).map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                write_register(
+                                    &mut registers,
+                                    *dst,
+                                    value.with_type_id(type_id),
+                                    function,
+                                    pc,
+                                )?;
+                            }
                             Opcode::AllocFunc { dst, static_id } => {
                                 let value = if let Some(id) = static_id {
                                     Val::new(
@@ -3068,17 +3088,30 @@ impl Vm {
                                     )
                                 })?;
                                 let expected = read_register(&registers, *tag, function, pc)?;
-                                let matches = if let DecodedValue::Tagged(handle) = value.value() {
-                                    let (actual, _) =
-                                        view.tagged(handle).map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?;
-                                    view.values_equal(actual, *expected).map_err(|heap_error| {
+                                let actual = match value.value() {
+                                    DecodedValue::Tagged(handle) => {
+                                        let (actual, _) =
+                                            view.tagged(handle).map_err(|heap_error| {
+                                                error(
+                                                    RuntimeErrorKind::InvalidBytecode,
+                                                    heap_error.to_string(),
+                                                    function,
+                                                    pc,
+                                                )
+                                            })?;
+                                        Some(actual)
+                                    }
+                                    DecodedValue::BuiltinAtom(_)
+                                    | DecodedValue::InlineAtom(_)
+                                    | DecodedValue::Atom(_) => Some(value),
+                                    _ => None,
+                                };
+                                let matches = if let Some(actual) = actual {
+                                    view.values_equal(
+                                        actual.without_type_id(),
+                                        expected.without_type_id(),
+                                    )
+                                    .map_err(|heap_error| {
                                         error(
                                             RuntimeErrorKind::InvalidBytecode,
                                             heap_error.to_string(),
@@ -3587,6 +3620,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
     match instruction {
         Opcode::LoadConst { dst, .. }
         | Opcode::Move { dst, .. }
+        | Opcode::OwnDeclared { dst, .. }
         | Opcode::AllocFunc { dst, .. }
         | Opcode::AllocTypeSlot { dst }
         | Opcode::ReadTypeSlot { dst, .. }
@@ -6248,26 +6282,6 @@ fn run_core_model(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    if operation == CoreModelFunction::Own {
-        let DecodedValue::DeclaredType(_) = arguments[0].value() else {
-            return Err(runtime_shallow_type_error(
-                "declared Type",
-                arguments[0],
-                function,
-                pc,
-            ));
-        };
-        let type_id = HeapView {
-            current,
-            background: Some(background),
-        }
-        .declared_type_id(arguments[0])
-        .map_err(|error| core_dict_heap_error(error, function, pc))?;
-        return Ok(VmAction::Return {
-            value: arguments[1].with_type_id(type_id),
-            return_target,
-        });
-    }
     validate_model_context(arguments[0], function, pc, current, background)?;
     if operation == CoreModelFunction::Union {
         return run_core_union_model(
@@ -6284,7 +6298,6 @@ fn run_core_model(
         CoreModelFunction::Struct => "fields",
         CoreModelFunction::Enum => "variants",
         CoreModelFunction::Union => unreachable!("Union handled above"),
-        CoreModelFunction::Own => unreachable!("Declared ownership handled above"),
     };
     let entries = core_dict_entries(
         arguments[1],
@@ -6344,7 +6357,6 @@ fn run_core_model(
                 }
             }
             CoreModelFunction::Union => unreachable!("Union handled above"),
-            CoreModelFunction::Own => unreachable!("Declared ownership handled above"),
         }
         let member = allocate_attributes_wrapper(
             inner,
@@ -6363,7 +6375,6 @@ fn run_core_model(
         CoreModelFunction::Struct => "Struct",
         CoreModelFunction::Enum => "Enum",
         CoreModelFunction::Union => unreachable!("Union handled above"),
-        CoreModelFunction::Own => unreachable!("Declared ownership handled above"),
     };
     let metadata = allocate_core_dict(
         BTreeMap::from([

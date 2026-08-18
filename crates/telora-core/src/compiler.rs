@@ -12,7 +12,7 @@ use crate::lir::{self, ConstantId, Item, LabelId, Operation, RegisterId};
 use crate::parser::parse_registered;
 use crate::source::{Diagnostic, Location, Origin, SourceDatabase, SourceFile, WithOrigin};
 use crate::types::{Analysis, NominalTypeConstructor, analyze_program_with_bindings_observed};
-use crate::value::{Atom, BuiltinAtom, CoreModelFunction, NativeFunction};
+use crate::value::{Atom, BuiltinAtom, NativeFunction};
 use crate::{DiscardDebugSink, ExecutionWorld, Quota, QuotaAccount, RuntimeError, Vm};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -353,6 +353,7 @@ pub(crate) fn compile_expression_with_external_bindings(
     function_name: &str,
     expression: &Expr,
     bindings: impl IntoIterator<Item = String>,
+    declared_value_owners: HashMap<Location, String>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {
     let bindings = bindings.into_iter().collect::<Vec<_>>();
@@ -378,7 +379,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         promoted_types: HashSet::new(),
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
-        declared_value_owners: HashMap::new(),
+        declared_value_owners,
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
@@ -987,52 +988,28 @@ impl<'a> Compiler<'a> {
 
     fn compile_expr(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
         let payload = self.compile_expr_unowned(expression)?;
-        let constructible = matches!(
-            expression.value,
-            ExprKind::Dict(_) | ExprKind::Atom(_) | ExprKind::Call { .. }
-        );
-        let Some(owner) = constructible
-            .then(|| self.declared_value_owners.get(&expression.location))
-            .flatten()
+        let Some(owner) = self
+            .declared_value_owners
+            .get(&expression.location)
             .cloned()
         else {
             return Ok(payload);
         };
-        let callee = self.load_constant(
-            Constant::Native(NativeFunction::core_model(CoreModelFunction::Own)),
-            expression.location,
-        );
         let owner = self
             .environment
             .get(&owner)
             .copied()
             .unwrap_or_else(|| self.load_external_constant(owner, expression.location));
-        let base = self.allocate();
+        let result = self.allocate();
         self.emit(
-            Operation::Move {
-                dst: base,
-                src: callee,
+            Operation::OwnDeclared {
+                dst: result,
+                owner,
+                value: payload,
             },
             expression.location,
         );
-        for source in [owner, payload] {
-            let destination = self.allocate();
-            self.emit(
-                Operation::Move {
-                    dst: destination,
-                    src: source,
-                },
-                expression.location,
-            );
-        }
-        self.emit(
-            Operation::Call {
-                base,
-                argument_count: 2,
-            },
-            expression.location,
-        );
-        Ok(base)
+        Ok(result)
     }
 
     fn compile_expr_unowned(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
@@ -1835,7 +1812,24 @@ impl<'a> Compiler<'a> {
             }
             PatternKind::Atom(item) => {
                 let expected = self.load_constant(atom_constant(item), pattern.location);
-                self.emit_pattern_equality(value, expected, failures, pattern.location);
+                let condition = self.allocate();
+                self.emit(
+                    Operation::TaggedTagEquals {
+                        dst: condition,
+                        value,
+                        tag: expected,
+                    },
+                    pattern.location,
+                );
+                let failure = self.new_label();
+                self.emit(
+                    Operation::JumpIfFalse {
+                        condition,
+                        target: failure,
+                    },
+                    pattern.location,
+                );
+                failures.push(failure);
             }
             PatternKind::Tagged { tag, payload } => {
                 let expected = self.load_constant(atom_constant(tag), pattern.location);

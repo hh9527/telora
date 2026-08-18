@@ -23,6 +23,11 @@ pub enum Operation {
         dst: RegisterId,
         src: RegisterId,
     },
+    OwnDeclared {
+        dst: RegisterId,
+        owner: RegisterId,
+        value: RegisterId,
+    },
     AllocFunc {
         dst: RegisterId,
         static_id: Option<crate::FuncId>,
@@ -358,6 +363,11 @@ fn lower_operation(
         Operation::Move { dst, src } => Instruction::Move {
             dst: register(dst)?,
             src: register(src)?,
+        },
+        Operation::OwnDeclared { dst, owner, value } => Instruction::OwnDeclared {
+            dst: register(dst)?,
+            owner: register(owner)?,
+            value: register(value)?,
         },
         Operation::AllocFunc { dst, static_id } => Instruction::AllocFunc {
             dst: register(dst)?,

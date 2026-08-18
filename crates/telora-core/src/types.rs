@@ -3230,10 +3230,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 static_environment.insert(binding.value.name.value.clone(), checked.clone());
                 binding_types.insert(binding.value.name.value.clone(), checked);
 
-                if let Ok(value) = evaluate_tool_expression_silent(
+                if let Ok(value) = evaluate_typed_tool_expression_silent(
                     source_name,
                     &binding.value.value,
                     &tool_values,
+                    &expression_descriptors,
                     account,
                     sources,
                     &mut evaluator,
@@ -3250,10 +3251,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .unwrap_or(inferred);
                 static_environment.insert(name.clone(), checked.clone());
                 binding_types.insert(name.clone(), checked);
-                if let Ok(value) = evaluate_tool_expression_silent(
+                if let Ok(value) = evaluate_typed_tool_expression_silent(
                     source_name,
                     &binding.value.value,
                     &tool_values,
+                    &expression_descriptors,
                     account,
                     sources,
                     &mut evaluator,
@@ -4364,6 +4366,7 @@ fn evaluate_tool_expression(
         source_name,
         expression,
         bindings,
+        None,
         account,
         sources,
         evaluator,
@@ -4371,10 +4374,11 @@ fn evaluate_tool_expression(
     )
 }
 
-fn evaluate_tool_expression_silent(
+fn evaluate_typed_tool_expression_silent(
     source_name: &str,
     expression: &Expr,
     bindings: &BTreeMap<String, Val>,
+    expression_descriptors: &HashMap<crate::Location, TypeDescriptor>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
@@ -4383,6 +4387,7 @@ fn evaluate_tool_expression_silent(
         source_name,
         expression,
         bindings,
+        Some(expression_descriptors),
         account,
         sources,
         evaluator,
@@ -4395,16 +4400,36 @@ fn evaluate_tool_expression_with_debug(
     source_name: &str,
     expression: &Expr,
     bindings: &BTreeMap<String, Val>,
+    expression_descriptors: Option<&HashMap<crate::Location, TypeDescriptor>>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
     observed: bool,
 ) -> Result<Val, FrontendError> {
+    let mut bindings = bindings.clone();
+    let mut declared_value_owners = HashMap::new();
+    if let Some(expression_descriptors) = expression_descriptors {
+        for (location, descriptor) in
+            expression_descriptors
+                .iter()
+                .filter(|(location, descriptor)| {
+                    expression.location.start <= location.start
+                        && location.end <= expression.location.end
+                        && matches!(descriptor, TypeDescriptor::Declared(_))
+                        && !type_identity_is_symbolic(descriptor)
+                })
+        {
+            let key = crate::compiler::declared_owner_link_key(*location);
+            bindings.insert(key.clone(), evaluator.descriptor(descriptor)?);
+            declared_value_owners.insert(*location, key);
+        }
+    }
     let function = compile_expression_with_external_bindings(
         source_name,
         "<tool-stage>",
         expression,
         bindings.keys().cloned(),
+        declared_value_owners,
         sources.get(expression.location.source),
     )?;
     let externals = bindings
@@ -7596,6 +7621,59 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn unify_equality(
+        &mut self,
+        left: &TypeDescriptor,
+        right: &TypeDescriptor,
+    ) -> Result<(), String> {
+        let left = self.resolve(left);
+        let right = self.resolve(right);
+        if left == right {
+            return Ok(());
+        }
+        match (&left, &right) {
+            (TypeDescriptor::Any, _) | (_, TypeDescriptor::Any) => Ok(()),
+            (TypeDescriptor::Atom(_), TypeDescriptor::Atom(_)) => Ok(()),
+            (
+                TypeDescriptor::Tagged {
+                    tag: left_tag,
+                    payload: left,
+                },
+                TypeDescriptor::Tagged {
+                    tag: right_tag,
+                    payload: right,
+                },
+            ) => {
+                if left_tag == right_tag {
+                    self.unify_equality(left, right)
+                } else {
+                    Ok(())
+                }
+            }
+            (TypeDescriptor::Array(left), TypeDescriptor::Array(right))
+            | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
+                self.unify_equality(left, right)
+            }
+            (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right))
+                if left.len() == right.len() =>
+            {
+                for (left, right) in left.iter().zip(right) {
+                    self.unify_equality(left, right)?;
+                }
+                Ok(())
+            }
+            (TypeDescriptor::Struct(left), TypeDescriptor::Struct(right))
+                if left.keys().eq(right.keys()) =>
+            {
+                for (name, left) in left {
+                    self.unify_equality(left, &right[name])?;
+                }
+                Ok(())
+            }
+            _ => self.unify(&left, &right),
+        }
+    }
+
     fn check(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
         let completed_actual = self.complete_declared(actual);
         let completed_expected = self.complete_declared(expected);
@@ -8367,11 +8445,16 @@ impl<'a> GenericInference<'a> {
                         };
                         let evidence = self.infer(evidence, environment, None)?;
                         let evidence = self.resolve(&evidence);
-                        let expected = self.declared_identity(&evidence).map(|_| &evidence);
-                        self.infer(literal, environment, expected)?;
+                        if self.declared_identity(&evidence).is_some() {
+                            self.infer(literal, environment, Some(&evidence))?;
+                        } else {
+                            let literal = self.infer(literal, environment, None)?;
+                            self.unify_equality(&evidence, &literal)?;
+                        }
                     } else {
-                        self.infer(left, environment, None)?;
-                        self.infer(right, environment, None)?;
+                        let left = self.infer(left, environment, None)?;
+                        let right = self.infer(right, environment, None)?;
+                        self.unify_equality(&left, &right)?;
                     }
                     normalized_bool_descriptor()
                 }
@@ -12660,8 +12743,10 @@ mod tests {
             assert_eq!(analysis.display(analysis.result_type), expected);
         }
 
-        let equality = analyze_with_natives("1 == \"1\"", &[]).unwrap();
-        assert_eq!(equality.display(equality.result_type), "enum {False, True}");
+        let equality = analyze_with_natives("1 == \"1\"", &[]).unwrap_err();
+        assert!(equality.message.contains("cannot unify"));
+        assert!(equality.message.contains("String"));
+        assert!(equality.message.contains("Int"));
 
         let logical_not = analyze_with_natives(
             "let invert_bool: Fn(Bool) -> Bool = fn(value) { !value };\
@@ -12713,6 +12798,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(dynamic.display(dynamic.result_type), "Fn(Any) -> Any");
+    }
+
+    #[test]
+    fn equality_requires_one_static_semantic_type() {
+        for source in [
+            "1 == \"1\"",
+            "[1] == [\"1\"]",
+            "type Left = struct {value: Int}; type Right = struct {value: Int}; let left: Left = {value: 1}; let right: Right = {value: 1}; left == right",
+        ] {
+            let error = analyze_with_natives(source, &[]).unwrap_err();
+            assert!(error.message.contains("cannot unify"), "{error}");
+        }
+
+        for source in [
+            "('Ok, 1) == ('Err, 1)",
+            "{state: 'Ready, value: 1} != {state: 'Pending, value: 1}",
+        ] {
+            let analysis = analyze_with_natives(source, &[]).unwrap();
+            assert_eq!(analysis.display(analysis.result_type), "enum {False, True}");
+        }
     }
 
     #[test]
