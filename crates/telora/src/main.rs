@@ -997,8 +997,11 @@ fn show_exports(
     exports.retain(|e| pattern.is_none_or(|p| e.name.contains(p)));
     exports.sort_by(|a, b| a.name.cmp(&b.name));
     for export in exports {
+        let ty = export
+            .scheme
+            .or_else(|| workspace.types().display(export.ty));
         emit(
-            json!({"schema":"telora.show/v1","module":module_name,"record":"export","authority":authority,"name":export.name,"type":workspace.types().display(export.ty)}),
+            json!({"schema":"telora.show/v1","module":module_name,"record":"export","authority":authority,"name":export.name,"type":ty}),
         )?;
     }
     Ok(())

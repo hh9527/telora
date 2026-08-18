@@ -160,6 +160,7 @@ pub struct WorkspaceModule {
     pub options: Vec<WorkspaceOption>,
     pub result_location: Option<Location>,
     pub result_type: Option<WorkspaceTypeId>,
+    pub export_schemes: BTreeMap<String, String>,
 }
 
 pub use crate::hir::HirDefinitionKind as DefinitionKind;
@@ -212,6 +213,7 @@ pub struct WorkspaceExpression {
 pub struct WorkspaceExport {
     pub name: String,
     pub ty: WorkspaceTypeId,
+    pub scheme: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -319,6 +321,7 @@ impl WorkspaceTypeGraph {
                         .map(|(name, ty)| WorkspaceExport {
                             name: name.clone(),
                             ty: *ty,
+                            scheme: None,
                         })
                         .collect();
                 }
@@ -561,6 +564,7 @@ impl WorkspaceSnapshot {
                     .as_ref()
                     .map(|result| result.location),
                 result_type: None,
+                export_schemes: BTreeMap::new(),
             }],
             definitions,
             references,
@@ -929,6 +933,10 @@ impl WorkspaceSnapshot {
             .map(|(name, ty)| WorkspaceExport {
                 name: name.clone(),
                 ty: *ty,
+                scheme: self
+                    .module(module)
+                    .and_then(|module| module.export_schemes.get(name))
+                    .cloned(),
             })
             .collect()
     }
@@ -1031,6 +1039,18 @@ impl WorkspaceSnapshot {
                     .as_ref()
                     .map(|program| program.value.body.value.result.location),
                 result_type,
+                export_schemes: input
+                    .analysis
+                    .as_ref()
+                    .map(|analysis| {
+                        analysis
+                            .module_interface
+                            .exports
+                            .iter()
+                            .map(|(name, scheme)| (name.clone(), scheme.display_name()))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             });
         }
 

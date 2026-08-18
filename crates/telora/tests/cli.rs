@@ -537,6 +537,65 @@ fn show_namespace_imports_reference_exact_module_interfaces() {
 }
 
 #[test]
+fn show_exports_preserves_type_family_binders_across_reexports() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/model.telora"),
+        r#"export type Entity(EntityId) = struct {id: EntityId, label: String};
+export type Request(Id, Subject, Input) = struct {id: Id, subject: Subject, input: Input};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/selective.telora"),
+        r#"import "@src/model.telora" {Entity, Request};
+export {Entity as PublicEntity, Request};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/open.telora"),
+        r#"import "@src/model.telora" *;
+export {Entity, Request};"#,
+    )
+    .unwrap();
+
+    let cases = [
+        ("@src/model.telora", "Entity"),
+        ("@src/selective.telora", "PublicEntity"),
+        ("@src/open.telora", "Entity"),
+    ];
+    for (module, entity_name) in cases {
+        let show = telora(&cwd)
+            .args(["show", module, "--exports"])
+            .output()
+            .unwrap();
+        assert!(
+            show.status.success(),
+            "{}",
+            String::from_utf8_lossy(&show.stderr)
+        );
+        let records = jsonl(&show.stdout);
+        let entity = records
+            .iter()
+            .find(|record| record["name"] == entity_name)
+            .unwrap();
+        assert_eq!(
+            entity["type"],
+            "for(EntityId) Fn(TypeOf(EntityId)) -> TypeOf(Entity)"
+        );
+        let request = records
+            .iter()
+            .find(|record| record["name"] == "Request")
+            .unwrap();
+        assert_eq!(
+            request["type"],
+            "for(Id, Subject, Input) Fn(TypeOf(Id), TypeOf(Subject), TypeOf(Input)) -> TypeOf(Request)"
+        );
+        assert_eq!(entity["authority"], "authoritative");
+        assert_eq!(request["authority"], "authoritative");
+    }
+}
+
+#[test]
 fn show_position_and_conflicts_are_structured() {
     let cwd = fixture();
     fs::write(
