@@ -7614,6 +7614,37 @@ unchanged", "|"),
     }
 
     #[test]
+    fn generic_declared_results_install_concrete_call_site_witnesses() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"type Box(A) = struct {value: A};
+               def make: for(A) Fn(A) -> Box(A) = fn(value) { {value} };
+               (make("ready"), make(1))"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
+        let string_box = output.sequence_get(0).unwrap();
+        let int_box = output.sequence_get(1).unwrap();
+        let (string_owner, _) = string_box
+            .declared_value_parts()
+            .expect("Box(String) result has a nominal witness");
+        let (int_owner, _) = int_box
+            .declared_value_parts()
+            .expect("Box(Int) result has a nominal witness");
+        let (string_id, _, _) = string_owner.declared_type_parts().unwrap();
+        let (int_id, _, _) = int_owner.declared_type_parts().unwrap();
+        assert_eq!(string_id.arguments(), &[TypeDescriptor::String]);
+        assert_eq!(int_id.arguments(), &[TypeDescriptor::Int]);
+        assert_ne!(string_id, int_id);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn imported_families_preserve_recursive_arguments_in_top_level_aliases() {
         let directory = fixture_dir();
         fs::write(

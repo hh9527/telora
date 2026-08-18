@@ -92,6 +92,7 @@ enum HeapKind {
     Func,
     Dyn,
     Module,
+    SymbolicType,
 }
 
 impl HeapKind {
@@ -107,6 +108,7 @@ impl HeapKind {
             8 => Self::Func,
             9 => Self::Dyn,
             10 => Self::Module,
+            11 => Self::SymbolicType,
             _ => Self::None,
         }
     }
@@ -119,6 +121,7 @@ impl HeapKind {
             | Self::Dict
             | Self::Func
             | Self::DeclaredType
+            | Self::SymbolicType
             | Self::Dyn
             | Self::Module => TRAIT_TRACE,
             Self::None | Self::Bytes | Self::Opaque => 0,
@@ -383,6 +386,7 @@ pub(crate) enum DecodedValue {
     Bytes(Handle),
     NativeType(crate::value::NativeTypeId),
     DeclaredType(Handle),
+    SymbolicType(Handle),
     Opaque(Handle),
     Array(Handle),
     Tuple(Handle),
@@ -427,6 +431,7 @@ impl DecodedValue {
                 u64::from(id.module.0) | (u64::from(id.local) << 32),
             ),
             Self::DeclaredType(handle) => heap_parts(handle, HeapKind::DeclaredType),
+            Self::SymbolicType(handle) => heap_parts(handle, HeapKind::SymbolicType),
             Self::Opaque(handle) => heap_parts(handle, HeapKind::Opaque),
             Self::Array(handle) => heap_parts(handle, HeapKind::Array),
             Self::Tuple(handle) => heap_parts(handle, HeapKind::Tuple),
@@ -583,6 +588,7 @@ impl Val {
                 local: (self.raw >> 32) as u32,
             }),
             (FlatKind::Heap, HeapKind::DeclaredType) => DecodedValue::DeclaredType(handle()),
+            (FlatKind::Heap, HeapKind::SymbolicType) => DecodedValue::SymbolicType(handle()),
             (FlatKind::Heap, HeapKind::Opaque) => DecodedValue::Opaque(handle()),
             (FlatKind::Heap, HeapKind::Array) => DecodedValue::Array(handle()),
             (FlatKind::Heap, HeapKind::Tuple) => DecodedValue::Tuple(handle()),
@@ -798,11 +804,11 @@ impl Heap {
                         return Ok(*existing);
                     }
                     let placeholder = kind(heap, "Any")?;
-                    let owner = heap.reserve_declared_type(
+                    let owner = heap.reserve_type_metadata(
                         value.id.clone(),
                         value.name.as_str(),
                         placeholder,
-                    );
+                    )?;
                     declared.insert(value.id.clone(), owner);
                     let body = build(heap, background, &value.body, declared)?;
                     heap.seal_type_ref(owner, body)
@@ -952,9 +958,9 @@ impl Heap {
         module: crate::ModuleId,
         declaration: u32,
         name: impl Into<Arc<str>>,
-    ) -> Val {
+    ) -> Result<Val, HeapError> {
         let id = crate::value::DeclaredTypeId::concrete(module, declaration);
-        let type_id = self.canonical_declared_type_id(&id).ok();
+        let type_id = self.canonical_declared_type_id(&id)?;
         let handle = self.allocate_declared_type(Object::DeclaredType {
             type_id,
             id,
@@ -963,7 +969,7 @@ impl Heap {
             sealed: true,
             application_arguments: None,
         });
-        Val::unknown(DecodedValue::DeclaredType(handle))
+        Ok(Val::unknown(DecodedValue::DeclaredType(handle)))
     }
 
     pub(crate) fn reserve_type_ref(
@@ -972,7 +978,7 @@ impl Heap {
         declaration: u32,
         name: impl Into<Arc<str>>,
         placeholder: Val,
-    ) -> Val {
+    ) -> Result<Val, HeapError> {
         let id = crate::value::DeclaredTypeId::concrete(module, declaration);
         self.reserve_declared_type(id, name, placeholder)
     }
@@ -982,8 +988,8 @@ impl Heap {
         id: crate::value::DeclaredTypeId,
         name: impl Into<Arc<str>>,
         placeholder: Val,
-    ) -> Val {
-        let type_id = self.canonical_declared_type_id(&id).ok();
+    ) -> Result<Val, HeapError> {
+        let type_id = self.canonical_declared_type_id(&id)?;
         let handle = self.allocate_declared_type(Object::DeclaredType {
             type_id,
             id,
@@ -992,23 +998,50 @@ impl Heap {
             sealed: false,
             application_arguments: None,
         });
-        Val::unknown(DecodedValue::DeclaredType(handle))
+        Ok(Val::unknown(DecodedValue::DeclaredType(handle)))
+    }
+
+    fn reserve_type_metadata(
+        &mut self,
+        id: crate::value::DeclaredTypeId,
+        name: impl Into<Arc<str>>,
+        placeholder: Val,
+    ) -> Result<Val, HeapError> {
+        match self.canonical_declared_type_id(&id) {
+            Ok(_) => self.reserve_declared_type(id, name, placeholder),
+            Err(_)
+                if id
+                    .arguments()
+                    .iter()
+                    .any(crate::types::type_identity_is_symbolic) =>
+            {
+                let handle = self.allocate(Object::SymbolicType {
+                    id,
+                    name: name.into(),
+                    body: placeholder,
+                    sealed: false,
+                    application_arguments: None,
+                });
+                Ok(Val::unknown(DecodedValue::SymbolicType(handle)))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) fn seal_type_ref(&mut self, target: Val, body: Val) -> Result<Val, HeapError> {
-        let DecodedValue::DeclaredType(handle) = target.value() else {
-            return Err(HeapError("type ref target is not a declared Type"));
+        let handle = match target.value() {
+            DecodedValue::DeclaredType(handle) | DecodedValue::SymbolicType(handle) => handle,
+            _ => return Err(HeapError("type ref target is not declared type metadata")),
         };
         if handle.storage != Storage::Work {
             return Err(HeapError(
                 "type refs can only be sealed in their Work world",
             ));
         }
-        let Object::DeclaredType {
-            body: slot, sealed, ..
-        } = self.object_mut(handle)?
-        else {
-            return Err(HeapError("type ref target is not a declared Type"));
+        let (slot, sealed) = match self.object_mut(handle)? {
+            Object::DeclaredType { body, sealed, .. }
+            | Object::SymbolicType { body, sealed, .. } => (body, sealed),
+            _ => return Err(HeapError("type ref target is not declared type metadata")),
         };
         if *sealed {
             return Err(HeapError("type ref is already sealed"));
@@ -1047,7 +1080,14 @@ pub(crate) enum Object {
     OpenFunc,
     Bytes(Box<[u8]>),
     DeclaredType {
-        type_id: Option<crate::TypeId>,
+        type_id: crate::TypeId,
+        id: crate::value::DeclaredTypeId,
+        name: Arc<str>,
+        body: Val,
+        sealed: bool,
+        application_arguments: Option<Box<[Val]>>,
+    },
+    SymbolicType {
         id: crate::value::DeclaredTypeId,
         name: Arc<str>,
         body: Val,
@@ -1092,17 +1132,32 @@ pub(crate) enum Object {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct HeapError(&'static str);
+pub(crate) struct HeapError {
+    message: std::borrow::Cow<'static, str>,
+}
+
+#[allow(non_snake_case)]
+fn HeapError(message: &'static str) -> HeapError {
+    HeapError::new(message)
+}
 
 impl HeapError {
     pub(crate) const fn new(message: &'static str) -> Self {
-        Self(message)
+        Self {
+            message: std::borrow::Cow::Borrowed(message),
+        }
+    }
+
+    pub(crate) fn owned(message: String) -> Self {
+        Self {
+            message: std::borrow::Cow::Owned(message),
+        }
     }
 }
 
 impl fmt::Display for HeapError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.0)
+        formatter.write_str(&self.message)
     }
 }
 
@@ -1291,9 +1346,11 @@ impl Heap {
         let arguments = declared
             .arguments()
             .iter()
-            .map(|argument| types.intern_descriptor(&crate::types::erase_type_variables(argument)))
+            .map(|argument| types.intern_descriptor(argument))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| HeapError("declared type argument is not canonical"))?;
+            .map_err(|error| {
+                HeapError::owned(format!("declared type argument is not canonical: {error}"))
+            })?;
         Ok(match types.begin(declared.constructor(), arguments) {
             crate::type_store::InternType::Existing(id)
             | crate::type_store::InternType::Reserved(id) => id,
@@ -1335,11 +1392,9 @@ impl Heap {
         };
         let type_id = *type_id;
         let handle = self.allocate(object);
-        if let Some(type_id) = type_id {
-            self.declared_types
-                .entry(type_id)
-                .or_insert_with(|| Val::unknown(DecodedValue::DeclaredType(handle)));
-        }
+        self.declared_types
+            .entry(type_id)
+            .or_insert_with(|| Val::unknown(DecodedValue::DeclaredType(handle)));
         handle
     }
 
@@ -1692,7 +1747,7 @@ impl<'a> HeapView<'a> {
         if !sealed {
             return Err(HeapError("declared value owner is not sealed"));
         }
-        type_id.ok_or(HeapError("declared value owner has no concrete TypeId"))
+        Ok(*type_id)
     }
 
     pub(crate) fn canonical_type_name(
@@ -1959,6 +2014,7 @@ impl<'a> HeapView<'a> {
                 | DecodedValue::Opaque(_)
                 | DecodedValue::NativeType(_)
                 | DecodedValue::DeclaredType(_)
+                | DecodedValue::SymbolicType(_)
                 | DecodedValue::Func(_)
                 | DecodedValue::TypeSlot(_)
                 | DecodedValue::FuncRef(_) => continue,
@@ -1989,6 +2045,7 @@ impl<'a> HeapView<'a> {
                 Object::Bytes(_)
                 | Object::Opaque(_)
                 | Object::DeclaredType { .. }
+                | Object::SymbolicType { .. }
                 | Object::Closure { .. }
                 | Object::TypeSlot { .. }
                 | Object::ByteCodeProto { .. }
@@ -2125,12 +2182,7 @@ impl<'a> HeapView<'a> {
                         "DeclaredType handle refers to another object kind",
                     ));
                 };
-                match (left, right) {
-                    (Some(left), Some(right)) => Ok(left == right),
-                    _ => Err(HeapError(
-                        "unfrozen type metadata cannot participate in runtime equality",
-                    )),
-                }
+                Ok(left == right)
             }
             (DecodedValue::Array(left), DecodedValue::Array(right))
             | (DecodedValue::Tuple(left), DecodedValue::Tuple(right)) => {
@@ -2295,7 +2347,7 @@ fn bound_type_replacements(
             continue;
         }
         let object = source.object(handle)?;
-        if let Object::DeclaredType { id, .. } = object
+        if let Object::DeclaredType { id, .. } | Object::SymbolicType { id, .. } = object
             && id
                 .arguments()
                 .iter()
@@ -2334,8 +2386,12 @@ fn bound_type_replacements(
         let children = match object {
             Object::DeclaredType {
                 body, sealed: true, ..
+            }
+            | Object::SymbolicType {
+                body, sealed: true, ..
             } => vec![*body],
-            Object::DeclaredType { sealed: false, .. } => {
+            Object::DeclaredType { sealed: false, .. }
+            | Object::SymbolicType { sealed: false, .. } => {
                 return Err(HeapError("type ref is not sealed"));
             }
             Object::Array(values) | Object::Tuple(values) => values.to_vec(),
@@ -2376,6 +2432,7 @@ fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
         DecodedValue::NativeType(_) => None,
         DecodedValue::Bytes(handle)
         | DecodedValue::DeclaredType(handle)
+        | DecodedValue::SymbolicType(handle)
         | DecodedValue::Opaque(handle)
         | DecodedValue::Array(handle)
         | DecodedValue::Tuple(handle)
@@ -2602,6 +2659,30 @@ impl PendingCopy {
             DecodedValue::DeclaredType(handle) => {
                 DecodedValue::DeclaredType(self.copy_object(target, source, handle)?)
             }
+            DecodedValue::SymbolicType(handle) => {
+                let copied = self.copy_object(target, source, handle)?;
+                if copied == handle {
+                    return Ok(value.with_value(DecodedValue::SymbolicType(copied)));
+                }
+                let Object::SymbolicType { id, .. } = source.object(handle)? else {
+                    return Err(HeapError(
+                        "SymbolicType handle refers to another object kind",
+                    ));
+                };
+                let id = self.type_arguments.as_ref().map_or_else(
+                    || id.clone(),
+                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
+                );
+                let remains_symbolic = id
+                    .arguments()
+                    .iter()
+                    .any(crate::types::type_identity_is_symbolic);
+                if remains_symbolic {
+                    DecodedValue::SymbolicType(copied)
+                } else {
+                    DecodedValue::DeclaredType(copied)
+                }
+            }
             DecodedValue::Array(handle) => {
                 DecodedValue::Array(self.copy_object(target, source, handle)?)
             }
@@ -2641,11 +2722,9 @@ impl PendingCopy {
             let Object::DeclaredType { id, .. } = source.object(owner_handle)? else {
                 unreachable!("type metadata is a declared Type")
             };
-            let copied_id = self.canonical_declared_type_id(target, id);
+            let copied_id = self.canonical_declared_type_id(target, id)?;
             self.copy_object(target, source, owner_handle)?;
-            if let Some(copied_id) = copied_id {
-                copied = copied.with_type_id(copied_id);
-            }
+            copied = copied.with_type_id(copied_id);
         }
         Ok(copied)
     }
@@ -2654,12 +2733,12 @@ impl PendingCopy {
         &self,
         target: &Heap,
         id: &crate::value::DeclaredTypeId,
-    ) -> Option<crate::TypeId> {
+    ) -> Result<crate::TypeId, HeapError> {
         let id = self.type_arguments.as_ref().map_or_else(
             || id.clone(),
             |arguments| crate::types::apply_declared_type_arguments(id, arguments),
         );
-        target.canonical_declared_type_id(&id).ok()
+        target.canonical_declared_type_id(&id)
     }
 
     fn copy_object(
@@ -2743,7 +2822,7 @@ impl PendingCopy {
                     || id.clone(),
                     |arguments| crate::types::apply_declared_type_arguments(id, arguments),
                 );
-                let type_id = target.canonical_declared_type_id(&id).ok();
+                let type_id = target.canonical_declared_type_id(&id)?;
                 Object::DeclaredType {
                     type_id,
                     id,
@@ -2751,6 +2830,57 @@ impl PendingCopy {
                     body: self.copy_value(target, source, *body)?,
                     sealed: true,
                     application_arguments,
+                }
+            }
+            Object::SymbolicType {
+                id,
+                name,
+                body,
+                sealed,
+                application_arguments,
+            } => {
+                if !sealed {
+                    return Err(HeapError("cannot copy an unsealed symbolic type ref"));
+                }
+                let type_argument_values = self.type_argument_values.clone();
+                let application_arguments = if let Some(arguments) = type_argument_values {
+                    Some(arguments.as_ref().into())
+                } else if let Some(arguments) = application_arguments {
+                    Some(
+                        arguments
+                            .iter()
+                            .map(|argument| self.copy_value(target, source, *argument))
+                            .collect::<Result<Box<[_]>, _>>()?,
+                    )
+                } else {
+                    None
+                };
+                let id = self.type_arguments.as_ref().map_or_else(
+                    || id.clone(),
+                    |arguments| crate::types::apply_declared_type_arguments(id, arguments),
+                );
+                let body = self.copy_value(target, source, *body)?;
+                if id
+                    .arguments()
+                    .iter()
+                    .any(crate::types::type_identity_is_symbolic)
+                {
+                    Object::SymbolicType {
+                        id,
+                        name: Arc::clone(name),
+                        body,
+                        sealed: true,
+                        application_arguments,
+                    }
+                } else {
+                    Object::DeclaredType {
+                        type_id: target.canonical_declared_type_id(&id)?,
+                        id,
+                        name: Arc::clone(name),
+                        body,
+                        sealed: true,
+                        application_arguments,
+                    }
                 }
             }
             Object::Array(values) => Object::Array(copy_values(self, values)?),
@@ -2943,10 +3073,7 @@ impl PendingCopy {
             .iter()
             .enumerate()
             .filter_map(|(index, object)| match object {
-                Object::DeclaredType {
-                    type_id: Some(type_id),
-                    ..
-                } => Some((
+                Object::DeclaredType { type_id, .. } => Some((
                     *type_id,
                     Val::unknown(DecodedValue::DeclaredType(Handle {
                         storage: self.target_storage,
@@ -2978,6 +3105,7 @@ fn value_contains_foreign(value: DecodedValue, target: Storage) -> bool {
         DecodedValue::Bytes(handle)
         | DecodedValue::Opaque(handle)
         | DecodedValue::DeclaredType(handle)
+        | DecodedValue::SymbolicType(handle)
         | DecodedValue::Array(handle)
         | DecodedValue::Tuple(handle)
         | DecodedValue::Tagged(handle)
@@ -3014,6 +3142,7 @@ fn object_contains_disallowed(
             DecodedValue::Bytes(handle)
             | DecodedValue::Opaque(handle)
             | DecodedValue::DeclaredType(handle)
+            | DecodedValue::SymbolicType(handle)
             | DecodedValue::Array(handle)
             | DecodedValue::Tuple(handle)
             | DecodedValue::Tagged(handle)
@@ -3035,6 +3164,7 @@ fn object_contains_disallowed(
     match object {
         Object::Reserved | Object::OpenFunc => true,
         Object::DeclaredType { sealed: false, .. } => true,
+        Object::SymbolicType { sealed: false, .. } => true,
         Object::Array(values) | Object::Tuple(values) => {
             values.iter().any(|value| value_foreign(*value))
         }
@@ -3051,6 +3181,7 @@ fn object_contains_disallowed(
             descriptor, value, ..
         } => value_foreign(*descriptor) || value_foreign(*value),
         Object::DeclaredType { body, .. } => value_foreign(*body),
+        Object::SymbolicType { body, .. } => value_foreign(*body),
         Object::TypeSlot { value } => value.is_none_or(value_foreign),
         Object::ByteCodeProto {
             values,
