@@ -18,7 +18,7 @@ from tools.opencode_experiment.observe import failures, latest_assistant, normal
 from tools.opencode_experiment.query import select_engine
 from tools.opencode_experiment.external import probe_direct, probe_mise, resolve_capabilities, resolve_cli, resolve_command
 from tools.opencode_experiment.state import atomic_json, load_state, save_state, SCHEMA
-from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare, request_start, reserve, start_requested
+from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare, request_start, reserve, run_validation, start_requested
 from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
@@ -317,6 +317,28 @@ class ObserveQueryTest(unittest.TestCase):
             self.assertEqual(resolve_cli("opencode"), ("mise", "x", "--", "opencode"))
         resolve_cli.cache_clear(); probe_direct.cache_clear(); probe_mise.cache_clear()
 
+    def test_validation_resolves_relative_executable_from_validation_cwd(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            validation_cwd = workspace / "crate"
+            validation_cwd.mkdir(parents=True)
+            executable = workspace / "bin" / "tool"
+            executable.parent.mkdir()
+            executable.write_text("#!/bin/sh\necho validated\n")
+            executable.chmod(0o755)
+            manifest = Manifest(
+                "demo", root, {},
+                ({"name": "crate", "cwd": "crate", "command": ["../bin/tool"], "required": True},),
+                (), (), (), {},
+            )
+            context = Context(root, root / "execution", {"workspace": str(workspace)}, manifest)
+
+            results = run_validation(context)
+
+            self.assertEqual(results[0]["exit"], 0)
+            self.assertEqual(results[0]["stdout"], "validated\n")
+
     def test_query_prefers_direct_jq_over_mise_jaq(self):
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch("tools.opencode_experiment.external.probe_direct", side_effect=lambda cli: (cli,) if cli == "jq" else None), mock.patch("tools.opencode_experiment.external.probe_mise", return_value=None):
             self.assertEqual(select_engine(), ("jq", ["jq"]))
@@ -415,7 +437,7 @@ class MetricsTest(unittest.TestCase):
 
 
 class ArchiveExportTest(unittest.TestCase):
-    def test_archive_is_repeatable_and_rejects_symlinks(self):
+    def test_archive_is_repeatable_allows_internal_file_links_and_rejects_escape(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary); root = repo / "role"; workspace = repo / "workspace"
             (workspace / "output").mkdir(parents=True); (workspace / "output" / "x").write_text("x")
@@ -424,6 +446,9 @@ class ArchiveExportTest(unittest.TestCase):
             context = Context(repo, root, {"workspace": str(workspace)}, manifest); destination = root / "result" / "workspace"
             copy_archive(context, destination); self.assertTrue((destination / "output/x").is_file())
             copy_archive(context, destination); self.assertTrue((destination / "output/x").is_file())
+            os.symlink("x", workspace / "output" / "internal")
+            copy_archive(context, destination)
+            self.assertEqual((destination / "output/internal").read_text(), "x")
             os.symlink("/tmp", workspace / "output" / "escape")
             with self.assertRaises(ControlError): copy_archive(context, destination)
 

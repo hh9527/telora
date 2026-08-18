@@ -379,7 +379,7 @@ def run_validation(context: Context) -> list[dict[str, Any]]:
     results = []
     for item in context.manifest.validation:
         workspace = Path(context.state["workspace"]); cwd = workspace / item.get("cwd", "")
-        started = now(); command = resolve_command(item["command"], workspace); result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        started = now(); command = resolve_command(item["command"], cwd); result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         record = {"name": item["name"], "command": item["command"], "cwd": item.get("cwd", ""), "started_at": started, "finished_at": now(), "exit": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
         atomic_json(directory / f"{item['name']}.json", record); results.append(record)
     return results
@@ -396,7 +396,8 @@ def copy_archive(context: Context, destination: Path) -> None:
             target = staging / relative
             if source.is_dir():
                 for child in source.rglob("*"):
-                    if child.is_symlink() or not child.resolve().is_relative_to(workspace):
+                    resolved = child.resolve()
+                    if (child.is_symlink() and not resolved.is_file()) or not resolved.is_relative_to(workspace):
                         raise ControlError(f"unsafe symlink in archive path: {child.relative_to(workspace)}")
                 shutil.copytree(source, target, symlinks=False)
             elif source.is_file(): target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target)
