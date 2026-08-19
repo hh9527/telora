@@ -1166,6 +1166,10 @@ impl RuntimeError {
             .and_then(|locations| locations.rule)
     }
 
+    pub(crate) const fn propagated_failure(&self) -> Option<u32> {
+        self.propagated_failure
+    }
+
     fn set_locations(&mut self, data: Option<crate::Loc>, rule: Option<crate::Loc>) {
         self.locations =
             (data.is_some() || rule.is_some()).then(|| Box::new(RuntimeLocations { data, rule }));
@@ -1365,9 +1369,10 @@ pub(crate) struct VmExecution {
     pub(crate) failures: Vec<RuntimeError>,
 }
 
-struct VmExecutionFailure {
+pub(crate) struct VmExecutionFailure {
     heap: Heap,
-    error: RuntimeError,
+    pub(crate) error: RuntimeError,
+    pub(crate) failures: Vec<RuntimeError>,
 }
 
 #[derive(Clone, Copy)]
@@ -1702,7 +1707,7 @@ impl Vm {
         arguments: &[crate::DataWorld],
         account: &mut QuotaAccount,
         inherited_failure_count: usize,
-    ) -> Result<VmExecution, RuntimeError> {
+    ) -> Result<VmExecution, VmExecutionFailure> {
         self.execute_frame_with_policy(
             background,
             externals,
@@ -1716,7 +1721,6 @@ impl Vm {
             true,
             inherited_failure_count,
         )
-        .map_err(|failure| failure.error)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1832,6 +1836,7 @@ impl Vm {
                 return Err(VmExecutionFailure {
                     heap: current,
                     error,
+                    failures: Vec::new(),
                 });
             }
         };
@@ -1846,6 +1851,7 @@ impl Vm {
                         function,
                         0,
                     ),
+                    failures: Vec::new(),
                 });
             }
         };
@@ -1865,6 +1871,7 @@ impl Vm {
                             function,
                             0,
                         ),
+                        failures: Vec::new(),
                     });
                 }
             };
@@ -1885,6 +1892,7 @@ impl Vm {
                         function,
                         0,
                     ),
+                    failures: Vec::new(),
                 });
             }
         };
@@ -1904,6 +1912,7 @@ impl Vm {
                         function,
                         0,
                     ),
+                    failures: Vec::new(),
                 });
             }
         };
@@ -1923,6 +1932,7 @@ impl Vm {
                 return Err(VmExecutionFailure {
                     heap: current,
                     error,
+                    failures: Vec::new(),
                 });
             }
         };
@@ -3581,6 +3591,7 @@ impl Vm {
             Err(error) => Err(VmExecutionFailure {
                 heap: current,
                 error,
+                failures,
             }),
         }
     }

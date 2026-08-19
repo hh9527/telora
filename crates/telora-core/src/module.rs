@@ -3140,14 +3140,18 @@ impl WorkspaceBuilder<'_> {
                 inherited_failure_count,
             ) {
             Ok(execution) => execution,
-            Err(error) => {
+            Err(failure) => {
                 let mut diagnostics = account.take_diagnostics();
-                if let Some(diagnostic) = error.diagnostic() {
+                merge_runtime_errors(&mut diagnostics, failure.failures);
+                if let Some(diagnostic) = failure.error.diagnostic() {
                     merge_runtime_diagnostics(&mut diagnostics, [diagnostic]);
-                } else {
+                } else if failure.error.propagated_failure().is_none() {
                     merge_runtime_diagnostics(
                         &mut diagnostics,
-                        [Diagnostic::error(error.to_string(), program.location)],
+                        [Diagnostic::error(
+                            failure.error.to_string(),
+                            program.location,
+                        )],
                     );
                 }
                 return ModuleEvaluation {

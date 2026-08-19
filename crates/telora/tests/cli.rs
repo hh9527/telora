@@ -303,6 +303,63 @@ export let output = dependency.ensure_plan(plan, plan);"#,
     assert!(!run_records.iter().any(call_cascade));
 }
 
+#[test]
+fn best_effort_run_preserves_failure_through_imported_facade_closures() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/rules.telora"),
+        r#"def reject: Fn(Int) -> Int = fn(value) {
+    fail!("source rule rejected value", value)
+};
+export {reject};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/facade.telora"),
+        r#"import "@src/rules.telora" as rules;
+def lower: Fn(Int) -> Int = fn(value) { rules.reject(value) };
+export {lower};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "@src/facade.telora" as facade;
+let rejected = facade.lower(7);
+export let output: String = "value={rejected}";"#,
+    )
+    .unwrap();
+
+    let strict = telora(&cwd).args(["run", "main"]).output().unwrap();
+    assert!(!strict.status.success());
+    assert!(String::from_utf8_lossy(&strict.stderr).contains("source rule rejected value"));
+
+    let recovered = telora(&cwd)
+        .args(["run", "main", "--best-effort"])
+        .output()
+        .unwrap();
+    assert!(!recovered.status.success());
+    let records = jsonl(&recovered.stderr);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["message"] == "source rule rejected value")
+            .count(),
+        1
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.to_string().contains("src/rules.telora")),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(!records.iter().any(|record| {
+        record["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("dependent computation received"))
+    }));
+}
+
 fn call_cascade(record: &Value) -> bool {
     record["message"].as_str().is_some_and(|message| {
         message.contains("tag constructor")
