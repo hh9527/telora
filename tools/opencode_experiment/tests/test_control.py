@@ -109,37 +109,6 @@ class ConfigStateTest(unittest.TestCase):
             state = {"schema": SCHEMA, "plan_id": "plan", "exec_name": "run", "phase": "ready"}; save_state(root, state)
             self.assertEqual(load_state(root), state)
 
-    def test_ontology_plan_control_inputs(self):
-        repo = Path(__file__).resolve().parents[3]
-        manifest = load_manifest(repo, "ontology-edsl")
-        self.assertEqual(manifest.prompts, {
-            "start": "请开始实验。",
-            "continue": "恢复执行。",
-        })
-        self.assertEqual(
-            [item["name"] for item in manifest.validation],
-            ["ontology", "ontology-verify", "enterprise", "enterprise-verify"],
-        )
-        self.assertEqual(manifest.reporting, {"sinks": []})
-        self.assertIn("./bin/telora run invalid -C ontology --best-effort", manifest.permission_preflight["a2"])
-
-        plan = repo / "experiments" / "ontology-edsl"
-        a2 = (plan / ".opencode" / "agents" / "a2.md").read_text(encoding="utf-8")
-        a3 = (plan / ".opencode" / "agents" / "a3.md").read_text(encoding="utf-8")
-        coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
-        design = (plan / "ontology" / "DESIGN.md").read_text(encoding="utf-8")
-        self.assertIn("## Telora 自学与探索", a2)
-        self.assertIn("@bin/*.telora", a2)
-        self.assertIn("## Telora 自学与探索", a3)
-        self.assertIn("@bin/*.telora", a3)
-        self.assertIn("Model := ModellingFactory(DomainKnowledge)", design)
-        self.assertIn("SqlQuery := transform(Plan)", design)
-        self.assertIn("bindings: Array(Val)", design)
-        self.assertIn("完整内容", coordinator)
-        self.assertIn("当前反馈完整内容", coordinator)
-        self.assertIn("整个 execution 不存在第二轮修订", coordinator)
-        self.assertEqual([item["cwd"] for item in manifest.validation], ["ontology", "ontology", "ent-1", "ent-1"])
-
     def test_ontology_3_pins_model_and_uses_file_driven_workflow(self):
         repo = Path(__file__).resolve().parents[3]
         plan = repo / "experiments" / "ontology-3"
@@ -201,26 +170,6 @@ class ConfigStateTest(unittest.TestCase):
         ontology_goal = (plan / "ontology" / "GOAL.md").read_text(encoding="utf-8")
         self.assertNotIn("一次结果必须同时保留", domain)
         self.assertNotIn("多个非法意图产生诊断", ontology_goal)
-
-    def test_artifact_dag_smoke_plan_is_minimal_and_role_owned(self):
-        repo = Path(__file__).resolve().parents[3]
-        manifest = load_manifest(repo, "artifact-dag-smoke")
-        workflow = manifest.workflow
-        self.assertIsNotNone(workflow)
-        self.assertEqual(workflow["schema"], "telora.opencode-artifact-workflow/v1")
-        self.assertEqual(workflow["roles"], ["a1", "a2"])
-        self.assertEqual(workflow["start_artifacts"], ["brief"])
-        self.assertEqual(workflow["finish_artifact"], "result")
-        artifacts = workflow["artifacts"]
-        self.assertEqual(artifacts["draft.a1"]["owner"], "a1")
-        self.assertEqual(artifacts["draft-review.a2"]["owner"], "a2")
-        self.assertIsNone(artifacts["draft"]["owner"])
-        self.assertEqual(artifacts["draft.a1"]["input"], [
-            {"id": "brief", "optional": False},
-            {"id": "draft-feedback", "optional": True},
-        ])
-        self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
-        self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
 
     def test_manifest_validates_opencode_environment(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1,5 +1,0 @@
-{
-  "dependencies": {
-    "ontology-edsl": {"path": "../ontology-edsl"}
-  }
-}

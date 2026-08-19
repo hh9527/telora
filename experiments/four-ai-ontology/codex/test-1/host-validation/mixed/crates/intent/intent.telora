@@ -1,6 +1,0 @@
-import "enterprise-model/lib.telora" { compile, Intent, MeasureId, DimensionId };
-
-export let output = compile({
-  measures: ['OrdersCreated, 'DeliveredPackages],
-  dimensions: ['OriginRegion],
-});
