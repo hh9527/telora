@@ -111,6 +111,39 @@ class ArtifactWorkflowTest(unittest.TestCase):
                 "blocked_by": ["qb.a1"],
             }])
 
+    def test_pull_returns_one_runnable_artifact_in_declaration_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = validate_workflow({
+                "schema": "telora.opencode-artifact-workflow/v1",
+                "roles": ["a1"],
+                "start_artifacts": ["lang"],
+                "finish_artifact": "finish",
+                "stop_path": "control/STOP",
+                "artifacts": {
+                    "lang": {"desc": "input", "checks": ["GOAL.md"]},
+                    "first.a1": {
+                        "desc": "first", "input": ["lang"],
+                        "checks": ["first.txt"], "instruction": "write first",
+                    },
+                    "second.a1": {
+                        "desc": "second", "input": ["lang"],
+                        "checks": ["second.txt"], "instruction": "write second",
+                    },
+                    "finish": {"desc": "finish", "input": ["first.a1", "second.a1"]},
+                },
+            })
+            (root / "GOAL.md").write_text("goal", encoding="utf-8")
+            publish_artifact(root, value, "lang")
+
+            first = pull(root, value, "a1", False, None)
+            self.assertEqual([item["id"] for item in first["artifacts"]], ["first.a1"])
+            (root / "first.txt").write_text("first", encoding="utf-8")
+            submit(root, value, "a1", ["first.a1"])
+
+            second = pull(root, value, "a1", False, None)
+            self.assertEqual([item["id"] for item in second["artifacts"]], ["second.a1"])
+
     def test_stop_file_releases_waiting_roles(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -94,8 +94,10 @@ def _update(context: Context, values: list[str]) -> list[dict[str, Any]]:
             destination.unlink(missing_ok=True)
             results.append({"destination": destination_name, "removed": True})
             continue
-        source = Path.cwd() / _safe_relative(source_name, "source")
-        if not source.is_file() or source.is_symlink():
+        source = Path(source_name).expanduser()
+        if not source.is_absolute():
+            source = Path.cwd() / source
+        if not source.is_file():
             raise ControlError(f"missing source file: {source_name}", 66)
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=f".{destination.name}.", delete=False) as output:

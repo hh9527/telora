@@ -141,6 +141,33 @@ class ConfigStateTest(unittest.TestCase):
                 _update(context, ["docs/FEEDBACK.md=!"])
                 self.assertFalse((workspace / "docs/FEEDBACK.md").exists())
 
+    def test_update_accepts_absolute_host_source_outside_repository(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            source = root / "host-input.md"
+            workspace.mkdir()
+            source.write_text("external input", encoding="utf-8")
+            context = mock.Mock(state={"phase": "idle", "workspace": str(workspace)})
+
+            result = _update(context, [f"docs/INPUT.md={source}"])
+
+            self.assertEqual((workspace / "docs/INPUT.md").read_text(), "external input")
+            self.assertEqual(result[0]["source"], str(source))
+
+    def test_update_still_rejects_unsafe_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            source = root / "input.md"
+            workspace.mkdir()
+            source.write_text("input", encoding="utf-8")
+            context = mock.Mock(state={"phase": "idle", "workspace": str(workspace)})
+
+            with self.assertRaisesRegex(ControlError, "unsafe destination"):
+                _update(context, [f"../escaped.md={source}"])
+            self.assertFalse((root / "escaped.md").exists())
+
     def test_atomic_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); (root / "plan").write_text("plan\n")

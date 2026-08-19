@@ -426,14 +426,16 @@ def pull(root: Path, workflow: dict[str, Any], role: str,
             runnable = [artifact for artifact in workflow["artifacts"].values()
                         if artifact["owner"] == role and status["artifacts"][artifact["id"]]["runnable"]]
             if runnable:
+                artifact = runnable[0]
                 started = time.time_ns()
                 task = {
                     "schema": TASK_SCHEMA,
                     "task_id": f"{role}-{started}",
                     "role": role,
-                    "artifacts": [artifact["id"] for artifact in runnable],
-                    "inputs": {artifact["id"]: status["artifacts"][artifact["id"]]["input_mtime_ns"]
-                               for artifact in runnable},
+                    "artifacts": [artifact["id"]],
+                    "inputs": {
+                        artifact["id"]: status["artifacts"][artifact["id"]]["input_mtime_ns"]
+                    },
                     "started_at_ns": started,
                     "status": "active",
                 }

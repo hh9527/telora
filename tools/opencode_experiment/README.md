@@ -18,10 +18,11 @@ bin/oc-task pull <role>
 bin/oc-task submit <role> <artifact...>
 ```
 
-`pull` returns one task containing every currently runnable artifact owned by the role. A task starts
-when this pull succeeds and ends only when one complete-batch submit succeeds. With no runnable work
-it waits up to 60 seconds and the role immediately pulls again. Every role runs this loop for the
-whole external TUI lifetime; idle, timeout, and submit are not exit conditions.
+`pull` returns only the first runnable artifact owned by the role, using artifact declaration order.
+A task starts when this pull succeeds and ends when that one artifact is submitted. The role pulls
+again to claim its next runnable artifact. With no runnable work it waits up to 60 seconds and the
+role immediately pulls again. Every role runs this loop for the whole external TUI lifetime; idle,
+timeout, and submit are not exit conditions. Tasks are deliberately not merged.
 
 Each returned output artifact includes `output_mtime_ns`. Every direct input includes its current
 `mtime_ns`, `available`, and `changed`, where `changed` is computed without stored history:
@@ -44,10 +45,12 @@ oc-ctl update <test-id> <dest-file>=<src-file>...
 oc-ctl publish <test-id> <artifact>[=!]...
 ```
 
-`update` atomically copies a file from the Host's current directory, or deletes it when the source
-is `!`. `publish` touches a Host-owned artifact, or removes it when suffixed with `=!`. `status`
-combines artifact and Agent state with the latest task elapsed time and tokens. `stat` reports each
-role/task duration and tokens, longest thinking interval, and Telora command count.
+`update` atomically copies any Host-readable file. Relative source paths are resolved from the
+Host's current directory; absolute paths, including files under `/tmp`, are accepted. Destination
+paths remain relative to the experiment workspace. A source of `!` deletes the destination.
+`publish` touches a Host-owned artifact, or removes it when suffixed with `=!`. `status` combines
+artifact and Agent state with the latest task elapsed time and tokens. `stat` reports each role/task
+duration and tokens, longest thinking interval, and Telora command count.
 
 An `input` ending in `?` is optional. Its absence never blocks the first run; once published, its
 mtime participates in freshness exactly like any other input. Required inputs must be current.
