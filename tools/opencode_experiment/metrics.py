@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,6 +17,114 @@ def _tokens(messages: list[dict[str, Any]]) -> dict[str, int]:
         result["cache_read"] += cache.get("read", 0) or 0
         result["cache_write"] += cache.get("write", 0) or 0
     result["fresh"] = result["input"] + result["output"] + result["reasoning"]
+    return result
+
+
+def _message_interval(message: dict[str, Any], now_ms: int) -> tuple[int, int] | None:
+    values = message.get("info", {}).get("time", {})
+    start = values.get("created")
+    end = values.get("completed")
+    if not isinstance(start, (int, float)):
+        return None
+    return int(start), int(end) if isinstance(end, (int, float)) else now_ms
+
+
+def _overlap(left: tuple[int, int], right: tuple[int, int]) -> int:
+    return max(0, min(left[1], right[1]) - max(left[0], right[0]))
+
+
+def _longest_thinking_ms(message: dict[str, Any], window: tuple[int, int], now_ms: int) -> int:
+    interval = _message_interval(message, now_ms)
+    if interval is None:
+        return 0
+    start = max(interval[0], window[0])
+    end = min(interval[1], window[1])
+    if end <= start:
+        return 0
+    tools = []
+    for part in message.get("parts", []):
+        if part.get("type") != "tool":
+            continue
+        values = part.get("state", {}).get("time", {})
+        tool_start, tool_end = values.get("start"), values.get("end")
+        if isinstance(tool_start, (int, float)) and isinstance(tool_end, (int, float)):
+            tools.append((max(start, int(tool_start)), min(end, int(tool_end))))
+    cursor = start
+    longest = 0
+    for tool_start, tool_end in sorted(tools):
+        if tool_end <= cursor:
+            continue
+        longest = max(longest, max(0, tool_start - cursor))
+        cursor = max(cursor, tool_end)
+    return max(longest, max(0, end - cursor))
+
+
+def _telora_commands(messages: list[dict[str, Any]]) -> int:
+    result = 0
+    for message in messages:
+        for part in message.get("parts", []):
+            if part.get("type") != "tool" or part.get("tool") != "bash":
+                continue
+            command = part.get("state", {}).get("input", {}).get("command")
+            if isinstance(command, str) and re.search(r"(?:^|[\s/])telora(?:\s|$)", command):
+                result += 1
+    return result
+
+
+def collect_task_metrics(
+    records: dict[str, list[dict[str, Any]]],
+    messages_by_role: dict[str, list[dict[str, Any]]],
+    now_ms: int | None = None,
+) -> list[dict[str, Any]]:
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    tasks = [*records.get("history", []), *records.get("active", [])]
+    normalized = []
+    for task in tasks:
+        started_ns = task.get("started_at_ns")
+        if not isinstance(started_ns, int):
+            continue
+        ended_ns = task.get("submitted_at_ns") or task.get("ended_at_ns")
+        start = started_ns // 1_000_000
+        end = ended_ns // 1_000_000 if isinstance(ended_ns, int) else now_ms
+        normalized.append({"record": task, "window": (start, max(start, end)), "messages": []})
+
+    # A message belongs to at most one task. This avoids double-counting when a
+    # single assistant turn submits one task and immediately pulls the next.
+    for role, messages in messages_by_role.items():
+        role_tasks = [item for item in normalized if item["record"].get("role") == role]
+        for message in messages:
+            if message.get("info", {}).get("role") != "assistant":
+                continue
+            interval = _message_interval(message, now_ms)
+            if interval is None:
+                continue
+            candidates = [(_overlap(interval, item["window"]), item) for item in role_tasks]
+            overlap, selected = max(candidates, key=lambda item: (item[0], item[1]["window"][0]),
+                                    default=(0, None))
+            if overlap and selected is not None:
+                selected["messages"].append(message)
+
+    result = []
+    for item in normalized:
+        task = item["record"]
+        messages = item["messages"]
+        result.append({
+            "task_id": task.get("task_id"),
+            "role": task.get("role"),
+            "artifacts": task.get("artifacts", []),
+            "status": task.get("status"),
+            "started_at_ns": task.get("started_at_ns"),
+            "ended_at_ns": task.get("submitted_at_ns") or task.get("ended_at_ns"),
+            "elapsed_ms": item["window"][1] - item["window"][0],
+            "tokens": _tokens(messages),
+            "longest_thinking_ms": max(
+                (_longest_thinking_ms(message, item["window"], now_ms) for message in messages),
+                default=0,
+            ),
+            "telora_commands": _telora_commands(messages),
+            "assistant_messages": len(messages),
+        })
+    result.sort(key=lambda item: (item["started_at_ns"] or 0, item["task_id"] or ""))
     return result
 
 
@@ -172,15 +281,19 @@ def collect_metrics(
     children: list[dict[str, Any]],
     load_messages: Callable[[str], list[dict[str, Any]]],
     config: dict[str, Any],
+    task_records: dict[str, list[dict[str, Any]]] | None = None,
+    now_ms: int | None = None,
 ) -> dict[str, Any]:
     configured = config.get("roles", {})
     roles = []
+    messages_by_role: dict[str, list[dict[str, Any]]] = {}
     for child in children:
         agent = child.get("agent")
         session_id = child.get("id") or child.get("session_id")
         if not isinstance(agent, str) or not isinstance(session_id, str):
             continue
         messages = load_messages(session_id)
+        messages_by_role.setdefault(agent, []).extend(messages)
         definition = configured.get(agent)
         phases = []
         for name, kind, phase_messages in _phase_messages(messages, workspace, definition):
@@ -212,6 +325,13 @@ def collect_metrics(
             },
         })
     roles.sort(key=lambda item: item["agent"])
+
+    tasks = collect_task_metrics(task_records or {"active": [], "history": []},
+                                 messages_by_role, now_ms)
+    for role in roles:
+        role_tasks = [task for task in tasks if task["role"] == role["agent"]]
+        role["tasks"] = role_tasks
+        role["latest_task"] = role_tasks[-1] if role_tasks else None
 
     token_names = ("input", "output", "reasoning", "cache_read", "cache_write", "fresh")
     token_total = _sum_values([role["tokens"] for role in roles], token_names)
@@ -251,4 +371,9 @@ def collect_metrics(
                 ) if phase_totals["work"]["tokens"]["fresh"] else None,
             },
         },
+        "tasks": tasks,
+        "task_token_accounting": (
+            "Each assistant message is assigned to the task window with the greatest time overlap; "
+            "tokens are not split within a message."
+        ),
     }

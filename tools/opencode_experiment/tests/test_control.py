@@ -24,7 +24,7 @@ from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
-from tools.opencode_experiment.cli_ctl import main as control_main, parser as control_parser
+from tools.opencode_experiment.cli_ctl import _update, main as control_main, parser as control_parser
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -96,12 +96,31 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_artifact_publication_command_is_available(self):
         args = control_parser().parse_args(["publish", "run", "draft", "result"])
-        self.assertEqual((args.command, args.exec_name, args.artifacts),
+        self.assertEqual((args.command, args.test_id, args.artifacts),
                          ("publish", "run", ["draft", "result"]))
 
-    def test_stats_command_is_available(self):
-        args = control_parser().parse_args(["stats", "run"])
-        self.assertEqual((args.command, args.exec_name), ("stats", "run"))
+    def test_stat_command_is_available(self):
+        args = control_parser().parse_args(["stat", "run"])
+        self.assertEqual((args.command, args.test_id), ("stat", "run"))
+
+    def test_control_surface_is_limited_to_five_commands(self):
+        self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
+                         {"start", "stat", "status", "update", "publish"})
+
+    def test_update_copies_and_removes_workspace_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            host = root / "host"
+            workspace = root / "workspace"
+            host.mkdir()
+            workspace.mkdir()
+            (host / "feedback.md").write_text("revise", encoding="utf-8")
+            context = mock.Mock(state={"phase": "idle", "workspace": str(workspace)})
+            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=host):
+                _update(context, ["docs/FEEDBACK.md=feedback.md"])
+                self.assertEqual((workspace / "docs/FEEDBACK.md").read_text(), "revise")
+                _update(context, ["docs/FEEDBACK.md=!"])
+                self.assertFalse((workspace / "docs/FEEDBACK.md").exists())
 
     def test_atomic_state(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -139,9 +158,11 @@ class ConfigStateTest(unittest.TestCase):
         self.assertEqual(artifacts["qb.a1"]["input"], [
             {"id": "lang", "optional": False},
             {"id": "qb-req", "optional": False},
-            {"id": "qb-feedback-a2", "optional": True},
-            {"id": "qb-feedback-a3", "optional": True},
+            {"id": "qb-feedback", "optional": True},
         ])
+        self.assertEqual(artifacts["qb-feedback.a2"]["owner"], "a2")
+        self.assertEqual(artifacts["qb-feedback.a3"]["owner"], "a3")
+        self.assertIsNone(artifacts["qb-feedback"]["owner"])
         self.assertEqual(next(item for item in manifest.artifacts if item["name"] == "telora")["source"],
                          "target/release/telora")
         self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
@@ -393,6 +414,30 @@ class MetricsTest(unittest.TestCase):
                          [("unclassified", "unclassified")])
         self.assertEqual(result["aggregate"]["phases"]["unclassified"]["tokens"]["fresh"], 3)
 
+    def test_task_metrics_cover_tokens_thinking_and_telora_commands(self):
+        messages = [{
+            "info": {"role": "assistant", "time": {"created": 1000, "completed": 2000},
+                     "tokens": {"input": 10, "output": 3}},
+            "parts": [{"type": "tool", "tool": "bash", "state": {
+                "input": {"command": "./bin/telora run main -C demo"},
+                "time": {"start": 1300, "end": 1400},
+            }}],
+        }]
+        records = {"active": [], "history": [{
+            "task_id": "a1-1", "role": "a1", "artifacts": ["demo.a1"],
+            "status": "submitted", "started_at_ns": 900_000_000,
+            "submitted_at_ns": 2_100_000_000,
+        }]}
+        result = collect_metrics(
+            "run", "idle", Path("/tmp"), [{"id": "ses_a1", "agent": "a1"}],
+            lambda _session: messages, {"roles": {}}, records, now_ms=3000,
+        )
+        task = result["tasks"][0]
+        self.assertEqual(task["tokens"]["fresh"], 13)
+        self.assertEqual(task["elapsed_ms"], 1200)
+        self.assertEqual(task["longest_thinking_ms"], 600)
+        self.assertEqual(task["telora_commands"], 1)
+
     def test_collects_multiple_work_phases_at_first_matching_writes(self):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
@@ -432,7 +477,7 @@ class MetricsTest(unittest.TestCase):
                 [("learning", 1), ("modeling", 5), ("public_surface", 9)],
             )
 
-    def test_stats_reads_frozen_child_messages(self):
+    def test_stat_reads_live_child_messages(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             result_dir = root / "result"
@@ -441,27 +486,22 @@ class MetricsTest(unittest.TestCase):
             child_dir.mkdir(parents=True)
             workspace.mkdir()
             session_id = "ses_worker"
-            (result_dir / "children.json").write_text(json.dumps([
-                {"session_id": session_id, "title": "Worker"},
-            ]))
-            (child_dir / f"{session_id}.json").write_text(json.dumps({
-                "info": {"id": session_id, "agent": "worker",
-                         "model": {"providerID": "provider", "id": "model"}},
-                "messages": [{"info": {"role": "assistant", "tokens": {"input": 999}}, "parts": []}],
-            }))
-            (child_dir / f"{session_id}.messages.json").write_text(json.dumps([
+            messages = [
                 {"info": {"role": "assistant", "time": {"created": 1, "completed": 2},
                           "tokens": {"input": 7}}, "parts": []},
-            ]))
+            ]
+            children = [{"id": session_id, "agent": "worker", "title": "Worker"}]
             context = Context(Path(temporary), root, {
-                "exec_name": "run", "phase": "finished", "workspace": "/tmp/missing",
+                "exec_name": "run", "phase": "idle", "workspace": str(workspace),
                 "metrics": {"roles": {}},
             }, mock.Mock(metrics={"roles": {}}))
             output = StringIO()
-            with mock.patch("tools.opencode_experiment.cli_ctl.resolve", return_value=context), redirect_stdout(output):
-                self.assertEqual(control_main(["stats", "run"]), 0)
+            with mock.patch("tools.opencode_experiment.cli_ctl.resolve", return_value=context), \
+                 mock.patch("tools.opencode_experiment.cli_ctl._live_children",
+                            return_value=(children, {session_id: messages}, {})), redirect_stdout(output):
+                self.assertEqual(control_main(["stat", "run"]), 0)
             document = json.loads(output.getvalue())
-            self.assertEqual(document["execution_phase"], "finished")
+            self.assertEqual(document["execution_phase"], "idle")
             self.assertEqual(document["roles"][0]["tokens"]["fresh"], 7)
 
 

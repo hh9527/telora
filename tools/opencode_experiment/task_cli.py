@@ -15,6 +15,7 @@ from typing import Any, Iterator
 
 
 SCHEMA = "telora.opencode-artifact-workflow/v1"
+TASK_SCHEMA = "telora.oc-task-attempt/v1"
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 
 
@@ -240,6 +241,86 @@ def _artifact_path(root: Path, name: str) -> Path:
     return root / "control" / "artifacts" / name
 
 
+def _active_task_path(root: Path, role: str) -> Path:
+    return root / ".oc-task" / "active" / f"{role}.json"
+
+
+def _task_history_path(root: Path, task_id: str) -> Path:
+    return root / ".oc-task" / "history" / f"{task_id}.json"
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TaskError(f"invalid task record {path}: {exc}") from None
+    if not isinstance(value, dict):
+        raise TaskError(f"invalid task record {path}")
+    return value
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    _atomic_write(path, (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode())
+
+
+def _task_response(workflow: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema": "telora.oc-task-pull/v1",
+        "role": task["role"],
+        "task_id": task["task_id"],
+        "started_at_ns": task["started_at_ns"],
+        "artifacts": [{
+            "id": name,
+            "description": workflow["artifacts"][name]["desc"],
+            "instruction": workflow["artifacts"][name]["instruction"],
+            "inputs": [{**reference, "available": bool(
+                status["artifacts"][reference["id"]]["stamp_mtime_ns"]
+            )} for reference in workflow["artifacts"][name]["input"]],
+            "checks": workflow["artifacts"][name]["checks"],
+        } for name in task["artifacts"]],
+    }
+
+
+def task_records(root: Path) -> dict[str, list[dict[str, Any]]]:
+    active = []
+    history = []
+    for path in sorted((root / ".oc-task" / "active").glob("*.json")):
+        value = _read_json(path)
+        if value is not None:
+            active.append(value)
+    for path in sorted((root / ".oc-task" / "history").glob("*.json")):
+        value = _read_json(path)
+        if value is not None:
+            history.append(value)
+    history.sort(key=lambda item: (item.get("started_at_ns", 0), item.get("task_id", "")))
+    return {"active": active, "history": history}
+
+
+def _task_inputs_current(status: dict[str, Any], task: dict[str, Any]) -> bool:
+    inputs = task.get("inputs")
+    artifacts = task.get("artifacts")
+    return bool(isinstance(inputs, dict) and isinstance(artifacts, list) and all(
+        name in status["artifacts"]
+        and status["artifacts"][name]["input_mtime_ns"] == inputs.get(name)
+        for name in artifacts
+    ))
+
+
+def _archive_active(root: Path, path: Path, task: dict[str, Any], status: str,
+                    reason: str, ended_at_ns: int | None = None) -> dict[str, Any]:
+    archived = dict(task)
+    archived.update({
+        "status": status,
+        "ended_at_ns": time.time_ns() if ended_at_ns is None else ended_at_ns,
+        "reason": reason,
+    })
+    _write_json(_task_history_path(root, task["task_id"]), archived)
+    path.unlink(missing_ok=True)
+    return archived
+
+
 def evaluate(root: Path, workflow: dict[str, Any]) -> dict[str, Any]:
     artifacts = workflow["artifacts"]
     values: dict[str, dict[str, Any]] = {}
@@ -303,6 +384,20 @@ def publish_artifact(root: Path, workflow: dict[str, Any], name: str) -> dict[st
     return {"schema": "telora.oc-artifact/v1", "artifact": name, "mtime_ns": stamp}
 
 
+def remove_artifact(root: Path, workflow: dict[str, Any], name: str) -> dict[str, Any]:
+    artifact = workflow["artifacts"].get(name)
+    if artifact is None:
+        raise TaskError(f"unknown artifact: {name}", 64)
+    if artifact["owner"] is not None:
+        raise TaskError(f"role-owned artifact cannot be removed by Host: {name}", 64)
+    with _locked(root):
+        path = _artifact_path(root, name)
+        existed = path.is_file()
+        path.unlink(missing_ok=True)
+    return {"schema": "telora.oc-artifact/v1", "artifact": name,
+            "removed": True, "existed": existed}
+
+
 def pull(root: Path, workflow: dict[str, Any], role: str,
          wait: bool, timeout: float | None) -> dict[str, Any]:
     if role not in workflow["roles"]:
@@ -313,22 +408,29 @@ def pull(root: Path, workflow: dict[str, Any], role: str,
             if (root / workflow["stop_path"]).is_file():
                 return {"schema": "telora.oc-task-stop/v1", "role": role, "stopped": True}
             status = evaluate(root, workflow)
+            active_path = _active_task_path(root, role)
+            active = _read_json(active_path)
+            if active is not None:
+                if _task_inputs_current(status, active):
+                    return _task_response(workflow, status, active)
+                _archive_active(root, active_path, active, "stale",
+                                "artifact inputs changed after pull")
             runnable = [artifact for artifact in workflow["artifacts"].values()
                         if artifact["owner"] == role and status["artifacts"][artifact["id"]]["runnable"]]
             if runnable:
-                return {
-                    "schema": "telora.oc-task-pull/v1",
+                started = time.time_ns()
+                task = {
+                    "schema": TASK_SCHEMA,
+                    "task_id": f"{role}-{started}",
                     "role": role,
-                    "artifacts": [{
-                        "id": artifact["id"],
-                        "description": artifact["desc"],
-                        "instruction": artifact["instruction"],
-                        "inputs": [{**reference, "available": bool(
-                            status["artifacts"][reference["id"]]["stamp_mtime_ns"]
-                        )} for reference in artifact["input"]],
-                        "checks": artifact["checks"],
-                    } for artifact in runnable],
+                    "artifacts": [artifact["id"] for artifact in runnable],
+                    "inputs": {artifact["id"]: status["artifacts"][artifact["id"]]["input_mtime_ns"]
+                               for artifact in runnable},
+                    "started_at_ns": started,
+                    "status": "active",
                 }
+                _write_json(active_path, task)
+                return _task_response(workflow, status, task)
         if not wait or (deadline is not None and time.monotonic() >= deadline):
             status = workflow_status(root, workflow)
             waiting_for = [{
@@ -354,7 +456,18 @@ def submit(root: Path, workflow: dict[str, Any], role: str, names: list[str]) ->
     if not names or len(set(names)) != len(names):
         raise TaskError("submit requires unique artifact ids", 64)
     with _locked(root):
+        active_path = _active_task_path(root, role)
+        task = _read_json(active_path)
+        if task is None:
+            raise TaskError(f"role has no active pulled task: {role}", 75)
+        expected = task.get("artifacts")
+        if not isinstance(expected, list) or set(names) != set(expected) or len(names) != len(expected):
+            raise TaskError(f"submit must contain the complete pulled task: {', '.join(expected or [])}", 64)
         status = evaluate(root, workflow)
+        if not _task_inputs_current(status, task):
+            _archive_active(root, active_path, task, "stale",
+                            "artifact inputs changed after pull")
+            raise TaskError("artifact inputs changed after pull", 75)
         values = []
         for name in names:
             artifact = workflow["artifacts"].get(name)
@@ -371,7 +484,13 @@ def submit(root: Path, workflow: dict[str, Any], role: str, names: list[str]) ->
         published = [{"artifact": name, "mtime_ns": _atomic_write(
             _artifact_path(root, name), b"", value["input_mtime_ns"]
         )} for name, value in values]
-    return {"schema": "telora.oc-task-submit/v1", "role": role, "artifacts": published}
+        completed = dict(task)
+        completed.update({"status": "submitted", "submitted_at_ns": time.time_ns(),
+                          "artifacts_published": published})
+        _write_json(_task_history_path(root, task["task_id"]), completed)
+        active_path.unlink(missing_ok=True)
+    return {"schema": "telora.oc-task-submit/v1", "role": role,
+            "task_id": task["task_id"], "artifacts": published}
 
 
 def parser() -> argparse.ArgumentParser:

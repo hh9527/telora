@@ -13,7 +13,9 @@ from tools.opencode_experiment.task_cli import (
     parser,
     publish_artifact,
     pull,
+    remove_artifact,
     submit,
+    task_records,
     validate_workflow,
     workflow_status,
 )
@@ -35,13 +37,13 @@ def artifact_workflow() -> dict:
                 "checks": ["output.txt"],
                 "instruction": "生成 output.txt",
             },
-            "qb-review.a2": {
+            "qb-feedback.a2": {
                 "desc": "A2 检视",
                 "input": ["qb.a1"],
                 "checks": ["review.txt"],
                 "instruction": "检视 output.txt 并生成 review.txt",
             },
-            "qb": {"desc": "Host 批准的候选", "input": ["qb.a1", "qb-review.a2"]},
+            "qb": {"desc": "Host 批准的候选", "input": ["qb.a1", "qb-feedback.a2"]},
         },
     })
 
@@ -67,19 +69,22 @@ class ArtifactWorkflowTest(unittest.TestCase):
             submit(root, value, "a1", ["qb.a1"])
 
             (root / "review.txt").write_text("review", encoding="utf-8")
-            submit(root, value, "a2", ["qb-review.a2"])
+            pull(root, value, "a2", False, None)
+            submit(root, value, "a2", ["qb-feedback.a2"])
             (root / "FEEDBACK.md").write_text("revise", encoding="utf-8")
             publish_artifact(root, value, "qb-feedback")
 
             status = evaluate(root, value)
             self.assertTrue(status["artifacts"]["qb.a1"]["runnable"])
-            self.assertEqual(status["artifacts"]["qb-review.a2"]["blocked_by"], ["qb.a1"])
+            self.assertEqual(status["artifacts"]["qb-feedback.a2"]["blocked_by"], ["qb.a1"])
             self.assertEqual(workflow_status(root, load_workflow(root)), status)
 
             (root / "output.txt").write_text("revised", encoding="utf-8")
+            pull(root, value, "a1", False, None)
             submit(root, value, "a1", ["qb.a1"])
             (root / "review.txt").write_text("reviewed again", encoding="utf-8")
-            submit(root, value, "a2", ["qb-review.a2"])
+            pull(root, value, "a2", False, None)
+            submit(root, value, "a2", ["qb-feedback.a2"])
             publish_artifact(root, value, "qb")
             self.assertTrue(evaluate(root, value)["quiescent"])
 
@@ -91,7 +96,7 @@ class ArtifactWorkflowTest(unittest.TestCase):
             self.assertTrue(result["waiting"])
             self.assertEqual(result["reason"], "waiting for artifact inputs")
             self.assertEqual(result["waiting_for"], [{
-                "artifact": "qb-review.a2",
+                "artifact": "qb-feedback.a2",
                 "blocked_by": ["qb.a1"],
             }])
 
@@ -109,20 +114,45 @@ class ArtifactWorkflowTest(unittest.TestCase):
             value = self.prepare(root)
             with self.assertRaisesRegex(TaskError, "role-owned"):
                 publish_artifact(root, value, "qb.a1")
-            with self.assertRaisesRegex(TaskError, "not owned by a1"):
-                submit(root, value, "a1", ["qb-review.a2"])
-            with self.assertRaisesRegex(TaskError, "not owned by a2"):
+            with self.assertRaisesRegex(TaskError, "no active pulled task"):
+                submit(root, value, "a1", ["qb-feedback.a2"])
+            with self.assertRaisesRegex(TaskError, "no active pulled task"):
                 submit(root, value, "a2", ["qb"])
+
+    def test_host_can_remove_only_host_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            publish_artifact(root, value, "lang")
+            self.assertTrue(remove_artifact(root, value, "lang")["removed"])
+            self.assertFalse(evaluate(root, value)["artifacts"]["lang"]["current"])
+            with self.assertRaisesRegex(TaskError, "role-owned"):
+                remove_artifact(root, value, "qb.a1")
 
     def test_submit_requires_runnable_complete_checks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             value = self.prepare(root)
-            with self.assertRaisesRegex(TaskError, "not runnable"):
+            with self.assertRaisesRegex(TaskError, "no active pulled task"):
                 submit(root, value, "a1", ["qb.a1"])
             publish_artifact(root, value, "lang")
+            pull(root, value, "a1", False, None)
             with self.assertRaisesRegex(TaskError, "checks are incomplete"):
                 submit(root, value, "a1", ["qb.a1"])
+
+    def test_changed_inputs_supersede_active_task(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            publish_artifact(root, value, "lang")
+            first = pull(root, value, "a1", False, None)
+            (root / "FEEDBACK.md").write_text("new feedback", encoding="utf-8")
+            publish_artifact(root, value, "qb-feedback")
+            second = pull(root, value, "a1", False, None)
+            self.assertNotEqual(first["task_id"], second["task_id"])
+            records = task_records(root)
+            self.assertEqual(records["history"][0]["status"], "stale")
+            self.assertEqual(records["active"][0]["task_id"], second["task_id"])
 
     def test_validation_rejects_unknown_optional_input_and_cycle(self):
         raw = {
