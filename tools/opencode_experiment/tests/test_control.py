@@ -94,13 +94,10 @@ class ConfigStateTest(unittest.TestCase):
         for value in ("A", "a/b", ".hidden", "a b"):
             with self.assertRaises(ControlError): validate_identifier(value, "id")
 
-    def test_node_publication_commands_are_available(self):
-        args = control_parser().parse_args(["ready", "run", "qb.ready"])
-        self.assertEqual((args.command, args.exec_name, args.node), ("ready", "run", "qb.ready"))
-        args = control_parser().parse_args(["feedback", "run", "qb-feedback-a2.feedback",
-                                            "--body-file", "feedback.md"])
-        self.assertEqual((args.command, args.node, args.body_file),
-                         ("feedback", "qb-feedback-a2.feedback", Path("feedback.md")))
+    def test_artifact_publication_command_is_available(self):
+        args = control_parser().parse_args(["publish", "run", "draft", "result"])
+        self.assertEqual((args.command, args.exec_name, args.artifacts),
+                         ("publish", "run", ["draft", "result"]))
 
     def test_stats_command_is_available(self):
         args = control_parser().parse_args(["stats", "run"])
@@ -159,37 +156,28 @@ class ConfigStateTest(unittest.TestCase):
             [phase["name"] for phase in manifest.metrics["roles"]["a3"]["work_phases"]],
             ["modeling", "query_surface_design"],
         )
-        self.assertEqual(manifest.workflow["schema"], "telora.opencode-node-workflow/v1")
-        self.assertEqual(manifest.workflow["start_nodes"], ["lang.ready", "domain.ready"])
-        self.assertEqual(manifest.workflow["finish_node"], "intent-1.ready")
-        self.assertEqual(len(manifest.workflow["nodes"]), 20)
-        self.assertEqual(len(manifest.workflow["tasks"]), 10)
-        nodes = {item["id"]: item for item in manifest.workflow["nodes"]}
-        tasks = {item["id"]: item for item in manifest.workflow["tasks"]}
-        self.assertEqual(nodes["qb.rc"]["role"], "a1")
-        self.assertEqual(nodes["edsl.rc"]["role"], "a2")
-        self.assertEqual(nodes["ent-1-model.rc"]["role"], "a3")
-        self.assertEqual(nodes["ent-1-query-surface.rc"]["role"], "a3")
-        self.assertEqual(nodes["intent-1.rc"]["role"], "a4")
-        self.assertEqual(nodes["intent-1.rc"]["needs"],
-                         ["lang-learn-a4.rc", "ent-1-query-surface.ready"])
-        self.assertEqual(nodes["ent-1-query-feedback-a4.feedback"]["observes"],
-                         "ent-1-query-surface.rc")
-        self.assertEqual(nodes["qb.ready"]["needs"], ["qb.rc"])
-        self.assertEqual(nodes["qb-review-a2.rc"]["role"], "a2")
-        self.assertEqual(nodes["qb-review-a3.rc"]["role"], "a3")
-        self.assertEqual(nodes["qb-feedback-a2.feedback"]["observes"], "qb.rc")
-        self.assertEqual(nodes["qb-feedback-a3.feedback"]["observes"], "qb.rc")
-        self.assertEqual(nodes["qb.rc"]["inputs"],
-                         ["qb-feedback-a2.feedback", "qb-feedback-a3.feedback"])
-        self.assertEqual(tasks["edsl.rc"]["absorbs"], ["qb-review-a2.rc"])
-        self.assertEqual(tasks["ent-1-model.rc"]["absorbs"], ["qb-review-a3.rc"])
-        self.assertTrue(all(task_id.endswith(".rc") for task_id in tasks))
+        workflow = manifest.workflow
+        self.assertEqual(workflow["schema"], "telora.opencode-artifact-workflow/v1")
+        self.assertEqual(workflow["start_artifacts"],
+                         ["lang", "qb-req", "edsl-req", "domain-ent-1", "intent-req"])
+        self.assertEqual(workflow["finish_artifact"], "intent-1")
+        artifacts = workflow["artifacts"]
+        self.assertEqual(artifacts["qb.a1"]["owner"], "a1")
+        self.assertEqual(artifacts["edsl.a2"]["owner"], "a2")
+        self.assertEqual(artifacts["ent-1-model.a3"]["owner"], "a3")
+        self.assertEqual(artifacts["intent-1.a4"]["owner"], "a4")
+        self.assertIsNone(artifacts["qb"]["owner"])
+        self.assertEqual(artifacts["qb.a1"]["input"], [
+            {"id": "lang", "optional": False},
+            {"id": "qb-req", "optional": False},
+            {"id": "qb-feedback-a2", "optional": True},
+            {"id": "qb-feedback-a3", "optional": True},
+        ])
         self.assertEqual(next(item for item in manifest.artifacts if item["name"] == "telora")["source"],
                          "target/release/telora")
-        self.assertIn("./bin/oc-task next a1", manifest.permission_preflight["a1"])
-        self.assertIn("./bin/oc-task mark-done a2 qb-review-a2.rc", manifest.permission_preflight["a2"])
-        self.assertIn("./bin/oc-task mark-done a4 intent-1.rc", manifest.permission_preflight["a4"])
+        self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
+        self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
+        self.assertIn("./bin/oc-task submit a4 *", manifest.permission_preflight["a4"])
         a4 = (plan / ".opencode" / "agents" / "a4.md").read_text(encoding="utf-8")
         a4_permission_line = next(
             line.removeprefix("permission: ")
@@ -213,6 +201,26 @@ class ConfigStateTest(unittest.TestCase):
         ontology_goal = (plan / "ontology" / "GOAL.md").read_text(encoding="utf-8")
         self.assertNotIn("一次结果必须同时保留", domain)
         self.assertNotIn("多个非法意图产生诊断", ontology_goal)
+
+    def test_artifact_dag_smoke_plan_is_minimal_and_role_owned(self):
+        repo = Path(__file__).resolve().parents[3]
+        manifest = load_manifest(repo, "artifact-dag-smoke")
+        workflow = manifest.workflow
+        self.assertIsNotNone(workflow)
+        self.assertEqual(workflow["schema"], "telora.opencode-artifact-workflow/v1")
+        self.assertEqual(workflow["roles"], ["a1", "a2"])
+        self.assertEqual(workflow["start_artifacts"], ["brief"])
+        self.assertEqual(workflow["finish_artifact"], "result")
+        artifacts = workflow["artifacts"]
+        self.assertEqual(artifacts["draft.a1"]["owner"], "a1")
+        self.assertEqual(artifacts["draft-review.a2"]["owner"], "a2")
+        self.assertIsNone(artifacts["draft"]["owner"])
+        self.assertEqual(artifacts["draft.a1"]["input"], [
+            {"id": "brief", "optional": False},
+            {"id": "draft-feedback", "optional": True},
+        ])
+        self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
+        self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
 
     def test_manifest_validates_opencode_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -391,6 +399,13 @@ class MetricsTest(unittest.TestCase):
                  "parts": [{"type": "tool", "tool": "write", "state": {"input": {"filePath": str(source)}}}]},
                 {"info": {"role": "assistant", "time": {"created": 21, "completed": 25},
                           "tokens": {"input": 40, "output": 7, "reasoning": 8}}, "parts": []},
+                {"info": {"role": "assistant", "time": {"created": 26, "completed": 126},
+                          "tokens": {}},
+                 "parts": [{"type": "tool", "tool": "bash", "state": {
+                     "status": "completed",
+                     "input": {"command": "./bin/oc-task pull worker"},
+                     "time": {"start": 125, "end": 126},
+                 }}]},
             ]
             definition = {"roles": {"worker": {
                 "learning_phases": ["language_learning", "api_learning"],
@@ -408,14 +423,14 @@ class MetricsTest(unittest.TestCase):
             self.assertEqual([phase["name"] for phase in role["phases"]],
                              ["language_learning", "api_learning", "implementation"])
             self.assertEqual(role["tokens"]["fresh"], 138)
-            self.assertEqual(role["time"], {"first_created": 1, "last_completed": 25,
-                                             "active_ms": 16, "span_ms": 24, "waiting_ms": 8})
+            self.assertEqual(role["time"], {"first_created": 1, "last_completed": 126,
+                                             "active_ms": 16, "span_ms": 125, "waiting_ms": 109})
             self.assertEqual(role["artifacts"]["code"]["total"], {"files": 1, "lines": 2, "bytes": 25})
             self.assertEqual(role["artifacts"]["documents"]["total"]["lines"], 3)
             self.assertEqual(role["productivity"]["code_lines_per_1k_work_fresh_tokens"], 20.833)
             self.assertEqual(result["aggregate"]["phases"]["learning"]["tokens"]["fresh"], 42)
             self.assertEqual(result["aggregate"]["phases"]["work"]["tokens"]["fresh"], 96)
-            self.assertEqual(result["aggregate"]["time"]["span_ms"], 24)
+            self.assertEqual(result["aggregate"]["time"]["span_ms"], 125)
 
     def test_unconfigured_role_is_not_mislabeled_as_learning(self):
         messages = [{"info": {"role": "assistant", "time": {"created": 1, "completed": 2},

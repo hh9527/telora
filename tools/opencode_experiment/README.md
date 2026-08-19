@@ -1,51 +1,41 @@
 # OpenCode experiment control
 
 `oc-run` prepares an isolated experiment workspace and starts the external OpenCode TUI.
-`oc-ctl` controls and observes the execution. A plan may define a file-driven node DAG in
-`experiment.json.workflow`; the standalone `task_cli.py` is copied into the workspace as
-`bin/oc-task`.
+`oc-ctl` controls and observes the execution. A plan may define an artifact DAG in
+`experiment.json.workflow`; `task_cli.py` is copied into the workspace as `bin/oc-task`.
 
-## Node workflow
+## Artifact workflow
 
-The schema is `telora.opencode-node-workflow/v1`. Node suffixes define ownership:
-
-- `*.rc` is an Agent-owned task and candidate output. The task id and node id are identical.
-- `*.ready` is a Host-owned release decision. Downstream work cannot begin before it is current.
-- `*.feedback` is Host-owned content associated with one observed `.rc` version.
-
-Output files are checks, not DAG drivers. A task becomes runnable when all `needs` nodes and `after`
-tasks are current. `mark-done` requires the explicit `.rc` suffix, checks declared outputs, and
-atomically publishes that same node; an Agent cannot publish `.ready` or `.feedback`.
+The schema is `telora.opencode-artifact-workflow/v1`. An artifact named `name.<role>` is owned by
+that role. An artifact without a role suffix is Host-owned. Roles receive only two workflow
+permissions:
 
 ```text
-oc-ctl ready <exec-name> <node.ready>
-oc-ctl feedback <exec-name> <node.feedback> --body-file <file>
+bin/oc-task pull <role>
+bin/oc-task submit <role> <artifact...>
 ```
 
-`ready` rejects incomplete dependencies, checks, or required review tasks. `feedback` additionally
-requires a current observed `.rc`, a nonempty body, and all configured review tasks. Its timestamp
-invalidates the older `.rc`; after the Agent republishes `.rc`, that feedback becomes historical and
-does not trigger another iteration. Feedback is optional, so its absence never blocks initial work.
+`pull` returns every currently runnable artifact owned by the role. With no runnable work it waits
+up to 60 seconds, then returns the pending artifacts and their `blocked_by` dependencies; the role
+calls `pull` again. `submit` checks ownership, current inputs, and declared output checks before
+atomically touching each artifact marker. The wildcard command permission does not grant wildcard
+ownership: the DAG rejects every artifact not owned by the caller.
 
-The role loop is:
+The Host publishes reviewed inputs and promotions with:
 
 ```text
-bin/oc-task next <role>
-bin/oc-task mark-done <role> <name.rc>
+oc-ctl publish <exec-name> <artifact...>
 ```
 
-`next` atomically claims the first runnable task in manifest order and otherwise waits. Repeating it
-returns the existing claim. A task may declare same-role tasks in `absorbs`. When both the parent and
-an absorbed task are runnable, the parent is claimed and its response lists the absorbed obligations.
-Calling `mark-done` for an absorbed `.rc` publishes it but retains the parent claim; the parent cannot
-complete until every absorbed obligation is done. This lets a build report review completion during
-the build without scheduling a redundant review pass.
+An `input` ending in `?` is optional. Its absence never blocks the first run; once published, its
+mtime participates in freshness exactly like any other input. Required inputs must be current.
+When an input becomes newer, dependent artifacts become stale and are returned by `pull` again.
 
-`mark-done` is idempotent and rejects completion if inputs changed after the claim. `oc-ctl start`
-publishes every `start_nodes` entry once. `oc-ctl finish` requires the
-`finish_node`, every task, and all claims to be quiescent before writing `stop_path`; waiting roles
-then return `stopped: true`.
+Actual output files are only existence/nonempty checks. They never drive the DAG. All workflow
+state is reconstructed from `control/artifacts/*` mtimes; there are no claims, generations, done
+records, or special feedback semantics. File locking and atomic replacement serialize concurrent
+publication.
 
-State lives under `control/nodes/` and `.oc-task/` in the isolated workspace. Changes use file locks,
-atomic replacement, and nanosecond mtimes. File watches may optimize wake-up later, but do not define
-ordering semantics.
+`oc-ctl start` publishes `start_artifacts` once. `oc-ctl finish` requires the Host-owned
+`finish_artifact` and every role-owned artifact to be current, writes `stop_path`, and waits for role
+loops to observe `stopped: true`.

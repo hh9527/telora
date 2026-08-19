@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import ControlError, repository_root, validate_identifier
 from .context import Context, resolve
 from .external import resolve_capabilities, resolve_cli
-from .lifecycle import finish, live_boundary, publish_workflow_node, quiesce_workflow, reconcile, request_start, run_validation, safe_cleanup, send_round, verify_prepared
+from .lifecycle import finish, live_boundary, publish_workflow_artifact, quiesce_workflow, reconcile, request_start, run_validation, safe_cleanup, send_round, verify_prepared
 from .metrics import collect_metrics
 from .observe import failures, latest_assistant, normalized, recent, text_parts, timeline
 from .query import run_query, select_engine
@@ -49,8 +49,7 @@ def parser() -> argparse.ArgumentParser:
     query = commands.add_parser("query"); query.add_argument("exec_name"); group = query.add_mutually_exclusive_group(required=True); group.add_argument("expression", nargs="?"); group.add_argument("--file"); query.add_argument("--raw-output", action="store_true")
     watch = commands.add_parser("watch"); watch.add_argument("exec_name"); watch.add_argument("--debounce", type=lambda x: count(x, 3600), default=30); watch.add_argument("--timeout", type=lambda x: count(x, 86400), default=300)
     report = commands.add_parser("report"); report.add_argument("exec_name"); report.add_argument("--body-file", required=True, type=Path)
-    ready = commands.add_parser("ready"); ready.add_argument("exec_name"); ready.add_argument("node")
-    feedback = commands.add_parser("feedback"); feedback.add_argument("exec_name"); feedback.add_argument("node"); feedback.add_argument("--body-file", required=True, type=Path)
+    publish = commands.add_parser("publish"); publish.add_argument("exec_name"); publish.add_argument("artifacts", nargs="+")
     tasks = commands.add_parser("tasks"); tasks.add_argument("exec_name")
     return root
 
@@ -117,8 +116,10 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(.1)
             verify_prepared(context.manifest, context.state)
             if context.state.get("workflow"):
-                for node_id in context.state["workflow"]["start_nodes"]:
-                    publish_workflow_node(context, node_id, "start", once=f"workflow_started_{node_id}")
+                workflow = context.state["workflow"]
+                for artifact in workflow["start_artifacts"]:
+                    publish_workflow_artifact(context, artifact, "start",
+                                              once=f"workflow_started_{artifact}")
             initial = [record for record in context.rounds() if record.get("kind") == "initial"]
             if initial and initial[0].get("user_message_id"):
                 emit(initial[0]); return 0
@@ -191,11 +192,9 @@ def main(argv: list[str] | None = None) -> int:
                 if event.get("type") in ("session.status", "session.error", "message.updated") or (event.get("type") == "message.part.updated" and properties.get("part", {}).get("type") == "tool" and properties.get("part", {}).get("state", {}).get("status") in ("completed", "error")):
                     emit(event)
             return 0
-        if args.command == "ready":
-            emit(publish_workflow_node(context, args.node, "ready")); return 0
-        if args.command == "feedback":
-            content = args.body_file.read_bytes()
-            emit(publish_workflow_node(context, args.node, "feedback", content=content)); return 0
+        if args.command == "publish":
+            emit([publish_workflow_artifact(context, artifact, "publish")
+                  for artifact in args.artifacts]); return 0
         if args.command == "tasks":
             if not context.state.get("workflow") or not context.state.get("workspace"):
                 raise ControlError("execution workflow is not prepared", 75)

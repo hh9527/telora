@@ -19,7 +19,7 @@ from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
 from .permissions import preflight_permissions
 from .state import SCHEMA, atomic_json, atomic_write, bind_plan, load_state, locked, now, save_state
-from .task_cli import TaskError, publish_node, workflow_status
+from .task_cli import TaskError, publish_artifact, workflow_status
 
 
 def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
@@ -208,8 +208,8 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
     return root, state, True
 
 
-def publish_workflow_node(context: Context, node_id: str, reason: str, *, content: bytes | None = None,
-                          once: str | None = None) -> dict[str, Any]:
+def publish_workflow_artifact(context: Context, artifact: str, reason: str, *,
+                              once: str | None = None) -> dict[str, Any]:
     workflow = context.state.get("workflow")
     if not workflow:
         raise ControlError("execution plan has no workflow", 64)
@@ -218,15 +218,15 @@ def publish_workflow_node(context: Context, node_id: str, reason: str, *, conten
         if once and state.get(once):
             return dict(state[once])
         try:
-            result = publish_node(Path(state["workspace"]), workflow, node_id, content)
+            result = publish_artifact(Path(state["workspace"]), workflow, artifact)
         except TaskError as exc:
             raise ControlError(str(exc), exc.code) from None
-        number = int(state.get("next_node_event", 0))
+        number = int(state.get("next_artifact_event", 0))
         event = {**result, "number": number, "reason": reason, "published_at": now()}
-        directory = context.root / "nodes"
+        directory = context.root / "artifact-events"
         directory.mkdir(exist_ok=True)
-        atomic_json(directory / f"{number:03d}-{node_id.replace('/', '-')}.json", event)
-        state["next_node_event"] = number + 1
+        atomic_json(directory / f"{number:03d}-{artifact.replace('/', '-')}.json", event)
+        state["next_artifact_event"] = number + 1
         if once:
             state[once] = event
         save_state(context.root, state)
@@ -240,14 +240,14 @@ def quiesce_workflow(context: Context, timeout: float = 120) -> None:
         return
     status = workflow_status(Path(context.state["workspace"]), workflow)
     if not status["quiescent"]:
-        pending = [task["id"] for task in workflow["tasks"] if not status["tasks"][task["id"]]["current"]]
+        pending = [name for name, value in status["artifacts"].items()
+                   if value["owner"] is not None and not value["current"]]
         details = []
         if pending:
-            details.append(f"pending tasks: {', '.join(pending)}")
-        if not status["nodes"][workflow["finish_node"]]["current"]:
-            details.append(f"finish node is not current: {workflow['finish_node']}")
-        if status["claims"]:
-            details.append(f"active claims: {', '.join(sorted(status['claims']))}")
+            details.append(f"pending artifacts: {', '.join(pending)}")
+        finish = workflow["finish_artifact"]
+        if not status["artifacts"][finish]["current"]:
+            details.append(f"finish artifact is not current: {finish}")
         raise ControlError(f"workflow is not accepted; {'; '.join(details)}", 75)
     atomic_write(Path(context.state["workspace"]) / workflow["stop_path"], b"")
     deadline = time.monotonic() + timeout

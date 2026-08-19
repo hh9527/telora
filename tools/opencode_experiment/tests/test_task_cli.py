@@ -9,165 +9,152 @@ from tools.opencode_experiment.task_cli import (
     TaskError,
     evaluate,
     load_workflow,
-    mark_done,
-    next_task,
-    publish_node,
+    main,
+    parser,
+    publish_artifact,
+    pull,
+    submit,
     validate_workflow,
+    workflow_status,
 )
 
 
-def workflow() -> dict:
+def artifact_workflow() -> dict:
     return validate_workflow({
-        "schema": "telora.opencode-node-workflow/v1",
-        "start_nodes": ["lang.ready"],
-        "finish_node": "consume.ready",
+        "schema": "telora.opencode-artifact-workflow/v1",
+        "roles": ["a1", "a2"],
+        "start_artifacts": ["lang"],
+        "finish_artifact": "qb",
         "stop_path": "control/STOP",
-        "nodes": [
-            {"id": "lang.ready", "checks": ["docs/GOAL.md"]},
-            {"id": "build-feedback.feedback", "needs": ["build-review-a2.rc"],
-             "observes": "build.rc"},
-            {"id": "build.rc", "role": "a1", "needs": ["lang.ready"],
-             "inputs": ["build-feedback.feedback"], "checks": ["output.txt"]},
-            {"id": "build-review-a2.rc", "role": "a2", "needs": ["build.rc"],
-             "checks": ["review.txt"]},
-            {"id": "build.ready", "needs": ["build.rc"]},
-            {"id": "consume.rc", "role": "a2", "needs": ["build.ready"],
-             "checks": ["consumed.txt"]},
-            {"id": "consume.ready", "needs": ["consume.rc"]},
-        ],
-        "tasks": [
-            {"id": "build.rc", "role": "a1", "needs": ["lang.ready"],
-             "inputs": [], "outputs": ["output.txt"], "instruction": "build output"},
-            {"id": "build-review-a2.rc", "role": "a2", "needs": ["build.rc"],
-             "inputs": ["output.txt"], "outputs": ["review.txt"], "instruction": "review output"},
-            {"id": "consume.rc", "role": "a2", "needs": ["build.ready"],
-             "absorbs": ["build-review-a2.rc"], "inputs": ["output.txt"],
-             "outputs": ["consumed.txt"], "instruction": "consume output"},
-        ],
+        "artifacts": {
+            "lang": {"desc": "语言输入", "checks": ["GOAL.md"]},
+            "qb-feedback": {"desc": "Host 反馈", "checks": ["FEEDBACK.md"]},
+            "qb.a1": {
+                "desc": "A1 候选",
+                "input": ["lang", "qb-feedback?"],
+                "checks": ["output.txt"],
+                "instruction": "生成 output.txt",
+            },
+            "qb-review.a2": {
+                "desc": "A2 检视",
+                "input": ["qb.a1"],
+                "checks": ["review.txt"],
+                "instruction": "检视 output.txt 并生成 review.txt",
+            },
+            "qb": {"desc": "Host 批准的候选", "input": ["qb.a1", "qb-review.a2"]},
+        },
     })
 
 
-class TaskCliTest(unittest.TestCase):
+class ArtifactWorkflowTest(unittest.TestCase):
     def prepare(self, root: Path) -> dict:
-        (root / "docs").mkdir()
-        (root / "docs" / "GOAL.md").write_text("goal", encoding="utf-8")
-        value = workflow()
+        (root / "GOAL.md").write_text("write one line", encoding="utf-8")
+        value = artifact_workflow()
         (root / "experiment.json").write_text(json.dumps({"workflow": value}), encoding="utf-8")
         return value
 
-    @staticmethod
-    def complete_build(root: Path, value: dict, text: str = "ready") -> None:
-        claim = next_task(root, value, "a1", False, None)
-        assert claim["task"] == "build.rc"
-        (root / "output.txt").write_text(text, encoding="utf-8")
-        mark_done(root, value, "a1", "build.rc")
-
-    def test_standalone_review_and_feedback_invalidate_candidate(self):
+    def test_optional_artifact_rebuild_and_restart_are_mtime_derived(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); value = self.prepare(root)
+            root = Path(temporary)
+            value = self.prepare(root)
             self.assertEqual(load_workflow(root), value)
-            publish_node(root, value, "lang.ready")
-            self.complete_build(root, value)
+            publish_artifact(root, value, "lang")
 
-            claim = next_task(root, value, "a2", False, None)
-            self.assertEqual(claim["task"], "build-review-a2.rc")
-            self.assertEqual(claim["absorbed"], [])
-            (root / "review.txt").write_text("review", encoding="utf-8")
-            result = mark_done(root, value, "a2", "build-review-a2.rc")
-            self.assertFalse(result["claim_retained"])
-
-            feedback = publish_node(root, value, "build-feedback.feedback", b"fix the contract\n")
-            self.assertGreater(feedback["mtime_ns"], evaluate(root, value)["nodes"]["build.rc"]["stamp_mtime_ns"])
-            self.assertTrue(evaluate(root, value)["tasks"]["build.rc"]["runnable"])
-
-    def test_build_absorbs_runnable_review_and_keeps_parent_claim(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); value = self.prepare(root)
-            publish_node(root, value, "lang.ready")
-            self.complete_build(root, value)
-            publish_node(root, value, "build.ready")
-
-            claim = next_task(root, value, "a2", False, None)
-            self.assertEqual(claim["task"], "consume.rc")
-            self.assertEqual([item["task"] for item in claim["absorbed"]], ["build-review-a2.rc"])
-            with self.assertRaisesRegex(TaskError, "absorbed tasks must be completed"):
-                mark_done(root, value, "a2", "consume.rc")
+            pulled = pull(root, value, "a1", False, None)
+            self.assertEqual([item["id"] for item in pulled["artifacts"]], ["qb.a1"])
+            self.assertFalse(pulled["artifacts"][0]["inputs"][1]["available"])
+            (root / "output.txt").write_text("draft", encoding="utf-8")
+            submit(root, value, "a1", ["qb.a1"])
 
             (root / "review.txt").write_text("review", encoding="utf-8")
-            result = mark_done(root, value, "a2", "build-review-a2.rc")
-            self.assertTrue(result["claim_retained"])
-            self.assertEqual(result["parent"], "consume.rc")
-            resumed = next_task(root, value, "a2", False, None)
-            self.assertEqual(resumed["task"], "consume.rc")
-            self.assertEqual(resumed["absorbed"], [])
+            submit(root, value, "a2", ["qb-review.a2"])
+            (root / "FEEDBACK.md").write_text("revise", encoding="utf-8")
+            publish_artifact(root, value, "qb-feedback")
 
-            (root / "consumed.txt").write_text("done", encoding="utf-8")
-            result = mark_done(root, value, "a2", "consume.rc")
-            self.assertFalse(result["claim_retained"])
-            publish_node(root, value, "consume.ready")
+            status = evaluate(root, value)
+            self.assertTrue(status["artifacts"]["qb.a1"]["runnable"])
+            self.assertEqual(status["artifacts"]["qb-review.a2"]["blocked_by"], ["qb.a1"])
+            self.assertEqual(workflow_status(root, load_workflow(root)), status)
+
+            (root / "output.txt").write_text("revised", encoding="utf-8")
+            submit(root, value, "a1", ["qb.a1"])
+            (root / "review.txt").write_text("reviewed again", encoding="utf-8")
+            submit(root, value, "a2", ["qb-review.a2"])
+            publish_artifact(root, value, "qb")
             self.assertTrue(evaluate(root, value)["quiescent"])
 
-    def test_completed_review_is_not_absorbed_again(self):
+    def test_pull_timeout_explains_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); value = self.prepare(root)
-            publish_node(root, value, "lang.ready")
-            self.complete_build(root, value)
-            next_task(root, value, "a2", False, None)
-            (root / "review.txt").write_text("review", encoding="utf-8")
-            mark_done(root, value, "a2", "build-review-a2.rc")
-            publish_node(root, value, "build.ready")
-            claim = next_task(root, value, "a2", False, None)
-            self.assertEqual(claim["task"], "consume.rc")
-            self.assertEqual(claim["absorbed"], [])
-
-    def test_node_ownership_and_explicit_rc_target(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); value = self.prepare(root)
-            with self.assertRaisesRegex(TaskError, "Host-owned"):
-                publish_node(root, value, "build.rc")
-            with self.assertRaisesRegex(TaskError, "must end in .rc"):
-                mark_done(root, value, "a1", "build")
-            with self.assertRaisesRegex(TaskError, "stale node"):
-                publish_node(root, value, "build-feedback.feedback", b"feedback")
+            root = Path(temporary)
+            value = self.prepare(root)
+            result = pull(root, value, "a2", True, 0)
+            self.assertTrue(result["waiting"])
+            self.assertEqual(result["reason"], "waiting for artifact inputs")
+            self.assertEqual(result["waiting_for"], [{
+                "artifact": "qb-review.a2",
+                "blocked_by": ["qb.a1"],
+            }])
 
     def test_stop_file_releases_waiting_roles(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); value = self.prepare(root)
+            root = Path(temporary)
+            value = self.prepare(root)
             (root / "control").mkdir()
             (root / "control" / "STOP").touch()
-            self.assertTrue(next_task(root, value, "a1", False, None)["stopped"])
+            self.assertTrue(pull(root, value, "a1", False, None)["stopped"])
 
-    def test_mark_done_rejects_changed_inputs_and_releases_claim(self):
+    def test_role_and_host_ownership_are_enforced(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); value = self.prepare(root)
-            publish_node(root, value, "lang.ready")
-            next_task(root, value, "a1", False, None)
-            (root / "output.txt").write_text("ready", encoding="utf-8")
-            publish_node(root, value, "lang.ready")
-            with self.assertRaisesRegex(TaskError, "inputs changed"):
-                mark_done(root, value, "a1", "build.rc")
-            self.assertFalse(next_task(root, value, "a1", False, None)["resumed"])
+            root = Path(temporary)
+            value = self.prepare(root)
+            with self.assertRaisesRegex(TaskError, "role-owned"):
+                publish_artifact(root, value, "qb.a1")
+            with self.assertRaisesRegex(TaskError, "not owned by a1"):
+                submit(root, value, "a1", ["qb-review.a2"])
+            with self.assertRaisesRegex(TaskError, "not owned by a2"):
+                submit(root, value, "a2", ["qb"])
 
-    def test_rejects_invalid_task_names_ownership_and_absorption_cycles(self):
-        value = {
-            "schema": "telora.opencode-node-workflow/v1",
-            "start_nodes": ["start.ready"], "finish_node": "finish.ready",
+    def test_submit_requires_runnable_complete_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            with self.assertRaisesRegex(TaskError, "not runnable"):
+                submit(root, value, "a1", ["qb.a1"])
+            publish_artifact(root, value, "lang")
+            with self.assertRaisesRegex(TaskError, "checks are incomplete"):
+                submit(root, value, "a1", ["qb.a1"])
+
+    def test_validation_rejects_unknown_optional_input_and_cycle(self):
+        raw = {
+            "schema": "telora.opencode-artifact-workflow/v1",
+            "roles": ["a1"],
+            "start_artifacts": ["start"],
+            "finish_artifact": "finish",
             "stop_path": "control/STOP",
-            "nodes": [
-                {"id": "start.ready"}, {"id": "a.rc", "role": "r"},
-                {"id": "b.rc", "role": "r"}, {"id": "finish.ready", "needs": ["a.rc"]},
-            ],
-            "tasks": [
-                {"id": "a.rc", "role": "r", "absorbs": ["b.rc"], "instruction": "a"},
-                {"id": "b.rc", "role": "r", "absorbs": ["a.rc"], "instruction": "b"},
-            ],
+            "artifacts": {
+                "start": {"desc": "start"},
+                "work.a1": {"desc": "work", "input": ["missing?"], "instruction": "work"},
+                "finish": {"desc": "finish", "input": ["work.a1"]},
+            },
         }
-        with self.assertRaisesRegex(TaskError, "absorption cycle"):
-            validate_workflow(value)
-        value["tasks"][1]["absorbs"] = []
-        value["tasks"][1]["id"] = "b"
-        with self.assertRaisesRegex(TaskError, "must end in .rc"):
-            validate_workflow(value)
+        with self.assertRaisesRegex(TaskError, "unknown input"):
+            validate_workflow(raw)
+        raw["artifacts"]["work.a1"]["input"] = ["finish"]
+        with self.assertRaisesRegex(TaskError, "dependency cycle"):
+            validate_workflow(raw)
+
+    def test_cli_is_only_pull_submit_and_status(self):
+        self.assertEqual(parser().parse_args(["pull", "a1"]).timeout, 60.0)
+        self.assertEqual(parser().parse_args(["submit", "a1", "qb.a1"]).artifacts, ["qb.a1"])
+        self.assertEqual(parser().parse_args(["status"]).command, "status")
+        with self.assertRaises(SystemExit):
+            parser().parse_args(["mark-done", "a1", "qb.a1"])
+
+    def test_wait_is_a_successful_heartbeat(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.prepare(root)
+            self.assertEqual(main(["--root", str(root), "pull", "a2", "--timeout", "0"]), 0)
 
 
 if __name__ == "__main__":

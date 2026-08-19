@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,7 +25,7 @@ def _time(messages: list[dict[str, Any]]) -> dict[str, int | None]:
     starts = [value for value in starts if isinstance(value, (int, float))]
     ends = [value for value in ends if isinstance(value, (int, float))]
     active = sum(
-        max(0, info["completed"] - info["created"])
+        max(0, info["completed"] - info["created"] - _task_wait_ms(message))
         for message in messages
         if isinstance((info := message.get("info", {}).get("time", {})).get("created"), (int, float))
         and isinstance(info.get("completed"), (int, float))
@@ -33,6 +34,29 @@ def _time(messages: list[dict[str, Any]]) -> dict[str, int | None]:
     last = max(ends) if ends else None
     span = last - first if first is not None and last is not None else None
     return {"first_created": first, "last_completed": last, "active_ms": active, "span_ms": span}
+
+
+def _task_wait_ms(message: dict[str, Any]) -> int:
+    info = message.get("info", {}).get("time", {})
+    created = info.get("created")
+    completed = info.get("completed")
+    if not isinstance(created, (int, float)) or not isinstance(completed, (int, float)):
+        return 0
+    cursor = created
+    waiting = 0
+    for part in message.get("parts", []):
+        if part.get("type") != "tool":
+            continue
+        state = part.get("state", {})
+        end = state.get("time", {}).get("end")
+        if not isinstance(end, (int, float)):
+            continue
+        command = state.get("input", {}).get("command", "")
+        if (part.get("tool") == "bash" and isinstance(command, str)
+                and re.search(r"(?:^|/)oc-task (?:pull|next) [a-z0-9._-]+(?:\s|$)", command)):
+            waiting += max(0, min(end, completed) - cursor)
+        cursor = max(cursor, end)
+    return min(int(waiting), int(completed - created))
 
 
 def _matches(path: str, patterns: list[str]) -> bool:
