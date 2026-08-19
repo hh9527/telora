@@ -5959,6 +5959,41 @@ type Independent = String;
     }
 
     #[test]
+    fn codec_encode_is_closed_over_structural_containers_of_declared_values() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+               import "std/value" {Value};
+               type Val = enum {'String(String), 'Int(Int)};
+               def empty: Fn(String) -> Bool = fn(value) { value == "" };
+               type Query = struct {
+                   @json.skip_serializing_if(empty) sql: String,
+                   bindings: Array(Val),
+               };
+               let first: Query = {sql: "SELECT ?", bindings: ['Int(1)]};
+               let second: Query = {sql: "SELECT ?", bindings: ['String("two")]};
+               let queries: Array(Query) = [first, second];
+               let nested: Array(Array(Query)) = [[first], [second]];
+               let indexed: Dict(Query) = {first: first, second: second};
+               let maybe: Option(Query) = 'Some(first);
+               codec.encode(Value, {queries, nested, indexed, maybe})
+                   |> result.unwrap
+                   |> json.stringify"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        for expected in ["queries", "nested", "indexed", "maybe", "SELECT ?", "two"] {
+            assert!(output.contains(expected), "{output}");
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn codec_rejects_struct_shape_errors_and_json_is_strict() {
         let directory = fixture_dir();
         let cases = [

@@ -7904,8 +7904,7 @@ struct PredicateRequest {
 
 #[derive(Debug)]
 struct JsonEncodeContinuation {
-    schema: CodecType,
-    input: Val,
+    input: JsonEncodeInput,
     value_owner: Val,
     decisions: BTreeMap<String, bool>,
     pending_path: String,
@@ -7914,6 +7913,20 @@ struct JsonEncodeContinuation {
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
     trace_frame: RuntimeFrame,
+}
+
+#[derive(Debug)]
+enum JsonEncodeInput {
+    Typed { schema: CodecType, value: Val },
+    Dynamic(Val),
+}
+
+impl JsonEncodeInput {
+    fn value(&self) -> Val {
+        match self {
+            Self::Typed { value, .. } | Self::Dynamic(value) => *value,
+        }
+    }
 }
 
 impl NativeContinuation for JsonEncodeContinuation {
@@ -7981,24 +7994,13 @@ fn run_core_codec(
             })?
         };
         if source_owner.is_none() {
-            semantic_value_wrapper_bytes(current, Some(background), arguments[1]).map_err(
-                |heap_error| {
-                    error(
-                        RuntimeErrorKind::TypeMismatch,
-                        heap_error.to_string(),
-                        function,
-                        pc,
-                    )
-                },
-            )?;
-            return finish_codec_result(
-                Ok(CodecNode::SemanticValue {
-                    owner: arguments[0],
-                    raw: Box::new(CodecNode::Existing(arguments[1])),
-                }),
+            return continue_json_encode(
+                JsonEncodeInput::Dynamic(arguments[1]),
+                arguments[0],
+                BTreeMap::new(),
                 arguments[1],
                 return_target,
-                function,
+                Arc::new(function.clone()),
                 pc,
                 current,
                 background,
@@ -8092,10 +8094,13 @@ fn run_core_codec(
     )?;
     if matches!(direction, CodecDirection::Encode) {
         return continue_json_encode(
-            schema,
-            arguments[1],
+            JsonEncodeInput::Typed {
+                schema,
+                value: arguments[1],
+            },
             value_owner,
             BTreeMap::new(),
+            arguments[1],
             return_target,
             Arc::new(function.clone()),
             pc,
@@ -8149,10 +8154,10 @@ fn run_core_codec(
 
 #[allow(clippy::too_many_arguments)]
 fn continue_json_encode(
-    schema: CodecType,
-    input: Val,
+    input: JsonEncodeInput,
     value_owner: Val,
     decisions: BTreeMap<String, bool>,
+    diagnostic_input: Val,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
@@ -8160,20 +8165,30 @@ fn continue_json_encode(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
-    let result = transform_codec(
-        &schema,
-        input,
-        CodecDirection::Encode,
-        "$",
-        &decisions,
-        current,
-        background,
-    );
+    let result = match &input {
+        JsonEncodeInput::Typed { schema, value } => transform_codec(
+            schema,
+            *value,
+            CodecDirection::Encode,
+            "$",
+            &decisions,
+            current,
+            background,
+        ),
+        JsonEncodeInput::Dynamic(value) => transform_dynamic_encode(
+            *value,
+            "$",
+            &decisions,
+            current,
+            background,
+            &mut HashSet::new(),
+        )
+        .map(|(node, _)| node),
+    };
     if let Err(failure) = &result
         && let Some(request) = &failure.predicate
     {
         let continuation = JsonEncodeContinuation {
-            schema,
             input,
             value_owner,
             decisions,
@@ -8202,7 +8217,7 @@ fn continue_json_encode(
     });
     finish_codec_result(
         result,
-        input,
+        diagnostic_input,
         return_target,
         &call_function,
         call_pc,
@@ -8236,11 +8251,12 @@ fn resume_json_encode_continuation(
     continuation
         .decisions
         .insert(continuation.pending_path.clone(), decision);
+    let diagnostic_input = continuation.input.value();
     continue_json_encode(
-        continuation.schema,
         continuation.input,
         continuation.value_owner,
         continuation.decisions,
+        diagnostic_input,
         continuation.return_target,
         continuation.call_function,
         continuation.call_pc,
@@ -8248,6 +8264,201 @@ fn resume_json_encode_continuation(
         background,
         account,
     )
+}
+
+fn transform_dynamic_encode(
+    value: Val,
+    path: &str,
+    predicate_decisions: &BTreeMap<String, bool>,
+    current: &Heap,
+    background: &Heap,
+    active: &mut HashSet<Handle>,
+) -> Result<(CodecNode, bool), CodecFailure> {
+    let view = HeapView {
+        current,
+        background: Some(background),
+    };
+    if let Some(owner) = view
+        .type_witness(value)
+        .map_err(|error| CodecFailure::new(error.to_string(), value, value))?
+    {
+        let schema = decode_runtime_type(owner, current, background)
+            .map_err(|message| CodecFailure::new(message, value, owner))?;
+        assert_codec_graph_ready(&schema, current, background).map_err(|error| {
+            let message = match error {
+                CodecGraphError::Pending => {
+                    "codec was invoked before recursive type metadata was sealed".into()
+                }
+                CodecGraphError::Invalid(message) => message,
+            };
+            CodecFailure::new(message, value, owner)
+        })?;
+        return transform_codec(
+            &schema,
+            value,
+            CodecDirection::Encode,
+            path,
+            predicate_decisions,
+            current,
+            background,
+        )
+        .map(|node| (node, true));
+    }
+
+    let result = match value.value() {
+        DecodedValue::BuiltinAtom(BuiltinAtom::None | BuiltinAtom::True | BuiltinAtom::False)
+        | DecodedValue::Int(_)
+        | DecodedValue::InlineString(_)
+        | DecodedValue::ShortString(_)
+        | DecodedValue::Bytes(_) => Ok((CodecNode::Existing(value), false)),
+        DecodedValue::Float(number) if number.is_finite() => {
+            Ok((CodecNode::Existing(value), false))
+        }
+        DecodedValue::Float(_) => Err(CodecFailure::new(
+            "semantic Value cannot contain a non-finite Float",
+            value,
+            value,
+        )),
+        DecodedValue::Array(handle) => {
+            if !active.insert(handle) {
+                return Err(CodecFailure::new(
+                    "semantic Value cannot contain a cycle",
+                    value,
+                    value,
+                ));
+            }
+            let result = view
+                .sequence(handle, false)
+                .map_err(|error| CodecFailure::new(error.to_string(), value, value))?
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    transform_dynamic_encode(
+                        *item,
+                        &format!("{path}[{index}]"),
+                        predicate_decisions,
+                        current,
+                        background,
+                        active,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>();
+            active.remove(&handle);
+            result.map(|items| {
+                if items.iter().any(|(_, transformed)| *transformed) {
+                    (
+                        CodecNode::Array(
+                            items.into_iter().map(|(item, _)| item).collect(),
+                            value.loc(),
+                        ),
+                        true,
+                    )
+                } else {
+                    (CodecNode::Existing(value), false)
+                }
+            })
+        }
+        DecodedValue::Dict(handle) => {
+            if !active.insert(handle) {
+                return Err(CodecFailure::new(
+                    "semantic Value cannot contain a cycle",
+                    value,
+                    value,
+                ));
+            }
+            let (fields, values) = view
+                .dict_parts(handle)
+                .map_err(|error| CodecFailure::new(error.to_string(), value, value))?;
+            let result = fields
+                .iter()
+                .zip(values)
+                .map(|(field, item)| {
+                    let name = view
+                        .text(*field)
+                        .map_err(|error| CodecFailure::new(error.to_string(), value, value))?
+                        .to_owned();
+                    transform_dynamic_encode(
+                        *item,
+                        &format!("{path}.{name}"),
+                        predicate_decisions,
+                        current,
+                        background,
+                        active,
+                    )
+                    .map(|(item, transformed)| (name, item, transformed))
+                })
+                .collect::<Result<Vec<_>, _>>();
+            active.remove(&handle);
+            result.map(|fields| {
+                if fields.iter().any(|(_, _, transformed)| *transformed) {
+                    (
+                        CodecNode::Dict(
+                            fields
+                                .into_iter()
+                                .map(|(name, item, _)| (name, item))
+                                .collect(),
+                            value.loc(),
+                        ),
+                        true,
+                    )
+                } else {
+                    (CodecNode::Existing(value), false)
+                }
+            })
+        }
+        DecodedValue::Tagged(handle) => {
+            let (tag, payload) = view
+                .tagged(handle)
+                .map_err(|error| CodecFailure::new(error.to_string(), value, value))?;
+            if tag.value() == DecodedValue::BuiltinAtom(BuiltinAtom::Some) {
+                return transform_dynamic_encode(
+                    payload,
+                    path,
+                    predicate_decisions,
+                    current,
+                    background,
+                    active,
+                )
+                .map(|(node, _)| (node, true));
+            }
+            let temporal = view
+                .atom_text(tag)
+                .map_err(|error| CodecFailure::new(error.to_string(), value, value))?
+                .is_some_and(|tag| {
+                    matches!(
+                        tag.as_str(),
+                        "LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime"
+                    )
+                })
+                && view
+                    .string_text(payload)
+                    .map_err(|error| CodecFailure::new(error.to_string(), value, value))?
+                    .is_some();
+            if temporal {
+                Ok((CodecNode::Existing(value), false))
+            } else {
+                Err(CodecFailure::new(
+                    "raw data graph contains unsupported tagged value",
+                    value,
+                    value,
+                ))
+            }
+        }
+        DecodedValue::NativeType(_)
+        | DecodedValue::DeclaredType(_)
+        | DecodedValue::SymbolicType(_)
+        | DecodedValue::TypeSlot(_) => Err(CodecFailure::new(
+            "semantic Value cannot encode Type",
+            value,
+            value,
+        )),
+        _ => Err(CodecFailure::new(
+            format!("raw data graph contains unsupported {:?}", value.value()),
+            value,
+            value,
+        )),
+    };
+    result
 }
 
 #[allow(clippy::too_many_arguments)]
