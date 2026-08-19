@@ -23,6 +23,17 @@ when this pull succeeds and ends only when one complete-batch submit succeeds. W
 it waits up to 60 seconds and the role immediately pulls again. Every role runs this loop for the
 whole external TUI lifetime; idle, timeout, and submit are not exit conditions.
 
+Each returned output artifact includes `output_mtime_ns`. Every direct input includes its current
+`mtime_ns`, `available`, and `changed`, where `changed` is computed without stored history:
+
+```text
+changed := input.mtime_ns > output_mtime_ns
+```
+
+An absent output has mtime zero, so every available input is changed on the first run. An absent
+optional input has mtime zero and is not changed. Inputs are listed per output artifact rather than
+as a merged task-wide set, so a role can see exactly why each output became runnable.
+
 The Host control surface is deliberately limited to:
 
 ```text

@@ -66,7 +66,13 @@ class ArtifactWorkflowTest(unittest.TestCase):
 
             pulled = pull(root, value, "a1", False, None)
             self.assertEqual([item["id"] for item in pulled["artifacts"]], ["qb.a1"])
-            self.assertFalse(pulled["artifacts"][0]["inputs"][1]["available"])
+            output = pulled["artifacts"][0]
+            self.assertEqual(output["output_mtime_ns"], 0)
+            self.assertGreater(output["inputs"][0]["mtime_ns"], 0)
+            self.assertTrue(output["inputs"][0]["changed"])
+            self.assertFalse(output["inputs"][1]["available"])
+            self.assertEqual(output["inputs"][1]["mtime_ns"], 0)
+            self.assertFalse(output["inputs"][1]["changed"])
             (root / "output.txt").write_text("draft", encoding="utf-8")
             submit(root, value, "a1", ["qb.a1"])
 
@@ -82,7 +88,10 @@ class ArtifactWorkflowTest(unittest.TestCase):
             self.assertEqual(workflow_status(root, load_workflow(root)), status)
 
             (root / "output.txt").write_text("revised", encoding="utf-8")
-            pull(root, value, "a1", False, None)
+            rebuilt = pull(root, value, "a1", False, None)["artifacts"][0]
+            self.assertGreater(rebuilt["output_mtime_ns"], 0)
+            self.assertFalse(rebuilt["inputs"][0]["changed"])
+            self.assertTrue(rebuilt["inputs"][1]["changed"])
             submit(root, value, "a1", ["qb.a1"])
             (root / "review.txt").write_text("reviewed again", encoding="utf-8")
             pull(root, value, "a2", False, None)

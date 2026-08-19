@@ -266,20 +266,28 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _task_response(workflow: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    def artifact_response(name: str) -> dict[str, Any]:
+        output_mtime = status["artifacts"][name]["stamp_mtime_ns"]
+        return {
+            "id": name,
+            "description": workflow["artifacts"][name]["desc"],
+            "instruction": workflow["artifacts"][name]["instruction"],
+            "output_mtime_ns": output_mtime,
+            "inputs": [{
+                **reference,
+                "available": bool(status["artifacts"][reference["id"]]["stamp_mtime_ns"]),
+                "mtime_ns": status["artifacts"][reference["id"]]["stamp_mtime_ns"],
+                "changed": status["artifacts"][reference["id"]]["stamp_mtime_ns"] > output_mtime,
+            } for reference in workflow["artifacts"][name]["input"]],
+            "checks": workflow["artifacts"][name]["checks"],
+        }
+
     return {
         "schema": "telora.oc-task-pull/v1",
         "role": task["role"],
         "task_id": task["task_id"],
         "started_at_ns": task["started_at_ns"],
-        "artifacts": [{
-            "id": name,
-            "description": workflow["artifacts"][name]["desc"],
-            "instruction": workflow["artifacts"][name]["instruction"],
-            "inputs": [{**reference, "available": bool(
-                status["artifacts"][reference["id"]]["stamp_mtime_ns"]
-            )} for reference in workflow["artifacts"][name]["input"]],
-            "checks": workflow["artifacts"][name]["checks"],
-        } for name in task["artifacts"]],
+        "artifacts": [artifact_response(name) for name in task["artifacts"]],
     }
 
 
