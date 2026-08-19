@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from tools.opencode_experiment.task_cli import (
@@ -177,14 +179,15 @@ class ArtifactWorkflowTest(unittest.TestCase):
         self.assertEqual(parser().parse_args(["pull", "a1"]).timeout, 60.0)
         self.assertEqual(parser().parse_args(["submit", "a1", "qb.a1"]).artifacts, ["qb.a1"])
         self.assertEqual(parser().parse_args(["status"]).command, "status")
-        with self.assertRaises(SystemExit):
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
             parser().parse_args(["mark-done", "a1", "qb.a1"])
 
     def test_wait_is_a_successful_heartbeat(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.prepare(root)
-            self.assertEqual(main(["--root", str(root), "pull", "a2", "--timeout", "0"]), 0)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(main(["--root", str(root), "pull", "a2", "--timeout", "0"]), 0)
 
 
 if __name__ == "__main__":
