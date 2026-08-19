@@ -515,34 +515,43 @@ def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
 规范类型实参共同确定；同一应用重复求值返回同一个类型身份。因此 family 不是任意
 type-level function，也不是 higher-kinded constructor。
 
-Family 必须一次提供全部参数，不支持 partial application 或参数化递归。无环 family
-可以组合本模块中的其他 family 和非参数化 concrete type，也可以跨完整、选择性、
-alias 和 open import 保留精确 scheme。Family 可达的本地 TypeMetadata 依赖按语义
-依赖图求值，声明顺序不影响结果；包含 family 的循环 component 是错误。
+Family 必须一次提供全部参数，不支持 partial application。无环 family 可以组合本
+模块中的其他 family 和非参数化 concrete type，也可以跨完整、选择性、alias 和 open
+import 保留精确 scheme。Family 可达的本地 TypeMetadata 依赖按语义依赖图求值，声明
+顺序不影响结果。
 
 Family 声明可以捕获已经封闭的非参数化递归 concrete type，但不能依赖同模块的
 普通 helper；可以依赖内建 metadata 构造器和 imported metadata 能力。这一边界
 避免把普通源码求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
 
-这一拒绝是稳定的语言边界，不是待补齐的推断 fallback。Family 是有限符号模板，
-递归 concrete type 是预声明并 sealing 的有限图；参数化递归 back-edge 还需要携带
-family 应用及参数环境，无法表示为普通 `Bound` 替换或 concrete `Named` reference。
-语言不通过 eager unfolding、深度截断、`Any` 或按 concrete 参数重跑 family body
-近似该能力。需要变化叶节点集合时，声明不同的封闭递归类型或一个包含全部受支持
-variant 的闭合 enum；需要共享行为时，在递归数据之外参数化 renderer、visitor、
-capability、policy 或 dialect。
+名义 Struct/Enum family 可以直接以完全相同、顺序不变的参数自递归：
+
+```telora
+type Expr(A) = enum {
+    'Leaf(A),
+    'Call(Array(Expr(A))),
+};
+```
+
+该声明只求值一次，并把 `Expr(A)` 表示为同一 symbolic root 的有限图回边。具体化以
+`(TypeConstructorId, TypeArgs)` 为 canonical key；重复 `Expr(Int)` 是同一类型，
+`Expr(String)` 则是另一类型。严格分析与恢复分析都使用这一闭合规则。
+
+这一能力不是一般递归 type-level function。递归调用必须原样使用当前全部 Bound 参数；
+`F(Array(A))`、`F(B, A)`、mutual family cycle、family/concrete mixed cycle，以及
+`type F(A) = F(A)` 这样的无生产 alias 均在声明处拒绝。语言不通过 eager unfolding、
+深度截断、`Any` 或按 concrete 参数重跑 family body 来近似这些形式。
 
 ### 7.3 递归元数据
 
 递归类型使用有限图和受控 reference 表示，而不是无限展开的树。成功初始化的递归
 root 在冻结后发布；未初始化 reference 不能进入 persistent world。
 
-严格模块分析与 `check`/`show` 的恢复分析对非参数化递归 concrete type 使用相同的
-component sealing：先为同一递归 component 的全部 root 建立具名 reference，再整体
-求值并安装有限图。旁支 binding 的语法、类型或运行时失败不会把该 component 误报为
-不可部分求值，也不会迫使库作者把递归类型、引用它的 family 和多个函数契约拆到不同
-模块。裸 type alias 环和包含 family 的递归 component 不满足这一规则，仍按第 7.2 节
-拒绝。
+严格模块分析与 `check`/`show` 的恢复分析对递归 concrete type 使用相同的 component
+sealing：先为同一递归 component 的全部 root 建立具名 reference，再整体求值并安装
+有限图。第 7.2 节允许的单个名义 family 同样先建立带 Bound 参数的 symbolic root，
+再封闭同参自回边。旁支 binding 的语法、类型或运行时失败不会把这些类型误报为不可
+部分求值。裸 type alias 环、mutual family cycle 和 mixed cycle 仍拒绝。
 
 用户态 descriptor observer 可以识别 Ref 并显式解析。遍历不伴随具体值时，解释器
 必须自行处理循环；遍历有限、无环的运行时数据时，可以让普通值递归提供终止进度。
@@ -1375,9 +1384,9 @@ type Dialect(Context) = struct {
 同一个递归声明经 whole-module、selective 或 open import 得到的契约保持原声明身份；
 另一个同结构声明仍是不同类型。私有 identity 不属于显示名称，也不是源码可引用的值。
 
-Family 自身仍不能参数化递归或形成循环 family component，也不能调用同模块普通
-helper。这里的限制是 family 求值依赖的限制，不限制 family 字段引用已经封闭的
-递归 concrete type。
+Family 可以在直接 Struct/Enum initializer 中用原参数自递归；其余循环 family
+component 仍拒绝。Family 也不能调用同模块普通 helper。这里的限制是 family 模板
+闭合与求值依赖的限制，不限制 family 字段引用已经封闭的递归 concrete type。
 
 ### 14.4 多态 binding 与外围类型参数
 

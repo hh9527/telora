@@ -1,13 +1,19 @@
 # RFC 0232: Bounded recursion for TypeMetadata families
 
-- Status: Implemented
+- Status: Superseded in part by RFC 0254
 - Tracking issue: #51
 - Clarifies: RFC 0218
 
 ## Summary
 
-Telora does not support parameterized recursive TypeMetadata families. Every
-strongly connected type-declaration component containing a family is rejected.
+RFC 0254 later admits productive direct self-recursion for nominal Struct/Enum
+families with unchanged parameters. This RFC remains authoritative for the
+rejection of mutual, transformed-argument, mixed, and non-productive recursive
+families.
+
+At the time of this RFC, Telora did not support parameterized recursive
+TypeMetadata families, and every strongly connected type-declaration component
+containing a family was rejected.
 Recursion remains available through closed, non-parameterized concrete types;
 acyclic families may contain those closed recursive descriptors or accept them
 as ordinary TypeMetadata arguments.

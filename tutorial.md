@@ -177,8 +177,7 @@ alias 不创建名义上不同的新类型。
 需要让一个可复用的 metadata 结果出现在泛型契约中时，使用参数化 `type` 声明：
 
 ```telora
-@struct
-type Box(Item) = {
+type Box(Item) = struct {
     value: Item,
 };
 
@@ -198,7 +197,7 @@ Family 可以组合其他无环 family，也可以像其他 export 一样跨模�
 
 ```telora
 # containers.telora
-@struct type Box(Item) = {value: Item};
+type Box(Item) = struct {value: Item};
 export { Box };
 
 # main.telora
@@ -206,10 +205,20 @@ import "./containers.telora" { Box };
 type IntBox = Box(Int);
 ```
 
-调用必须一次提供全部 TypeMetadata 参数。重复参数、参数数量错误、无效 metadata 和
-直接或相互递归 family 都会在声明或调用位置报告。当前版本不允许 family 依赖同一
-模块中普通的非参数化 `type` 或 helper；可以直接使用内建 metadata 构造器、imported
-metadata 能力和其他无环本地 family。
+调用必须一次提供全部 TypeMetadata 参数。重复参数、参数数量错误和无效 metadata
+都会在声明或调用位置报告。名义 Struct/Enum family 支持原参数直接自递归：
+
+```telora
+type Expr(Leaf) = enum {
+    'Leaf(Leaf),
+    'Call(Array(Expr(Leaf))),
+};
+```
+
+`Expr(Int)` 重复应用得到同一类型身份。递归调用必须原样、原序提供全部当前参数；
+参数变换、参数换序、相互递归 family 和无生产 alias 不支持。当前版本也不允许 family
+依赖同一模块中普通 helper；可以直接使用内建 metadata 构造器、imported metadata
+能力和其他无环本地 family。
 
 ## 5. Option、Result 和模式匹配
 

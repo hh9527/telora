@@ -1028,6 +1028,24 @@ impl Heap {
         }
     }
 
+    pub(crate) fn reserve_symbolic_type_ref(
+        &mut self,
+        id: crate::value::DeclaredTypeId,
+        name: impl Into<Arc<str>>,
+        placeholder: Val,
+    ) -> Result<Val, HeapError> {
+        if !id
+            .arguments()
+            .iter()
+            .any(crate::types::type_identity_is_symbolic)
+        {
+            return Err(HeapError(
+                "symbolic type ref requires at least one symbolic argument",
+            ));
+        }
+        self.reserve_type_metadata(id, name, placeholder)
+    }
+
     pub(crate) fn seal_type_ref(&mut self, target: Val, body: Val) -> Result<Val, HeapError> {
         let handle = match target.value() {
             DecodedValue::DeclaredType(handle) | DecodedValue::SymbolicType(handle) => handle,

@@ -245,6 +245,10 @@ Family 不是任意 metadata function、associated type、trait、higher-kinded 
 parameter 或 nominal constructor。它不参与实例搜索，不能作为 type parameter 传递，
 也不引入新的 runtime kind 或求值语言。
 
+名义 Struct/Enum family 可以在自己的有限符号模板中以完全相同的 Bound 参数建立直接
+回边。参数变换、mutual family recursion 和无生产 alias 不属于该能力；它们需要一般
+递归 type-function 归一化，当前不支持。
+
 ### `Any`
 
 `Any` 是显式的静态精度逃生口，允许值在缺少精确静态类型时跨越边界。API 如果

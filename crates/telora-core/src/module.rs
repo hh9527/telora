@@ -8605,6 +8605,56 @@ unchanged", "|"),
     }
 
     #[test]
+    fn imported_recursive_type_family_drives_codecs_and_schema() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"type Expr(A) = enum {
+                   'Leaf(A),
+                   'Call(Array(Expr(A))),
+               };
+               export {Expr};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("facade.telora"),
+            r#"import "./types.telora" {Expr}; export {Expr};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./facade.telora" as types;
+               import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+               import "std/value" {Value};
+               type IntExpr = types.Expr(Int);
+               type SameIntExpr = types.Expr(Int);
+               type StringExpr = types.Expr(String);
+               let value: IntExpr = 'Call(['Leaf(1), 'Call(['Leaf(2)])]);
+               let encoded = codec.encode(Value, value) |> result.unwrap;
+               let decoded: IntExpr = codec.decode(IntExpr, encoded) |> result.unwrap;
+               {decoded, encoded, schema: json.schema(IntExpr)}"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.analysis.binding_types["IntExpr"],
+            module.analysis.binding_types["SameIntExpr"]
+        );
+        assert_ne!(
+            module.analysis.binding_types["IntExpr"],
+            module.analysis.binding_types["StringExpr"]
+        );
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("'Leaf(2)"), "{output}");
+        assert!(output.contains("$defs"), "{output}");
+        assert!(output.contains("$ref"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn core_array_callbacks_share_fuel_allocation_and_tool_stage_execution() {
         let directory = fixture_dir();
         let item_count = 1_500usize;

@@ -2038,6 +2038,48 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                 })
                 .collect::<Vec<_>>();
             handled.extend(component.iter().copied());
+            let recursive_nominal_family = component.len() == 1 && {
+                let binding = bindings[&component[0]];
+                !binding.value.type_parameters.is_empty()
+                    && binding.value.declared_initializer.is_some()
+            };
+            if recursive_nominal_family {
+                let definition = component[0];
+                let binding = bindings[&definition];
+                let outcome = build_recursive_type_family(
+                    &source_name,
+                    module_id,
+                    declared_initializer_slots[&binding.value.name.location],
+                    binding,
+                    &tool_values,
+                    &mut account,
+                    sources,
+                    &mut evaluator,
+                );
+                match outcome {
+                    Ok(built) => {
+                        let descriptor = erase_type_variables(&built.scheme.body);
+                        let id = types.intern_descriptor(&descriptor);
+                        definition_schemes.insert(definition, built.scheme);
+                        tool_values.insert(binding.value.name.value.clone(), built.family_value);
+                        facts.insert(definition, SemanticFact::known(id));
+                    }
+                    Err(error) => {
+                        let diagnostic = DiagnosticId::from_index(diagnostics.len());
+                        diagnostics.push(error.diagnostic.map_or_else(
+                            || Diagnostic::error(error.message, binding.value.value.location),
+                            |diagnostic| *diagnostic,
+                        ));
+                        let mut fact = SemanticFact::incomputable(
+                            None,
+                            IncomputableReason::UnsupportedOperation,
+                        );
+                        fact.diagnostics.push(diagnostic);
+                        facts.insert(definition, fact);
+                    }
+                }
+                continue;
+            }
             let concrete_decorated = component.iter().all(|definition| {
                 let binding = bindings[definition];
                 binding.value.type_parameters.is_empty() && !binding.value.decorators.is_empty()
@@ -2856,6 +2898,33 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .declared_initializer
                     .is_some()
             });
+            let recursive_nominal_family =
+                component.len() == 1 && contains_family && contains_nominal;
+            if recursive_nominal_family {
+                let definition = component[0];
+                let binding = type_bindings[&definition];
+                let built = build_recursive_type_family(
+                    source_name,
+                    module_id,
+                    declared_initializer_slots[&binding.value.name.location],
+                    binding,
+                    &tool_values,
+                    account,
+                    sources,
+                    &mut evaluator,
+                )?;
+                let erased = erase_type_variables(&built.scheme.body);
+                tool_values.insert(binding.value.name.value.clone(), built.family_value);
+                static_environment.insert(binding.value.name.value.clone(), erased.clone());
+                binding_types.insert(binding.value.name.value.clone(), erased);
+                binding_schemes.insert(binding.value.name.value.clone(), built.scheme);
+                type_family_templates
+                    .insert(binding.value.name.value.clone(), built.family.clone());
+                type_family_values.insert(binding.value.name.value.clone(), built.family);
+                pending_types.remove(&definition);
+                evaluated_types.insert(definition);
+                continue;
+            }
             let concrete_decorated = !contains_family
                 && component
                     .iter()
@@ -4690,6 +4759,189 @@ impl<'a> ToolEvaluator<'a> {
             .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
         Ok((family, template, root))
     }
+
+    fn reserve_recursive_type_family(
+        &mut self,
+        constructor: &NominalTypeConstructor,
+        parameters: &[TypeParameter],
+    ) -> Result<(Val, Val), FrontendError> {
+        let arguments = parameters
+            .iter()
+            .map(|parameter| TypeDescriptor::Bound(parameter.id))
+            .collect::<Vec<_>>();
+        let id = crate::value::DeclaredTypeId::applied(
+            constructor.id.module,
+            constructor.id.local,
+            &arguments,
+        );
+        let placeholder = self.descriptor(&TypeDescriptor::Any)?;
+        let root = self
+            .work
+            .reserve_symbolic_type_ref(id, constructor.name.as_str(), placeholder)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
+        let family = self.work.native_closure(
+            NativeFunction::new(
+                "recursive-type-family.apply",
+                parameters.len(),
+                native_apply_recursive_type_family,
+            ),
+            vec![root],
+        );
+        Ok((root, family))
+    }
+}
+
+struct RecursiveTypeFamilyBuild {
+    family_value: Val,
+    family: TypeFamilyTemplate,
+    scheme: TypeScheme,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_recursive_type_family(
+    source_name: &str,
+    module_id: crate::ModuleId,
+    declaration: u32,
+    binding: &Binding,
+    base_bindings: &BTreeMap<String, Val>,
+    account: &mut QuotaAccount,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator<'_>,
+) -> Result<RecursiveTypeFamilyBuild, FrontendError> {
+    let mut evaluation_bindings = base_bindings.clone();
+    let mut parameters = Vec::new();
+    let mut parameter_names = HashSet::new();
+    for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
+        if !parameter_names.insert(parameter.value.as_str()) {
+            return Err(FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error(
+                    format!("duplicate type parameter {:?}", parameter.value),
+                    parameter.location,
+                ),
+            ));
+        }
+        let id = TypeParameterId(
+            u32::try_from(index)
+                .map_err(|_| frontend_error(source_name, "type family has too many parameters"))?,
+        );
+        parameters.push(TypeParameter {
+            id,
+            name: parameter.value.clone(),
+            location: parameter.location,
+        });
+        evaluation_bindings.insert(
+            parameter.value.clone(),
+            evaluator.descriptor(&TypeDescriptor::Bound(id))?,
+        );
+    }
+    let constructor = NominalTypeConstructor {
+        id: crate::TypeConstructorId {
+            module: module_id,
+            local: declaration,
+        },
+        name: binding.value.name.value.clone(),
+    };
+    let (symbolic_root, self_family) =
+        evaluator.reserve_recursive_type_family(&constructor, &parameters)?;
+    evaluation_bindings.insert(binding.value.name.value.clone(), self_family);
+    let body = evaluate_tool_expression(
+        source_name,
+        &binding.value.value,
+        &evaluation_bindings,
+        account,
+        sources,
+        evaluator,
+    )?;
+    validate_declared_metadata(source_name, binding, body, evaluator)?;
+    evaluator
+        .work
+        .seal_type_ref(symbolic_root, body)
+        .map_err(|error| frontend_error(source_name, error.to_string()))?;
+    let (graph, root) = evaluator
+        .decode_type_graph(symbolic_root, "Type")
+        .map_err(|message| {
+            frontend_error(
+                source_name,
+                format!(
+                    "type family {} produced invalid metadata: {message}",
+                    binding.value.name.value
+                ),
+            )
+        })?;
+    let descriptor = graph.descriptor(root).map_err(|message| {
+        frontend_error(
+            source_name,
+            format!(
+                "type family {} produced invalid metadata: {message}",
+                binding.value.name.value
+            ),
+        )
+    })?;
+    let mut bounds = Vec::new();
+    collect_bound_parameters(&descriptor, &mut bounds);
+    if let Some(foreign) = bounds
+        .iter()
+        .find(|bound| !parameters.iter().any(|parameter| parameter.id == **bound))
+    {
+        return Err(FrontendError::from_diagnostic(
+            sources,
+            Diagnostic::error(
+                format!(
+                    "type family {} produced foreign bound parameter T{}",
+                    binding.value.name.value, foreign.0
+                ),
+                binding.value.value.location,
+            ),
+        ));
+    }
+    let (family_value, template, root) =
+        evaluator.create_type_family(symbolic_root, parameters.len(), None)?;
+    let family = TypeFamilyTemplate {
+        parameters: parameters.clone(),
+        template,
+        root,
+        rebuild_at_runtime: contains_named_type(&descriptor),
+        constructor: Some(constructor),
+    };
+    let scheme = TypeScheme {
+        parameters,
+        body: TypeDescriptor::Function {
+            parameters: family
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(parameter.id)))
+                })
+                .collect(),
+            result: Box::new(TypeDescriptor::TypeOf(Box::new(descriptor.clone()))),
+        },
+    };
+    Ok(RecursiveTypeFamilyBuild {
+        family_value,
+        family,
+        scheme,
+    })
+}
+
+fn native_apply_recursive_type_family(
+    context: &mut CallContext<'_, '_>,
+) -> Result<(), NativeError> {
+    for index in 0..context.argument_count() {
+        let argument = native_type_argument_descriptor(context, context.argument(index)?, index)?;
+        if argument
+            != TypeDescriptor::Bound(TypeParameterId(
+                u32::try_from(index)
+                    .map_err(|_| NativeError::new("type-family parameter index exceeds u32"))?,
+            ))
+        {
+            return Err(NativeError::new(
+                "recursive type-family application must use its bound parameters unchanged and in declaration order",
+            ));
+        }
+    }
+    context.copy(context.result(), context.upvalue(0)?)?;
+    context.mark_at_call_site(context.result())
 }
 
 fn native_apply_type_family(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -14854,6 +15106,60 @@ mod tests {
     }
 
     #[test]
+    fn productive_recursive_type_family_preserves_its_bound_leaf() {
+        let analysis = analyze_source(
+            "recursive-expr-family.telora",
+            "type Expr(A) = enum {'Leaf(A), 'Call(Array(Expr(A)))};\
+             type IntExpr = Expr(Int);\
+             type SameIntExpr = Expr(Int);\
+             type StringExpr = Expr(String);\
+             def identity: Fn(IntExpr) -> IntExpr = fn(value) { value };\
+             identity('Call(['Leaf(1)]))",
+        )
+        .unwrap();
+        let expression_family = analysis
+            .hir
+            .definitions()
+            .iter()
+            .find(|definition| definition.name == "Expr")
+            .unwrap();
+        let scheme = analysis.definition_schemes[&expression_family.id].display_name();
+        assert_eq!(scheme, "for(A) Fn(TypeOf(A)) -> TypeOf(Expr)");
+        assert!(!scheme.contains("Any"));
+        assert_eq!(analysis.display(analysis.declared_types["IntExpr"]), "Expr");
+        let nominal_id = |name| match analysis.types.node(analysis.declared_types[name]) {
+            TypeNode::Declared { id, .. } => id.clone(),
+            node => panic!("{name} is not nominal: {node:?}"),
+        };
+        assert_eq!(nominal_id("IntExpr"), nominal_id("SameIntExpr"));
+        assert_ne!(nominal_id("IntExpr"), nominal_id("StringExpr"));
+        assert!(!analysis.display(analysis.result_type).contains("Any"));
+    }
+
+    #[test]
+    fn recursive_type_family_rejects_changed_arguments() {
+        for (name, source) in [
+            (
+                "transformed",
+                "type Grow(A) = struct {next: Grow(Array(A))}; 0",
+            ),
+            (
+                "reordered",
+                "type Swap(A, B) = struct {next: Swap(B, A)}; 0",
+            ),
+        ] {
+            let error = analyze_source(&format!("recursive-{name}.telora"), source).unwrap_err();
+            assert!(
+                error
+                    .message
+                    .contains("must use its bound parameters unchanged"),
+                "{}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
     fn type_validation_uses_the_authoritative_metadata_decoder() {
         let valid =
             crate::compile_source("valid-type.telora", "validate(Type, Array(Int))").unwrap();
@@ -15345,11 +15651,8 @@ mod tests {
     }
 
     #[test]
-    fn partial_type_evaluation_rejects_recursive_aliases_and_families() {
-        for (name, source) in [
-            ("alias", "type Left = Right; type Right = Left; 0"),
-            ("family", "type Loop(A) = struct {next: Loop(A)}; 0"),
-        ] {
+    fn partial_type_evaluation_rejects_recursive_aliases() {
+        for (name, source) in [("alias", "type Left = Right; type Right = Left; 0")] {
             let partial = analyze_partial_types(
                 &format!("recursive-{name}.telora"),
                 source,
@@ -15362,6 +15665,28 @@ mod tests {
                 diagnostic.message.contains("cannot be partially evaluated")
             }));
         }
+    }
+
+    #[test]
+    fn partial_type_evaluation_accepts_productive_recursive_families() {
+        let partial = analyze_partial_types(
+            "recursive-family.telora",
+            "type Expr(A) = enum {'Leaf(A), 'Call(Array(Expr(A)))}; 0",
+            Quota::with_fuel(100),
+        );
+        let expression_family = partial
+            .hir
+            .definitions()
+            .iter()
+            .find(|definition| definition.name == "Expr")
+            .unwrap();
+        assert_eq!(
+            partial.definition_facts[&expression_family.id].state,
+            FactState::Known
+        );
+        let scheme = partial.definition_schemes[&expression_family.id].display_name();
+        assert_eq!(scheme, "for(A) Fn(TypeOf(A)) -> TypeOf(Expr)");
+        assert!(partial.diagnostics.is_empty(), "{:?}", partial.diagnostics);
     }
 
     #[test]

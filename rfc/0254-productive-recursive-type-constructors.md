@@ -1,6 +1,6 @@
 # RFC 0254: Productive Recursive Type Constructors
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #109
 - Supersedes: the recursive-family rejection in RFC 0232
 - Depends on: RFC 0238, RFC 0239, RFC 0248, RFC 0250
@@ -209,3 +209,24 @@ declarations.
 7. Existing concrete recursion, acyclic families, inference, equality,
    codec/schema, resource accounting, and best-effort behavior do not regress.
 8. Workspace tests, formatting, and diff checks pass.
+
+## Outcome
+
+The type dependency scheduler now recognizes a one-node nominal family cycle.
+Full and partial analysis share one construction path: it reserves a symbolic
+declared root keyed by the constructor and Bound arguments, installs a
+restricted same-argument self capability, evaluates the Struct/Enum body once,
+and seals the finite graph. Changed or reordered arguments fail at the authored
+family application.
+
+The ordinary family application copier materializes the sealed symbolic graph
+as a concrete declared graph. Its existing forwarding map closes the recursive
+edge, while `TypeStore` continues to canonicalize concrete identity from
+`(TypeConstructorId, TypeArgs)`. No inference or nominal assignability rule was
+relaxed.
+
+Regression coverage includes precise full and partial schemes, equal and
+unequal concrete applications, construction and matching, deterministic
+argument rejection, import through a re-export facade, codec round trips, and
+recursive JSON Schema references. Workspace verification passed with 20 LSP,
+37 CLI, and 558 core tests; one existing parser baseline remains ignored.
