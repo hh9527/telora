@@ -8,11 +8,11 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .config import ControlError
+from .config import ControlError, load_manifest, repository_root
 from .context import Context, resolve
 from .lifecycle import publish_workflow_artifact, request_start, send_round, verify_prepared
 from .metrics import collect_metrics
-from .state import load_state
+from .state import create_run_config, load_run_config, load_state, run_config_path
 from .task_cli import TaskError, remove_artifact, task_records, workflow_status
 
 
@@ -47,6 +47,39 @@ def _safe_relative(value: str, where: str) -> Path:
     if path.is_absolute() or not value or any(part in ("", ".", "..") for part in value.split("/")):
         raise ControlError(f"unsafe {where}: {value}", 64)
     return Path(*path.parts)
+
+
+def _controller_repo() -> Path:
+    return repository_root(Path(__file__).resolve().parent)
+
+
+def _selected_plan(repo: Path, cwd: Path | None = None) -> str:
+    current = (cwd or Path.cwd()).resolve()
+    plans = repo / "experiments"
+    for candidate in (current, *current.parents):
+        if candidate.parent == plans and (candidate / "experiment.json").is_file():
+            load_manifest(repo, candidate.name)
+            return candidate.name
+    raise ControlError("Host must run start from inside the autonomously selected experiment plan", 66)
+
+
+def _automatic_port(repo: Path) -> int:
+    used = set()
+    for path in (repo / "target" / "exp").glob("*/config.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and isinstance(value.get("port"), int):
+            used.add(value["port"])
+    return next(port for port in range(4100, 65536) if port not in used)
+
+
+def _configure_start(repo: Path, test_id: str) -> dict[str, Any]:
+    path = run_config_path(repo, test_id)
+    if path.is_file():
+        return load_run_config(repo, test_id)
+    return create_run_config(repo, test_id, _selected_plan(repo), _automatic_port(repo))
 
 
 def _update(context: Context, values: list[str]) -> list[dict[str, Any]]:
@@ -172,10 +205,20 @@ def _start(context: Context) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        context = resolve(args.test_id)
         if args.command == "start":
+            repo = _controller_repo()
+            _configure_start(repo, args.test_id)
+            deadline = time.monotonic() + 30
+            state_path = run_config_path(repo, args.test_id).parent / "state.json"
+            while not state_path.is_file():
+                if time.monotonic() >= deadline:
+                    raise ControlError("timed out waiting for oc-run to consume its configuration", 75)
+                time.sleep(.1)
+            context = resolve(args.test_id, repo)
             emit(_start(context))
-        elif args.command == "status":
+            return 0
+        context = resolve(args.test_id, _controller_repo())
+        if args.command == "status":
             emit(_status(context))
         elif args.command == "stat":
             emit(_metrics(context)[0])

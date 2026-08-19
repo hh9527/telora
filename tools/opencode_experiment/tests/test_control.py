@@ -17,14 +17,15 @@ from tools.opencode_experiment.config import ControlError, Manifest, load_manife
 from tools.opencode_experiment.observe import failures, latest_assistant, normalized, summarize
 from tools.opencode_experiment.query import select_engine
 from tools.opencode_experiment.external import probe_direct, probe_mise, resolve_capabilities, resolve_cli, resolve_command
-from tools.opencode_experiment.state import atomic_json, load_state, save_state, SCHEMA
+from tools.opencode_experiment.state import atomic_json, create_run_config, load_run_config, load_state, save_state, SCHEMA
 from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare, request_start, reserve, run_validation, start_requested
 from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
-from tools.opencode_experiment.cli_ctl import _update, main as control_main, parser as control_parser
+from tools.opencode_experiment.cli_ctl import _configure_start, _selected_plan, _update, main as control_main, parser as control_parser
+from tools.opencode_experiment.cli_run import parser as run_parser
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -106,6 +107,24 @@ class ConfigStateTest(unittest.TestCase):
     def test_control_surface_is_limited_to_five_commands(self):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
                          {"start", "stat", "status", "update", "publish"})
+
+    def test_run_uses_only_test_id(self):
+        args = run_parser().parse_args(["ontology-3-006"])
+        self.assertEqual(vars(args), {"test_id": "ontology-3-006"})
+
+    def test_host_selects_plan_and_writes_run_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            plan = repo / "experiments" / "demo"
+            self.write_plan(plan)
+            self.assertEqual(_selected_plan(repo, plan / "nested"), "demo")
+            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan), \
+                 mock.patch("tools.opencode_experiment.cli_ctl._automatic_port", return_value=43123):
+                value = _configure_start(repo, "run-001")
+            self.assertEqual(value["plan_id"], "demo")
+            self.assertEqual(value["port"], 43123)
+            self.assertEqual(load_run_config(repo, "run-001"), value)
+            self.assertEqual(create_run_config(repo, "run-001", "demo", 49999), value)
 
     def test_update_copies_and_removes_workspace_file(self):
         with tempfile.TemporaryDirectory() as temporary:

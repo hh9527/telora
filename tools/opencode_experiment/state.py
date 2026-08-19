@@ -12,6 +12,7 @@ from typing import Any, Iterator
 from .config import ControlError, validate_identifier
 
 SCHEMA = "telora.opencode-execution/v1"
+RUN_CONFIG_SCHEMA = "telora.opencode-run-config/v1"
 PHASES = {"waiting", "preparing", "ready", "active", "idle", "finishing", "finished", "failed", "retired"}
 
 
@@ -22,6 +23,56 @@ def now() -> str:
 def execution_root(repo: Path, exec_name: str) -> Path:
     validate_identifier(exec_name, "exec-name")
     return repo / "target" / "exp" / exec_name
+
+
+def run_config_path(repo: Path, test_id: str) -> Path:
+    return execution_root(repo, test_id) / "config.json"
+
+
+def _validate_run_config(value: Any, test_id: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"schema", "test_id", "plan_id", "port", "created_at"}:
+        raise ControlError("invalid run configuration")
+    if value.get("schema") != RUN_CONFIG_SCHEMA or value.get("test_id") != test_id:
+        raise ControlError("run configuration identity mismatch")
+    if not isinstance(value.get("plan_id"), str):
+        raise ControlError("invalid run configuration plan-id")
+    validate_identifier(value["plan_id"], "plan-id")
+    if not isinstance(value.get("port"), int) or not 1 <= value["port"] <= 65535:
+        raise ControlError("invalid run configuration port")
+    return value
+
+
+def load_run_config(repo: Path, test_id: str) -> dict[str, Any]:
+    path = run_config_path(repo, test_id)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ControlError(f"missing run configuration: {path}", 66) from None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControlError(f"invalid run configuration: {exc}") from None
+    return _validate_run_config(value, test_id)
+
+
+def create_run_config(repo: Path, test_id: str, plan_id: str, port: int) -> dict[str, Any]:
+    validate_identifier(test_id, "test-id")
+    validate_identifier(plan_id, "plan-id")
+    if not 1 <= port <= 65535:
+        raise ControlError("port must be from 1 through 65535", 64)
+    root = execution_root(repo, test_id)
+    with locked(root):
+        path = run_config_path(repo, test_id)
+        if path.is_file():
+            try:
+                value = _validate_run_config(json.loads(path.read_text(encoding="utf-8")), test_id)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ControlError(f"invalid run configuration: {exc}") from None
+            if value["plan_id"] != plan_id:
+                raise ControlError(f"execution {test_id} is already configured for {value['plan_id']}")
+            return value
+        value = {"schema": RUN_CONFIG_SCHEMA, "test_id": test_id, "plan_id": plan_id,
+                 "port": port, "created_at": now()}
+        atomic_json(path, value)
+        return value
 
 
 def bind_plan(repo: Path, plan_id: str, exec_name: str) -> Path:

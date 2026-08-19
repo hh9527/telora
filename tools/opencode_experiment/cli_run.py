@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from .client import Client
-from .config import ControlError
+from .config import ControlError, repository_root, validate_identifier
 from .external import resolve_cli
 from .lifecycle import create_empty_session, opencode_environment, prepare, reserve, safe_cleanup, start_requested
-from .state import load_state
+from .state import load_run_config, load_state, run_config_path
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(prog="oc-run", description="Prepare or resume an external opencode experiment TUI.")
-    value.add_argument("plan_id"); value.add_argument("exec_name"); value.add_argument("--port", type=int)
-    value.add_argument("--artifact", action="append", default=[], metavar="NAME=PATH")
+    value = argparse.ArgumentParser(prog="oc-run", description="Wait for and run a Host-configured experiment TUI.")
+    value.add_argument("test_id")
     return value
 
 
@@ -25,19 +23,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         opencode = resolve_cli("opencode")
-        artifacts = {}
-        for value in args.artifact:
-            if "=" not in value: raise ControlError("--artifact must be NAME=PATH", 64)
-            name, path = value.split("=", 1)
-            if not name or not path or name in artifacts: raise ControlError(f"invalid artifact override: {value}", 64)
-            artifacts[name] = path
-        root, state = reserve(args.plan_id, args.exec_name, args.port, artifacts)
+        test_id = validate_identifier(args.test_id, "test-id")
+        repo = repository_root(Path(__file__).resolve().parent)
+        config_path = run_config_path(repo, test_id)
+        print(f"Execution {test_id} is waiting for Host configuration: {config_path}", flush=True)
+        while not config_path.is_file():
+            time.sleep(.25)
+        config = load_run_config(repo, test_id)
+        plan_id, port = config["plan_id"], config["port"]
+        root, state = reserve(plan_id, test_id, port)
         if state["phase"] == "waiting":
-            print(f"Execution {args.exec_name} is waiting for: ./oc-ctl start {args.exec_name}", flush=True)
+            print(f"Execution {test_id} is waiting for: ./oc-ctl start {test_id}", flush=True)
             while not start_requested(root):
                 time.sleep(.25)
-        root, state, _ = prepare(args.plan_id, args.exec_name, args.port, artifacts)
-        state = create_empty_session(root, state, f"{args.plan_id} / {args.exec_name} (ready)")
+        root, state, _ = prepare(plan_id, test_id, port)
+        state = create_empty_session(root, state, f"{plan_id} / {test_id} (ready)")
         workspace, server_url, session_id = state["workspace"], state["server_url"], state["session_id"]
         port = int(server_url.rsplit(":", 1)[1])
         print(f"Workspace ready: {workspace}\nEmpty session ready: {session_id}", flush=True)
@@ -51,9 +51,9 @@ def main(argv: list[str] | None = None) -> int:
         state = load_state(root)
         if state["phase"] in ("finished", "retired") and all((root / "result" / name).is_file() for name in ("query.json", "session.json", "messages.json")):
             safe_cleanup(state)
-            print(f"Execution {args.exec_name} is frozen; temporary workspace removed.")
+            print(f"Execution {test_id} is frozen; temporary workspace removed.")
         else:
-            print(f"Execution {args.exec_name} remains resumable in phase {state['phase']}.")
+            print(f"Execution {test_id} remains resumable in phase {state['phase']}.")
         return result.returncode
     except ControlError as exc:
         print(f"oc-run: {exc}", file=sys.stderr); return exc.code

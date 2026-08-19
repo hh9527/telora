@@ -1,6 +1,9 @@
 # OpenCode experiment control
 
-`oc-run` prepares an isolated experiment workspace and starts the external OpenCode TUI.
+`oc-run <test-id>` waits for Host configuration, prepares an isolated experiment workspace, and
+starts the external OpenCode TUI. The external operator never selects a plan or port. The Host runs
+`oc-ctl start <test-id>` from inside its autonomously selected plan directory; `start` chooses a
+free port and atomically writes `target/exp/<test-id>/config.json`, which releases `oc-run`.
 `oc-ctl` controls and observes the execution. A plan may define an artifact DAG in
 `experiment.json.workflow`; `task_cli.py` is copied into the workspace as `bin/oc-task`.
 
