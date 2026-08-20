@@ -240,6 +240,48 @@ fn check_rejects_concrete_runtime_errors_without_synthetic_finalization() {
 }
 
 #[test]
+fn check_suppresses_parser_recovery_fallout_but_keeps_independent_errors() {
+    let cwd = fixture();
+    let cases: &[(&str, &str, &[&str])] = &[
+        (
+            "one-root",
+            "export def broken = match 'A { 'A 1, _ => 2 };",
+            &["missing FatArrow"],
+        ),
+        (
+            "two-roots",
+            "export def first = (1 + 2; export def second = match 'A { 'A 1, _ => 2 };",
+            &[
+                "invalid syntax, expected one of: ',', ')'",
+                "missing FatArrow",
+            ],
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let path = cwd.join(format!("src/{name}.telora"));
+        fs::write(path, source).unwrap();
+        let module_id = format!("@src/{name}.telora");
+        let check = telora(&cwd)
+            .args(["check", module_id.as_str()])
+            .output()
+            .unwrap();
+        assert!(!check.status.success(), "{name} unexpectedly passed");
+        assert!(check.stderr.is_empty(), "{name} mixed text into stderr");
+
+        let records = jsonl(&check.stdout);
+        let messages = records
+            .iter()
+            .filter(|record| record["record"] == "diagnostic")
+            .map(|record| record["message"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(messages, *expected, "{name}");
+        assert_eq!(records.last().unwrap()["record"], "summary");
+        assert_eq!(records.last().unwrap()["status"], "error");
+    }
+}
+
+#[test]
 fn check_accepts_a_complete_module_with_warnings() {
     let cwd = fixture();
     fs::write(
