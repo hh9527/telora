@@ -235,7 +235,7 @@ impl<'a> Lowerer<'a> {
         if authored_result && !exports.is_empty() {
             return Err(self.error(
                 body_node,
-                "a module cannot mix explicit exports with a final expression",
+                "top-level expressions are not supported; bind the computation with def and export the intended result",
             ));
         }
         let mut public_names = HashMap::new();
@@ -1027,6 +1027,9 @@ impl<'a> Lowerer<'a> {
                 Some(Rule::LetBinding | Rule::DefBinding | Rule::TypeBinding)
             )
         }) {
+            if self.rule(binding_node) == Some(Rule::LetBinding) {
+                return Err(self.error(binding_node, "export let is not supported; use export def"));
+            }
             let binding = self.binding(binding_node)?;
             let local = binding.value.name.clone();
             let marker = located(
@@ -1216,6 +1219,14 @@ impl<'a> Lowerer<'a> {
                 ExprKind::Dict(fields)
             }
             Rule::Block => ExprKind::Block(self.block_body(node)?),
+            Rule::DoExpr => {
+                let block = rules
+                    .iter()
+                    .find(|child| self.rule(**child) == Some(Rule::Block))
+                    .copied()
+                    .ok_or_else(|| self.error(node, "do expression has no block"))?;
+                ExprKind::Block(self.block_body(block)?)
+            }
             Rule::Closure => {
                 let parameters = rules
                     .iter()
@@ -2786,6 +2797,7 @@ impl<'a> Lowerer<'a> {
                     | Rule::CallExpr
                     | Rule::Closure
                     | Rule::DictExpr
+                    | Rule::DoExpr
                     | Rule::IndexExpr
                     | Rule::FloatExpr
                     | Rule::FunctionContract
@@ -3541,10 +3553,10 @@ mod tests {
     fn lowers_explicit_exports_without_creating_lexical_bindings() {
         let program = parse(
             "exports.telora",
-            r#"export let value = 1;
+            r#"export def value = 1;
 export def identity = fn(item) { item };
 export type User = struct { name: String };
-let private = 2;
+def private = 2;
 export { private as visible, identity as map };"#,
         )
         .unwrap();
@@ -3560,9 +3572,9 @@ export { private as visible, identity as map };"#,
         assert_eq!(
             bindings
                 .iter()
-                .filter(|binding| binding.value.kind == BindingKind::Let)
+                .filter(|binding| binding.value.kind == BindingKind::Def)
                 .count(),
-            2
+            3
         );
         let visible = bindings
             .iter()
@@ -3580,12 +3592,15 @@ export { private as visible, identity as map };"#,
     fn diagnoses_duplicate_mixed_and_nested_exports() {
         for (source, expected) in [
             (
-                "export let value = 1; export { value };",
+                "export def value = 1; export { value };",
                 "duplicate export",
             ),
-            ("export let value = 1; value", "cannot mix explicit exports"),
             (
-                "let value = { export let nested = 1; nested }; value",
+                "export def value = 1; value",
+                "top-level expressions are not supported",
+            ),
+            (
+                "let value = { export def nested = 1; nested }; value",
                 "only at module top level",
             ),
         ] {
@@ -4160,7 +4175,7 @@ export { private as visible, identity as map };"#,
     fn lowers_only_immediate_ordered_module_options() {
         let program = parse(
             "options.telora",
-            r#"option "module.documentation" {name: "tool"}; export let value = 0; option "module.documentation" 'Stable;"#,
+            r#"option "module.documentation" {name: "tool"}; export def value = 0; option "module.documentation" 'Stable;"#,
         )
         .unwrap();
         assert_eq!(program.value.options.len(), 2);
@@ -4175,11 +4190,11 @@ export { private as visible, identity as map };"#,
         ));
 
         for invalid in [
-            "@@manifest {}; export let value = 0;",
-            "option \"documentation\" {}; export let value = 0;",
-            "option \"module.documentation\" value; export let value = 0;",
-            "option \"module.documentation\" `tool-\\{value}`; export let value = 0;",
-            "option \"module.documentation\" {...value}; export let value = 0;",
+            "@@manifest {}; export def value = 0;",
+            "option \"documentation\" {}; export def value = 0;",
+            "option \"module.documentation\" value; export def value = 0;",
+            "option \"module.documentation\" `tool-\\{value}`; export def value = 0;",
+            "option \"module.documentation\" {...value}; export def value = 0;",
             "export def f = fn() { option \"module.documentation\" {}; 0 };",
         ] {
             assert!(

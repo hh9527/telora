@@ -1,7 +1,7 @@
 import "./b2b-model.telora" { compile };
 import "./restriction.json" { data as restriction };
 
-export let output = compile(restriction, {
+export def output = compile(restriction, {
     measures: ['NetRevenue, 'UnitsSold],
     alignment: 'Natural,
     dimensions: ['OrderMonth],

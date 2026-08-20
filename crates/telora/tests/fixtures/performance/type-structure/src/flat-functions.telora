@@ -99,6 +99,6 @@ def f096: Fn(Int) -> Int = fn(x) { x };
 def f097: Fn(Int) -> Int = fn(x) { x };
 def f098: Fn(Int) -> Int = fn(x) { x };
 def f099: Fn(Int) -> Int = fn(x) { x };
-export let output = "ok";
+export def output = "ok";
 
 

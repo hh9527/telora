@@ -1,6 +1,6 @@
 import "./model.telora" { compile };
 
-export let output = compile(
+export def output = compile(
     ['PurchaseRevenue],
     ['ProductCategory, 'LoyaltyTier],
 );

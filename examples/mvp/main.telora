@@ -6,6 +6,6 @@ type User = struct {
     nickname: Option(String),
 };
 
-let user: User = raw_user;
-let result = validate(User, user);
+def user: User = raw_user;
+def result = validate(User, user);
 export { result as output };

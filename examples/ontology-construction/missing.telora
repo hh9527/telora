@@ -6,14 +6,14 @@ type Measure = enum { 'Revenue, 'Units };
 
 type MeasureCapability = ontology.Capability(Measure, Entity, String);
 
-let revenue: MeasureCapability = {
+def revenue: MeasureCapability = {
     id: 'Revenue,
     lower: fn(measure, entity) { 'Some(`revenue from \{entity}`) },
 };
 
-let requested: Array(Measure) = ['Revenue, 'Units];
-let input: Entity = 'Order;
-export let output = method.lower_requested(
+def requested: Array(Measure) = ['Revenue, 'Units];
+def input: Entity = 'Order;
+export def output = method.lower_requested(
     requested,
     [revenue],
     fn(item) { item.id },

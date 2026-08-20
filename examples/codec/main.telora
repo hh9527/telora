@@ -3,6 +3,6 @@ import "./User.telora" as User;
 import "core:result" as result;
 import "core:json" as json;
 
-let user = data |> User.decode |> result.unwrap;
-let text = user |> User.encode |> json.stringify_pretty(2);
+def user = data |> User.decode |> result.unwrap;
+def text = user |> User.encode |> json.stringify_pretty(2);
 export { text as output };

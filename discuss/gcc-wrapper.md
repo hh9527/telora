@@ -248,7 +248,7 @@ export def command:
 
 import "@src/toolchain.telora" as toolchain;
 
-export let exec = toolchain.command("gcc");
+export def exec = toolchain.command("gcc");
 ```
 
 ```telora
@@ -257,7 +257,7 @@ export let exec = toolchain.command("gcc");
 
 import "@src/toolchain.telora" as toolchain;
 
-export let exec = toolchain.command("g++");
+export def exec = toolchain.command("g++");
 ```
 
 ```telora
@@ -266,7 +266,7 @@ export let exec = toolchain.command("g++");
 
 import "@src/toolchain.telora" as toolchain;
 
-export let exec = toolchain.command("ar");
+export def exec = toolchain.command("ar");
 ```
 
 `@src/toolchain.telora` 是当前工作 crate 内的绝对模块请求；它取代了早期设计稿

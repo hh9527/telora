@@ -650,10 +650,23 @@ export {LocalPlan as Plan};
 `b` 的 local binding，因此后续本地表达式不能因该 export 而 resolve `b`。Public
 alias 只供下游 import 和 Module member resolution 使用。
 
-`export let`、`export def` 和 `export type` 是普通 local binding 后接 export marker
+`export def` 和 `export type` 是普通 module binding 后接 export marker
 的语法糖。例如 `export def f = value;` 与 `def f = value; export {f};` 具有相同
 语义。本地 `f` 由 `def` 建立；export marker 不建立 lexical binding、不执行用户代码，
 只选择要发布的 local binding。
+
+Module 顶层是声明空间，不是普通 expression block。顶层值只使用 `def`；`let` 只允许
+出现在函数或 `do` 等普通 block 中，用于顺序求值、词法局部和 shadow。复杂模块值的
+初始化把局部步骤封装在 initializer expression 中：
+
+```telora
+def answer: Int = do {
+    let base = 40;
+    base + 2
+};
+```
+
+模块顶层不接受 `let`、`export let`、裸表达式或 final expression。
 
 被 export 选中的 local binding 可以由当前模块声明，也可以由 selective、aliased、
 open 或 namespace import 建立。导出 imported local 时保留原 value identity、精确
@@ -694,7 +707,7 @@ test 根也不能使用 `./` 或 `../`；它们必须以 `@src/` 导入本 crate
 Production module 使用显式命名导出：
 
 ```telora
-export let version = 1;
+export def version = 1;
 export def compile: Fn(Input) -> Option(Output) = fn(input) { ... };
 export { User, compile };
 ```

@@ -47,7 +47,7 @@ fn help_is_clap_owned_and_types_is_removed() {
 #[test]
 fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export let output = \"42\";").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "export def output = \"42\";").unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
         "import \"@src/lib.telora\" {output}; export {output};",
@@ -133,9 +133,9 @@ fn show_selects_registered_standard_library_modules() {
 fn check_rejects_concrete_runtime_errors_without_synthetic_finalization() {
     let cwd = fixture();
     let cases = [
-        ("failed", "export let output = fail!(\"boom\", 1);"),
-        ("division", "export let output = 1 / 0;"),
-        ("index", "export let output = [1][2];"),
+        ("failed", "export def output = fail!(\"boom\", 1);"),
+        ("division", "export def output = 1 / 0;"),
+        ("index", "export def output = [1][2];"),
     ];
     for (name, source) in cases {
         fs::write(cwd.join(format!("src/{name}.telora")), source).unwrap();
@@ -172,7 +172,7 @@ fn check_accepts_a_complete_module_with_warnings() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/warning.telora"),
-        "let reject: Fn() -> Result(Int, String) = fn() { 'Err(\"notice\") }; let checked = reject.should_ok!(); export let output = 1;",
+        "def reject: Fn() -> Result(Int, String) = fn() { 'Err(\"notice\") }; def checked = reject.should_ok!(); export def output = 1;",
     )
     .unwrap();
     let check = telora(&cwd)
@@ -200,7 +200,7 @@ fn run_writes_contextual_debug_as_stderr_jsonl() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "let var = 3; let observed = var.dbg!(\"observed\"); export let output = \"3\";",
+        "def var = 3; def observed = var.dbg!(\"observed\"); export def output = \"3\";",
     )
     .unwrap();
     let run = telora(&cwd).args(["run", "main"]).output().unwrap();
@@ -232,8 +232,8 @@ def transform: Fn(Int) -> Int = fn(item) {
     else if item == 4 { fail!("four", item) }
     else { item }
 };
-let broken = array.map([1, 2, 3, 4], transform);
-export let output = if array.length(broken) > 0 { "unexpected" } else { "empty" };"#,
+def broken = array.map([1, 2, 3, 4], transform);
+export def output = if array.length(broken) > 0 { "unexpected" } else { "empty" };"#,
     )
     .unwrap();
 
@@ -266,8 +266,8 @@ export { Plan, ensure_plan };"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/dependency.telora" as dependency;
-let plan: dependency.Plan(Int) = { revision: 1 };
-export let output = dependency.ensure_plan(plan, plan);"#,
+def plan: dependency.Plan(Int) = { revision: 1 };
+export def output = dependency.ensure_plan(plan, plan);"#,
     )
     .unwrap();
 
@@ -324,8 +324,8 @@ export {lower};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/facade.telora" as facade;
-let rejected = facade.lower(7);
-export let output: String = "value={rejected}";"#,
+def rejected = facade.lower(7);
+export def output: String = "value={rejected}";"#,
     )
     .unwrap();
 
@@ -391,7 +391,7 @@ export {lower};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/facade.telora" as facade;
-export let output: String = facade.lower(7);"#,
+export def output: String = facade.lower(7);"#,
     )
     .unwrap();
 
@@ -440,8 +440,8 @@ fn recursive_type_metadata_does_not_add_recovery_errors() {
     let source = r#"type CallExpr = struct { args: Array(Expr) };
 type Expr = enum { 'Call(CallExpr), 'Text(String) };
 def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
-let failed = reject(1);
-export let output = "unreachable";"#;
+def failed = reject(1);
+export def output = "unreachable";"#;
     fs::write(cwd.join("src/bin/main.telora"), source).unwrap();
 
     let check = telora(&cwd)
@@ -594,14 +594,14 @@ def total: Fn(Node) -> Int = fn(node) {
         'Some(child) => total(child),
     }
 };
-let root: Node = {value: 1, children: [{value: 2, children: []}]};
+def root: Node = {value: 1, children: [{value: 2, children: []}]};
 export {Node, root, total};"#,
     )
     .unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/tree.telora" as tree;
-export let output = `\{tree.total(tree.root)}`;"#,
+export def output = `\{tree.total(tree.root)}`;"#,
     )
     .unwrap();
 
@@ -642,7 +642,7 @@ export let output = `\{tree.total(tree.root)}`;"#,
 #[test]
 fn public_cli_rejects_physical_paths_and_missing_manifests() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "export let output = 1;").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "export def output = 1;").unwrap();
     let physical = telora(&cwd)
         .args(["run", "src/lib.telora"])
         .output()
@@ -661,7 +661,7 @@ fn public_cli_rejects_physical_paths_and_missing_manifests() {
 #[test]
 fn show_named_queries_emit_stable_jsonl() {
     let cwd = fixture();
-    fs::write(cwd.join("src/lib.telora"), "type Name = String; let hidden = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
+    fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
     let show = telora(&cwd)
         .args(["show", "@src/lib.telora", "-p", "a", "-k", "type,def"])
         .output()
@@ -798,7 +798,7 @@ fn show_position_and_conflicts_are_structured() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/lib.telora"),
-        "let answer = 42;\nexport {answer};\n",
+        "def answer = 42;\nexport {answer};\n",
     )
     .unwrap();
     let at = telora(&cwd)
@@ -830,7 +830,7 @@ fn show_position_and_conflicts_are_structured() {
 #[test]
 fn test_roots_are_selectable_but_not_importable() {
     let cwd = fixture();
-    fs::write(cwd.join("tests/codec.telora"), "export let output = 7;").unwrap();
+    fs::write(cwd.join("tests/codec.telora"), "export def output = 7;").unwrap();
     let run = telora(&cwd)
         .args(["check", "@test/codec.telora"])
         .output()
@@ -842,7 +842,7 @@ fn test_roots_are_selectable_but_not_importable() {
     );
     fs::write(
         cwd.join("src/lib.telora"),
-        "import \"@test/codec.telora\" as codec; export let output = codec;",
+        "import \"@test/codec.telora\" as codec; export def output = codec;",
     )
     .unwrap();
     let check = telora(&cwd)
@@ -857,7 +857,7 @@ fn run_accepts_external_json() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "export let output: String = input.cast!(String).unwrap!();",
+        "export def output: String = input.cast!(String).unwrap!();",
     )
     .unwrap();
     fs::write(cwd.join("input.json"), r#""accepted""#).unwrap();
@@ -879,7 +879,7 @@ fn run_context_selects_the_manifest_discovery_start() {
     let other = fixture();
     fs::write(
         other.join("src/bin/tool.telora"),
-        "export let output = \"9\";",
+        "export def output = \"9\";",
     )
     .unwrap();
     let run = telora(&cwd)
@@ -941,7 +941,7 @@ fn standalone_run_uses_only_embedded_dependency_options() {
     fs::create_dir_all(dependency.join("src")).unwrap();
     fs::write(
         dependency.join("src/value.telora"),
-        "export let value = \"12\";",
+        "export def value = \"12\";",
     )
     .unwrap();
     let standalone = cwd.join("standalone.telora");
@@ -986,7 +986,7 @@ fn exec_and_build_are_unknown_subcommands() {
 #[test]
 fn run_accepts_a_pure_custom_entry() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let answer = 42;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def answer = 42;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
@@ -1022,7 +1022,7 @@ export def initialize: Fn(MainType) -> Tuple([State, Reducer]) = fn(main) {
 #[test]
 fn custom_entry_can_choose_a_dynamic_main_contract() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let answer = 42;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def answer = 42;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
@@ -1051,7 +1051,7 @@ fn custom_entry_rejects_a_mismatched_main_contract() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "export let answer = \"no\";",
+        "export def answer = \"no\";",
     )
     .unwrap();
     fs::write(
@@ -1086,10 +1086,10 @@ fn selected_entry_alone_can_import_dependency_private_modules() {
     .unwrap();
     fs::write(
         dependency.join("src/secret.priv.telora"),
-        "export let value = 42;",
+        "export def value = 42;",
     )
     .unwrap();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
@@ -1156,7 +1156,7 @@ export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
 #[test]
 fn entry_drives_a_stdio_child_through_host_events() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
@@ -1205,7 +1205,7 @@ export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
 #[test]
 fn child_spawn_failure_is_a_reducible_result_event() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
@@ -1253,7 +1253,7 @@ fn entry_receives_line_stderr_eof_and_nonzero_child_exit_events() {
     use std::os::unix::fs::PermissionsExt;
 
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     let child = cwd.join("child.sh");
     fs::write(
         &child,
@@ -1319,7 +1319,7 @@ export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
 #[test]
 fn exec_effect_replaces_the_telora_process() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
@@ -1353,7 +1353,7 @@ fn exit_waits_all_active_children_before_returning_the_status() {
     use std::time::{Duration, Instant};
 
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     let child = cwd.join("long-child.sh");
     fs::write(&child, "#!/bin/sh\nprintf '%s\\n' \"$$\"\nsleep 30\n").unwrap();
     let mut permissions = fs::metadata(&child).unwrap().permissions();
@@ -1415,7 +1415,7 @@ fn blocked_child_stdin_does_not_block_unrelated_events_or_exit() {
     use std::time::{Duration, Instant};
 
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     let blocked = cwd.join("blocked.sh");
     let reporter = cwd.join("reporter.sh");
     fs::write(&blocked, "#!/bin/sh\nsleep 30\n").unwrap();
@@ -1486,7 +1486,7 @@ export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
 #[test]
 fn entry_protocol_failures_commit_no_buffered_output() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     let template = r#"import "std/rt.priv.telora" as rt;
 type Main = struct {marker: Int};
 export type MainType = Main;
@@ -1524,14 +1524,14 @@ export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
 #[test]
 fn entry_rejects_extra_public_protocol_members() {
     let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export let marker = 0;").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(
         cwd.join("entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
 type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
-export let typo = 1;
+export def typo = 1;
 export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
 export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
     (main.marker, fn(state, event) { (state, ['Exit(1)]) })

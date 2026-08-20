@@ -1,7 +1,7 @@
 import "./b2b-model.telora" { compile };
 import "./restriction.json" { data as restriction };
 
-let compilation = compile(restriction, {
+def compilation = compile(restriction, {
     measures: ['NetRevenue],
     alignment: 'Natural,
     dimensions: ['OrderMonth, 'CustomerRegion],
@@ -11,7 +11,7 @@ let compilation = compile(restriction, {
     render: {mode: 'Table, fields: ["order_month", "customer_region", "net_revenue_cents"]},
 });
 
-export let output = match compilation {
+export def output = match compilation {
     'Some(plan) => plan.statement,
     'None => panic!("expected the valid report to lower to SQL"),
 };

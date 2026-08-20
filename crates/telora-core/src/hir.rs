@@ -392,7 +392,12 @@ impl Resolver {
                 | BindingKind::NativeType
                 | BindingKind::Type => {
                     let value = self.index_binding_expr(binding, &binding.value.value, scopes);
-                    let definition = resolve_name(scopes, &binding.value.name.value)
+                    let definition = self
+                        .hir
+                        .definitions
+                        .iter()
+                        .find(|definition| definition.location == binding.value.name.location)
+                        .map(|definition| definition.id)
                         .expect("predeclared binding has a definition");
                     self.hir.definitions[definition.index()].value = Some(value);
                 }

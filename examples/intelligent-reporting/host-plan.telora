@@ -2,7 +2,7 @@ import "./b2b-model.telora" { compile };
 import "./execution.telora" { ExecutionPlan, encode_plan };
 import "./restriction.json" { data as restriction };
 
-let compilation = compile(restriction, {
+def compilation = compile(restriction, {
     measures: ['NetRevenue],
     alignment: 'Natural,
     dimensions: ['OrderMonth, 'CustomerRegion],
@@ -12,9 +12,9 @@ let compilation = compile(restriction, {
     render: {mode: 'Json, fields: ["order_month", "customer_region", "net_revenue_cents"]},
 });
 
-let checked: Option(ExecutionPlan) = compilation;
+def checked: Option(ExecutionPlan) = compilation;
 
-export let output = match checked {
+export def output = match checked {
     'Some(plan) => encode_plan(plan),
     'None => "",
 };

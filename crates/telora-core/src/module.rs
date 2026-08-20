@@ -611,11 +611,21 @@ impl ModuleGraph {
             let mut blueprint = match parsed.program.as_ref() {
                 Some(program) => {
                     reject_nested_imports(program, &cname.to_string())?;
-                    ModuleBlueprint::from_program(program).map_err(|message| {
-                        ModuleError::new(format!(
-                            "module {cname} has an invalid skeleton: {message}"
-                        ))
-                    })?
+                    if !recover
+                        && let Some(diagnostic) =
+                            module_binding_diagnostics(program).into_iter().next()
+                    {
+                        return Err(ModuleError::new(scan_sources.render(&diagnostic)));
+                    }
+                    match ModuleBlueprint::from_program(program) {
+                        Ok(blueprint) => blueprint,
+                        Err(_) if recover => ModuleBlueprint::default(),
+                        Err(message) => {
+                            return Err(ModuleError::new(format!(
+                                "module {cname} has an invalid skeleton: {message}"
+                            )));
+                        }
+                    }
                 }
                 None if recover => ModuleBlueprint::default(),
                 None => {
@@ -753,7 +763,14 @@ impl ModuleBlueprint {
                 | BindingKind::Native
                 | BindingKind::NativeType
                 | BindingKind::Type => {
-                    visible.entry(name.clone()).or_insert(VisibleBinding::Other);
+                    if visible
+                        .insert(name.clone(), VisibleBinding::Other)
+                        .is_some()
+                    {
+                        return Err(format!(
+                            "module binding {name:?} conflicts with an earlier explicit binding"
+                        ));
+                    }
                 }
                 BindingKind::OpenImport | BindingKind::Export => {}
             }
@@ -2702,6 +2719,23 @@ impl WorkspaceBuilder<'_> {
                     binding.location,
                 ));
             }
+            if let Some(program) = &program {
+                diagnostics.extend(module_binding_diagnostics(program));
+                for binding in &program.value.body.value.bindings {
+                    if binding.value.kind == BindingKind::Let {
+                        diagnostics.push(Diagnostic::error(
+                            "module-level let is not supported; use def, or use def name = do { ... } for local computation",
+                            binding.location,
+                        ));
+                    }
+                }
+                if program.value.authored_result {
+                    diagnostics.push(Diagnostic::error(
+                        "top-level expressions are not supported; bind the computation with def and export the intended result",
+                        program.value.body.value.result.location,
+                    ));
+                }
+            }
             let missing_exports = program.as_ref().is_some_and(|program| {
                 !program
                     .value
@@ -4321,6 +4355,9 @@ impl ModuleLoader {
                     .join("\n"),
             )
         })?;
+        if let Some(diagnostic) = module_binding_diagnostics(&program).into_iter().next() {
+            return Err(ModuleError::new(self.sources.render(&diagnostic)));
+        }
         let skeleton = if self.main.modules.modules.is_empty() {
             None
         } else {
@@ -4370,6 +4407,30 @@ impl ModuleLoader {
             .bindings
             .iter()
             .any(|binding| binding.value.kind == BindingKind::Export);
+        if self.source_policy == ModuleSourcePolicy::ExplicitExports
+            && let Some(binding) = program
+                .value
+                .body
+                .value
+                .bindings
+                .iter()
+                .find(|binding| binding.value.kind == BindingKind::Let)
+        {
+            let message = "module-level let is not supported; use def, or use def name = do { ... } for local computation";
+            return Err(ModuleError::new(
+                self.sources
+                    .render(&Diagnostic::error(message, binding.location)),
+            ));
+        }
+        if self.source_policy == ModuleSourcePolicy::ExplicitExports
+            && program.value.authored_result
+        {
+            let message = "top-level expressions are not supported; bind the computation with def and export the intended result";
+            return Err(ModuleError::new(self.sources.render(&Diagnostic::error(
+                message,
+                program.value.body.value.result.location,
+            ))));
+        }
         if self.source_policy == ModuleSourcePolicy::ExplicitExports && !has_explicit_exports {
             let message = "module requires at least one explicit export";
             return Err(ModuleError::new(
@@ -4730,6 +4791,37 @@ impl ModuleLoader {
     }
 }
 
+fn module_binding_diagnostics(program: &Program) -> Vec<Diagnostic> {
+    let mut visible = HashMap::<String, (BindingKind, crate::Location)>::new();
+    let mut diagnostics = Vec::new();
+    for binding in &program.value.body.value.bindings {
+        let kind = binding.value.kind;
+        if matches!(
+            kind,
+            BindingKind::Let | BindingKind::OpenImport | BindingKind::Export
+        ) {
+            continue;
+        }
+        let name = &binding.value.name.value;
+        let Some((previous_kind, previous_location)) = visible.get(name).copied() else {
+            visible.insert(name.clone(), (kind, binding.value.name.location));
+            continue;
+        };
+        if previous_kind == BindingKind::Decl && kind == BindingKind::Def {
+            visible.insert(name.clone(), (kind, binding.value.name.location));
+            continue;
+        }
+        diagnostics.push(
+            Diagnostic::error(
+                format!("module binding {name:?} conflicts with an earlier explicit binding"),
+                binding.value.name.location,
+            )
+            .with_secondary("first bound here", previous_location),
+        );
+    }
+    diagnostics
+}
+
 fn reject_nested_imports(program: &Program, source_name: &str) -> Result<(), ModuleError> {
     for binding in &program.value.body.value.bindings {
         if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def)
@@ -4981,6 +5073,34 @@ mod tests {
         assert!(through_let.contains("cannot shadow"));
     }
 
+    #[test]
+    fn module_skeleton_rejects_explicit_import_name_collisions() {
+        for binding in [
+            "type Item = struct {value: Int};",
+            "def Item = 1;",
+            "decl Item: Fn() -> Int;",
+            "native Item: Fn() -> Int;",
+            "native type Item @7;",
+        ] {
+            let source =
+                format!("import \"./provider.telora\" {{ Item }}; {binding} export {{Item}};");
+            let mut sources = SourceDatabase::default();
+            let source_id = sources.add("@test/conflict.telora", source);
+            let parsed = parse_registered(&sources, source_id);
+            let program = parsed.program.unwrap_or_else(|| {
+                panic!("conflict fixture did not parse: {source_id:?}: {binding}")
+            });
+            let diagnostics = module_binding_diagnostics(&program);
+            assert!(
+                diagnostics.iter().any(|diagnostic| diagnostic
+                    .message
+                    .contains("conflicts with an earlier explicit binding")),
+                "{diagnostics:?}"
+            );
+            assert_eq!(diagnostics[0].labels.len(), 2);
+        }
+    }
+
     fn named_output(value: &crate::ExecutionWorld) -> crate::ValueRef<'_> {
         value.value().dict_get("output").expect("output export")
     }
@@ -5091,7 +5211,7 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
         assert!(
             duplicate
                 .to_string()
-                .contains("duplicate module binding \"item\"")
+                .contains("module binding \"item\" conflicts with an earlier explicit binding")
         );
 
         fs::write(
@@ -5194,7 +5314,7 @@ let user = {name: unwrap('Ok("telora"))};
             directory.join("library.telora"),
             r#"let private = "hidden";
 export def identity: for(A) Fn(A) -> A = fn(value) { value };
-export let answer = 42;
+export def answer = 42;
 export { identity as map };"#,
         )
         .unwrap();
@@ -5254,7 +5374,7 @@ import "./library.telora" *;
     fn production_modules_require_explicit_exports() {
         let directory = fixture_dir();
         let module = directory.join("missing-export.telora");
-        fs::write(&module, "let value = 42;").unwrap();
+        fs::write(&module, "def value = 42;").unwrap();
 
         let engine = recovery_engine();
         let error = engine.load_module(&module, BTreeMap::new()).unwrap_err();
@@ -5281,6 +5401,88 @@ import "./library.telora" *;
                 .count(),
             1
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn production_modules_reject_lexical_and_expression_top_levels() {
+        let directory = fixture_dir();
+        let engine = recovery_engine();
+
+        for (name, source, expected) in [
+            (
+                "let.telora",
+                "let value = 42; export {value};",
+                "module-level let is not supported",
+            ),
+            (
+                "result.telora",
+                "def value = 42; value",
+                "top-level expressions are not supported",
+            ),
+            (
+                "export-let.telora",
+                "export let value = 42;",
+                "export let is not supported",
+            ),
+        ] {
+            let path = directory.join(name);
+            fs::write(&path, source).unwrap();
+            let error = engine.load_module(&path, BTreeMap::new()).unwrap_err();
+            assert!(error.message().contains(expected), "{}", error.message());
+        }
+
+        fs::write(
+            directory.join("valid.telora"),
+            "export def value: Int = do { let base = 40; base + 2 };",
+        )
+        .unwrap();
+        engine
+            .load_module(directory.join("valid.telora"), BTreeMap::new())
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_type_family_collision_is_sourced_and_recoverable() {
+        let directory = fixture_dir();
+        let provider = directory.join("provider.telora");
+        let main = directory.join("main.telora");
+        fs::write(&provider, "export type Capability(T) = enum { 'Value(T) };").unwrap();
+        fs::write(
+            &main,
+            r#"import "./provider.telora" { Capability };
+type Capability = enum { 'Local };
+export {Capability};"#,
+        )
+        .unwrap();
+
+        let engine = recovery_engine();
+        let error = engine.load_module(&main, BTreeMap::new()).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("module binding \"Capability\" conflicts"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error.message().contains("first bound here"),
+            "{}",
+            error.message()
+        );
+
+        let snapshot = engine.recover_workspace(&main).unwrap();
+        let diagnostic = snapshot
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| {
+                diagnostic
+                    .message
+                    .contains("binding \"Capability\" conflicts")
+            })
+            .expect("recovery keeps the binding conflict");
+        assert_eq!(diagnostic.labels.len(), 2);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -5409,7 +5611,7 @@ import "./library.telora" *;
             [1_024, 1_025, 1_026, 2_000]
         );
         let directory = fixture_dir();
-        fs::write(directory.join("main.telora"), "export let output = 1;").unwrap();
+        fs::write(directory.join("main.telora"), "export def output = 1;").unwrap();
         let module = engine
             .load_module(directory.join("main.telora"), BTreeMap::new())
             .unwrap();
@@ -5451,7 +5653,7 @@ import "./library.telora" *;
             &main,
             r#"import "acme/runtime" as host;
 import "std/type-desc" as desc;
-export let output = {answer: host.answer(), name: desc.opaque_name(host.Token)};"#,
+export def output = {answer: host.answer(), name: desc.opaque_name(host.Token)};"#,
         )
         .unwrap();
 
@@ -5555,7 +5757,7 @@ export let output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
         .unwrap();
         fs::write(
             directory.join("src/bin/main.telora"),
-            "export let marker = 0;",
+            "export def marker = 0;",
         )
         .unwrap();
         let entry = directory.join("entry.telora");
@@ -5619,14 +5821,14 @@ type Independent = String;
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"let identity: Fn(Any) -> Any = fn(value) { value };
-               let data = { text: "line\nnext", items: [1, 'Ok, (2,)] };
-               let observed = dbg!(data, "loaded\nvalue");
-               let seen_identity = dbg!(identity);
-               let seen_value = dbg!(observed);
-               let whole_float = dbg!(3.0);
-               let negative_zero = dbg!(-0.0);
-               export let output = if seen_identity == identity { seen_value } else { data };"#,
+            r#"def identity: Fn(Any) -> Any = fn(value) { value };
+               def data = { text: "line\nnext", items: [1, 'Ok, (2,)] };
+               def observed = dbg!(data, "loaded\nvalue");
+               def seen_identity = dbg!(identity);
+               def seen_value = dbg!(observed);
+               def whole_float = dbg!(3.0);
+               def negative_zero = dbg!(-0.0);
+               export def output = if seen_identity == identity { seen_value } else { data };"#,
         )
         .unwrap();
         let sink = Arc::new(CapturingDebugSink::default());
@@ -5653,7 +5855,7 @@ type Independent = String;
             "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
         );
         assert_eq!(events[1].name, "identity");
-        assert!(events[1].repr.starts_with("<fn "));
+        assert!(events[1].repr.starts_with("<fn-ref "));
         assert_eq!(events[2].name, "observed");
         assert_eq!(events[2].repr, events[0].repr);
         assert_eq!(events[3].name, "3.0");
@@ -5664,7 +5866,7 @@ type Independent = String;
 
         fs::write(
             directory.join("bad-message.telora"),
-            r#"let message = "dynamic"; export let output = dbg!(42, message);"#,
+            r#"def message = "dynamic"; export def output = dbg!(42, message);"#,
         )
         .unwrap();
         let bad = engine
@@ -5692,7 +5894,7 @@ type Independent = String;
             fs::write(
                 &path,
                 format!(
-                    "{type_binding}\nlet value = 1;\nlet observed = dbg!(value);\nexport let output = \"ok\";"
+                    "{type_binding}\ndef value = 1;\ndef observed = dbg!(value);\nexport def output = \"ok\";"
                 ),
             )
             .unwrap();
@@ -5713,7 +5915,7 @@ type Independent = String;
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"export let output = dbg!(42, "answer");"#,
+            r#"export def output = dbg!(42, "answer");"#,
         )
         .unwrap();
         let sink = Arc::new(CapturingDebugSink::default());
@@ -6465,7 +6667,7 @@ name = "rustc"
         let directory = fixture_dir();
         fs::write(
             directory.join("typed.telora"),
-            "type First = Array(Int); type Second = Array(Int); export let output = 0;",
+            "type First = Array(Int); type Second = Array(Int); export def output = 0;",
         )
         .unwrap();
         let module_limited = Engine::new(EngineConfig {
@@ -6477,7 +6679,7 @@ name = "rustc"
             .unwrap_err();
         assert!(error.message().contains("fuel"));
 
-        fs::write(directory.join("value.telora"), "export let output = [1];").unwrap();
+        fs::write(directory.join("value.telora"), "export def output = [1];").unwrap();
         let session_limited = Engine::new(EngineConfig {
             module_quota: Quota::new(100, 1_000, u64::MAX),
             session_quota: Quota::new(100, 1_000, 0),
@@ -7383,7 +7585,7 @@ unchanged", "|"),
                                    finish
                                )
                            }};
-                       export let output = execute(
+                       export def output = execute(
                            1,
                            [2, 3],
                            4,
@@ -7921,7 +8123,7 @@ unchanged", "|"),
                        expr: column("t", "name"),
                        lower: lower,
                    }];
-                   export let output = definitions;"#
+                   export def output = definitions;"#
                     .replace("$IMPORT", import)
                     .replace("$EXPR", expr)
                     .replace("$DEFINITION", definition);
@@ -8070,7 +8272,7 @@ unchanged", "|"),
                        }),
                    }
                };
-               export let output: Int = eval('Branch({children: ['Leaf(1)]}));"#,
+               export def output: Int = eval('Branch({children: ['Leaf(1)]}));"#,
         )
         .unwrap();
 
@@ -8102,7 +8304,7 @@ unchanged", "|"),
                def identity: Fn(LocalBox) -> LocalBox = fn(value) { value };
                let via_alias: LocalBox = identity({value: 'A});
                let direct: Box(Local) = {value: 'A};
-               export let output = (via_alias, direct);"#,
+               export def output = (via_alias, direct);"#,
         )
         .unwrap();
 
@@ -8165,8 +8367,8 @@ unchanged", "|"),
                    subject: 'Order,
                    output: 'Call({name: "root", args: ['Subject('Order)]}),
                };
-               export let creator = make_creator(model);
-               export let composed_creator = make_composed_creator(model);"#,
+               export def creator = make_creator(model);
+               export def composed_creator = make_composed_creator(model);"#,
         )
         .unwrap();
         fs::write(
@@ -8209,7 +8411,7 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "./facade.telora" {Box, Tree, identity};
                type TreeBox = Box(Tree);
-               export let output: TreeBox = identity({value: 'Leaf(1)});"#,
+               export def output: TreeBox = identity({value: 'Leaf(1)});"#,
         )
         .unwrap();
 
@@ -8226,7 +8428,7 @@ unchanged", "|"),
 
         fs::write(
             directory.join("invalid-local.telora"),
-            r#"let a = 1; export {a as b}; export let output = b;"#,
+            r#"let a = 1; export {a as b}; export def output = b;"#,
         )
         .unwrap();
         let error = load_module(
@@ -8259,8 +8461,8 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "./facade.telora" {model};
                type IntBox = model.Box(Int);
-               export let output: IntBox = model.identity({value: 1});
-               export let polymorphic = (model.identity(1), model.identity("x"));"#,
+               export def output: IntBox = model.identity({value: 1});
+               export def polymorphic = (model.identity(1), model.identity("x"));"#,
         )
         .unwrap();
 
@@ -8277,7 +8479,7 @@ unchanged", "|"),
         let directory = fixture_dir();
         fs::write(
             directory.join("origin.telora"),
-            r#"export let value = 7;
+            r#"export def value = 7;
                export def identity: for(A) Fn(A) -> A = fn(item) { item };"#,
         )
         .unwrap();
@@ -8297,7 +8499,7 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "./origin.telora" {identity as direct};
                import "./second.telora" {answer, identity};
-               export let output = {
+               export def output = {
                    answer,
                    same: direct == identity,
                    values: (identity(1), identity("x")),
@@ -8325,7 +8527,7 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "./facade.telora" {State};
                import "std/type-desc" as desc;
-               export let output = {
+               export def output = {
                    kind: desc.kind(State),
                    name: desc.opaque_name(State),
                };"#,
@@ -9372,9 +9574,9 @@ unchanged", "|"),
             directory.join("main.telora"),
             r#"import "std/dict" as dict;
                import "std/argv" as argv;
-               let environment: Dict(String) = {TARGET: "aarch64-linux-gnu"};
-               let target: Option(String) = dict.get(environment, "TARGET");
-               let missing: Option(String) = dict.get(environment, "MISSING");
+               def environment: Dict(String) = {TARGET: "aarch64-linux-gnu"};
+               def target: Option(String) = dict.get(environment, "TARGET");
+               def missing: Option(String) = dict.get(environment, "MISSING");
                def rewrite:
                    Fn(Array(String)) -> Result(Array(String), String) = fn(arguments) {
                        let arguments = argv.reject_option(arguments, "--sysroot")?;
@@ -9384,7 +9586,7 @@ unchanged", "|"),
                            arguments,
                        ))
                    };
-               export let output = {
+               export def output = {
                    target,
                    missing,
                    exact: [
@@ -10910,7 +11112,7 @@ unchanged", "|"),
                    Node,
                    codec.encode(codec.Value, root) |> result.unwrap,
                ) |> result.unwrap;
-               export let output = {
+               export def output = {
                    sum,
                    mapped: mapped[0],
                    dict_root: dict.get(mapped_dict, "root"),
@@ -11213,11 +11415,11 @@ export { CallExpr, Expr };"#,
                        }
                    }
                };
-               let value: expr.Expr = expr.add(
+               def value: expr.Expr = expr.add(
                    expr.lit(1),
                    expr.add(expr.lit(2), expr.lit(3)),
                );
-               export let output = (expr.depth(value), has_ref(expr.Expr, 8));"#,
+               export def output = (expr.depth(value), has_ref(expr.Expr, 8));"#,
         )
         .unwrap();
         let whole = load_module(directory.join("whole.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -11238,7 +11440,7 @@ export { CallExpr, Expr };"#,
                 format!(
                     r#"{import}
                        let value: Expr = add(lit(1), lit(2));
-                       export let output = depth(value);"#
+                       export def output = depth(value);"#
                 ),
             )
             .unwrap();
@@ -11249,7 +11451,7 @@ export { CallExpr, Expr };"#,
         fs::write(
             directory.join("invalid.telora"),
             r#"import "./expr.telora" {Expr, depth};
-               export let output = depth("bad");"#,
+               export def output = depth("bad");"#,
         )
         .unwrap();
         let invalid = load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000)
@@ -11951,7 +12153,7 @@ export { CallExpr, Expr };"#,
         fs::write(
             &main,
             r#"import "./library.telora" as library;
-               export let output = (
+               export def output = (
                    library.direct(40),
                    library.factory({platform: {os: "linux", arch: "x86_64"}, offset: 2})(39),
                    library.command("gcc")(
@@ -11996,7 +12198,7 @@ export { CallExpr, Expr };"#,
         assert_eq!(first, second);
         assert!(first.contains("missing.telora"), "{first}");
 
-        fs::write(&main, "export let output = 42;").unwrap();
+        fs::write(&main, "export def output = 42;").unwrap();
         let pending = engine.prepare_module(&main).unwrap();
         let first = pending.initialize().unwrap();
         let second = pending.initialize().unwrap();
@@ -12228,7 +12430,7 @@ export { CallExpr, Expr };"#,
             "let first = 1 / 0;\n\
              let blocked = first + 1;\n\
              let second = 2 / 0;\n\
-             export let output = blocked + second;",
+             export def output = blocked + second;",
         )
         .unwrap();
 
@@ -12263,7 +12465,7 @@ let first = array.map([1, 2], fn(item) {
 let second = array.map(first, fn(item) {
     if item == 2 { fail!("second", item) } else { item }
 });
-export let output = `unexpected \{array.length(second)}`;"#,
+export def output = `unexpected \{array.length(second)}`;"#,
         )
         .unwrap();
 
@@ -12310,7 +12512,7 @@ def run_both: Fn(Array(A), Array(B)) -> Int = fn(values_a, values_b) {{
     array.length(first) + array.length(second)
 }};
 let result = run_both(['Bad], ['Bad]);
-export let output = "unreachable";"#
+export def output = "unreachable";"#
                 ),
             )
             .unwrap();
@@ -12347,8 +12549,8 @@ def render: Fn(Expr) -> String = fn(expr) {
 def transform: for(A) Fn(Plan(A)) -> String = fn(plan) { render(plan.root) };
 def duplicate: Fn(Array(Expr)) -> Array(Expr) = fn(items) { items };
 def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
-let failed = reject(1);
-export let output = "unreachable";"#,
+def failed = reject(1);
+export def output = "unreachable";"#,
         )
         .unwrap();
 
@@ -12376,7 +12578,7 @@ export let output = "unreachable";"#,
         fs::rename(&main, &dependency).unwrap();
         fs::write(
             &main,
-            "import \"./dependency.telora\" as dependency; export let output = \"root\";",
+            "import \"./dependency.telora\" as dependency; export def output = \"root\";",
         )
         .unwrap();
         let dependent = recovery_engine().recover_workspace(&main).unwrap();
@@ -12403,20 +12605,20 @@ export let output = "unreachable";"#,
         let blocked = directory.join("blocked.telora");
         fs::write(
             &dependency,
-            r#"export let failed = fail!("dependency failed", 1);
-export let healthy = 41;"#,
+            r#"export def failed = fail!("dependency failed", 1);
+export def healthy = 41;"#,
         )
         .unwrap();
         fs::write(
             &healthy,
             r#"import "./dependency.telora" as dependency;
-export let output = dependency.healthy + 1;"#,
+export def output = dependency.healthy + 1;"#,
         )
         .unwrap();
         fs::write(
             &blocked,
             r#"import "./dependency.telora" as dependency;
-export let output = dependency.failed + 1;"#,
+export def output = dependency.failed + 1;"#,
         )
         .unwrap();
 
@@ -12459,13 +12661,13 @@ export let output = dependency.failed + 1;"#,
         let first = directory.join("first.telora");
         let second = directory.join("second.telora");
         let main = directory.join("main.telora");
-        fs::write(&first, r#"export let failed = fail!("first failed", 1);"#).unwrap();
-        fs::write(&second, r#"export let failed = fail!("second failed", 2);"#).unwrap();
+        fs::write(&first, r#"export def failed = fail!("first failed", 1);"#).unwrap();
+        fs::write(&second, r#"export def failed = fail!("second failed", 2);"#).unwrap();
         fs::write(
             &main,
             r#"import "./first.telora" as first;
 import "./second.telora" as second;
-export let output = second.failed + 1;"#,
+export def output = second.failed + 1;"#,
         )
         .unwrap();
 
@@ -12507,7 +12709,7 @@ def first: Fn(Int) -> Int = fn(item) {
 def second: Fn(Int) -> Int = fn(item) {
     if item == 13 { fail!("three", item) } else { item + 100 }
 };
-export let output = [1, 2, 3, 4]
+export def output = [1, 2, 3, 4]
     |> array.map\(_, first)
     |> array.map\(_, second);"#,
         )
@@ -12547,7 +12749,7 @@ export let output = [1, 2, 3, 4]
 def transform: Fn(Int) -> Int = fn(item) {
     if item == 2 { fail!("two", item) } else { item + 10 }
 };
-export let output = match array.get(array.map([1, 2, 3], transform), 0) {
+export def output = match array.get(array.map([1, 2, 3], transform), 0) {
     'Some(value) => value,
     'None => 0,
 };"#,
@@ -12587,7 +12789,7 @@ def transform: Fn(Int) -> Int = fn(item) {
     else if item == 3 { fail!("three", item) }
     else { item }
 };
-export let output = array.length([1, transform(2), 1 / 0, transform(3), 4]);"#,
+export def output = array.length([1, transform(2), 1 / 0, transform(3), 4]);"#,
         )
         .unwrap();
 
@@ -12624,7 +12826,7 @@ export let output = array.length([1, transform(2), 1 / 0, transform(3), 4]);"#,
         fs::write(
             &filter,
             r#"import "std/array" as array;
-export let output = array.filter([1, 2, 3, 4], fn(item) {
+export def output = array.filter([1, 2, 3, 4], fn(item) {
     if item == 2 { fail!("filter-two", item) }
     else if item == 4 { fail!("filter-four", item) }
     else { item > 0 }
@@ -12647,7 +12849,7 @@ export let output = array.filter([1, 2, 3, 4], fn(item) {
         fs::write(
             &fold,
             r#"import "std/array" as array;
-export let output = array.fold([1, 2, 3], 0, fn(acc, item) {
+export def output = array.fold([1, 2, 3], 0, fn(acc, item) {
     if item == 2 { fail!("fold-stop", item) }
     else if item == 3 { fail!("fold-must-not-run", item) }
     else { acc + item }
@@ -12685,7 +12887,7 @@ let concatenated = array.concat([[0], flattened, [4]]);
 let independent = array.map([5, 6], fn(item) {
     if item == 6 { fail!("independent-six", item) } else { item }
 });
-export let output = array.length(concatenated) + array.length(independent);"#,
+export def output = array.length(concatenated) + array.length(independent);"#,
         )
         .unwrap();
 
@@ -12739,7 +12941,7 @@ let cross_poly = dependency.ensure_plan(plan, plan);
 let cross_mono = dependency.ensure_int(1, 2);
 let own_poly = local_poly(plan, plan);
 let own_mono = local_int(1, 2);
-export let output = (cross_poly, cross_mono, own_poly, own_mono);"#,
+export def output = (cross_poly, cross_mono, own_poly, own_mono);"#,
         )
         .unwrap();
 
@@ -12786,7 +12988,7 @@ def reject: Fn(Int) -> Int = fn(item) { fail!("nested", item) };
 let failed: Array(Int) = array.map([1], reject);
 let compared = failed == [1];
 let selected = failed[0] == 1;
-export let output = (compared, selected);"#,
+export def output = (compared, selected);"#,
         )
         .unwrap();
 
@@ -12963,15 +13165,15 @@ export let output = (compared, selected);"#,
             &main,
             r#"import "std/json" as json;
                import "std/result" as result;
-               let parsed = result.unwrap(json.parse("{\"answer\": 42}"));
-               let answer = match parsed {
+               def parsed = result.unwrap(json.parse("{\"answer\": 42}"));
+               def answer = match parsed {
                    'Object(fields) => match fields.answer {
                        'Int(value) => value,
                        _ => 0,
                    },
                    _ => 0,
                };
-               export let output = {
+               export def output = {
                    parsed: parsed,
                    answer: answer,
                    decoded: result.unwrap(json.decode(Int, "42")),
@@ -13003,23 +13205,23 @@ export let output = (compared, selected);"#,
             r#"import "std/yaml" as yaml;
                import "std/toml" as toml;
                import "std/result" as result;
-               let yaml_value = result.unwrap(yaml.parse("item: !!binary SGk="));
-               let toml_value = result.unwrap(toml.parse("when = 2026-08-18"));
-               let yaml_ok = match yaml_value {
+               def yaml_value = result.unwrap(yaml.parse("item: !!binary SGk="));
+               def toml_value = result.unwrap(toml.parse("when = 2026-08-18"));
+               def yaml_ok = match yaml_value {
                    'Object(fields) => match fields.item {
                        'Bytes(_) => 'True,
                        _ => 'False,
                    },
                    _ => 'False,
                };
-               let toml_ok = match toml_value {
+               def toml_ok = match toml_value {
                    'Object(fields) => match fields.when {
                        'LocalDate("2026-08-18") => 'True,
                        _ => 'False,
                    },
                    _ => 'False,
                };
-               export let output = {
+               export def output = {
                    yaml_ok: yaml_ok,
                    toml_ok: toml_ok,
                    custom_tag: yaml.parse("item: !custom value"),
@@ -13119,12 +13321,12 @@ export let output = (compared, selected);"#,
                        'OffsetDateTime(_) => "OffsetDateTime",
                    }
                };
-               let json: Dict(Value) = match json_data {'Object(fields) => fields, _ => {}};
-               let yaml: Dict(Value) = match yaml_data {'Object(fields) => fields, _ => {}};
-               let toml: Dict(Value) = match toml_data {'Object(fields) => fields, _ => {}};
-               let encoded_identity = codec.encode(Value, json_data) |> result.unwrap;
-               let decoded_identity = codec.decode(Value, encoded_identity) |> result.unwrap;
-               export let output = {
+               def json: Dict(Value) = match json_data {'Object(fields) => fields, _ => {}};
+               def yaml: Dict(Value) = match yaml_data {'Object(fields) => fields, _ => {}};
+               def toml: Dict(Value) = match toml_data {'Object(fields) => fields, _ => {}};
+               def encoded_identity = codec.encode(Value, json_data) |> result.unwrap;
+               def decoded_identity = codec.decode(Value, encoded_identity) |> result.unwrap;
+               export def output = {
                    json_module,
                    yaml_module,
                    toml_module,
@@ -13360,7 +13562,7 @@ export let output = (compared, selected);"#,
                type Endpoint = struct { host: String, port: Int };
                @re.parse_by(re.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
                type Service = struct { name: String, endpoint: Endpoint };
-               export let output = result.unwrap(string.parse(Service, "api@localhost:8080"));"#,
+               export def output = result.unwrap(string.parse(Service, "api@localhost:8080"));"#,
         )
         .unwrap();
         let engine = recovery_engine();
@@ -13385,7 +13587,7 @@ export let output = (compared, selected);"#,
                type Endpoint = struct { host: String, port: Int };
                @fmt.display_by("{name}@{endpoint} {{ready}} {ratio} {name}")
                type Service = struct { name: String, endpoint: Endpoint, ratio: Float };
-               export let output = fmt.display(Service, {
+               export def output = fmt.display(Service, {
                    name: "api",
                    endpoint: { host: "localhost", port: 8080 },
                    ratio: -0.0,
@@ -13447,11 +13649,11 @@ export let output = (compared, selected);"#,
                type Endpoint = struct { host: String, port: Int };
 
                type Config = struct { endpoint: Endpoint, name: String };
-               let decoded = result.unwrap(codec.decode(Config, codec.encode(codec.Value, {
+               def decoded = result.unwrap(codec.decode(Config, codec.encode(codec.Value, {
                    endpoint: "localhost:8080",
                    name: "dev",
                }) |> result.unwrap));
-               export let output = {
+               export def output = {
                    decoded,
                    encoded: result.unwrap(codec.encode(codec.Value, decoded)),
                    direct: result.unwrap(codec.decode(Endpoint, codec.encode(codec.Value, "example.com:443") |> result.unwrap)),
@@ -13488,7 +13690,7 @@ export let output = (compared, selected);"#,
                @string.decode_by_parse
                @re.parse_by(re.compile(r"^(?P<value>\d+)$"))
                type Bad = struct { value: Int };
-               export let output = codec.decode(Bad, codec.encode(codec.Value, "42") |> result.unwrap);"#,
+               export def output = codec.decode(Bad, codec.encode(codec.Value, "42") |> result.unwrap);"#,
         )
         .unwrap();
         let engine = recovery_engine();
@@ -13529,7 +13731,7 @@ export let output = (compared, selected);"#,
             r#"{"dependencies":{"models":{"path":"models"}}}"#,
         )
         .unwrap();
-        fs::write(models.join("base.telora"), "export let answer = 42;").unwrap();
+        fs::write(models.join("base.telora"), "export def answer = 42;").unwrap();
         fs::write(
             models.join("user.telora"),
             "import \"./base.telora\" as base; export { base as base };",
@@ -13538,7 +13740,7 @@ export let output = (compared, selected);"#,
         let main = app.join("main.telora");
         fs::write(
             &main,
-            "import \"models/user.telora\" as user; export let output = user.base.answer;",
+            "import \"models/user.telora\" as user; export def output = user.base.answer;",
         )
         .unwrap();
 
@@ -13721,10 +13923,10 @@ export let output = (compared, selected);"#,
 import "std/array" as arrays;
 import "std/result" as result;
 import "./project.json" { data as project };
-let initial: Array(validation.DiagnosticRecord) = [];
+def initial: Array(validation.DiagnosticRecord) = [];
 import "std/codec" as codec;
-let checked_input = codec.decode(validation.Project, project) |> result.unwrap;
-let output = match validation.validate_project(checked_input, initial) {
+def checked_input = codec.decode(validation.Project, project) |> result.unwrap;
+def output = match validation.validate_project(checked_input, initial) {
     (checked, diagnostics) => {
         count: arrays.length(diagnostics),
         initial_count: arrays.length(initial),
@@ -13852,7 +14054,7 @@ inspect(User)(checked)"#;
         fs::write(
             &main,
             r#"def reject: Fn(String) -> Result(String, String) = fn(value) { 'Err("deprecated") };
-export let output = reject.should_ok!("old");"#,
+export def output = reject.should_ok!("old");"#,
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
@@ -13869,7 +14071,7 @@ export let output = reject.should_ok!("old");"#,
         fs::write(
             &main,
             r#"def reject: Fn(Int) -> Result(Int, String) = fn(value) { 'Err("invalid") };
-export let output = reject.must_ok!(42);"#,
+export def output = reject.must_ok!(42);"#,
         )
         .unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();

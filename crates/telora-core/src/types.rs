@@ -2325,6 +2325,7 @@ fn type_definition_bindings<'a>(
                     definition.top_level
                         && definition.kind == HirDefinitionKind::Type
                         && definition.location == binding.value.name.location
+                        && definition.value.is_some()
                 })
                 .map(|definition| (definition.id, binding))
         })
@@ -3498,19 +3499,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ),
         ));
     }
-    let uncontracted_definition_names = program
-        .value
-        .body
-        .value
-        .bindings
-        .iter()
-        .filter(|binding| {
-            binding.value.kind == BindingKind::Def
-                && binding.value.annotation.is_none()
-                && !definition_contracts.contains_key(&binding.value.name.value)
-        })
-        .map(|binding| binding.value.name.value.clone())
-        .collect::<HashSet<_>>();
     for binding in &program.value.body.value.bindings {
         if binding.value.kind != BindingKind::Def
             || binding.value.annotation.is_some()
@@ -3675,9 +3663,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
         if binding.value.kind == BindingKind::Def
             && binding.value.annotation.is_none()
             && !is_recursive
+            && !definition_contracts.contains_key(&binding.value.name.value)
             && expression_references_names(
                 &binding.value.value,
-                &uncontracted_definition_names,
+                &HashSet::from([binding.value.name.value.clone()]),
                 &HashSet::new(),
             )
         {
@@ -9844,17 +9833,6 @@ impl<'a> GenericInference<'a> {
         if !component_plan.indirect_recursive.is_empty() {
             return Err("indirect recursive definition requires an explicit contract".into());
         }
-        let uncontracted_definition_names = block
-            .value
-            .bindings
-            .iter()
-            .filter(|binding| {
-                binding.value.kind == BindingKind::Def
-                    && binding.value.annotation.is_none()
-                    && !declared_contracts.contains_key(&binding.value.name.value)
-            })
-            .map(|binding| binding.value.name.value.clone())
-            .collect::<HashSet<_>>();
         for binding in &block.value.bindings {
             if binding.value.kind != BindingKind::Def || binding.value.annotation.is_some() {
                 continue;
@@ -9978,7 +9956,7 @@ impl<'a> GenericInference<'a> {
                 && !declared_contracts.contains_key(&binding.value.name.value)
                 && expression_references_names(
                     &binding.value.value,
-                    &uncontracted_definition_names,
+                    &HashSet::from([binding.value.name.value.clone()]),
                     &HashSet::new(),
                 )
             {
@@ -12486,7 +12464,7 @@ mod tests {
                       let dictionary: Dict(String) = {value: \"x\"};\
                       let alternative = if 'True { {value: 1} } else { {value: \"x\"} };\
                       let dynamic: Any = record;\
-                      export let output = (record.value, dictionary.value, alternative.value, dynamic.value);";
+                      export def output = (record.value, dictionary.value, alternative.value, dynamic.value);";
         let analysis = analyze_with_natives(source, &[]).unwrap();
         assert_eq!(
             analysis.display(analysis.binding_types["output"]),

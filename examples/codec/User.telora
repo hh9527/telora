@@ -3,11 +3,11 @@ import "core:result" as result;
 
 type Type = struct {v: Option(String)};
 
-let decode = fn(value) {
+def decode = fn(value) {
     codec.decode(Type, value)
 };
 
-let encode = fn(value) {
+def encode = fn(value) {
     codec.encode(Type, value) |> result.unwrap
 };
 

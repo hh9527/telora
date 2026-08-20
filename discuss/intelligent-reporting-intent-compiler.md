@@ -228,7 +228,7 @@ Code Agent 可以生成靠近意图的 Telora：
 ```telora
 import "company/analytics" as analytics;
 
-export let report = analytics.report({
+export def report = analytics.report({
     measures: [
         analytics.measure("net_revenue"),
         analytics.previous_period("net_revenue"),

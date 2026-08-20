@@ -1427,7 +1427,7 @@ mod tests {
         let (root, state) = fixture();
         let model = root.join("model.telora");
         let main = root.join("main.telora");
-        std::fs::write(&model, "export let alpha = 1; export let beta = \"x\";")
+        std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
             .expect("write model");
         let source = "import \"./model.telora\" as model; model.alpha";
         std::fs::write(&main, format!("{source}; export {{ model as output }};"))
@@ -1452,7 +1452,7 @@ mod tests {
         let (root, state) = fixture();
         let model = root.join("model.telora");
         let main = root.join("main.telora");
-        std::fs::write(&model, "export let alpha = 1; export let beta = \"x\";")
+        std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
             .expect("write model");
         let source = "import \"./model.telora\" as model; model.";
         std::fs::write(&main, format!("{source}\nexport {{ model as output }};"))
@@ -1579,7 +1579,7 @@ mod tests {
             .open(
                 &path,
                 DocumentVersion(1),
-                "let first = 1 / 0; let second = 2 / 0; export let output = 0;",
+                "def first = 1 / 0; def second = 2 / 0; export def output = 0;",
             )
             .expect("open invalid source");
         {
@@ -1604,7 +1604,7 @@ mod tests {
                 &path,
                 DocumentVersion(1),
                 DocumentVersion(2),
-                &[TextEdit::Full("export let output = 1;".to_owned())],
+                &[TextEdit::Full("export def output = 1;".to_owned())],
             )
             .expect("fix source");
         state.borrow_mut().documents.insert(path, 2);

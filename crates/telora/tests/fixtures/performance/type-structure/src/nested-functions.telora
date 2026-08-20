@@ -102,6 +102,6 @@ def f096: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x
 def f097: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } }, b: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } } } };
 def f098: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } }, b: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } } } };
 def f099: Fn(String) -> Big = fn(x) { { a: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } }, b: { a: { a: { value: x }, b: { value: x } }, b: { a: { value: x }, b: { value: x } } } } };
-export let output = "ok";
+export def output = "ok";
 
 

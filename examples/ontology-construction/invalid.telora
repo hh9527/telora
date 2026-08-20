@@ -5,7 +5,7 @@ type Measure = enum { 'Revenue };
 
 type MeasureCapability = ontology.Capability(Measure, Entity, String);
 
-export let output: MeasureCapability = {
+export def output: MeasureCapability = {
     id: 'Revenue,
     lower: fn(measure, entity) { 'Some(entity) },
 };

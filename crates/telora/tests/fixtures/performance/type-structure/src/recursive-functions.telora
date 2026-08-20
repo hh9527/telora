@@ -101,5 +101,5 @@ def f096: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f097: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f098: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
 def f099: Fn(Expr) -> Expr = fn(x) { 'And({ items: [x] }) };
-export let output = "ok";
+export def output = "ok";
 

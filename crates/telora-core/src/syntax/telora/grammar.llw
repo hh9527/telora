@@ -1,4 +1,4 @@
-token Let='let' Decl='decl' Def='def' Native='native' Option='option' For='for' Type='type' Fn='fn' FunctionType='Fn' Interpreter='interpreter' If='if' Else='else' Match='match' Return='return';
+token Let='let' Decl='decl' Def='def' Do='do' Native='native' Option='option' For='for' Type='type' Fn='fn' FunctionType='Fn' Interpreter='interpreter' If='if' Else='else' Match='match' Return='return';
 token Import='import' Export='export' As='as';
 token SectionLParen='\\(' LParen='(' RParen=')' LBrace='{' RBrace='}' LBracket='[' RBracket=']';
 token Comma=',' Colon=':' Semicolon=';' Ellipsis='...' Dot='.' At='@' Bang='!' Question='?';
@@ -74,6 +74,7 @@ primary:
 | Identifier @variable_expr
 | ?5 interpreter_intrinsic
 | ?6 if_let_expr
+| ?7 do_expr
 | legacy_interpreter_expr
 | '(' [expression (?1 ',' expression)* [',']] ')' @paren_expr
 | '[' [array_item (?2 ',' array_item)* [',']] ']' @array_expr
@@ -94,6 +95,7 @@ dict_item^: spread_item | dict_field;
 decorator: '@' decorator_path [arguments];
 decorator_path: Identifier ('.' Identifier)*;
 block: '{' body '}';
+do_expr: 'do' block;
 closure: 'fn' parameters ['->' expression] block;
 interpreter_intrinsic: 'interpreter' '!' '(' [expression (?1 ',' expression)* [',']] ')';
 named_intrinsic: Identifier '!' '(' [expression (?1 ',' expression)* [',']] ')';

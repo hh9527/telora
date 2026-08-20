@@ -1,7 +1,7 @@
 import "./b2b-model.telora" { compile };
 import "./restriction.json" { data as restriction };
 
-let compilation = compile(restriction, {
+def compilation = compile(restriction, {
     measures: ['NetRevenue, 'UnitsSold],
     alignment: 'PreAggregate('Order),
     dimensions: ['OrderMonth],
@@ -11,7 +11,7 @@ let compilation = compile(restriction, {
     render: {mode: 'Table, fields: ["order_month", "net_revenue_cents", "units_sold"]},
 });
 
-export let output = match compilation {
+export def output = match compilation {
     'Some(plan) => plan.statement,
     'None => panic!("expected the aligned multi-measure report to lower to SQL"),
 };

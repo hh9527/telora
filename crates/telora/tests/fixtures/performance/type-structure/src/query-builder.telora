@@ -123,9 +123,9 @@ type Query = struct {
 
 # ---------------------------------------------------------------- Identifiers
 
-let sql_identifier_re = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
+def sql_identifier_re = regex.compile(r"^[A-Za-z_][A-Za-z0-9_]*$");
 
-let reserved_words: Array(String) = [
+def reserved_words: Array(String) = [
   "select", "from", "where", "group", "by", "order", "limit", "as", "join",
   "inner", "left", "on", "and", "or", "not", "null", "case", "when", "then",
   "else", "end", "distinct", "union", "all", "insert", "update", "delete",
@@ -172,17 +172,17 @@ def make_join: Fn(JoinKind, TableRef, ColumnRef, ColumnRef) -> Join = fn(kind, r
 
 # ---------------------------------------------------------------- Profile vocabulary
 
-let all_operators: Array(Operator) = [
+def all_operators: Array(Operator) = [
   'Scan, 'Column, 'Binding, 'Scalar, 'Aggregate, 'Project, 'Filter, 'EquiJoin, 'Group, 'Order, 'Limit,
 ];
 
-let all_join_kinds: Array(JoinKind) = ['Inner, 'Left];
+def all_join_kinds: Array(JoinKind) = ['Inner, 'Left];
 
-let all_scalar_functions: Array(ScalarFunction) = ['Lower, 'Upper, 'Abs, 'Length, 'Coalesce, 'Substr];
+def all_scalar_functions: Array(ScalarFunction) = ['Lower, 'Upper, 'Abs, 'Length, 'Coalesce, 'Substr];
 
-let all_aggregate_functions: Array(AggregateFunction) = ['Count, 'Sum, 'Avg, 'Min, 'Max];
+def all_aggregate_functions: Array(AggregateFunction) = ['Count, 'Sum, 'Avg, 'Min, 'Max];
 
-let full_profile: PlanProfile = {
+def full_profile: PlanProfile = {
   operators: all_operators,
   join_kinds: all_join_kinds,
   scalar_functions: all_scalar_functions,
@@ -191,16 +191,16 @@ let full_profile: PlanProfile = {
 
 # ---------------------------------------------------------------- Example plans
 
-let example_lower_expr: Expr = 'Scalar({ function: 'Lower, args: ['Column(make_column_ref("c", "name"))] });
+def example_lower_expr: Expr = 'Scalar({ function: 'Lower, args: ['Column(make_column_ref("c", "name"))] });
 
-let example_total_sum_expr: Expr = 'Aggregate({ function: 'Sum, argument: 'Some('Column(make_column_ref("o", "total"))) });
+def example_total_sum_expr: Expr = 'Aggregate({ function: 'Sum, argument: 'Some('Column(make_column_ref("o", "total"))) });
 
-let example_filter_expr: Expr = 'And({ items: [
+def example_filter_expr: Expr = 'And({ items: [
   'Compare({ op: 'Gt, left: 'Column(make_column_ref("o", "total")), right: 'Value('Float(100.0)) }),
   'Compare({ op: 'Eq, left: 'Column(make_column_ref("c", "tier")), right: 'Value('String("gold")) }),
 ] });
 
-let example_full_plan: Plan = {
+def example_full_plan: Plan = {
   revision: "v7",
   source: make_table_ref("orders", "o", ["id", "customer_id", "total", "status", "created_at"]),
   projections: [
@@ -218,11 +218,11 @@ let example_full_plan: Plan = {
   limit: 'Some(50),
 };
 
-let example_count_expr: Expr = 'Aggregate({ function: 'Count, argument: 'None });
+def example_count_expr: Expr = 'Aggregate({ function: 'Count, argument: 'None });
 
-let example_amount_sum_expr: Expr = 'Aggregate({ function: 'Sum, argument: 'Some('Column(make_column_ref("s", "amount"))) });
+def example_amount_sum_expr: Expr = 'Aggregate({ function: 'Sum, argument: 'Some('Column(make_column_ref("s", "amount"))) });
 
-let example_grouped_plan: Plan = {
+def example_grouped_plan: Plan = {
   revision: "v2",
   source: make_table_ref("sales", "s", ["region", "amount"]),
   projections: [
@@ -237,7 +237,7 @@ let example_grouped_plan: Plan = {
   limit: 'Some(10),
 };
 
-let example_simple_plan: Plan = {
+def example_simple_plan: Plan = {
   revision: "v1",
   source: make_table_ref("items", "i", ["id", "name", "price"]),
   projections: [
@@ -255,15 +255,15 @@ let example_simple_plan: Plan = {
 # expression (substr(orders.created_at, 1, 7)). Later joins reference aliases
 # introduced by earlier joins, and grouping accepts scalar expressions.
 
-let example_orders_count_expr: Expr = 'Aggregate({ function: 'Count, argument: 'Some('Column(make_column_ref("o", "id"))) });
+def example_orders_count_expr: Expr = 'Aggregate({ function: 'Count, argument: 'Some('Column(make_column_ref("o", "id"))) });
 
-let example_order_month_expr: Expr = 'Scalar({ function: 'Substr, args: [
+def example_order_month_expr: Expr = 'Scalar({ function: 'Substr, args: [
   'Column(make_column_ref("o", "created_at")),
   'Value('Int(1)),
   'Value('Int(7)),
 ] });
 
-let example_multi_hop_plan: Plan = {
+def example_multi_hop_plan: Plan = {
   revision: "v9",
   source: make_table_ref("orders", "o", ["id", "created_at", "customer_id", "warehouse_id", "carrier_id", "service_level_id"]),
   projections: [

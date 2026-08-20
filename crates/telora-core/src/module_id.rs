@@ -1351,7 +1351,7 @@ mod tests {
         std::fs::create_dir_all(app.join("src/bin")).unwrap();
         std::fs::create_dir_all(app.join("tests")).unwrap();
         std::fs::write(app.join("telora-deps.json"), "{}").unwrap();
-        std::fs::write(temporary.join("outside.telora"), "export let output = 1;").unwrap();
+        std::fs::write(temporary.join("outside.telora"), "export def output = 1;").unwrap();
         symlink(
             temporary.join("outside.telora"),
             app.join("src/bin/escape.telora"),

@@ -1,6 +1,6 @@
 type DiagnosticRecord = struct {message: String};
 
-export let output = {
+export def output = {
     let warning: DiagnosticRecord = {message: "configuration key is deprecated"};
     warning.message
 };

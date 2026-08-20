@@ -317,10 +317,24 @@ import "path" as name, { item };
 模块没有隐式返回值。显式导出值、函数或类型：
 
 ```telora
-export let version = 1;
+export def version = 1;
 export def compile: Fn(Input) -> Option(Output) = fn(input) { ... };
 export { User, make_user };
 ```
+
+模块顶层只包含声明，普通值也使用 `def`。`let` 只用于函数或 `do` block 中的局部、
+顺序计算；需要多步初始化模块值时写成：
+
+```telora
+def answer: Int = do {
+    let base = 40;
+    base + 2
+};
+
+export {answer};
+```
+
+顶层 `let`、`export let`、裸调用和 final expression 都不是合法 ModuleItem。
 
 ### Package dependency
 
@@ -558,7 +572,7 @@ def enabled: Rule = {
     lower: fn(requested) { 'Some("enabled-plan") },
 };
 
-export let output = lower_one([enabled], 'Enabled);
+export def output = lower_one([enabled], 'Enabled);
 ```
 
 真实 eDSL 应进一步保存所有独立结果、验证完整性，并只在证据完整时调用 final

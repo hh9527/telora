@@ -190,7 +190,7 @@ fn(relation) { relation.to }
 ```telora
 import "./model.telora" { compile };
 
-export let output = compile(['SomeMeasure], ['SomeDimension]);
+export def output = compile(['SomeMeasure], ['SomeDimension]);
 ```
 
 本实验由主实验者运行。你只负责写好代码并报告预期风险。

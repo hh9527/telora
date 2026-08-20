@@ -1600,7 +1600,7 @@ mod tests {
         let directory = fixture_dir();
         let model = directory.join("model.telora");
         let main = directory.join("main.telora");
-        fs::write(&model, "export let alpha = 1; export let beta = \"x\";").unwrap();
+        fs::write(&model, "export def alpha = 1; export def beta = \"x\";").unwrap();
         fs::write(
             &main,
             "import \"./model.telora\" as model; let selected = model.alpha; export { selected as output };",
@@ -1646,8 +1646,8 @@ mod tests {
             &main,
             "import \"./model.telora\" as model;\n\
              import \"./data.json\" as data;\n\
-             let f = fn(x) { let y = x; y };\n\
-             let count = 1 + 2;\n\
+             def f = fn(x) { let y = x; y };\n\
+             def count = 1 + 2;\n\
              export { model, data, f, count };",
         )
         .unwrap();

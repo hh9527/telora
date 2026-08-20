@@ -1,6 +1,6 @@
 # RFC 0255: Declarative Module Items
 
-- Status: Accepted
+- Status: Implemented
 - Tracking issue: #114
 - Supersedes: module-level `let`, `export let`, and authored module results
 - Depends on: RFC 0226, RFC 0235, RFC 0238
@@ -185,3 +185,23 @@ imports observe different publication conventions.
 7. All repository Telora modules use `def` for top-level values and contain no
    `export let`.
 8. Parser, core, CLI, LSP, tree-sitter, formatting, and workspace tests pass.
+
+## Outcome
+
+Implemented on 2026-08-20.
+
+- Production modules reject top-level `let`, `export let`, authored result
+  expressions, and missing explicit interfaces with focused diagnostics.
+- `do { ... }` is an ordinary expression and is the documented initializer
+  form for module values that need lexical `let` bindings.
+- Explicit module bindings share one namespace. Conflicts carry primary and
+  secondary source labels; recovery retains the conflict without overwriting
+  type-definition identities or panicking on imported type families.
+- Ordinary acyclic `def` dependencies are inferred without being mistaken for
+  recursion. Function recursion and `decl`/`def` pairing retain their existing
+  contracts.
+- The repository modules, LANGUAGE SSOT, tutorial, experiment tutorial, CLI
+  tutorial, LSP/CLI fixtures, and tree-sitter grammar/corpus were migrated.
+- `cargo test --workspace` passes with 20 LSP tests, 38 CLI tests, and 561 core
+  tests (one manual parse baseline ignored). `npx tree-sitter test` passes all
+  10 corpus cases.

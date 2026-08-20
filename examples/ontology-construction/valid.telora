@@ -16,16 +16,16 @@ type Requirements = ontology.Many(Entity);
 type MeasureRequirement = ontology.Requirement(Measure, Requirements);
 type MeasureCapability = ontology.Capability(Measure, Entity, MeasureRequirement);
 
-let capability: MeasureCapability = {
+def capability: MeasureCapability = {
     id: 'Revenue,
     lower: fn(measure, entity) {
         'Some({key: 'Revenue, output: [entity]})
     },
 };
 
-let requested: Array(Measure) = ['Revenue];
-let input: Entity = 'Order;
-let lowered = method.lower_requested(
+def requested: Array(Measure) = ['Revenue];
+def input: Entity = 'Order;
+def lowered = method.lower_requested(
     requested,
     [capability],
     fn(item) { item.id },
@@ -33,7 +33,7 @@ let lowered = method.lower_requested(
     input,
 );
 
-export let output: MeasureRequirement = match array.find(method.completed(lowered), fn(ignored) { 'True }) {
+export def output: MeasureRequirement = match array.find(method.completed(lowered), fn(ignored) { 'True }) {
     'Some(requirement) => requirement,
     'None => {key: 'Revenue, output: []},
 };

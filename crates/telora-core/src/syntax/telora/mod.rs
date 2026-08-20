@@ -139,7 +139,7 @@ option "module.documentation" {stability: "experimental"};"#;
 
     #[test]
     fn cst_preserves_multiple_explicit_exports_without_a_final_expression() {
-        let source = "export let value = 1; export type User = struct { name: String }; export { value as output, User };";
+        let source = "export def value = 1; export type User = struct { name: String }; export { value as output, User };";
         let mut sources = crate::source::SourceDatabase::default();
         let id = sources.add("exports.telora", source);
         let parsed = parse(id, source);
