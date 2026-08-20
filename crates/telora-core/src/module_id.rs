@@ -65,6 +65,48 @@ pub enum ModuleAuthority {
     RuntimeSystem,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ModuleCatalogOrigin {
+    Crate,
+    Dependency,
+    Host,
+}
+
+impl ModuleCatalogOrigin {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Crate => "crate",
+            Self::Dependency => "dependency",
+            Self::Host => "host",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ModuleVisibility {
+    Public,
+    Private,
+    Native,
+}
+
+impl ModuleVisibility {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+            Self::Native => "native",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ModuleCatalogEntry {
+    pub id: ModuleCName,
+    pub format: ModuleFormat,
+    pub origin: ModuleCatalogOrigin,
+    pub visibility: ModuleVisibility,
+}
+
 /// Stable identity assigned after the complete module graph has been discovered.
 ///
 /// The numeric value is the module's position in the graph sorted by canonical
@@ -278,19 +320,7 @@ impl ModuleResolver {
     }
 
     pub fn from_cwd(cwd: &Path, root_id: &str) -> Result<Self, ResolveModuleError> {
-        let cwd = absolute_normalized(cwd)?;
-        let manifest = cwd
-            .ancestors()
-            .map(|directory| directory.join("telora-deps.json"))
-            .find(|candidate| candidate.is_file())
-            .ok_or_else(|| {
-                ResolveModuleError::Manifest(format!(
-                    "cannot find telora-deps.json from {} or its ancestors",
-                    cwd.display()
-                ))
-            })?;
-        let workspace_root = manifest.parent().expect("manifest has parent").to_owned();
-        let source_root = resolve_physical(&workspace_root.join("src"))?;
+        let (manifest, workspace_root, source_root) = workspace_layout(cwd)?;
         let (id, path) = logical_root(&workspace_root, &source_root, root_id)?;
         let root_path = resolve_physical(&path)?;
         let expected_root = match &id {
@@ -329,6 +359,97 @@ impl ModuleResolver {
             ));
         }
         Ok(resolver)
+    }
+
+    pub fn catalog_from_cwd(
+        cwd: &Path,
+        builtins: impl IntoIterator<Item = (String, u32)>,
+    ) -> Result<Vec<ModuleCatalogEntry>, ResolveModuleError> {
+        let (manifest, workspace_root, source_root) = workspace_layout(cwd)?;
+        let config = read_manifest_config(&workspace_root, &manifest)?;
+        let mut modules = BTreeMap::new();
+
+        for (path, physical) in module_files(&source_root)? {
+            let id = if let Ok(binary) = path.strip_prefix("bin") {
+                if binary.as_os_str().is_empty() {
+                    continue;
+                }
+                ModuleCName::Binary(binary.to_owned())
+            } else {
+                ModuleCName::Source(path.clone())
+            };
+            insert_catalog_file(
+                &mut modules,
+                id,
+                physical,
+                ModuleCatalogOrigin::Crate,
+                true,
+                &config.formats,
+            );
+        }
+
+        let tests = workspace_root.join("tests");
+        if tests.is_dir() {
+            let tests = resolve_physical(&tests)?;
+            for (path, physical) in module_files(&tests)? {
+                insert_catalog_file(
+                    &mut modules,
+                    ModuleCName::Test(path),
+                    physical,
+                    ModuleCatalogOrigin::Crate,
+                    true,
+                    &config.formats,
+                );
+            }
+        }
+
+        for (name, root) in &config.dependencies {
+            let source_candidate = root.join("src");
+            let source_root = if source_candidate.is_dir() {
+                resolve_physical(&source_candidate)?
+            } else {
+                root.clone()
+            };
+            for (path, physical) in module_files(&source_root)? {
+                if path
+                    .components()
+                    .next()
+                    .is_some_and(|part| matches!(part.as_os_str().to_str(), Some("bin" | "tests")))
+                    || is_private_module_path(&path)
+                {
+                    continue;
+                }
+                insert_catalog_file(
+                    &mut modules,
+                    ModuleCName::Dependency {
+                        name: name.clone(),
+                        path,
+                    },
+                    physical,
+                    ModuleCatalogOrigin::Dependency,
+                    false,
+                    &config.formats,
+                );
+            }
+        }
+
+        for (name, _) in builtins {
+            if is_private_module_path(Path::new(&name)) {
+                continue;
+            }
+            let id = ModuleCName::builtin(name);
+            modules.insert(
+                id.to_string(),
+                ModuleCatalogEntry {
+                    id,
+                    format: ModuleFormat::Telora,
+                    origin: ModuleCatalogOrigin::Host,
+                    visibility: ModuleVisibility::Public,
+                },
+            );
+        }
+
+        Ok(modules.into_values().collect())
     }
 
     pub fn selected_root(&self) -> Result<ResolvedModule, ResolveModuleError> {
@@ -554,61 +675,9 @@ impl ModuleResolver {
     }
 
     fn load_manifest(&mut self, manifest: &Path) -> Result<(), ResolveModuleError> {
-        let source = std::fs::read_to_string(manifest).map_err(|error| {
-            ResolveModuleError::Manifest(format!("cannot read {}: {error}", manifest.display()))
-        })?;
-        let value =
-            crate::json::parse_json(&manifest.display().to_string(), &source).map_err(|error| {
-                ResolveModuleError::Manifest(format!("invalid {}: {error}", manifest.display()))
-            })?;
-        self.apply_manifest(value.value())
-    }
-
-    fn apply_manifest(&mut self, value: crate::ValueRef<'_>) -> Result<(), ResolveModuleError> {
-        if value.kind() != crate::ValueKind::Dict {
-            return Err(ResolveModuleError::Manifest(
-                "dependency manifest must be a JSON object".into(),
-            ));
-        }
-        if let Some(dependencies) = value.get("dependencies") {
-            let Some(names) = dependencies.dict_fields() else {
-                return Err(ResolveModuleError::Manifest(
-                    "manifest field \"dependencies\" must be an object".into(),
-                ));
-            };
-            for name in names {
-                let specification = dependencies.get(name).expect("Dict field exists");
-                let path = specification
-                    .get("path")
-                    .and_then(crate::ValueRef::as_str)
-                    .ok_or_else(|| {
-                        ResolveModuleError::Manifest(format!(
-                            "dependency {name:?} must have a String path"
-                        ))
-                    })?;
-                let root = resolve_physical(&self.workspace_root.join(path.as_str()))?;
-                self.dependencies.insert(name.to_owned(), root);
-            }
-        }
-        if let Some(formats) = value.get("formats") {
-            let Some(modules) = formats.dict_fields() else {
-                return Err(ResolveModuleError::Manifest(
-                    "manifest field \"formats\" must be an object".into(),
-                ));
-            };
-            for module in modules {
-                let format = formats
-                    .get(module)
-                    .and_then(crate::ValueRef::as_str)
-                    .ok_or_else(|| {
-                        ResolveModuleError::Manifest(format!(
-                            "format override {module:?} must be a String"
-                        ))
-                    })?;
-                self.formats
-                    .insert(module.to_owned(), ModuleFormat::parse(format.as_str())?);
-            }
-        }
+        let config = read_manifest_config(&self.workspace_root, manifest)?;
+        self.dependencies = config.dependencies;
+        self.formats = config.formats;
         Ok(())
     }
 
@@ -809,19 +878,207 @@ impl ModuleResolver {
         id: &ModuleCName,
         physical: &Path,
     ) -> Result<ModuleFormat, ResolveModuleError> {
-        let configured = self.formats.get(&id.to_string()).copied();
-        let extension = ModuleFormat::from_path(physical);
-        match (configured, extension) {
-            (Some(_), Err(error @ ResolveModuleError::InvalidModuleSuffix(_))) => Err(error),
-            (Some(configured), Ok(extension)) if configured != extension => {
-                Err(ResolveModuleError::FormatConflict {
-                    configured,
-                    extension,
-                })
-            }
-            (Some(configured), _) => Ok(configured),
-            (None, extension) => extension,
+        format_for(&self.formats, id, physical)
+    }
+}
+
+#[derive(Default)]
+struct ManifestConfig {
+    dependencies: BTreeMap<String, PathBuf>,
+    formats: BTreeMap<String, ModuleFormat>,
+}
+
+fn workspace_layout(cwd: &Path) -> Result<(PathBuf, PathBuf, PathBuf), ResolveModuleError> {
+    let cwd = absolute_normalized(cwd)?;
+    let manifest = cwd
+        .ancestors()
+        .map(|directory| directory.join("telora-deps.json"))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            ResolveModuleError::Manifest(format!(
+                "cannot find telora-deps.json from {} or its ancestors",
+                cwd.display()
+            ))
+        })?;
+    let workspace_root = manifest.parent().expect("manifest has parent").to_owned();
+    let source_root = resolve_physical(&workspace_root.join("src"))?;
+    Ok((manifest, workspace_root, source_root))
+}
+
+fn read_manifest_config(
+    workspace_root: &Path,
+    manifest: &Path,
+) -> Result<ManifestConfig, ResolveModuleError> {
+    let source = std::fs::read_to_string(manifest).map_err(|error| {
+        ResolveModuleError::Manifest(format!("cannot read {}: {error}", manifest.display()))
+    })?;
+    let value =
+        crate::json::parse_json(&manifest.display().to_string(), &source).map_err(|error| {
+            ResolveModuleError::Manifest(format!("invalid {}: {error}", manifest.display()))
+        })?;
+    let mut config = ManifestConfig::default();
+    apply_manifest(
+        workspace_root,
+        value.value(),
+        &mut config.dependencies,
+        &mut config.formats,
+    )?;
+    Ok(config)
+}
+
+fn apply_manifest(
+    workspace_root: &Path,
+    value: crate::ValueRef<'_>,
+    dependencies_out: &mut BTreeMap<String, PathBuf>,
+    formats_out: &mut BTreeMap<String, ModuleFormat>,
+) -> Result<(), ResolveModuleError> {
+    if value.kind() != crate::ValueKind::Dict {
+        return Err(ResolveModuleError::Manifest(
+            "dependency manifest must be a JSON object".into(),
+        ));
+    }
+    if let Some(dependencies) = value.get("dependencies") {
+        let Some(names) = dependencies.dict_fields() else {
+            return Err(ResolveModuleError::Manifest(
+                "manifest field \"dependencies\" must be an object".into(),
+            ));
+        };
+        for name in names {
+            let specification = dependencies.get(name).expect("Dict field exists");
+            let path = specification
+                .get("path")
+                .and_then(crate::ValueRef::as_str)
+                .ok_or_else(|| {
+                    ResolveModuleError::Manifest(format!(
+                        "dependency {name:?} must have a String path"
+                    ))
+                })?;
+            let root = resolve_physical(&workspace_root.join(path.as_str()))?;
+            dependencies_out.insert(name.to_owned(), root);
         }
+    }
+    if let Some(formats) = value.get("formats") {
+        let Some(modules) = formats.dict_fields() else {
+            return Err(ResolveModuleError::Manifest(
+                "manifest field \"formats\" must be an object".into(),
+            ));
+        };
+        for module in modules {
+            let format = formats
+                .get(module)
+                .and_then(crate::ValueRef::as_str)
+                .ok_or_else(|| {
+                    ResolveModuleError::Manifest(format!(
+                        "format override {module:?} must be a String"
+                    ))
+                })?;
+            formats_out.insert(module.to_owned(), ModuleFormat::parse(format.as_str())?);
+        }
+    }
+    Ok(())
+}
+
+fn insert_catalog_file(
+    modules: &mut BTreeMap<String, ModuleCatalogEntry>,
+    id: ModuleCName,
+    physical: PathBuf,
+    origin: ModuleCatalogOrigin,
+    include_private: bool,
+    formats: &BTreeMap<String, ModuleFormat>,
+) {
+    let visibility = visibility_for_path(&physical);
+    if !include_private && visibility != ModuleVisibility::Public {
+        return;
+    }
+    let Ok(format) = format_for(formats, &id, &physical) else {
+        return;
+    };
+    modules.insert(
+        id.to_string(),
+        ModuleCatalogEntry {
+            id,
+            format,
+            origin,
+            visibility,
+        },
+    );
+}
+
+fn module_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>, ResolveModuleError> {
+    let mut files = Vec::new();
+    collect_module_files(root, root, &mut files)?;
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(files)
+}
+
+fn collect_module_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<(), ResolveModuleError> {
+    let mut entries = std::fs::read_dir(directory)
+        .map_err(|error| {
+            ResolveModuleError::Io(format!("cannot read {}: {error}", directory.display()))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            ResolveModuleError::Io(format!("cannot read {}: {error}", directory.display()))
+        })?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            ResolveModuleError::Io(format!("cannot inspect {}: {error}", path.display()))
+        })?;
+        if file_type.is_dir() {
+            collect_module_files(root, &path, files)?;
+            continue;
+        }
+        if !file_type.is_file() && !file_type.is_symlink() {
+            continue;
+        }
+        let Ok(physical) = resolve_physical(&path) else {
+            continue;
+        };
+        if !physical.starts_with(root) || !physical.is_file() {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .expect("walked path remains under root")
+            .to_owned();
+        files.push((relative, physical));
+    }
+    Ok(())
+}
+
+fn visibility_for_path(path: &Path) -> ModuleVisibility {
+    if is_package_system_source(path) {
+        ModuleVisibility::Native
+    } else if has_penultimate_suffix(path, "priv") {
+        ModuleVisibility::Private
+    } else {
+        ModuleVisibility::Public
+    }
+}
+
+fn format_for(
+    formats: &BTreeMap<String, ModuleFormat>,
+    id: &ModuleCName,
+    physical: &Path,
+) -> Result<ModuleFormat, ResolveModuleError> {
+    let configured = formats.get(&id.to_string()).copied();
+    let extension = ModuleFormat::from_path(physical);
+    match (configured, extension) {
+        (Some(_), Err(error @ ResolveModuleError::InvalidModuleSuffix(_))) => Err(error),
+        (Some(configured), Ok(extension)) if configured != extension => {
+            Err(ResolveModuleError::FormatConflict {
+                configured,
+                extension,
+            })
+        }
+        (Some(configured), _) => Ok(configured),
+        (None, extension) => extension,
     }
 }
 
@@ -1129,6 +1386,78 @@ mod tests {
             Ok(ModuleFormat::Yaml)
         );
         assert!(ModuleFormat::from_path(Path::new("a.JSON")).is_err());
+    }
+
+    #[test]
+    fn catalog_exposes_the_crate_internals_and_only_external_public_modules() {
+        let temporary =
+            std::env::temp_dir().join(format!("telora-module-catalog-test-{}", std::process::id()));
+        let app = temporary.join("app");
+        let dependency = temporary.join("dependency");
+        std::fs::create_dir_all(app.join("src/bin")).unwrap();
+        std::fs::create_dir_all(app.join("tests")).unwrap();
+        std::fs::create_dir_all(dependency.join("src/bin")).unwrap();
+        std::fs::create_dir_all(dependency.join("tests")).unwrap();
+        std::fs::write(app.join("src/lib.telora"), "0").unwrap();
+        std::fs::write(app.join("src/rules.priv.telora"), "0").unwrap();
+        std::fs::write(app.join("src/codec.native.telora"), "0").unwrap();
+        std::fs::write(app.join("src/schema"), "{}").unwrap();
+        std::fs::write(app.join("src/ignored.txt"), "ignored").unwrap();
+        std::fs::write(app.join("src/bin/tool.telora"), "0").unwrap();
+        std::fs::write(app.join("tests/query.telora"), "0").unwrap();
+        std::fs::write(dependency.join("src/public.telora"), "0").unwrap();
+        std::fs::write(dependency.join("src/internal.priv.telora"), "0").unwrap();
+        std::fs::write(dependency.join("src/system.native.telora"), "0").unwrap();
+        std::fs::write(dependency.join("src/bin/tool.telora"), "0").unwrap();
+        std::fs::write(dependency.join("tests/query.telora"), "0").unwrap();
+        std::fs::write(
+            app.join("telora-deps.json"),
+            r#"{"dependencies":{"dep":{"path":"../dependency"}},"formats":{"@src/schema":"json"}}"#,
+        )
+        .unwrap();
+
+        let catalog = ModuleResolver::catalog_from_cwd(
+            &app,
+            [
+                ("std/string".to_owned(), 1),
+                ("std/rt.priv.telora".to_owned(), 2),
+                ("std/host.native.telora".to_owned(), 3),
+            ],
+        )
+        .unwrap();
+        let by_name = catalog
+            .into_iter()
+            .map(|module| (module.id.to_string(), module))
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(
+            by_name.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "@bin/tool.telora",
+                "@src/codec.native.telora",
+                "@src/lib.telora",
+                "@src/rules.priv.telora",
+                "@src/schema",
+                "@test/query.telora",
+                "dep/public.telora",
+                "std/string",
+            ]
+        );
+        assert_eq!(
+            by_name["@src/codec.native.telora"].visibility,
+            ModuleVisibility::Native
+        );
+        assert_eq!(
+            by_name["@src/rules.priv.telora"].visibility,
+            ModuleVisibility::Private
+        );
+        assert_eq!(
+            by_name["dep/public.telora"].origin,
+            ModuleCatalogOrigin::Dependency
+        );
+        assert_eq!(by_name["std/string"].origin, ModuleCatalogOrigin::Host);
+        assert_eq!(by_name["@src/schema"].format, ModuleFormat::Json);
+        std::fs::remove_dir_all(temporary).unwrap();
     }
 
     #[test]

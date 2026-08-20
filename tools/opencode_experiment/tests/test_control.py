@@ -108,17 +108,17 @@ class ConfigStateTest(unittest.TestCase):
             path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(
                 ControlError,
-                r"unsupported Telora subcommand.*'types'.*check, lsp, run, show",
+                r"unsupported Telora subcommand.*'types'.*check, lsp, query, run",
             ):
                 load_manifest(repo, "demo")
 
             manifest["permission_preflight"]["a1"] = [
-                "./bin/telora show @bin/main.telora -C query-builder",
+                "./bin/telora query exports @bin/main.telora -C query-builder",
             ]
             path.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(
                 load_manifest(repo, "demo").permission_preflight["a1"],
-                ("./bin/telora show @bin/main.telora -C query-builder",),
+                ("./bin/telora query exports @bin/main.telora -C query-builder",),
             )
 
     def test_artifact_publication_command_is_available(self):
@@ -249,9 +249,9 @@ class ConfigStateTest(unittest.TestCase):
         a4_permissions = json.loads(a4_permission_line)
         self.assertEqual(a4_permissions["read"]["*"], "deny")
         self.assertNotIn("ent-1/**", a4_permissions["read"])
-        self.assertNotIn("./bin/telora show * -C intent-1", a4_permissions["bash"])
+        self.assertNotIn("./bin/telora query at * -C intent-1", a4_permissions["bash"])
         self.assertEqual(
-            a4_permissions["bash"]["./bin/telora show @bin/main.telora -C intent-1"],
+            a4_permissions["bash"]["./bin/telora query exports @bin/main.telora -C intent-1"],
             "allow",
         )
         self.assertFalse(any("mark-blocked" in command for commands in manifest.permission_preflight.values()

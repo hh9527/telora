@@ -152,6 +152,14 @@ impl DocumentText {
         })
     }
 
+    pub fn line_content_offsets(&self, line: u32) -> Result<(u32, u32), DocumentError> {
+        let (start, end) = self.line_content_range(line as usize)?;
+        Ok((
+            u32::try_from(start).map_err(|_| DocumentError::TextTooLarge)?,
+            u32::try_from(end).map_err(|_| DocumentError::TextTooLarge)?,
+        ))
+    }
+
     pub(crate) fn scalar_position(&self, offset: u32) -> Option<TextPosition> {
         let offset = offset as usize;
         if offset > self.byte_len() || !self.is_char_boundary(offset) {
@@ -390,6 +398,9 @@ mod tests {
                 .unwrap(),
             text.byte_len() as u32
         );
+        assert_eq!(text.line_content_offsets(0).unwrap(), (0, 7));
+        assert_eq!(text.line_content_offsets(1).unwrap(), (9, 23));
+        assert_eq!(text.line_content_offsets(2).unwrap(), (24, 24));
     }
 
     #[test]

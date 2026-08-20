@@ -1,6 +1,6 @@
 # RFC 0256: Structured CLI Query Protocol
 
-- Status: Proposed
+- Status: Implemented
 - Tracking issue: #121
 - Supersedes: the RFC 0227 `show` command surface and CLI coordinate convention
 - Depends on: RFC 0039, RFC 0040, RFC 0042, RFC 0044, RFC 0059, RFC 0227, RFC 0228
@@ -271,3 +271,16 @@ Changing coordinate meaning per invocation makes stored JSONL records
 ambiguous and complicates every consumer. UTF-8 byte columns are the fixed CLI
 schema contract; consumers needing negotiated positions should use LSP.
 
+## Outcome
+
+Implemented on 2026-08-20. The CLI now exposes only the structured
+`query|q modules`, `query|q exports`, and `query|q at` command tree. The resolver
+provides a deterministic visibility-aware module catalog, maintained tutorials
+and experiment permissions use the new surface, and all CLI JSONL source
+locations use one-based lines with zero-based UTF-8 byte columns and half-open
+ranges. LSP encoding negotiation and terminal source rendering were unchanged.
+
+Verification completed with 40 CLI tests, 20 LSP tests, 564 passing core tests
+(one manual full-file baseline ignored), 53 experiment-infrastructure tests,
+and the complete tree-sitter corpus. `cargo fmt --all -- --check` and both
+parent/submodule `git diff --check` also passed.

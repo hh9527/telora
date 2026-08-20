@@ -42,6 +42,17 @@ fn help_is_clap_owned_and_types_is_removed() {
         .output()
         .unwrap();
     assert!(!types.status.success());
+
+    assert!(output.contains("query"));
+    assert!(output.contains("q"));
+    assert!(!output.contains("show"));
+    let query_help = telora(&cwd).args(["query", "-h"]).output().unwrap();
+    let output = String::from_utf8_lossy(&query_help.stdout);
+    assert!(query_help.status.success());
+    assert!(output.contains("modules"));
+    assert!(output.contains("exports"));
+    assert!(output.contains("at"));
+    assert!(output.contains("telora q modules -p std/"));
 }
 
 #[test]
@@ -73,10 +84,10 @@ fn run_and_check_select_logical_roots_from_cwd() {
 }
 
 #[test]
-fn show_selects_registered_standard_library_modules() {
+fn query_selects_registered_standard_library_modules() {
     let cwd = fixture();
     let string = telora(&cwd)
-        .args(["show", "std/string", "--exports"])
+        .args(["query", "exports", "std/string"])
         .output()
         .unwrap();
     assert!(
@@ -97,7 +108,7 @@ fn show_selects_registered_standard_library_modules() {
     );
 
     let array = telora(&cwd)
-        .args(["show", "std/array", "-p", "flat_map"])
+        .args(["query", "at", "std/array", "-p", "flat_map"])
         .output()
         .unwrap();
     assert!(
@@ -113,7 +124,7 @@ fn show_selects_registered_standard_library_modules() {
     );
 
     let missing = telora(&cwd)
-        .args(["show", "std/not-present", "--exports"])
+        .args(["query", "exports", "std/not-present"])
         .output()
         .unwrap();
     assert!(!missing.status.success());
@@ -126,6 +137,67 @@ fn show_selects_registered_standard_library_modules() {
     assert_eq!(
         records[0]["message"],
         "unknown built-in module \"std/not-present\""
+    );
+}
+
+#[test]
+fn query_modules_lists_the_crate_view_as_stable_jsonl() {
+    let cwd = fixture();
+    let dependency = cwd.join("dependency");
+    fs::create_dir_all(dependency.join("src/bin")).unwrap();
+    fs::write(cwd.join("src/lib.telora"), "0").unwrap();
+    fs::write(cwd.join("src/local.priv.telora"), "0").unwrap();
+    fs::write(cwd.join("src/local.native.telora"), "0").unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "0").unwrap();
+    fs::write(cwd.join("tests/query.telora"), "0").unwrap();
+    fs::write(dependency.join("src/public.telora"), "0").unwrap();
+    fs::write(dependency.join("src/hidden.priv.telora"), "0").unwrap();
+    fs::write(dependency.join("src/bin/tool.telora"), "0").unwrap();
+    fs::write(
+        cwd.join("telora-deps.json"),
+        r#"{"dependencies":{"dep":{"path":"dependency"}}}"#,
+    )
+    .unwrap();
+
+    let output = telora(&cwd)
+        .args(["q", "modules", "-p", "telora"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records = jsonl(&output.stdout);
+    let names = records
+        .iter()
+        .map(|record| record["module"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(names.contains(&"@src/local.priv.telora"));
+    assert!(names.contains(&"@src/local.native.telora"));
+    assert!(names.contains(&"dep/public.telora"));
+    assert!(!names.contains(&"dep/hidden.priv.telora"));
+    assert!(!names.contains(&"dep/bin/tool.telora"));
+    assert!(records.iter().all(|record| {
+        record["schema"] == "telora.query/v1"
+            && record["record"] == "module"
+            && record["format"] == "telora"
+    }));
+    let private = records
+        .iter()
+        .find(|record| record["module"] == "@src/local.priv.telora")
+        .unwrap();
+    assert_eq!(private["origin"], "crate");
+    assert_eq!(private["visibility"], "private");
+
+    assert!(
+        !telora(&cwd)
+            .args(["query", "modules", "@src/lib.telora"])
+            .output()
+            .unwrap()
+            .status
+            .success()
     );
 }
 
@@ -508,7 +580,7 @@ export { CallExpr, Expr, identity };"#,
     assert!(check.stderr.is_empty());
 
     let show = telora(&cwd)
-        .args(["show", "@src/recursive.telora", "--exports"])
+        .args(["query", "exports", "@src/recursive.telora"])
         .output()
         .unwrap();
     assert!(show.status.success());
@@ -527,7 +599,7 @@ export { CallExpr, Expr, identity };"#,
 }
 
 #[test]
-fn show_rejects_a_missing_dependency_module_without_leaking_its_path() {
+fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     let cwd = fixture();
     let dependency = cwd.join("query-builder");
     fs::create_dir_all(dependency.join("src")).unwrap();
@@ -545,7 +617,7 @@ fn show_rejects_a_missing_dependency_module_without_leaking_its_path() {
 
     let missing_id = "query-builder/src/query-builder.telora";
     let missing = telora(&cwd)
-        .args(["show", missing_id, "--exports"])
+        .args(["query", "exports", missing_id])
         .output()
         .unwrap();
     assert!(!missing.status.success());
@@ -566,14 +638,26 @@ fn show_rejects_a_missing_dependency_module_without_leaking_its_path() {
     );
 
     let found = telora(&cwd)
-        .args(["show", "query-builder/query-builder.telora", "-p", "Plan"])
+        .args([
+            "query",
+            "at",
+            "query-builder/query-builder.telora",
+            "-p",
+            "Plan",
+        ])
         .output()
         .unwrap();
     assert!(found.status.success());
     assert_eq!(jsonl(&found.stdout).len(), 1);
 
     let no_match = telora(&cwd)
-        .args(["show", "query-builder/query-builder.telora", "-p", "Absent"])
+        .args([
+            "query",
+            "at",
+            "query-builder/query-builder.telora",
+            "-p",
+            "Absent",
+        ])
         .output()
         .unwrap();
     assert!(no_match.status.success());
@@ -582,7 +666,7 @@ fn show_rejects_a_missing_dependency_module_without_leaking_its_path() {
 }
 
 #[test]
-fn recursive_modules_are_consistent_across_check_show_and_run_modes() {
+fn recursive_modules_are_consistent_across_check_query_and_run_modes() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/tree.telora"),
@@ -618,7 +702,7 @@ export def output = `\{tree.total(tree.root)}`;"#,
     assert_eq!(records.last().unwrap()["status"], "ok");
 
     let show = telora(&cwd)
-        .args(["show", "@src/tree.telora", "--exports"])
+        .args(["query", "exports", "@src/tree.telora"])
         .output()
         .unwrap();
     assert!(show.status.success());
@@ -659,11 +743,19 @@ fn public_cli_rejects_physical_paths_and_missing_manifests() {
 }
 
 #[test]
-fn show_named_queries_emit_stable_jsonl() {
+fn named_queries_emit_stable_jsonl() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "type Name = String; def hidden = 1; def make: Fn(Int) -> Int = fn(value) { value }; export {Name, make};").unwrap();
     let show = telora(&cwd)
-        .args(["show", "@src/lib.telora", "-p", "a", "-k", "type,def"])
+        .args([
+            "query",
+            "at",
+            "@src/lib.telora",
+            "-p",
+            "a",
+            "-k",
+            "type,def",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -674,13 +766,13 @@ fn show_named_queries_emit_stable_jsonl() {
     let records = jsonl(&show.stdout);
     assert_eq!(records.len(), 2);
     assert!(records.iter().all(
-        |record| record["schema"] == "telora.show/v1" && record["module"] == "@src/lib.telora"
+        |record| record["schema"] == "telora.query/v1" && record["module"] == "@src/lib.telora"
     ));
     assert_eq!(records[0]["name"], "Name");
     assert_eq!(records[1]["name"], "make");
 
     let exports = telora(&cwd)
-        .args(["show", "@src/lib.telora", "--exports"])
+        .args(["query", "exports", "@src/lib.telora"])
         .output()
         .unwrap();
     let records = jsonl(&exports.stdout);
@@ -694,7 +786,7 @@ fn show_named_queries_emit_stable_jsonl() {
 }
 
 #[test]
-fn show_namespace_imports_reference_exact_module_interfaces() {
+fn query_namespace_imports_reference_exact_module_interfaces() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/types.telora"),
@@ -708,7 +800,7 @@ fn show_namespace_imports_reference_exact_module_interfaces() {
     .unwrap();
 
     let show = telora(&cwd)
-        .args(["show", "@src/lib.telora", "-k", "import"])
+        .args(["query", "at", "@src/lib.telora", "-k", "import"])
         .output()
         .unwrap();
     assert!(
@@ -735,7 +827,7 @@ fn show_namespace_imports_reference_exact_module_interfaces() {
 }
 
 #[test]
-fn show_exports_preserves_type_family_binders_across_reexports() {
+fn query_exports_preserves_type_family_binders_across_reexports() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/model.telora"),
@@ -763,7 +855,7 @@ export {Entity, Request};"#,
     ];
     for (module, entity_name) in cases {
         let show = telora(&cwd)
-            .args(["show", module, "--exports"])
+            .args(["query", "exports", module])
             .output()
             .unwrap();
         assert!(
@@ -794,7 +886,7 @@ export {Entity, Request};"#,
 }
 
 #[test]
-fn show_position_and_conflicts_are_structured() {
+fn query_position_and_conflicts_are_structured() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/lib.telora"),
@@ -802,7 +894,7 @@ fn show_position_and_conflicts_are_structured() {
     )
     .unwrap();
     let at = telora(&cwd)
-        .args(["show", "@src/lib.telora", "--at", "1:5"])
+        .args(["query", "at", "@src/lib.telora:1:4"])
         .output()
         .unwrap();
     assert!(
@@ -816,15 +908,84 @@ fn show_position_and_conflicts_are_structured() {
             .any(|record| record["record"] == "definition" && record["name"] == "answer")
     );
     let conflict = telora(&cwd)
-        .args(["show", "@src/lib.telora", "--at", "1", "-p", "a"])
+        .args(["query", "at", "@src/lib.telora:1", "-p", "a"])
         .output()
         .unwrap();
     assert!(!conflict.status.success());
     let bad_kind = telora(&cwd)
-        .args(["show", "@src/lib.telora", "-k", "let,"])
+        .args(["query", "at", "@src/lib.telora", "-k", "let,"])
         .output()
         .unwrap();
     assert!(!bad_kind.status.success());
+}
+
+#[test]
+fn query_and_cli_jsonl_use_one_based_lines_and_zero_based_utf8_columns() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/lib.telora"),
+        "def other = 42;\ndef value = (\"中\", other);\nexport {value};\n",
+    )
+    .unwrap();
+
+    let named = telora(&cwd)
+        .args(["query", "at", "@src/lib.telora", "-p", "value"])
+        .output()
+        .unwrap();
+    assert!(named.status.success());
+    let records = jsonl(&named.stdout);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["location"]["line"], 2);
+    assert_eq!(records[0]["location"]["column"], 4);
+    assert_eq!(records[0]["location"]["end_line"], 2);
+    assert_eq!(records[0]["location"]["end_column"], 9);
+
+    for selector in ["@src/lib.telora:2:0", "@src/lib.telora:2:20"] {
+        let output = telora(&cwd)
+            .args(["query", "at", selector])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if selector.ends_with(":20") {
+            let records = jsonl(&output.stdout);
+            let reference = records
+                .iter()
+                .find(|record| record["record"] == "reference" && record["name"] == "other")
+                .unwrap();
+            assert_eq!(reference["location"]["line"], 2);
+            assert_eq!(reference["location"]["column"], 20);
+            assert_eq!(reference["location"]["end_column"], 25);
+        }
+    }
+    let inside_scalar = telora(&cwd)
+        .args(["query", "at", "@src/lib.telora:2:15"])
+        .output()
+        .unwrap();
+    assert!(!inside_scalar.status.success());
+    assert!(String::from_utf8_lossy(&inside_scalar.stderr).contains("outside"));
+
+    let at_end = telora(&cwd)
+        .args(["query", "at", "@src/lib.telora:2:25"])
+        .output()
+        .unwrap();
+    assert!(at_end.status.success());
+    assert!(
+        jsonl(&at_end.stdout)
+            .iter()
+            .all(|record| record["name"] != "other")
+    );
+    assert!(
+        !telora(&cwd)
+            .args(["query", "at", "@src/lib.telora:0"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -895,7 +1056,7 @@ fn run_context_selects_the_manifest_discovery_start() {
 }
 
 #[test]
-fn check_and_show_context_select_the_manifest_discovery_start() {
+fn check_and_query_context_select_the_manifest_discovery_start() {
     let cwd = fixture();
     let other = fixture();
     fs::write(
@@ -916,11 +1077,11 @@ fn check_and_show_context_select_the_manifest_discovery_start() {
 
     let show = telora(&cwd)
         .args([
-            "show",
+            "query",
+            "exports",
             "@src/lib.telora",
             "-C",
             other.to_str().unwrap(),
-            "--exports",
         ])
         .output()
         .unwrap();

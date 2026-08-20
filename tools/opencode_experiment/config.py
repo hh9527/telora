@@ -20,7 +20,7 @@ IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 OPENCODE_ENVIRONMENT = {
     "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": lambda value: value.isascii() and value.isdigit() and int(value) > 0,
 }
-TELORA_SUBCOMMANDS = frozenset({"check", "lsp", "run", "show"})
+TELORA_SUBCOMMANDS = frozenset({"check", "lsp", "query", "run"})
 
 
 def validate_identifier(value: str, kind: str) -> str:

@@ -10,8 +10,8 @@ use crate::core::{
 use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, wrap_semantic_value};
 use crate::json::{Provenance, SourcedValue, parse_json_registered};
 use crate::module_id::{
-    ModuleAuthority, ModuleCName, ModuleFormat, ModuleId, ModuleResolver, ResolvedModule,
-    immediate_value,
+    ModuleAuthority, ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver,
+    ResolvedModule, immediate_value,
 };
 use crate::parser::parse_registered;
 use crate::semantic::{
@@ -2431,6 +2431,14 @@ impl Engine {
             .map_err(|error| ModuleError::new(error.to_string()))?
             .with_builtins(builtin_list(&self.native_modules));
         self.recover_with_resolver(resolver)
+    }
+
+    pub fn module_catalog(
+        &self,
+        cwd: impl AsRef<Path>,
+    ) -> Result<Vec<ModuleCatalogEntry>, ModuleError> {
+        ModuleResolver::catalog_from_cwd(cwd.as_ref(), builtin_list(&self.native_modules))
+            .map_err(|error| ModuleError::new(error.to_string()))
     }
 
     pub fn recover_builtin_workspace(

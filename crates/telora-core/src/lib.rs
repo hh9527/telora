@@ -55,8 +55,9 @@ pub use module::{
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
-    FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleAuthority, ModuleCName, ModuleFormat, ModuleId,
-    ModuleResolver, ResolveModuleError, ResolvedModule, TypeConstructorId, resolve_root_module,
+    FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleAuthority, ModuleCName, ModuleCatalogEntry,
+    ModuleCatalogOrigin, ModuleFormat, ModuleId, ModuleResolver, ModuleVisibility,
+    ResolveModuleError, ResolvedModule, TypeConstructorId, resolve_root_module,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use semantic::{

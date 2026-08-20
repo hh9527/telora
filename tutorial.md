@@ -21,11 +21,11 @@ let answer = 42;
 ```text
 telora check path/to/main.telora
 telora run path/to/main.telora
-telora show path/to/main.telora
+telora query exports @src/main.telora
 ```
 
-`check` 做模块解析和严格类型检查；`run` 执行模块并显示命名导出；`show` 用于观察
-模块接口。执行有 fuel、栈、深度和分配预算。
+`check` 做模块解析和严格类型检查；`run` 执行模块并显示命名导出；`query` 用于查询
+模块目录、公开接口、局部定义和源码位置上的语义事实。执行有 fuel、栈、深度和分配预算。
 
 在 clean-room 实验中，生成代码的 Agent 不直接运行这些命令。Host 运行并返回
 带源码位置的诊断。

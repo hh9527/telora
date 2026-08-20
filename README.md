@@ -121,7 +121,7 @@ and observation remain host concerns.
 
 `telora run` uses a pure Edge Entry selected by the host. The Entry declares
 its input needs, validates the Main export record, and reduces explicit system
-events into effect descriptions. `check`, `show`, and LSP use fixed tooling
+events into effect descriptions. `check`, `query`, and LSP use fixed tooling
 entries. Domain plans remain ordinary values interpreted by external hosts.
 
 ## What This Enables
@@ -316,7 +316,7 @@ typed Agent plans, and host-driven Agent loops.
 ```sh
 cargo run -p telora -- check examples/mvp/main.telora
 cargo run -p telora -- run examples/mvp/external.telora --input examples/mvp/request.json
-cargo run -p telora -- show examples/mvp/main.telora
+cargo run -p telora -- query at @src/compiler.telora -C examples/analytics-ontology
 cargo run -p telora -- lsp
 ```
 

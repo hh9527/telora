@@ -11,8 +11,8 @@ use std::sync::Arc;
 use telora_core::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
     DataWorld, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
-    Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent, WorkspaceSnapshot,
-    parse_json,
+    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent,
+    TextPosition, WorkspaceSnapshot, parse_json,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -22,6 +22,7 @@ use tokio::task::JoinSet;
 const EVALUATION_FUEL: usize = 1_000_000;
 const STACK_SLOTS: usize = 65_536;
 const ALLOCATION_BYTES: u64 = 256 * 1024 * 1024;
+const QUERY_SCHEMA: &str = "telora.query/v1";
 
 fn engine_config() -> EngineConfig {
     EngineConfig {
@@ -517,7 +518,9 @@ struct Cli {
 enum Command {
     Run(RunArgs),
     Check(CheckArgs),
-    Show(ShowArgs),
+    /// Query module and semantic facts as JSONL.
+    #[command(visible_alias = "q")]
+    Query(QueryArgs),
     Lsp,
 }
 
@@ -545,18 +548,55 @@ struct CheckArgs {
 }
 
 #[derive(Args)]
-struct ShowArgs {
-    module_id: String,
-    #[arg(short = 'C', value_name = "CONTEXT")]
+#[command(
+    after_help = "Examples:\n  telora query modules\n  telora q modules -p std/\n  telora query exports @src/lib.telora\n  telora query at @src/lib.telora -k type,def -p Query\n  telora query at @src/lib.telora:13:0"
+)]
+struct QueryArgs {
+    /// Find telora-deps.json upward from this path (default: current directory).
+    #[arg(short = 'C', value_name = "CONTEXT", global = true)]
     context: Option<PathBuf>,
-    #[arg(short = 'p', long = "pattern", value_parser = non_empty)]
+    #[command(subcommand)]
+    command: QueryCommand,
+}
+
+#[derive(Subcommand)]
+enum QueryCommand {
+    /// List this crate's public/private/native modules and external public modules.
+    Modules(QueryModulesArgs),
+    /// Query a module's public interface.
+    Exports(QueryExportsArgs),
+    /// Query local symbols in a module, or semantic facts at a source position.
+    At(QueryAtArgs),
+}
+
+#[derive(Args)]
+struct QueryModulesArgs {
+    /// Filter canonical module IDs by a literal substring.
+    #[arg(short = 'p', long = "pattern", value_name = "SUBSTRING", value_parser = non_empty)]
     pattern: Option<String>,
-    #[arg(short = 'k', long = "kind", value_parser = parse_kinds, conflicts_with = "exports")]
+}
+
+#[derive(Args)]
+struct QueryExportsArgs {
+    /// Canonical module ID, such as @src/lib.telora or std/string.
+    #[arg(value_name = "MODULE_ID")]
+    module_id: String,
+    /// Filter public export names by a literal substring.
+    #[arg(short = 'p', long = "pattern", value_name = "SUBSTRING", value_parser = non_empty)]
+    pattern: Option<String>,
+}
+
+#[derive(Args)]
+struct QueryAtArgs {
+    /// Module ID with an optional one-based line and zero-based UTF-8 column.
+    #[arg(value_name = "MODULE_ID[:LINE[:COLUMN]]", value_parser = parse_module_selector)]
+    selector: ModuleSelector,
+    /// Filter local symbol names by a literal substring; invalid with a position.
+    #[arg(short = 'p', long = "pattern", value_name = "SUBSTRING", value_parser = non_empty)]
+    pattern: Option<String>,
+    /// Query only these definition kinds: type, let, def, import.
+    #[arg(short = 'k', long = "kind", value_name = "KINDS", value_parser = parse_kinds)]
     kinds: Option<KindSet>,
-    #[arg(long, conflicts_with_all = ["kinds", "at"])]
-    exports: bool,
-    #[arg(long, value_parser = parse_position, conflicts_with_all = ["pattern", "kinds", "exports"])]
-    at: Option<ShowPosition>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -571,9 +611,15 @@ enum ShowKind {
 struct KindSet(Vec<ShowKind>);
 
 #[derive(Clone, Copy)]
-struct ShowPosition {
+struct QueryPosition {
     line: usize,
     column: Option<usize>,
+}
+
+#[derive(Clone)]
+struct ModuleSelector {
+    module_id: String,
+    position: Option<QueryPosition>,
 }
 
 fn non_empty(value: &str) -> Result<String, String> {
@@ -613,26 +659,34 @@ fn parse_kinds(value: &str) -> Result<KindSet, String> {
     Ok(KindSet(kinds))
 }
 
-fn parse_position(value: &str) -> Result<ShowPosition, String> {
-    let mut parts = value.split(':');
-    let parse = |part: Option<&str>, name: &str| -> Result<usize, String> {
-        let raw = part.ok_or_else(|| format!("missing {name}"))?;
-        let number = raw
-            .parse::<usize>()
-            .map_err(|_| format!("invalid {name} {raw:?}"))?;
-        (number > 0)
-            .then_some(number)
-            .ok_or_else(|| format!("{name} must be positive"))
-    };
-    let line = parse(parts.next(), "line")?;
-    let column = parts
-        .next()
-        .map(|raw| parse(Some(raw), "column"))
-        .transpose()?;
-    if parts.next().is_some() {
-        return Err("position must be line or line:column".into());
+fn parse_module_selector(value: &str) -> Result<ModuleSelector, String> {
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.is_empty() || parts.len() > 3 || parts[0].is_empty() {
+        return Err("expected MODULE_ID[:LINE[:COLUMN]]".into());
     }
-    Ok(ShowPosition { line, column })
+    if parts.len() == 1 {
+        return Ok(ModuleSelector {
+            module_id: parts[0].to_owned(),
+            position: None,
+        });
+    }
+    let line = parts[1]
+        .parse::<usize>()
+        .map_err(|_| format!("invalid line {:?}", parts[1]))?;
+    if line == 0 {
+        return Err("line must be positive".into());
+    }
+    let column = parts
+        .get(2)
+        .map(|raw| {
+            raw.parse::<usize>()
+                .map_err(|_| format!("invalid column {raw:?}"))
+        })
+        .transpose()?;
+    Ok(ModuleSelector {
+        module_id: parts[0].to_owned(),
+        position: Some(QueryPosition { line, column }),
+    })
 }
 
 fn run_cli(cli: Cli) -> Result<i32, String> {
@@ -643,7 +697,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(arguments)),
         Command::Check(arguments) => check_command(arguments),
-        Command::Show(arguments) => show_command(arguments),
+        Command::Query(arguments) => query_command(arguments),
         Command::Lsp => lsp_command().map(|()| 0),
     }
 }
@@ -786,19 +840,90 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
     Ok(i32::from(failed))
 }
 
-fn show_command(arguments: ShowArgs) -> Result<i32, String> {
+enum ModuleQuery {
+    Exports {
+        pattern: Option<String>,
+    },
+    Definitions {
+        pattern: Option<String>,
+        kinds: Option<KindSet>,
+    },
+    Position(QueryPosition),
+}
+
+fn query_command(arguments: QueryArgs) -> Result<i32, String> {
     let context = command_context(arguments.context)?;
-    let workspace = if arguments.module_id.starts_with("std/") {
-        engine().recover_builtin_workspace(&arguments.module_id)
+    if let QueryCommand::Modules(arguments) = &arguments.command {
+        let modules = match engine().module_catalog(context) {
+            Ok(modules) => modules,
+            Err(error) => {
+                emit(json!({
+                    "schema": QUERY_SCHEMA,
+                    "record": "diagnostic",
+                    "authority": "recovery",
+                    "severity": "error",
+                    "message": error.to_string(),
+                }))?;
+                return Ok(1);
+            }
+        };
+        for module in modules.into_iter().filter(|module| {
+            arguments
+                .pattern
+                .as_deref()
+                .is_none_or(|pattern| module.id.to_string().contains(pattern))
+        }) {
+            emit(json!({
+                "schema": QUERY_SCHEMA,
+                "record": "module",
+                "module": module.id.to_string(),
+                "origin": module.origin.name(),
+                "visibility": module.visibility.name(),
+                "format": module.format.name(),
+            }))?;
+        }
+        return Ok(0);
+    }
+    let (module_id, query) = match arguments.command {
+        QueryCommand::Exports(arguments) => (
+            arguments.module_id,
+            ModuleQuery::Exports {
+                pattern: arguments.pattern,
+            },
+        ),
+        QueryCommand::At(arguments) => {
+            let ModuleSelector {
+                module_id,
+                position,
+            } = arguments.selector;
+            let query = if let Some(position) = position {
+                if arguments.pattern.is_some() || arguments.kinds.is_some() {
+                    return Err(
+                        "-p/--pattern and -k/--kind require a module-only query target".into(),
+                    );
+                }
+                ModuleQuery::Position(position)
+            } else {
+                ModuleQuery::Definitions {
+                    pattern: arguments.pattern,
+                    kinds: arguments.kinds,
+                }
+            };
+            (module_id, query)
+        }
+        QueryCommand::Modules(_) => unreachable!("handled above"),
+    };
+    let workspace = if module_id.starts_with("std/") {
+        engine().recover_builtin_workspace(&module_id)
     } else {
-        engine().recover_workspace_id(context, &arguments.module_id)
+        engine().recover_workspace_id(context, &module_id)
     };
     let workspace = match workspace {
         Ok(workspace) => workspace,
         Err(error) => {
             emit(json!({
-                "schema": "telora.show/v1",
-                "module": arguments.module_id,
+                "schema": QUERY_SCHEMA,
+                "module": module_id,
                 "record": "diagnostic",
                 "authority": "recovery",
                 "severity": "error",
@@ -810,30 +935,27 @@ fn show_command(arguments: ShowArgs) -> Result<i32, String> {
     let root = workspace
         .modules()
         .iter()
-        .find(|module| module.name == arguments.module_id)
+        .find(|module| module.name == module_id)
         .ok_or_else(|| {
             format!(
                 "selected module {:?} is absent from the workspace",
-                arguments.module_id
+                module_id
             )
         })?;
-    if let Some(position) = arguments.at {
-        show_at(&workspace, root.id, &arguments.module_id, position)
-    } else if arguments.exports {
-        show_exports(
+    match query {
+        ModuleQuery::Exports { pattern } => {
+            query_exports(&workspace, root.id, &module_id, pattern.as_deref())
+        }
+        ModuleQuery::Definitions { pattern, kinds } => query_definitions(
             &workspace,
             root.id,
-            &arguments.module_id,
-            arguments.pattern.as_deref(),
-        )
-    } else {
-        show_definitions(
-            &workspace,
-            root.id,
-            &arguments.module_id,
-            arguments.pattern.as_deref(),
-            arguments.kinds.as_ref().map(|set| set.0.as_slice()),
-        )
+            &module_id,
+            pattern.as_deref(),
+            kinds.as_ref().map(|set| set.0.as_slice()),
+        ),
+        ModuleQuery::Position(position) => {
+            query_position(&workspace, root.id, &module_id, position)
+        }
     }?;
     Ok(0)
 }
@@ -865,9 +987,15 @@ fn authority(state: &FactState) -> &'static str {
 }
 fn location_json(workspace: &WorkspaceSnapshot, location: Location) -> serde_json::Value {
     let source = workspace.sources().get(location.source);
-    let start = source.position(location.start);
-    let end = source.position(location.end);
-    json!({"line":start.line,"column":start.column,"end_line":end.line,"end_column":end.column})
+    let start = source
+        .text()
+        .position(location.start, PositionEncoding::Utf8)
+        .expect("semantic locations are valid UTF-8 source boundaries");
+    let end = source
+        .text()
+        .position(location.end, PositionEncoding::Utf8)
+        .expect("semantic locations are valid UTF-8 source boundaries");
+    json!({"line":start.line + 1,"column":start.character,"end_line":end.line + 1,"end_column":end.character})
 }
 fn diagnostic_record(
     schema: &str,
@@ -918,7 +1046,7 @@ fn emit_stderr(record: serde_json::Value) -> Result<(), String> {
     Ok(())
 }
 
-fn show_definitions(
+fn query_definitions(
     workspace: &WorkspaceSnapshot,
     module: telora_core::WorkspaceModuleId,
     module_name: &str,
@@ -942,7 +1070,7 @@ fn show_definitions(
                 .and_then(|target| workspace.module(target))
                 .map(|module| module.name.as_str());
             emit(
-                json!({"schema":"telora.show/v1","module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"target":target,"location":location_json(workspace,d.location)}),
+                json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"target":target,"location":location_json(workspace,d.location)}),
             )?;
             continue;
         }
@@ -951,12 +1079,12 @@ fn show_definitions(
             .clone()
             .or_else(|| d.ty.value.and_then(|id| workspace.types().display(id)));
         emit(
-            json!({"schema":"telora.show/v1","module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":ty,"location":location_json(workspace,d.location)}),
+            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":ty,"location":location_json(workspace,d.location)}),
         )?;
     }
     Ok(())
 }
-fn show_exports(
+fn query_exports(
     workspace: &WorkspaceSnapshot,
     module: telora_core::WorkspaceModuleId,
     module_name: &str,
@@ -971,42 +1099,44 @@ fn show_exports(
             .scheme
             .or_else(|| workspace.types().display(export.ty));
         emit(
-            json!({"schema":"telora.show/v1","module":module_name,"record":"export","authority":authority,"name":export.name,"type":ty}),
+            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"export","authority":authority,"name":export.name,"type":ty}),
         )?;
     }
     Ok(())
 }
-fn show_at(
+fn query_position(
     workspace: &WorkspaceSnapshot,
     module: telora_core::WorkspaceModuleId,
     module_name: &str,
-    at: ShowPosition,
+    at: QueryPosition,
 ) -> Result<(), String> {
     let source_id = workspace
         .module(module)
         .and_then(|m| m.source)
         .ok_or_else(|| "selected module has no source".to_owned())?;
     let source = workspace.sources().get(source_id);
+    let line = u32::try_from(at.line - 1)
+        .map_err(|_| format!("line {} is outside {module_name}", at.line))?;
     let (start, end) = if let Some(column) = at.column {
+        let column = u32::try_from(column)
+            .map_err(|_| format!("position {}:{} is outside {module_name}", at.line, column))?;
         let offset = source
-            .offset(at.line, column)
-            .ok_or_else(|| format!("position {}:{} is outside {module_name}", at.line, column))?;
+            .text()
+            .offset(TextPosition::new(line, column), PositionEncoding::Utf8)
+            .map_err(|_| format!("position {}:{} is outside {module_name}", at.line, column))?;
         (offset, offset)
     } else {
-        let start = source
-            .offset(at.line, 1)
-            .ok_or_else(|| format!("line {} is outside {module_name}", at.line))?;
-        let end = source
-            .offset(at.line + 1, 1)
-            .unwrap_or(source.text().byte_len() as u32);
-        (start, end)
+        source
+            .text()
+            .line_content_offsets(line)
+            .map_err(|_| format!("line {} is outside {module_name}", at.line))?
     };
     let intersects = |loc: Location| {
         loc.source == source_id
             && if at.column.is_some() {
-                loc.start <= start && start <= loc.end
+                loc.start <= start && start < loc.end
             } else {
-                loc.start < end && start <= loc.end
+                loc.start < end && start < loc.end
             }
     };
     for d in workspace
@@ -1016,7 +1146,7 @@ fn show_at(
     {
         if let Some(kind) = kind_of(d.kind) {
             emit(
-                json!({"schema":"telora.show/v1","module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":d.scheme.clone().or_else(||d.ty.value.and_then(|id|workspace.types().display(id))),"location":location_json(workspace,d.location)}),
+                json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"definition","authority":authority(&d.ty.state),"name":d.name,"kind":kind_name(kind),"type":d.scheme.clone().or_else(||d.ty.value.and_then(|id|workspace.types().display(id))),"location":location_json(workspace,d.location)}),
             )?;
         }
     }
@@ -1026,7 +1156,7 @@ fn show_at(
         .filter(|r| r.module == module && intersects(r.location))
     {
         emit(
-            json!({"schema":"telora.show/v1","module":module_name,"record":"reference","authority":if r.definition.is_some()||r.external{"authoritative"}else{"recovery"},"name":r.name,"resolved":r.definition.is_some(),"external":r.external,"location":location_json(workspace,r.location)}),
+            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"reference","authority":if r.definition.is_some()||r.external{"authoritative"}else{"recovery"},"name":r.name,"resolved":r.definition.is_some(),"external":r.external,"location":location_json(workspace,r.location)}),
         )?;
     }
     for e in workspace
@@ -1035,7 +1165,7 @@ fn show_at(
         .filter(|e| e.module == module && intersects(e.location))
     {
         emit(
-            json!({"schema":"telora.show/v1","module":module_name,"record":"expression","authority":"debug","state":format!("{:?}",e.ty.state),"type":e.ty.value.and_then(|id|workspace.types().display(id)),"location":location_json(workspace,e.location)}),
+            json!({"schema":QUERY_SCHEMA,"module":module_name,"record":"expression","authority":"debug","state":format!("{:?}",e.ty.state),"type":e.ty.value.and_then(|id|workspace.types().display(id)),"location":location_json(workspace,e.location)}),
         )?;
     }
     Ok(())

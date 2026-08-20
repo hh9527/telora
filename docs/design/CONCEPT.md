@@ -160,7 +160,7 @@ WorkWorld 中声明环境诉求与 Main 类型，再由 Host 初始化、校验�
 随后在新的 WorkWorld 中以 opaque State、SystemEvent 和 SystemEffect 驱动运行。
 Main 不能 import Entry 的私有协议面，Entry 描述 effect 但不执行 effect。
 
-`run` 可以选择内置或用户 Entry；`check`、`show` 和 LSP 使用 Host 固定的 tooling
+`run` 可以选择内置或用户 Entry；`check`、`query` 和 LSP 使用 Host 固定的 tooling
 Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect。
 
 ### Freeze 与 Publication

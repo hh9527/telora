@@ -547,7 +547,7 @@ type Expr(A) = enum {
 递归类型使用有限图和受控 reference 表示，而不是无限展开的树。成功初始化的递归
 root 在冻结后发布；未初始化 reference 不能进入 persistent world。
 
-严格模块分析与 `check`/`show` 的恢复分析对递归 concrete type 使用相同的 component
+严格模块分析与 `check`/`query` 的恢复分析对递归 concrete type 使用相同的 component
 sealing：先为同一递归 component 的全部 root 建立具名 reference，再整体求值并安装
 有限图。第 7.2 节允许的单个名义 family 同样先建立带 Bound 参数的 symbolic root，
 再封闭同参自回边。旁支 binding 的语法、类型或运行时失败不会把这些类型误报为不可
@@ -797,7 +797,7 @@ syntax diagnostic 和不依赖成功值的事实。
 
 格式 frontend 可以在内部建立 raw graph，但发布前必须一次性规范化为 Value。Variant
 wrapper 不增加 provenance path segment；数组索引、对象 key 和原始 scalar 位置继续
-指向输入数据。Strict load、recovery、`check` 和 `show` 观察同一个 `{data: Value}`
+指向输入数据。Strict load、recovery、`check` 和 `query` 观察同一个 `{data: Value}`
 接口。
 
 ### 8.3 初始化和发布
@@ -1075,14 +1075,15 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 telora check <module> [-C <context>]
 telora run <binary-name> [-C <context>] [--input <json|->] [--entry <file>] [--best-effort]
 telora run -S <file> [--input <json|->] [--entry <file>] [--best-effort]
-telora show <module> [-C <context>] [-p <substring>] [-k type,let,def,import] [--exports]
-telora show <module> [-C <context>] --at <line>[:<column>]
+telora query|q modules [-C <context>] [-p <substring>]
+telora query|q exports <module> [-C <context>] [-p <substring>]
+telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
 telora lsp
 ```
 
 `run abc` 的 binary name 是一个不含路径分隔符和 `.telora` 后缀的 stem；Host 从 CWD
 向上发现最近的 manifest，并固定选择 `@bin/abc.telora`。调用者写 `run abc`，不写
-`run @bin/abc.telora`。`run`、`check` 和 `show` 的 `-C` 都指定 manifest discovery
+`run @bin/abc.telora`。`run`、`check` 和 `query` 的 `-C` 都指定 manifest discovery
 的起始目录，该目录不必就是 crate root。`run -S file` 是独立 standalone 模式：
 即使文件的祖先目录存在 manifest 也不
 查找，只使用根文件内的 `crate.dependency` / `crate.format` options，且 options 相对
@@ -1090,19 +1091,30 @@ telora lsp
 binary name、`-C` 互斥。
 
 其他命令的 `<module>` 是 `@src/...`、`@bin/...`、`@test/...`、依赖模块 ID，或
-Host 注册的公开 `std/...` 模块 ID，不是物理文件名。`show std/string --exports` 与
+Host 注册的公开 `std/...` 模块 ID，不是物理文件名。`query exports std/string` 与
 源码中的 `import "std/string"` 选择同一个内置模块身份；不存在的 `std/...` 得到
-明确的 built-in module-not-found 错误，不按 workspace dependency 解析。`show` 以
-稳定 `telora.show/v1` JSONL 输出语义事实，默认查询选中模块的顶层
-local definitions。`-p` 执行大小写敏感的字面子串匹配，不解释 glob 或正则表达式；
-`-k` 接受由逗号分隔的 `type`、`let`、`def`、`import`。`--exports` 改查公共接口并与
-`-k` 互斥。`--at` 接受从一开始计数的 `line[:column]`：只有行号时选择与该行相交的
-事实，带列号时选择覆盖该点的事实；它与 `-p`、`-k`、`--exports` 互斥。空匹配成功
-且不输出记录。每条记录显式区分 `authoritative`、`recovery` 或 `debug` 权威层级；
+明确的 built-in module-not-found 错误，不按 workspace dependency 解析。`query`（可见
+alias `q`）以稳定 `telora.query/v1` JSONL 输出语义事实。`query at <module>` 查询选中
+模块的顶层 local definitions；追加 `:<line>` 或 `:<line>:<column>` 后改查整行或精确点
+相交的 definition、reference 和 expression facts。`query modules` 不加载、解析或求值
+模块，而是列出 `-C` 所确定
+crate 的模块视图：本 crate 的 `@src/...`、`@bin/...`、`@test/...` 包含 public、priv
+和 native 模块；dependency 只包含公开 source module；Host 只包含公开注册模块。
+每条 module record 携带规范 module ID、`crate` / `dependency` / `host` origin、
+`public` / `private` / `native` visibility 和 resolver format，并按 module ID 稳定排序。
+`query exports` 独立查询公开 Module interface。`-p` 执行大小写敏感的字面子串匹配，
+不解释 glob 或正则表达式：在 `modules` 下匹配规范 module ID，在 `exports` 下匹配公开
+名称，在无坐标的 `at` 下匹配本地符号名。`-k` 接受由逗号分隔的 `type`、`let`、
+`def`、`import`；坐标化的 `at` 不接受 `-p` 或 `-k`。空匹配成功且不输出记录。
+`line` 从 1 开始，`column` 从 0 开始并按 UTF-8 byte 计数；column 必须落在 Unicode
+scalar 边界。JSONL 中所有 `line/end_line` 同样从 1 开始，`column/end_column` 从 0
+开始并固定为 UTF-8 byte offset，range 使用半开区间。LSP 仍按客户端协商的
+UTF-8/UTF-16/UTF-32 encoding 输出其协议规定的 0-based position；终端诊断继续使用
+面向人的字符位置。每条 query 记录显式区分 `authoritative`、`recovery` 或 `debug` 权威层级；
 表达式级记录属于 `debug`，错误恢复所得记录的权威层级服从对应事实状态，而不是模块级
 “完整性”状态。
 Namespace import 的 definition record 以 `target` 给出被导入模块的稳定 ID，并省略
-普通值的 `type` 字段；其成员的精确公开 type/scheme 由该目标模块的 `--exports`
+普通值的 `type` 字段；其成员的精确公开 type/scheme 由 `query exports <target>`
 记录定义。Selective import 仍在本地 definition record 中直接携带所选成员的精确
 type/scheme。Namespace 不把模块接口压缩为含 `Any` 的近似 Struct 类型。
 
@@ -1118,8 +1130,8 @@ JSONL：先按稳定顺序输出
 ID、dependency 数量和 `ok` 或 `error` status。Warning 本身不阻止成功；失败不伪造
 Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`dbg!` 仍是独立旁路。
 
-`show` 查询同一普通 Module 管线产生的全面证据图，包括 recoverable CST、部分语义事实和
-诊断求值结果，因此存在错误或求值失败时仍可返回不受影响的事实。`show` 成功只表示查询
+`query` 查询同一普通 Module 管线产生的全面证据图，包括 recoverable CST、部分语义事实和
+诊断求值结果，因此存在错误或求值失败时仍可返回不受影响的事实。`query` 成功只表示查询
 成功，不表示模块健康；恢复节点不得以权威 `Any` 伪装成已知值。
 
 `run --best-effort` 在启动 Entry 前对 Main 执行静默的 best-effort 诊断求值，并把
@@ -1227,9 +1239,9 @@ String chunk。CLI 在 terminal effect 前缓冲它们；协议失败不暴露�
 支持进程替换的 Host 上替换 Telora 进程。没有内部 Wake 或任意 turn 上限；无队列
 事件且无活动 child 时才判定无进展。每次 reducer 调用仍受普通 VM quota 约束。
 
-`check`、`show` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
+`check`、`query` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
 把目标当作 module。`check` 给出严格 module load/compile verdict，但不等价于一次
-`run`：它不选择 application output，也不承诺执行期成功。`show` 和 LSP 可以使用
+`run`：它不选择 application output，也不承诺执行期成功。`query` 和 LSP 可以使用
 recovery snapshot 展示仍有证据的语义事实。
 
 CLI 不提供领域专用的 `exec` 或 `build` adapter。Exec plan、build plan、SQL plan 等
@@ -1262,7 +1274,7 @@ published snapshot。Snapshot 的发布是原子的。
 completion，并协商 UTF-8/UTF-16 等位置编码。Completion 只使用恢复后确有证据的模块
 export 和 Struct field，不在 unknown/Any 上虚构结构。
 
-CLI `show` 和 LSP 可以展示 recovery fact；`check`、`run` 和 Host entry 仍采用严格
+CLI `query` 和 LSP 可以展示 recovery fact；`check`、`run` 和 Host entry 仍采用严格
 成功边界。两者共同展示的事实必须具有同一含义。
 
 ## 13. 标准库和 native 边界

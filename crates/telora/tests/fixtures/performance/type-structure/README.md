@@ -43,11 +43,11 @@ The modules cover distinct costs:
 - `query-builder.telora`: the real-world QueryBuilder module that exposed the
   regression in the ontology experiment.
 
-Use `show` to isolate workspace recovery from output rendering:
+Use `query` to isolate workspace recovery from output rendering:
 
 ```sh
 /usr/bin/time -f 'elapsed=%e user=%U sys=%S' \
-  target/release/telora show @src/query-builder.telora \
+  target/release/telora query at @src/query-builder.telora \
   -C crates/telora/tests/fixtures/performance/type-structure \
   -p definitely_missing_name
 ```
