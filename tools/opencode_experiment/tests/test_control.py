@@ -95,6 +95,32 @@ class ConfigStateTest(unittest.TestCase):
         for value in ("A", "a/b", ".hidden", "a b"):
             with self.assertRaises(ControlError): validate_identifier(value, "id")
 
+    def test_manifest_rejects_unknown_telora_preflight_subcommand(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            plan = repo / "experiments" / "demo"
+            self.write_plan(plan)
+            path = plan / "experiment.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest["permission_preflight"] = {
+                "a1": ["./bin/telora types --limit 20"],
+            }
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ControlError,
+                r"unsupported Telora subcommand.*'types'.*check, lsp, run, show",
+            ):
+                load_manifest(repo, "demo")
+
+            manifest["permission_preflight"]["a1"] = [
+                "./bin/telora show @bin/main.telora -C query-builder",
+            ]
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertEqual(
+                load_manifest(repo, "demo").permission_preflight["a1"],
+                ("./bin/telora show @bin/main.telora -C query-builder",),
+            )
+
     def test_artifact_publication_command_is_available(self):
         args = control_parser().parse_args(["publish", "run", "draft", "result"])
         self.assertEqual((args.command, args.test_id, args.artifacts),

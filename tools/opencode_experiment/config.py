@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -19,6 +20,7 @@ IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 OPENCODE_ENVIRONMENT = {
     "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": lambda value: value.isascii() and value.isdigit() and int(value) > 0,
 }
+TELORA_SUBCOMMANDS = frozenset({"check", "lsp", "run", "show"})
 
 
 def validate_identifier(value: str, kind: str) -> str:
@@ -81,6 +83,24 @@ def _string_array(value: Any, where: str) -> list[str]:
     return value
 
 
+def _validate_permission_preflight_command(command: str, where: str) -> None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        raise ControlError(f"invalid {where} command: {exc}") from None
+    if not tokens:
+        raise ControlError(f"{where} command must not be empty")
+    if PurePosixPath(tokens[0]).name != "telora":
+        return
+    subcommand = tokens[1] if len(tokens) > 1 else None
+    if subcommand not in TELORA_SUBCOMMANDS:
+        expected = ", ".join(sorted(TELORA_SUBCOMMANDS))
+        raise ControlError(
+            f"unsupported Telora subcommand in {where}: {subcommand!r}; "
+            f"expected one of {expected}"
+        )
+
+
 def load_manifest(repo: Path, plan_id: str) -> Manifest:
     validate_identifier(plan_id, "plan-id")
     root = repo / "experiments" / plan_id
@@ -118,7 +138,11 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     normalized_preflight = {}
     for role, commands in permission_preflight.items():
         validate_identifier(role, "permission preflight role")
-        normalized_preflight[role] = tuple(_string_array(commands, f"permission_preflight.{role}"))
+        where = f"permission_preflight.{role}"
+        normalized_commands = _string_array(commands, where)
+        for index, command in enumerate(normalized_commands):
+            _validate_permission_preflight_command(command, f"{where}[{index}]")
+        normalized_preflight[role] = tuple(normalized_commands)
     if not isinstance(reporting, dict):
         raise ControlError("reporting must be an object")
     _keys(reporting, {"sinks"}, "reporting")
