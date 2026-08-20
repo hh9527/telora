@@ -223,7 +223,8 @@ fuel 当作正常终止条件。
 
 ## 文档
 
-- [TUTORIAL.md](TUTORIAL.md)：完整使用教程与当前限制。
+- [guide/TELORA.md](guide/TELORA.md)：语言使用教程与当前限制。
+- [guide/TELORA-CLI.md](guide/TELORA-CLI.md)：CLI、工作区解析和 JSONL 契约。
 - [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md)：当前语言设计 SSOT。
 - [docs/design/CONCEPT.md](docs/design/CONCEPT.md)：核心概念和所有权边界。
 - [docs/MOTIVATION.md](docs/MOTIVATION.md)：问题域、动机与能力准入原则。

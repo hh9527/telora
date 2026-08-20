@@ -7,7 +7,7 @@ Host 能够观察到的语义出发，定义语言表面、静态语义、求值
 核心概念与术语见 [`CONCEPT.md`](CONCEPT.md)，问题与动机见
 [`../MOTIVATION.md`](../MOTIVATION.md)，文档的权威关系与维护规则见
 [`../README.md`](../README.md)。具体写法与编程指导属于
-[`../../TUTORIAL.md`](../../TUTORIAL.md)。
+[`../../guide/TELORA.md`](../../guide/TELORA.md)。
 
 本文描述当前成立的语言，不记录设计演进过程，也不讨论备选方案。它不是完整的
 形式化语法、标准库 API 索引或版本兼容性承诺；这些内容分别属于语法定义、标准库

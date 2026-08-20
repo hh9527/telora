@@ -255,7 +255,10 @@ class ConfigStateTest(unittest.TestCase):
                          "target/release/telora")
         tutorial = next(item for item in manifest.artifacts if item["name"] == "lang-tutorial")
         self.assertEqual((tutorial["source"], tutorial["to"]),
-                         ("TUTORIAL.md", "docs/TUTORIAL.md"))
+                         ("guide/TELORA.md", "docs/TELORA.md"))
+        cli_guide = next(item for item in manifest.artifacts if item["name"] == "cli-guide")
+        self.assertEqual((cli_guide["source"], cli_guide["to"]),
+                         ("guide/TELORA-CLI.md", "docs/TELORA-CLI.md"))
         self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
         self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
         self.assertIn("./bin/oc-task submit a4 *", manifest.permission_preflight["a4"])

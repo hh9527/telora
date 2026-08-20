@@ -1,7 +1,7 @@
 # Telora 语言教程
 
 本文面向第一次使用 Telora 的程序作者和库作者，说明当前已经实现并经过验证的
-公开语言表面。完整语义以 [`docs/design/LANGUAGE.md`](docs/design/LANGUAGE.md)
+公开语言表面。完整语义以 [`../docs/design/LANGUAGE.md`](../docs/design/LANGUAGE.md)
 为准；本文没有说明的行为不能据此推断为存在。
 
 Telora 是一门确定、纯、面向表达式的语言，用于把意图编译为不可变计划。
