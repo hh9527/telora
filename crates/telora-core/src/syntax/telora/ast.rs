@@ -574,6 +574,7 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::Closure
                 | Rule::FunctionContract
                 | Rule::DictExpr
+                | Rule::DoExpr
                 | Rule::IndexExpr
                 | Rule::FloatExpr
                 | Rule::IfExpr

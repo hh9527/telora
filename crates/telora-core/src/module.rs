@@ -5434,7 +5434,7 @@ import "./library.telora" *;
 
         fs::write(
             directory.join("valid.telora"),
-            "export def value: Int = do { let base = 40; base + 2 };",
+            "def value: Int = do { let base = 40; base + 2 }; export {value};",
         )
         .unwrap();
         engine
@@ -5483,6 +5483,74 @@ export {Capability};"#,
             })
             .expect("recovery keeps the binding conflict");
         assert_eq!(diagnostic.labels.len(), 2);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn declared_enum_context_reaches_branches_closures_and_nested_literals() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"type Expr = enum { 'All, 'Column(String), 'Scalar(Int) };
+type Operator = enum { 'Filter(Expr), 'Project(Array(Expr)) };
+type Val = enum { 'Int(Int), 'Float(Float) };
+type Plan = struct {expr: Expr, operators: Array(Operator), values: Array(Val)};
+
+def branch: Expr = if 'True { 'All } else { 'Column("fallback") };
+def make: Fn() -> Expr = fn() { 'Column("id") };
+
+export def output: Plan = do {
+    let local_branch: Expr = if 'True { 'Scalar(1) } else { 'All };
+    let local_make: Fn() -> Expr = fn() { 'Column("name") };
+    let forward: Array(Expr) = ['All, 'Column("first")];
+    let reverse: Array(Expr) = ['Column("second"), 'All];
+    let operators: Array(Operator) = [
+        'Filter(local_branch),
+        'Project(forward),
+        'Project(reverse),
+    ];
+    let values: Array(Val) = ['Int(1), 'Float(2.0)];
+    {expr: if 'True { local_make() } else { make() }, operators, values}
+};"#,
+        )
+        .unwrap();
+
+        recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap();
+
+        fs::write(
+            &main,
+            r#"type Expr = enum { 'Column(String) };
+def raw = 'Column("id");
+export def output: Expr = raw;"#,
+        )
+        .unwrap();
+        let frozen = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(
+            frozen.message().contains("cannot unify")
+                || frozen.message().contains("not assignable"),
+            "{}",
+            frozen.message()
+        );
+
+        fs::write(
+            &main,
+            r#"type Expr = enum { 'Column(String) };
+export def output: Expr = 'Missing;"#,
+        )
+        .unwrap();
+        let illegal = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(
+            illegal.message().contains("Missing"),
+            "{}",
+            illegal.message()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
