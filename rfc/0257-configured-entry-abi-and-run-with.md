@@ -92,14 +92,55 @@ type SystemResources = struct {
 ```
 
 `data_srcs` requests named JSON, YAML, or TOML sources. The private Host native
-uses the same static-data frontends as JSON/YAML/TOML imports and constructs
-source-backed `Value` graphs directly in the Entry WorkWorld. It also constructs
-the complete `SystemResources`; `text_srcs` preserves both text and source name.
+uses the same source-registration, CST, format-validation, and materialization
+pipeline as JSON/YAML/TOML imports. Static imports materialize directly into the
+building MainWorld; Entry resources materialize directly into the retained
+Entry WorkWorld. Neither path constructs an intermediate `DataWorld`, decodes a
+Telora value into a Host-owned representation, or copies a completed data graph
+between Host and World. The private native also constructs the complete
+`SystemResources` in that WorkWorld; `text_srcs` preserves both text and source
+name.
 If a requested data file is absent, `'Some(default)` supplies an already typed
 `Value` while `'None` fails capability preparation. The default is not parsed
 according to `fmt`. Text defaults remain strings. Other I/O failures always
 fail. An existing data file that cannot be parsed never falls back to its
 default.
+
+The shared data-source pipeline has a strict phase boundary:
+
+1. read the physical source while retaining its logical source name;
+2. construct a lossless CST and validate all format-level rules without
+   allocating runtime data objects;
+3. only after validation succeeds, materialize the generic `Value` graph
+   directly into the target Heap.
+
+Format-level validation includes every content condition that could otherwise
+make materialization fail, such as duplicate object keys, TOML table conflicts,
+invalid numeric or temporal values, and unsupported or ambiguous YAML graph
+features. Failure registers a sourced diagnostic and produces no runtime
+`Value`. This layer does not check application schemas: both static data imports
+and `data_srcs` deliberately expose generic `Value`; business conformance is a
+separate codec concern.
+
+Validation is a borrowed view over the lossless CST, not a second owned data
+tree. Validators retain node IDs, spans, and references into source/CST storage;
+they do not copy scalar text or normalize complete arrays and objects into an
+intermediate graph. Small side tables are allowed only where required for
+duplicate detection, YAML graph resolution, TOML table assembly, or a
+deterministic materialization order. Their entries should identify CST nodes
+rather than own duplicated payloads. A validated source is therefore a compact
+plan of references that can be consumed once by the target-Heap materializer.
+
+Materialization does not consume Telora control-flow fuel because it cannot
+call or recurse. It remains subject to Heap allocation quota. Every materialized
+node retains the `SourceId` and range allocated by the same run's source
+registry, so later diagnostics may use the data node as their source location.
+
+Once the dependency graph and stable module slots exist, a validated static
+data module may allocate its `Value` and export module directly in the unsealed
+MainWorld. Entry resources use the same materializer with the Entry WorkWorld
+as target and the MainWorld as background. The target differs; the validation,
+location, quota, and `Value` construction rules do not.
 
 `vars` is a requested snapshot, not a list of required variables. Missing
 names are omitted from `SystemResources.vars`; values present in the process

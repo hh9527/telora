@@ -57,6 +57,10 @@ export def lowering_case = do {
   JSON/YAML/TOML 数据源、文本源、环境变量、stdin 模式和 child-process 权限。文件
   诉求可用 `default: 'Some(value)` 容忍数据文件不存在，该默认值是 `Value`，不会按
   文件格式再解析；文本文件默认值仍是 String。已有但无法解析的数据文件仍报错。
+  JSON/YAML/TOML import 与 `data_srcs` 共用同一管线：先完成 CST 和全部格式级验证，
+  再把通用 `Value` 直接物化进目标 Heap；前者进入构建中的 MainWorld，后者进入 Entry
+  WorkWorld。该过程不经过 `DataWorld` 或 Host-owned Telora value。业务 schema 校验属于
+  codec，不属于资源读取。
   不存在的环境变量从 `SystemResources.vars` 省略，非字符串环境值报错。
   `stdin: 'Text` 注入完整文本；`'Lined` 在 `Initialize` 后逐行产生 `StdinLine`，并以
   单个 `None` 表示 EOF。`spawn_child` 必须为真才能发出 `SpawnStdioChild` 或

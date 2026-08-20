@@ -1261,13 +1261,34 @@ SystemEffect = SpawnStdioChild(SpawnStdioChild)
 `Text` 在 initializer 前读到 EOF，并通过 `SystemResources.stdin` 注入完整文本；
 `Lined` 不注入完整文本，而是在 `Initialize` 之后逐行发送不含换行符的 `Some`，EOF
 恰好发送一次 `None`；`Null` 不读取也不产生事件。私有 resources native 对 `data_srcs`
-复用 JSON/YAML/TOML import 的静态数据 frontend，在当前 Entry WorkWorld 中直接生成带
-provenance 的 `Value` 和完整 `SystemResources`；`text_srcs` 保留文本和
+复用 JSON/YAML/TOML import 的完整数据源管线，在当前 Entry WorkWorld 中直接生成带
+provenance 的 `Value` 和完整 `SystemResources`；静态 import 则在依赖图和稳定 module
+slot 建立后，直接把相同的 `Value` 物化到尚未封闭的 MainWorld。两条路径都不构造中间
+`DataWorld`，不把 Telora value 解码为 Host-owned 表示，也不在 Host 与 World 之间复制
+完成的数据图；`text_srcs` 保留文本和
 来源名。请求的数据文件不存在时，`default: 'Some(value)` 直接提供已经类型化的
 `Value`，不按 `fmt` 再解析；文本文件的默认值仍是 String。`'None` 表示缺失即失败，
 其他 I/O 错误也始终失败。数据文件只要存在，解析失败就直接报错，不使用默认值。
 `vars` 是环境变量快照诉求：不存在的名字从 `SystemResources.vars` 省略，存在但不能
 表示为字符串的值会在 Main/initializer 运行前失败。
+
+统一数据源管线严格分成三步：读取物理 source 并注册逻辑 source name；构造 lossless
+CST，并在不分配运行时数据对象的前提下完成格式级验证；只有验证全部成功后，才向目标
+Heap 直接物化通用 `Value`。格式级验证覆盖所有可能使物化失败的数据条件，包括重复键、
+TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 YAML graph 特性。失败产生
+带 source location 的诊断，不产生部分 `Value`。这一层不检查业务 schema：import 和
+`data_srcs` 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
+
+验证阶段必须优先借用 lossless CST，而不是再构造一棵 Owned 数据树。实现以 CST node
+ID、span 和对 source/CST storage 的引用表达 validated plan；不得复制 scalar text，也
+不得把完整 array/object 预先规范化到中间 graph。重复键检测、YAML graph 解引用、TOML
+table 组装和确定性物化顺序可以使用必要的轻量 side table，但表项应引用 CST node，不
+拥有重复 payload。validated plan 由目标 Heap materializer 单次消费。
+
+数据物化不消耗 Telora 跳转/fuel 配额，因为它不会调用或递归；生成的 Heap 对象仍受
+allocation quota 约束。每个节点直接携带本次运行共享 source registry 分配的
+`SourceId + range`，后续诊断可以稳定地把该节点作为 source 位置。MainWorld 和 Entry
+WorkWorld 仅是不同 target，CST、格式验证、location、quota 和 `Value` 构造逻辑相同。
 
 `spawn_child` 是 `SpawnStdioChild` 与 `PostStdin` 的显式权限。Host 在执行一批 effect
 中的任何一项前先审计整批；未授权时整批拒绝。`Exec` 是独立权限语义，不由

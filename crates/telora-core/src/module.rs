@@ -8,8 +8,13 @@ use crate::core::{
     DEFAULT_ENTRY_MODULE, EDGE_RUNTIME_MODULE, PRELUDE_MODULE, default_entry_source,
     edge_runtime_source, module_specs,
 };
-use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, wrap_semantic_value};
-use crate::json::{Provenance, SourcedValue, parse_json_registered};
+use crate::heap::{
+    DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_storage_bytes,
+    semantic_value_type_id,
+};
+use crate::json::{
+    MaterializedValue, Provenance, SemanticDataTarget, materialize_json_semantic_registered,
+};
 use crate::module_id::{
     ModuleAuthority, ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver,
     ResolvedModule, immediate_value,
@@ -20,7 +25,7 @@ use crate::semantic::{
     WorkspaceModuleState, WorkspaceSnapshot,
 };
 use crate::source::{Diagnostic, SourceDatabase};
-use crate::toml::parse_toml_registered;
+use crate::toml::materialize_toml_semantic_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
     Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor, TypeFamilyTemplate,
@@ -30,7 +35,7 @@ use crate::types::{
 #[cfg(test)]
 use crate::vm::ValueRef;
 use crate::vm::WorkWorld;
-use crate::yaml::parse_yaml_registered;
+use crate::yaml::materialize_yaml_semantic_registered;
 use crate::{
     BuiltinAtom, BytecodeFunction, DebugSink, DiscardDebugSink, Instruction, Quota, QuotaAccount,
     Register, Vm,
@@ -42,7 +47,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 struct StaticDataParse {
-    value: Option<SourcedValue>,
+    value: Option<MaterializedValue>,
     diagnostics: Vec<Diagnostic>,
     kind: WorkspaceModuleKind,
 }
@@ -148,22 +153,25 @@ fn parse_static_data_registered(
     format: ModuleFormat,
     sources: &SourceDatabase,
     source_id: crate::SourceId,
+    heap: &mut Heap,
+    target: SemanticDataTarget<'_>,
 ) -> Option<StaticDataParse> {
     let kind = static_data_kind(format)?;
-    let (value, diagnostics) = match format {
+    let result = match format {
         ModuleFormat::Json => {
-            let parsed = parse_json_registered(sources, source_id);
-            (parsed.value, parsed.diagnostics)
+            materialize_json_semantic_registered(sources, source_id, heap, target)
         }
         ModuleFormat::Toml => {
-            let parsed = parse_toml_registered(sources, source_id);
-            (parsed.value, parsed.diagnostics)
+            materialize_toml_semantic_registered(sources, source_id, heap, target)
         }
         ModuleFormat::Yaml => {
-            let parsed = parse_yaml_registered(sources, source_id);
-            (parsed.value, parsed.diagnostics)
+            materialize_yaml_semantic_registered(sources, source_id, heap, target)
         }
         _ => unreachable!("kind exists only for static data formats"),
+    };
+    let (value, diagnostics) = match result {
+        Ok(value) => (Some(value), Vec::new()),
+        Err(diagnostics) => (None, diagnostics),
     };
     Some(StaticDataParse {
         value,
@@ -211,23 +219,71 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
 }
 
 fn publish_static_data_module(
-    sourced: &SourcedValue,
+    sourced: &MaterializedValue,
     core_modules: &HashMap<String, ModuleArtifact>,
     heap: &mut Heap,
+    source_bytes: usize,
+    allocation_limit: u64,
 ) -> Result<(PersistentValue, ModuleInterface), ModuleError> {
     let (owner, descriptor) = semantic_value_contract(core_modules, heap)?;
-    let raw = sourced
-        .value
-        .publish(heap)
-        .map_err(|error| ModuleError::new(error.to_string()))?;
-    let data = wrap_semantic_value(heap, None, raw.runtime(), owner.runtime())
-        .map_err(|error| ModuleError::new(error.to_string()))?;
+    let requested = u64::try_from(source_bytes)
+        .ok()
+        .and_then(|bytes| {
+            semantic_value_storage_bytes(heap, None, sourced.value, owner.runtime())
+                .ok()
+                .and_then(|storage| bytes.checked_add(storage))
+        })
+        .ok_or_else(|| ModuleError::new("static data allocation size overflowed"))?;
+    if requested > allocation_limit {
+        return Err(ModuleError::new(
+            "static data module exceeds the allocation quota",
+        ));
+    }
+    let data = sourced.value;
     let root = heap
         .module([("data".into(), data)])
         .and_then(|value| heap.persistent(value))
         .map_err(|error| ModuleError::new(error.to_string()))?;
     let interface = static_data_interface(descriptor);
     Ok((root, interface))
+}
+
+fn materialize_system_data_source(
+    format: SystemDataFormat,
+    sources: &SourceDatabase,
+    source_id: crate::SourceId,
+    heap: &mut Heap,
+    target: SemanticDataTarget<'_>,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    match format {
+        SystemDataFormat::Json => {
+            materialize_json_semantic_registered(sources, source_id, heap, target)
+        }
+        SystemDataFormat::Yaml => {
+            materialize_yaml_semantic_registered(sources, source_id, heap, target)
+        }
+        SystemDataFormat::Toml => {
+            materialize_toml_semantic_registered(sources, source_id, heap, target)
+        }
+    }
+}
+
+fn allocate_record(heap: &mut Heap, fields: impl IntoIterator<Item = (String, Val)>) -> Val {
+    let mut fields = fields.into_iter().collect::<Vec<_>>();
+    fields.sort_by(|left, right| left.0.cmp(&right.0));
+    let names = fields
+        .iter()
+        .map(|(name, _)| heap.intern(name))
+        .collect::<Vec<_>>();
+    let values = fields
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    let shape = heap.intern_shape(names);
+    Val::unknown(DecodedValue::Dict(heap.allocate(Object::Dict {
+        shape,
+        values: values.into_boxed_slice(),
+    })))
 }
 
 #[derive(Clone, Debug)]
@@ -1427,6 +1483,7 @@ fn prepare_and_initialize_entry_in(
     provider: Val,
     caps: Val,
     value_owner: Val,
+    prepared_data: Val,
     initializer: Val,
     main_argument: Val,
     quota: Quota,
@@ -1434,47 +1491,58 @@ fn prepare_and_initialize_entry_in(
 ) -> Result<WorkWorld, ModuleError> {
     let wrapper = BytecodeFunction::with_signature(
         "<prepare resources and invoke Entry initializer>",
-        6,
+        7,
         0,
-        12,
+        14,
         Vec::new(),
         vec![
             Instruction::Move {
-                dst: Register(6),
+                dst: Register(7),
                 src: Register(1),
             },
             Instruction::Move {
-                dst: Register(7),
+                dst: Register(8),
                 src: Register(2),
             },
             Instruction::Move {
-                dst: Register(8),
-                src: Register(3),
-            },
-            Instruction::Call {
-                base: Register(6),
-                argument_count: 2,
-            },
-            Instruction::Move {
                 dst: Register(9),
-                src: Register(4),
+                src: Register(3),
             },
             Instruction::Move {
                 dst: Register(10),
-                src: Register(6),
+                src: Register(4),
+            },
+            Instruction::Call {
+                base: Register(7),
+                argument_count: 3,
             },
             Instruction::Move {
                 dst: Register(11),
                 src: Register(5),
             },
+            Instruction::Move {
+                dst: Register(12),
+                src: Register(7),
+            },
+            Instruction::Move {
+                dst: Register(13),
+                src: Register(6),
+            },
             Instruction::Call {
-                base: Register(9),
+                base: Register(11),
                 argument_count: 2,
             },
-            Instruction::Return { src: Register(9) },
+            Instruction::Return { src: Register(11) },
         ],
     );
-    let arguments = [provider, caps, value_owner, initializer, main_argument];
+    let arguments = [
+        provider,
+        caps,
+        value_owner,
+        prepared_data,
+        initializer,
+        main_argument,
+    ];
     let mut account = QuotaAccount::new(quota);
     Vm::new()
         .with_debug_sink(debug_sink)
@@ -1770,6 +1838,14 @@ pub trait RunHost {
 
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>>;
 
+    /// Reads a configured data source without decoding it into a Telora value.
+    /// The runtime registers and materializes the returned source directly in
+    /// the Entry WorkWorld.
+    fn read_data_source(
+        &mut self,
+        source: &SystemDataSource,
+    ) -> RunHostFuture<'_, Result<Option<String>, String>>;
+
     fn spawn_stdio_child(
         &mut self,
         child: SpawnStdioChild,
@@ -1822,7 +1898,7 @@ impl RunHost for NoProcessRunHost {
     fn resources_provider(&mut self) -> crate::NativeFunction {
         crate::NativeFunction::new(
             "host.prepare_system_resources.empty",
-            2,
+            3,
             empty_system_resources,
         )
     }
@@ -1839,6 +1915,13 @@ impl RunHost for NoProcessRunHost {
             }
             Ok(())
         })
+    }
+
+    fn read_data_source(
+        &mut self,
+        _source: &SystemDataSource,
+    ) -> RunHostFuture<'_, Result<Option<String>, String>> {
+        Box::pin(async { Ok(None) })
     }
 
     fn spawn_stdio_child(
@@ -2390,7 +2473,7 @@ impl Engine {
         let sources = loader.sources.clone();
         let shared_main =
             Arc::new(std::mem::replace(&mut loader.main, MainWorld::building()).seal());
-        let entry = loaded_from_compiled(
+        let mut entry = loaded_from_compiled(
             main_path.clone(),
             dependencies.clone(),
             sources.clone(),
@@ -2433,6 +2516,79 @@ impl Engine {
         let (mut entry_world, main_argument) = entry_world
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
+        let mut prepared_fields = Vec::new();
+        let mut requested_data_allocation = 0u64;
+        for (key, request) in &caps.data_sources {
+            let Some(source) = host.read_data_source(request).await.map_err(|error| {
+                ModuleError::new(format!(
+                    "cannot read Entry data source {:?}: {error}",
+                    request.src
+                ))
+            })?
+            else {
+                continue;
+            };
+            let source_id = entry.sources.add(request.src.clone(), &source);
+            let type_id = semantic_value_type_id(
+                entry_world.heap(),
+                Some(&shared_main.heap),
+                value_owner.runtime(),
+            )
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+            let materialized = materialize_system_data_source(
+                request.format,
+                &entry.sources,
+                source_id,
+                entry_world.heap_mut(),
+                SemanticDataTarget {
+                    background: Some(&shared_main.heap),
+                    type_id,
+                },
+            )
+            .map_err(|diagnostics| {
+                ModuleError::new(
+                    diagnostics
+                        .iter()
+                        .map(|diagnostic| entry.sources.render(diagnostic))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            })?;
+            let data = materialized.value;
+            let raw_bytes = u64::try_from(source.len())
+                .ok()
+                .and_then(|bytes| {
+                    semantic_value_storage_bytes(
+                        entry_world.heap(),
+                        Some(&shared_main.heap),
+                        data,
+                        value_owner.runtime(),
+                    )
+                    .ok()
+                    .and_then(|storage| bytes.checked_add(storage))
+                })
+                .ok_or_else(|| ModuleError::new("Entry data allocation size overflowed"))?;
+            requested_data_allocation = requested_data_allocation
+                .checked_add(raw_bytes)
+                .ok_or_else(|| ModuleError::new("Entry data allocation size overflowed"))?;
+            if requested_data_allocation > self.config.session_quota.allocation_bytes {
+                return Err(ModuleError::new(format!(
+                    "Entry data source {:?} exceeds the allocation quota",
+                    request.src
+                )));
+            }
+            let src = Val::unknown(
+                entry_world
+                    .heap_mut()
+                    .string(Some(&shared_main.heap), &request.src),
+            );
+            let item = allocate_record(
+                entry_world.heap_mut(),
+                [("data".into(), data), ("src".into(), src)],
+            );
+            prepared_fields.push((key.clone(), item));
+        }
+        let prepared_data = allocate_record(entry_world.heap_mut(), prepared_fields);
         let caps_argument = entry_world.root_ref(&entry.runtime.main.heap).runtime();
         let resources_provider = entry_world
             .heap_mut()
@@ -2445,6 +2601,7 @@ impl Engine {
             resources_provider,
             caps_argument,
             value_owner.runtime(),
+            prepared_data,
             initializer,
             main_argument,
             self.config.session_quota,
@@ -3269,15 +3426,26 @@ impl WorkspaceBuilder<'_> {
         let source_id = self
             .sources
             .add_document(path.display().to_string(), source);
-        let parsed = parse_static_data_registered(module.format, &self.sources, source_id)?;
-        let sourced = parsed.value;
-        let (_, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
+        let (owner, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
             .expect("std/value provides the static data interface");
+        let type_id = semantic_value_type_id(&self.main.heap, None, owner.runtime())
+            .expect("std/value Value owner is linked");
+        let parsed = parse_static_data_registered(
+            module.format,
+            &self.sources,
+            source_id,
+            &mut self.main.heap,
+            SemanticDataTarget {
+                background: None,
+                type_id,
+            },
+        )?;
+        let sourced = parsed.value;
         let interface = static_data_interface(descriptor);
         self.inputs.insert(
             key.clone(),
             SemanticModuleInput {
-                key,
+                key: key.clone(),
                 path: Some(path),
                 kind: parsed.kind,
                 source: Some(source_id),
@@ -3291,9 +3459,26 @@ impl WorkspaceBuilder<'_> {
             },
         );
         if let Some(sourced) = sourced {
-            let (root, interface) =
-                publish_static_data_module(&sourced, &self.core_modules, &mut self.main.heap)
-                    .expect("parsed sourced value publishes into the main heap");
+            let source_len = self.sources.get(source_id).text().byte_len();
+            let (root, interface) = match publish_static_data_module(
+                &sourced,
+                &self.core_modules,
+                &mut self.main.heap,
+                source_len,
+                self.engine.config.module_quota.allocation_bytes,
+            ) {
+                Ok(published) => published,
+                Err(error) => {
+                    let location = crate::Location::from_usize(source_id, 0..source_len)
+                        .expect("registered source range fits Location");
+                    self.inputs
+                        .get_mut(&key)
+                        .expect("static data input was inserted")
+                        .diagnostics
+                        .push(Diagnostic::error(error.to_string(), location));
+                    return None;
+                }
+            };
             self.interfaces.insert(module_id.clone(), interface);
             self.roots.insert(module_id.clone(), root);
             self.provenances.insert(module_id, sourced.provenance);
@@ -4628,12 +4813,24 @@ impl ModuleLoader {
             ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => {
                 let source = read(&path)?;
                 let source_id = self.sources.add(path.display().to_string(), source);
+                let (owner, _) = semantic_value_contract(&self.core_modules, &self.main.heap)?;
+                let type_id = semantic_value_type_id(&self.main.heap, None, owner.runtime())
+                    .map_err(|error| ModuleError::new(error.to_string()))?;
                 let StaticDataParse {
                     value,
                     diagnostics,
                     kind,
-                } = parse_static_data_registered(format, &self.sources, source_id)
-                    .expect("static data format has a frontend");
+                } = parse_static_data_registered(
+                    format,
+                    &self.sources,
+                    source_id,
+                    &mut self.main.heap,
+                    SemanticDataTarget {
+                        background: None,
+                        type_id,
+                    },
+                )
+                .expect("static data format has a frontend");
                 value
                     .ok_or_else(|| {
                         ModuleError::new(
@@ -4649,6 +4846,8 @@ impl ModuleLoader {
                             &sourced,
                             &self.core_modules,
                             &mut self.main.heap,
+                            self.sources.get(source_id).text().byte_len(),
+                            self.module_quota.allocation_bytes,
                         )?;
                         let key = module_id.to_string();
                         self.semantic_inputs.insert(

@@ -6,6 +6,27 @@ use crate::{BuiltinAtom, DataWorld};
 use std::collections::BTreeMap;
 use std::fmt;
 
+#[derive(Clone, Copy)]
+pub(crate) struct SemanticDataTarget<'a> {
+    pub(crate) background: Option<&'a Heap>,
+    pub(crate) type_id: crate::TypeId,
+}
+
+pub(crate) fn semantic_tag(
+    heap: &mut Heap,
+    target: SemanticDataTarget<'_>,
+    tag: &str,
+    payload: Val,
+    location: Location,
+) -> Val {
+    let tag = Val::original(heap.atom(target.background, tag), Some(location.into()));
+    Val::original(
+        DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload })),
+        Some(location.into()),
+    )
+    .with_type_id(target.type_id)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonError {
     pub source_name: String,
@@ -62,6 +83,55 @@ impl DataScalar {
         };
         Val::original(value, Some(location.into()))
     }
+
+    pub(crate) fn lower_semantic(
+        self,
+        heap: &mut Heap,
+        target: SemanticDataTarget<'_>,
+        location: Location,
+    ) -> Val {
+        match self {
+            Self::Int(value) => semantic_tag(
+                heap,
+                target,
+                "Int",
+                Val::original(DecodedValue::Int(value), Some(location.into())),
+                location,
+            ),
+            Self::Float(value) => semantic_tag(
+                heap,
+                target,
+                "Float",
+                Val::original(DecodedValue::Float(value), Some(location.into())),
+                location,
+            ),
+            Self::String(value) => {
+                let payload = Val::original(
+                    heap.string(target.background, &value),
+                    Some(location.into()),
+                );
+                semantic_tag(heap, target, "String", payload, location)
+            }
+            Self::Bytes(value) => {
+                let payload = Val::original(
+                    DecodedValue::Bytes(heap.allocate(Object::Bytes(value.into_boxed_slice()))),
+                    Some(location.into()),
+                );
+                semantic_tag(heap, target, "Bytes", payload, location)
+            }
+            Self::Atom(value) => {
+                Val::original(heap.atom(target.background, &value), Some(location.into()))
+                    .with_type_id(target.type_id)
+            }
+            Self::TaggedString { tag, value } => {
+                let payload = Val::original(
+                    heap.string(target.background, &value),
+                    Some(location.into()),
+                );
+                semantic_tag(heap, target, &tag, payload, location)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -74,6 +144,11 @@ pub struct Provenance {
 pub struct SourcedValue {
     pub value: DataWorld,
     pub provenance: Provenance,
+}
+
+pub(crate) struct MaterializedValue {
+    pub(crate) value: Val,
+    pub(crate) provenance: Provenance,
 }
 
 #[derive(Debug)]
@@ -104,8 +179,14 @@ pub fn parse_json_registered(sources: &SourceDatabase, source_id: SourceId) -> J
     let parsed = crate::syntax::json::parse_document(source_id, source.text());
     let mut diagnostics = parsed.diagnostics;
     let value = if diagnostics.is_empty() {
-        match JsonLowerer::new(source_id, source.text(), &parsed.syntax).lower() {
-            Ok(value) => Some(value),
+        let mut heap = Heap::work();
+        match JsonLowerer::new(source_id, source.text(), &parsed.syntax, &mut heap)
+            .lower_materialized()
+        {
+            Ok(value) => Some(SourcedValue {
+                value: DataWorld::new(heap, value.value),
+                provenance: value.provenance,
+            }),
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
                 None
@@ -119,6 +200,64 @@ pub fn parse_json_registered(sources: &SourceDatabase, source_id: SourceId) -> J
         value,
         diagnostics,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn materialize_json_registered(
+    sources: &SourceDatabase,
+    source_id: SourceId,
+    heap: &mut Heap,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let source = sources.get(source_id);
+    materialize_json_source(source_id, source.text(), heap)
+}
+
+pub(crate) fn materialize_json_semantic_registered(
+    sources: &SourceDatabase,
+    source_id: SourceId,
+    heap: &mut Heap,
+    target: SemanticDataTarget<'_>,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let source = sources.get(source_id);
+    let parsed = crate::syntax::json::parse_document(source_id, source.text());
+    if !parsed.diagnostics.is_empty() {
+        return Err(parsed.diagnostics);
+    }
+    if let Err(diagnostic) = validate_json(source_id, source.text(), &parsed.syntax) {
+        return Err(vec![diagnostic]);
+    }
+    JsonLowerer::new_semantic(source_id, source.text(), &parsed.syntax, heap, target)
+        .lower_materialized()
+        .map_err(|diagnostic| vec![diagnostic])
+}
+
+#[cfg(test)]
+pub(crate) fn materialize_json_source(
+    source_id: SourceId,
+    source: &crate::document::DocumentText,
+    heap: &mut Heap,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let parsed = crate::syntax::json::parse_document(source_id, source);
+    if !parsed.diagnostics.is_empty() {
+        return Err(parsed.diagnostics);
+    }
+    // The validation pass decodes every scalar and checks every key before the
+    // target heap is touched. The second traversal is the only allocation pass.
+    if let Err(diagnostic) = validate_json(source_id, source, &parsed.syntax) {
+        return Err(vec![diagnostic]);
+    }
+    JsonLowerer::new(source_id, source, &parsed.syntax, heap)
+        .lower_materialized()
+        .map_err(|diagnostic| vec![diagnostic])
+}
+
+fn validate_json(
+    source_id: SourceId,
+    source: &crate::document::DocumentText,
+    cst: &CstData,
+) -> Result<(), Diagnostic> {
+    let mut heap = Heap::work();
+    JsonLowerer::new(source_id, source, cst, &mut heap).validate_document()
 }
 
 fn compatibility_error(
@@ -142,41 +281,119 @@ fn compatibility_error(
     }
 }
 
-struct JsonLowerer<'a> {
+struct JsonLowerer<'a, 'heap> {
     source_id: SourceId,
     source: &'a crate::document::DocumentText,
     cst: &'a CstData,
-    heap: Heap,
+    heap: &'heap mut Heap,
     path: ValuePath,
     provenance: Provenance,
+    semantic: Option<SemanticDataTarget<'a>>,
 }
 
-impl<'a> JsonLowerer<'a> {
+impl<'a, 'heap> JsonLowerer<'a, 'heap> {
     fn new(
         source_id: SourceId,
         source: &'a crate::document::DocumentText,
         cst: &'a CstData,
+        heap: &'heap mut Heap,
     ) -> Self {
         Self {
             source_id,
             source,
             cst,
-            heap: Heap::work(),
+            heap,
             path: Vec::new(),
             provenance: Provenance::default(),
+            semantic: None,
         }
     }
 
-    fn lower(mut self) -> Result<SourcedValue, Diagnostic> {
+    fn new_semantic(
+        source_id: SourceId,
+        source: &'a crate::document::DocumentText,
+        cst: &'a CstData,
+        heap: &'heap mut Heap,
+        semantic: SemanticDataTarget<'a>,
+    ) -> Self {
+        Self {
+            source_id,
+            source,
+            cst,
+            heap,
+            path: Vec::new(),
+            provenance: Provenance::default(),
+            semantic: Some(semantic),
+        }
+    }
+
+    fn lower_materialized(mut self) -> Result<MaterializedValue, Diagnostic> {
         let value_node = self
             .children(NodeRef::ROOT)
             .find(|node| self.is_value(*node))
             .ok_or_else(|| self.error(NodeRef::ROOT, "expected a JSON value"))?;
         let root = self.value(value_node)?;
-        Ok(SourcedValue {
-            value: DataWorld::new(self.heap, root),
+        Ok(MaterializedValue {
+            value: root,
             provenance: self.provenance,
         })
+    }
+
+    fn validate_document(&self) -> Result<(), Diagnostic> {
+        let value = self
+            .children(NodeRef::ROOT)
+            .find(|node| self.is_value(*node))
+            .ok_or_else(|| self.error(NodeRef::ROOT, "expected a JSON value"))?;
+        self.validate_value(value)
+    }
+
+    fn validate_value(&self, node: NodeRef) -> Result<(), Diagnostic> {
+        match self.cst.get(node) {
+            Node::Token(Token::Null | Token::True | Token::False, _) => Ok(()),
+            Node::Token(Token::Number, _) => self.number(node).map(|_| ()),
+            Node::Rule(Rule::StringLiteral, _) => self.decode_string(node).map(|_| ()),
+            Node::Rule(Rule::Literal | Rule::Value, _) => {
+                let child = self
+                    .children(node)
+                    .find(|child| self.is_value(*child))
+                    .ok_or_else(|| self.error(node, "empty JSON value"))?;
+                self.validate_value(child)
+            }
+            Node::Rule(Rule::Array, _) => {
+                for child in self.children(node).filter(|child| self.is_value(*child)) {
+                    self.validate_value(child)?;
+                }
+                Ok(())
+            }
+            Node::Rule(Rule::Object, _) => {
+                let mut keys = BTreeMap::new();
+                for member in self
+                    .rule_children(node)
+                    .filter(|child| self.rule(*child) == Some(Rule::Member))
+                {
+                    let key_node = self
+                        .rule_children(member)
+                        .find(|child| self.rule(*child) == Some(Rule::StringLiteral))
+                        .ok_or_else(|| self.error(member, "JSON object key must be a string"))?;
+                    let key = self.decode_string(key_node)?;
+                    let location = self.location(key_node);
+                    if let Some(previous) = keys.insert(key.clone(), location) {
+                        return Err(Diagnostic::error(
+                            format!("duplicate JSON object key {key:?}"),
+                            location,
+                        )
+                        .with_secondary("first defined here", previous));
+                    }
+                    let value = self
+                        .children(member)
+                        .find(|child| *child != key_node && self.is_value(*child))
+                        .ok_or_else(|| self.error(member, "JSON member has no value"))?;
+                    self.validate_value(value)?;
+                }
+                Ok(())
+            }
+            _ => Err(self.error(node, "expected a JSON value")),
+        }
     }
 
     fn value(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
@@ -186,7 +403,13 @@ impl<'a> JsonLowerer<'a> {
             Node::Token(Token::True, _) => DecodedValue::BuiltinAtom(BuiltinAtom::True),
             Node::Token(Token::False, _) => DecodedValue::BuiltinAtom(BuiltinAtom::False),
             Node::Rule(Rule::StringLiteral, _) => {
-                self.heap.string(None, &self.decode_string(node)?)
+                let value = self.decode_string(node)?;
+                if let Some(target) = self.semantic {
+                    return Ok(
+                        DataScalar::String(value).lower_semantic(self.heap, target, location)
+                    );
+                }
+                self.heap.string(None, &value)
             }
             Node::Token(Token::Number, _) => self.number(node)?,
             Node::Rule(Rule::Literal | Rule::Value, _) => {
@@ -203,7 +426,17 @@ impl<'a> JsonLowerer<'a> {
         self.provenance
             .values
             .insert(self.path.clone(), self.location(node));
-        Ok(Val::original(value, Some(location.into())))
+        let value = Val::original(value, Some(location.into()));
+        if let Some(target) = self.semantic {
+            Ok(match value.value() {
+                DecodedValue::BuiltinAtom(_) => value.with_type_id(target.type_id),
+                DecodedValue::Int(_) => semantic_tag(self.heap, target, "Int", value, location),
+                DecodedValue::Float(_) => semantic_tag(self.heap, target, "Float", value, location),
+                _ => unreachable!("JSON scalar classification is complete"),
+            })
+        } else {
+            Ok(value)
+        }
     }
 
     fn array(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
@@ -220,10 +453,14 @@ impl<'a> JsonLowerer<'a> {
         self.provenance
             .values
             .insert(self.path.clone(), self.location(node));
-        Ok(Val::original(
+        let location = self.location(node);
+        let array = Val::original(
             DecodedValue::Array(self.heap.allocate(Object::Array(values.into_boxed_slice()))),
-            Some(self.location(node).into()),
-        ))
+            Some(location.into()),
+        );
+        Ok(self.semantic.map_or(array, |target| {
+            semantic_tag(self.heap, target, "Array", array, location)
+        }))
     }
 
     fn object(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
@@ -267,13 +504,17 @@ impl<'a> JsonLowerer<'a> {
         self.provenance
             .values
             .insert(self.path.clone(), self.location(node));
-        Ok(Val::original(
+        let location = self.location(node);
+        let object = Val::original(
             DecodedValue::Dict(self.heap.allocate(Object::Dict {
                 shape,
                 values: values.into_boxed_slice(),
             })),
-            Some(self.location(node).into()),
-        ))
+            Some(location.into()),
+        );
+        Ok(self.semantic.map_or(object, |target| {
+            semantic_tag(self.heap, target, "Object", object, location)
+        }))
     }
 
     fn number(&self, node: NodeRef) -> Result<DecodedValue, Diagnostic> {
@@ -467,6 +708,16 @@ mod tests {
         let parsed = parse_json_registered(&sources, non_finite);
         assert!(parsed.value.is_none());
         assert!(parsed.diagnostics[0].message.contains("must be finite"));
+    }
+
+    #[test]
+    fn direct_materialization_does_not_touch_the_target_on_validation_failure() {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("invalid.json", r#"{"ok":[],"ok":1}"#);
+        let mut heap = Heap::main();
+        let before = heap.allocation_count();
+        assert!(materialize_json_registered(&sources, source_id, &mut heap).is_err());
+        assert_eq!(heap.allocation_count(), before);
     }
 
     #[test]

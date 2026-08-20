@@ -1,6 +1,9 @@
 use crate::DataWorld;
 use crate::heap::{DecodedValue, Heap, Object, Val};
-use crate::json::{DataScalar, Provenance, SourcedValue, ValuePath, ValuePathSegment};
+use crate::json::{
+    DataScalar, MaterializedValue, Provenance, SemanticDataTarget, SourcedValue, ValuePath,
+    ValuePathSegment, semantic_tag,
+};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use std::collections::BTreeMap;
 
@@ -14,13 +17,33 @@ pub struct YamlParse {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub(crate) fn materialize_yaml_semantic_registered(
+    sources: &SourceDatabase,
+    source_id: SourceId,
+    heap: &mut Heap,
+    target: SemanticDataTarget<'_>,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let source = sources.get(source_id);
+    let parsed = crate::syntax::yaml::parse_document(source_id, source.text());
+    if !parsed.diagnostics.is_empty() {
+        return Err(parsed.diagnostics);
+    }
+    YamlLowerer::new(source_id, source.text())
+        .lower_with(heap, Some(target))
+        .map_err(|diagnostic| vec![diagnostic])
+}
+
 pub fn parse_yaml_registered(sources: &SourceDatabase, source_id: SourceId) -> YamlParse {
     let source = sources.get(source_id);
     let parsed = crate::syntax::yaml::parse_document(source_id, source.text());
     let mut diagnostics = parsed.diagnostics;
     let value = if diagnostics.is_empty() {
-        match YamlLowerer::new(source_id, source.text()).lower() {
-            Ok(value) => Some(value),
+        let mut heap = Heap::work();
+        match YamlLowerer::new(source_id, source.text()).lower(&mut heap) {
+            Ok(value) => Some(SourcedValue {
+                value: DataWorld::new(heap, value.value),
+                provenance: value.provenance,
+            }),
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
                 None
@@ -34,6 +57,31 @@ pub fn parse_yaml_registered(sources: &SourceDatabase, source_id: SourceId) -> Y
         value,
         diagnostics,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn materialize_yaml_registered(
+    sources: &SourceDatabase,
+    source_id: SourceId,
+    heap: &mut Heap,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let source = sources.get(source_id);
+    materialize_yaml_source(source_id, source.text(), heap)
+}
+
+#[cfg(test)]
+pub(crate) fn materialize_yaml_source(
+    source_id: SourceId,
+    source: &crate::document::DocumentText,
+    heap: &mut Heap,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let parsed = crate::syntax::yaml::parse_document(source_id, source);
+    if !parsed.diagnostics.is_empty() {
+        return Err(parsed.diagnostics);
+    }
+    YamlLowerer::new(source_id, source)
+        .lower(heap)
+        .map_err(|diagnostic| vec![diagnostic])
 }
 
 #[derive(Clone)]
@@ -106,7 +154,15 @@ impl YamlLowerer {
         }
     }
 
-    fn lower(mut self) -> Result<SourcedValue, Diagnostic> {
+    fn lower(self, heap: &mut Heap) -> Result<MaterializedValue, Diagnostic> {
+        self.lower_with(heap, None)
+    }
+
+    fn lower_with(
+        mut self,
+        heap: &mut Heap,
+        semantic: Option<SemanticDataTarget<'_>>,
+    ) -> Result<MaterializedValue, Diagnostic> {
         if let Some((index, _)) = self
             .lines
             .iter()
@@ -133,13 +189,12 @@ impl YamlLowerer {
                 "YAML module must contain exactly one document",
             ));
         }
-        let mut heap = Heap::work();
         let mut provenance = Provenance::default();
         let mut path = Vec::new();
-        let root = materialize(node, &mut heap, &mut provenance, &mut path)
+        let root = materialize(node, heap, &mut provenance, &mut path, semantic)
             .map_err(|message| Diagnostic::error(message, self.location(0, self.source_len)))?;
-        Ok(SourcedValue {
-            value: DataWorld::new(heap, root),
+        Ok(MaterializedValue {
+            value: root,
             provenance,
         })
     }
@@ -1018,31 +1073,38 @@ fn materialize(
     heap: &mut Heap,
     provenance: &mut Provenance,
     path: &mut ValuePath,
+    semantic: Option<SemanticDataTarget<'_>>,
 ) -> Result<Val, String> {
     match node {
         YamlNode::Scalar(value, location) => {
             provenance.values.insert(path.clone(), location);
-            Ok(value.lower(heap, location))
+            Ok(match semantic {
+                Some(target) => value.lower_semantic(heap, target, location),
+                None => value.lower(heap, location),
+            })
         }
         YamlNode::Sequence(values, location) => {
             let mut result = Vec::new();
             for (index, value) in values.into_iter().enumerate() {
                 path.push(ValuePathSegment::Index(index));
-                result.push(materialize(value, heap, provenance, path)?);
+                result.push(materialize(value, heap, provenance, path, semantic)?);
                 path.pop();
             }
             provenance.values.insert(path.clone(), location);
-            Ok(Val::original(
+            let value = Val::original(
                 DecodedValue::Array(heap.allocate(Object::Array(result.into_boxed_slice()))),
                 Some(location.into()),
-            ))
+            );
+            Ok(semantic.map_or(value, |target| {
+                semantic_tag(heap, target, "Array", value, location)
+            }))
         }
         YamlNode::Mapping(entries, location) => {
             let mut result = Vec::new();
             for (key, key_location, value) in entries {
                 path.push(ValuePathSegment::Key(key.clone()));
                 provenance.keys.insert(path.clone(), key_location);
-                result.push((key, materialize(value, heap, provenance, path)?));
+                result.push((key, materialize(value, heap, provenance, path, semantic)?));
                 path.pop();
             }
             provenance.values.insert(path.clone(), location);
@@ -1056,13 +1118,16 @@ fn materialize(
                 .map(|(_, value)| value)
                 .collect::<Vec<_>>();
             let shape = heap.intern_shape(names);
-            Ok(Val::original(
+            let value = Val::original(
                 DecodedValue::Dict(heap.allocate(Object::Dict {
                     shape,
                     values: values.into_boxed_slice(),
                 })),
                 Some(location.into()),
-            ))
+            );
+            Ok(semantic.map_or(value, |target| {
+                semantic_tag(heap, target, "Object", value, location)
+            }))
         }
     }
 }
@@ -1074,6 +1139,15 @@ mod tests {
         let mut sources = SourceDatabase::default();
         let id = sources.add("test.yaml", source);
         parse_yaml_registered(&sources, id)
+    }
+    #[test]
+    fn direct_materialization_does_not_touch_the_target_on_validation_failure() {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("invalid.yaml", "ok: []\nok: 1\n");
+        let mut heap = Heap::main();
+        let before = heap.allocation_count();
+        assert!(materialize_yaml_registered(&sources, source_id, &mut heap).is_err());
+        assert_eq!(heap.allocation_count(), before);
     }
     #[test]
     fn lowers_core_schema_collections_aliases_and_block_scalars() {

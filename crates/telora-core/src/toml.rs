@@ -1,6 +1,9 @@
 use crate::DataWorld;
 use crate::heap::{DecodedValue, Heap, Object, Val};
-use crate::json::{DataScalar, Provenance, SourcedValue, ValuePath, ValuePathSegment};
+use crate::json::{
+    DataScalar, MaterializedValue, Provenance, SemanticDataTarget, SourcedValue, ValuePath,
+    ValuePathSegment, semantic_tag,
+};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::toml::lexer::Token;
 use crate::syntax::toml::parser::{CstData, Node, NodeRef, Rule};
@@ -13,13 +16,33 @@ pub struct TomlParse {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+pub(crate) fn materialize_toml_semantic_registered(
+    sources: &SourceDatabase,
+    source_id: SourceId,
+    heap: &mut Heap,
+    target: SemanticDataTarget<'_>,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let source = sources.get(source_id);
+    let parsed = crate::syntax::toml::parse_document(source_id, source.text());
+    if !parsed.diagnostics.is_empty() {
+        return Err(parsed.diagnostics);
+    }
+    TomlLowerer::new(source_id, source.text(), &parsed.syntax)
+        .lower_with(heap, Some(target))
+        .map_err(|diagnostic| vec![diagnostic])
+}
+
 pub fn parse_toml_registered(sources: &SourceDatabase, source_id: SourceId) -> TomlParse {
     let source = sources.get(source_id);
     let parsed = crate::syntax::toml::parse_document(source_id, source.text());
     let mut diagnostics = parsed.diagnostics;
     let value = if diagnostics.is_empty() {
-        match TomlLowerer::new(source_id, source.text(), &parsed.syntax).lower() {
-            Ok(value) => Some(value),
+        let mut heap = Heap::work();
+        match TomlLowerer::new(source_id, source.text(), &parsed.syntax).lower(&mut heap) {
+            Ok(value) => Some(SourcedValue {
+                value: DataWorld::new(heap, value.value),
+                provenance: value.provenance,
+            }),
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
                 None
@@ -33,6 +56,31 @@ pub fn parse_toml_registered(sources: &SourceDatabase, source_id: SourceId) -> T
         value,
         diagnostics,
     }
+}
+
+#[cfg(test)]
+pub(crate) fn materialize_toml_registered(
+    sources: &SourceDatabase,
+    source_id: SourceId,
+    heap: &mut Heap,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let source = sources.get(source_id);
+    materialize_toml_source(source_id, source.text(), heap)
+}
+
+#[cfg(test)]
+pub(crate) fn materialize_toml_source(
+    source_id: SourceId,
+    source: &crate::document::DocumentText,
+    heap: &mut Heap,
+) -> Result<MaterializedValue, Vec<Diagnostic>> {
+    let parsed = crate::syntax::toml::parse_document(source_id, source);
+    if !parsed.diagnostics.is_empty() {
+        return Err(parsed.diagnostics);
+    }
+    TomlLowerer::new(source_id, source, &parsed.syntax)
+        .lower(heap)
+        .map_err(|diagnostic| vec![diagnostic])
 }
 
 #[derive(Clone)]
@@ -83,7 +131,15 @@ impl<'a> TomlLowerer<'a> {
         }
     }
 
-    fn lower(mut self) -> Result<SourcedValue, Diagnostic> {
+    fn lower(self, heap: &mut Heap) -> Result<MaterializedValue, Diagnostic> {
+        self.lower_with(heap, None)
+    }
+
+    fn lower_with(
+        mut self,
+        heap: &mut Heap,
+        semantic: Option<SemanticDataTarget<'_>>,
+    ) -> Result<MaterializedValue, Diagnostic> {
         let root_location = Location::from_usize(self.source_id, 0..self.source.byte_len())
             .expect("source range fits Location");
         let mut root = Table {
@@ -97,13 +153,12 @@ impl<'a> TomlLowerer<'a> {
         for statement in statements {
             self.statement(&mut root, statement)?;
         }
-        let mut heap = Heap::work();
         let mut provenance = Provenance::default();
         let mut path = Vec::new();
-        let root = materialize_table(root, &mut heap, &mut provenance, &mut path)
+        let root = materialize_table(root, heap, &mut provenance, &mut path, semantic)
             .map_err(|message| self.error(NodeRef::ROOT, message))?;
-        Ok(SourcedValue {
-            value: DataWorld::new(heap, root),
+        Ok(MaterializedValue {
+            value: root,
             provenance,
         })
     }
@@ -524,12 +579,13 @@ fn materialize_table(
     heap: &mut Heap,
     provenance: &mut Provenance,
     path: &mut ValuePath,
+    semantic: Option<SemanticDataTarget<'_>>,
 ) -> Result<Val, String> {
     let mut fields = Vec::with_capacity(table.fields.len());
     for (name, entry) in table.fields {
         path.push(ValuePathSegment::Key(name.clone()));
         provenance.keys.insert(path.clone(), entry.key_location);
-        let value = materialize_node(entry.node, heap, provenance, path)?;
+        let value = materialize_node(entry.node, heap, provenance, path, semantic)?;
         path.pop();
         fields.push((name, value));
     }
@@ -543,13 +599,16 @@ fn materialize_table(
         .map(|(_, value)| value)
         .collect::<Vec<_>>();
     let shape = heap.intern_shape(names);
-    Ok(Val::original(
+    let value = Val::original(
         DecodedValue::Dict(heap.allocate(Object::Dict {
             shape,
             values: values.into_boxed_slice(),
         })),
         Some(table.location.into()),
-    ))
+    );
+    Ok(semantic.map_or(value, |target| {
+        semantic_tag(heap, target, "Object", value, table.location)
+    }))
 }
 
 fn materialize_node(
@@ -557,26 +616,33 @@ fn materialize_node(
     heap: &mut Heap,
     provenance: &mut Provenance,
     path: &mut ValuePath,
+    semantic: Option<SemanticDataTarget<'_>>,
 ) -> Result<Val, String> {
     match node {
         TomlNode::Scalar(value, location) => {
             provenance.values.insert(path.clone(), location);
-            Ok(value.lower(heap, location))
+            Ok(match semantic {
+                Some(target) => value.lower_semantic(heap, target, location),
+                None => value.lower(heap, location),
+            })
         }
         TomlNode::Array(values, location, _) => {
             let mut output = Vec::with_capacity(values.len());
             for (index, value) in values.into_iter().enumerate() {
                 path.push(ValuePathSegment::Index(index));
-                output.push(materialize_node(value, heap, provenance, path)?);
+                output.push(materialize_node(value, heap, provenance, path, semantic)?);
                 path.pop();
             }
             provenance.values.insert(path.clone(), location);
-            Ok(Val::original(
+            let value = Val::original(
                 DecodedValue::Array(heap.allocate(Object::Array(output.into_boxed_slice()))),
                 Some(location.into()),
-            ))
+            );
+            Ok(semantic.map_or(value, |target| {
+                semantic_tag(heap, target, "Array", value, location)
+            }))
         }
-        TomlNode::Table(table) => materialize_table(table, heap, provenance, path),
+        TomlNode::Table(table) => materialize_table(table, heap, provenance, path, semantic),
     }
 }
 
@@ -901,6 +967,16 @@ mod tests {
         let mut sources = SourceDatabase::default();
         let id = sources.add("test.toml", source);
         parse_toml_registered(&sources, id)
+    }
+
+    #[test]
+    fn direct_materialization_does_not_touch_the_target_on_validation_failure() {
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("invalid.toml", "value = []\nvalue = 1\n");
+        let mut heap = Heap::main();
+        let before = heap.allocation_count();
+        assert!(materialize_toml_registered(&sources, source_id, &mut heap).is_err());
+        assert_eq!(heap.allocation_count(), before);
     }
 
     #[test]

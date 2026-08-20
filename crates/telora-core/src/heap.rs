@@ -1235,6 +1235,11 @@ impl Heap {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn allocation_count(&self) -> usize {
+        self.objects.len()
+    }
+
     pub(crate) fn preallocate_func(&mut self, id: crate::FuncId) -> Result<(), HeapError> {
         if self.storage != Storage::Main {
             return Err(HeapError(
@@ -2733,6 +2738,124 @@ pub(crate) fn wrap_semantic_value(
         }
     };
     Ok(value.with_type_id(type_id))
+}
+
+pub(crate) fn semantic_value_type_id(
+    current: &Heap,
+    background: Option<&Heap>,
+    owner: Val,
+) -> Result<crate::TypeId, HeapError> {
+    HeapView {
+        current,
+        background,
+    }
+    .declared_type_id(owner)
+}
+
+pub(crate) fn semantic_value_storage_bytes(
+    current: &Heap,
+    background: Option<&Heap>,
+    value: Val,
+    owner: Val,
+) -> Result<u64, HeapError> {
+    fn add(left: u64, right: u64) -> Result<u64, HeapError> {
+        left.checked_add(right)
+            .ok_or(HeapError("semantic Value size overflowed"))
+    }
+    fn visit(
+        view: &HeapView<'_>,
+        value: Val,
+        expected: crate::TypeId,
+        active: &mut HashSet<Handle>,
+    ) -> Result<u64, HeapError> {
+        if value.type_id() != Some(expected) {
+            return Err(HeapError("data value has another nominal identity"));
+        }
+        match value.value() {
+            DecodedValue::BuiltinAtom(
+                BuiltinAtom::None | BuiltinAtom::True | BuiltinAtom::False,
+            ) => Ok(0),
+            DecodedValue::Tagged(handle) => {
+                if !active.insert(handle) {
+                    return Err(HeapError("semantic Value cannot contain a cycle"));
+                }
+                let (tag, payload) = view.tagged(handle)?;
+                let tag = view
+                    .atom_text(tag)?
+                    .ok_or(HeapError("semantic Value tag is not an Atom"))?;
+                let tagged = (std::mem::size_of::<Val>() as u64)
+                    .checked_mul(2)
+                    .ok_or(HeapError("semantic Value size overflowed"))?;
+                let payload_bytes = match tag.as_str() {
+                    "Int" | "Float" => 0,
+                    "String" | "LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime" => {
+                        view.string_text(payload)?
+                            .ok_or(HeapError("semantic Value payload is not a String"))?
+                            .as_str()
+                            .len() as u64
+                    }
+                    "Bytes" => {
+                        let DecodedValue::Bytes(bytes) = payload.value() else {
+                            return Err(HeapError("semantic Value payload is not Bytes"));
+                        };
+                        let Object::Bytes(bytes) = view.object(bytes)? else {
+                            return Err(HeapError("semantic Value Bytes handle is invalid"));
+                        };
+                        bytes.len() as u64
+                    }
+                    "Array" => {
+                        let DecodedValue::Array(array) = payload.value() else {
+                            return Err(HeapError("semantic Value payload is not an Array"));
+                        };
+                        if !active.insert(array) {
+                            return Err(HeapError("semantic Value cannot contain a cycle"));
+                        }
+                        let items = view.sequence(array, false)?;
+                        let mut bytes = (std::mem::size_of::<Val>() as u64)
+                            .checked_mul(items.len() as u64)
+                            .ok_or(HeapError("semantic Value size overflowed"))?;
+                        for item in items {
+                            bytes = add(bytes, visit(view, *item, expected, active)?)?;
+                        }
+                        active.remove(&array);
+                        bytes
+                    }
+                    "Object" => {
+                        let DecodedValue::Dict(dict) = payload.value() else {
+                            return Err(HeapError("semantic Value payload is not an Object"));
+                        };
+                        if !active.insert(dict) {
+                            return Err(HeapError("semantic Value cannot contain a cycle"));
+                        }
+                        let (fields, values) = view.dict_parts(dict)?;
+                        let mut bytes = (std::mem::size_of::<Val>() as u64)
+                            .checked_mul(values.len() as u64)
+                            .ok_or(HeapError("semantic Value size overflowed"))?;
+                        for (field, item) in fields.iter().zip(values) {
+                            bytes = add(bytes, view.text(*field)?.len() as u64)?;
+                            bytes = add(bytes, visit(view, *item, expected, active)?)?;
+                        }
+                        active.remove(&dict);
+                        bytes
+                    }
+                    _ => return Err(HeapError("semantic Value has an unknown variant")),
+                };
+                active.remove(&handle);
+                add(tagged, payload_bytes)
+            }
+            _ => Err(HeapError("semantic Value is not a canonical variant")),
+        }
+    }
+    let type_id = semantic_value_type_id(current, background, owner)?;
+    visit(
+        &HeapView {
+            current,
+            background,
+        },
+        value,
+        type_id,
+        &mut HashSet::new(),
+    )
 }
 
 pub(crate) fn semantic_value_wrapper_bytes(

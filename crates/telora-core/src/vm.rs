@@ -1488,6 +1488,10 @@ impl WorkWorld {
         &mut self.heap
     }
 
+    pub(crate) fn heap(&self) -> &Heap {
+        &self.heap
+    }
+
     pub(crate) fn value_ref<'a>(&'a self, world: &'a Heap, value: Val) -> ValueRef<'a> {
         ValueRef::work(value, &self.heap, world)
     }

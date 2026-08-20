@@ -11,11 +11,10 @@ use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
     CallContext, ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode,
-    ChildText, DataWorld, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState,
-    Location, NativeError, NativeFunction, PositionEncoding, Quota, RunHost, RunHostFuture,
-    RunTermination, SourceDatabase, SpawnStdioChild, SystemCaps, SystemEvent, SystemStdin,
-    TextPosition, WorkspaceSnapshot, parse_json_registered, parse_toml_registered,
-    parse_yaml_registered,
+    ChildText, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
+    NativeError, NativeFunction, PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination,
+    SpawnStdioChild, SystemCaps, SystemDataSource, SystemEvent, SystemStdin, TextPosition,
+    WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -414,75 +413,34 @@ fn native_dict_fields(
         .ok_or_else(|| NativeError::new(format!("{path} must be Dict")))
 }
 
-fn parse_data_resource(format: &str, src: &str, source: &str) -> Result<DataWorld, NativeError> {
-    let mut sources = SourceDatabase::default();
-    let source_id = sources.add(src, source);
-    let (value, diagnostics) = match format {
-        "Json" => {
-            let parsed = parse_json_registered(&sources, source_id);
-            (parsed.value, parsed.diagnostics)
-        }
-        "Yaml" => {
-            let parsed = parse_yaml_registered(&sources, source_id);
-            (parsed.value, parsed.diagnostics)
-        }
-        "Toml" => {
-            let parsed = parse_toml_registered(&sources, source_id);
-            (parsed.value, parsed.diagnostics)
-        }
-        _ => return Err(NativeError::new("data source format is invalid")),
-    };
-    if !diagnostics.is_empty() {
-        return Err(NativeError::new(
-            diagnostics
-                .iter()
-                .map(|diagnostic| sources.render(diagnostic))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ));
-    }
-    value
-        .map(|value| value.value)
-        .ok_or_else(|| NativeError::new(format!("cannot parse data source {src:?}")))
-}
-
 fn prepare_system_resources(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let caps = context.argument(0)?;
-    let value_owner = context.argument(1)?;
+    let _value_owner = context.argument(1)?;
+    let prepared_data = context.argument(2)?;
+    let prepared_keys = native_dict_fields(context, prepared_data, "prepared data sources")?
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
 
     let data_requests = native_field(context, caps, "data_srcs")?;
     let mut data_fields = Vec::new();
     for key in native_dict_fields(context, data_requests, "SystemCaps.data_srcs")? {
+        if prepared_keys.contains(key.as_str()) {
+            let item = context.scratch()?;
+            context.copy_field(item, prepared_data, &key)?;
+            data_fields.push((key, item));
+            continue;
+        }
         let request = native_field(context, data_requests, &key)?;
         let src_register = native_field(context, request, "src")?;
         let src = native_string(context, src_register, "DataSrc.src")?;
-        let format_register = native_field(context, request, "fmt")?;
-        let format = context
-            .value(format_register)?
-            .as_atom()
-            .map(|value| value.as_str().to_owned())
-            .ok_or_else(|| NativeError::new("DataSrc.fmt must be DataFormat"))?;
         let data = context.scratch()?;
-        match fs::read_to_string(&src) {
-            Ok(source) => {
-                let parsed = parse_data_resource(&format, &src, &source)?;
-                context.set_semantic_value(data, &parsed, value_owner, source.len())?;
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let default = native_field(context, request, "default")?;
-                if context.value(default)?.as_atom().as_deref() == Some("None") {
-                    return Err(NativeError::new(format!(
-                        "cannot read data source {src:?}: {error}"
-                    )));
-                }
-                context.copy_tagged_payload(data, default)?;
-            }
-            Err(error) => {
-                return Err(NativeError::new(format!(
-                    "cannot read data source {src:?}: {error}"
-                )));
-            }
+        let default = native_field(context, request, "default")?;
+        if context.value(default)?.as_atom().as_deref() == Some("None") {
+            return Err(NativeError::new(format!(
+                "cannot read data source {src:?}: file does not exist"
+            )));
         }
+        context.copy_tagged_payload(data, default)?;
         let item = context.scratch()?;
         context.make_dict(item, &[("data".into(), data), ("src".into(), src_register)])?;
         data_fields.push((key, item));
@@ -581,7 +539,7 @@ impl RunHost for ProcessRunHost {
     fn resources_provider(&mut self) -> NativeFunction {
         NativeFunction::new(
             "telora.cli.prepare_system_resources",
-            2,
+            3,
             prepare_system_resources,
         )
     }
@@ -624,6 +582,20 @@ impl RunHost for ProcessRunHost {
                 });
             }
             Ok(())
+        })
+    }
+
+    fn read_data_source(
+        &mut self,
+        source: &SystemDataSource,
+    ) -> RunHostFuture<'_, Result<Option<String>, String>> {
+        let src = source.src.clone();
+        Box::pin(async move {
+            match fs::read_to_string(&src) {
+                Ok(source) => Ok(Some(source)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(format!("cannot read data source {src:?}: {error}")),
+            }
         })
     }
 

@@ -1151,6 +1151,56 @@ export def config:
 }
 
 #[test]
+fn entry_data_diagnostics_use_the_registered_data_source() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(cwd.join("input.json"), r#"{"name":"Ada"}"#).unwrap();
+    fs::write(
+        cwd.join("src/provenance.entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+type Main = struct {marker: Int};
+export type MainType = Main;
+export type State = Int;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
+export def config: Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {
+                data_srcs: {input: {default: 'None, fmt: 'Json, src: "input.json"}},
+                spawn_child: 'False,
+                text_srcs: {},
+                vars: [],
+                stdin: 'Null,
+            },
+            fn(resources, main) {
+                match resources.data.input.data {
+                    'Object(object) => fail!("review data provenance", object.name),
+                    _ => fail!("expected object"),
+                }
+            },
+        )
+    };"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run-with", "@src/provenance.entry.telora", "main"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("input.json:1:9: review data provenance"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("provenance.entry.telora")
+            && stderr.contains("contract rule declared here"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn run_decodes_all_data_source_formats() {
     let cwd = fixture();
     fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
