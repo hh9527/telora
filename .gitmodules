@@ -1,6 +1,3 @@
 [submodule "tree-sitter-telora"]
 	path = tree-sitter-telora
 	url = ../tree-sitter-telora.git
-[submodule "experiments/ontology-3"]
-	path = experiments/ontology-3
-	url = ../telora-experiment-ontology-3.git

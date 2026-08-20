@@ -1,3 +1,4 @@
 /target
+/experiments/
 __pycache__/
 *.py[cod]

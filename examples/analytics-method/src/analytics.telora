@@ -18,9 +18,9 @@ def expand_once:
         })
     };
 
-# The current executable ontology is bounded to paths of at most six edges.
-# Keeping that policy visible avoids pretending this is an unbounded graph
-# engine; another industry model may provide a different closure strategy.
+# This helper is deliberately bounded to paths of at most six edges. Keeping
+# that policy visible avoids pretending this is an unbounded graph engine;
+# another application may provide a different closure strategy.
 def close_six:
     for(Node, Edge)
     Fn(Array(Edge), Array(Node), Fn(Edge) -> Node, Fn(Edge) -> Node)

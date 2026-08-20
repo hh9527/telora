@@ -1,6 +1,0 @@
-import "./model.telora" { compile };
-
-export def output = compile(
-    ['ResolvedTickets],
-    ['OpenedMonth, 'WorkspacePlan, 'AssignedTeam, 'SlaPolicy],
-);

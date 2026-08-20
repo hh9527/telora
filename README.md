@@ -1,345 +1,239 @@
 # Telora
 
-> **TELORA Enables Lowering Objectives to Reliable Artifacts.**
->
-> Telora was formerly known as Forma and was originally called XL. Its design
-> history is recorded in [rfc/](rfc/).
+Telora 是一门实验性的静态类型语言，用于在封闭、纯、确定且保留来源的世界中，
+把高层意图验证并 lowering 为不可变数据或计划。
 
-**Telora is an experimental language for programmable data transformation and
-validation in a closed, pure, deterministic, and source-aware world.**
-
-It is designed as a verified intent language between agents and the real
-world: programs express objectives, libraries validate and lower them, and
-hosts decide whether the resulting artifacts may affect external systems.
-
-It asks:
-
-> What is the smallest language that can provide general data computation,
-> finite execution boundaries, and first-class diagnostics and feedback?
-
-Telora sits between static configuration and general-purpose scripting. Static
-formats are inspectable but limited; scripting languages are programmable but
-often open, effectful, difficult to reproduce, and weak at explaining the
-origin of transformed data. A sandbox with fuel and an API allowlist can bound
-a script, but it does not by itself provide an authoritative semantic model,
-cross-data provenance, recoverable analysis, or precise editor feedback.
-
-Telora treats those requirements as one design problem.
-
-## The Core Model
-
-### Ordinary computation over ordinary data
-
-Configuration, validation, normalization, migration, codecs, schema
-generation, and plan construction are not language features. They are ordinary
-pure functions over immutable values.
-
-Telora supplies functions, closures, recursion, pattern matching, modules, and a
-small runtime data model. Domain policies such as merge, defaults, precedence,
-and encoding live in libraries where they can be inspected, replaced, and
-composed.
-
-### A closed and bounded world
-
-Module paths are statically known, dependencies are fixed, runtime `eval` is
-absent, and genuine runtime input enters through explicit host values. Telora,
-JSON, YAML, and TOML files participate in the same immutable module graph.
-
-Telora permits recursion, but every execution has independent fuel, stack, call
-depth, and allocation quotas. An execution deterministically produces a value
-or a structured resource failure within its configured boundary. Failed work
-is discarded atomically rather than partially published into the persistent
-world.
-
-### Diagnostics are first-class
-
-Source locations travel with values through imports, transformations, metadata,
-and codec normalization. A validation failure can identify both the data and
-the rule that rejected it:
+它位于静态配置与通用脚本语言之间：程序可以使用函数、闭包、模式匹配、递归、
+模块和可编程类型元数据完成一般数据计算，但不能直接访问文件、网络、时钟、进程
+或环境。外部能力始终由 Host 准备、约束和解释。
 
 ```text
-user.yaml:4:8: expected Int
-  User.telora:3:10: requirement declared here
+静态模块 + 显式输入
+  -> 类型检查与元数据计算
+  -> 有界的纯数据计算
+  -> 完整值或来源化诊断
+  -> Host 决定是否发布或执行
 ```
 
-JSON, YAML, and TOML files in the workspace are first-class source modules, not
-opaque external blobs. They retain syntax diagnostics and field-level
-provenance and participate in dependency and workspace analysis.
+Telora 当前仍处于快速演进阶段，不提供语法或 ABI 兼容性承诺。
 
-Incomplete Telora source still provides useful navigation, types, and
-diagnostics. Semantic facts distinguish known values from explicit `Any`,
-unknown information, conflicts, dependency blocking, and tool-stage
-incomputability. Completion does not invent structure to appear helpful.
+## 快速开始
 
-This feedback model is part of the language experiment, not an editor added
-after execution works.
+构建命令行工具：
 
-### Types are programmable metadata
+```bash
+cargo build --release -p telora
+```
 
-A type declaration evaluates to canonical ordinary Telora data:
+建立最小 crate：
+
+```text
+hello/
+  telora-deps.json
+  src/bin/main.telora
+```
+
+`hello/telora-deps.json`：
+
+```json
+{"dependencies":{}}
+```
+
+`hello/src/bin/main.telora`：
 
 ```telora
-def Maybe: for(A) Fn(TypeOf(A)) -> TypeOf(Option(A)) = fn(Item) {
-    Option(Item)
+export def output: String = "hello, telora";
+```
+
+运行：
+
+```bash
+target/release/telora check @bin/main.telora -C hello
+target/release/telora run main -C hello
+target/release/telora query exports @bin/main.telora -C hello
+```
+
+内置 `run` Entry 会把入口模块显式导出的 String `output` 转换为输出效果。
+
+## 语言模型
+
+### 值与表达式
+
+Telora 只有表达式，没有 statement。普通值不可变，基础表示包括：
+
+```telora
+42
+3.5
+"text"
+b"bytes"
+'Ready
+'Some(1)
+("port", 8080)
+[1, 2, 3]
+{name: "Ada", active: 'True}
+```
+
+Bool 是由 `'True` 和 `'False` 构成的封闭 Atom 类型，不进行 truthiness 转换。
+Array 是有序同质序列；Tuple 是固定长度异质积；record 和 Dict 在运行时共享 Dict
+表示，但具有不同静态语义。
+
+模块顶层是声明空间，只接受 `option`、`import`、`type`、`decl`、`def`、`native`
+和 `export`。局部顺序计算使用 `let`；复杂模块值通过 `do` 表达：
+
+```telora
+export def total: Int = do {
+    let base = 40;
+    base + 2
+};
+```
+
+### 函数与类型
+
+```telora
+def identity: for(A) Fn(A) -> A = fn(value) { value };
+
+type User = struct {
+    id: Int,
+    name: String,
 };
 
-type MaybeInt = Maybe(Int);
+type Option(A) = enum {
+    'None,
+    'Some(A),
+};
 ```
 
-`Maybe` is an ordinary pure function evaluated by the same VM used for program
-code. The type checker interprets its result rather than reimplementing the
-function in a hidden type-level language.
+Struct 和 enum 是封闭的具名类型。即使结构相同，不同声明也不是同一类型；alias、
+import 和 reexport 保留声明身份。参数化声明定义 TypeMetadata constructor；同一
+constructor 使用相同类型实参时得到相同的 canonical 类型。
 
-The same metadata can drive static checking, LSP information, runtime
-validation, normalization, codecs, documentation, schema generation, and
-user-space interpreters. `TypeOf(A)` preserves the relationship between a
-metadata witness and the values it describes; the narrow `Dyn` and
-`interpreter!(...)` boundary supports heterogeneous interpretation without an
-unchecked cast.
+类型元数据由普通 Telora 计算产生，并由同一个 VM 求值。它可以同时驱动静态检查、
+运行时验证、codec、schema、文档和用户空间 interpreter，不需要另一门隐藏的类型级
+语言。
 
-Types are central to Telora, but they serve the larger goal: programmable data
-rules with authoritative, source-aware feedback.
+### 模块与静态数据
 
-## The Host Owns Effects
-
-Telora has no authority over the external world. A host supplies explicit
-ordinary inputs and decides whether an ordinary output has external meaning:
+模块依赖在执行前封闭，不支持动态 import 或 `eval`。稳定模块 ID 与 crate 布局对应：
 
 ```text
-external world
-    -> host input snapshot
-    -> closed Telora computation
-    -> output value
-    -> host validation and authorization
-    -> external world
+@src/model.telora       -> <crate>/src/model.telora
+@bin/main.telora        -> <crate>/src/bin/main.telora
+@test/model.telora      -> <crate>/tests/model.telora
+dep/types.telora        -> <dependency>/src/types.telora
 ```
 
-There is no universal Telora action ABI. A process launcher, build system,
-Kubernetes controller, or agent runtime defines its own types and interprets
-only the values it recognizes. Permissions, IO, retries, transactions, clocks,
-and observation remain host concerns.
-
-`telora run` uses a pure Edge Entry selected by the host. The Entry declares
-its input needs, validates the Main export record, and reduces explicit system
-events into effect descriptions. `check`, `query`, and LSP use fixed tooling
-entries. Domain plans remain ordinary values interpreted by external hosts.
-
-## What This Enables
-
-### Codecs and schemas without language magic
-
-Decorators are functions, attributes are data, and codecs are metadata
-interpreters:
+JSON、YAML 和 TOML 文件也是静态模块，并统一导出 `std/value.Value`：
 
 ```telora
+import "./request.json" { data as request };
+```
+
+它们在模块图封闭时由 Host 加载，不是运行时文件 IO。
+
+### Codec 与展示
+
+```telora
+import "std/codec" as codec;
 import "std/json" as json;
+import "std/result" as result;
+import "std/value" { Value };
 
-@json.rename_all('CamelCase)
-@struct
-type User = {
-    user_id: Int,
-    @json.default('None)
-    nickname: Option(String),
+type Request = struct { subject: String, limit: Int };
+
+def raw_text: String = "{\"subject\":\"orders\",\"limit\":20}";
+def request: Request = json.decode(Request, raw_text) |> result.unwrap;
+def encoded: Value = codec.encode(Value, request) |> result.unwrap;
+```
+
+`std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本和 schema。
+Decorator 是产生 attribute 的普通元数据函数，codec 与 schema 读取同一份元数据。
+
+字符串插值 `` `value=\{value}` `` 只依据运行时 primitive meta 支持 String、Int、
+Float 和 Atom，不隐式调用用户 Display。稳定的数据交换使用 codec；临时观察使用
+`dbg!`；显式的面向人展示可以使用 `std/fmt`。
+
+## 诊断与 best-effort
+
+Telora 的值携带来源。失败可以同时指出不满足规则的数据位置和规则位置：
+
+```telora
+def require_positive: Fn(Int) -> Int = fn(value) {
+    if value > 0 { value }
+    else { fail!("expected a positive value", value) }
 };
 ```
 
-Field renaming, defaults, flattening, and skip policies are library-defined
-metadata. Encoding and decoding share one plan, and JSON Schema is generated
-from that same plan.
+公共函数应直接承诺成功类型 `T`。无法产生合法 `T` 时使用 `fail!`，而不是为了
+向 Host 报告诊断就把所有 API 改写为领域 `Rejection`。业务调用者确实需要恢复或
+分支时，再显式使用 `Option`、`Result` 或领域 enum。
 
-Types can also declare textual parsing rules. `Regex` is a public standard
-library native type; its expression is compiled during type construction, when
-named captures are checked against the complete field set:
+严格执行遇到失败立即中止。`--best-effort` 会在内部传播 Fail，并继续彼此独立的
+计算，以便一次获得更多有意义的诊断；它不保证与严格模式经过完全相同的求值路径。
+只要存在 error，最终返回值和效果都不会越过 Host 发布边界。
 
-```telora
-import "std/regex" as re;
-import "std/string" as string;
-
-@re.parse_by(re.compile(r"(?P<name>\w+)=(?P<value>\d+)"))
-@struct
-type Rec = { name: String, value: Int };
-```
-
-`string.parse(Rec, "answer=42")` has type `Result(Rec, BlameError)`. The type
-is the authoritative contract; the regex only matches and splits a validated
-textual representation. Captured fields are parsed recursively through the
-same `std/string.parse` capability, so nested decorated struct types compose
-without regex owning their conversions.
-
-The reverse direction uses a separate `Display` capability for stable,
-user-facing text:
+常用诊断组合包括：
 
 ```telora
-import "std/fmt" as fmt;
-
-@fmt.display_by("{host}:{port}")
-@struct
-type Endpoint = { host: String, port: Int };
-
-fmt.display(Endpoint, { host: "localhost", port: 8080 })
+checker.should_ok!(value)  # Result 的 Err 产生 Warning，返回 Option
+checker.must_ok!(value)    # Result 的 Err 产生失败，返回 Ok payload
+result.try_unwrap!()       # Warning + Option
+result.unwrap!()           # failure + payload
+value.dbg!("message")     # 返回原值，向 Host 发送 JSONL 观察
 ```
 
-The template is checked and compiled during type construction. Field
-substitutions recursively use their types' Display capabilities, so nested
-decorated structs compose without reparsing templates at runtime. Diagnostic
-`Debug` output remains a separate future capability.
+## Host 与 Entry
 
-Types can explicitly make that text representation their structured-codec
-container form:
+Telora 程序本身没有外部权限。`run` 选择一个纯 Entry；Entry 约束 Main 模块接口，
+接收 `SystemEvent`，并返回下一状态和 `SystemEffect`。当前 Host 协议可以表达 String
+输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
+子进程以及最终发布。
 
-```telora
-@string.decode_by_parse
-@string.encode_by_display
-@fmt.display_by("{host}:{port}")
-@re.parse_by(re.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
-@struct
-type Endpoint = { host: String, port: Int };
-```
+普通 `run main` 使用内置 Entry。`run --entry path/to/entry.telora` 可以选择由 Host
+授权的自定义 Entry；只有 Entry 可以访问依赖图中对普通模块隐藏的 private/native
+模块。
 
-Within the semantic `Value` boundary, `codec.decode(Endpoint, value)` accepts a
-`'String(...)` variant and `codec.encode(Value, endpoint)` produces one. JSON
-Schema describes `Endpoint` as a string even when nested. The two bridge
-declarations are paired and currently apply only to a type container; field
-overrides are intentionally deferred.
+## 命令行
 
-### Deterministic plans and Edge entries
-
-A module has no ambient authority. It exports ordinary values, including any
-application-defined executable, build, query, or deployment plan. An external
-host decides which plan type it accepts and how to interpret it.
-
-`telora run app` selects `@bin/app.telora`. By default its built-in Entry emits
-the explicit String `output` export. `--entry path/to/entry.telora` instead
-authorizes a pure user Entry, whose `MainType` and output encoding are entirely
-its own. The Entry runs outside MainWorld, may access the private/native modules
-visible in the selected dependency graph, and exchanges only explicit
-`SystemEvent` and `SystemEffect` values with the host. The initial effects cover
-stdio child processes, process replacement, String output, and exit. Entry code
-cannot perform IO itself: it reduces later child observations as events and
-uses ordinary Telora codecs and formatters to produce output text.
-
-### Static data as source
-
-JSON, TOML, and YAML modules enter the same immutable graph as Telora code and
-export exactly `{ data: Value }`. `std/value.Value` is one nominal recursive
-tagged sum shared by static imports and `json/yaml/toml.parse`; it is semantic
-data, not a lossless syntax tree. Typed models cross this boundary through
-`codec.decode(Model, value)` and `codec.encode(Value, model)`.
-
-TOML temporal categories retain distinct Value variants. YAML uses a fixed
-conservative schema: legacy implicit booleans and timestamps remain Strings,
-mapping keys must be Strings, custom tags are rejected, aliases are bounded,
-and mapping merge keys are expanded deterministically. Standard `!!binary`
-maps to Bytes after strict base64 validation.
-
-### Conservative local polymorphism
-
-An unannotated closure-valued `let` can infer a rank-1 scheme:
-
-```telora
-let identity = fn(value) { value };
-(identity(1), identity("text")) # (Int, String)
-```
-
-Inference is intentionally bounded. Aliases instantiate once, recursive groups
-remain monomorphic without an explicit contract, and numeric constraints are
-not erased into unconstrained parameters. Telora prefers an explicit unknown or
-diagnostic over unstable inferred precision.
-
-## Agentic Systems
-
-Machine-generated programs make Telora's constraints more valuable. Generation
-is cheap; trustworthy feedback and controlled external meaning are not.
-
-Telora can act as a typed, source-aware IR for plans. An agent generates or
-modifies a pure program; Telora returns a complete plan value that a host can
-validate, compare, review, sign, or reject before any effect occurs. The plan's
-action vocabulary remains ordinary host-defined data.
-
-Telora can also define one pure step of a host-driven loop:
+当前稳定命令面只有四项：
 
 ```text
-Context x State x Observation
-    -> Result(LoopDecision(State, Plan, Output), BlameError)
+telora run [binary]        通过 Entry 调度 @bin/<binary>.telora
+telora check <module-id>   以 best-effort 策略检查并求值模块导出
+telora query ...           以 JSONL 查询模块和语义事实；别名 q
+telora lsp                 启动语言服务器
 ```
 
-The host owns observation, persistence, time, effects, retries, approvals, and
-the overall loop budget. Telora computes one deterministic, finitely bounded
-transition. Its diagnostics can point back to generated Telora, a JSON/YAML/TOML
-source value, and the rule that rejected it, creating a precise repair and
-audit loop.
+`query` 包含：
 
-These uses require no Agent-specific syntax and grant Telora no additional
-authority.
-
-## Design Tradeoffs
-
-- **Compared with CUE:** Telora does not make unification the foundational
-  semantics of constraints and composition. Policies are explicit functions
-  over data.
-- **Compared with Dhall:** both value pure, reproducible computation. Dhall
-  guarantees normalization; Telora permits recursion and supplies deterministic
-  fuel and resource boundaries.
-- **Compared with Starlark:** both support controlled hosted computation. Telora
-  additionally makes programmable type metadata, source provenance, partial
-  semantic facts, and editor feedback part of the core experiment.
-- **Compared with Nickel:** Nickel makes contracts, merging, and priorities
-  central configuration mechanisms. Telora keeps such policies in replaceable
-  libraries.
-- **Compared with a sandboxed scripting language:** Telora is not only bounded.
-  It unifies static data, transformation code, rules, runtime validation, and
-  tooling in one source-aware semantic model.
-
-Telora does not eliminate complexity. It tries to place domain complexity in
-ordinary libraries and data while keeping the trusted language semantics small
-and consistent.
-
-## Current Boundaries
-
-Telora is experimental. It has no language-level effects, ambient IO, dynamic
-imports, general package acquisition, traits, or type narrowing. Hosts may
-provide narrow adapters, but effects are not a deferred part of the language.
-
-The project has now demonstrated the central vertical path, including computed
-and recursive type metadata, derived codecs and schemas, recoverable workspace
-semantics, a language server, bounded rank-1 inference, safe dynamic
-observation, and user-space reference Equality and Show interpreters. It has
-not yet demonstrated production-scale hosts, long-term compatibility, or broad
-external use.
-
-Likely application domains include reusable configuration packages, build and
-toolchain planning, continuous reconciliation, policy-driven data pipelines,
-typed Agent plans, and host-driven Agent loops.
-
-## Try It
-
-```sh
-cargo run -p telora -- check examples/mvp/main.telora
-cargo run -p telora -- run examples/mvp/external.telora --input examples/mvp/request.json
-cargo run -p telora -- query at @src/compiler.telora -C examples/analytics-ontology
-cargo run -p telora -- lsp
+```text
+telora query modules [-p pattern]
+telora query exports <module-id> [-p pattern]
+telora query at <module-id>[:line[:column]] [-p pattern] [-k kinds]
 ```
 
-## Documentation
+JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协议协商位置
+编码。`check` 不进行 Entry 调度，也不会调用已导出的函数，因此最终行为必须由严格
+`run` 验收。遇到失败时再使用 `run --best-effort` 扩大诊断覆盖。
 
-- [docs/README.md](docs/README.md): the current design SSOT, document map, and
-  update rules (Chinese)
-- [docs/MOTIVATION.md](docs/MOTIVATION.md): the MRT problem domain and why
-  Telora is a language for lowering intent and harnessing agents (Chinese)
-- [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md): the current whole-language
-  design baseline (Chinese)
-- [docs/design/CONCEPT.md](docs/design/CONCEPT.md): the authoritative core
-  concepts, ownership boundaries, and dependency direction (Chinese)
-- [INTRO.md](INTRO.md): the problem domain, prior art, and the GCC wrapper case
-- [VISION.md](VISION.md): the design thesis and feature admission rule
-- [tutorial.md](tutorial.md): the current public language tutorial (Chinese)
-- [rfc/](rfc/): decision history and implementation acceptance evidence
-- [README.zh.md](README.zh.md): Chinese introduction
+## 资源限制
 
-## Verification
+Telora 允许递归，但每次执行受 fuel、栈、调用深度、分配和取消边界约束。资源耗尽
+产生结构化失败，不发布部分结果。程序仍应表达自身算法需要的语义边界，不能把 Host
+fuel 当作正常终止条件。
 
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+## 文档
+
+- [TUTORIAL.md](TUTORIAL.md)：完整使用教程与当前限制。
+- [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md)：当前语言设计 SSOT。
+- [docs/design/CONCEPT.md](docs/design/CONCEPT.md)：核心概念和所有权边界。
+- [docs/MOTIVATION.md](docs/MOTIVATION.md)：问题域、动机与能力准入原则。
+- [rfc/](rfc/)：设计决策的历史、方案与验收证据。
+- [tree-sitter-telora/](tree-sitter-telora/)：Tree-sitter grammar。
+
+## 验证
+
+```bash
 cargo test --workspace
+cd tree-sitter-telora
+npx tree-sitter test
 ```

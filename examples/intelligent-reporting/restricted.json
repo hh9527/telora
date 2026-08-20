@@ -1,4 +1,0 @@
-{
-  "revision": "orders-only-v1",
-  "allowed_entities": ["Order"]
-}

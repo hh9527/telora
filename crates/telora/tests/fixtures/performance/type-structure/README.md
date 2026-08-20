@@ -41,7 +41,7 @@ The modules cover distinct costs:
   values.
 - `recursive-values-growing.telora`: a recursively growing shared value graph.
 - `query-builder.telora`: the real-world QueryBuilder module that exposed the
-  regression in the ontology experiment.
+  regression in an eDSL experiment.
 
 Use `query` to isolate workspace recovery from output rendering:
 

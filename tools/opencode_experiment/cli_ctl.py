@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import stat
 import sys
-import tempfile
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -12,7 +12,7 @@ from .config import ControlError, load_manifest, repository_root
 from .context import Context, resolve
 from .lifecycle import publish_workflow_artifact, request_start, send_round, verify_prepared
 from .metrics import collect_metrics
-from .state import create_run_config, load_run_config, load_state, run_config_path
+from .state import atomic_write, create_run_config, load_run_config, load_state, run_config_path
 from .task_cli import TaskError, remove_artifact, task_records, workflow_status
 
 
@@ -99,13 +99,10 @@ def _update(context: Context, values: list[str]) -> list[dict[str, Any]]:
             source = Path.cwd() / source
         if not source.is_file():
             raise ControlError(f"missing source file: {source_name}", 66)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=f".{destination.name}.", delete=False) as output:
-            temporary = Path(output.name)
-            output.write(source.read_bytes())
-        temporary.replace(destination)
+        mode = stat.S_IMODE(source.stat().st_mode)
+        atomic_write(destination, source.read_bytes(), mode)
         results.append({"destination": destination_name, "source": source_name,
-                        "bytes": destination.stat().st_size})
+                        "bytes": destination.stat().st_size, "mode": f"{mode:04o}"})
     return results
 
 

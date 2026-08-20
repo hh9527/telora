@@ -181,6 +181,22 @@ class ConfigStateTest(unittest.TestCase):
             self.assertEqual((workspace / "docs/INPUT.md").read_text(), "external input")
             self.assertEqual(result[0]["source"], str(source))
 
+    def test_update_preserves_source_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            source = root / "tool"
+            workspace.mkdir()
+            source.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            source.chmod(0o775)
+            context = mock.Mock(state={"phase": "idle", "workspace": str(workspace)})
+
+            result = _update(context, [f"bin/tool={source}"])
+
+            destination = workspace / "bin/tool"
+            self.assertEqual(destination.stat().st_mode & 0o7777, 0o775)
+            self.assertEqual(result[0]["mode"], "0775")
+
     def test_update_still_rejects_unsafe_destination(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -237,6 +253,9 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIsNone(artifacts["qb-feedback"]["owner"])
         self.assertEqual(next(item for item in manifest.artifacts if item["name"] == "telora")["source"],
                          "target/release/telora")
+        tutorial = next(item for item in manifest.artifacts if item["name"] == "lang-tutorial")
+        self.assertEqual((tutorial["source"], tutorial["to"]),
+                         ("TUTORIAL.md", "docs/TUTORIAL.md"))
         self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
         self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
         self.assertIn("./bin/oc-task submit a4 *", manifest.permission_preflight["a4"])
