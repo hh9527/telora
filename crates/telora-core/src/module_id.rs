@@ -87,6 +87,7 @@ pub enum ModuleVisibility {
     Public,
     Private,
     Native,
+    Entry,
 }
 
 impl ModuleVisibility {
@@ -95,6 +96,7 @@ impl ModuleVisibility {
             Self::Public => "public",
             Self::Private => "private",
             Self::Native => "native",
+            Self::Entry => "entry",
         }
     }
 }
@@ -219,6 +221,8 @@ pub enum ResolveModuleError {
     CrateEscape(String),
     PrivateModuleAccess(String),
     PrivateModuleRoot,
+    EntryModuleAccess(String),
+    EntryModuleRoot,
     Manifest(String),
     FormatConflict {
         configured: ModuleFormat,
@@ -253,6 +257,13 @@ impl fmt::Display for ResolveModuleError {
             ),
             Self::PrivateModuleRoot => {
                 formatter.write_str("a private module cannot be used as the root module")
+            }
+            Self::EntryModuleAccess(request) => write!(
+                formatter,
+                "Entry module {request:?} can only be selected by telora run-with"
+            ),
+            Self::EntryModuleRoot => {
+                formatter.write_str("an .entry.telora module cannot be used as an ordinary root")
             }
             Self::Manifest(message) | Self::Io(message) => formatter.write_str(message),
             Self::FormatConflict {
@@ -567,6 +578,9 @@ impl ModuleResolver {
                 path.display()
             )));
         }
+        if is_entry_module_path(&path) {
+            return Err(ResolveModuleError::EntryModuleRoot);
+        }
         if is_private_file_name(&path) {
             return Err(ResolveModuleError::PrivateModuleRoot);
         }
@@ -588,6 +602,9 @@ impl ModuleResolver {
             return Err(ResolveModuleError::EmptyPath);
         }
         let privileged = self.selected_entry.as_ref() == Some(importer);
+        if target.ends_with(".entry.telora") && !privileged {
+            return Err(ResolveModuleError::EntryModuleAccess(target.into()));
+        }
         if self.injected_modules.contains(target) {
             if !privileged {
                 return Err(ResolveModuleError::PrivateModuleAccess(target.into()));
@@ -672,6 +689,18 @@ impl ModuleResolver {
             return Err(ResolveModuleError::InvalidImport(target.into()));
         }
         self.resolve_dependency(target, target, privileged)
+    }
+
+    pub fn resolve_entry(&self, target: &str) -> Result<ResolvedModule, ResolveModuleError> {
+        if !target.ends_with(".entry.telora") {
+            return Err(ResolveModuleError::InvalidImport(format!(
+                "Entry selector {target:?} must resolve to .entry.telora"
+            )));
+        }
+        let importer = self.root_id.clone();
+        self.clone()
+            .with_entry_context(importer.clone(), std::iter::empty())
+            .resolve_import(&importer, target)
     }
 
     fn load_manifest(&mut self, manifest: &Path) -> Result<(), ResolveModuleError> {
@@ -1053,13 +1082,19 @@ fn collect_module_files(
 }
 
 fn visibility_for_path(path: &Path) -> ModuleVisibility {
-    if is_package_system_source(path) {
+    if is_entry_module_path(path) {
+        ModuleVisibility::Entry
+    } else if is_package_system_source(path) {
         ModuleVisibility::Native
     } else if has_penultimate_suffix(path, "priv") {
         ModuleVisibility::Private
     } else {
         ModuleVisibility::Public
     }
+}
+
+fn is_entry_module_path(path: &Path) -> bool {
+    has_penultimate_suffix(path, "entry")
 }
 
 fn format_for(
@@ -1401,6 +1436,7 @@ mod tests {
         std::fs::write(app.join("src/lib.telora"), "0").unwrap();
         std::fs::write(app.join("src/rules.priv.telora"), "0").unwrap();
         std::fs::write(app.join("src/codec.native.telora"), "0").unwrap();
+        std::fs::write(app.join("src/serve.entry.telora"), "0").unwrap();
         std::fs::write(app.join("src/schema"), "{}").unwrap();
         std::fs::write(app.join("src/ignored.txt"), "ignored").unwrap();
         std::fs::write(app.join("src/bin/tool.telora"), "0").unwrap();
@@ -1438,6 +1474,7 @@ mod tests {
                 "@src/lib.telora",
                 "@src/rules.priv.telora",
                 "@src/schema",
+                "@src/serve.entry.telora",
                 "@test/query.telora",
                 "dep/public.telora",
                 "std/string",
@@ -1450,6 +1487,10 @@ mod tests {
         assert_eq!(
             by_name["@src/rules.priv.telora"].visibility,
             ModuleVisibility::Private
+        );
+        assert_eq!(
+            by_name["@src/serve.entry.telora"].visibility,
+            ModuleVisibility::Entry
         );
         assert_eq!(
             by_name["dep/public.telora"].origin,
@@ -1517,7 +1558,7 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ModuleCName::builtin("host/run-entry.telora");
+        let entry = ModuleCName::builtin("std/entry/default.entry.telora");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_builtins([
@@ -1608,7 +1649,7 @@ mod tests {
         )
         .unwrap();
 
-        let entry = ModuleCName::builtin("host/run-entry.telora");
+        let entry = ModuleCName::builtin("std/entry/default.entry.telora");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_entry_context(entry.clone(), ["std/rt.priv.telora".to_owned()]);
@@ -1641,7 +1682,7 @@ mod tests {
             resolver.resolve_import(&local.id, "@bin/tool.telora"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
-        assert_eq!(entry.to_string(), "host/run-entry.telora");
+        assert_eq!(entry.to_string(), "std/entry/default.entry.telora");
         assert_eq!(
             resolver
                 .resolve_import(&entry, "@bin/tool.telora")

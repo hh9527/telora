@@ -1,8 +1,8 @@
 # RFC 0257: Configured Entry ABI and `run-with`
 
 - Status: Accepted
-- Supersedes: the Entry ABI and `run --entry` surface in RFC 0235
-- Depends on: RFC 0235, RFC 0236, RFC 0237, RFC 0249
+- Supersedes: the Entry ABI and `run --entry` surface in RFC 0233
+- Depends on: RFC 0233, RFC 0249
 
 ## Summary
 

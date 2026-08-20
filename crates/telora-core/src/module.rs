@@ -5,7 +5,8 @@ use crate::compiler::{
     type_family_template_link_key,
 };
 use crate::core::{
-    EDGE_RUNTIME_MODULE, PRELUDE_MODULE, edge_runtime_source, module_specs, run_entry_source,
+    DEFAULT_ENTRY_MODULE, EDGE_RUNTIME_MODULE, PRELUDE_MODULE, default_entry_source,
+    edge_runtime_source, module_specs,
 };
 use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, wrap_semantic_value};
 use crate::json::{Provenance, SourcedValue, parse_json_registered};
@@ -280,6 +281,7 @@ pub struct PendingModule {
 struct PendingModuleInner {
     path: PathBuf,
     resolver: ModuleResolver,
+    options: Vec<LoadedOptionAction>,
     config: EngineConfig,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: Arc<[RegisteredNativeModule]>,
@@ -1416,6 +1418,60 @@ fn invoke_world_member_in(
         .map_err(|error| ModuleError::new(error.with_sources(sources).to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn invoke_world_function_in(
+    main: &Heap,
+    externals: &HashMap<String, Val>,
+    sources: &SourceDatabase,
+    world: WorkWorld,
+    function: Val,
+    runtime_arguments: &[Val],
+    quota: Quota,
+    debug_sink: Arc<dyn DebugSink>,
+) -> Result<WorkWorld, ModuleError> {
+    let argument_count = runtime_arguments.len();
+    let base = argument_count + 2;
+    let mut instructions = vec![Instruction::Move {
+        dst: Register(base),
+        src: Register(1),
+    }];
+    instructions.extend((0..argument_count).map(|index| Instruction::Move {
+        dst: Register(base + 1 + index),
+        src: Register(2 + index),
+    }));
+    instructions.push(Instruction::Call {
+        base: Register(base),
+        argument_count,
+    });
+    instructions.push(Instruction::Return {
+        src: Register(base),
+    });
+    let wrapper = BytecodeFunction::with_signature(
+        "<invoke Entry initializer>",
+        argument_count + 2,
+        0,
+        base + argument_count + 1,
+        Vec::new(),
+        instructions,
+    );
+    let mut arguments = Vec::with_capacity(argument_count + 1);
+    arguments.push(function);
+    arguments.extend_from_slice(runtime_arguments);
+    let mut account = QuotaAccount::new(quota);
+    Vm::new()
+        .with_debug_sink(debug_sink)
+        .execute_in_existing_world_with_runtime_args(
+            main,
+            externals,
+            &wrapper,
+            world,
+            &arguments,
+            &[],
+            &mut account,
+        )
+        .map_err(|error| ModuleError::new(error.with_sources(sources).to_string()))
+}
+
 impl LoadedModule {
     pub const fn uses_explicit_exports(&self) -> bool {
         self.analysis.explicit_exports
@@ -1947,10 +2003,27 @@ impl Engine {
                     .join("\n"),
             ));
         }
+        let options = parsed
+            .options
+            .iter()
+            .map(|option| {
+                immediate_value(&option.value)
+                    .map(|value| LoadedOptionAction {
+                        key: option.key.value.clone(),
+                        value,
+                    })
+                    .map_err(|error| {
+                        ModuleError::new(
+                            sources.render(&Diagnostic::error(error.to_string(), option.location)),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(PendingModule {
             inner: Arc::new(PendingModuleInner {
                 path: physical.to_owned(),
                 resolver,
+                options,
                 config: self.config,
                 debug_sink: Arc::clone(&self.debug_sink),
                 native_modules: Arc::clone(&self.native_modules),
@@ -2028,21 +2101,29 @@ impl Engine {
         &self,
         pending: PendingModule,
         input: Option<crate::DataWorld>,
-        entry_path: Option<&Path>,
+        entry_selector: &str,
+        entry_args: &[String],
     ) -> Result<RunOutcome, ModuleError> {
-        self.run_pending_with_host(pending, input, entry_path, &mut NoProcessRunHost)
-            .await
+        self.run_pending_with_host(
+            pending,
+            input,
+            entry_selector,
+            entry_args,
+            &mut NoProcessRunHost,
+        )
+        .await
     }
 
     pub async fn run_pending_with_host(
         &self,
         pending: PendingModule,
         input: Option<crate::DataWorld>,
-        entry_path: Option<&Path>,
+        entry_selector: &str,
+        entry_args: &[String],
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
         let result = self
-            .run_pending_with_host_inner(pending, input, entry_path, host)
+            .run_pending_with_host_inner(pending, input, entry_selector, entry_args, host)
             .await;
         let finished = host
             .finish()
@@ -2059,25 +2140,24 @@ impl Engine {
         &self,
         pending: PendingModule,
         input: Option<crate::DataWorld>,
-        entry_path: Option<&Path>,
+        entry_selector: &str,
+        entry_args: &[String],
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
         let resolver = pending.inner.resolver.clone();
-        let (entry_id, entry_source) = match entry_path {
-            Some(path) => {
-                if path.extension().and_then(|extension| extension.to_str()) != Some("telora") {
-                    return Err(ModuleError::new("--entry must name a .telora file"));
-                }
-                let path = fs::canonicalize(path).map_err(|error| {
-                    ModuleError::new(format!("cannot resolve entry {}: {error}", path.display()))
-                })?;
-                let source = read(&path)?;
-                (ModuleCName::builtin("host/user-entry.telora"), source)
-            }
-            None => (
-                ModuleCName::builtin("host/run-entry.telora"),
-                run_entry_source().to_owned(),
-            ),
+        let (entry_id, entry_source) = if entry_selector == DEFAULT_ENTRY_MODULE {
+            (
+                ModuleCName::builtin("std/entry/default.entry.telora"),
+                default_entry_source().to_owned(),
+            )
+        } else {
+            let entry = resolver
+                .resolve_entry(entry_selector)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let path = entry.path().map(Path::to_owned).ok_or_else(|| {
+                ModuleError::new(format!("Entry {entry_selector:?} has no physical source"))
+            })?;
+            (entry.id, read(&path)?)
         };
         let SelectedEntryLoader {
             mut loader,
@@ -2105,14 +2185,14 @@ impl Engine {
             .map_err(|error| ModuleError::new(error.with_sources(&loader.sources).to_string()))?
             .seal_module()
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let expected = ["MainType", "State", "initialize", "prepare"];
+        let expected = ["MainType", "State", "config"];
         if entry_world
             .module_fields(&loader.main.heap)
             .map_err(|error| ModuleError::new(error.to_string()))?
             != expected
         {
             return Err(ModuleError::new(
-                "Entry must export exactly MainType, State, initialize, and prepare",
+                "Entry must export exactly MainType, State, and config",
             ));
         }
         let exports = ["MainType", "State"]
@@ -2135,46 +2215,58 @@ impl Engine {
             &state_type,
         )?;
         if entry_world
-            .member_function_arity(&loader.main.heap, "prepare")
+            .member_function_arity(&loader.main.heap, "config")
             .map_err(|error| ModuleError::new(error.to_string()))?
-            != Some(1)
+            != Some(2)
         {
-            return Err(ModuleError::new("Entry.prepare must be a unary function"));
+            return Err(ModuleError::new("Entry.config must accept 2 arguments"));
         }
         let mut entry_world = entry_world;
-        let options =
-            make_system_options(entry_world.heap_mut(), &loader.main.heap, input.as_ref())?;
-        let prepared = invoke_world_member_in(
+        let options = make_system_options(
+            entry_world.heap_mut(),
+            &loader.main.heap,
+            &pending.inner.options,
+        )?;
+        let env = make_entry_env(
+            entry_world.heap_mut(),
+            &loader.main.heap,
+            entry_args,
+            input.is_some(),
+        );
+        let configured = invoke_world_member_in(
             &loader.main.heap,
             &entry_compiled.externals,
             &loader.sources,
             entry_world,
-            "prepare",
-            &[options],
-            true,
+            "config",
+            &[options, env],
+            false,
             self.config.session_quota,
             Arc::clone(&self.debug_sink),
         )
-        .map_err(|error| ModuleError::new(format!("Entry.prepare failed: {error}")))?;
-        let (entry_world, caps) = prepared
-            .into_retained_module_result(&loader.main.heap)
+        .map_err(|error| ModuleError::new(format!("Entry.config failed: {error}")))?;
+        let (entry_world, initializer) = configured
+            .into_runtime_pair(
+                &loader.main.heap,
+                "Entry.config must return Tuple([SystemCaps, Initializer])",
+                "Entry.config must return exactly SystemCaps and Initializer",
+            )
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let wants_input = parse_system_caps(entry_world.value_ref(&loader.main.heap, caps))?;
-        let mut bindings = pending.begin_initialization()?;
-        match (wants_input, input) {
-            (true, Some(input)) => {
-                if bindings.insert("input".into(), input).is_some() {
-                    return Err(ModuleError::new(
-                        "external binding \"input\" is already installed",
-                    ));
-                }
-            }
-            (true, None) => {
-                return Err(ModuleError::new(
-                    "Entry requested input, but telora run received no --input",
-                ));
-            }
-            (false, _) => {}
+        let wants_input = parse_system_caps(entry_world.root_ref(&loader.main.heap))?;
+        let initializer_arity = entry_world
+            .runtime_function_arity(&loader.main.heap, initializer)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .ok_or_else(|| ModuleError::new("Entry.config initializer must be a function"))?;
+        if initializer_arity != 2 {
+            return Err(ModuleError::new(format!(
+                "Entry.config initializer must accept 2 arguments, found {initializer_arity}"
+            )));
+        }
+        let bindings = pending.begin_initialization()?;
+        if wants_input && input.is_none() {
+            return Err(ModuleError::new(
+                "Entry requested input, but telora run received no --input",
+            ));
         }
 
         let (compiled_main_path, main_compiled) = match loader.compile_root(main_module, bindings) {
@@ -2248,35 +2340,30 @@ impl Engine {
             execution: Arc::new(main_world),
         };
         pending.finish_initialization(&Ok(instantiated.clone()));
-        let (entry_world, main_argument) = entry_world
+        let (mut entry_world, main_argument) = entry_world
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        if entry_world
-            .member_function_arity(&entry.runtime.main.heap, "initialize")
-            .map_err(|error| ModuleError::new(error.to_string()))?
-            != Some(1)
-        {
-            return Err(ModuleError::new(
-                "Entry.initialize must be a unary function",
-            ));
-        }
-        let initialized = invoke_world_member_in(
+        let injection = make_system_injection(
+            entry_world.heap_mut(),
+            &entry.runtime.main.heap,
+            wants_input.then_some(input.as_ref()).flatten(),
+        )?;
+        let initialized = invoke_world_function_in(
             &entry.runtime.main.heap,
             &entry.runtime.externals,
             &entry.sources,
             entry_world,
-            "initialize",
-            &[main_argument],
-            false,
+            initializer,
+            &[injection, main_argument],
             self.config.session_quota,
             Arc::clone(&self.debug_sink),
         )
-        .map_err(|error| ModuleError::new(format!("Entry.initialize failed: {error}")))?;
+        .map_err(|error| ModuleError::new(format!("Entry initializer failed: {error}")))?;
         let (state, reducer) = initialized
             .into_runtime_pair(
                 &entry.runtime.main.heap,
-                "Entry.initialize must return Tuple([State, Reducer])",
-                "Entry.initialize must return exactly State and Reducer",
+                "Entry initializer must return Tuple([State, Reducer])",
+                "Entry initializer must return exactly State and Reducer",
             )
             .map_err(|error| ModuleError::new(error.to_string()))?;
         let mut state = state;
@@ -3759,14 +3846,29 @@ fn validate_entry_interface(
         )
     };
     let bool_type = unit_enum(&["False", "True"]);
-    let options_type = TypeDescriptor::Struct(BTreeMap::from([(
-        "input".into(),
-        TypeDescriptor::Enum(BTreeMap::from([
-            ("None".into(), None),
-            ("Some".into(), Some(Box::new(TypeDescriptor::Dyn))),
-        ])),
-    )]));
+    let option_dyn = TypeDescriptor::Enum(BTreeMap::from([
+        ("None".into(), None),
+        ("Some".into(), Some(Box::new(TypeDescriptor::Dyn))),
+    ]));
+    let option_action = TypeDescriptor::Struct(BTreeMap::from([
+        ("key".into(), TypeDescriptor::String),
+        ("value".into(), TypeDescriptor::Dyn),
+    ]));
+    let options_type = TypeDescriptor::Array(Box::new(option_action));
+    let platform_type = TypeDescriptor::Struct(BTreeMap::from([
+        ("arch".into(), TypeDescriptor::String),
+        ("os".into(), TypeDescriptor::String),
+    ]));
+    let env_type = TypeDescriptor::Struct(BTreeMap::from([
+        (
+            "args".into(),
+            TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
+        ),
+        ("input".into(), bool_type.clone()),
+        ("platform".into(), platform_type),
+    ]));
     let caps_type = TypeDescriptor::Struct(BTreeMap::from([("input".into(), bool_type)]));
+    let injection_type = TypeDescriptor::Struct(BTreeMap::from([("input".into(), option_dyn)]));
     let option_string = TypeDescriptor::Enum(BTreeMap::from([
         ("None".into(), None),
         ("Some".into(), Some(Box::new(TypeDescriptor::String))),
@@ -3853,6 +3955,13 @@ fn validate_entry_interface(
         parameters: vec![state_type.clone(), event_type],
         result: Box::new(transition_type),
     };
+    let initializer_type = TypeDescriptor::Function {
+        parameters: vec![injection_type, main_type.clone()],
+        result: Box::new(TypeDescriptor::Tuple(vec![
+            state_type.clone(),
+            reducer_type,
+        ])),
+    };
     let expected = BTreeMap::from([
         (
             "MainType",
@@ -3863,20 +3972,10 @@ fn validate_entry_interface(
             TypeDescriptor::TypeOf(Box::new(state_type.clone())),
         ),
         (
-            "initialize",
+            "config",
             TypeDescriptor::Function {
-                parameters: vec![main_type.clone()],
-                result: Box::new(TypeDescriptor::Tuple(vec![
-                    state_type.clone(),
-                    reducer_type,
-                ])),
-            },
-        ),
-        (
-            "prepare",
-            TypeDescriptor::Function {
-                parameters: vec![options_type],
-                result: Box::new(caps_type),
+                parameters: vec![options_type, env_type],
+                result: Box::new(TypeDescriptor::Tuple(vec![caps_type, initializer_type])),
             },
         ),
     ]);
@@ -3901,7 +4000,84 @@ fn validate_entry_interface(
     Ok(())
 }
 
+fn runtime_bool(value: bool) -> Val {
+    Val::unknown(DecodedValue::BuiltinAtom(if value {
+        BuiltinAtom::True
+    } else {
+        BuiltinAtom::False
+    }))
+}
+
+fn runtime_array(heap: &mut Heap, values: Vec<Val>) -> Val {
+    Val::unknown(DecodedValue::Array(
+        heap.allocate(Object::Array(values.into_boxed_slice())),
+    ))
+}
+
+fn runtime_dyn(
+    heap: &mut Heap,
+    main: &Heap,
+    value: Val,
+    origin: impl Into<Arc<str>>,
+) -> Result<Val, ModuleError> {
+    let descriptor = crate::types::infer_value_ref(crate::ValueRef::work(value, heap, main));
+    let descriptor_value = heap
+        .type_descriptor_value(Some(main), &descriptor)
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+    Ok(
+        value.with_value(DecodedValue::Dyn(heap.allocate(Object::Dyn {
+            identity: Arc::new(()),
+            descriptor: descriptor_value,
+            value,
+            scheme: Some(crate::TypeScheme {
+                parameters: Vec::new(),
+                body: descriptor,
+            }),
+            origin: Some(origin.into()),
+        }))),
+    )
+}
+
 fn make_system_options(
+    heap: &mut Heap,
+    main: &Heap,
+    options: &[LoadedOptionAction],
+) -> Result<Val, ModuleError> {
+    let options = options
+        .iter()
+        .map(|option| {
+            let value = option
+                .value
+                .relocate_into(heap, main)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let value = runtime_dyn(heap, main, value, format!("option {:?}", option.key))?;
+            let key = runtime_string(heap, main, &option.key);
+            Ok(runtime_record(heap, vec![("key", key), ("value", value)]))
+        })
+        .collect::<Result<Vec<_>, ModuleError>>()?;
+    Ok(runtime_array(heap, options))
+}
+
+fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String], has_input: bool) -> Val {
+    let arguments = arguments
+        .iter()
+        .map(|argument| runtime_string(heap, main, argument))
+        .collect();
+    let arguments = runtime_array(heap, arguments);
+    let arch = runtime_string(heap, main, std::env::consts::ARCH);
+    let os = runtime_string(heap, main, std::env::consts::OS);
+    let platform = runtime_record(heap, vec![("arch", arch), ("os", os)]);
+    runtime_record(
+        heap,
+        vec![
+            ("args", arguments),
+            ("input", runtime_bool(has_input)),
+            ("platform", platform),
+        ],
+    )
+}
+
+fn make_system_injection(
     heap: &mut Heap,
     main: &Heap,
     input: Option<&crate::DataWorld>,
@@ -3911,21 +4087,7 @@ fn make_system_options(
             let value = input
                 .relocate_into(heap, main)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            let descriptor =
-                crate::types::infer_value_ref(crate::ValueRef::work(value, heap, main));
-            let descriptor_value = heap
-                .type_descriptor_value(Some(main), &descriptor)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            let value = value.with_value(DecodedValue::Dyn(heap.allocate(Object::Dyn {
-                identity: Arc::new(()),
-                descriptor: descriptor_value,
-                value,
-                scheme: Some(crate::TypeScheme {
-                    parameters: Vec::new(),
-                    body: descriptor,
-                }),
-                origin: Some(Arc::from("telora run --input")),
-            })));
+            let value = runtime_dyn(heap, main, value, "telora run --input")?;
             runtime_tagged(
                 heap,
                 Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
@@ -3938,7 +4100,7 @@ fn make_system_options(
 }
 
 fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<bool, ModuleError> {
-    let caps = expect_protocol_record_ref(value, "Entry.prepare result", &["input"])?;
+    let caps = expect_protocol_record_ref(value, "Entry.config SystemCaps", &["input"])?;
     protocol_bool_ref(
         caps.get("input").expect("field shape checked"),
         "SystemCaps.input",
@@ -5925,7 +6087,7 @@ export def output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
             "export def marker = 0;",
         )
         .unwrap();
-        let entry = directory.join("entry.telora");
+        let entry = directory.join("src/host.entry.telora");
         fs::write(
             &entry,
             r#"import "std/rt.priv.telora" as rt;
@@ -5933,13 +6095,19 @@ import "dep/service.native.telora" as service;
 type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
-export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };
-export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
-    (service.answer(), fn(state, event) {
-        match event {
-            'Initialize => (state, ['Output("42"), 'Exit(0)]),
-            _ => fail!("unexpected event", event),
-        }
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+    ({input: 'False}, fn(injection: rt.SystemInjection, main: MainType) {
+        let reduce: Reducer = fn(state, event) {
+            match event {
+                'Initialize => (state, ['Output("42"), 'Exit(0)]),
+                _ => fail!("unexpected event", event),
+            }
+        };
+        (service.answer(), reduce)
     })
 };"#,
         )
@@ -5947,7 +6115,9 @@ export def initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
         let pending = engine
             .prepare_module_id(&directory, "@bin/main.telora")
             .unwrap();
-        let outcome = block_on_recovery(engine.run_pending(pending, None, Some(&entry))).unwrap();
+        let outcome =
+            block_on_recovery(engine.run_pending(pending, None, "@src/host.entry.telora", &[]))
+                .unwrap();
         assert_eq!(outcome.output, "42");
         assert_eq!(outcome.termination, RunTermination::Exit(0));
         fs::remove_dir_all(directory).unwrap();

@@ -19,7 +19,7 @@ telora query at @src/compiler.telora:12:3 -C examples/my-crate
 telora query exports std/string -C examples/my-crate
 telora query at std/array -C examples/my-crate -p flat_map
 telora run -S path/to/file.telora
-telora run main -C examples/my-crate --entry path/to/entry.telora
+telora run-with @src/tool.entry.telora main -C examples/my-crate -- argument
 telora run invalid -C examples/my-crate --best-effort
 ```
 
@@ -36,19 +36,23 @@ export def lowering_case = do {
 
 多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
 
-- `run name` 固定执行 `@bin/name.telora`；内置 Entry 把其 String export
-  `output` 作为 `Output(String)` effect 发给 Host。`name` 是不含路径分隔符和
-  `.telora` 后缀的单个 stem。
+- `run name` 完全等价于 `run-with std/entry/default name`。默认 Entry 要求 Main 的
+  export record 含 String `output`，并把它作为 `Output(String)` effect 发给 Host。
+  `name` 是不含路径分隔符和 `.telora` 后缀的单个 stem。
 - `run name -C context` 从 `context` 开始向上发现 manifest。
 - `run ... --best-effort` 只在遇到问题时用于扩大诊断覆盖。它在启动 Entry 前对 Main 做
   best-effort 诊断求值；只要出现任何 error，stderr 输出 `telora.run/v1` JSONL 诊断与
   error summary，非零退出且不产生任何 Entry effect，即使一个不依赖失败的干净根值仍能
   算出。没有 error 时仍重新走严格 Entry/Host lifecycle；成功结果的最终验收使用普通
   `run`。本参数用于调查问题时扩大诊断覆盖。
-- `run ... --entry file.telora` 由 Host 显式选择纯 Edge Entry；省略时使用内置 Entry，
-  从 Main 的显式 export record 读取 String `output`。自定义 Entry 的 `MainType` 和
-  输出编码由它自己规定，可以通过 stdio-child effects 编排进程。普通模块不自行创建
-  Entry。Entry 文件路径相对命令进程的当前目录解析。
+- `run-with <entry-module> ...` 由 Host 显式选择纯 Edge Entry。自定义 Entry 的
+  `MainType` 和输出编码由它自己规定，可以通过 stdio-child effects 编排进程。Entry
+  使用稳定模块 selector，例如 `@src/tool.entry.telora`；文件名必须以
+  `.entry.telora` 结尾。它不能作为普通模块根，也不能被普通模块 import。
+- `run-with` 中 `--` 后的参数按顺序进入 `Env.args`。Main 顶层的 `option` action 按
+  源码顺序进入 `SystemOptions`。Entry 的 `config(options, env)` 返回 capability 诉求
+  和 initializer；Host 按诉求构造 `SystemInjection`，再由 initializer 把环境数据显式
+  传给 Main。`--input` 不会成为 Main 的 ambient binding。
 - `run -S file` 进入 standalone 模式，不发现 manifest，只使用根文件内的
   `crate.dependency` / `crate.format` options；这些 options 相对文件父目录解析。
   `-S` 与 binary name、`-C` 互斥。
@@ -67,6 +71,8 @@ export def lowering_case = do {
   查询与源码行或位置相交的事实。它查询 recoverable CST 和部分语义/求值证据图，因此
   在模块损坏时仍可返回不受影响的事实；命令成功只表示查询完成，不表示模块能够通过
   `check` 或 `run`。
+- 本 crate 的 Entry 会以 `visibility: "entry"` 出现在 `query modules`；它仍只能由
+  `run-with` 选择，不能交给 `check`、`query exports` 或普通 import。
 - `query at std/...` 和 `query exports std/...` 直接查询 Host 注册的公开标准库逻辑模块，与源码 `import "std/..."`
   使用同一模块身份；不需要也不能把 `std` 声明成 workspace dependency。
 - `-p` 按名称的大小写敏感字面子串过滤，不是 glob 或正则。

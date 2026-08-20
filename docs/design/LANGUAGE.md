@@ -1078,10 +1078,12 @@ Host 负责所有开放世界行为：文件和 package 解析、环境捕获、
 ```text
 Host 选择 Main 和 Entry
   -> 固定依赖与 source snapshot
-  -> 在准备 WorkWorld 调用 Entry.prepare，取得环境诉求
-  -> 注册显式输入，初始化 Main，并按 Entry.MainType 校验完整 export record
+  -> 从 Main 顶层收集有序 SystemOptions，并构造含参数、输入可用性和平台事实的 Env
+  -> 在准备 WorkWorld 调用 Entry.config(options, env)，取得 SystemCaps 和 initializer
+  -> Host 按 SystemCaps 准备 SystemInjection
+  -> 初始化 Main，并按 Entry.MainType 校验完整 export record
   -> 冻结 MainWorld
-  -> 在新的运行 WorkWorld 调用 Entry.initialize(main)
+  -> 在新的运行 WorkWorld 调用 initializer(injection, main)
   -> 以 SystemEvent 驱动纯 reducer，解释返回的 SystemEffect
   -> 原子发布成功结果，或丢弃失败过程的候选结果
 ```
@@ -1098,8 +1100,10 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--input <json|->] [--entry <file>] [--best-effort]
-telora run -S <file> [--input <json|->] [--entry <file>] [--best-effort]
+telora run <binary-name> [-C <context>] [--input <json|->] [--best-effort] [-- <entry-args>...]
+telora run -S <file> [--input <json|->] [--best-effort] [-- <entry-args>...]
+telora run-with <entry-module> <binary-name> [-C <context>] [--input <json|->] [--best-effort] [-- <entry-args>...]
+telora run-with <entry-module> -S <file> [--input <json|->] [--best-effort] [-- <entry-args>...]
 telora query|q modules [-C <context>] [-p <substring>]
 telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
@@ -1123,10 +1127,11 @@ alias `q`）以稳定 `telora.query/v1` JSONL 输出语义事实。`query at <mo
 模块的顶层 local definitions；追加 `:<line>` 或 `:<line>:<column>` 后改查整行或精确点
 相交的 definition、reference 和 expression facts。`query modules` 不加载、解析或求值
 模块，而是列出 `-C` 所确定
-crate 的模块视图：本 crate 的 `@src/...`、`@bin/...`、`@test/...` 包含 public、priv
-和 native 模块；dependency 只包含公开 source module；Host 只包含公开注册模块。
+crate 的模块视图：本 crate 的 `@src/...`、`@bin/...`、`@test/...` 包含 public、priv、
+native 和 entry 模块；dependency 只包含公开 source module；Host 只包含公开注册模块。
 每条 module record 携带规范 module ID、`crate` / `dependency` / `host` origin、
-`public` / `private` / `native` visibility 和 resolver format，并按 module ID 稳定排序。
+`public` / `private` / `native` / `entry` visibility 和 resolver format，并按 module ID
+稳定排序。
 `query exports` 独立查询公开 Module interface。`-p` 执行大小写敏感的字面子串匹配，
 不解释 glob 或正则表达式：在 `modules` 下匹配规范 module ID，在 `exports` 下匹配公开
 名称，在无坐标的 `at` 下匹配本地符号名。`-k` 接受由逗号分隔的 `type`、`let`、
@@ -1166,13 +1171,13 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
 最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
-`run` 选择一个 Main application 和一个 Edge Entry。省略 `--entry` 时使用内置 Entry：
-它只在提供 `--input` 时请求把外部 JSON 安装为 Main 的 `input` binding，并从 Main 的
-完整显式 export record 中选择 String `output`。`--entry file.telora` 是 Host 的显式授权动作；
-该物理源码获得保留的 Entry 身份，可以访问依赖图内任意 `.priv.*`、
-`.native.telora` 和已注册 native module。特权仅属于这个 requester，不传递给它导入
-的普通模块。Entry 不能使用相对、`@src`、`@bin` 或 `@test` import；依赖必须使用
-manifest 中的稳定 module ID。
+`run` 选择一个 Main application，并且完全等价于用内置 Entry 执行
+`run-with std/entry/default`。默认 Entry 要求 Main 的完整显式 export record 含 String
+`output`。`run-with <entry-module>` 是 Host 的显式授权动作；selector 必须指向
+`.entry.telora` 模块，例如 `@src/tool.entry.telora`。该源码获得保留的 Entry 身份，
+可以访问依赖图内任意 `.priv.*`、`.native.telora` 和已注册 native module。特权仅属于
+这个 requester，不传递给它导入的普通模块。`.entry.telora` 不能作为普通模块根，也
+不能被普通模块 import。
 
 Entry 在纯 Telora 中实现以下 ABI：
 
@@ -1181,17 +1186,19 @@ import "std/rt.priv.telora" as rt;
 
 export type MainType = ...;
 export type State = ...;
-export def prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = ...;
-export def initialize:
-    Fn(MainType) -> Tuple([
-        State,
-        Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]),
-    ])
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = ...;
 ```
 
-准备 WorkWorld 只能返回经 Host 校验的 `SystemCaps`。Host 随后准备并初始化 Main，按
-`MainType` 校验完整 export record，再冻结 MainWorld。运行阶段使用一系列 WorkWorld；
+`SystemOptions` 是 Main 顶层 `option` action 的有序序列。`Env` 包含 `--` 后的 Entry
+参数、输入是否可用以及 OS/arch 平台事实。准备 WorkWorld 中的 `config` 返回经 Host
+校验的 `SystemCaps` 和 initializer；Host 根据 caps 构造 `SystemInjection`，随后初始化
+Main、按 `MainType` 校验完整 export record，再调用 initializer。所有环境上下文必须由
+initializer 显式传给 Main；`--input` 不产生 ambient Main binding。当前不进行分阶段或
+动态 Main 加载。运行阶段使用一系列 WorkWorld；
 `MainType` 没有系统约定的形状，它完全由所选 Entry 定义。内置 Entry 使用 `Dyn`
 边界只是该 Entry 自己的适配策略。
 `State` 对 Host 不透明，也不会物化为 Host-owned Value。每轮结束时，runtime 只把

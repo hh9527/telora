@@ -188,16 +188,19 @@ Telora 程序本身没有外部权限。`run` 选择一个纯 Entry；Entry 约�
 输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
 子进程以及最终发布。
 
-普通 `run main` 使用内置 Entry。`run --entry path/to/entry.telora` 可以选择由 Host
-授权的自定义 Entry；只有 Entry 可以访问依赖图中对普通模块隐藏的 private/native
-模块。
+普通 `run main` 等价于 `run-with std/entry/default main`。自定义 Entry 使用
+`telora run-with @src/name.entry.telora main` 选择；`.entry.telora` 文件不能作为普通
+模块根或被普通模块 import。只有被 Host 选中的 Entry 可以访问依赖图中对普通模块
+隐藏的 private/native 模块。
 
 ## 命令行
 
-当前稳定命令面只有四项：
+当前稳定命令面只有五项：
 
 ```text
 telora run [binary]        通过 Entry 调度 @bin/<binary>.telora
+telora run-with <entry> [binary]
+                           通过指定的 .entry.telora 模块调度 binary
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器

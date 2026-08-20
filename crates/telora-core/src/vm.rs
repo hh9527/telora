@@ -1391,7 +1391,6 @@ impl<'a> WorkView<'a> {
 }
 
 impl WorkWorld {
-    #[cfg(test)]
     pub(crate) fn root_ref<'a>(&'a self, world: &'a Heap) -> ValueRef<'a> {
         self.value_ref(world, self.root)
     }
@@ -1593,17 +1592,6 @@ impl WorkWorld {
             background: Some(world),
         }
         .resolved_function_arity(value)
-    }
-
-    pub(crate) fn into_retained_module_result(
-        self,
-        world: &Heap,
-    ) -> Result<(Self, Val), crate::heap::HeapError> {
-        self.into_runtime_pair(
-            world,
-            "module call must return Tuple([Module, Result])",
-            "module call must retain exactly Module and Result",
-        )
     }
 }
 

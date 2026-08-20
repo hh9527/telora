@@ -27,9 +27,10 @@ pub(crate) const EQ_MODULE: &str = "std/eq";
 pub(crate) const REGEX_MODULE: &str = "std/regex";
 pub(crate) const FMT_MODULE: &str = "std/fmt";
 pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/rt.priv.telora";
+pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/entry/default";
 
-pub(crate) fn run_entry_source() -> &'static str {
-    include_str!("../modules/run-entry.telora")
+pub(crate) fn default_entry_source() -> &'static str {
+    include_str!("../modules/std/entry/default.entry.telora")
 }
 
 pub(crate) fn edge_runtime_source() -> &'static str {

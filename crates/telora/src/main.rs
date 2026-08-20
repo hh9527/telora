@@ -517,6 +517,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Run(RunArgs),
+    RunWith(RunWithArgs),
     Check(CheckArgs),
     /// Query module and semantic facts as JSONL.
     #[command(visible_alias = "q")]
@@ -534,10 +535,19 @@ struct RunArgs {
     standalone: Option<PathBuf>,
     #[arg(long)]
     input: Option<String>,
-    #[arg(long, value_name = "FILE")]
-    entry: Option<PathBuf>,
     #[arg(long)]
     best_effort: bool,
+    #[arg(last = true, value_name = "ENTRY_ARG")]
+    entry_args: Vec<String>,
+}
+
+#[derive(Args)]
+struct RunWithArgs {
+    /// Canonical Entry module selector, such as std/entry/default or @src/serve.entry.telora.
+    #[arg(value_name = "ENTRY_MODULE")]
+    entry: String,
+    #[command(flatten)]
+    run: RunArgs,
 }
 
 #[derive(Args)]
@@ -695,7 +705,12 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .enable_all()
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command(arguments)),
+            .block_on(run_command("std/entry/default", arguments)),
+        Command::RunWith(arguments) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("cannot start the run Host: {error}"))?
+            .block_on(run_command(&arguments.entry, arguments.run)),
         Command::Check(arguments) => check_command(arguments),
         Command::Query(arguments) => query_command(arguments),
         Command::Lsp => lsp_command().map(|()| 0),
@@ -708,7 +723,7 @@ fn lsp_command() -> Result<(), String> {
     telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
 }
 
-async fn run_command(arguments: RunArgs) -> Result<i32, String> {
+async fn run_command(entry: &str, arguments: RunArgs) -> Result<i32, String> {
     let input = arguments.input.as_deref().map(read_input).transpose()?;
     let context = command_context(arguments.context.clone())?;
     let module_id = arguments
@@ -756,7 +771,7 @@ async fn run_command(arguments: RunArgs) -> Result<i32, String> {
     .map_err(|error| error.to_string())?;
     let mut host = ProcessRunHost::new();
     let outcome = engine
-        .run_pending_with_host(pending, input, arguments.entry.as_deref(), &mut host)
+        .run_pending_with_host(pending, input, entry, &arguments.entry_args, &mut host)
         .await
         .map_err(|error| error.to_string())?;
     io::stdout()

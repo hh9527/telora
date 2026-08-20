@@ -1,0 +1,43 @@
+import "std/rt.priv.telora" as rt;
+
+export type MainType = struct {
+    output: String,
+};
+
+type State = struct {
+    output: String,
+    completed: Bool,
+};
+
+type Transition = Tuple([State, Array(rt.SystemEffect)]);
+type Reducer = Fn(State, rt.SystemEvent) -> Transition;
+type Initializer =
+    Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {input: 'False},
+            fn(injection, main) {
+                let state: State = {
+                    output: main.output,
+                    completed: 'False,
+                };
+                let reduce: Reducer = fn(state, event) {
+                    if state.completed {
+                        fail!("default Entry received an event after completion", event)
+                    } else match event {
+                        'Initialize => (
+                            {output: state.output, completed: 'True},
+                            ['Output(state.output), 'Exit(0)],
+                        ),
+                        _ => fail!("default Entry received an unsupported event", event),
+                    }
+                };
+                (state, reduce)
+            },
+        )
+    };
+
+export { State };

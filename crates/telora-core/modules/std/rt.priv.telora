@@ -1,9 +1,27 @@
-type SystemOptions = struct {
-    input: Option(Dyn),
+type OptionAction = struct {
+    key: String,
+    value: Dyn,
+};
+
+type SystemOptions = Array(OptionAction);
+
+type Platform = struct {
+    os: String,
+    arch: String,
+};
+
+type Env = struct {
+    args: Array(String),
+    input: Bool,
+    platform: Platform,
 };
 
 type SystemCaps = struct {
     input: Bool,
+};
+
+type SystemInjection = struct {
+    input: Option(Dyn),
 };
 
 type Stdin = enum {
@@ -70,8 +88,12 @@ type SystemEffect = enum {
 };
 
 export {
+    OptionAction,
     SystemOptions,
+    Platform,
+    Env,
     SystemCaps,
+    SystemInjection,
     Stdin,
     Stdout,
     Stdio,
