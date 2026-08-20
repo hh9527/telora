@@ -360,6 +360,72 @@ export let output: String = "value={rejected}";"#,
     }));
 }
 
+#[test]
+fn best_effort_run_preserves_failure_across_two_imported_computations() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/factory.telora"),
+        r#"def make_rejector: Fn(Int) -> Fn(Int) -> Int = fn(base) {
+    fn(value) { fail!("factory rejected value", base, value) }
+};
+export {make_rejector};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/transform.telora"),
+        r#"def render: Fn(Int) -> String = fn(value) { "rendered={value}" };
+export {render};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/facade.telora"),
+        r#"import "@src/factory.telora" as factory;
+import "@src/transform.telora" as transform;
+def lower: Fn(Int) -> String = fn(value) {
+    let rejected: Int = factory.make_rejector(3)(value);
+    transform.render(rejected)
+};
+export {lower};"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "@src/facade.telora" as facade;
+export let output: String = facade.lower(7);"#,
+    )
+    .unwrap();
+
+    let strict = telora(&cwd).args(["run", "main"]).output().unwrap();
+    assert!(!strict.status.success());
+    assert!(String::from_utf8_lossy(&strict.stderr).contains("factory rejected value"));
+
+    let recovered = telora(&cwd)
+        .args(["run", "main", "--best-effort"])
+        .output()
+        .unwrap();
+    assert!(!recovered.status.success());
+    let records = jsonl(&recovered.stderr);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["message"] == "factory rejected value")
+            .count(),
+        1
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.to_string().contains("src/factory.telora")),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(!records.iter().any(|record| {
+        record["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("dependent computation received"))
+    }));
+}
+
 fn call_cascade(record: &Value) -> bool {
     record["message"].as_str().is_some_and(|message| {
         message.contains("tag constructor")
