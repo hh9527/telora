@@ -64,19 +64,44 @@ r#"a "quoted" value"#      # 带 delimiter 的 raw String
 'Ready                     # Atom
 ```
 
-普通字符串支持转义和显式续行。反引号字符串是结构化连接表达式，使用 `\{...}`
-嵌入表达式：
+普通字符串支持 `\0`、`\n`、`\r`、`\t`、`\"`、`\\`、两位 ASCII `\xNN`、
+Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符串使用同一组
+标量转义，但以 `` \` `` 代替 `\"`，并作为结构化连接表达式使用 `\{...}` 嵌入
+表达式。raw String 不处理转义或插值；需要保留大量反斜杠或引号时应增加 `#`
+delimiter，而不是发明新的 escape。
 
 ```telora
 let greeting = `hello \{name}`;
 ```
 
-插值支持 String、Int、Float 和 Atom，不是隐式调用任意用户 `Display`。String 保持
-原文本，Int 使用十进制表示，Atom 省略前导 `'`。Float 使用有限 binary64 的 Display
-表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一 binary64 值的最短十进制文本，
-不受 locale 影响。该表示保留负零的符号，但不保留整数值的小数点，例如 `3.0` 表示
-为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的原始小数或指数拼写，而由同一
-Display 规则选择十进制或指数形式。
+插值按运行时 primitive `meta` 支持 String、Int、Float 和 Atom，不读取值的名义
+`ty`，也不隐式调用任意用户 `Display`。静态分析只提前证明表达式的表示必然属于
+这些类别；无法证明时，执行仍按实际 `meta` 检查。声明 wrapper 在分派前被解开，
+因此 Bool 值的插值依靠 Atom 表示工作，而不是因为 Bool 实现了 Display。String
+保持原文本，Int 使用十进制表示，Atom 省略前导 `'`。Float
+使用有限 binary64 的文本表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一
+binary64 值的最短十进制文本，不受 locale 影响。该表示保留负零的符号，但不保留
+整数值的小数点，例如 `3.0` 表示为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的
+原始小数或指数拼写。
+
+`std/fmt` 是另一条显式的 TypeMetadata-driven 路径：
+
+```telora
+import "std/fmt" as fmt;
+
+@fmt.display_by("{host}:{port}")
+type Endpoint = struct { host: String, port: Int };
+
+def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
+    fmt.display(Endpoint, endpoint)
+};
+```
+
+`display_by` 是受控模板 eDSL。它在构造 TypeMetadata 时解析、验证字段并附加
+`std/fmt.display` attribute；`fmt.display` 由调用者显式传入要采用的 TypeMetadata。
+它不是 trait、`ToString` 或代码生成机制，也不改变 `\{...}` 的 primitive-meta
+语义。`dbg!` 的有界 repr 属于 Host-only 观察；codec/JSON 则是数据交换协议，三者
+都不能作为彼此的隐式替代。
 
 Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
 条件位置只接受 Bool，不进行 truthiness 转换。
