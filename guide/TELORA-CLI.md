@@ -52,7 +52,11 @@ export def lowering_case = do {
 - `run-with` 中 `--` 后的参数按顺序进入 `Env.args`。Main 顶层的 `option` action 按
   源码顺序进入 `SystemOptions`。Entry 的 `config(options, env)` 返回 capability 诉求
   和 initializer；Host 按诉求构造 `SystemInjection`，再由 initializer 把环境数据显式
-  传给 Main。`--input` 不会成为 Main 的 ambient binding。
+  传给 Main。CLI 不提供 `--input`；Entry 负责解析参数，并通过 `SystemCaps` 请求具名
+  JSON/YAML/TOML 数据源、文本源、必需环境变量、stdin 模式和 child-process 权限。
+  `stdin: 'Text` 注入完整文本；`'Lined` 在 `Initialize` 后逐行产生 `StdinLine`，并以
+  单个 `None` 表示 EOF。`spawn_child` 必须为真才能发出 `SpawnStdioChild` 或
+  `PostStdin`。
 - `run -S file` 进入 standalone 模式，不发现 manifest，只使用根文件内的
   `crate.dependency` / `crate.format` options；这些 options 相对文件父目录解析。
   `-S` 与 binary name、`-C` 互斥。

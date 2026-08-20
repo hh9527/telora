@@ -18,7 +18,13 @@ export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
-            {input: 'False},
+            {
+                data_srcs: {},
+                spawn_child: 'False,
+                text_srcs: {},
+                vars: [],
+                stdin: 'Null,
+            },
             fn(injection, main) {
                 let state: State = {
                     output: main.output,

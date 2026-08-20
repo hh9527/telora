@@ -44,7 +44,8 @@ option is removed without compatibility behavior.
 
 ## Protocol types
 
-The first implemented protocol keeps the existing external input capability:
+The implemented protocol makes invocation arguments, requested Host resources,
+and fulfilled resources explicit:
 
 ```telora
 type OptionAction = struct {
@@ -61,25 +62,46 @@ type Platform = struct {
 
 type Env = struct {
     args: Array(String),
-    input: Bool,
     platform: Platform,
 };
 
+type DataFormat = enum { 'Json, 'Yaml, 'Toml };
+type DataSrc = struct { src: String, fmt: DataFormat };
+type Stdin = enum { 'Text, 'Lined, 'Null };
+
 type SystemCaps = struct {
-    input: Bool,
+    data_srcs: Dict(DataSrc),
+    spawn_child: Bool,
+    text_srcs: Dict(String),
+    vars: Array(String),
+    stdin: Stdin,
 };
 
+type SrcItem(T) = struct { data: T, src: String };
 type SystemInjection = struct {
-    input: Option(Dyn),
+    data: Dict(SrcItem(Value)),
+    texts: Dict(SrcItem(String)),
+    vars: Dict(String),
+    stdin: Option(String),
 };
 ```
 
-`Env.input` reports whether the invocation supplied `--input`; it does not
-expose the value. The Entry requests that value with `SystemCaps.input`. The
-Host rejects a requested but unavailable input and passes the value only
-through `SystemInjection.input`. Later RFCs may add environment snapshots,
-source-backed files, or stdio event sources by extending the caps/injection
-protocol; they do not grant ordinary Main modules ambient Host access.
+`data_srcs` requests named JSON, YAML, or TOML sources. The Host reads them,
+the engine parses them in the run's source database, and the initializer sees
+source-backed `Value` graphs. `text_srcs` preserves both text and source name.
+Every name in `vars` is required; a missing variable fails capability
+preparation before Main or the initializer runs.
+
+`stdin: 'Text` reads stdin to EOF and places it in `SystemInjection.stdin`.
+`'Lined` leaves the injection field empty and emits
+`'StdinLine('Some(line))` events followed by exactly one
+`'StdinLine('None)` at EOF. `'Initialize` always precedes these events.
+`'Null` neither injects stdin nor emits stdin events.
+
+`spawn_child` explicitly authorizes both `'SpawnStdioChild` and `'PostStdin`.
+Before executing any effect in a reducer result, the Host audits the complete
+batch and rejects either effect when this capability is false. Existing
+`'Exec` authority is separate from `spawn_child`.
 
 Repeated Main options preserve authored order. Option values remain immediate
 Telora values, wrapped as `Dyn` only at the heterogeneous Entry boundary. Main
@@ -143,10 +165,13 @@ telora run-with std/entry/default main
 telora run-with @src/serve.entry.telora main
 ```
 
-Workspace and standalone selection, `-C`, `-S`, `--input`, and
-`--best-effort` retain their existing meaning. Arguments after `--` are not
+Workspace and standalone selection, `-C`, `-S`, and `--best-effort` retain
+their existing meaning. Arguments after `--` are not
 Telora tool options; the Host copies them verbatim into `Env.args` for the
 Entry to interpret.
+
+There is no `--input` option. Entry owns argument parsing and expresses all
+resource requests through `SystemCaps`.
 
 `run` and explicit default `run-with` must have identical loading, diagnostics,
 output, termination, and best-effort behavior.
@@ -185,9 +210,12 @@ staging boundary.
 - `telora run main` and `telora run-with std/entry/default main` are
   behaviorally identical.
 - a custom `.entry.telora` module receives ordered Main options, Entry args,
-  platform facts, and the input availability bit.
-- requested input is delivered only through `SystemInjection`; unavailable
-  requested input fails before initializer invocation.
+  and platform facts.
+- requested data, text, variables, and text stdin are delivered only through
+  `SystemInjection`; unavailable resources fail before initializer invocation.
+- lined stdin emits Initialize, lines, and exactly one EOF event in order.
+- child-process effects require `spawn_child`, and rejection commits no effect
+  from the invalid batch.
 - the initializer closure can capture values computed by `config`.
 - ordinary imports and root selection of `.entry.telora` fail at resolution.
 - `run --entry` is rejected by clap.

@@ -1,7 +1,8 @@
 use serde_json::Value;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn fixture() -> PathBuf {
@@ -23,7 +24,21 @@ fn telora(cwd: &Path) -> Command {
 }
 
 fn write_entry(cwd: &Path, source: impl AsRef<str>) -> std::io::Result<()> {
-    let source = source.as_ref();
+    let source = source
+        .as_ref()
+        .replace(
+            "def legacy_prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };",
+            "",
+        )
+        .replace(
+            "def legacy_prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'True} };",
+            "",
+        );
+    let spawn_child = if source.contains("'SpawnStdioChild") || source.contains("'PostStdin") {
+        "'True"
+    } else {
+        "'False"
+    };
     let source = format!(
         r#"{source}
 type EntryInitializer = Fn(rt.SystemInjection, MainType) -> Tuple([
@@ -33,7 +48,16 @@ type EntryInitializer = Fn(rt.SystemInjection, MainType) -> Tuple([
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, EntryInitializer])
     = fn(options, env) {{
-    (legacy_prepare(options), fn(injection, main) {{ legacy_initialize(main) }})
+    (
+        {{
+            data_srcs: {{}},
+            spawn_child: {spawn_child},
+            text_srcs: {{}},
+            vars: [],
+            stdin: 'Null,
+        }},
+        fn(injection, main) {{ legacy_initialize(main) }},
+    )
 }};"#
     );
     fs::write(cwd.join("src/test.entry.telora"), source)
@@ -1073,17 +1097,14 @@ fn test_roots_are_selectable_but_not_importable() {
 }
 
 #[test]
-fn run_accepts_external_json() {
+fn run_injects_external_json_as_value() {
     let cwd = fixture();
-    fs::write(
-        cwd.join("src/bin/main.telora"),
-        "export def main: Fn(Dyn) -> String = fn(input) { \"accepted\" };",
-    )
-    .unwrap();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(
         cwd.join("src/input.entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
-type Main = struct {main: Fn(Dyn) -> String};
+import "std/value" as value;
+type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = String;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
@@ -1092,13 +1113,20 @@ export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
-            {input: 'True},
+            {
+                data_srcs: {input: {src: "input.json", fmt: 'Json}},
+                spawn_child: 'False,
+                text_srcs: {},
+                vars: [],
+                stdin: 'Null,
+            },
             fn(injection, main) {
-                let value = match injection.input {
-                    'Some(value) => main.main(value),
-                    'None => fail!("Host did not provide requested input"),
+                let item = injection.data.input;
+                let output = match item.data {
+                    'String(value) => value,
+                    _ => fail!("expected JSON string", item.data),
                 };
-                (value, fn(state, event) {
+                (output, fn(state, event) {
                     match event {
                         'Initialize => (state, ['Output(state), 'Exit(0)]),
                         _ => fail!("unexpected event", event),
@@ -1111,13 +1139,7 @@ export def config:
     .unwrap();
     fs::write(cwd.join("input.json"), r#""accepted""#).unwrap();
     let run = telora(&cwd)
-        .args([
-            "run-with",
-            "@src/input.entry.telora",
-            "main",
-            "--input",
-            "input.json",
-        ])
+        .args(["run-with", "@src/input.entry.telora", "main"])
         .output()
         .unwrap();
     assert!(
@@ -1126,6 +1148,246 @@ export def config:
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "accepted");
+}
+
+#[test]
+fn run_decodes_all_data_source_formats() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(cwd.join("input.json"), r#"{"name":"json"}"#).unwrap();
+    fs::write(cwd.join("input.yaml"), "name: yaml\n").unwrap();
+    fs::write(cwd.join("input.toml"), "name = \"toml\"\n").unwrap();
+    fs::write(
+        cwd.join("src/formats.entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+type Main = struct {marker: Int};
+export type MainType = Main;
+export type State = String;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+def object_name = fn(value) {
+    match value {
+        'Object(object) => match object.name {
+            'String(name) => name,
+            _ => fail!("name is not a string", object.name),
+        },
+        _ => fail!("data source is not an object", value),
+    }
+};
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {
+                data_srcs: {
+                    json: {src: "input.json", fmt: 'Json},
+                    yaml: {src: "input.yaml", fmt: 'Yaml},
+                    toml: {src: "input.toml", fmt: 'Toml},
+                },
+                spawn_child: 'False,
+                text_srcs: {},
+                vars: [],
+                stdin: 'Null,
+            },
+            fn(injection, main) {
+                let output = `\{object_name(injection.data.json.data)}|\{object_name(injection.data.yaml.data)}|\{object_name(injection.data.toml.data)}`;
+                (output, fn(state, event) {
+                    match event {
+                        'Initialize => (state, ['Output(state), 'Exit(0)]),
+                        _ => fail!("unexpected event", event),
+                    }
+                })
+            },
+        )
+    };"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run-with", "@src/formats.entry.telora", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "json|yaml|toml");
+}
+
+#[test]
+fn run_injects_text_environment_and_text_stdin() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(cwd.join("message.txt"), "from-file").unwrap();
+    fs::write(
+        cwd.join("src/injection.entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+type Main = struct {marker: Int};
+export type MainType = Main;
+export type State = String;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {
+                data_srcs: {},
+                spawn_child: 'False,
+                text_srcs: {message: "message.txt"},
+                vars: ["TELORA_TEST_VAR"],
+                stdin: 'Text,
+            },
+            fn(injection, main) {
+                let input = match injection.stdin {
+                    'Some(value) => value,
+                    'None => fail!("missing text stdin"),
+                };
+                let output = `\{injection.texts.message.data}|\{injection.texts.message.src}|\{injection.vars.TELORA_TEST_VAR}|\{input}`;
+                (output, fn(state, event) {
+                    match event {
+                        'Initialize => (state, ['Output(state), 'Exit(0)]),
+                        _ => fail!("unexpected event", event),
+                    }
+                })
+            },
+        )
+    };"#,
+    )
+    .unwrap();
+    let mut child = telora(&cwd)
+        .args(["run-with", "@src/injection.entry.telora", "main"])
+        .env("TELORA_TEST_VAR", "from-env")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"from-stdin")
+        .unwrap();
+    let run = child.wait_with_output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "from-file|message.txt|from-env|from-stdin"
+    );
+}
+
+#[test]
+fn lined_stdin_emits_initialize_lines_and_one_eof() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(
+        cwd.join("src/lined.entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+type Main = struct {marker: Int};
+export type MainType = Main;
+export type State = Int;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Lined},
+            fn(injection, main) {
+                (0, fn(state, event) {
+                    match event {
+                        'Initialize => (1, ['Output("initialize|")]),
+                        'StdinLine('Some(line)) => if state == 0 {
+                            fail!("line arrived before Initialize", line)
+                        } else {
+                            (state + 1, ['Output(`\{line}|`)])
+                        },
+                        'StdinLine('None) => (state, ['Output(`eof:\{state}`), 'Exit(0)]),
+                        _ => fail!("unexpected event", event),
+                    }
+                })
+            },
+        )
+    };"#,
+    )
+    .unwrap();
+    let mut child = telora(&cwd)
+        .args(["run-with", "@src/lined.entry.telora", "main"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"first\nsecond\n")
+        .unwrap();
+    let run = child.wait_with_output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "initialize|first|second|eof:3"
+    );
+}
+
+#[test]
+fn missing_requested_source_stops_before_initializer() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(
+        cwd.join("src/missing.entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+type Main = struct {marker: Int};
+export type MainType = Main;
+export type State = Int;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {data_srcs: {}, spawn_child: 'False, text_srcs: {missing: "missing.txt"}, vars: [], stdin: 'Null},
+            fn(injection, main) {
+                (0, fn(state, event) { (state, ['Output("initializer ran"), 'Exit(0)]) })
+            },
+        )
+    };"#,
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run-with", "@src/missing.entry.telora", "main"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(run.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("cannot read text source"));
+}
+
+#[test]
+fn run_rejects_removed_input_option() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        "export def output = \"unused\";",
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run", "main", "--input", "input.json"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("unexpected argument '--input'"));
 }
 
 #[test]
@@ -1364,7 +1626,7 @@ export def config:
         };
         let configured = `\{first.key},\{second.key}:\{arg}:\{env.platform.os}:\{env.platform.arch}`;
         (
-            {input: 'False},
+            {data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null},
             fn(injection, main) {
                 (configured, fn(state, event) {
                     match event {
@@ -1399,58 +1661,6 @@ export def config:
     );
     assert!(output.contains(std::env::consts::OS), "{output}");
     assert!(output.ends_with(std::env::consts::ARCH), "{output}");
-}
-
-#[test]
-fn input_is_available_to_config_but_injected_only_when_requested() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
-    fs::write(cwd.join("input.json"), "1").unwrap();
-    fs::write(
-        cwd.join("src/no-input.entry.telora"),
-        r#"import "std/rt.priv.telora" as rt;
-type Main = struct {marker: Int};
-export type MainType = Main;
-export type State = Int;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
-export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
-    = fn(options, env) {
-        if env.input {
-            (
-                {input: 'False},
-                fn(injection, main) {
-                    match injection.input {
-                        'None => (main.marker, fn(state, event) {
-                            (state, ['Output("not injected"), 'Exit(0)])
-                        }),
-                        'Some(value) => fail!("unrequested input was injected", value),
-                    }
-                },
-            )
-        } else {
-            fail!("config did not observe available input")
-        }
-    };"#,
-    )
-    .unwrap();
-    let run = telora(&cwd)
-        .args([
-            "run-with",
-            "@src/no-input.entry.telora",
-            "main",
-            "--input",
-            "input.json",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "not injected");
 }
 
 #[test]
@@ -1561,29 +1771,6 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
 }
 
 #[test]
-fn entry_input_capability_is_required_before_main_initialization() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export {input as output};").unwrap();
-    write_entry(&cwd,
-        r#"import "std/rt.priv.telora" as rt;
-type Main = struct {output: Int};
-export type MainType = Main;
-export type State = Int;
-def legacy_prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'True} };
-def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)])]) = fn(main) {
-    (0, fn(state, event) { (state, ['Exit(1)]) })
-};"#,
-    )
-    .unwrap();
-    let run = telora(&cwd)
-        .args(["run-with", "@src/test.entry.telora", "main"])
-        .output()
-        .unwrap();
-    assert!(!run.status.success());
-    assert!(String::from_utf8_lossy(&run.stderr).contains("received no --input"));
-}
-
-#[test]
 fn entry_drives_a_stdio_child_through_host_events() {
     let cwd = fixture();
     fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
@@ -1614,6 +1801,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             },
             'ChildStderr(_) => (state, []),
             'ChildExited(_) => (state, ['Output(state), 'Exit(0)]),
+            'StdinLine(_) => fail!("unexpected stdin event"),
         }
     })
 };"#,
@@ -1629,6 +1817,61 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "hello from child");
+}
+
+#[cfg(unix)]
+#[test]
+fn child_capability_rejection_is_atomic_for_the_effect_batch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    let marker = cwd.join("spawned");
+    let child = cwd.join("should-not-run.sh");
+    fs::write(&child, format!("#!/bin/sh\ntouch {:?}\n", marker)).unwrap();
+    let mut permissions = fs::metadata(&child).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&child, permissions).unwrap();
+    fs::write(
+        cwd.join("src/denied.entry.telora"),
+        format!(
+            r#"import "std/rt.priv.telora" as rt;
+type Main = struct {{marker: Int}};
+export type MainType = Main;
+export type State = Int;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {{
+        (
+            {{data_srcs: {{}}, spawn_child: 'False, text_srcs: {{}}, vars: [], stdin: 'Null}},
+            fn(injection, main) {{
+                (0, fn(state, event) {{
+                    (state, [
+                        'Output("must not commit"),
+                        'SpawnStdioChild({{
+                            key: "denied",
+                            opts: {{bin: {child:?}, cwd: 'None, envs: {{}}, clear_env: 'False}},
+                            stdio: {{stdin: 'Null, stdout: 'Null, stderr: 'Null}},
+                        }}),
+                    ])
+                }})
+            }},
+        )
+    }};"#,
+            child = child.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+    let run = telora(&cwd)
+        .args(["run-with", "@src/denied.entry.telora", "main"])
+        .output()
+        .unwrap();
+    assert!(!run.status.success());
+    assert!(run.stdout.is_empty());
+    assert!(!marker.exists());
+    assert!(String::from_utf8_lossy(&run.stderr).contains("without spawn_child capability"));
 }
 
 #[test]
@@ -1719,6 +1962,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
                 'None => (state, []),
             }},
             'ChildExited(status) => (state, ['Output("exited"), 'Exit(0)]),
+            'StdinLine(_) => fail!("unexpected stdin event"),
         }}
     }})
 }};"#,
@@ -1810,6 +2054,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             }},
             'ChildStderr(_) => (state, []),
             'ChildExited(_) => fail!("child exited before Entry requested Exit"),
+            'StdinLine(_) => fail!("unexpected stdin event"),
         }}
     }})
 }};"#,
@@ -1885,6 +2130,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             }},
             'ChildStderr(_) => (state, []),
             'ChildExited(_) => (state, []),
+            'StdinLine(_) => fail!("unexpected stdin event"),
         }}
     }})
 }};"#,

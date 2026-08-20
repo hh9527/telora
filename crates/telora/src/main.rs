@@ -1,18 +1,17 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio as ProcessStdio};
 use std::sync::Arc;
 use telora_core::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
-    DataWorld, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
-    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemEvent,
-    TextPosition, WorkspaceSnapshot, parse_json,
+    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
+    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SourceItem, SpawnStdioChild,
+    SystemCaps, SystemEvent, SystemInjection, SystemStdin, TextPosition, WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -378,6 +377,102 @@ fn exit_signal(_status: &std::process::ExitStatus) -> Option<i64> {
 }
 
 impl RunHost for ProcessRunHost {
+    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemInjection, String>> {
+        Box::pin(async move {
+            let mut data = BTreeMap::new();
+            for (key, request) in &caps.data_sources {
+                let source = tokio::fs::read_to_string(&request.src)
+                    .await
+                    .map_err(|error| {
+                        format!("cannot read data source {:?}: {error}", request.src)
+                    })?;
+                data.insert(
+                    key.clone(),
+                    SourceItem {
+                        data: source,
+                        src: request.src.clone(),
+                    },
+                );
+            }
+            let mut texts = BTreeMap::new();
+            for (key, path) in &caps.text_sources {
+                let source = tokio::fs::read_to_string(path)
+                    .await
+                    .map_err(|error| format!("cannot read text source {path:?}: {error}"))?;
+                texts.insert(
+                    key.clone(),
+                    SourceItem {
+                        data: source,
+                        src: path.clone(),
+                    },
+                );
+            }
+            let vars = caps
+                .vars
+                .iter()
+                .map(|name| {
+                    env::var(name)
+                        .map(|value| (name.clone(), value))
+                        .map_err(|error| format!("cannot read required variable {name:?}: {error}"))
+                })
+                .collect::<Result<BTreeMap<_, _>, _>>()?;
+            let stdin = match caps.stdin {
+                SystemStdin::Text => {
+                    let mut source = String::new();
+                    tokio::io::stdin()
+                        .read_to_string(&mut source)
+                        .await
+                        .map_err(|error| format!("cannot read standard input: {error}"))?;
+                    Some(source)
+                }
+                SystemStdin::Lined => {
+                    let sender = self.sender.clone();
+                    let mut cancel = self.cancel.subscribe();
+                    self.tasks.spawn(async move {
+                        let mut lines = BufReader::new(tokio::io::stdin()).lines();
+                        loop {
+                            let line = tokio::select! {
+                                biased;
+                                changed = cancel.changed() => {
+                                    if changed.is_ok() && *cancel.borrow() {
+                                        return ("<stdin>".into(), Ok(()));
+                                    }
+                                    continue;
+                                }
+                                line = lines.next_line() => line,
+                            };
+                            match line {
+                                Ok(Some(line)) => {
+                                    let _ = sender.send(ReaderEvent::Event(
+                                        SystemEvent::StdinLine(Some(line)),
+                                    ));
+                                }
+                                Ok(None) => {
+                                    let _ = sender
+                                        .send(ReaderEvent::Event(SystemEvent::StdinLine(None)));
+                                    return ("<stdin>".into(), Ok(()));
+                                }
+                                Err(error) => {
+                                    let message = format!("cannot read standard input: {error}");
+                                    let _ = sender.send(ReaderEvent::Error(message.clone()));
+                                    return ("<stdin>".into(), Err(message));
+                                }
+                            }
+                        }
+                    });
+                    None
+                }
+                SystemStdin::Null => None,
+            };
+            Ok(SystemInjection {
+                data,
+                texts,
+                vars,
+                stdin,
+            })
+        })
+    }
+
     fn spawn_stdio_child(
         &mut self,
         request: SpawnStdioChild,
@@ -533,8 +628,6 @@ struct RunArgs {
     context: Option<PathBuf>,
     #[arg(short = 'S', value_name = "FILE", conflicts_with_all = ["binary", "context"])]
     standalone: Option<PathBuf>,
-    #[arg(long)]
-    input: Option<String>,
     #[arg(long)]
     best_effort: bool,
     #[arg(last = true, value_name = "ENTRY_ARG")]
@@ -724,7 +817,6 @@ fn lsp_command() -> Result<(), String> {
 }
 
 async fn run_command(entry: &str, arguments: RunArgs) -> Result<i32, String> {
-    let input = arguments.input.as_deref().map(read_input).transpose()?;
     let context = command_context(arguments.context.clone())?;
     let module_id = arguments
         .binary
@@ -771,7 +863,7 @@ async fn run_command(entry: &str, arguments: RunArgs) -> Result<i32, String> {
     .map_err(|error| error.to_string())?;
     let mut host = ProcessRunHost::new();
     let outcome = engine
-        .run_pending_with_host(pending, input, entry, &arguments.entry_args, &mut host)
+        .run_pending_with_host(pending, entry, &arguments.entry_args, &mut host)
         .await
         .map_err(|error| error.to_string())?;
     io::stdout()
@@ -1184,19 +1276,4 @@ fn query_position(
         )?;
     }
     Ok(())
-}
-
-fn read_input(path: &str) -> Result<DataWorld, String> {
-    let (source_name, source) = if path == "-" {
-        let mut source = String::new();
-        io::stdin()
-            .read_to_string(&mut source)
-            .map_err(|error| format!("cannot read standard input: {error}"))?;
-        ("<stdin>".to_owned(), source)
-    } else {
-        let source = fs::read_to_string(path)
-            .map_err(|error| format!("cannot read input {}: {error}", Path::new(path).display()))?;
-        (path.to_owned(), source)
-    };
-    parse_json(&source_name, &source).map_err(|error| error.to_string())
 }

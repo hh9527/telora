@@ -1,3 +1,5 @@
+import "std/value" {Value};
+
 type OptionAction = struct {
     key: String,
     value: Dyn,
@@ -12,19 +14,47 @@ type Platform = struct {
 
 type Env = struct {
     args: Array(String),
-    input: Bool,
     platform: Platform,
 };
 
-type SystemCaps = struct {
-    input: Bool,
+type DataFormat = enum {
+    'Json,
+    'Yaml,
+    'Toml,
 };
 
-type SystemInjection = struct {
-    input: Option(Dyn),
+type DataSrc = struct {
+    src: String,
+    fmt: DataFormat,
 };
 
 type Stdin = enum {
+    'Text,
+    'Lined,
+    'Null,
+};
+
+type SystemCaps = struct {
+    data_srcs: Dict(DataSrc),
+    spawn_child: Bool,
+    text_srcs: Dict(String),
+    vars: Array(String),
+    stdin: Stdin,
+};
+
+type SrcItem(T) = struct {
+    data: T,
+    src: String,
+};
+
+type SystemInjection = struct {
+    data: Dict(SrcItem(Value)),
+    texts: Dict(SrcItem(String)),
+    vars: Dict(String),
+    stdin: Option(String),
+};
+
+type ChildStdin = enum {
     'Piped,
     'Inherit,
     'Null,
@@ -38,7 +68,7 @@ type Stdout = enum {
 };
 
 type Stdio = struct {
-    stdin: Stdin,
+    stdin: ChildStdin,
     stdout: Stdout,
     stderr: Stdout,
 };
@@ -73,6 +103,7 @@ type ChildSpawnResult = struct {
 
 type SystemEvent = enum {
     'Initialize,
+    'StdinLine(Option(String)),
     'ChildStdout(ChildText),
     'ChildStderr(ChildText),
     'ChildSpawnResult(ChildSpawnResult),
@@ -92,9 +123,13 @@ export {
     SystemOptions,
     Platform,
     Env,
-    SystemCaps,
-    SystemInjection,
+    DataFormat,
+    DataSrc,
     Stdin,
+    SystemCaps,
+    SrcItem,
+    SystemInjection,
+    ChildStdin,
     Stdout,
     Stdio,
     ChildOpts,

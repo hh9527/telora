@@ -1078,7 +1078,7 @@ Host 负责所有开放世界行为：文件和 package 解析、环境捕获、
 ```text
 Host 选择 Main 和 Entry
   -> 固定依赖与 source snapshot
-  -> 从 Main 顶层收集有序 SystemOptions，并构造含参数、输入可用性和平台事实的 Env
+  -> 从 Main 顶层收集有序 SystemOptions，并构造含参数和平台事实的 Env
   -> 在准备 WorkWorld 调用 Entry.config(options, env)，取得 SystemCaps 和 initializer
   -> Host 按 SystemCaps 准备 SystemInjection
   -> 初始化 Main，并按 Entry.MainType 校验完整 export record
@@ -1100,10 +1100,10 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--input <json|->] [--best-effort] [-- <entry-args>...]
-telora run -S <file> [--input <json|->] [--best-effort] [-- <entry-args>...]
-telora run-with <entry-module> <binary-name> [-C <context>] [--input <json|->] [--best-effort] [-- <entry-args>...]
-telora run-with <entry-module> -S <file> [--input <json|->] [--best-effort] [-- <entry-args>...]
+telora run <binary-name> [-C <context>] [--best-effort] [-- <entry-args>...]
+telora run -S <file> [--best-effort] [-- <entry-args>...]
+telora run-with <entry-module> <binary-name> [-C <context>] [--best-effort] [-- <entry-args>...]
+telora run-with <entry-module> -S <file> [--best-effort] [-- <entry-args>...]
 telora query|q modules [-C <context>] [-p <substring>]
 telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
@@ -1194,10 +1194,10 @@ export def config:
 ```
 
 `SystemOptions` 是 Main 顶层 `option` action 的有序序列。`Env` 包含 `--` 后的 Entry
-参数、输入是否可用以及 OS/arch 平台事实。准备 WorkWorld 中的 `config` 返回经 Host
+参数以及 OS/arch 平台事实。准备 WorkWorld 中的 `config` 返回经 Host
 校验的 `SystemCaps` 和 initializer；Host 根据 caps 构造 `SystemInjection`，随后初始化
 Main、按 `MainType` 校验完整 export record，再调用 initializer。所有环境上下文必须由
-initializer 显式传给 Main；`--input` 不产生 ambient Main binding。当前不进行分阶段或
+initializer 显式传给 Main；CLI 不提供 `--input`，参数由 Entry 从 `Env.args` 解析。当前不进行分阶段或
 动态 Main 加载。运行阶段使用一系列 WorkWorld；
 `MainType` 没有系统约定的形状，它完全由所选 Entry 定义。内置 Entry 使用 `Dyn`
 边界只是该 Entry 自己的适配策略。
@@ -1213,9 +1213,22 @@ Entry reducer 接受单个
 外部信息只能在后续 turn 作为 Event 注入。当前固定协议为：
 
 ```text
-Stdin  = Piped | Inherit | Null
+DataFormat = Json | Yaml | Toml
+DataSrc = { src: String, fmt: DataFormat }
+SystemStdin = Text | Lined | Null
+SystemCaps = {
+    data_srcs: Dict(DataSrc), spawn_child: Bool,
+    text_srcs: Dict(String), vars: Array(String), stdin: SystemStdin,
+}
+SrcItem(T) = { data: T, src: String }
+SystemInjection = {
+    data: Dict(SrcItem(Value)), texts: Dict(SrcItem(String)),
+    vars: Dict(String), stdin: Option(String),
+}
+
+ChildStdin = Piped | Inherit | Null
 Stdout = PipedLine | PipedToEnd | Inherit | Null
-Stdio  = { stdin: Stdin, stdout: Stdout, stderr: Stdout }
+Stdio  = { stdin: ChildStdin, stdout: Stdout, stderr: Stdout }
 
 ChildOpts = {
     bin: String,
@@ -1229,6 +1242,7 @@ ChildSpawnResult = { key: String, result: Result(Int, String) }
 ChildExited     = { key: String, exited: Result(Int, Option(Int)) }
 
 SystemEvent = Initialize
+            | StdinLine(Option(String))
             | ChildStdout(ChildText)
             | ChildStderr(ChildText)
             | ChildSpawnResult(ChildSpawnResult)
@@ -1240,6 +1254,16 @@ SystemEffect = SpawnStdioChild(SpawnStdioChild)
              | Output(String)
              | Exit(Int)
 ```
+
+`Text` 在 initializer 前读到 EOF，并通过 `SystemInjection.stdin` 注入完整文本；
+`Lined` 不注入完整文本，而是在 `Initialize` 之后逐行发送不含换行符的 `Some`，EOF
+恰好发送一次 `None`；`Null` 不读取也不产生事件。`data_srcs` 由 engine 在同一 source
+database 中按 JSON/YAML/TOML 解析成带 provenance 的 `Value`，`text_srcs` 保留文本和
+来源名，`vars` 中任一环境变量缺失都会在 Main/initializer 运行前失败。
+
+`spawn_child` 是 `SpawnStdioChild` 与 `PostStdin` 的显式权限。Host 在执行一批 effect
+中的任何一项前先审计整批；未授权时整批拒绝。`Exec` 是独立权限语义，不由
+`spawn_child` 控制。
 
 `SpawnStdioChild` 使用 Entry 给出的稳定 `key` 启动进程，并始终产生对应的
 `ChildSpawnResult`：成功分支携带 pid，失败分支携带可由 reducer 处理的错误文本。stdin 可为

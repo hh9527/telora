@@ -1700,8 +1700,52 @@ pub enum ChildExit {
     Signal(Option<i64>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SystemDataFormat {
+    Json,
+    Yaml,
+    Toml,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemDataSource {
+    pub src: String,
+    pub format: SystemDataFormat,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SystemStdin {
+    Text,
+    Lined,
+    Null,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemCaps {
+    pub data_sources: BTreeMap<String, SystemDataSource>,
+    pub spawn_child: bool,
+    pub text_sources: BTreeMap<String, String>,
+    pub vars: Vec<String>,
+    pub stdin: SystemStdin,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceItem<T> {
+    pub data: T,
+    pub src: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemInjection {
+    pub data: BTreeMap<String, SourceItem<String>>,
+    pub texts: BTreeMap<String, SourceItem<String>>,
+    pub vars: BTreeMap<String, String>,
+    pub stdin: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SystemEvent {
+    StdinLine(Option<String>),
     ChildStdout(ChildText),
     ChildStderr(ChildText),
     ChildSpawnResult(ChildSpawnResult),
@@ -1711,6 +1755,8 @@ pub enum SystemEvent {
 pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 pub trait RunHost {
+    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemInjection, String>>;
+
     fn spawn_stdio_child(
         &mut self,
         child: SpawnStdioChild,
@@ -1738,6 +1784,25 @@ pub struct RunOutcome {
 struct NoProcessRunHost;
 
 impl RunHost for NoProcessRunHost {
+    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemInjection, String>> {
+        Box::pin(async move {
+            if !caps.data_sources.is_empty()
+                || !caps.text_sources.is_empty()
+                || !caps.vars.is_empty()
+                || caps.stdin != SystemStdin::Null
+                || caps.spawn_child
+            {
+                return Err("this Host does not provide initialization capabilities".into());
+            }
+            Ok(SystemInjection {
+                data: BTreeMap::new(),
+                texts: BTreeMap::new(),
+                vars: BTreeMap::new(),
+                stdin: None,
+            })
+        })
+    }
+
     fn spawn_stdio_child(
         &mut self,
         _child: SpawnStdioChild,
@@ -2100,30 +2165,22 @@ impl Engine {
     pub async fn run_pending(
         &self,
         pending: PendingModule,
-        input: Option<crate::DataWorld>,
         entry_selector: &str,
         entry_args: &[String],
     ) -> Result<RunOutcome, ModuleError> {
-        self.run_pending_with_host(
-            pending,
-            input,
-            entry_selector,
-            entry_args,
-            &mut NoProcessRunHost,
-        )
-        .await
+        self.run_pending_with_host(pending, entry_selector, entry_args, &mut NoProcessRunHost)
+            .await
     }
 
     pub async fn run_pending_with_host(
         &self,
         pending: PendingModule,
-        input: Option<crate::DataWorld>,
         entry_selector: &str,
         entry_args: &[String],
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
         let result = self
-            .run_pending_with_host_inner(pending, input, entry_selector, entry_args, host)
+            .run_pending_with_host_inner(pending, entry_selector, entry_args, host)
             .await;
         let finished = host
             .finish()
@@ -2139,7 +2196,6 @@ impl Engine {
     async fn run_pending_with_host_inner(
         &self,
         pending: PendingModule,
-        input: Option<crate::DataWorld>,
         entry_selector: &str,
         entry_args: &[String],
         host: &mut dyn RunHost,
@@ -2209,10 +2265,13 @@ impl Engine {
             .map_err(ModuleError::new)?;
         let state_type = crate::types::decode_type_ref(exports["State"], "Entry.State")
             .map_err(ModuleError::new)?;
+        let (value_owner, value_type) =
+            semantic_value_contract(&loader.core_modules, &loader.main.heap)?;
         validate_entry_interface(
             &entry_compiled.analysis.module_interface,
             &main_type,
             &state_type,
+            &value_type,
         )?;
         if entry_world
             .member_function_arity(&loader.main.heap, "config")
@@ -2227,12 +2286,7 @@ impl Engine {
             &loader.main.heap,
             &pending.inner.options,
         )?;
-        let env = make_entry_env(
-            entry_world.heap_mut(),
-            &loader.main.heap,
-            entry_args,
-            input.is_some(),
-        );
+        let env = make_entry_env(entry_world.heap_mut(), &loader.main.heap, entry_args);
         let configured = invoke_world_member_in(
             &loader.main.heap,
             &entry_compiled.externals,
@@ -2252,7 +2306,7 @@ impl Engine {
                 "Entry.config must return exactly SystemCaps and Initializer",
             )
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let wants_input = parse_system_caps(entry_world.root_ref(&loader.main.heap))?;
+        let caps = parse_system_caps(entry_world.root_ref(&loader.main.heap))?;
         let initializer_arity = entry_world
             .runtime_function_arity(&loader.main.heap, initializer)
             .map_err(|error| ModuleError::new(error.to_string()))?
@@ -2262,12 +2316,11 @@ impl Engine {
                 "Entry.config initializer must accept 2 arguments, found {initializer_arity}"
             )));
         }
+        let fulfilled = host.prepare(caps.clone()).await.map_err(|error| {
+            ModuleError::new(format!("cannot satisfy Entry capabilities: {error}"))
+        })?;
+        let injection = decode_system_injection(&mut loader.sources, &caps, fulfilled)?;
         let bindings = pending.begin_initialization()?;
-        if wants_input && input.is_none() {
-            return Err(ModuleError::new(
-                "Entry requested input, but telora run received no --input",
-            ));
-        }
 
         let (compiled_main_path, main_compiled) = match loader.compile_root(main_module, bindings) {
             Ok(compiled) => compiled,
@@ -2346,7 +2399,8 @@ impl Engine {
         let injection = make_system_injection(
             entry_world.heap_mut(),
             &entry.runtime.main.heap,
-            wants_input.then_some(input.as_ref()).flatten(),
+            &injection,
+            value_owner.runtime(),
         )?;
         let initialized = invoke_world_function_in(
             &entry.runtime.main.heap,
@@ -2404,6 +2458,21 @@ impl Engine {
                 .into_reducer_transition(&entry.runtime.main.heap)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
             state = next_state;
+            for effect in &effects {
+                let effect = state.value_ref(&entry.runtime.main.heap, *effect);
+                let (tag, _) = effect
+                    .tagged_parts()
+                    .ok_or_else(|| ModuleError::new("Entry returned an invalid SystemEffect"))?;
+                if matches!(
+                    tag.as_atom().as_deref(),
+                    Some("SpawnStdioChild" | "PostStdin")
+                ) && !caps.spawn_child
+                {
+                    return Err(ModuleError::new(
+                        "Entry emitted a child-process effect without spawn_child capability",
+                    ));
+                }
+            }
             let mut terminal = None;
             for effect in effects {
                 let effect = state.value_ref(&entry.runtime.main.heap, effect);
@@ -3738,6 +3807,24 @@ fn runtime_record(heap: &mut Heap, fields: Vec<(&str, Val)>) -> Val {
     })))
 }
 
+fn runtime_dict(heap: &mut Heap, fields: Vec<(String, Val)>) -> Val {
+    let mut fields = fields;
+    fields.sort_by(|left, right| left.0.cmp(&right.0));
+    let names = fields
+        .iter()
+        .map(|(name, _)| heap.intern(name))
+        .collect::<Vec<_>>();
+    let values = fields
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>();
+    let shape = heap.intern_shape(names);
+    Val::unknown(DecodedValue::Dict(heap.allocate(Object::Dict {
+        shape,
+        values: values.into_boxed_slice(),
+    })))
+}
+
 fn runtime_string(heap: &mut Heap, main: &Heap, value: &str) -> Val {
     Val::unknown(heap.string(Some(main), value))
 }
@@ -3778,6 +3865,20 @@ fn runtime_system_event(
         return Ok(runtime_atom(heap, main, "Initialize"));
     };
     let (tag, payload) = match event {
+        SystemEvent::StdinLine(line) => {
+            let line = match line {
+                Some(line) => {
+                    let line = runtime_string(heap, main, &line);
+                    runtime_tagged(
+                        heap,
+                        Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
+                        line,
+                    )
+                }
+                None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
+            };
+            ("StdinLine", line)
+        }
         SystemEvent::ChildStdout(text) => ("ChildStdout", runtime_child_text(heap, main, text)),
         SystemEvent::ChildStderr(text) => ("ChildStderr", runtime_child_text(heap, main, text)),
         SystemEvent::ChildSpawnResult(result) => {
@@ -3836,6 +3937,7 @@ fn validate_entry_interface(
     interface: &ModuleInterface,
     main_type: &TypeDescriptor,
     state_type: &TypeDescriptor,
+    value_type: &TypeDescriptor,
 ) -> Result<(), ModuleError> {
     let unit_enum = |names: &[&str]| {
         TypeDescriptor::Enum(
@@ -3846,9 +3948,9 @@ fn validate_entry_interface(
         )
     };
     let bool_type = unit_enum(&["False", "True"]);
-    let option_dyn = TypeDescriptor::Enum(BTreeMap::from([
+    let option_string = TypeDescriptor::Enum(BTreeMap::from([
         ("None".into(), None),
-        ("Some".into(), Some(Box::new(TypeDescriptor::Dyn))),
+        ("Some".into(), Some(Box::new(TypeDescriptor::String))),
     ]));
     let option_action = TypeDescriptor::Struct(BTreeMap::from([
         ("key".into(), TypeDescriptor::String),
@@ -3864,14 +3966,50 @@ fn validate_entry_interface(
             "args".into(),
             TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
         ),
-        ("input".into(), bool_type.clone()),
         ("platform".into(), platform_type),
     ]));
-    let caps_type = TypeDescriptor::Struct(BTreeMap::from([("input".into(), bool_type)]));
-    let injection_type = TypeDescriptor::Struct(BTreeMap::from([("input".into(), option_dyn)]));
-    let option_string = TypeDescriptor::Enum(BTreeMap::from([
-        ("None".into(), None),
-        ("Some".into(), Some(Box::new(TypeDescriptor::String))),
+    let data_format = unit_enum(&["Json", "Toml", "Yaml"]);
+    let data_source = TypeDescriptor::Struct(BTreeMap::from([
+        ("fmt".into(), data_format),
+        ("src".into(), TypeDescriptor::String),
+    ]));
+    let stdin = unit_enum(&["Lined", "Null", "Text"]);
+    let caps_type = TypeDescriptor::Struct(BTreeMap::from([
+        (
+            "data_srcs".into(),
+            TypeDescriptor::Dict(Box::new(data_source)),
+        ),
+        ("spawn_child".into(), bool_type.clone()),
+        ("stdin".into(), stdin),
+        (
+            "text_srcs".into(),
+            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
+        ),
+        (
+            "vars".into(),
+            TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
+        ),
+    ]));
+    let source_item = |data| {
+        TypeDescriptor::Struct(BTreeMap::from([
+            ("data".into(), data),
+            ("src".into(), TypeDescriptor::String),
+        ]))
+    };
+    let injection_type = TypeDescriptor::Struct(BTreeMap::from([
+        (
+            "data".into(),
+            TypeDescriptor::Dict(Box::new(source_item(value_type.clone()))),
+        ),
+        ("stdin".into(), option_string.clone()),
+        (
+            "texts".into(),
+            TypeDescriptor::Dict(Box::new(source_item(TypeDescriptor::String))),
+        ),
+        (
+            "vars".into(),
+            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
+        ),
     ]));
     let child_text = TypeDescriptor::Struct(BTreeMap::from([
         ("data".into(), option_string.clone()),
@@ -3932,6 +4070,7 @@ fn validate_entry_interface(
     ]));
     let event_type = TypeDescriptor::Enum(BTreeMap::from([
         ("Initialize".into(), None),
+        ("StdinLine".into(), Some(Box::new(option_string.clone()))),
         ("ChildStdout".into(), Some(Box::new(child_text.clone()))),
         ("ChildStderr".into(), Some(Box::new(child_text.clone()))),
         (
@@ -4000,14 +4139,6 @@ fn validate_entry_interface(
     Ok(())
 }
 
-fn runtime_bool(value: bool) -> Val {
-    Val::unknown(DecodedValue::BuiltinAtom(if value {
-        BuiltinAtom::True
-    } else {
-        BuiltinAtom::False
-    }))
-}
-
 fn runtime_array(heap: &mut Heap, values: Vec<Val>) -> Val {
     Val::unknown(DecodedValue::Array(
         heap.allocate(Object::Array(values.into_boxed_slice())),
@@ -4058,7 +4189,7 @@ fn make_system_options(
     Ok(runtime_array(heap, options))
 }
 
-fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String], has_input: bool) -> Val {
+fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String]) -> Val {
     let arguments = arguments
         .iter()
         .map(|argument| runtime_string(heap, main, argument))
@@ -4067,44 +4198,253 @@ fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String], has_input:
     let arch = runtime_string(heap, main, std::env::consts::ARCH);
     let os = runtime_string(heap, main, std::env::consts::OS);
     let platform = runtime_record(heap, vec![("arch", arch), ("os", os)]);
-    runtime_record(
-        heap,
-        vec![
-            ("args", arguments),
-            ("input", runtime_bool(has_input)),
-            ("platform", platform),
-        ],
-    )
+    runtime_record(heap, vec![("args", arguments), ("platform", platform)])
+}
+
+struct DecodedSystemInjection {
+    data: BTreeMap<String, SourceItem<crate::DataWorld>>,
+    texts: BTreeMap<String, SourceItem<String>>,
+    vars: BTreeMap<String, String>,
+    stdin: Option<String>,
+}
+
+fn decode_system_injection(
+    sources: &mut SourceDatabase,
+    caps: &SystemCaps,
+    injection: SystemInjection,
+) -> Result<DecodedSystemInjection, ModuleError> {
+    let exact_keys = |actual: &BTreeSet<_>, expected: &BTreeSet<_>, path: &str| {
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(ModuleError::new(format!(
+                "{path} does not exactly satisfy the requested capability keys"
+            )))
+        }
+    };
+    exact_keys(
+        &injection.data.keys().cloned().collect(),
+        &caps.data_sources.keys().cloned().collect(),
+        "SystemInjection.data",
+    )?;
+    exact_keys(
+        &injection.texts.keys().cloned().collect(),
+        &caps.text_sources.keys().cloned().collect(),
+        "SystemInjection.texts",
+    )?;
+    exact_keys(
+        &injection.vars.keys().cloned().collect(),
+        &caps.vars.iter().cloned().collect(),
+        "SystemInjection.vars",
+    )?;
+    match (caps.stdin, injection.stdin.is_some()) {
+        (SystemStdin::Text, true) | (SystemStdin::Lined | SystemStdin::Null, false) => {}
+        _ => {
+            return Err(ModuleError::new(
+                "SystemInjection.stdin does not satisfy SystemCaps.stdin",
+            ));
+        }
+    }
+
+    let data = injection
+        .data
+        .into_iter()
+        .map(|(key, item)| {
+            let request = &caps.data_sources[&key];
+            let source_id = sources.add(item.src.clone(), item.data);
+            let format = match request.format {
+                SystemDataFormat::Json => ModuleFormat::Json,
+                SystemDataFormat::Yaml => ModuleFormat::Yaml,
+                SystemDataFormat::Toml => ModuleFormat::Toml,
+            };
+            let parsed = parse_static_data_registered(format, sources, source_id)
+                .expect("system data formats are static data formats");
+            if !parsed.diagnostics.is_empty() {
+                return Err(ModuleError::new(
+                    parsed
+                        .diagnostics
+                        .iter()
+                        .map(|diagnostic| sources.render(diagnostic))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ));
+            }
+            let value = parsed
+                .value
+                .expect("static data parse without diagnostics has a value")
+                .value;
+            Ok((
+                key,
+                SourceItem {
+                    data: value,
+                    src: item.src,
+                },
+            ))
+        })
+        .collect::<Result<_, ModuleError>>()?;
+    Ok(DecodedSystemInjection {
+        data,
+        texts: injection.texts,
+        vars: injection.vars,
+        stdin: injection.stdin,
+    })
 }
 
 fn make_system_injection(
     heap: &mut Heap,
     main: &Heap,
-    input: Option<&crate::DataWorld>,
+    injection: &DecodedSystemInjection,
+    value_owner: Val,
 ) -> Result<Val, ModuleError> {
-    let input = match input {
-        Some(input) => {
-            let value = input
+    let data = injection
+        .data
+        .iter()
+        .map(|(key, item)| {
+            let raw = item
+                .data
                 .relocate_into(heap, main)
                 .map_err(|error| ModuleError::new(error.to_string()))?;
-            let value = runtime_dyn(heap, main, value, "telora run --input")?;
+            let value = wrap_semantic_value(heap, Some(main), raw, value_owner)
+                .map_err(|error| ModuleError::new(error.to_string()))?;
+            let src = runtime_string(heap, main, &item.src);
+            Ok((
+                key.clone(),
+                runtime_record(heap, vec![("data", value), ("src", src)]),
+            ))
+        })
+        .collect::<Result<Vec<_>, ModuleError>>()?;
+    let texts = injection
+        .texts
+        .iter()
+        .map(|(key, item)| {
+            let value = runtime_string(heap, main, &item.data);
+            let src = runtime_string(heap, main, &item.src);
+            (
+                key.clone(),
+                runtime_record(heap, vec![("data", value), ("src", src)]),
+            )
+        })
+        .collect();
+    let vars = injection
+        .vars
+        .iter()
+        .map(|(name, value)| (name.clone(), runtime_string(heap, main, value)))
+        .collect();
+    let stdin = match &injection.stdin {
+        Some(text) => {
+            let text = runtime_string(heap, main, text);
             runtime_tagged(
                 heap,
                 Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
-                value,
+                text,
             )
         }
         None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
     };
-    Ok(runtime_record(heap, vec![("input", input)]))
+    let data = runtime_dict(heap, data);
+    let texts = runtime_dict(heap, texts);
+    let vars = runtime_dict(heap, vars);
+    Ok(runtime_record(
+        heap,
+        vec![
+            ("data", data),
+            ("stdin", stdin),
+            ("texts", texts),
+            ("vars", vars),
+        ],
+    ))
 }
 
-fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<bool, ModuleError> {
-    let caps = expect_protocol_record_ref(value, "Entry.config SystemCaps", &["input"])?;
-    protocol_bool_ref(
-        caps.get("input").expect("field shape checked"),
-        "SystemCaps.input",
-    )
+fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleError> {
+    fn dict<'a>(
+        value: crate::ValueRef<'a>,
+        path: &str,
+    ) -> Result<(crate::ValueRef<'a>, Vec<&'a str>), ModuleError> {
+        let value = protocol_ref(value);
+        let fields = value
+            .dict_fields()
+            .ok_or_else(|| ModuleError::new(format!("{path} must be a Dict")))?;
+        Ok((value, fields))
+    }
+
+    let caps = expect_protocol_record_ref(
+        value,
+        "Entry.config SystemCaps",
+        &["data_srcs", "spawn_child", "stdin", "text_srcs", "vars"],
+    )?;
+    let (data, data_keys) = dict(caps.get("data_srcs").unwrap(), "SystemCaps.data_srcs")?;
+    let data_sources = data_keys
+        .into_iter()
+        .map(|key| {
+            let path = format!("SystemCaps.data_srcs.{key}");
+            let value = expect_protocol_record_ref(data.get(key).unwrap(), &path, &["fmt", "src"])?;
+            let format = match protocol_ref(value.get("fmt").unwrap()).as_atom().as_deref() {
+                Some("Json") => SystemDataFormat::Json,
+                Some("Yaml") => SystemDataFormat::Yaml,
+                Some("Toml") => SystemDataFormat::Toml,
+                _ => return Err(ModuleError::new(format!("{path}.fmt is invalid"))),
+            };
+            let src = protocol_string_ref(value.get("src").unwrap(), &format!("{path}.src"))?;
+            if key.is_empty() || src.is_empty() {
+                return Err(ModuleError::new(format!(
+                    "{path} must use non-empty key and src"
+                )));
+            }
+            Ok((key.to_owned(), SystemDataSource { src, format }))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let (texts, text_keys) = dict(caps.get("text_srcs").unwrap(), "SystemCaps.text_srcs")?;
+    let text_sources = text_keys
+        .into_iter()
+        .map(|key| {
+            let src = protocol_string_ref(
+                texts.get(key).unwrap(),
+                &format!("SystemCaps.text_srcs.{key}"),
+            )?;
+            if key.is_empty() || src.is_empty() {
+                return Err(ModuleError::new(
+                    "SystemCaps.text_srcs must use non-empty keys and paths",
+                ));
+            }
+            Ok((key.to_owned(), src))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let vars = protocol_ref(caps.get("vars").unwrap());
+    let length = vars
+        .sequence_len()
+        .ok_or_else(|| ModuleError::new("SystemCaps.vars must be Array(String)"))?;
+    let mut names = Vec::with_capacity(length);
+    let mut unique = BTreeSet::new();
+    for index in 0..length {
+        let name = protocol_string_ref(
+            vars.sequence_get(index).expect("index is in range"),
+            &format!("SystemCaps.vars[{index}]"),
+        )?;
+        if name.is_empty() || !unique.insert(name.clone()) {
+            return Err(ModuleError::new(
+                "SystemCaps.vars must contain unique non-empty names",
+            ));
+        }
+        names.push(name);
+    }
+    let stdin = match protocol_ref(caps.get("stdin").unwrap())
+        .as_atom()
+        .as_deref()
+    {
+        Some("Text") => SystemStdin::Text,
+        Some("Lined") => SystemStdin::Lined,
+        Some("Null") => SystemStdin::Null,
+        _ => return Err(ModuleError::new("SystemCaps.stdin is invalid")),
+    };
+    Ok(SystemCaps {
+        data_sources,
+        spawn_child: protocol_bool_ref(caps.get("spawn_child").unwrap(), "SystemCaps.spawn_child")?,
+        text_sources,
+        vars: names,
+        stdin,
+    })
 }
 
 fn concrete_module_descriptor(interface: &ModuleInterface) -> Result<TypeDescriptor, ModuleError> {
@@ -6100,7 +6440,7 @@ type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
-    ({input: 'False}, fn(injection: rt.SystemInjection, main: MainType) {
+    ({data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null}, fn(injection: rt.SystemInjection, main: MainType) {
         let reduce: Reducer = fn(state, event) {
             match event {
                 'Initialize => (state, ['Output("42"), 'Exit(0)]),
@@ -6116,8 +6456,7 @@ export def config:
             .prepare_module_id(&directory, "@bin/main.telora")
             .unwrap();
         let outcome =
-            block_on_recovery(engine.run_pending(pending, None, "@src/host.entry.telora", &[]))
-                .unwrap();
+            block_on_recovery(engine.run_pending(pending, "@src/host.entry.telora", &[])).unwrap();
         assert_eq!(outcome.output, "42");
         assert_eq!(outcome.termination, RunTermination::Exit(0));
         fs::remove_dir_all(directory).unwrap();

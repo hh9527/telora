@@ -51,7 +51,8 @@ pub use module::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildStdio,
     ChildText, Engine, EngineBuilder, EngineConfig, InstantiatedModule, LoadedModule,
     LoadedOptionAction, ModuleError, NativeModuleSpec, PendingModule, RunHost, RunHostFuture,
-    RunOutcome, RunTermination, SpawnStdioChild, SystemEvent, evaluate_expression_module,
+    RunOutcome, RunTermination, SourceItem, SpawnStdioChild, SystemCaps, SystemDataFormat,
+    SystemDataSource, SystemEvent, SystemInjection, SystemStdin, evaluate_expression_module,
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
