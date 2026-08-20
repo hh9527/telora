@@ -3544,8 +3544,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
         inference.recursive_body_inference_depth -= 1;
         inference.delayed_initializer_depth -= 1;
         let inferred = inferred.map_err(|message| {
-            let location = inference.take_failure_location(binding.value.value.location);
-            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+            let diagnostic = inference.take_failure_diagnostic(
+                binding.value.value.location,
+                message,
+                binding
+                    .value
+                    .annotation
+                    .as_ref()
+                    .map(|annotation| annotation.location),
+            );
+            FrontendError::from_diagnostic(sources, diagnostic)
         })?;
         if let (
             Some(variable),
@@ -3580,8 +3588,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let inferred = inference.infer(&binding.value.value, &checked_environment, None);
         inference.delayed_initializer_depth -= 1;
         let inferred = inferred.map_err(|message| {
-            let location = inference.take_failure_location(binding.value.value.location);
-            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+            let diagnostic = inference.take_failure_diagnostic(
+                binding.value.value.location,
+                message,
+                binding
+                    .value
+                    .annotation
+                    .as_ref()
+                    .map(|annotation| annotation.location),
+            );
+            FrontendError::from_diagnostic(sources, diagnostic)
         })?;
         let scheme = inference
             .generalize_local_closure(&inferred, first_owned_variable, binding.value.name.location)
@@ -3721,8 +3737,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
             inference.delayed_initializer_depth -= 1;
         }
         let inferred = inferred.map_err(|message| {
-            let location = inference.take_failure_location(binding.value.value.location);
-            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+            let expected_location = binding
+                .value
+                .annotation
+                .as_ref()
+                .map(|annotation| annotation.location)
+                .or_else(|| {
+                    declaration_locations
+                        .get(&binding.value.name.value)
+                        .copied()
+                });
+            let diagnostic = inference.take_failure_diagnostic(
+                binding.value.value.location,
+                message,
+                expected_location,
+            );
+            FrontendError::from_diagnostic(sources, diagnostic)
         })?;
         if binding.value.kind == BindingKind::Type {
             continue;
@@ -3784,9 +3814,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let result_type = inference
         .infer(&program.value.body.value.result, &checked_environment, None)
         .map_err(|message| {
-            let location =
-                inference.take_failure_location(program.value.body.value.result.location);
-            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+            let diagnostic = inference.take_failure_diagnostic(
+                program.value.body.value.result.location,
+                message,
+                None,
+            );
+            FrontendError::from_diagnostic(sources, diagnostic)
         })?;
     let module_requirement = inference
         .propagation_boundaries
@@ -6634,7 +6667,22 @@ struct GenericInference<'a> {
     propagation_families: HashMap<crate::Location, PropagationFamily>,
     not_families: HashMap<crate::Location, NotFamily>,
     failure_location: Option<crate::Location>,
+    failure_expected_location: Option<crate::Location>,
+    enum_failure: Option<EnumInferenceFailure>,
     checking_named_pairs: HashSet<(String, String)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnumInferenceFailureKind {
+    IllegalVariant,
+    MissingContext,
+    Payload,
+}
+
+#[derive(Clone, Debug)]
+struct EnumInferenceFailure {
+    kind: EnumInferenceFailureKind,
+    expected_name: String,
 }
 
 #[derive(Clone)]
@@ -6860,12 +6908,49 @@ impl<'a> GenericInference<'a> {
             propagation_families: HashMap::new(),
             not_families: HashMap::new(),
             failure_location: None,
+            failure_expected_location: None,
+            enum_failure: None,
             checking_named_pairs: HashSet::new(),
         }
     }
 
     fn take_failure_location(&mut self, fallback: crate::Location) -> crate::Location {
         self.failure_location.take().unwrap_or(fallback)
+    }
+
+    fn take_failure_diagnostic(
+        &mut self,
+        fallback: crate::Location,
+        message: String,
+        expected_location: Option<crate::Location>,
+    ) -> Diagnostic {
+        let location = self.take_failure_location(fallback);
+        let expected_location = self.failure_expected_location.take().or(expected_location);
+        let Some(failure) = self.enum_failure.take() else {
+            return Diagnostic::error(message, location);
+        };
+        let mut diagnostic = Diagnostic::error(message, location);
+        if let Some(expected_location) = expected_location
+            && expected_location != location
+        {
+            diagnostic = diagnostic.with_secondary(
+                format!("expected type {} required here", failure.expected_name),
+                expected_location,
+            );
+        }
+        if failure.kind == EnumInferenceFailureKind::MissingContext {
+            diagnostic = diagnostic.with_note(format!(
+                "consider annotating the direct definition or collection as {}",
+                failure.expected_name
+            ));
+        }
+        diagnostic
+    }
+
+    fn record_failure_expected_location(&mut self, location: Option<crate::Location>) {
+        if self.enum_failure.is_some() && self.failure_expected_location.is_none() {
+            self.failure_expected_location = location;
+        }
     }
 
     fn declared_body<'b>(&'b self, declared: &'b DeclaredTypeDescriptor) -> &'b TypeDescriptor {
@@ -8103,6 +8188,105 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn collect_narrow_enum_variants(
+        &self,
+        descriptor: &TypeDescriptor,
+        variants: &mut Vec<(String, Option<TypeDescriptor>)>,
+    ) -> bool {
+        match self.expose_named(descriptor) {
+            TypeDescriptor::Atom(tag) => {
+                variants.push((tag.name().to_owned(), None));
+                true
+            }
+            TypeDescriptor::Tagged { tag, payload } => {
+                variants.push((tag.name().to_owned(), Some(*payload)));
+                true
+            }
+            TypeDescriptor::Union(items) => items
+                .iter()
+                .all(|item| self.collect_narrow_enum_variants(item, variants)),
+            _ => false,
+        }
+    }
+
+    fn enum_assignment_failure(
+        &self,
+        actual: &TypeDescriptor,
+        declared: &DeclaredTypeDescriptor,
+    ) -> Option<(EnumInferenceFailure, String)> {
+        let TypeDescriptor::Enum(expected_variants) = self.declared_body(declared) else {
+            return None;
+        };
+        let mut actual_variants = Vec::new();
+        if !self.collect_narrow_enum_variants(actual, &mut actual_variants)
+            || actual_variants.is_empty()
+        {
+            return None;
+        }
+        actual_variants.sort_by(|left, right| left.0.cmp(&right.0));
+        actual_variants.dedup();
+        let expected_name = declared.name.clone();
+        for (tag, _) in &actual_variants {
+            if !expected_variants.contains_key(tag) {
+                return Some((
+                    EnumInferenceFailure {
+                        kind: EnumInferenceFailureKind::IllegalVariant,
+                        expected_name: expected_name.clone(),
+                    },
+                    format!("variant '{tag} is not part of {expected_name}"),
+                ));
+            }
+        }
+        for (tag, actual_payload) in &actual_variants {
+            let expected_payload = &expected_variants[tag];
+            let mismatch = match (actual_payload, expected_payload) {
+                (None, None) => None,
+                (None, Some(_)) => Some(format!("variant '{tag} requires a payload")),
+                (Some(_), None) => Some(format!("variant '{tag} does not accept a payload")),
+                (Some(actual), Some(expected)) => {
+                    let actual = erase_declared_identity(actual);
+                    let expected = erase_declared_identity(expected);
+                    incompatibility_path(&actual, &expected).map(|path| {
+                        let actual_leaf = type_at_path(&actual, &path).unwrap_or(&actual);
+                        let expected_leaf = type_at_path(&expected, &path).unwrap_or(&expected);
+                        let path = display_type_path(&path);
+                        format!(
+                            "variant '{tag} payload is incompatible with {expected_name}{path}: expected {}, found {}",
+                            expected_leaf.display_name(),
+                            actual_leaf.display_name()
+                        )
+                    })
+                }
+            };
+            if let Some(message) = mismatch {
+                return Some((
+                    EnumInferenceFailure {
+                        kind: EnumInferenceFailureKind::Payload,
+                        expected_name,
+                    },
+                    message,
+                ));
+            }
+        }
+        let variants = actual_variants
+            .iter()
+            .map(|(tag, _)| format!("'{tag}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let noun = if actual_variants.len() == 1 {
+            "variant"
+        } else {
+            "variants"
+        };
+        Some((
+            EnumInferenceFailure {
+                kind: EnumInferenceFailureKind::MissingContext,
+                expected_name: expected_name.clone(),
+            },
+            format!("value was inferred as narrower {noun} {variants}; expected {expected_name}"),
+        ))
+    }
+
     fn check(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
         let completed_actual = self.complete_declared(actual);
         let completed_expected = self.complete_declared(expected);
@@ -8150,6 +8334,10 @@ impl<'a> GenericInference<'a> {
             }
             if matches!(actual, TypeDescriptor::Inference(_)) {
                 return self.unify(actual, &TypeDescriptor::Declared(expected.clone()));
+            }
+            if let Some((failure, message)) = self.enum_assignment_failure(actual, expected) {
+                self.enum_failure = Some(failure);
+                return Err(message);
             }
             return Err(format!(
                 "cannot unify {} with {}",
@@ -8498,6 +8686,70 @@ impl<'a> GenericInference<'a> {
         Ok(())
     }
 
+    fn narrow_value_origin(&self, expression: &Expr) -> crate::Location {
+        if !matches!(expression.value, ExprKind::Variable(_)) {
+            return expression.location;
+        }
+        self.hir
+            .expression_ids_at(expression.location)
+            .filter_map(|id| self.hir.expression(id))
+            .filter_map(|expression| expression.reference)
+            .filter_map(|id| self.hir.reference(id))
+            .find_map(|reference| match reference.resolution {
+                HirResolution::Definition(id) => self
+                    .hir
+                    .definition(id)
+                    .and_then(|definition| definition.value)
+                    .and_then(|value| self.hir.expression(value))
+                    .map(|expression| expression.location),
+                HirResolution::External | HirResolution::Unresolved => None,
+            })
+            .unwrap_or(expression.location)
+    }
+
+    fn direct_enum_failure(
+        &self,
+        expression: &Expr,
+        declared: &DeclaredTypeDescriptor,
+        inner_message: &str,
+    ) -> Option<(EnumInferenceFailure, String)> {
+        let TypeDescriptor::Enum(variants) = self.declared_body(declared) else {
+            return None;
+        };
+        let tag = match &expression.value {
+            ExprKind::Atom(name) => name.as_str(),
+            ExprKind::Call { callee, .. } => match &callee.value {
+                ExprKind::Atom(name) => name.as_str(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let expected_name = declared.name.clone();
+        if !variants.contains_key(tag) {
+            return Some((
+                EnumInferenceFailure {
+                    kind: EnumInferenceFailureKind::IllegalVariant,
+                    expected_name: expected_name.clone(),
+                },
+                format!("variant '{tag} is not part of {expected_name}"),
+            ));
+        }
+        let type_failure = inner_message.contains("cannot unify")
+            || inner_message.contains("not assignable")
+            || inner_message.contains("payload");
+        type_failure.then(|| {
+            (
+                EnumInferenceFailure {
+                    kind: EnumInferenceFailureKind::Payload,
+                    expected_name: expected_name.clone(),
+                },
+                format!(
+                    "variant '{tag} payload is incompatible with {expected_name}: {inner_message}"
+                ),
+            )
+        })
+    }
+
     fn infer(
         &mut self,
         expression: &Expr,
@@ -8515,8 +8767,28 @@ impl<'a> GenericInference<'a> {
             .as_ref()
             .filter(|_| constructs_declared_value)
             .map(|declared| declared.body.as_ref());
-        let result = self.infer_inner(expression, environment, structural_expected.or(expected));
-        let result = result.map(|inferred| {
+        let mut result =
+            self.infer_inner(expression, environment, structural_expected.or(expected));
+        if let Err(message) = &result
+            && self.enum_failure.is_none()
+            && let Some(declared) = expected_declared.as_ref()
+            && let Some((failure, replacement)) =
+                self.direct_enum_failure(expression, declared, message)
+        {
+            self.enum_failure = Some(failure);
+            result = Err(replacement);
+        }
+        if result.is_err() && self.failure_location.is_none() {
+            self.failure_location = Some(
+                self.enum_failure
+                    .as_ref()
+                    .filter(|failure| failure.kind == EnumInferenceFailureKind::MissingContext)
+                    .map_or(expression.location, |_| {
+                        self.narrow_value_origin(expression)
+                    }),
+            );
+        }
+        result.map(|inferred| {
             let Some(declared) = expected_declared else {
                 return inferred;
             };
@@ -8532,11 +8804,7 @@ impl<'a> GenericInference<'a> {
             let declared = TypeDescriptor::Declared(declared);
             self.records.insert(expression.location, declared.clone());
             declared
-        });
-        if result.is_err() && self.failure_location.is_none() {
-            self.failure_location = Some(expression.location);
-        }
-        result
+        })
     }
 
     fn infer_authored_boundary(
@@ -9980,6 +10248,28 @@ impl<'a> GenericInference<'a> {
             };
             if is_delayed {
                 self.delayed_initializer_depth -= 1;
+            }
+            if inferred.is_err() {
+                let expected_location = binding
+                    .value
+                    .annotation
+                    .as_ref()
+                    .map(|annotation| annotation.location)
+                    .or_else(|| {
+                        block.value.bindings.iter().find_map(|candidate| {
+                            (candidate.value.kind == BindingKind::Decl
+                                && candidate.value.name.value == binding.value.name.value)
+                                .then(|| {
+                                    candidate
+                                        .value
+                                        .annotation
+                                        .as_ref()
+                                        .map(|annotation| annotation.location)
+                                })
+                                .flatten()
+                        })
+                    });
+                self.record_failure_expected_location(expected_location);
             }
             let inferred = inferred?;
             if matches!(
@@ -12175,6 +12465,31 @@ fn incompatibility_path(actual: &TypeDescriptor, expected: &TypeDescriptor) -> O
     visit(actual, expected, &mut path).then_some(path)
 }
 
+fn type_at_path<'a>(
+    descriptor: &'a TypeDescriptor,
+    path: &[ValuePathSegment],
+) -> Option<&'a TypeDescriptor> {
+    let mut descriptor = descriptor;
+    for segment in path {
+        descriptor = match (segment, descriptor) {
+            (ValuePathSegment::Key(name), TypeDescriptor::Struct(fields)) => fields.get(name)?,
+            (ValuePathSegment::Index(index), TypeDescriptor::Tuple(items)) => items.get(*index)?,
+            (_, TypeDescriptor::Array(item) | TypeDescriptor::Dict(item)) => item,
+            _ => return None,
+        };
+    }
+    Some(descriptor)
+}
+
+fn display_type_path(path: &[ValuePathSegment]) -> String {
+    path.iter()
+        .map(|segment| match segment {
+            ValuePathSegment::Key(name) => format!(".{name}"),
+            ValuePathSegment::Index(index) => format!("[{index}]"),
+        })
+        .collect()
+}
+
 fn expression_location_at_path(
     expression: &Expr,
     path: &[ValuePathSegment],
@@ -13089,7 +13404,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            conflict.message.contains("cannot unify"),
+            conflict
+                .message
+                .contains("variant 'Base is not part of ForeignId"),
             "{}",
             conflict.message
         );
@@ -14766,7 +15083,9 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            conflict.message.contains("Foreign") && conflict.message.contains("enum {A, B}"),
+            conflict
+                .message
+                .contains("variant 'Foreign is not part of Node"),
             "{}",
             conflict.message
         );

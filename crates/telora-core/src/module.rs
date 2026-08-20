@@ -5531,8 +5531,8 @@ export def output: Expr = raw;"#,
             .load_module(&main, BTreeMap::new())
             .unwrap_err();
         assert!(
-            frozen.message().contains("cannot unify")
-                || frozen.message().contains("not assignable"),
+            frozen.message().contains("inferred as narrower variant")
+                && frozen.message().contains("expected Expr"),
             "{}",
             frozen.message()
         );
@@ -5551,6 +5551,95 @@ export def output: Expr = 'Missing;"#,
             "{}",
             illegal.message()
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn declared_enum_failures_are_named_sourced_and_actionable() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        let recover = |source: &str, expected: &str| {
+            fs::write(&main, source).unwrap();
+            let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+            snapshot
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.message == expected)
+                .cloned()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing diagnostic {expected:?}; found {:#?}",
+                        snapshot.diagnostics()
+                    )
+                })
+        };
+
+        let illegal = r#"type Expr = enum { 'Column(String) };
+export def output: Expr = 'Missing;"#;
+        let diagnostic = recover(illegal, "variant 'Missing is not part of Expr");
+        assert_eq!(diagnostic.labels.len(), 2);
+        assert_eq!(
+            diagnostic.labels[0].location.range(),
+            illegal.find("'Missing").unwrap()..illegal.find("'Missing").unwrap() + "'Missing".len()
+        );
+        let expected = illegal.rfind("Expr").unwrap();
+        assert_eq!(
+            diagnostic.labels[1].location.range(),
+            expected..expected + "Expr".len()
+        );
+        assert!(diagnostic.notes.is_empty());
+        assert!(!diagnostic.message.contains("enum {"));
+
+        let narrow = r#"type Expr = enum { 'All, 'Column(String) };
+def raw = 'Column("id");
+export def output: Expr = raw;"#;
+        let diagnostic = recover(
+            narrow,
+            "value was inferred as narrower variant 'Column; expected Expr",
+        );
+        assert_eq!(diagnostic.labels.len(), 2);
+        let origin = narrow.find("'Column(\"id\")").unwrap();
+        assert_eq!(
+            diagnostic.labels[0].location.range(),
+            origin..origin + "'Column(\"id\")".len()
+        );
+        assert_eq!(
+            diagnostic.notes,
+            vec!["consider annotating the direct definition or collection as Expr".to_owned()]
+        );
+
+        let collection = r#"type Expr = enum { 'All, 'Column(String) };
+def raw = ['All, 'Column("id")];
+export def output: Array(Expr) = raw;"#;
+        let diagnostic = recover(
+            collection,
+            "value was inferred as narrower variants 'All | 'Column; expected Expr",
+        );
+        let origin = collection.find("['All, 'Column(\"id\")]").unwrap();
+        assert_eq!(
+            diagnostic.labels[0].location.range(),
+            origin..origin + "['All, 'Column(\"id\")]".len()
+        );
+        assert_eq!(
+            diagnostic.notes,
+            vec!["consider annotating the direct definition or collection as Expr".to_owned()]
+        );
+
+        let payload = r#"type Pair = struct {left: Int, right: Int};
+type Expr = enum { 'Compare(Pair) };
+export def output: Expr = 'Compare({left: 1, right: "wrong"});"#;
+        let diagnostic = recover(
+            payload,
+            "variant 'Compare payload is incompatible with Expr: field right: cannot unify String with Int",
+        );
+        assert_eq!(diagnostic.labels.len(), 2);
+        let mismatch = payload.find("\"wrong\"").unwrap();
+        assert_eq!(
+            diagnostic.labels[0].location.range(),
+            mismatch..mismatch + "\"wrong\"".len()
+        );
+        assert!(diagnostic.notes.is_empty());
+        assert!(!diagnostic.message.contains("enum {"));
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -191,6 +191,11 @@ impl Diagnostic {
         });
         self
     }
+
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
