@@ -17,7 +17,7 @@ export type State = ...;
 type Transition = Tuple([State, Array(rt.SystemEffect)]);
 type Reducer = Fn(State, rt.SystemEvent) -> Transition;
 type Initializer =
-    Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+    Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 
 export def config:
     Fn(rt.SystemOptions, rt.Env)
@@ -29,8 +29,8 @@ export def config:
 actions authored in the selected Main root. `Env` contains non-sensitive Host
 facts and invocation arguments. `config` returns the exact capabilities needed
 by this invocation and an initializer closure that captures all pure planning
-results. The Host prepares an immutable `SystemInjection`, loads Main normally,
-and calls the initializer with the injection and Main export record.
+results. The Host prepares immutable `SystemResources`, loads Main normally,
+and calls the initializer with the resources and Main export record.
 
 The CLI surface is:
 
@@ -78,7 +78,7 @@ type SystemCaps = struct {
 };
 
 type SrcItem(T) = struct { data: T, src: String };
-type SystemInjection = struct {
+type SystemResources = struct {
     data: Dict(SrcItem(Value)),
     texts: Dict(SrcItem(String)),
     vars: Dict(String),
@@ -92,8 +92,8 @@ source-backed `Value` graphs. `text_srcs` preserves both text and source name.
 Every name in `vars` is required; a missing variable fails capability
 preparation before Main or the initializer runs.
 
-`stdin: 'Text` reads stdin to EOF and places it in `SystemInjection.stdin`.
-`'Lined` leaves the injection field empty and emits
+`stdin: 'Text` reads stdin to EOF and places it in `SystemResources.stdin`.
+`'Lined` leaves the resources field empty and emits
 `'StdinLine('Some(line))` events followed by exactly one
 `'StdinLine('None)` at EOF. `'Initialize` always precedes these events.
 `'Null` neither injects stdin nor emits stdin events.
@@ -107,9 +107,9 @@ Repeated Main options preserve authored order. Option values remain immediate
 Telora values, wrapped as `Dyn` only at the heterogeneous Entry boundary. Main
 options are extracted before Main evaluation, but this RFC does not introduce
 dynamic or staged Main loading. Main top-level evaluation cannot observe the
-injection. An application that depends on invocation context exposes that
+resources. An application that depends on invocation context exposes that
 dependency explicitly, for example `main: Fn(Ctx) -> Plan`, and the Entry calls
-it with a context built from `SystemInjection` and captured `Env`.
+it with a context built from `SystemResources` and captured `Env`.
 
 ## Host lifecycle
 
@@ -119,16 +119,16 @@ The Host performs one deterministic lifecycle:
 2. extract the Main root's ordered option actions without evaluating Main;
 3. load Entry and validate its exact `MainType`, `State`, and `config` exports;
 4. call `config(options, env)` and retain the returned initializer closure;
-5. validate `SystemCaps` and prepare `SystemInjection`;
+5. validate `SystemCaps` and prepare `SystemResources`;
 6. load and evaluate Main once, then check its complete export record against
    `MainType`;
-7. call `initializer(injection, main)`;
+7. call `initializer(resources, main)`;
 8. inject `Initialize` and run the existing serial reducer/effect loop.
 
 The initializer closure stays in the retained Entry WorkWorld while the Host
-prepares the injection and Main. No arbitrary Host-owned Telora value is
+prepares the resources and Main. No arbitrary Host-owned Telora value is
 materialized. Existing WorkWorld/MainWorld relocation preserves closure,
-injection, Main, state, identity, and provenance.
+resources, Main, state, identity, and provenance.
 
 `config`, initializer, and reducer failures are Entry failures and remain
 outside the Entry program. The existing effect trust audit remains unchanged:
@@ -193,9 +193,9 @@ staging boundary.
 ## Implementation plan
 
 1. Replace `prepare`/`initialize` exports with the staged `config` export and
-   add the option, environment, caps, and injection protocol values.
+   add the option, environment, caps, and resources protocol values.
 2. Extract ordered Main options before Main evaluation, call `config`, retain
-   its initializer closure, prepare input injection, and call it with Main.
+   its initializer closure, prepare requested resources, and call it with Main.
 3. move the built-in Entry to `std/entry/default.entry.telora` and update its
    source and ABI.
 4. add `run-with`, define `run` as default selection, remove `run --entry`, and
@@ -212,7 +212,7 @@ staging boundary.
 - a custom `.entry.telora` module receives ordered Main options, Entry args,
   and platform facts.
 - requested data, text, variables, and text stdin are delivered only through
-  `SystemInjection`; unavailable resources fail before initializer invocation.
+  `SystemResources`; unavailable resources fail before initializer invocation.
 - lined stdin emits Initialize, lines, and exactly one EOF event in order.
 - child-process effects require `spawn_child`, and rejection commits no effect
   from the invalid batch.

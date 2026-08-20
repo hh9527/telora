@@ -47,7 +47,7 @@ type SrcItem(T) = struct {
     src: String,
 };
 
-type SystemInjection = struct {
+type SystemResources = struct {
     data: Dict(SrcItem(Value)),
     texts: Dict(SrcItem(String)),
     vars: Dict(String),
@@ -128,7 +128,7 @@ export {
     Stdin,
     SystemCaps,
     SrcItem,
-    SystemInjection,
+    SystemResources,
     ChildStdin,
     Stdout,
     Stdio,

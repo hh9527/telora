@@ -1736,7 +1736,7 @@ pub struct SourceItem<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SystemInjection {
+pub struct SystemResources {
     pub data: BTreeMap<String, SourceItem<String>>,
     pub texts: BTreeMap<String, SourceItem<String>>,
     pub vars: BTreeMap<String, String>,
@@ -1755,7 +1755,7 @@ pub enum SystemEvent {
 pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 pub trait RunHost {
-    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemInjection, String>>;
+    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemResources, String>>;
 
     fn spawn_stdio_child(
         &mut self,
@@ -1784,7 +1784,7 @@ pub struct RunOutcome {
 struct NoProcessRunHost;
 
 impl RunHost for NoProcessRunHost {
-    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemInjection, String>> {
+    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemResources, String>> {
         Box::pin(async move {
             if !caps.data_sources.is_empty()
                 || !caps.text_sources.is_empty()
@@ -1794,7 +1794,7 @@ impl RunHost for NoProcessRunHost {
             {
                 return Err("this Host does not provide initialization capabilities".into());
             }
-            Ok(SystemInjection {
+            Ok(SystemResources {
                 data: BTreeMap::new(),
                 texts: BTreeMap::new(),
                 vars: BTreeMap::new(),
@@ -2319,7 +2319,7 @@ impl Engine {
         let fulfilled = host.prepare(caps.clone()).await.map_err(|error| {
             ModuleError::new(format!("cannot satisfy Entry capabilities: {error}"))
         })?;
-        let injection = decode_system_injection(&mut loader.sources, &caps, fulfilled)?;
+        let resources = decode_system_resources(&mut loader.sources, &caps, fulfilled)?;
         let bindings = pending.begin_initialization()?;
 
         let (compiled_main_path, main_compiled) = match loader.compile_root(main_module, bindings) {
@@ -2396,10 +2396,10 @@ impl Engine {
         let (mut entry_world, main_argument) = entry_world
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let injection = make_system_injection(
+        let resources = make_system_resources(
             entry_world.heap_mut(),
             &entry.runtime.main.heap,
-            &injection,
+            &resources,
             value_owner.runtime(),
         )?;
         let initialized = invoke_world_function_in(
@@ -2408,7 +2408,7 @@ impl Engine {
             &entry.sources,
             entry_world,
             initializer,
-            &[injection, main_argument],
+            &[resources, main_argument],
             self.config.session_quota,
             Arc::clone(&self.debug_sink),
         )
@@ -4201,18 +4201,18 @@ fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String]) -> Val {
     runtime_record(heap, vec![("args", arguments), ("platform", platform)])
 }
 
-struct DecodedSystemInjection {
+struct DecodedSystemResources {
     data: BTreeMap<String, SourceItem<crate::DataWorld>>,
     texts: BTreeMap<String, SourceItem<String>>,
     vars: BTreeMap<String, String>,
     stdin: Option<String>,
 }
 
-fn decode_system_injection(
+fn decode_system_resources(
     sources: &mut SourceDatabase,
     caps: &SystemCaps,
-    injection: SystemInjection,
-) -> Result<DecodedSystemInjection, ModuleError> {
+    resources: SystemResources,
+) -> Result<DecodedSystemResources, ModuleError> {
     let exact_keys = |actual: &BTreeSet<_>, expected: &BTreeSet<_>, path: &str| {
         if actual == expected {
             Ok(())
@@ -4223,30 +4223,30 @@ fn decode_system_injection(
         }
     };
     exact_keys(
-        &injection.data.keys().cloned().collect(),
+        &resources.data.keys().cloned().collect(),
         &caps.data_sources.keys().cloned().collect(),
-        "SystemInjection.data",
+        "SystemResources.data",
     )?;
     exact_keys(
-        &injection.texts.keys().cloned().collect(),
+        &resources.texts.keys().cloned().collect(),
         &caps.text_sources.keys().cloned().collect(),
-        "SystemInjection.texts",
+        "SystemResources.texts",
     )?;
     exact_keys(
-        &injection.vars.keys().cloned().collect(),
+        &resources.vars.keys().cloned().collect(),
         &caps.vars.iter().cloned().collect(),
-        "SystemInjection.vars",
+        "SystemResources.vars",
     )?;
-    match (caps.stdin, injection.stdin.is_some()) {
+    match (caps.stdin, resources.stdin.is_some()) {
         (SystemStdin::Text, true) | (SystemStdin::Lined | SystemStdin::Null, false) => {}
         _ => {
             return Err(ModuleError::new(
-                "SystemInjection.stdin does not satisfy SystemCaps.stdin",
+                "SystemResources.stdin does not satisfy SystemCaps.stdin",
             ));
         }
     }
 
-    let data = injection
+    let data = resources
         .data
         .into_iter()
         .map(|(key, item)| {
@@ -4282,21 +4282,21 @@ fn decode_system_injection(
             ))
         })
         .collect::<Result<_, ModuleError>>()?;
-    Ok(DecodedSystemInjection {
+    Ok(DecodedSystemResources {
         data,
-        texts: injection.texts,
-        vars: injection.vars,
-        stdin: injection.stdin,
+        texts: resources.texts,
+        vars: resources.vars,
+        stdin: resources.stdin,
     })
 }
 
-fn make_system_injection(
+fn make_system_resources(
     heap: &mut Heap,
     main: &Heap,
-    injection: &DecodedSystemInjection,
+    resources: &DecodedSystemResources,
     value_owner: Val,
 ) -> Result<Val, ModuleError> {
-    let data = injection
+    let data = resources
         .data
         .iter()
         .map(|(key, item)| {
@@ -4313,7 +4313,7 @@ fn make_system_injection(
             ))
         })
         .collect::<Result<Vec<_>, ModuleError>>()?;
-    let texts = injection
+    let texts = resources
         .texts
         .iter()
         .map(|(key, item)| {
@@ -4325,12 +4325,12 @@ fn make_system_injection(
             )
         })
         .collect();
-    let vars = injection
+    let vars = resources
         .vars
         .iter()
         .map(|(name, value)| (name.clone(), runtime_string(heap, main, value)))
         .collect();
-    let stdin = match &injection.stdin {
+    let stdin = match &resources.stdin {
         Some(text) => {
             let text = runtime_string(heap, main, text);
             runtime_tagged(
@@ -6436,11 +6436,11 @@ type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
-    ({data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null}, fn(injection: rt.SystemInjection, main: MainType) {
+    ({data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null}, fn(resources: rt.SystemResources, main: MainType) {
         let reduce: Reducer = fn(state, event) {
             match event {
                 'Initialize => (state, ['Output("42"), 'Exit(0)]),

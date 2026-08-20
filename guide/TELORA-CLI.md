@@ -51,7 +51,7 @@ export def lowering_case = do {
   `.entry.telora` 结尾。它不能作为普通模块根，也不能被普通模块 import。
 - `run-with` 中 `--` 后的参数按顺序进入 `Env.args`。Main 顶层的 `option` action 按
   源码顺序进入 `SystemOptions`。Entry 的 `config(options, env)` 返回 capability 诉求
-  和 initializer；Host 按诉求构造 `SystemInjection`，再由 initializer 把环境数据显式
+  和 initializer；Host 按诉求构造 `SystemResources`，再由 initializer 把环境数据显式
   传给 Main。CLI 不提供 `--input`；Entry 负责解析参数，并通过 `SystemCaps` 请求具名
   JSON/YAML/TOML 数据源、文本源、必需环境变量、stdin 模式和 child-process 权限。
   `stdin: 'Text` 注入完整文本；`'Lined` 在 `Initialize` 后逐行产生 `StdinLine`，并以

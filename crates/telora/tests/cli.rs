@@ -41,7 +41,7 @@ fn write_entry(cwd: &Path, source: impl AsRef<str>) -> std::io::Result<()> {
     };
     let source = format!(
         r#"{source}
-type EntryInitializer = Fn(rt.SystemInjection, MainType) -> Tuple([
+type EntryInitializer = Fn(rt.SystemResources, MainType) -> Tuple([
     State,
     Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]),
 ]);
@@ -56,7 +56,7 @@ export def config:
             vars: [],
             stdin: 'Null,
         }},
-        fn(injection, main) {{ legacy_initialize(main) }},
+        fn(resources, main) {{ legacy_initialize(main) }},
     )
 }};"#
     );
@@ -1108,7 +1108,7 @@ type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = String;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
@@ -1120,8 +1120,8 @@ export def config:
                 vars: [],
                 stdin: 'Null,
             },
-            fn(injection, main) {
-                let item = injection.data.input;
+            fn(resources, main) {
+                let item = resources.data.input;
                 let output = match item.data {
                     'String(value) => value,
                     _ => fail!("expected JSON string", item.data),
@@ -1164,7 +1164,7 @@ type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = String;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 def object_name = fn(value) {
     match value {
         'Object(object) => match object.name {
@@ -1189,8 +1189,8 @@ export def config:
                 vars: [],
                 stdin: 'Null,
             },
-            fn(injection, main) {
-                let output = `\{object_name(injection.data.json.data)}|\{object_name(injection.data.yaml.data)}|\{object_name(injection.data.toml.data)}`;
+            fn(resources, main) {
+                let output = `\{object_name(resources.data.json.data)}|\{object_name(resources.data.yaml.data)}|\{object_name(resources.data.toml.data)}`;
                 (output, fn(state, event) {
                     match event {
                         'Initialize => (state, ['Output(state), 'Exit(0)]),
@@ -1220,13 +1220,13 @@ fn run_injects_text_environment_and_text_stdin() {
     fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
     fs::write(cwd.join("message.txt"), "from-file").unwrap();
     fs::write(
-        cwd.join("src/injection.entry.telora"),
+        cwd.join("src/resources.entry.telora"),
         r#"import "std/rt.priv.telora" as rt;
 type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = String;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
@@ -1238,12 +1238,12 @@ export def config:
                 vars: ["TELORA_TEST_VAR"],
                 stdin: 'Text,
             },
-            fn(injection, main) {
-                let input = match injection.stdin {
+            fn(resources, main) {
+                let input = match resources.stdin {
                     'Some(value) => value,
                     'None => fail!("missing text stdin"),
                 };
-                let output = `\{injection.texts.message.data}|\{injection.texts.message.src}|\{injection.vars.TELORA_TEST_VAR}|\{input}`;
+                let output = `\{resources.texts.message.data}|\{resources.texts.message.src}|\{resources.vars.TELORA_TEST_VAR}|\{input}`;
                 (output, fn(state, event) {
                     match event {
                         'Initialize => (state, ['Output(state), 'Exit(0)]),
@@ -1256,7 +1256,7 @@ export def config:
     )
     .unwrap();
     let mut child = telora(&cwd)
-        .args(["run-with", "@src/injection.entry.telora", "main"])
+        .args(["run-with", "@src/resources.entry.telora", "main"])
         .env("TELORA_TEST_VAR", "from-env")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1292,13 +1292,13 @@ type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
             {data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Lined},
-            fn(injection, main) {
+            fn(resources, main) {
                 (0, fn(state, event) {
                     match event {
                         'Initialize => (1, ['Output("initialize|")]),
@@ -1352,13 +1352,13 @@ type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = Int;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
             {data_srcs: {}, spawn_child: 'False, text_srcs: {missing: "missing.txt"}, vars: [], stdin: 'Null},
-            fn(injection, main) {
+            fn(resources, main) {
                 (0, fn(state, event) { (state, ['Output("initializer ran"), 'Exit(0)]) })
             },
         )
@@ -1608,7 +1608,7 @@ type Main = struct {marker: Int};
 export type MainType = Main;
 export type State = String;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
@@ -1627,7 +1627,7 @@ export def config:
         let configured = `\{first.key},\{second.key}:\{arg}:\{env.platform.os}:\{env.platform.arch}`;
         (
             {data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null},
-            fn(injection, main) {
+            fn(resources, main) {
                 (configured, fn(state, event) {
                     match event {
                         'Initialize => (state, ['Output(state), 'Exit(0)]),
@@ -1840,13 +1840,13 @@ type Main = struct {{marker: Int}};
 export type MainType = Main;
 export type State = Int;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {{
         (
             {{data_srcs: {{}}, spawn_child: 'False, text_srcs: {{}}, vars: [], stdin: 'Null}},
-            fn(injection, main) {{
+            fn(resources, main) {{
                 (0, fn(state, event) {{
                     (state, [
                         'Output("must not commit"),

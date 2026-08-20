@@ -12,7 +12,7 @@ type State = struct {
 type Transition = Tuple([State, Array(rt.SystemEffect)]);
 type Reducer = Fn(State, rt.SystemEvent) -> Transition;
 type Initializer =
-    Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+    Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
@@ -25,7 +25,7 @@ export def config:
                 vars: [],
                 stdin: 'Null,
             },
-            fn(injection, main) {
+            fn(resources, main) {
                 let state: State = {
                     output: main.output,
                     completed: 'False,

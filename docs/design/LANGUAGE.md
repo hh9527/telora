@@ -1080,10 +1080,10 @@ Host 选择 Main 和 Entry
   -> 固定依赖与 source snapshot
   -> 从 Main 顶层收集有序 SystemOptions，并构造含参数和平台事实的 Env
   -> 在准备 WorkWorld 调用 Entry.config(options, env)，取得 SystemCaps 和 initializer
-  -> Host 按 SystemCaps 准备 SystemInjection
+  -> Host 按 SystemCaps 准备 SystemResources
   -> 初始化 Main，并按 Entry.MainType 校验完整 export record
   -> 冻结 MainWorld
-  -> 在新的运行 WorkWorld 调用 initializer(injection, main)
+  -> 在新的运行 WorkWorld 调用 initializer(resources, main)
   -> 以 SystemEvent 驱动纯 reducer，解释返回的 SystemEffect
   -> 原子发布成功结果，或丢弃失败过程的候选结果
 ```
@@ -1187,7 +1187,7 @@ import "std/rt.priv.telora" as rt;
 export type MainType = ...;
 export type State = ...;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemInjection, MainType) -> Tuple([State, Reducer]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = ...;
@@ -1195,7 +1195,7 @@ export def config:
 
 `SystemOptions` 是 Main 顶层 `option` action 的有序序列。`Env` 包含 `--` 后的 Entry
 参数以及 OS/arch 平台事实。准备 WorkWorld 中的 `config` 返回经 Host
-校验的 `SystemCaps` 和 initializer；Host 根据 caps 构造 `SystemInjection`，随后初始化
+校验的 `SystemCaps` 和 initializer；Host 根据 caps 构造 `SystemResources`，随后初始化
 Main、按 `MainType` 校验完整 export record，再调用 initializer。所有环境上下文必须由
 initializer 显式传给 Main；CLI 不提供 `--input`，参数由 Entry 从 `Env.args` 解析。当前不进行分阶段或
 动态 Main 加载。运行阶段使用一系列 WorkWorld；
@@ -1221,7 +1221,7 @@ SystemCaps = {
     text_srcs: Dict(String), vars: Array(String), stdin: SystemStdin,
 }
 SrcItem(T) = { data: T, src: String }
-SystemInjection = {
+SystemResources = {
     data: Dict(SrcItem(Value)), texts: Dict(SrcItem(String)),
     vars: Dict(String), stdin: Option(String),
 }
@@ -1255,7 +1255,7 @@ SystemEffect = SpawnStdioChild(SpawnStdioChild)
              | Exit(Int)
 ```
 
-`Text` 在 initializer 前读到 EOF，并通过 `SystemInjection.stdin` 注入完整文本；
+`Text` 在 initializer 前读到 EOF，并通过 `SystemResources.stdin` 注入完整文本；
 `Lined` 不注入完整文本，而是在 `Initialize` 之后逐行发送不含换行符的 `Some`，EOF
 恰好发送一次 `None`；`Null` 不读取也不产生事件。`data_srcs` 由 engine 在同一 source
 database 中按 JSON/YAML/TOML 解析成带 provenance 的 `Value`，`text_srcs` 保留文本和

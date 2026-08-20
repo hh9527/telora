@@ -11,7 +11,7 @@ use telora_core::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
     DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
     PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SourceItem, SpawnStdioChild,
-    SystemCaps, SystemEvent, SystemInjection, SystemStdin, TextPosition, WorkspaceSnapshot,
+    SystemCaps, SystemEvent, SystemResources, SystemStdin, TextPosition, WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -377,7 +377,7 @@ fn exit_signal(_status: &std::process::ExitStatus) -> Option<i64> {
 }
 
 impl RunHost for ProcessRunHost {
-    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemInjection, String>> {
+    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemResources, String>> {
         Box::pin(async move {
             let mut data = BTreeMap::new();
             for (key, request) in &caps.data_sources {
@@ -464,7 +464,7 @@ impl RunHost for ProcessRunHost {
                 }
                 SystemStdin::Null => None,
             };
-            Ok(SystemInjection {
+            Ok(SystemResources {
                 data,
                 texts,
                 vars,

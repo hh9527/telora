@@ -52,7 +52,7 @@ pub use module::{
     ChildText, Engine, EngineBuilder, EngineConfig, InstantiatedModule, LoadedModule,
     LoadedOptionAction, ModuleError, NativeModuleSpec, PendingModule, RunHost, RunHostFuture,
     RunOutcome, RunTermination, SourceItem, SpawnStdioChild, SystemCaps, SystemDataFormat,
-    SystemDataSource, SystemEvent, SystemInjection, SystemStdin, evaluate_expression_module,
+    SystemDataSource, SystemEvent, SystemResources, SystemStdin, evaluate_expression_module,
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
