@@ -1214,11 +1214,12 @@ Entry reducer 接受单个
 
 ```text
 DataFormat = Json | Yaml | Toml
-DataSrc = { src: String, fmt: DataFormat }
+DataSrc = { default: Option(String), fmt: DataFormat, src: String }
+TextSrc = { default: Option(String), src: String }
 SystemStdin = Text | Lined | Null
 SystemCaps = {
     data_srcs: Dict(DataSrc), spawn_child: Bool,
-    text_srcs: Dict(String), vars: Array(String), stdin: SystemStdin,
+    text_srcs: Dict(TextSrc), vars: Array(String), stdin: SystemStdin,
 }
 SrcItem(T) = { data: T, src: String }
 SystemResources = {
@@ -1259,7 +1260,10 @@ SystemEffect = SpawnStdioChild(SpawnStdioChild)
 `Lined` 不注入完整文本，而是在 `Initialize` 之后逐行发送不含换行符的 `Some`，EOF
 恰好发送一次 `None`；`Null` 不读取也不产生事件。`data_srcs` 由 engine 在同一 source
 database 中按 JSON/YAML/TOML 解析成带 provenance 的 `Value`，`text_srcs` 保留文本和
-来源名，`vars` 中任一环境变量缺失都会在 Main/initializer 运行前失败。
+来源名。请求的文件不存在时，`default: 'Some(text)` 提供替代源文本，`'None` 则失败；
+其他 I/O 错误始终失败。数据文件只要存在，解析失败就直接报错，不使用默认值。
+`vars` 是环境变量快照诉求：不存在的名字从 `SystemResources.vars` 省略，存在但不能
+表示为字符串的值会在 Main/initializer 运行前失败。
 
 `spawn_child` 是 `SpawnStdioChild` 与 `PostStdin` 的显式权限。Host 在执行一批 effect
 中的任何一项前先审计整批；未授权时整批拒绝。`Exec` 是独立权限语义，不由

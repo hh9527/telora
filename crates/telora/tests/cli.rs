@@ -1114,7 +1114,7 @@ export def config:
     = fn(options, env) {
         (
             {
-                data_srcs: {input: {src: "input.json", fmt: 'Json}},
+                data_srcs: {input: {default: 'None, fmt: 'Json, src: "input.json"}},
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
@@ -1180,9 +1180,9 @@ export def config:
         (
             {
                 data_srcs: {
-                    json: {src: "input.json", fmt: 'Json},
-                    yaml: {src: "input.yaml", fmt: 'Yaml},
-                    toml: {src: "input.toml", fmt: 'Toml},
+                    json: {default: 'None, fmt: 'Json, src: "input.json"},
+                    yaml: {default: 'None, fmt: 'Yaml, src: "input.yaml"},
+                    toml: {default: 'None, fmt: 'Toml, src: "input.toml"},
                 },
                 spawn_child: 'False,
                 text_srcs: {},
@@ -1234,8 +1234,8 @@ export def config:
             {
                 data_srcs: {},
                 spawn_child: 'False,
-                text_srcs: {message: "message.txt"},
-                vars: ["TELORA_TEST_VAR"],
+                text_srcs: {message: {default: 'None, src: "message.txt"}},
+                vars: ["TELORA_TEST_VAR", "TELORA_TEST_MISSING_VAR"],
                 stdin: 'Text,
             },
             fn(resources, main) {
@@ -1258,6 +1258,7 @@ export def config:
     let mut child = telora(&cwd)
         .args(["run-with", "@src/resources.entry.telora", "main"])
         .env("TELORA_TEST_VAR", "from-env")
+        .env_remove("TELORA_TEST_MISSING_VAR")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1279,6 +1280,22 @@ export def config:
         String::from_utf8_lossy(&run.stdout),
         "from-file|message.txt|from-env|from-stdin"
     );
+
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = telora(&cwd)
+            .args(["run-with", "@src/resources.entry.telora", "main"])
+            .env("TELORA_TEST_VAR", "from-env")
+            .env("TELORA_TEST_MISSING_VAR", OsString::from_vec(vec![0xff]))
+            .output()
+            .unwrap();
+        assert!(!invalid.status.success());
+        assert!(invalid.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&invalid.stderr).contains("cannot read variable"));
+    }
 }
 
 #[test]
@@ -1357,7 +1374,7 @@ export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
-            {data_srcs: {}, spawn_child: 'False, text_srcs: {missing: "missing.txt"}, vars: [], stdin: 'Null},
+            {data_srcs: {}, spawn_child: 'False, text_srcs: {missing: {default: 'None, src: "missing.txt"}}, vars: [], stdin: 'Null},
             fn(resources, main) {
                 (0, fn(state, event) { (state, ['Output("initializer ran"), 'Exit(0)]) })
             },
@@ -1372,6 +1389,75 @@ export def config:
     assert!(!run.status.success());
     assert!(run.stdout.is_empty());
     assert!(String::from_utf8_lossy(&run.stderr).contains("cannot read text source"));
+}
+
+#[test]
+fn missing_sources_use_defaults_but_invalid_existing_data_fails() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(
+        cwd.join("src/defaults.entry.telora"),
+        r#"import "std/rt.priv.telora" as rt;
+type Main = struct {marker: Int};
+export type MainType = Main;
+export type State = String;
+type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
+type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
+export def config:
+    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
+    = fn(options, env) {
+        (
+            {
+                data_srcs: {
+                    input: {default: 'Some("\"from-default\""), fmt: 'Json, src: "input.json"},
+                },
+                spawn_child: 'False,
+                text_srcs: {
+                    message: {default: 'Some("text-default"), src: "message.txt"},
+                },
+                vars: [],
+                stdin: 'Null,
+            },
+            fn(resources, main) {
+                let data = match resources.data.input.data {
+                    'String(value) => value,
+                    _ => fail!("expected default JSON string"),
+                };
+                let output = `\{data}|\{resources.texts.message.data}`;
+                (output, fn(state, event) {
+                    match event {
+                        'Initialize => (state, ['Output(state), 'Exit(0)]),
+                        _ => fail!("unexpected event", event),
+                    }
+                })
+            },
+        )
+    };"#,
+    )
+    .unwrap();
+
+    let defaulted = telora(&cwd)
+        .args(["run-with", "@src/defaults.entry.telora", "main"])
+        .output()
+        .unwrap();
+    assert!(
+        defaulted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&defaulted.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&defaulted.stdout),
+        "from-default|text-default"
+    );
+
+    fs::write(cwd.join("input.json"), "{").unwrap();
+    let invalid = telora(&cwd)
+        .args(["run-with", "@src/defaults.entry.telora", "main"])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(invalid.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("input.json"));
 }
 
 #[test]

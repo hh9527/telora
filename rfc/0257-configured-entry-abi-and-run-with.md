@@ -66,13 +66,16 @@ type Env = struct {
 };
 
 type DataFormat = enum { 'Json, 'Yaml, 'Toml };
-type DataSrc = struct { src: String, fmt: DataFormat };
+type DataSrc = struct {
+    default: Option(String), fmt: DataFormat, src: String,
+};
+type TextSrc = struct { default: Option(String), src: String };
 type Stdin = enum { 'Text, 'Lined, 'Null };
 
 type SystemCaps = struct {
     data_srcs: Dict(DataSrc),
     spawn_child: Bool,
-    text_srcs: Dict(String),
+    text_srcs: Dict(TextSrc),
     vars: Array(String),
     stdin: Stdin,
 };
@@ -89,8 +92,13 @@ type SystemResources = struct {
 `data_srcs` requests named JSON, YAML, or TOML sources. The Host reads them,
 the engine parses them in the run's source database, and the initializer sees
 source-backed `Value` graphs. `text_srcs` preserves both text and source name.
-Every name in `vars` is required; a missing variable fails capability
-preparation before Main or the initializer runs.
+If a requested file is absent, `'Some(default)` supplies source text while
+`'None` fails capability preparation. Other I/O failures always fail. An
+existing data file that cannot be parsed never falls back to its default.
+
+`vars` is a requested snapshot, not a list of required variables. Missing
+names are omitted from `SystemResources.vars`; values present in the process
+environment but not representable as strings fail capability preparation.
 
 `stdin: 'Text` reads stdin to EOF and places it in `SystemResources.stdin`.
 `'Lined` leaves the resources field empty and emits
@@ -212,7 +220,9 @@ staging boundary.
 - a custom `.entry.telora` module receives ordered Main options, Entry args,
   and platform facts.
 - requested data, text, variables, and text stdin are delivered only through
-  `SystemResources`; unavailable resources fail before initializer invocation.
+  `SystemResources`; absent variables are omitted, absent files use explicit
+  defaults, and unavailable files without defaults fail before initialization.
+- existing malformed data files fail instead of falling back to defaults.
 - lined stdin emits Initialize, lines, and exactly one EOF event in order.
 - child-process effects require `spawn_child`, and rejection commits no effect
   from the invalid batch.

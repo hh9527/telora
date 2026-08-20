@@ -24,8 +24,14 @@ type DataFormat = enum {
 };
 
 type DataSrc = struct {
-    src: String,
+    default: Option(String),
     fmt: DataFormat,
+    src: String,
+};
+
+type TextSrc = struct {
+    default: Option(String),
+    src: String,
 };
 
 type Stdin = enum {
@@ -37,7 +43,7 @@ type Stdin = enum {
 type SystemCaps = struct {
     data_srcs: Dict(DataSrc),
     spawn_child: Bool,
-    text_srcs: Dict(String),
+    text_srcs: Dict(TextSrc),
     vars: Array(String),
     stdin: Stdin,
 };
@@ -125,6 +131,7 @@ export {
     Env,
     DataFormat,
     DataSrc,
+    TextSrc,
     Stdin,
     SystemCaps,
     SrcItem,

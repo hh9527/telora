@@ -381,11 +381,20 @@ impl RunHost for ProcessRunHost {
         Box::pin(async move {
             let mut data = BTreeMap::new();
             for (key, request) in &caps.data_sources {
-                let source = tokio::fs::read_to_string(&request.src)
-                    .await
-                    .map_err(|error| {
-                        format!("cannot read data source {:?}: {error}", request.src)
-                    })?;
+                let source = match tokio::fs::read_to_string(&request.src).await {
+                    Ok(source) => source,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        request.default.clone().ok_or_else(|| {
+                            format!("cannot read data source {:?}: {error}", request.src)
+                        })?
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot read data source {:?}: {error}",
+                            request.src
+                        ));
+                    }
+                };
                 data.insert(
                     key.clone(),
                     SourceItem {
@@ -395,25 +404,36 @@ impl RunHost for ProcessRunHost {
                 );
             }
             let mut texts = BTreeMap::new();
-            for (key, path) in &caps.text_sources {
-                let source = tokio::fs::read_to_string(path)
-                    .await
-                    .map_err(|error| format!("cannot read text source {path:?}: {error}"))?;
+            for (key, request) in &caps.text_sources {
+                let source = match tokio::fs::read_to_string(&request.src).await {
+                    Ok(source) => source,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        request.default.clone().ok_or_else(|| {
+                            format!("cannot read text source {:?}: {error}", request.src)
+                        })?
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot read text source {:?}: {error}",
+                            request.src
+                        ));
+                    }
+                };
                 texts.insert(
                     key.clone(),
                     SourceItem {
                         data: source,
-                        src: path.clone(),
+                        src: request.src.clone(),
                     },
                 );
             }
             let vars = caps
                 .vars
                 .iter()
-                .map(|name| {
-                    env::var(name)
-                        .map(|value| (name.clone(), value))
-                        .map_err(|error| format!("cannot read required variable {name:?}: {error}"))
+                .filter_map(|name| match env::var(name) {
+                    Ok(value) => Some(Ok((name.clone(), value))),
+                    Err(env::VarError::NotPresent) => None,
+                    Err(error) => Some(Err(format!("cannot read variable {name:?}: {error}"))),
                 })
                 .collect::<Result<BTreeMap<_, _>, _>>()?;
             let stdin = match caps.stdin {

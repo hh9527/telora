@@ -1711,6 +1711,13 @@ pub enum SystemDataFormat {
 pub struct SystemDataSource {
     pub src: String,
     pub format: SystemDataFormat,
+    pub default: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemTextSource {
+    pub src: String,
+    pub default: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1724,7 +1731,7 @@ pub enum SystemStdin {
 pub struct SystemCaps {
     pub data_sources: BTreeMap<String, SystemDataSource>,
     pub spawn_child: bool,
-    pub text_sources: BTreeMap<String, String>,
+    pub text_sources: BTreeMap<String, SystemTextSource>,
     pub vars: Vec<String>,
     pub stdin: SystemStdin,
 }
@@ -3970,7 +3977,12 @@ fn validate_entry_interface(
     ]));
     let data_format = unit_enum(&["Json", "Toml", "Yaml"]);
     let data_source = TypeDescriptor::Struct(BTreeMap::from([
+        ("default".into(), option_string.clone()),
         ("fmt".into(), data_format),
+        ("src".into(), TypeDescriptor::String),
+    ]));
+    let text_source = TypeDescriptor::Struct(BTreeMap::from([
+        ("default".into(), option_string.clone()),
         ("src".into(), TypeDescriptor::String),
     ]));
     let stdin = unit_enum(&["Lined", "Null", "Text"]);
@@ -3983,7 +3995,7 @@ fn validate_entry_interface(
         ("stdin".into(), stdin),
         (
             "text_srcs".into(),
-            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
+            TypeDescriptor::Dict(Box::new(text_source)),
         ),
         (
             "vars".into(),
@@ -3996,7 +4008,7 @@ fn validate_entry_interface(
             ("src".into(), TypeDescriptor::String),
         ]))
     };
-    let injection_type = TypeDescriptor::Struct(BTreeMap::from([
+    let resources_type = TypeDescriptor::Struct(BTreeMap::from([
         (
             "data".into(),
             TypeDescriptor::Dict(Box::new(source_item(value_type.clone()))),
@@ -4095,7 +4107,7 @@ fn validate_entry_interface(
         result: Box::new(transition_type),
     };
     let initializer_type = TypeDescriptor::Function {
-        parameters: vec![injection_type, main_type.clone()],
+        parameters: vec![resources_type, main_type.clone()],
         result: Box::new(TypeDescriptor::Tuple(vec![
             state_type.clone(),
             reducer_type,
@@ -4232,11 +4244,16 @@ fn decode_system_resources(
         &caps.text_sources.keys().cloned().collect(),
         "SystemResources.texts",
     )?;
-    exact_keys(
-        &resources.vars.keys().cloned().collect(),
-        &caps.vars.iter().cloned().collect(),
-        "SystemResources.vars",
-    )?;
+    let requested_vars = caps.vars.iter().cloned().collect::<BTreeSet<_>>();
+    if !resources
+        .vars
+        .keys()
+        .all(|name| requested_vars.contains(name))
+    {
+        return Err(ModuleError::new(
+            "SystemResources.vars contains an unrequested capability key",
+        ));
+    }
     match (caps.stdin, resources.stdin.is_some()) {
         (SystemStdin::Text, true) | (SystemStdin::Lined | SystemStdin::Null, false) => {}
         _ => {
@@ -4377,7 +4394,11 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
         .into_iter()
         .map(|key| {
             let path = format!("SystemCaps.data_srcs.{key}");
-            let value = expect_protocol_record_ref(data.get(key).unwrap(), &path, &["fmt", "src"])?;
+            let value = expect_protocol_record_ref(
+                data.get(key).unwrap(),
+                &path,
+                &["default", "fmt", "src"],
+            )?;
             let format = match protocol_ref(value.get("fmt").unwrap()).as_atom().as_deref() {
                 Some("Json") => SystemDataFormat::Json,
                 Some("Yaml") => SystemDataFormat::Yaml,
@@ -4385,12 +4406,23 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
                 _ => return Err(ModuleError::new(format!("{path}.fmt is invalid"))),
             };
             let src = protocol_string_ref(value.get("src").unwrap(), &format!("{path}.src"))?;
+            let default = protocol_option_string_ref(
+                value.get("default").unwrap(),
+                &format!("{path}.default"),
+            )?;
             if key.is_empty() || src.is_empty() {
                 return Err(ModuleError::new(format!(
                     "{path} must use non-empty key and src"
                 )));
             }
-            Ok((key.to_owned(), SystemDataSource { src, format }))
+            Ok((
+                key.to_owned(),
+                SystemDataSource {
+                    src,
+                    format,
+                    default,
+                },
+            ))
         })
         .collect::<Result<_, _>>()?;
 
@@ -4398,16 +4430,20 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
     let text_sources = text_keys
         .into_iter()
         .map(|key| {
-            let src = protocol_string_ref(
-                texts.get(key).unwrap(),
-                &format!("SystemCaps.text_srcs.{key}"),
+            let path = format!("SystemCaps.text_srcs.{key}");
+            let value =
+                expect_protocol_record_ref(texts.get(key).unwrap(), &path, &["default", "src"])?;
+            let src = protocol_string_ref(value.get("src").unwrap(), &format!("{path}.src"))?;
+            let default = protocol_option_string_ref(
+                value.get("default").unwrap(),
+                &format!("{path}.default"),
             )?;
             if key.is_empty() || src.is_empty() {
                 return Err(ModuleError::new(
                     "SystemCaps.text_srcs must use non-empty keys and paths",
                 ));
             }
-            Ok((key.to_owned(), src))
+            Ok((key.to_owned(), SystemTextSource { src, default }))
         })
         .collect::<Result<_, _>>()?;
 
