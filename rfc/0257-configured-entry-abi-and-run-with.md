@@ -29,8 +29,10 @@ export def config:
 actions authored in the selected Main root. `Env` contains non-sensitive Host
 facts and invocation arguments. `config` returns the exact capabilities needed
 by this invocation and an initializer closure that captures all pure planning
-results. The Host prepares immutable `SystemResources`, loads Main normally,
-and calls the initializer with the resources and Main export record.
+results. The Host supplies a private native resource provider. After loading
+Main normally, the engine invokes that provider inside the retained Entry
+WorkWorld and passes its `SystemResources` result directly to the initializer;
+the resource value never returns to Host orchestration.
 
 The CLI surface is:
 
@@ -67,7 +69,7 @@ type Env = struct {
 
 type DataFormat = enum { 'Json, 'Yaml, 'Toml };
 type DataSrc = struct {
-    default: Option(String), fmt: DataFormat, src: String,
+    default: Option(Value), fmt: DataFormat, src: String,
 };
 type TextSrc = struct { default: Option(String), src: String };
 type Stdin = enum { 'Text, 'Lined, 'Null };
@@ -89,12 +91,15 @@ type SystemResources = struct {
 };
 ```
 
-`data_srcs` requests named JSON, YAML, or TOML sources. The Host reads them,
-the engine parses them in the run's source database, and the initializer sees
-source-backed `Value` graphs. `text_srcs` preserves both text and source name.
-If a requested file is absent, `'Some(default)` supplies source text while
-`'None` fails capability preparation. Other I/O failures always fail. An
-existing data file that cannot be parsed never falls back to its default.
+`data_srcs` requests named JSON, YAML, or TOML sources. The private Host native
+uses the same static-data frontends as JSON/YAML/TOML imports and constructs
+source-backed `Value` graphs directly in the Entry WorkWorld. It also constructs
+the complete `SystemResources`; `text_srcs` preserves both text and source name.
+If a requested data file is absent, `'Some(default)` supplies an already typed
+`Value` while `'None` fails capability preparation. The default is not parsed
+according to `fmt`. Text defaults remain strings. Other I/O failures always
+fail. An existing data file that cannot be parsed never falls back to its
+default.
 
 `vars` is a requested snapshot, not a list of required variables. Missing
 names are omitted from `SystemResources.vars`; values present in the process
@@ -127,16 +132,19 @@ The Host performs one deterministic lifecycle:
 2. extract the Main root's ordered option actions without evaluating Main;
 3. load Entry and validate its exact `MainType`, `State`, and `config` exports;
 4. call `config(options, env)` and retain the returned initializer closure;
-5. validate `SystemCaps` and prepare `SystemResources`;
+5. validate `SystemCaps` and configure event-producing Host capabilities;
 6. load and evaluate Main once, then check its complete export record against
    `MainType`;
-7. call `initializer(resources, main)`;
+7. in one VM runner call, invoke the private resource native and pass its
+   `SystemResources` result directly to `initializer(resources, main)`;
 8. inject `Initialize` and run the existing serial reducer/effect loop.
 
 The initializer closure stays in the retained Entry WorkWorld while the Host
-prepares the resources and Main. No arbitrary Host-owned Telora value is
-materialized. Existing WorkWorld/MainWorld relocation preserves closure,
-resources, Main, state, identity, and provenance.
+configures event sources and Main is loaded. `SystemResources` is created in
+that same WorkWorld and remains a VM register/heap value between the private
+native and initializer. It is never decoded, mirrored, or rebuilt as a
+Host-owned Telora value. Existing WorkWorld/MainWorld relocation preserves
+closure, resources, Main, state, identity, and provenance.
 
 `config`, initializer, and reducer failures are Entry failures and remain
 outside the Entry program. The existing effect trust audit remains unchanged:

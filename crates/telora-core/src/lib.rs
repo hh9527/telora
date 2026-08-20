@@ -51,10 +51,9 @@ pub use module::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildStdio,
     ChildText, Engine, EngineBuilder, EngineConfig, InstantiatedModule, LoadedModule,
     LoadedOptionAction, ModuleError, NativeModuleSpec, PendingModule, RunHost, RunHostFuture,
-    RunOutcome, RunTermination, SourceItem, SpawnStdioChild, SystemCaps, SystemDataFormat,
-    SystemDataSource, SystemEvent, SystemResources, SystemStdin, SystemTextSource,
-    evaluate_expression_module, evaluate_expression_module_with_quota,
-    evaluate_expression_module_with_quota_and_debug_sink,
+    RunOutcome, RunTermination, SpawnStdioChild, SystemCaps, SystemDataFormat, SystemDataSource,
+    SystemEvent, SystemStdin, SystemTextSource, evaluate_expression_module,
+    evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
     FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleAuthority, ModuleCName, ModuleCatalogEntry,

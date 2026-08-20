@@ -1419,44 +1419,62 @@ fn invoke_world_member_in(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn invoke_world_function_in(
+fn prepare_and_initialize_entry_in(
     main: &Heap,
     externals: &HashMap<String, Val>,
     sources: &SourceDatabase,
     world: WorkWorld,
-    function: Val,
-    runtime_arguments: &[Val],
+    provider: Val,
+    caps: Val,
+    value_owner: Val,
+    initializer: Val,
+    main_argument: Val,
     quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
 ) -> Result<WorkWorld, ModuleError> {
-    let argument_count = runtime_arguments.len();
-    let base = argument_count + 2;
-    let mut instructions = vec![Instruction::Move {
-        dst: Register(base),
-        src: Register(1),
-    }];
-    instructions.extend((0..argument_count).map(|index| Instruction::Move {
-        dst: Register(base + 1 + index),
-        src: Register(2 + index),
-    }));
-    instructions.push(Instruction::Call {
-        base: Register(base),
-        argument_count,
-    });
-    instructions.push(Instruction::Return {
-        src: Register(base),
-    });
     let wrapper = BytecodeFunction::with_signature(
-        "<invoke Entry initializer>",
-        argument_count + 2,
+        "<prepare resources and invoke Entry initializer>",
+        6,
         0,
-        base + argument_count + 1,
+        12,
         Vec::new(),
-        instructions,
+        vec![
+            Instruction::Move {
+                dst: Register(6),
+                src: Register(1),
+            },
+            Instruction::Move {
+                dst: Register(7),
+                src: Register(2),
+            },
+            Instruction::Move {
+                dst: Register(8),
+                src: Register(3),
+            },
+            Instruction::Call {
+                base: Register(6),
+                argument_count: 2,
+            },
+            Instruction::Move {
+                dst: Register(9),
+                src: Register(4),
+            },
+            Instruction::Move {
+                dst: Register(10),
+                src: Register(6),
+            },
+            Instruction::Move {
+                dst: Register(11),
+                src: Register(5),
+            },
+            Instruction::Call {
+                base: Register(9),
+                argument_count: 2,
+            },
+            Instruction::Return { src: Register(9) },
+        ],
     );
-    let mut arguments = Vec::with_capacity(argument_count + 1);
-    arguments.push(function);
-    arguments.extend_from_slice(runtime_arguments);
+    let arguments = [provider, caps, value_owner, initializer, main_argument];
     let mut account = QuotaAccount::new(quota);
     Vm::new()
         .with_debug_sink(debug_sink)
@@ -1711,7 +1729,7 @@ pub enum SystemDataFormat {
 pub struct SystemDataSource {
     pub src: String,
     pub format: SystemDataFormat,
-    pub default: Option<String>,
+    pub has_default: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1737,20 +1755,6 @@ pub struct SystemCaps {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SourceItem<T> {
-    pub data: T,
-    pub src: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SystemResources {
-    pub data: BTreeMap<String, SourceItem<String>>,
-    pub texts: BTreeMap<String, SourceItem<String>>,
-    pub vars: BTreeMap<String, String>,
-    pub stdin: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SystemEvent {
     StdinLine(Option<String>),
     ChildStdout(ChildText),
@@ -1762,7 +1766,9 @@ pub enum SystemEvent {
 pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 pub trait RunHost {
-    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemResources, String>>;
+    fn resources_provider(&mut self) -> crate::NativeFunction;
+
+    fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>>;
 
     fn spawn_stdio_child(
         &mut self,
@@ -1790,8 +1796,38 @@ pub struct RunOutcome {
 
 struct NoProcessRunHost;
 
+fn empty_system_resources(
+    context: &mut crate::CallContext<'_, '_>,
+) -> Result<(), crate::NativeError> {
+    let data = context.scratch()?;
+    let texts = context.scratch()?;
+    let vars = context.scratch()?;
+    let stdin = context.scratch()?;
+    context.make_dict(data, &[])?;
+    context.make_dict(texts, &[])?;
+    context.make_dict(vars, &[])?;
+    context.set_none(stdin)?;
+    context.make_dict(
+        context.result(),
+        &[
+            ("data".into(), data),
+            ("texts".into(), texts),
+            ("vars".into(), vars),
+            ("stdin".into(), stdin),
+        ],
+    )
+}
+
 impl RunHost for NoProcessRunHost {
-    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemResources, String>> {
+    fn resources_provider(&mut self) -> crate::NativeFunction {
+        crate::NativeFunction::new(
+            "host.prepare_system_resources.empty",
+            2,
+            empty_system_resources,
+        )
+    }
+
+    fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async move {
             if !caps.data_sources.is_empty()
                 || !caps.text_sources.is_empty()
@@ -1801,12 +1837,7 @@ impl RunHost for NoProcessRunHost {
             {
                 return Err("this Host does not provide initialization capabilities".into());
             }
-            Ok(SystemResources {
-                data: BTreeMap::new(),
-                texts: BTreeMap::new(),
-                vars: BTreeMap::new(),
-                stdin: None,
-            })
+            Ok(())
         })
     }
 
@@ -2323,10 +2354,9 @@ impl Engine {
                 "Entry.config initializer must accept 2 arguments, found {initializer_arity}"
             )));
         }
-        let fulfilled = host.prepare(caps.clone()).await.map_err(|error| {
+        host.configure(caps.clone()).await.map_err(|error| {
             ModuleError::new(format!("cannot satisfy Entry capabilities: {error}"))
         })?;
-        let resources = decode_system_resources(&mut loader.sources, &caps, fulfilled)?;
         let bindings = pending.begin_initialization()?;
 
         let (compiled_main_path, main_compiled) = match loader.compile_root(main_module, bindings) {
@@ -2403,23 +2433,24 @@ impl Engine {
         let (mut entry_world, main_argument) = entry_world
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let resources = make_system_resources(
-            entry_world.heap_mut(),
-            &entry.runtime.main.heap,
-            &resources,
-            value_owner.runtime(),
-        )?;
-        let initialized = invoke_world_function_in(
+        let caps_argument = entry_world.root_ref(&entry.runtime.main.heap).runtime();
+        let resources_provider = entry_world
+            .heap_mut()
+            .native_closure(host.resources_provider(), []);
+        let initialized = prepare_and_initialize_entry_in(
             &entry.runtime.main.heap,
             &entry.runtime.externals,
             &entry.sources,
             entry_world,
+            resources_provider,
+            caps_argument,
+            value_owner.runtime(),
             initializer,
-            &[resources, main_argument],
+            main_argument,
             self.config.session_quota,
             Arc::clone(&self.debug_sink),
         )
-        .map_err(|error| ModuleError::new(format!("Entry initializer failed: {error}")))?;
+        .map_err(|error| ModuleError::new(format!("Entry initialization failed: {error}")))?;
         let (state, reducer) = initialized
             .into_runtime_pair(
                 &entry.runtime.main.heap,
@@ -3814,24 +3845,6 @@ fn runtime_record(heap: &mut Heap, fields: Vec<(&str, Val)>) -> Val {
     })))
 }
 
-fn runtime_dict(heap: &mut Heap, fields: Vec<(String, Val)>) -> Val {
-    let mut fields = fields;
-    fields.sort_by(|left, right| left.0.cmp(&right.0));
-    let names = fields
-        .iter()
-        .map(|(name, _)| heap.intern(name))
-        .collect::<Vec<_>>();
-    let values = fields
-        .into_iter()
-        .map(|(_, value)| value)
-        .collect::<Vec<_>>();
-    let shape = heap.intern_shape(names);
-    Val::unknown(DecodedValue::Dict(heap.allocate(Object::Dict {
-        shape,
-        values: values.into_boxed_slice(),
-    })))
-}
-
 fn runtime_string(heap: &mut Heap, main: &Heap, value: &str) -> Val {
     Val::unknown(heap.string(Some(main), value))
 }
@@ -3977,7 +3990,13 @@ fn validate_entry_interface(
     ]));
     let data_format = unit_enum(&["Json", "Toml", "Yaml"]);
     let data_source = TypeDescriptor::Struct(BTreeMap::from([
-        ("default".into(), option_string.clone()),
+        (
+            "default".into(),
+            TypeDescriptor::Enum(BTreeMap::from([
+                ("None".into(), None),
+                ("Some".into(), Some(Box::new(value_type.clone()))),
+            ])),
+        ),
         ("fmt".into(), data_format),
         ("src".into(), TypeDescriptor::String),
     ]));
@@ -4213,165 +4232,6 @@ fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String]) -> Val {
     runtime_record(heap, vec![("args", arguments), ("platform", platform)])
 }
 
-struct DecodedSystemResources {
-    data: BTreeMap<String, SourceItem<crate::DataWorld>>,
-    texts: BTreeMap<String, SourceItem<String>>,
-    vars: BTreeMap<String, String>,
-    stdin: Option<String>,
-}
-
-fn decode_system_resources(
-    sources: &mut SourceDatabase,
-    caps: &SystemCaps,
-    resources: SystemResources,
-) -> Result<DecodedSystemResources, ModuleError> {
-    let exact_keys = |actual: &BTreeSet<_>, expected: &BTreeSet<_>, path: &str| {
-        if actual == expected {
-            Ok(())
-        } else {
-            Err(ModuleError::new(format!(
-                "{path} does not exactly satisfy the requested capability keys"
-            )))
-        }
-    };
-    exact_keys(
-        &resources.data.keys().cloned().collect(),
-        &caps.data_sources.keys().cloned().collect(),
-        "SystemResources.data",
-    )?;
-    exact_keys(
-        &resources.texts.keys().cloned().collect(),
-        &caps.text_sources.keys().cloned().collect(),
-        "SystemResources.texts",
-    )?;
-    let requested_vars = caps.vars.iter().cloned().collect::<BTreeSet<_>>();
-    if !resources
-        .vars
-        .keys()
-        .all(|name| requested_vars.contains(name))
-    {
-        return Err(ModuleError::new(
-            "SystemResources.vars contains an unrequested capability key",
-        ));
-    }
-    match (caps.stdin, resources.stdin.is_some()) {
-        (SystemStdin::Text, true) | (SystemStdin::Lined | SystemStdin::Null, false) => {}
-        _ => {
-            return Err(ModuleError::new(
-                "SystemResources.stdin does not satisfy SystemCaps.stdin",
-            ));
-        }
-    }
-
-    let data = resources
-        .data
-        .into_iter()
-        .map(|(key, item)| {
-            let request = &caps.data_sources[&key];
-            let source_id = sources.add(item.src.clone(), item.data);
-            let format = match request.format {
-                SystemDataFormat::Json => ModuleFormat::Json,
-                SystemDataFormat::Yaml => ModuleFormat::Yaml,
-                SystemDataFormat::Toml => ModuleFormat::Toml,
-            };
-            let parsed = parse_static_data_registered(format, sources, source_id)
-                .expect("system data formats are static data formats");
-            if !parsed.diagnostics.is_empty() {
-                return Err(ModuleError::new(
-                    parsed
-                        .diagnostics
-                        .iter()
-                        .map(|diagnostic| sources.render(diagnostic))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                ));
-            }
-            let value = parsed
-                .value
-                .expect("static data parse without diagnostics has a value")
-                .value;
-            Ok((
-                key,
-                SourceItem {
-                    data: value,
-                    src: item.src,
-                },
-            ))
-        })
-        .collect::<Result<_, ModuleError>>()?;
-    Ok(DecodedSystemResources {
-        data,
-        texts: resources.texts,
-        vars: resources.vars,
-        stdin: resources.stdin,
-    })
-}
-
-fn make_system_resources(
-    heap: &mut Heap,
-    main: &Heap,
-    resources: &DecodedSystemResources,
-    value_owner: Val,
-) -> Result<Val, ModuleError> {
-    let data = resources
-        .data
-        .iter()
-        .map(|(key, item)| {
-            let raw = item
-                .data
-                .relocate_into(heap, main)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            let value = wrap_semantic_value(heap, Some(main), raw, value_owner)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            let src = runtime_string(heap, main, &item.src);
-            Ok((
-                key.clone(),
-                runtime_record(heap, vec![("data", value), ("src", src)]),
-            ))
-        })
-        .collect::<Result<Vec<_>, ModuleError>>()?;
-    let texts = resources
-        .texts
-        .iter()
-        .map(|(key, item)| {
-            let value = runtime_string(heap, main, &item.data);
-            let src = runtime_string(heap, main, &item.src);
-            (
-                key.clone(),
-                runtime_record(heap, vec![("data", value), ("src", src)]),
-            )
-        })
-        .collect();
-    let vars = resources
-        .vars
-        .iter()
-        .map(|(name, value)| (name.clone(), runtime_string(heap, main, value)))
-        .collect();
-    let stdin = match &resources.stdin {
-        Some(text) => {
-            let text = runtime_string(heap, main, text);
-            runtime_tagged(
-                heap,
-                Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
-                text,
-            )
-        }
-        None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
-    };
-    let data = runtime_dict(heap, data);
-    let texts = runtime_dict(heap, texts);
-    let vars = runtime_dict(heap, vars);
-    Ok(runtime_record(
-        heap,
-        vec![
-            ("data", data),
-            ("stdin", stdin),
-            ("texts", texts),
-            ("vars", vars),
-        ],
-    ))
-}
-
 fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleError> {
     fn dict<'a>(
         value: crate::ValueRef<'a>,
@@ -4406,10 +4266,20 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
                 _ => return Err(ModuleError::new(format!("{path}.fmt is invalid"))),
             };
             let src = protocol_string_ref(value.get("src").unwrap(), &format!("{path}.src"))?;
-            let default = protocol_option_string_ref(
-                value.get("default").unwrap(),
-                &format!("{path}.default"),
-            )?;
+            let default = protocol_ref(value.get("default").unwrap());
+            let has_default = if default.as_atom().as_deref() == Some("None") {
+                false
+            } else {
+                let (tag, _) = default.tagged_parts().ok_or_else(|| {
+                    ModuleError::new(format!("{path}.default must be Option(Value)"))
+                })?;
+                if tag.as_atom().as_deref() != Some("Some") {
+                    return Err(ModuleError::new(format!(
+                        "{path}.default must be Option(Value)"
+                    )));
+                }
+                true
+            };
             if key.is_empty() || src.is_empty() {
                 return Err(ModuleError::new(format!(
                     "{path} must use non-empty key and src"
@@ -4420,7 +4290,7 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
                 SystemDataSource {
                     src,
                     format,
-                    default,
+                    has_default,
                 },
             ))
         })
@@ -4474,9 +4344,11 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
         Some("Null") => SystemStdin::Null,
         _ => return Err(ModuleError::new("SystemCaps.stdin is invalid")),
     };
+    let spawn_child =
+        protocol_bool_ref(caps.get("spawn_child").unwrap(), "SystemCaps.spawn_child")?;
     Ok(SystemCaps {
         data_sources,
-        spawn_child: protocol_bool_ref(caps.get("spawn_child").unwrap(), "SystemCaps.spawn_child")?,
+        spawn_child,
         text_sources,
         vars: names,
         stdin,

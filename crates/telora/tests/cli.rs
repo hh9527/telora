@@ -1409,7 +1409,7 @@ export def config:
         (
             {
                 data_srcs: {
-                    input: {default: 'Some("\"from-default\""), fmt: 'Json, src: "input.json"},
+                    input: {default: 'Some('String("from-default")), fmt: 'Json, src: "input.json"},
                 },
                 spawn_child: 'False,
                 text_srcs: {

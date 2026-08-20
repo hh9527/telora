@@ -1080,10 +1080,10 @@ Host 选择 Main 和 Entry
   -> 固定依赖与 source snapshot
   -> 从 Main 顶层收集有序 SystemOptions，并构造含参数和平台事实的 Env
   -> 在准备 WorkWorld 调用 Entry.config(options, env)，取得 SystemCaps 和 initializer
-  -> Host 按 SystemCaps 准备 SystemResources
+  -> Host 按 SystemCaps 配置事件源，并提供私有 resources native
   -> 初始化 Main，并按 Entry.MainType 校验完整 export record
   -> 冻结 MainWorld
-  -> 在新的运行 WorkWorld 调用 initializer(resources, main)
+  -> 在新的运行 WorkWorld 内由 native 生成 SystemResources，并直接调用 initializer(resources, main)
   -> 以 SystemEvent 驱动纯 reducer，解释返回的 SystemEffect
   -> 原子发布成功结果，或丢弃失败过程的候选结果
 ```
@@ -1195,8 +1195,10 @@ export def config:
 
 `SystemOptions` 是 Main 顶层 `option` action 的有序序列。`Env` 包含 `--` 后的 Entry
 参数以及 OS/arch 平台事实。准备 WorkWorld 中的 `config` 返回经 Host
-校验的 `SystemCaps` 和 initializer；Host 根据 caps 构造 `SystemResources`，随后初始化
-Main、按 `MainType` 校验完整 export record，再调用 initializer。所有环境上下文必须由
+校验的 `SystemCaps` 和 initializer；Host 根据 caps 配置事件源并提供私有 native，随后初始化
+Main、按 `MainType` 校验完整 export record。runtime 在同一个 Entry WorkWorld 中调用
+native 生成 `SystemResources`，并把结果直接传给 initializer；该值不返回 Rust Host，也不
+在 Host 侧解码或重建。所有环境上下文必须由
 initializer 显式传给 Main；CLI 不提供 `--input`，参数由 Entry 从 `Env.args` 解析。当前不进行分阶段或
 动态 Main 加载。运行阶段使用一系列 WorkWorld；
 `MainType` 没有系统约定的形状，它完全由所选 Entry 定义。内置 Entry 使用 `Dyn`
@@ -1214,7 +1216,7 @@ Entry reducer 接受单个
 
 ```text
 DataFormat = Json | Yaml | Toml
-DataSrc = { default: Option(String), fmt: DataFormat, src: String }
+DataSrc = { default: Option(Value), fmt: DataFormat, src: String }
 TextSrc = { default: Option(String), src: String }
 SystemStdin = Text | Lined | Null
 SystemCaps = {
@@ -1258,10 +1260,12 @@ SystemEffect = SpawnStdioChild(SpawnStdioChild)
 
 `Text` 在 initializer 前读到 EOF，并通过 `SystemResources.stdin` 注入完整文本；
 `Lined` 不注入完整文本，而是在 `Initialize` 之后逐行发送不含换行符的 `Some`，EOF
-恰好发送一次 `None`；`Null` 不读取也不产生事件。`data_srcs` 由 engine 在同一 source
-database 中按 JSON/YAML/TOML 解析成带 provenance 的 `Value`，`text_srcs` 保留文本和
-来源名。请求的文件不存在时，`default: 'Some(text)` 提供替代源文本，`'None` 则失败；
-其他 I/O 错误始终失败。数据文件只要存在，解析失败就直接报错，不使用默认值。
+恰好发送一次 `None`；`Null` 不读取也不产生事件。私有 resources native 对 `data_srcs`
+复用 JSON/YAML/TOML import 的静态数据 frontend，在当前 Entry WorkWorld 中直接生成带
+provenance 的 `Value` 和完整 `SystemResources`；`text_srcs` 保留文本和
+来源名。请求的数据文件不存在时，`default: 'Some(value)` 直接提供已经类型化的
+`Value`，不按 `fmt` 再解析；文本文件的默认值仍是 String。`'None` 表示缺失即失败，
+其他 I/O 错误也始终失败。数据文件只要存在，解析失败就直接报错，不使用默认值。
 `vars` 是环境变量快照诉求：不存在的名字从 `SystemResources.vars` 省略，存在但不能
 表示为字符串的值会在 Main/initializer 运行前失败。
 

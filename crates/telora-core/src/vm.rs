@@ -281,6 +281,10 @@ impl fmt::Display for ExecutionWorld {
 }
 
 impl<'a> ValueRef<'a> {
+    pub(crate) fn runtime(self) -> Val {
+        self.value
+    }
+
     pub(crate) fn persistent(value: PersistentValue, heap: &'a Heap) -> Self {
         Self {
             value: value.runtime(),
@@ -925,6 +929,91 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
 
     pub fn copy(&mut self, destination: RegisterId, source: RegisterId) -> Result<(), NativeError> {
         let value = self.owned(source)?;
+        self.set(destination, value)
+    }
+
+    pub fn copy_field(
+        &mut self,
+        destination: RegisterId,
+        source: RegisterId,
+        field: &str,
+    ) -> Result<(), NativeError> {
+        let value = self.owned(source)?;
+        let DecodedValue::Dict(handle) = value.value() else {
+            return Err(NativeError::new("native field source must be a Dict"));
+        };
+        let value = HeapView {
+            current: self.current,
+            background: self.background,
+        }
+        .dict_get_text(handle, field)
+        .map_err(|error| NativeError::new(error.to_string()))?
+        .ok_or_else(|| NativeError::new(format!("native field source has no field {field:?}")))?;
+        self.set(destination, value)
+    }
+
+    pub fn copy_sequence_item(
+        &mut self,
+        destination: RegisterId,
+        source: RegisterId,
+        index: usize,
+    ) -> Result<(), NativeError> {
+        let value = self.owned(source)?;
+        let DecodedValue::Array(handle) = value.value() else {
+            return Err(NativeError::new("native sequence source must be an Array"));
+        };
+        let value = HeapView {
+            current: self.current,
+            background: self.background,
+        }
+        .sequence(handle, false)
+        .map_err(|error| NativeError::new(error.to_string()))?
+        .get(index)
+        .copied()
+        .ok_or_else(|| NativeError::new(format!("native sequence has no item {index}")))?;
+        self.set(destination, value)
+    }
+
+    pub fn copy_tagged_payload(
+        &mut self,
+        destination: RegisterId,
+        source: RegisterId,
+    ) -> Result<(), NativeError> {
+        let value = self.owned(source)?;
+        let DecodedValue::Tagged(handle) = value.value() else {
+            return Err(NativeError::new("native tagged source must have a payload"));
+        };
+        let (_, payload) = HeapView {
+            current: self.current,
+            background: self.background,
+        }
+        .tagged(handle)
+        .map_err(|error| NativeError::new(error.to_string()))?;
+        self.set(destination, payload)
+    }
+
+    pub fn set_semantic_value(
+        &mut self,
+        destination: RegisterId,
+        source: &DataWorld,
+        owner: RegisterId,
+        allocation_hint: usize,
+    ) -> Result<(), NativeError> {
+        let background = self
+            .background
+            .ok_or_else(|| NativeError::new("semantic Value requires a Main world"))?;
+        let owner = self.owned(owner)?;
+        self.charge_allocation(allocation_hint)?;
+        let raw = source
+            .relocate_into(self.current, background)
+            .map_err(|error| NativeError::new(error.to_string()))?;
+        let wrapper_bytes = semantic_value_wrapper_bytes(self.current, Some(background), raw)
+            .map_err(|error| NativeError::new(error.to_string()))?;
+        self.account
+            .charge_allocation(wrapper_bytes)
+            .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))?;
+        let value = wrap_semantic_value(self.current, Some(background), raw, owner)
+            .map_err(|error| NativeError::new(error.to_string()))?;
         self.set(destination, value)
     }
 

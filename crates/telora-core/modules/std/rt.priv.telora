@@ -24,7 +24,7 @@ type DataFormat = enum {
 };
 
 type DataSrc = struct {
-    default: Option(String),
+    default: Option(Value),
     fmt: DataFormat,
     src: String,
 };

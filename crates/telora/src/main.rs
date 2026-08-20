@@ -1,17 +1,21 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::env;
-use std::io::{self, Write};
+use std::fs;
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio as ProcessStdio};
 use std::sync::Arc;
+use telora_core::lir::RegisterId;
 use telora_core::{
-    ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildText,
-    DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
-    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SourceItem, SpawnStdioChild,
-    SystemCaps, SystemEvent, SystemResources, SystemStdin, TextPosition, WorkspaceSnapshot,
+    CallContext, ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode,
+    ChildText, DataWorld, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState,
+    Location, NativeError, NativeFunction, PositionEncoding, Quota, RunHost, RunHostFuture,
+    RunTermination, SourceDatabase, SpawnStdioChild, SystemCaps, SystemEvent, SystemStdin,
+    TextPosition, WorkspaceSnapshot, parse_json_registered, parse_toml_registered,
+    parse_yaml_registered,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -376,120 +380,250 @@ fn exit_signal(_status: &std::process::ExitStatus) -> Option<i64> {
     None
 }
 
-impl RunHost for ProcessRunHost {
-    fn prepare(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<SystemResources, String>> {
-        Box::pin(async move {
-            let mut data = BTreeMap::new();
-            for (key, request) in &caps.data_sources {
-                let source = match tokio::fs::read_to_string(&request.src).await {
-                    Ok(source) => source,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        request.default.clone().ok_or_else(|| {
-                            format!("cannot read data source {:?}: {error}", request.src)
-                        })?
-                    }
-                    Err(error) => {
-                        return Err(format!(
-                            "cannot read data source {:?}: {error}",
-                            request.src
-                        ));
-                    }
-                };
-                data.insert(
-                    key.clone(),
-                    SourceItem {
-                        data: source,
-                        src: request.src.clone(),
-                    },
-                );
-            }
-            let mut texts = BTreeMap::new();
-            for (key, request) in &caps.text_sources {
-                let source = match tokio::fs::read_to_string(&request.src).await {
-                    Ok(source) => source,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        request.default.clone().ok_or_else(|| {
-                            format!("cannot read text source {:?}: {error}", request.src)
-                        })?
-                    }
-                    Err(error) => {
-                        return Err(format!(
-                            "cannot read text source {:?}: {error}",
-                            request.src
-                        ));
-                    }
-                };
-                texts.insert(
-                    key.clone(),
-                    SourceItem {
-                        data: source,
-                        src: request.src.clone(),
-                    },
-                );
-            }
-            let vars = caps
-                .vars
+fn native_string(
+    context: &CallContext<'_, '_>,
+    register: RegisterId,
+    path: &str,
+) -> Result<String, NativeError> {
+    context
+        .value(register)?
+        .as_str()
+        .map(|value| value.as_str().to_owned())
+        .ok_or_else(|| NativeError::new(format!("{path} must be String")))
+}
+
+fn native_field(
+    context: &mut CallContext<'_, '_>,
+    source: RegisterId,
+    field: &str,
+) -> Result<RegisterId, NativeError> {
+    let destination = context.scratch()?;
+    context.copy_field(destination, source, field)?;
+    Ok(destination)
+}
+
+fn native_dict_fields(
+    context: &CallContext<'_, '_>,
+    register: RegisterId,
+    path: &str,
+) -> Result<Vec<String>, NativeError> {
+    context
+        .value(register)?
+        .dict_fields()
+        .map(|fields| fields.into_iter().map(str::to_owned).collect())
+        .ok_or_else(|| NativeError::new(format!("{path} must be Dict")))
+}
+
+fn parse_data_resource(format: &str, src: &str, source: &str) -> Result<DataWorld, NativeError> {
+    let mut sources = SourceDatabase::default();
+    let source_id = sources.add(src, source);
+    let (value, diagnostics) = match format {
+        "Json" => {
+            let parsed = parse_json_registered(&sources, source_id);
+            (parsed.value, parsed.diagnostics)
+        }
+        "Yaml" => {
+            let parsed = parse_yaml_registered(&sources, source_id);
+            (parsed.value, parsed.diagnostics)
+        }
+        "Toml" => {
+            let parsed = parse_toml_registered(&sources, source_id);
+            (parsed.value, parsed.diagnostics)
+        }
+        _ => return Err(NativeError::new("data source format is invalid")),
+    };
+    if !diagnostics.is_empty() {
+        return Err(NativeError::new(
+            diagnostics
                 .iter()
-                .filter_map(|name| match env::var(name) {
-                    Ok(value) => Some(Ok((name.clone(), value))),
-                    Err(env::VarError::NotPresent) => None,
-                    Err(error) => Some(Err(format!("cannot read variable {name:?}: {error}"))),
-                })
-                .collect::<Result<BTreeMap<_, _>, _>>()?;
-            let stdin = match caps.stdin {
-                SystemStdin::Text => {
-                    let mut source = String::new();
-                    tokio::io::stdin()
-                        .read_to_string(&mut source)
-                        .await
-                        .map_err(|error| format!("cannot read standard input: {error}"))?;
-                    Some(source)
+                .map(|diagnostic| sources.render(diagnostic))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+    }
+    value
+        .map(|value| value.value)
+        .ok_or_else(|| NativeError::new(format!("cannot parse data source {src:?}")))
+}
+
+fn prepare_system_resources(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let caps = context.argument(0)?;
+    let value_owner = context.argument(1)?;
+
+    let data_requests = native_field(context, caps, "data_srcs")?;
+    let mut data_fields = Vec::new();
+    for key in native_dict_fields(context, data_requests, "SystemCaps.data_srcs")? {
+        let request = native_field(context, data_requests, &key)?;
+        let src_register = native_field(context, request, "src")?;
+        let src = native_string(context, src_register, "DataSrc.src")?;
+        let format_register = native_field(context, request, "fmt")?;
+        let format = context
+            .value(format_register)?
+            .as_atom()
+            .map(|value| value.as_str().to_owned())
+            .ok_or_else(|| NativeError::new("DataSrc.fmt must be DataFormat"))?;
+        let data = context.scratch()?;
+        match fs::read_to_string(&src) {
+            Ok(source) => {
+                let parsed = parse_data_resource(&format, &src, &source)?;
+                context.set_semantic_value(data, &parsed, value_owner, source.len())?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let default = native_field(context, request, "default")?;
+                if context.value(default)?.as_atom().as_deref() == Some("None") {
+                    return Err(NativeError::new(format!(
+                        "cannot read data source {src:?}: {error}"
+                    )));
                 }
-                SystemStdin::Lined => {
-                    let sender = self.sender.clone();
-                    let mut cancel = self.cancel.subscribe();
-                    self.tasks.spawn(async move {
-                        let mut lines = BufReader::new(tokio::io::stdin()).lines();
-                        loop {
-                            let line = tokio::select! {
-                                biased;
-                                changed = cancel.changed() => {
-                                    if changed.is_ok() && *cancel.borrow() {
-                                        return ("<stdin>".into(), Ok(()));
-                                    }
-                                    continue;
-                                }
-                                line = lines.next_line() => line,
-                            };
-                            match line {
-                                Ok(Some(line)) => {
-                                    let _ = sender.send(ReaderEvent::Event(
-                                        SystemEvent::StdinLine(Some(line)),
-                                    ));
-                                }
-                                Ok(None) => {
-                                    let _ = sender
-                                        .send(ReaderEvent::Event(SystemEvent::StdinLine(None)));
+                context.copy_tagged_payload(data, default)?;
+            }
+            Err(error) => {
+                return Err(NativeError::new(format!(
+                    "cannot read data source {src:?}: {error}"
+                )));
+            }
+        }
+        let item = context.scratch()?;
+        context.make_dict(item, &[("data".into(), data), ("src".into(), src_register)])?;
+        data_fields.push((key, item));
+    }
+    let data = context.scratch()?;
+    context.make_dict(data, &data_fields)?;
+
+    let text_requests = native_field(context, caps, "text_srcs")?;
+    let mut text_fields = Vec::new();
+    for key in native_dict_fields(context, text_requests, "SystemCaps.text_srcs")? {
+        let request = native_field(context, text_requests, &key)?;
+        let src_register = native_field(context, request, "src")?;
+        let src = native_string(context, src_register, "TextSrc.src")?;
+        let text = context.scratch()?;
+        match fs::read_to_string(&src) {
+            Ok(source) => context.set_string(text, source)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let default = native_field(context, request, "default")?;
+                if context.value(default)?.as_atom().as_deref() == Some("None") {
+                    return Err(NativeError::new(format!(
+                        "cannot read text source {src:?}: {error}"
+                    )));
+                }
+                context.copy_tagged_payload(text, default)?;
+            }
+            Err(error) => {
+                return Err(NativeError::new(format!(
+                    "cannot read text source {src:?}: {error}"
+                )));
+            }
+        }
+        let item = context.scratch()?;
+        context.make_dict(item, &[("data".into(), text), ("src".into(), src_register)])?;
+        text_fields.push((key, item));
+    }
+    let texts = context.scratch()?;
+    context.make_dict(texts, &text_fields)?;
+
+    let requested_vars = native_field(context, caps, "vars")?;
+    let var_count = context
+        .value(requested_vars)?
+        .sequence_len()
+        .ok_or_else(|| NativeError::new("SystemCaps.vars must be Array(String)"))?;
+    let mut var_fields = Vec::new();
+    for index in 0..var_count {
+        let name_register = context.scratch()?;
+        context.copy_sequence_item(name_register, requested_vars, index)?;
+        let name = native_string(context, name_register, "SystemCaps.vars item")?;
+        match env::var(&name) {
+            Ok(value) => {
+                let value_register = context.scratch()?;
+                context.set_string(value_register, value)?;
+                var_fields.push((name, value_register));
+            }
+            Err(env::VarError::NotPresent) => {}
+            Err(error) => {
+                return Err(NativeError::new(format!(
+                    "cannot read variable {name:?}: {error}"
+                )));
+            }
+        }
+    }
+    let vars = context.scratch()?;
+    context.make_dict(vars, &var_fields)?;
+
+    let stdin_mode = native_field(context, caps, "stdin")?;
+    let stdin = context.scratch()?;
+    match context.value(stdin_mode)?.as_atom().as_deref() {
+        Some("Text") => {
+            let mut source = String::new();
+            Read::read_to_string(&mut io::stdin(), &mut source).map_err(|error| {
+                NativeError::new(format!("cannot read standard input: {error}"))
+            })?;
+            let tag = context.scratch()?;
+            let payload = context.scratch()?;
+            context.set_atom(tag, "Some")?;
+            context.set_string(payload, source)?;
+            context.make_tagged(stdin, tag, payload)?;
+        }
+        Some("Lined" | "Null") => context.set_none(stdin)?,
+        _ => return Err(NativeError::new("SystemCaps.stdin is invalid")),
+    }
+
+    context.make_dict(
+        context.result(),
+        &[
+            ("data".into(), data),
+            ("texts".into(), texts),
+            ("vars".into(), vars),
+            ("stdin".into(), stdin),
+        ],
+    )
+}
+
+impl RunHost for ProcessRunHost {
+    fn resources_provider(&mut self) -> NativeFunction {
+        NativeFunction::new(
+            "telora.cli.prepare_system_resources",
+            2,
+            prepare_system_resources,
+        )
+    }
+
+    fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            if caps.stdin == SystemStdin::Lined {
+                let sender = self.sender.clone();
+                let mut cancel = self.cancel.subscribe();
+                self.tasks.spawn(async move {
+                    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+                    loop {
+                        let line = tokio::select! {
+                            biased;
+                            changed = cancel.changed() => {
+                                if changed.is_ok() && *cancel.borrow() {
                                     return ("<stdin>".into(), Ok(()));
                                 }
-                                Err(error) => {
-                                    let message = format!("cannot read standard input: {error}");
-                                    let _ = sender.send(ReaderEvent::Error(message.clone()));
-                                    return ("<stdin>".into(), Err(message));
-                                }
+                                continue;
+                            }
+                            line = lines.next_line() => line,
+                        };
+                        match line {
+                            Ok(Some(line)) => {
+                                let _ = sender
+                                    .send(ReaderEvent::Event(SystemEvent::StdinLine(Some(line))));
+                            }
+                            Ok(None) => {
+                                let _ =
+                                    sender.send(ReaderEvent::Event(SystemEvent::StdinLine(None)));
+                                return ("<stdin>".into(), Ok(()));
+                            }
+                            Err(error) => {
+                                let message = format!("cannot read standard input: {error}");
+                                let _ = sender.send(ReaderEvent::Error(message.clone()));
+                                return ("<stdin>".into(), Err(message));
                             }
                         }
-                    });
-                    None
-                }
-                SystemStdin::Null => None,
-            };
-            Ok(SystemResources {
-                data,
-                texts,
-                vars,
-                stdin,
-            })
+                    }
+                });
+            }
+            Ok(())
         })
     }
 
