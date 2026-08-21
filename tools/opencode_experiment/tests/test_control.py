@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
@@ -17,15 +18,43 @@ from tools.opencode_experiment.config import ControlError, Manifest, load_manife
 from tools.opencode_experiment.observe import failures, latest_assistant, normalized, summarize
 from tools.opencode_experiment.query import select_engine
 from tools.opencode_experiment.external import probe_direct, probe_mise, resolve_capabilities, resolve_cli, resolve_command
-from tools.opencode_experiment.state import atomic_json, create_run_config, load_run_config, load_state, save_state, SCHEMA
-from tools.opencode_experiment.lifecycle import copy_archive, export_session, opencode_environment, prepare, request_start, reserve, run_validation, start_requested
+from tools.opencode_experiment.state import (
+    SCHEMA,
+    atomic_json,
+    create_runner_config,
+    create_run_config,
+    load_connect_test,
+    load_run_config,
+    load_runner_config,
+    load_state,
+    record_connect_test,
+    save_state,
+)
+from tools.opencode_experiment.lifecycle import (
+    copy_archive,
+    export_session,
+    opencode_environment,
+    prepare,
+    probe_opencode_connection,
+    request_start,
+    reserve,
+    run_validation,
+    start_requested,
+)
 from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
-from tools.opencode_experiment.cli_ctl import _configure_start, _selected_plan, _update, main as control_main, parser as control_parser
-from tools.opencode_experiment.cli_run import parser as run_parser
+from tools.opencode_experiment.cli_ctl import (
+    _configure_start,
+    _selected_plan,
+    _test_connect,
+    _update,
+    main as control_main,
+    parser as control_parser,
+)
+from tools.opencode_experiment.cli_run import main as run_main, parser as run_parser
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -130,13 +159,26 @@ class ConfigStateTest(unittest.TestCase):
         args = control_parser().parse_args(["stat", "run"])
         self.assertEqual((args.command, args.test_id), ("stat", "run"))
 
-    def test_control_surface_is_limited_to_five_commands(self):
+    def test_control_surface_includes_connection_preflight(self):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
-                         {"start", "stat", "status", "update", "publish"})
+                         {"test-connect", "start", "stat", "status", "update", "publish"})
 
-    def test_run_uses_only_test_id(self):
-        args = run_parser().parse_args(["ontology-3-006"])
-        self.assertEqual(vars(args), {"test_id": "ontology-3-006"})
+    def test_run_requires_test_id_and_reserved_port(self):
+        args = run_parser().parse_args(["ontology-3-006", "4199"])
+        self.assertEqual(vars(args), {"test_id": "ontology-3-006", "port": 4199})
+
+    def test_run_reports_an_occupied_port_before_waiting_for_host(self):
+        with socket.socket() as occupied:
+            occupied.bind(("127.0.0.1", 0))
+            occupied.listen(1)
+            port = occupied.getsockname()[1]
+            stderr = StringIO()
+            with mock.patch(
+                "tools.opencode_experiment.cli_run.resolve_cli", return_value=("opencode",)
+            ), redirect_stderr(stderr):
+                result = run_main(["run-001", str(port)])
+        self.assertEqual(result, 69)
+        self.assertIn(f"cannot reserve runner port {port}", stderr.getvalue())
 
     def test_host_selects_plan_and_writes_run_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -144,13 +186,88 @@ class ConfigStateTest(unittest.TestCase):
             plan = repo / "experiments" / "demo"
             self.write_plan(plan)
             self.assertEqual(_selected_plan(repo, plan / "nested"), "demo")
-            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan), \
-                 mock.patch("tools.opencode_experiment.cli_ctl._automatic_port", return_value=43123):
+            record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
+            create_runner_config(repo, "run-001", 43123)
+            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan):
                 value = _configure_start(repo, "run-001")
             self.assertEqual(value["plan_id"], "demo")
             self.assertEqual(value["port"], 43123)
             self.assertEqual(load_run_config(repo, "run-001"), value)
             self.assertEqual(create_run_config(repo, "run-001", "demo", 49999), value)
+
+    def test_runner_configuration_records_the_external_port(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            value = create_runner_config(repo, "run-001", 4199)
+            self.assertEqual(load_runner_config(repo, "run-001"), value)
+            self.assertEqual(value["port"], 4199)
+            with self.assertRaisesRegex(ControlError, "another port"):
+                create_runner_config(repo, "run-001", 4200)
+
+    def test_start_requires_a_connection_test_before_freezing_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            plan = repo / "experiments" / "demo"
+            self.write_plan(plan)
+            create_runner_config(repo, "run-001", 43123)
+            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan):
+                with self.assertRaisesRegex(ControlError, "test-connect"):
+                    _configure_start(repo, "run-001")
+            self.assertFalse((repo / "target/exp/run-001/config.json").exists())
+
+    def test_start_requires_the_external_runner_after_connection_preflight(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            plan = repo / "experiments" / "demo"
+            self.write_plan(plan)
+            record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
+            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan):
+                with self.assertRaisesRegex(ControlError, "oc-run run-001 <port>"):
+                    _configure_start(repo, "run-001")
+            self.assertFalse((repo / "target/exp/run-001/config.json").exists())
+
+    def test_start_rejects_a_config_that_differs_from_the_reserved_port(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
+            create_runner_config(repo, "run-001", 4199)
+            create_run_config(repo, "run-001", "demo", 4200)
+            with self.assertRaisesRegex(ControlError, "does not match"):
+                _configure_start(repo, "run-001")
+
+    def test_connect_records_a_receipt_without_releasing_oc_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            create_runner_config(repo, "run-001", 4199)
+            with mock.patch(
+                "tools.opencode_experiment.cli_ctl.probe_opencode_connection",
+                return_value={"health": True, "session_id": "ses_probe"},
+            ) as probe:
+                receipt = _test_connect(repo, "run-001")
+            self.assertEqual(load_connect_test(repo, "run-001"), receipt)
+            self.assertFalse((repo / "target/exp/run-001/config.json").exists())
+            probe.assert_called_once_with(
+                "run-001", 4199, repo / "target/exp/run-001/runner-workspace"
+            )
+
+    def test_connect_rejects_an_already_configured_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            create_run_config(repo, "run-001", "demo", 43123)
+            with self.assertRaisesRegex(ControlError, "already configured"):
+                _test_connect(repo, "run-001")
+
+    def test_connection_probe_exercises_the_runner_health_and_session(self):
+        client = mock.Mock()
+        client.health.return_value = {"healthy": True}
+        client.create_session.return_value = {"id": "ses_probe"}
+        workspace = Path("/tmp/runner-workspace")
+        with mock.patch("tools.opencode_experiment.lifecycle.Client", return_value=client) as factory:
+            result = probe_opencode_connection("run-001", 4199, workspace)
+        self.assertEqual(result, {"health": True, "session_id": "ses_probe"})
+        factory.assert_called_once_with("http://127.0.0.1:4199", str(workspace), timeout=0.5)
+        client.health.assert_called_once()
+        client.create_session.assert_called_once()
 
     def test_update_copies_and_removes_workspace_file(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -293,6 +410,7 @@ class ConfigStateTest(unittest.TestCase):
             manifest = load_manifest(repo, "demo")
             self.assertEqual(manifest.environment, {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"})
             self.assertEqual(opencode_environment({"opencode_environment": manifest.environment})["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"], "128000")
+            self.assertEqual(opencode_environment({})["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"], "128000")
 
         for environment in ({"PATH": "/tmp"}, {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "0"},
                             {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "lots"}):

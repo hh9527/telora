@@ -25,7 +25,25 @@ from .task_cli import TaskError, publish_artifact, workflow_status
 def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
     environment = os.environ.copy()
     environment.update(state.get("opencode_environment", {}))
+    environment["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = "128000"
     return environment
+
+
+def probe_opencode_connection(test_id: str, port: int, workspace: Path) -> dict[str, Any]:
+    """Exercise the external runner's daemon without preparing a real execution."""
+    from .config import validate_identifier
+
+    validate_identifier(test_id, "test-id")
+    client = Client(f"http://127.0.0.1:{port}", str(workspace), timeout=0.5)
+    health = client.health()
+    session = client.create_session(f"connection test / {test_id}")
+    session_id = session.get("id") if isinstance(session, dict) else None
+    if not isinstance(session_id, str) or not session_id.startswith("ses_"):
+        raise ControlError("opencode connection test returned an invalid session identity")
+    return {
+        "health": bool(isinstance(health, dict) and health.get("healthy")),
+        "session_id": session_id,
+    }
 
 
 def git_metadata(repo: Path) -> tuple[str, bool]:
@@ -261,29 +279,14 @@ def quiesce_workflow(context: Context, timeout: float = 120) -> None:
         time.sleep(.1)
 
 
-def create_empty_session(root: Path, state: dict[str, Any], title: str) -> dict[str, Any]:
+def create_execution_session(root: Path, state: dict[str, Any], title: str) -> dict[str, Any]:
     if state.get("session_id"): return state
-    port = int(state["server_url"].rsplit(":", 1)[1])
-    if not _port_free(port): raise ControlError(f"port {port} is occupied", 69)
-    log = (root / "handshake.log").open("ab")
-    process = subprocess.Popen([*resolve_cli("opencode"), "serve", "--hostname", "127.0.0.1", "--port", str(port), "--pure"], cwd=state["workspace"], env=opencode_environment(state), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
     client = Client(state["server_url"], state["workspace"])
-    try:
-        healthy = False
-        for _ in range(100):
-            if process.poll() is not None: break
-            try: client.health(); healthy = True; break
-            except ControlError: time.sleep(.1)
-        if not healthy: raise ControlError(f"temporary opencode daemon did not become healthy; see {root / 'handshake.log'}", 70)
-        response = client.create_session(title); session_id = response.get("id") if isinstance(response, dict) else None
-        if not isinstance(session_id, str) or not session_id.startswith("ses_"): raise ControlError("opencode returned an invalid session identity")
-        with locked(root):
-            current = load_state(root); current["session_id"] = session_id; current["phase"] = "ready"; save_state(root, current); state = current
-    finally:
-        process.terminate()
-        try: process.wait(timeout=5)
-        except subprocess.TimeoutExpired: process.kill(); process.wait()
-        log.close()
+    client.health()
+    response = client.create_session(title); session_id = response.get("id") if isinstance(response, dict) else None
+    if not isinstance(session_id, str) or not session_id.startswith("ses_"): raise ControlError("opencode returned an invalid session identity")
+    with locked(root):
+        current = load_state(root); current["session_id"] = session_id; current["phase"] = "ready"; save_state(root, current); state = current
     return state
 
 

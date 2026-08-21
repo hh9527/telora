@@ -10,9 +10,25 @@ from typing import Any
 
 from .config import ControlError, load_manifest, repository_root
 from .context import Context, resolve
-from .lifecycle import publish_workflow_artifact, request_start, send_round, verify_prepared
+from .lifecycle import (
+    probe_opencode_connection,
+    publish_workflow_artifact,
+    request_start,
+    send_round,
+    verify_prepared,
+)
 from .metrics import collect_metrics
-from .state import atomic_write, create_run_config, load_run_config, load_state, run_config_path
+from .state import (
+    atomic_write,
+    create_run_config,
+    load_connect_test,
+    load_run_config,
+    load_runner_config,
+    load_state,
+    record_connect_test,
+    run_config_path,
+    runner_workspace_path,
+)
 from .task_cli import TaskError, remove_artifact, task_records, workflow_status
 
 
@@ -23,7 +39,7 @@ def emit(value: object) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named artifact-DAG experiment.")
     commands = root.add_subparsers(dest="command", required=True)
-    for name in ("start", "stat", "status"):
+    for name in ("test-connect", "start", "stat", "status"):
         item = commands.add_parser(name)
         item.add_argument("test_id")
     update = commands.add_parser("update")
@@ -63,23 +79,27 @@ def _selected_plan(repo: Path, cwd: Path | None = None) -> str:
     raise ControlError("Host must run start from inside the autonomously selected experiment plan", 66)
 
 
-def _automatic_port(repo: Path) -> int:
-    used = set()
-    for path in (repo / "target" / "exp").glob("*/config.json"):
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(value, dict) and isinstance(value.get("port"), int):
-            used.add(value["port"])
-    return next(port for port in range(4100, 65536) if port not in used)
-
-
 def _configure_start(repo: Path, test_id: str) -> dict[str, Any]:
+    load_connect_test(repo, test_id)
+    runner = load_runner_config(repo, test_id)
     path = run_config_path(repo, test_id)
     if path.is_file():
-        return load_run_config(repo, test_id)
-    return create_run_config(repo, test_id, _selected_plan(repo), _automatic_port(repo))
+        configured = load_run_config(repo, test_id)
+        if configured["port"] != runner["port"]:
+            raise ControlError("execution port does not match the external runner", 64)
+        return configured
+    return create_run_config(repo, test_id, _selected_plan(repo), runner["port"])
+
+
+def _test_connect(repo: Path, test_id: str) -> dict[str, Any]:
+    if run_config_path(repo, test_id).exists():
+        raise ControlError(
+            f"execution {test_id} is already configured; connection tests must run before start",
+            64,
+        )
+    runner = load_runner_config(repo, test_id)
+    result = probe_opencode_connection(test_id, runner["port"], runner_workspace_path(repo, test_id))
+    return record_connect_test(repo, test_id, result)
 
 
 def _update(context: Context, values: list[str]) -> list[dict[str, Any]]:
@@ -204,6 +224,9 @@ def _start(context: Context) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
+        if args.command == "test-connect":
+            emit(_test_connect(_controller_repo(), args.test_id))
+            return 0
         if args.command == "start":
             repo = _controller_repo()
             _configure_start(repo, args.test_id)

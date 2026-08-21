@@ -1,9 +1,16 @@
 # OpenCode experiment control
 
-`oc-run <test-id>` waits for Host configuration, prepares an isolated experiment workspace, and
-starts the external OpenCode TUI. The external operator never selects a plan or port. The Host runs
-`oc-ctl start <test-id>` from inside its autonomously selected plan directory; `start` chooses a
-free port and atomically writes `target/exp/<test-id>/config.json`, which releases `oc-run`.
+`oc-run <test-id> <port>` starts a persistent headless OpenCode daemon in an empty runner workspace,
+thereby occupying the requested loopback port before any experiment material exists. The external
+operator selects the port but never selects a plan. Early in a long-running task, the Host runs
+`oc-ctl test-connect <test-id>` to exercise that exact daemon and record
+`target/exp/<test-id>/connect-test.json`. This neither chooses a plan nor writes `config.json`, so it
+does not release `oc-run` or freeze experiment inputs. After prerequisite fixes are complete, the
+Host runs `oc-ctl start <test-id>` from inside its autonomously selected plan directory; `start`
+requires the successful receipt and external runner, adopts its port, and atomically writes
+`target/exp/<test-id>/config.json`. The runner then prepares the isolated experiment workspace,
+creates the formal session on the existing daemon, and attaches the TUI. When the TUI exits,
+`oc-run` terminates the daemon.
 `oc-ctl` controls and observes the execution. A plan may define an artifact DAG in
 `experiment.json.workflow`; `task_cli.py` is copied into the workspace as `bin/oc-task`.
 
@@ -38,6 +45,7 @@ as a merged task-wide set, so a role can see exactly why each output became runn
 The Host control surface is deliberately limited to:
 
 ```text
+oc-ctl test-connect <test-id>
 oc-ctl start <test-id>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
@@ -65,6 +73,11 @@ concurrent publication.
 starts every role once and exits; it never dispatches, retries, observes, or interprets work.
 
 ## Host scheduling contract
+
+`oc-run` is an external-operator command. It owns the external TUI lifecycle and is never part of
+the Host permission preflight or Host scheduling command set. The Host runs `test-connect` while
+authorization can still be attended and persistently approves the whole `oc-ctl` command prefix,
+not only the probe's exact argv.
 
 Before `oc-ctl start`, the Host must obtain every permission needed for the complete experiment.
 From `start` until the external TUI ends, the Host must never request temporary authorization: an

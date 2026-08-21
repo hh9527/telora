@@ -27,6 +27,7 @@ Host 和 tooling。专题文档细化 `LANGUAGE.md`，不能建立一套与其�
 | `docs/design/` | 当前概念、语义、边界与专题设计 | 是，设计 SSOT |
 | `guide/TELORA.md` | 当前公开语言表面的使用方法 | 是，面向使用者 |
 | `guide/TELORA-CLI.md` | CLI、工作区解析和 JSONL 契约 | 是，面向使用者 |
+| `guide/EXPERIMENTS.md` | OpenCode 实验准备、调度、审核与总结流程 | 是，面向实验 Host |
 | `README.md` | 项目导览、快速开始与能力概述 | 仅作概述 |
 | `VISION.md` | 项目愿景与设计方向 | 不覆盖当前设计文档 |
 | `rfc/` | 单项决策的动机、方案、演进与验收证据 | 否，属于历史记录 |

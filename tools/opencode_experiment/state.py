@@ -13,6 +13,8 @@ from .config import ControlError, validate_identifier
 
 SCHEMA = "telora.opencode-execution/v1"
 RUN_CONFIG_SCHEMA = "telora.opencode-run-config/v1"
+RUNNER_CONFIG_SCHEMA = "telora.opencode-runner-config/v1"
+CONNECT_TEST_SCHEMA = "telora.opencode-connect-test/v1"
 PHASES = {"waiting", "preparing", "ready", "active", "idle", "finishing", "finished", "failed", "retired"}
 
 
@@ -27,6 +29,109 @@ def execution_root(repo: Path, exec_name: str) -> Path:
 
 def run_config_path(repo: Path, test_id: str) -> Path:
     return execution_root(repo, test_id) / "config.json"
+
+
+def runner_config_path(repo: Path, test_id: str) -> Path:
+    return execution_root(repo, test_id) / "runner.json"
+
+
+def runner_workspace_path(repo: Path, test_id: str) -> Path:
+    return execution_root(repo, test_id) / "runner-workspace"
+
+
+def create_runner_config(repo: Path, test_id: str, port: int) -> dict[str, Any]:
+    validate_identifier(test_id, "test-id")
+    if not 1 <= port <= 65535:
+        raise ControlError("port must be from 1 through 65535", 64)
+    root = execution_root(repo, test_id)
+    with locked(root):
+        path = runner_config_path(repo, test_id)
+        if path.is_file():
+            value = load_runner_config(repo, test_id)
+            if value["port"] != port:
+                raise ControlError(f"runner {test_id} is already configured for another port")
+            return value
+        value = {
+            "schema": RUNNER_CONFIG_SCHEMA,
+            "test_id": test_id,
+            "port": port,
+            "created_at": now(),
+        }
+        atomic_json(path, value)
+        return value
+
+
+def load_runner_config(repo: Path, test_id: str) -> dict[str, Any]:
+    path = runner_config_path(repo, test_id)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ControlError(
+            f"missing external runner for {test_id}; run oc-run {test_id} <port> before start",
+            75,
+        ) from None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControlError(f"invalid runner configuration: {exc}") from None
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema", "test_id", "port", "created_at"}
+        or value.get("schema") != RUNNER_CONFIG_SCHEMA
+        or value.get("test_id") != test_id
+        or not isinstance(value.get("port"), int)
+        or not 1 <= value["port"] <= 65535
+        or not isinstance(value.get("created_at"), str)
+    ):
+        raise ControlError("invalid runner configuration")
+    return value
+
+
+def connect_test_path(repo: Path, test_id: str) -> Path:
+    return execution_root(repo, test_id) / "connect-test.json"
+
+
+def record_connect_test(repo: Path, test_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    validate_identifier(test_id, "test-id")
+    value = {
+        "schema": CONNECT_TEST_SCHEMA,
+        "test_id": test_id,
+        "tested_at": now(),
+        "transport": "opencode-loopback-http",
+        "health": result.get("health"),
+        "session_id": result.get("session_id"),
+    }
+    if value["health"] is not True:
+        raise ControlError("connection test did not report a healthy daemon")
+    if not isinstance(value["session_id"], str) or not value["session_id"].startswith("ses_"):
+        raise ControlError("connection test did not create a valid session")
+    atomic_json(connect_test_path(repo, test_id), value)
+    return value
+
+
+def load_connect_test(repo: Path, test_id: str) -> dict[str, Any]:
+    path = connect_test_path(repo, test_id)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ControlError(
+            f"missing connection test for {test_id}; run oc-ctl test-connect {test_id} before start",
+            75,
+        ) from None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControlError(f"invalid connection test: {exc}") from None
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {"schema", "test_id", "tested_at", "transport", "health", "session_id"}
+        or value.get("schema") != CONNECT_TEST_SCHEMA
+        or value.get("test_id") != test_id
+        or value.get("transport") != "opencode-loopback-http"
+        or value.get("health") is not True
+        or not isinstance(value.get("tested_at"), str)
+        or not isinstance(value.get("session_id"), str)
+        or not value["session_id"].startswith("ses_")
+    ):
+        raise ControlError("invalid connection test receipt")
+    return value
 
 
 def _validate_run_config(value: Any, test_id: str) -> dict[str, Any]:
