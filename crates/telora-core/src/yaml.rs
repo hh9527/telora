@@ -9,9 +9,6 @@ use crate::syntax::yaml::lexer::Token;
 use crate::syntax::yaml::parser::{CstData, Node, NodeRef};
 use std::collections::BTreeMap;
 
-const MAX_ALIAS_EXPANSIONS: usize = 10_000;
-const MAX_ALIAS_DEPTH: usize = 64;
-
 #[derive(Debug)]
 pub struct YamlParse {
     pub cst: crate::syntax::yaml::CstData,
@@ -104,7 +101,6 @@ struct YamlLowerer<'a> {
     position: usize,
     plan: ValidatedDataPlan,
     anchors: BTreeMap<String, DataNodeId>,
-    alias_expansion_work: usize,
 }
 
 fn push_line(lines: &mut Vec<Line>, start: usize, text: &str) {
@@ -151,7 +147,6 @@ impl<'a> YamlLowerer<'a> {
             position: 0,
             plan: ValidatedDataPlan::default(),
             anchors: BTreeMap::new(),
-            alias_expansion_work: 0,
         }
     }
 
@@ -379,15 +374,6 @@ impl<'a> YamlLowerer<'a> {
             let anchored = self.anchors.get(alias).copied().ok_or_else(|| {
                 self.line_error(line, format!("unknown or cyclic YAML alias {alias:?}"))
             })?;
-            self.alias_expansion_work = self
-                .alias_expansion_work
-                .saturating_add(node_count(&self.plan, anchored));
-            if self.alias_expansion_work > MAX_ALIAS_EXPANSIONS {
-                return Err(self.line_error(line, "YAML alias expansion limit exceeded"));
-            }
-            if node_depth(&self.plan, anchored) > MAX_ALIAS_DEPTH {
-                return Err(self.line_error(line, "YAML alias depth limit exceeded"));
-            }
             return Ok(self
                 .plan
                 .clone_root_at(anchored, self.location(offset, offset + text.len())));
@@ -406,16 +392,9 @@ impl<'a> YamlLowerer<'a> {
         }
         let location = self.location(offset, offset + text.len());
         if text.starts_with('[') || text.starts_with('{') {
-            let (node, work) = FlowParser::new(
-                self.source_id,
-                offset,
-                &text,
-                &mut self.plan,
-                &self.anchors,
-                MAX_ALIAS_EXPANSIONS.saturating_sub(self.alias_expansion_work),
-            )
-            .parse()?;
-            self.alias_expansion_work = self.alias_expansion_work.saturating_add(work);
+            let node =
+                FlowParser::new(self.source_id, offset, &text, &mut self.plan, &self.anchors)
+                    .parse()?;
             return Ok(node);
         }
         parse_scalar(&mut self.plan, &text, location)
@@ -843,41 +822,6 @@ fn fold_lines(lines: &[(String, bool)]) -> String {
     }
     output
 }
-fn node_depth(plan: &ValidatedDataPlan, node: DataNodeId) -> usize {
-    match &plan.node(node).kind {
-        DataPlanNodeKind::Scalar(..) => 1,
-        DataPlanNodeKind::Array(values) => {
-            1 + values
-                .iter()
-                .map(|node| node_depth(plan, *node))
-                .max()
-                .unwrap_or(0)
-        }
-        DataPlanNodeKind::Object(fields) => {
-            1 + fields
-                .values()
-                .map(|field| node_depth(plan, field.value))
-                .max()
-                .unwrap_or(0)
-        }
-    }
-}
-
-fn node_count(plan: &ValidatedDataPlan, node: DataNodeId) -> usize {
-    match &plan.node(node).kind {
-        DataPlanNodeKind::Scalar(..) => 1,
-        DataPlanNodeKind::Array(values) => {
-            1usize.saturating_add(values.iter().map(|node| node_count(plan, *node)).sum())
-        }
-        DataPlanNodeKind::Object(fields) => 1usize.saturating_add(
-            fields
-                .values()
-                .map(|field| node_count(plan, field.value))
-                .sum(),
-        ),
-    }
-}
-
 fn core_non_string(text: &str) -> bool {
     matches!(
         text,
@@ -910,8 +854,6 @@ struct FlowParser<'a> {
     pos: usize,
     plan: &'a mut ValidatedDataPlan,
     anchors: &'a BTreeMap<String, DataNodeId>,
-    alias_work: usize,
-    alias_limit: usize,
 }
 impl<'a> FlowParser<'a> {
     fn new(
@@ -920,7 +862,6 @@ impl<'a> FlowParser<'a> {
         text: &'a str,
         plan: &'a mut ValidatedDataPlan,
         anchors: &'a BTreeMap<String, DataNodeId>,
-        alias_limit: usize,
     ) -> Self {
         Self {
             source_id,
@@ -929,17 +870,15 @@ impl<'a> FlowParser<'a> {
             pos: 0,
             plan,
             anchors,
-            alias_work: 0,
-            alias_limit,
         }
     }
-    fn parse(mut self) -> Result<(DataNodeId, usize), Diagnostic> {
+    fn parse(mut self) -> Result<DataNodeId, Diagnostic> {
         let value = self.value()?;
         self.ws();
         if self.pos != self.text.len() {
             return Err(self.error("unexpected YAML flow content"));
         }
-        Ok((value, self.alias_work))
+        Ok(value)
     }
     fn value(&mut self) -> Result<DataNodeId, Diagnostic> {
         self.ws();
@@ -1051,12 +990,6 @@ impl<'a> FlowParser<'a> {
                         .copied()
                         .ok_or_else(|| self.error(format!("unknown YAML alias {name:?}")));
                     let anchored = anchored?;
-                    self.alias_work = self
-                        .alias_work
-                        .saturating_add(node_count(self.plan, anchored));
-                    if self.alias_work > self.alias_limit {
-                        return Err(self.error("YAML alias expansion limit exceeded"));
-                    }
                     return Ok(self.plan.clone_root_at(anchored, loc));
                 }
                 parse_scalar(self.plan, raw, loc).map_err(|m| self.error(m))
@@ -1196,20 +1129,27 @@ mod tests {
             assert!(!parsed.diagnostics.is_empty(), "{source}");
         }
 
-        let anchored = std::iter::repeat("0")
-            .take(100)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let aliases = std::iter::repeat("*base")
-            .take(101)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let limited = parse(&format!("base: &base [{anchored}]\nitems: [{aliases}]\n"));
-        assert!(limited.value.is_none());
+        let mut sources = SourceDatabase::default();
+        let source = "base: &base [0, 1]\nitems: [*base, *base]\n";
+        let source_id = sources.add("aliases.yaml", source);
+        let plan = validate_yaml_registered(&sources, source_id).unwrap();
+        let stats = plan
+            .enforce_limits(crate::DataLimits::default(), source.len())
+            .unwrap();
+        // Root Object + base Array and its two children + items Array, two
+        // alias Arrays, and both pairs of aliased children.
+        assert_eq!(stats.nodes, 11);
         assert!(
-            limited.diagnostics[0]
-                .message
-                .contains("alias expansion limit")
+            plan.enforce_limits(
+                crate::DataLimits {
+                    nodes: 10,
+                    ..crate::DataLimits::default()
+                },
+                source.len(),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("nodes")
         );
     }
 

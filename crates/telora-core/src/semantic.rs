@@ -1516,6 +1516,7 @@ mod tests {
         Engine::new(EngineConfig {
             module_quota: Quota::with_fuel(1_000_000),
             session_quota: Quota::with_fuel(1_000_000),
+            data_limits: crate::DataLimits::default(),
         })
     }
 

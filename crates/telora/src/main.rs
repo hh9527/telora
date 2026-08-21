@@ -11,10 +11,10 @@ use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
     CallContext, ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode,
-    ChildText, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState, Location,
-    NativeError, NativeFunction, PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination,
-    SpawnStdioChild, SystemCaps, SystemDataSource, SystemEvent, SystemStdin, TextPosition,
-    WorkspaceSnapshot,
+    ChildText, DataLimits, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState,
+    Location, NativeError, NativeFunction, PositionEncoding, Quota, RunHost, RunHostFuture,
+    RunTermination, SpawnStdioChild, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
+    TextPosition, WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -30,6 +30,7 @@ fn engine_config() -> EngineConfig {
     EngineConfig {
         module_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
         session_quota: Quota::new(EVALUATION_FUEL, STACK_SLOTS, ALLOCATION_BYTES),
+        data_limits: DataLimits::default(),
     }
 }
 
@@ -588,14 +589,33 @@ impl RunHost for ProcessRunHost {
     fn read_data_source(
         &mut self,
         source: &SystemDataSource,
+        max_bytes: usize,
     ) -> RunHostFuture<'_, Result<Option<String>, String>> {
         let src = source.src.clone();
         Box::pin(async move {
-            match fs::read_to_string(&src) {
-                Ok(source) => Ok(Some(source)),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(format!("cannot read data source {src:?}: {error}")),
+            let file = match fs::File::open(&src) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => {
+                    return Err(format!("cannot read data source {src:?}: {error}"));
+                }
+            };
+            let max_read = u64::try_from(max_bytes)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1);
+            let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+            file.take(max_read)
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("cannot read data source {src:?}: {error}"))?;
+            if bytes.len() > max_bytes {
+                return Err(format!(
+                    "data source exceeds file_size limit ({} > {max_bytes})",
+                    bytes.len()
+                ));
             }
+            String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|error| format!("cannot read data source {src:?}: {error}"))
         })
     }
 

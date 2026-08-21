@@ -16,6 +16,7 @@ The embedding API temporarily provides two policies:
 pub struct EngineConfig {
     pub module_quota: Quota,
     pub session_quota: Quota,
+    pub data_limits: DataLimits,
 }
 
 pub struct Quota {
@@ -178,6 +179,10 @@ pre-existing bytecode constant and cloning an immutable value allocate no new
 XL payload and therefore do not charge. Bytecode prototypes, constant pools,
 source text, AST/CST nodes, imported JSON parsing, and host-provided input are
 admission or compiler resources outside execution allocation quota.
+Static JSON/YAML/TOML modules and Entry `data_srcs` instead use independent
+`DataLimits` admission bounds for raw file size and validated logical graph
+shape. Their validation and Heap materialization do not consume VM fuel, stack,
+or allocation quota.
 
 Checked arithmetic is mandatory for every size calculation and account update.
 Overflow is treated as quota exhaustion.

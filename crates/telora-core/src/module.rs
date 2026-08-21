@@ -10,8 +10,8 @@ use crate::core::{
 };
 use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_type_id};
 use crate::json::{
-    Provenance, SemanticDataTarget, ValidatedDataPlan, data_plan_allocation_bytes,
-    materialize_data_plan, validate_json_registered,
+    Provenance, SemanticDataTarget, ValidatedDataPlan, materialize_data_plan,
+    validate_json_registered,
 };
 use crate::module_id::{
     ModuleAuthority, ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver,
@@ -213,16 +213,11 @@ fn publish_static_data_module(
     core_modules: &HashMap<String, ModuleArtifact>,
     heap: &mut Heap,
     source_bytes: usize,
-    allocation_limit: u64,
+    data_limits: DataLimits,
 ) -> Result<(PersistentValue, ModuleInterface, Provenance), ModuleError> {
     let (owner, descriptor) = semantic_value_contract(core_modules, heap)?;
-    let requested = data_plan_allocation_bytes(plan, source_bytes)
-        .map_err(|_| ModuleError::new("static data allocation size overflowed"))?;
-    if requested > allocation_limit {
-        return Err(ModuleError::new(
-            "static data module exceeds the allocation quota",
-        ));
-    }
+    plan.enforce_limits(data_limits, source_bytes)
+        .map_err(|error| ModuleError::new(error.to_string()))?;
     let type_id = semantic_value_type_id(heap, None, owner.runtime())
         .map_err(|error| ModuleError::new(error.to_string()))?;
     let sourced = materialize_data_plan(
@@ -418,6 +413,7 @@ impl PendingModule {
             resolver,
             bindings,
             self.inner.config.module_quota,
+            self.inner.config.data_limits,
             Arc::clone(&self.inner.debug_sink),
             &self.inner.native_modules,
             ModuleSourcePolicy::ExplicitExports,
@@ -1715,6 +1711,40 @@ impl LoadedModule {
 pub struct EngineConfig {
     pub module_quota: Quota,
     pub session_quota: Quota,
+    pub data_limits: DataLimits,
+}
+
+/// Admission limits applied independently to each static or Entry data source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DataLimits {
+    /// Maximum raw source bytes read before parsing.
+    pub file_size: usize,
+    /// Maximum logical Value occurrences after alias and merge expansion.
+    pub nodes: usize,
+    /// Maximum logical graph depth, with the root at depth one.
+    pub depth: usize,
+    /// Maximum element or field count of any one Array or Object.
+    pub container_size: usize,
+    /// Maximum decoded byte length of any one Bytes value.
+    pub bytes_len: usize,
+    /// Maximum decoded UTF-8 byte length of any String, object key, or temporal value.
+    pub string_len: usize,
+    /// Maximum total decoded bytes in Strings, object keys, temporal values, and Bytes.
+    pub payloads_bytes: usize,
+}
+
+impl Default for DataLimits {
+    fn default() -> Self {
+        Self {
+            file_size: 256 * 1024 * 1024,
+            nodes: 1_000_000,
+            depth: 256,
+            container_size: 1_000_000,
+            bytes_len: 64 * 1024 * 1024,
+            string_len: 64 * 1024 * 1024,
+            payloads_bytes: 256 * 1024 * 1024,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1830,6 +1860,7 @@ pub trait RunHost {
     fn read_data_source(
         &mut self,
         source: &SystemDataSource,
+        max_bytes: usize,
     ) -> RunHostFuture<'_, Result<Option<String>, String>>;
 
     fn spawn_stdio_child(
@@ -1906,6 +1937,7 @@ impl RunHost for NoProcessRunHost {
     fn read_data_source(
         &mut self,
         _source: &SystemDataSource,
+        _max_bytes: usize,
     ) -> RunHostFuture<'_, Result<Option<String>, String>> {
         Box::pin(async { Ok(None) })
     }
@@ -2082,6 +2114,7 @@ impl Engine {
             path,
             external_bindings,
             self.config.module_quota,
+            self.config.data_limits,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
@@ -2101,6 +2134,7 @@ impl Engine {
             resolver,
             external_bindings,
             self.config.module_quota,
+            self.config.data_limits,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
@@ -2119,6 +2153,7 @@ impl Engine {
             resolver,
             external_bindings,
             self.config.module_quota,
+            self.config.data_limits,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
@@ -2332,6 +2367,7 @@ impl Engine {
             entry_id,
             &entry_source,
             self.config.module_quota,
+            self.config.data_limits,
             Arc::clone(&self.debug_sink),
             &self.native_modules,
         )?;
@@ -2503,14 +2539,16 @@ impl Engine {
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
         let mut prepared_plans = Vec::new();
-        let mut requested_data_allocation = 0u64;
         for (key, request) in &caps.data_sources {
-            let Some(source) = host.read_data_source(request).await.map_err(|error| {
-                ModuleError::new(format!(
-                    "cannot read Entry data source {:?}: {error}",
-                    request.src
-                ))
-            })?
+            let Some(source) = host
+                .read_data_source(request, self.config.data_limits.file_size)
+                .await
+                .map_err(|error| {
+                    ModuleError::new(format!(
+                        "cannot read Entry data source {:?}: {error}",
+                        request.src
+                    ))
+                })?
             else {
                 continue;
             };
@@ -2525,17 +2563,10 @@ impl Engine {
                             .join("\n"),
                     )
                 })?;
-            let raw_bytes = data_plan_allocation_bytes(&plan, source.len())
-                .map_err(|_| ModuleError::new("Entry data allocation size overflowed"))?;
-            requested_data_allocation = requested_data_allocation
-                .checked_add(raw_bytes)
-                .ok_or_else(|| ModuleError::new("Entry data allocation size overflowed"))?;
-            if requested_data_allocation > self.config.session_quota.allocation_bytes {
-                return Err(ModuleError::new(format!(
-                    "Entry data source {:?} exceeds the allocation quota",
-                    request.src
-                )));
-            }
+            plan.enforce_limits(self.config.data_limits, source.len())
+                .map_err(|error| {
+                    ModuleError::new(format!("Entry data source {:?}: {error}", request.src))
+                })?;
             prepared_plans.push((key.clone(), request.src.clone(), plan));
         }
         let type_id = semantic_value_type_id(
@@ -3390,8 +3421,14 @@ impl WorkspaceBuilder<'_> {
             return None;
         }
         let source = match self.overlays.get(&path).cloned() {
-            Some(source) => source,
-            None => match fs::read_to_string(&path) {
+            Some(source) if source.byte_len() <= self.engine.config.data_limits.file_size => source,
+            Some(_) => {
+                let kind = static_data_kind(module.format)?;
+                self.inputs
+                    .insert(key.clone(), unavailable_input(key, path.clone(), kind));
+                return None;
+            }
+            None => match read_data_file(&path, self.engine.config.data_limits.file_size) {
                 Ok(source) => crate::document::DocumentText::new(source),
                 Err(_) => {
                     let kind = static_data_kind(module.format)?;
@@ -3432,7 +3469,7 @@ impl WorkspaceBuilder<'_> {
                 &self.core_modules,
                 &mut self.main.heap,
                 source_len,
-                self.engine.config.module_quota.allocation_bytes,
+                self.engine.config.data_limits,
             ) {
                 Ok(published) => published,
                 Err(error) => {
@@ -3744,6 +3781,7 @@ pub fn evaluate_expression_module_with_quota_and_debug_sink(
         path,
         external_bindings,
         module_quota,
+        DataLimits::default(),
         debug_sink,
         &[],
         ModuleSourcePolicy::ExpressionHarness,
@@ -3781,6 +3819,7 @@ fn load_module_with_native_modules(
     path: impl AsRef<Path>,
     external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
+    data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
     source_policy: ModuleSourcePolicy,
@@ -3792,6 +3831,7 @@ fn load_module_with_native_modules(
         resolver,
         external_bindings,
         module_quota,
+        data_limits,
         debug_sink,
         native_modules,
         source_policy,
@@ -3802,6 +3842,7 @@ fn load_module_with_resolver(
     resolver: ModuleResolver,
     external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
+    data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
     source_policy: ModuleSourcePolicy,
@@ -3837,6 +3878,7 @@ fn load_module_with_resolver(
         visiting: Vec::new(),
         dependencies: BTreeSet::new(),
         module_quota,
+        data_limits,
         debug_sink,
         sources,
         semantic_inputs: BTreeMap::new(),
@@ -4532,6 +4574,7 @@ fn prepare_selected_entry(
     entry_id: ModuleCName,
     source: &str,
     module_quota: Quota,
+    data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
     native_modules: &[RegisteredNativeModule],
 ) -> Result<SelectedEntryLoader, ModuleError> {
@@ -4587,6 +4630,7 @@ fn prepare_selected_entry(
         visiting: Vec::new(),
         dependencies: BTreeSet::new(),
         module_quota,
+        data_limits,
         debug_sink,
         sources,
         semantic_inputs: BTreeMap::new(),
@@ -4610,6 +4654,7 @@ struct ModuleLoader {
     visiting: Vec<ModuleCName>,
     dependencies: BTreeSet<PathBuf>,
     module_quota: Quota,
+    data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
     sources: SourceDatabase,
     semantic_inputs: BTreeMap<String, SemanticModuleInput>,
@@ -4777,8 +4822,8 @@ impl ModuleLoader {
         self.enter(&module_id)?;
         self.dependencies.insert(path.clone());
         let result: Result<ModuleArtifact, ModuleError> = match format {
-            ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => {
-                let source = read(&path)?;
+            ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => (|| {
+                let source = read_data_file(&path, self.data_limits.file_size)?;
                 let source_id = self.sources.add(path.display().to_string(), source);
                 let StaticDataParse {
                     plan,
@@ -4801,7 +4846,7 @@ impl ModuleLoader {
                         &self.core_modules,
                         &mut self.main.heap,
                         self.sources.get(source_id).text().byte_len(),
-                        self.module_quota.allocation_bytes,
+                        self.data_limits,
                     )?;
                     let key = module_id.to_string();
                     self.semantic_inputs.insert(
@@ -4826,7 +4871,7 @@ impl ModuleLoader {
                         provenance: Some(provenance),
                     })
                 })
-            }
+            })(),
             ModuleFormat::Telora => {
                 let mut account = QuotaAccount::new(self.module_quota);
                 self.compile_telora(
@@ -5560,6 +5605,41 @@ fn read(path: &Path) -> Result<String, ModuleError> {
     })
 }
 
+fn read_data_file(path: &Path, max_bytes: usize) -> Result<String, ModuleError> {
+    use std::io::Read;
+
+    let file = fs::File::open(path).map_err(|error| {
+        ModuleError::new(format!(
+            "cannot read data module {}: {error}",
+            path.display()
+        ))
+    })?;
+    let max_read = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    file.take(max_read)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            ModuleError::new(format!(
+                "cannot read data module {}: {error}",
+                path.display()
+            ))
+        })?;
+    if bytes.len() > max_bytes {
+        return Err(ModuleError::new(format!(
+            "data source exceeds file_size limit ({} > {max_bytes})",
+            bytes.len()
+        )));
+    }
+    String::from_utf8(bytes).map_err(|error| {
+        ModuleError::new(format!(
+            "cannot read data module {}: {error}",
+            path.display()
+        ))
+    })
+}
+
 #[cfg(test)]
 fn canonicalize(path: &Path) -> Result<PathBuf, ModuleError> {
     fs::canonicalize(path).map_err(|error| {
@@ -5703,6 +5783,7 @@ mod tests {
         Engine::new(EngineConfig {
             module_quota: Quota::with_fuel(1_000_000),
             session_quota: Quota::with_fuel(1_000_000),
+            data_limits: DataLimits::default(),
         })
     }
 
@@ -6268,6 +6349,7 @@ export def output: Expr = 'Compare({left: 1, right: "wrong"});"#;
         let mut builder = Engine::builder(EngineConfig {
             module_quota: Quota::with_fuel(100_000),
             session_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
         });
         assert_eq!(
             builder
@@ -6355,6 +6437,7 @@ export def output: Expr = 'Compare({left: 1, right: "wrong"});"#;
         let config = EngineConfig {
             module_quota: Quota::with_fuel(500_000),
             session_quota: Quota::with_fuel(500_000),
+            data_limits: DataLimits::default(),
         };
         let mut builder = Engine::builder(config);
         builder
@@ -6449,6 +6532,7 @@ export def output = {answer: host.answer(), name: desc.opaque_name(host.Token)};
         let config = EngineConfig {
             module_quota: Quota::with_fuel(500_000),
             session_quota: Quota::with_fuel(500_000),
+            data_limits: DataLimits::default(),
         };
         let native_source = "native answer: Fn() -> Int; export { answer };";
         let mut builder = Engine::builder(config);
@@ -6570,6 +6654,7 @@ type Independent = String;
         let engine = Engine::new(EngineConfig {
             module_quota: Quota::with_fuel(100_000),
             session_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
         })
         .with_debug_sink(sink.clone());
         let module = engine
@@ -6618,6 +6703,7 @@ type Independent = String;
         let engine = Engine::new(EngineConfig {
             module_quota: Quota::with_fuel(100_000),
             session_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
         })
         .with_debug_sink(sink.clone());
 
@@ -6657,6 +6743,7 @@ type Independent = String;
         let engine = Engine::new(EngineConfig {
             module_quota: Quota::with_fuel(100_000),
             session_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
         })
         .with_debug_sink(sink.clone());
         let module = engine
@@ -7408,6 +7495,7 @@ name = "rustc"
         let module_limited = Engine::new(EngineConfig {
             module_quota: Quota::new(1, 1_000, u64::MAX),
             session_quota: Quota::new(100, 1_000, u64::MAX),
+            data_limits: DataLimits::default(),
         });
         let error = module_limited
             .load_module(directory.join("typed.telora"), BTreeMap::new())
@@ -7418,6 +7506,7 @@ name = "rustc"
         let session_limited = Engine::new(EngineConfig {
             module_quota: Quota::new(100, 1_000, u64::MAX),
             session_quota: Quota::new(100, 1_000, 0),
+            data_limits: DataLimits::default(),
         });
         let module = session_limited
             .load_module(directory.join("value.telora"), BTreeMap::new())
@@ -7451,6 +7540,7 @@ name = "rustc"
             visiting: Vec::new(),
             dependencies: BTreeSet::new(),
             module_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
             debug_sink,
             sources,
             semantic_inputs: BTreeMap::new(),
@@ -12805,6 +12895,7 @@ export { CallExpr, Expr };"#,
             visiting: Vec::new(),
             dependencies: BTreeSet::new(),
             module_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
             debug_sink: Arc::new(DiscardDebugSink),
             sources: SourceDatabase::default(),
             semantic_inputs: BTreeMap::new(),
@@ -13973,6 +14064,45 @@ export def output = (compared, selected);"#,
         assert!(output.contains("custom YAML tags"), "{output}");
         assert!(output.contains("non_finite: 'Err("), "{output}");
         assert!(output.contains("must be finite"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn static_data_imports_use_structural_limits_instead_of_vm_allocation_quota() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(directory.join("data.json"), r#"{"items":[1,2]}"#).unwrap();
+        fs::write(
+            &main,
+            r#"import "./data.json" { data }; export def output = data;"#,
+        )
+        .unwrap();
+
+        let engine_with = |data_limits| {
+            Engine::new(EngineConfig {
+                module_quota: Quota::with_fuel(1_000_000),
+                session_quota: Quota::with_fuel(1_000_000),
+                data_limits,
+            })
+        };
+        let file_error = engine_with(DataLimits {
+            file_size: 4,
+            ..DataLimits::default()
+        })
+        .load_module(&main, BTreeMap::new())
+        .unwrap_err()
+        .to_string();
+        assert!(file_error.contains("file_size"), "{file_error}");
+
+        let node_error = engine_with(DataLimits {
+            nodes: 3,
+            ..DataLimits::default()
+        })
+        .load_module(&main, BTreeMap::new())
+        .unwrap_err()
+        .to_string();
+        assert!(node_error.contains("nodes"), "{node_error}");
+        assert!(!node_error.contains("allocation quota"), "{node_error}");
         fs::remove_dir_all(directory).unwrap();
     }
 

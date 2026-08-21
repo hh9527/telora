@@ -757,6 +757,7 @@ mod tests {
         EngineConfig {
             module_quota: Quota::with_fuel(100_000),
             session_quota: Quota::with_fuel(100_000),
+            data_limits: telora_core::DataLimits::default(),
         }
     }
 

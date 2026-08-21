@@ -1285,12 +1285,16 @@ arena 节点的轻量边；JSON/TOML 节点来自对应 CST node，YAML 节点�
 字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、YAML
 graph 解引用、TOML table 组装所需的索引，进入必要的 side table。plan
 不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
-验证和 quota 预检全部成功后单次消费它。
+验证和结构限制预检全部成功后单次消费它。
 
-数据物化不消耗 Telora 跳转/fuel 配额，因为它不会调用或递归；生成的 Heap 对象仍受
-allocation quota 约束。每个节点直接携带本次运行共享 source registry 分配的
+数据源不消耗也不依赖 VM 的 fuel、stack 或 allocation quota。Host 在完整分配 source
+字符串前以有界读取检查原始 `file_size`；验证计划随后独立检查 `nodes`（YAML alias/merge
+按最终每次出现计数）、`depth`（根为 1）、单个 `container_size`、单个 `bytes_len`、单个
+UTF-8 `string_len`，以及所有 String、对象键、时间字符串和 Bytes 解码后长度之和
+`payloads_bytes`。对象键不是节点。全部计数使用 checked arithmetic，任何溢出均视为
+超限；只有所有检查通过后才物化。每个节点直接携带本次运行共享 source registry 分配的
 `SourceId + range`，后续诊断可以稳定地把该节点作为 source 位置。MainWorld 和 Entry
-WorkWorld 仅是不同 target，CST、格式验证、location、quota 和 `Value` 构造逻辑相同。
+WorkWorld 仅是不同 target，CST、格式验证、location、data limits 和 `Value` 构造逻辑相同。
 
 `spawn_child` 是 `SpawnStdioChild` 与 `PostStdin` 的显式权限。Host 在执行一批 effect
 中的任何一项前先审计整批；未授权时整批拒绝。`Exec` 是独立权限语义，不由

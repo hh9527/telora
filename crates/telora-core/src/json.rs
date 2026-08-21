@@ -209,6 +209,209 @@ impl ValidatedDataPlan {
         self.nodes.push(DataPlanNode { kind, location });
         id
     }
+
+    pub(crate) fn enforce_limits(
+        &self,
+        limits: crate::DataLimits,
+        file_size: usize,
+    ) -> Result<DataStats, DataLimitError> {
+        if file_size > limits.file_size {
+            return Err(DataLimitError::new(
+                "file_size",
+                file_size,
+                limits.file_size,
+            ));
+        }
+
+        fn add(
+            value: &mut usize,
+            amount: usize,
+            name: &'static str,
+            limit: usize,
+        ) -> Result<(), DataLimitError> {
+            *value = value
+                .checked_add(amount)
+                .ok_or_else(|| DataLimitError::overflow(name, limit))?;
+            if *value > limit {
+                return Err(DataLimitError::new(name, *value, limit));
+            }
+            Ok(())
+        }
+
+        fn visit(
+            plan: &ValidatedDataPlan,
+            id: DataNodeId,
+            depth: usize,
+            limits: crate::DataLimits,
+            stats: &mut DataStats,
+        ) -> Result<(), DataLimitError> {
+            if depth > limits.depth {
+                return Err(DataLimitError::new("depth", depth, limits.depth));
+            }
+            stats.depth = stats.depth.max(depth);
+            add(&mut stats.nodes, 1, "nodes", limits.nodes)?;
+            match &plan.node(id).kind {
+                DataPlanNodeKind::Scalar(DataScalar::String(value)) => {
+                    stats.string_len = stats.string_len.max(value.len());
+                    if value.len() > limits.string_len {
+                        return Err(DataLimitError::new(
+                            "string_len",
+                            value.len(),
+                            limits.string_len,
+                        ));
+                    }
+                    add(
+                        &mut stats.payloads_bytes,
+                        value.len(),
+                        "payloads_bytes",
+                        limits.payloads_bytes,
+                    )?;
+                }
+                DataPlanNodeKind::Scalar(DataScalar::Bytes(value)) => {
+                    stats.bytes_len = stats.bytes_len.max(value.len());
+                    if value.len() > limits.bytes_len {
+                        return Err(DataLimitError::new(
+                            "bytes_len",
+                            value.len(),
+                            limits.bytes_len,
+                        ));
+                    }
+                    add(
+                        &mut stats.payloads_bytes,
+                        value.len(),
+                        "payloads_bytes",
+                        limits.payloads_bytes,
+                    )?;
+                }
+                DataPlanNodeKind::Scalar(DataScalar::TaggedString { value, .. }) => {
+                    stats.string_len = stats.string_len.max(value.len());
+                    if value.len() > limits.string_len {
+                        return Err(DataLimitError::new(
+                            "string_len",
+                            value.len(),
+                            limits.string_len,
+                        ));
+                    }
+                    add(
+                        &mut stats.payloads_bytes,
+                        value.len(),
+                        "payloads_bytes",
+                        limits.payloads_bytes,
+                    )?;
+                }
+                DataPlanNodeKind::Scalar(_) => {}
+                DataPlanNodeKind::Array(items) => {
+                    stats.container_size = stats.container_size.max(items.len());
+                    if items.len() > limits.container_size {
+                        return Err(DataLimitError::new(
+                            "container_size",
+                            items.len(),
+                            limits.container_size,
+                        ));
+                    }
+                    let child_depth = depth
+                        .checked_add(1)
+                        .ok_or_else(|| DataLimitError::overflow("depth", limits.depth))?;
+                    for item in items {
+                        visit(plan, *item, child_depth, limits, stats)?;
+                    }
+                }
+                DataPlanNodeKind::Object(fields) => {
+                    stats.container_size = stats.container_size.max(fields.len());
+                    if fields.len() > limits.container_size {
+                        return Err(DataLimitError::new(
+                            "container_size",
+                            fields.len(),
+                            limits.container_size,
+                        ));
+                    }
+                    let child_depth = depth
+                        .checked_add(1)
+                        .ok_or_else(|| DataLimitError::overflow("depth", limits.depth))?;
+                    for (name, field) in fields {
+                        stats.string_len = stats.string_len.max(name.len());
+                        if name.len() > limits.string_len {
+                            return Err(DataLimitError::new(
+                                "string_len",
+                                name.len(),
+                                limits.string_len,
+                            ));
+                        }
+                        add(
+                            &mut stats.payloads_bytes,
+                            name.len(),
+                            "payloads_bytes",
+                            limits.payloads_bytes,
+                        )?;
+                        visit(plan, field.value, child_depth, limits, stats)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        let mut stats = DataStats {
+            file_size,
+            ..DataStats::default()
+        };
+        visit(self, self.root(), 1, limits, &mut stats)?;
+        Ok(stats)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DataStats {
+    pub(crate) file_size: usize,
+    pub(crate) nodes: usize,
+    pub(crate) depth: usize,
+    pub(crate) container_size: usize,
+    pub(crate) bytes_len: usize,
+    pub(crate) string_len: usize,
+    pub(crate) payloads_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DataLimitError {
+    name: &'static str,
+    actual: Option<usize>,
+    limit: usize,
+}
+
+impl DataLimitError {
+    fn new(name: &'static str, actual: usize, limit: usize) -> Self {
+        Self {
+            name,
+            actual: Some(actual),
+            limit,
+        }
+    }
+
+    fn overflow(name: &'static str, limit: usize) -> Self {
+        Self {
+            name,
+            actual: None,
+            limit,
+        }
+    }
+}
+
+impl fmt::Display for DataLimitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.actual {
+            Some(actual) => write!(
+                formatter,
+                "data source exceeds {name} limit ({actual} > {limit})",
+                name = self.name,
+                limit = self.limit,
+            ),
+            None => write!(
+                formatter,
+                "data source {name} accounting overflowed (limit {limit})",
+                name = self.name,
+                limit = self.limit,
+            ),
+        }
+    }
 }
 
 pub(crate) fn materialize_data_plan(
@@ -290,69 +493,6 @@ pub(crate) fn materialize_data_plan(
         &mut Vec::new(),
     );
     MaterializedValue { value, provenance }
-}
-
-pub(crate) fn semantic_data_plan_storage_bytes(
-    plan: &ValidatedDataPlan,
-) -> Result<u64, &'static str> {
-    fn add(left: u64, right: u64) -> Result<u64, &'static str> {
-        left.checked_add(right)
-            .ok_or("semantic Value size overflowed")
-    }
-    fn visit(plan: &ValidatedDataPlan, id: DataNodeId) -> Result<u64, &'static str> {
-        let tagged = (std::mem::size_of::<Val>() as u64)
-            .checked_mul(2)
-            .ok_or("semantic Value size overflowed")?;
-        let payload = match &plan.node(id).kind {
-            DataPlanNodeKind::Scalar(DataScalar::Atom(value))
-                if matches!(value.as_str(), "None" | "True" | "False") =>
-            {
-                return Ok(0);
-            }
-            DataPlanNodeKind::Scalar(DataScalar::Int(_) | DataScalar::Float(_)) => 0,
-            DataPlanNodeKind::Scalar(DataScalar::String(value)) => value.len() as u64,
-            DataPlanNodeKind::Scalar(DataScalar::Bytes(value)) => value.len() as u64,
-            DataPlanNodeKind::Scalar(DataScalar::TaggedString { value, .. }) => value.len() as u64,
-            DataPlanNodeKind::Scalar(DataScalar::Atom(_)) => {
-                return Err("semantic Value contains an unsupported Atom");
-            }
-            DataPlanNodeKind::Array(items) => {
-                let mut bytes = (std::mem::size_of::<Val>() as u64)
-                    .checked_mul(items.len() as u64)
-                    .ok_or("semantic Value size overflowed")?;
-                for item in items {
-                    bytes = add(bytes, visit(plan, *item)?)?;
-                }
-                bytes
-            }
-            DataPlanNodeKind::Object(fields) => {
-                let mut bytes = (std::mem::size_of::<Val>() as u64)
-                    .checked_mul(fields.len() as u64)
-                    .ok_or("semantic Value size overflowed")?;
-                for (name, field) in fields {
-                    bytes = add(bytes, name.len() as u64)?;
-                    bytes = add(bytes, visit(plan, field.value)?)?;
-                }
-                bytes
-            }
-        };
-        add(tagged, payload)
-    }
-    visit(plan, plan.root())
-}
-
-pub(crate) fn data_plan_allocation_bytes(
-    plan: &ValidatedDataPlan,
-    source_bytes: usize,
-) -> Result<u64, &'static str> {
-    u64::try_from(source_bytes)
-        .ok()
-        .and_then(|source| {
-            semantic_data_plan_storage_bytes(plan)
-                .ok()?
-                .checked_add(source)
-        })
-        .ok_or("data allocation size overflowed")
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -798,19 +938,104 @@ mod tests {
     }
 
     #[test]
-    fn validated_plan_accounts_the_complete_semantic_graph_before_materialization() {
+    fn validated_plan_accounts_the_complete_logical_graph_before_materialization() {
         let source = r#"{"a":"xyz","b":[1,true]}"#;
         let mut sources = SourceDatabase::default();
         let source_id = sources.add("quota.json", source);
         let plan = validate_json_registered(&sources, source_id).unwrap();
-        let value_bytes = std::mem::size_of::<Val>() as u64;
 
-        // Object wrapper + two fields, String wrapper, Array wrapper + two
-        // items, and Int wrapper. Builtin True itself allocates no graph node.
-        let expected = source.len() as u64 + 12 * value_bytes + 5;
         assert_eq!(
-            data_plan_allocation_bytes(&plan, source.len()).unwrap(),
-            expected
+            plan.enforce_limits(crate::DataLimits::default(), source.len())
+                .unwrap(),
+            DataStats {
+                file_size: source.len(),
+                nodes: 5,
+                depth: 3,
+                container_size: 2,
+                bytes_len: 0,
+                string_len: 3,
+                payloads_bytes: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn validated_plan_enforces_each_structural_limit() {
+        let source = r#"{"a":"xyz","b":[1,true]}"#;
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("limits.json", source);
+        let plan = validate_json_registered(&sources, source_id).unwrap();
+        let defaults = crate::DataLimits::default();
+
+        for (limits, name) in [
+            (
+                crate::DataLimits {
+                    file_size: source.len() - 1,
+                    ..defaults
+                },
+                "file_size",
+            ),
+            (
+                crate::DataLimits {
+                    nodes: 4,
+                    ..defaults
+                },
+                "nodes",
+            ),
+            (
+                crate::DataLimits {
+                    depth: 2,
+                    ..defaults
+                },
+                "depth",
+            ),
+            (
+                crate::DataLimits {
+                    container_size: 1,
+                    ..defaults
+                },
+                "container_size",
+            ),
+            (
+                crate::DataLimits {
+                    string_len: 2,
+                    ..defaults
+                },
+                "string_len",
+            ),
+            (
+                crate::DataLimits {
+                    payloads_bytes: 4,
+                    ..defaults
+                },
+                "payloads_bytes",
+            ),
+        ] {
+            assert!(
+                plan.enforce_limits(limits, source.len())
+                    .unwrap_err()
+                    .to_string()
+                    .contains(name),
+                "{name}"
+            );
+        }
+
+        let location = Location::from_usize(source_id, 0..source.len()).unwrap();
+        let mut bytes = ValidatedDataPlan::default();
+        let root = bytes.scalar(DataScalar::Bytes(vec![0; 3]), location);
+        bytes.set_root(root);
+        assert!(
+            bytes
+                .enforce_limits(
+                    crate::DataLimits {
+                        bytes_len: 2,
+                        ..defaults
+                    },
+                    source.len(),
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("bytes_len")
         );
     }
 

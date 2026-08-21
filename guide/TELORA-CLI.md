@@ -60,7 +60,9 @@ export def lowering_case = do {
   JSON/YAML/TOML import 与 `data_srcs` 共用同一管线：先完成 CST 和全部格式级验证，
   再把通用 `Value` 直接物化进目标 Heap；前者进入构建中的 MainWorld，后者进入 Entry
   WorkWorld。该过程不经过 `DataWorld` 或 Host-owned Telora value。业务 schema 校验属于
-  codec，不属于资源读取。
+  codec，不属于资源读取。物理文件使用有界读取；文件大小、节点总数、深度、单容器大小、
+  单 Bytes/String 长度和解码 payload 总字节数由独立 data limits 控制，不消耗或借用 VM
+  的 fuel、stack、allocation quota。
   不存在的环境变量从 `SystemResources.vars` 省略，非字符串环境值报错。
   `stdin: 'Text` 注入完整文本；`'Lined` 在 `Initialize` 后逐行产生 `StdinLine`，并以
   单个 `None` 表示 EOF。`spawn_child` 必须为真才能发出 `SpawnStdioChild` 或

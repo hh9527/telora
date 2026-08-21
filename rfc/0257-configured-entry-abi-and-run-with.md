@@ -131,16 +131,22 @@ deterministic materialization order. Their entries should identify CST nodes
 rather than own duplicated payloads. A validated source is therefore a compact
 plan of references that can be consumed once by the target-Heap materializer.
 
-Materialization does not consume Telora control-flow fuel because it cannot
-call or recurse. It remains subject to Heap allocation quota. Every materialized
-node retains the `SourceId` and range allocated by the same run's source
-registry, so later diagnostics may use the data node as their source location.
+Materialization does not consume or depend on Telora VM fuel, stack, or Heap
+allocation quota. Raw sources are read with a `file_size` bound before a complete
+source String is allocated. The validated logical graph is admitted with
+independent limits for total nodes, root-based depth, per-container items,
+per-Bytes length, per-String UTF-8 length, and total decoded payload bytes.
+Object keys contribute String and payload bytes but are not nodes; YAML aliases
+and merges contribute once per final logical occurrence. All accounting uses
+checked arithmetic. Every materialized node retains the `SourceId` and range
+allocated by the same run's source registry, so later diagnostics may use the
+data node as its source location.
 
 Once the dependency graph and stable module slots exist, a validated static
 data module may allocate its `Value` and export module directly in the unsealed
 MainWorld. Entry resources use the same materializer with the Entry WorkWorld
 as target and the MainWorld as background. The target differs; the validation,
-location, quota, and `Value` construction rules do not.
+location, data-limit, and `Value` construction rules do not.
 
 `vars` is a requested snapshot, not a list of required variables. Missing
 names are omitted from `SystemResources.vars`; values present in the process
