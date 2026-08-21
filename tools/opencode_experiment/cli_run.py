@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             plan_id, port = config["plan_id"], config["port"]
             root, state = reserve(plan_id, test_id, port)
             if state["phase"] == "waiting":
-                print(f"Execution {test_id} is waiting for: ./oc-ctl start {test_id}", flush=True)
+                print(f"Execution {test_id} is waiting for: ./oc-ctl start {test_id} {plan_id}", flush=True)
                 while not start_requested(root):
                     time.sleep(.25)
             root, state, _ = prepare(plan_id, test_id, port)

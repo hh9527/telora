@@ -6,8 +6,9 @@ operator selects the port but never selects a plan. Early in a long-running task
 `oc-ctl test-connect <test-id>` to exercise that exact daemon and record
 `target/exp/<test-id>/connect-test.json`. This neither chooses a plan nor writes `config.json`, so it
 does not release `oc-run` or freeze experiment inputs. After prerequisite fixes are complete, the
-Host runs `oc-ctl start <test-id>` from inside its autonomously selected plan directory; `start`
-requires the successful receipt and external runner, adopts its port, and atomically writes
+Host runs `oc-ctl start <test-id> <plan-id>` from the repository root; `plan-id` names a directory
+under `experiments/`. `start` requires the successful receipt and external runner, adopts its port,
+and atomically writes
 `target/exp/<test-id>/config.json`. The runner then prepares the isolated experiment workspace,
 creates the formal session on the existing daemon, and attaches the TUI. When the TUI exits,
 `oc-run` terminates the daemon.
@@ -46,7 +47,7 @@ The Host control surface is deliberately limited to:
 
 ```text
 oc-ctl test-connect <test-id>
-oc-ctl start <test-id>
+oc-ctl start <test-id> <plan-id>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
 oc-ctl update <test-id> <dest-file>=<src-file>...

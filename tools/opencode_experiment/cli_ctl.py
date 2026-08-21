@@ -39,9 +39,12 @@ def emit(value: object) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named artifact-DAG experiment.")
     commands = root.add_subparsers(dest="command", required=True)
-    for name in ("test-connect", "start", "stat", "status"):
+    for name in ("test-connect", "stat", "status"):
         item = commands.add_parser(name)
         item.add_argument("test_id")
+    start = commands.add_parser("start")
+    start.add_argument("test_id")
+    start.add_argument("plan_id")
     update = commands.add_parser("update")
     update.add_argument("test_id")
     update.add_argument("files", nargs="+")
@@ -69,26 +72,19 @@ def _controller_repo() -> Path:
     return repository_root(Path(__file__).resolve().parent)
 
 
-def _selected_plan(repo: Path, cwd: Path | None = None) -> str:
-    current = (cwd or Path.cwd()).resolve()
-    plans = repo / "experiments"
-    for candidate in (current, *current.parents):
-        if candidate.parent == plans and (candidate / "experiment.json").is_file():
-            load_manifest(repo, candidate.name)
-            return candidate.name
-    raise ControlError("Host must run start from inside the autonomously selected experiment plan", 66)
-
-
-def _configure_start(repo: Path, test_id: str) -> dict[str, Any]:
+def _configure_start(repo: Path, test_id: str, plan_id: str) -> dict[str, Any]:
     load_connect_test(repo, test_id)
     runner = load_runner_config(repo, test_id)
+    load_manifest(repo, plan_id)
     path = run_config_path(repo, test_id)
     if path.is_file():
         configured = load_run_config(repo, test_id)
+        if configured["plan_id"] != plan_id:
+            raise ControlError("execution plan does not match the requested plan", 64)
         if configured["port"] != runner["port"]:
             raise ControlError("execution port does not match the external runner", 64)
         return configured
-    return create_run_config(repo, test_id, _selected_plan(repo), runner["port"])
+    return create_run_config(repo, test_id, plan_id, runner["port"])
 
 
 def _test_connect(repo: Path, test_id: str) -> dict[str, Any]:
@@ -229,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "start":
             repo = _controller_repo()
-            _configure_start(repo, args.test_id)
+            _configure_start(repo, args.test_id, args.plan_id)
             deadline = time.monotonic() + 30
             state_path = run_config_path(repo, args.test_id).parent / "state.json"
             while not state_path.is_file():

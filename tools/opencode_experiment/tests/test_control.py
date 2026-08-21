@@ -48,7 +48,6 @@ from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
-    _selected_plan,
     _test_connect,
     _update,
     main as control_main,
@@ -163,6 +162,13 @@ class ConfigStateTest(unittest.TestCase):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
                          {"test-connect", "start", "stat", "status", "update", "publish"})
 
+    def test_start_requires_test_and_plan_identity(self):
+        args = control_parser().parse_args(["start", "ontology-3-009", "ontology-3"])
+        self.assertEqual(
+            (args.command, args.test_id, args.plan_id),
+            ("start", "ontology-3-009", "ontology-3"),
+        )
+
     def test_run_requires_test_id_and_reserved_port(self):
         args = run_parser().parse_args(["ontology-3-006", "4199"])
         self.assertEqual(vars(args), {"test_id": "ontology-3-006", "port": 4199})
@@ -180,16 +186,14 @@ class ConfigStateTest(unittest.TestCase):
         self.assertEqual(result, 69)
         self.assertIn(f"cannot reserve runner port {port}", stderr.getvalue())
 
-    def test_host_selects_plan_and_writes_run_configuration(self):
+    def test_host_configures_the_explicit_plan_and_runner_port(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
             plan = repo / "experiments" / "demo"
             self.write_plan(plan)
-            self.assertEqual(_selected_plan(repo, plan / "nested"), "demo")
             record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
             create_runner_config(repo, "run-001", 43123)
-            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan):
-                value = _configure_start(repo, "run-001")
+            value = _configure_start(repo, "run-001", "demo")
             self.assertEqual(value["plan_id"], "demo")
             self.assertEqual(value["port"], 43123)
             self.assertEqual(load_run_config(repo, "run-001"), value)
@@ -210,9 +214,8 @@ class ConfigStateTest(unittest.TestCase):
             plan = repo / "experiments" / "demo"
             self.write_plan(plan)
             create_runner_config(repo, "run-001", 43123)
-            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan):
-                with self.assertRaisesRegex(ControlError, "test-connect"):
-                    _configure_start(repo, "run-001")
+            with self.assertRaisesRegex(ControlError, "test-connect"):
+                _configure_start(repo, "run-001", "demo")
             self.assertFalse((repo / "target/exp/run-001/config.json").exists())
 
     def test_start_requires_the_external_runner_after_connection_preflight(self):
@@ -221,9 +224,8 @@ class ConfigStateTest(unittest.TestCase):
             plan = repo / "experiments" / "demo"
             self.write_plan(plan)
             record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
-            with mock.patch("tools.opencode_experiment.cli_ctl.Path.cwd", return_value=plan):
-                with self.assertRaisesRegex(ControlError, "oc-run run-001 <port>"):
-                    _configure_start(repo, "run-001")
+            with self.assertRaisesRegex(ControlError, "oc-run run-001 <port>"):
+                _configure_start(repo, "run-001", "demo")
             self.assertFalse((repo / "target/exp/run-001/config.json").exists())
 
     def test_start_rejects_a_config_that_differs_from_the_reserved_port(self):
@@ -232,8 +234,10 @@ class ConfigStateTest(unittest.TestCase):
             record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
             create_runner_config(repo, "run-001", 4199)
             create_run_config(repo, "run-001", "demo", 4200)
+            plan = repo / "experiments" / "demo"
+            self.write_plan(plan)
             with self.assertRaisesRegex(ControlError, "does not match"):
-                _configure_start(repo, "run-001")
+                _configure_start(repo, "run-001", "demo")
 
     def test_connect_records_a_receipt_without_releasing_oc_run(self):
         with tempfile.TemporaryDirectory() as temporary:

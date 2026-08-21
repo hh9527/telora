@@ -103,22 +103,21 @@ Host 在长程任务开头从主仓库运行连接测试：
 测试成功后可以继续修复 bug、更新教程和构建代码；此时 plan revision、Telora binary、
 教程和实验 workspace 都尚未冻结。
 
-所有前序工作完成后，Host 才在终端二进入选定的 plan，启动同一个 test-id：
+所有前序工作完成后，Host 才从主仓库根目录显式选择 plan，启动同一个 test-id：
 
 ```bash
-cd experiments/ontology-3
-../../oc-ctl start ontology-3-009
+./oc-ctl start ontology-3-009 ontology-3
 ```
 
 `start` 首先要求该 test-id 已有成功的连接测试凭据和正在等待的外部 runner，然后从当前
-plan 目录确定 plan-id，采用 runner 已保留的端口，并原子写入
+仓库的 `experiments/<plan-id>` 加载并校验计划，采用 runner 已保留的端口，并原子写入
 `target/exp/<test-id>/config.json`。随后 `oc-run` 才会克隆 plan、构建或复制声明的
 artifact、执行权限预检，在同一个 daemon 上为正式 workspace 创建 session，并启动 TUI
 attach。TUI 退出时 `oc-run` 终止 daemon。`start` 还会发布 `start_artifacts`，并只提示
 coordinator 一次。
 
-只有 `start` 必须从 plan 目录运行。execution 建立后，其他 `oc-ctl` 命令可以在主仓库
-内任意目录运行。
+所有 Host 控制命令都从主仓库根目录以 `./oc-ctl` 运行，避免因相对路径变化产生额外的
+命令授权。`plan-id` 是 `experiments/` 下的目录名，不是任意文件系统路径。
 
 ## 观察和调度
 
@@ -254,7 +253,7 @@ loop {
 
 ## 常见问题
 
-- `oc-run` 一直显示 waiting：正常；需要 Host 从 plan 目录执行同 test-id 的 `oc-ctl start`。
+- `oc-run` 一直显示 waiting：正常；需要 Host 执行同 test-id 和 plan-id 的 `oc-ctl start`。
 - `oc-run` 立即报告端口冲突：换用明确的空闲端口重新启动；此时尚未冻结或启动实验。
 - `start` 报告缺少 connection test：回到主仓库运行同 test-id 的
   `./oc-ctl test-connect`；它不会启动实验，完成后再从 plan 目录执行 `start`。
