@@ -45,9 +45,11 @@ from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
+from tools.opencode_experiment.task_cli import publish_artifact, pull, submit, validate_workflow
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
+    _status,
     _test_connect,
     _update,
     main as control_main,
@@ -372,6 +374,19 @@ class ConfigStateTest(unittest.TestCase):
         self.assertEqual(artifacts["qb-feedback.a2"]["owner"], "a2")
         self.assertEqual(artifacts["qb-feedback.a3"]["owner"], "a3")
         self.assertIsNone(artifacts["qb-feedback"]["owner"])
+        self.assertEqual(artifacts["qb"]["input"], [
+            {"id": "qb.a1", "optional": False},
+            {"id": "qb-feedback.a2", "optional": False},
+            {"id": "qb-feedback.a3", "optional": False},
+        ])
+        self.assertEqual(artifacts["edsl"]["input"], [
+            {"id": "edsl.a2", "optional": False},
+            {"id": "edsl-feedback.a3", "optional": False},
+        ])
+        self.assertEqual(artifacts["ent-1-query-surface"]["input"], [
+            {"id": "ent-1-query-surface.a3", "optional": False},
+            {"id": "ent-1-query-surface-feedback.a4", "optional": False},
+        ])
         self.assertEqual(next(item for item in manifest.artifacts if item["name"] == "telora")["source"],
                          "target/release/telora")
         tutorial = next(item for item in manifest.artifacts if item["name"] == "lang-tutorial")
@@ -397,6 +412,12 @@ class ConfigStateTest(unittest.TestCase):
             a4_permissions["bash"]["./bin/telora query exports @bin/main.telora -C intent-1"],
             "allow",
         )
+        self.assertFalse(any("telora types" in command for command in a4_permissions["bash"]))
+        for role in ("a1", "a2", "a3", "a4"):
+            text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
+            self.assertNotIn("stopped: true", text)
+            self.assertNotIn("telora types", text)
+        self.assertNotIn("stop_path", workflow)
         self.assertFalse(any("mark-blocked" in command for commands in manifest.permission_preflight.values()
                              for command in commands))
         self.assertEqual((plan / "ontology" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
@@ -630,6 +651,32 @@ class MetricsTest(unittest.TestCase):
                          [("unclassified", "unclassified")])
         self.assertEqual(result["aggregate"]["phases"]["unclassified"]["tokens"]["fresh"], 3)
 
+    def test_metrics_warn_when_configured_files_and_work_boundary_are_missing(self):
+        messages = [{
+            "info": {"role": "assistant", "time": {"created": 1000, "completed": 2000},
+                     "tokens": {"input": 1}},
+            "parts": [],
+        }]
+        definition = {"roles": {"worker": {
+            "learning_phases": ["learning"],
+            "work_phase": "implementation",
+            "work_files": ["missing/src/*.telora"],
+            "artifacts": {"code": {"core": ["missing/src/*.telora"]}},
+        }}}
+        records = {"active": [], "history": [{
+            "task_id": "worker-1", "role": "worker", "artifacts": ["build.worker"],
+            "status": "submitted", "started_at_ns": 900_000_000,
+            "submitted_at_ns": 2_100_000_000,
+        }]}
+        result = collect_metrics(
+            "run", "active", Path("/tmp"), [{"id": "ses_worker", "agent": "worker"}],
+            lambda _session: messages, definition, records, now_ms=3000,
+        )
+        self.assertEqual(
+            [warning["kind"] for warning in result["roles"][0]["warnings"]],
+            ["artifact_pattern_no_match", "work_boundary_not_observed"],
+        )
+
     def test_task_metrics_cover_tokens_thinking_and_telora_commands(self):
         messages = [{
             "info": {"role": "assistant", "time": {"created": 1000, "completed": 2000},
@@ -795,6 +842,61 @@ class PermissionPreflightTest(unittest.TestCase):
             workspace = self.workspace(root / "ask", {"bash": {"*": "ask"}})
             with self.assertRaisesRegex(ControlError, "interactive permission"):
                 preflight_permissions(self.manifest(root, ()), workspace)
+
+    def test_rejects_allowed_command_family_missing_from_preflight(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = self.workspace(root, {"bash": {
+                "*": "deny",
+                "./bin/telora query *": "allow",
+                "./bin/telora types *": "allow",
+            }})
+            manifest = self.manifest(
+                root, ("./bin/telora query exports @bin/main.telora -C demo",)
+            )
+            with self.assertRaisesRegex(ControlError, "unexercised worker command family"):
+                preflight_permissions(manifest, workspace)
+
+
+class StatusSummaryTest(unittest.TestCase):
+    def test_status_surfaces_host_gate_without_verbose_graph(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            workflow = validate_workflow({
+                "schema": "telora.opencode-artifact-workflow/v1",
+                "roles": ["a1"],
+                "start_artifacts": ["lang"],
+                "finish_artifact": "accepted",
+                "artifacts": {
+                    "lang": {"desc": "language"},
+                    "draft.a1": {
+                        "desc": "draft", "input": ["lang"], "instruction": "build",
+                    },
+                    "accepted": {"desc": "accepted", "input": ["draft.a1"]},
+                },
+            })
+            publish_artifact(workspace, workflow, "lang")
+            pull(workspace, workflow, "a1", False, None)
+            submit(workspace, workflow, "a1", ["draft.a1"])
+            context = mock.Mock(state={
+                "exec_name": "demo", "phase": "active", "workspace": str(workspace),
+                "workflow": workflow,
+            })
+            metrics = {"aggregate": {"tokens": {"fresh": 10}}}
+            detail = {"agents": [{"role": "a1", "state": "waiting_on_pull"}],
+                      "records": {"active": [], "history": []}}
+            with mock.patch("tools.opencode_experiment.cli_ctl._metrics",
+                            return_value=(metrics, detail)):
+                summary = _status(context)
+                verbose = _status(context, True)
+            self.assertNotIn("artifacts", summary)
+            self.assertEqual(summary["artifact_summary"]["publishable"], ["accepted"])
+            self.assertEqual(summary["next_host_actions"], [{
+                "action": "review_and_publish",
+                "artifact": "accepted",
+                "command": "oc-ctl publish demo accepted",
+            }])
+            self.assertIn("artifacts", verbose)
 
 
 class WatchTest(unittest.TestCase):

@@ -28,9 +28,10 @@ bin/oc-task submit <role> <artifact...>
 
 `pull` returns only the first runnable artifact owned by the role, using artifact declaration order.
 A task starts when this pull succeeds and ends when that one artifact is submitted. The role pulls
-again to claim its next runnable artifact. With no runnable work it waits up to 60 seconds and the
-role immediately pulls again. Every role runs this loop for the whole external TUI lifetime; idle,
-timeout, and submit are not exit conditions. Tasks are deliberately not merged.
+again to claim its next runnable artifact. With no runnable work the default command blocks until an
+artifact becomes runnable, so waiting does not periodically wake the model. `--timeout <seconds>` is
+available only for explicit diagnostics. Every role runs this loop for the whole external TUI
+lifetime; roles never stop themselves and tasks are deliberately not merged.
 
 Each returned output artifact includes `output_mtime_ns`. Every direct input includes its current
 `mtime_ns`, `available`, and `changed`, where `changed` is computed without stored history:
@@ -57,9 +58,12 @@ oc-ctl publish <test-id> <artifact>[=!]...
 `update` atomically copies any Host-readable file. Relative source paths are resolved from the
 Host's current directory; absolute paths, including files under `/tmp`, are accepted. Destination
 paths remain relative to the experiment workspace. A source of `!` deletes the destination.
-`publish` touches a Host-owned artifact, or removes it when suffixed with `=!`. `status` combines
-artifact and Agent state with the latest task elapsed time and tokens. `stat` reports each role/task
-duration and tokens, longest thinking interval, and Telora command count.
+`publish` touches a Host-owned artifact, or removes it when suffixed with `=!`. `status` returns a
+compact scheduling view with `complete`, `quiescent`, normalized Agent state, publishable artifacts,
+and `next_host_actions`; `status --verbose` additionally includes the complete artifact graph and raw
+runtime state. `stat` reports each role/task duration and tokens, longest thinking interval, and
+Telora command count. Metric patterns that match no files and missing configured work boundaries are
+reported as warnings instead of silently producing authoritative-looking zeroes.
 
 An `input` ending in `?` is optional. Its absence never blocks the first run; once published, its
 mtime participates in freshness exactly like any other input. Required inputs must be current.
@@ -91,3 +95,8 @@ permission before `start`. Reporting is a side effect of observation, never a DA
 failed, delayed, or rate-limited comment must not delay `status`, `update`, `publish`, or Agent work.
 The Host keeps scheduling and reports the missed update later when that can be done without
 interrupting the experiment.
+
+`start` also validates every role's command permissions against `permission_preflight`: an allowed
+`./bin/telora <subcommand>` or `./bin/oc-task <subcommand>` family that has no preflight representative
+is rejected as stale plan configuration. This prevents removed CLI such as `telora types` from being
+advertised to Agents without being noticed during preparation.

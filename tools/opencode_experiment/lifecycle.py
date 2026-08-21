@@ -19,7 +19,7 @@ from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
 from .permissions import preflight_permissions
 from .state import SCHEMA, atomic_json, atomic_write, bind_plan, load_state, locked, now, save_state
-from .task_cli import TaskError, publish_artifact, workflow_status
+from .task_cli import TaskError, publish_artifact
 
 
 def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
@@ -250,33 +250,6 @@ def publish_workflow_artifact(context: Context, artifact: str, reason: str, *,
         save_state(context.root, state)
         context.state = state
         return event
-
-
-def quiesce_workflow(context: Context, timeout: float = 120) -> None:
-    workflow = context.state.get("workflow")
-    if not workflow:
-        return
-    status = workflow_status(Path(context.state["workspace"]), workflow)
-    if not status["quiescent"]:
-        pending = [name for name, value in status["artifacts"].items()
-                   if value["owner"] is not None and not value["current"]]
-        details = []
-        if pending:
-            details.append(f"pending artifacts: {', '.join(pending)}")
-        finish = workflow["finish_artifact"]
-        if not status["artifacts"][finish]["current"]:
-            details.append(f"finish artifact is not current: {finish}")
-        raise ControlError(f"workflow is not accepted; {'; '.join(details)}", 75)
-    atomic_write(Path(context.state["workspace"]) / workflow["stop_path"], b"")
-    deadline = time.monotonic() + timeout
-    while True:
-        state, _ = reconcile(context)
-        context.state = state
-        if not state.get("active_round") and context.client().status().get("type", "idle") == "idle":
-            return
-        if time.monotonic() >= deadline:
-            raise ControlError("timed out waiting for workflow roles to stop", 75)
-        time.sleep(.1)
 
 
 def create_execution_session(root: Path, state: dict[str, Any], title: str) -> dict[str, Any]:

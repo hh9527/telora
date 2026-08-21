@@ -71,6 +71,17 @@ def preflight_permissions(manifest: Manifest, workspace: Path) -> dict[str, list
                 raise ControlError(
                     f"permission preflight rejected {role} command ({decision}): {command}"
                 )
+        if isinstance(bash, dict):
+            for pattern, decision in bash.items():
+                family = " ".join(pattern.split()[:2])
+                if (decision == "allow"
+                        and pattern.startswith(("./bin/telora ", "./bin/oc-task "))
+                        and not any(command == family or command.startswith(f"{family} ")
+                                    for command in commands)):
+                    raise ControlError(
+                        f"unexercised {role} command family is not covered by "
+                        f"permission_preflight: {pattern}"
+                    )
         results[role] = role_results
     for path in sorted(agents.glob("*.md")):
         permission = _frontmatter(path).get("permission", default)

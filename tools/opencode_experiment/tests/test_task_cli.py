@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -29,7 +31,6 @@ def artifact_workflow() -> dict:
         "roles": ["a1", "a2"],
         "start_artifacts": ["lang"],
         "finish_artifact": "qb",
-        "stop_path": "control/STOP",
         "artifacts": {
             "lang": {"desc": "语言输入", "checks": ["GOAL.md"]},
             "qb-feedback": {"desc": "Host 反馈", "checks": ["FEEDBACK.md"]},
@@ -111,6 +112,23 @@ class ArtifactWorkflowTest(unittest.TestCase):
                 "blocked_by": ["qb.a1"],
             }])
 
+    def test_pull_without_timeout_blocks_until_work_is_runnable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            result = []
+            worker = threading.Thread(
+                target=lambda: result.append(pull(root, value, "a1", True, None)),
+                daemon=True,
+            )
+            worker.start()
+            time.sleep(.05)
+            self.assertTrue(worker.is_alive())
+            publish_artifact(root, value, "lang")
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(result[0]["artifacts"][0]["id"], "qb.a1")
+
     def test_pull_returns_one_runnable_artifact_in_declaration_order(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -119,7 +137,6 @@ class ArtifactWorkflowTest(unittest.TestCase):
                 "roles": ["a1"],
                 "start_artifacts": ["lang"],
                 "finish_artifact": "finish",
-                "stop_path": "control/STOP",
                 "artifacts": {
                     "lang": {"desc": "input", "checks": ["GOAL.md"]},
                     "first.a1": {
@@ -143,14 +160,6 @@ class ArtifactWorkflowTest(unittest.TestCase):
 
             second = pull(root, value, "a1", False, None)
             self.assertEqual([item["id"] for item in second["artifacts"]], ["second.a1"])
-
-    def test_stop_file_releases_waiting_roles(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            value = self.prepare(root)
-            (root / "control").mkdir()
-            (root / "control" / "STOP").touch()
-            self.assertTrue(pull(root, value, "a1", False, None)["stopped"])
 
     def test_role_and_host_ownership_are_enforced(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -204,7 +213,6 @@ class ArtifactWorkflowTest(unittest.TestCase):
             "roles": ["a1"],
             "start_artifacts": ["start"],
             "finish_artifact": "finish",
-            "stop_path": "control/STOP",
             "artifacts": {
                 "start": {"desc": "start"},
                 "work.a1": {"desc": "work", "input": ["missing?"], "instruction": "work"},
@@ -218,7 +226,8 @@ class ArtifactWorkflowTest(unittest.TestCase):
             validate_workflow(raw)
 
     def test_cli_is_only_pull_submit_and_status(self):
-        self.assertEqual(parser().parse_args(["pull", "a1"]).timeout, 60.0)
+        self.assertIsNone(parser().parse_args(["pull", "a1"]).timeout)
+        self.assertEqual(parser().parse_args(["pull", "a1", "--timeout", "60"]).timeout, 60.0)
         self.assertEqual(parser().parse_args(["submit", "a1", "qb.a1"]).artifacts, ["qb.a1"])
         self.assertEqual(parser().parse_args(["status"]).command, "status")
         with redirect_stderr(StringIO()), self.assertRaises(SystemExit):

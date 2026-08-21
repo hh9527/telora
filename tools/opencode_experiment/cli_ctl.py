@@ -39,9 +39,15 @@ def emit(value: object) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named artifact-DAG experiment.")
     commands = root.add_subparsers(dest="command", required=True)
-    for name in ("test-connect", "stat", "status"):
+    for name in ("test-connect", "stat"):
         item = commands.add_parser(name)
         item.add_argument("test_id")
+    status = commands.add_parser("status")
+    status.add_argument("test_id")
+    status.add_argument(
+        "--verbose", action="store_true",
+        help="include the complete artifact graph and raw runtime states",
+    )
     start = commands.add_parser("start")
     start.add_argument("test_id")
     start.add_argument("plan_id")
@@ -161,33 +167,69 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
     )
     agents = []
     by_role = {role["agent"]: role for role in metrics["roles"]}
+    active_by_role = {record.get("role"): record for record in records["active"]}
     for role in context.state.get("workflow", {}).get("roles", []):
         child = next((item for item in children if item.get("agent") == role), None)
         role_metrics = by_role.get(role, {})
+        runtime_state = (statuses.get(child.get("id"), {"type": "unknown"})
+                         if child else {"type": "not-started"})
+        if role in active_by_role:
+            workflow_state = "working"
+        elif child:
+            workflow_state = "waiting_on_pull"
+        else:
+            workflow_state = "not_started"
         agents.append({
             "role": role,
             "session_id": child.get("id") if child else None,
-            "state": (statuses.get(child.get("id"), {"type": "stopped"}) if child else {"type": "not-started"}),
+            "state": workflow_state,
+            "runtime_state": runtime_state,
             "latest_task": role_metrics.get("latest_task"),
         })
     return metrics, {"agents": agents, "records": records}
 
 
-def _status(context: Context) -> dict[str, Any]:
+def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
     if context.state["phase"] in ("waiting", "preparing"):
         return {"test_id": context.state["exec_name"], "phase": context.state["phase"],
-                "workspace": context.state.get("workspace"), "artifacts": {}, "agents": []}
+                "workspace": context.state.get("workspace"), "complete": False,
+                "quiescent": False, "next_host_actions": [], "agents": []}
     metrics, detail = _metrics(context)
     workflow = context.state.get("workflow")
     artifacts = workflow_status(_workspace(context), workflow)
-    return {
+    publishable = [name for name, value in artifacts["artifacts"].items()
+                   if value["publishable"]]
+    runnable = [name for name, value in artifacts["artifacts"].items()
+                if value["runnable"]]
+    blocked = [{"artifact": name, "blocked_by": value["blocked_by"]}
+               for name, value in artifacts["artifacts"].items()
+               if value["owner"] is not None and not value["current"] and value["blocked_by"]]
+    result = {
         "test_id": context.state["exec_name"],
         "phase": context.state["phase"],
         "workspace": context.state.get("workspace"),
-        "artifacts": artifacts,
+        "complete": artifacts["complete"],
+        "quiescent": artifacts["quiescent"],
+        "artifact_summary": {
+            "publishable": publishable,
+            "runnable": runnable,
+            "blocked": blocked,
+        },
+        "next_host_actions": [{
+            "action": "review_and_publish",
+            "artifact": name,
+            "command": f"oc-ctl publish {context.state['exec_name']} {name}",
+        } for name in publishable],
         "agents": detail["agents"],
         "tokens": metrics["aggregate"]["tokens"],
     }
+    if verbose:
+        result["artifacts"] = artifacts
+        result["task_records"] = detail["records"]
+    else:
+        for agent in result["agents"]:
+            agent.pop("runtime_state", None)
+    return result
 
 
 def _start(context: Context) -> dict[str, Any]:
@@ -237,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         context = resolve(args.test_id, _controller_repo())
         if args.command == "status":
-            emit(_status(context))
+            emit(_status(context, args.verbose))
         elif args.command == "stat":
             emit(_metrics(context)[0])
         elif args.command == "update":

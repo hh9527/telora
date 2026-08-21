@@ -249,15 +249,26 @@ def _add_metric(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
     return {name: left.get(name, 0) + right.get(name, 0) for name in ("files", "lines", "bytes")}
 
 
-def _artifact_metrics(workspace: Path, definition: dict[str, Any]) -> dict[str, Any]:
+def _artifact_metrics(
+    workspace: Path, definition: dict[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
     result: dict[str, Any] = {}
+    warnings = []
     for kind, categories in definition.get("artifacts", {}).items():
         kind_files: set[Path] = set()
         category_values = {}
         for category, patterns in categories.items():
             paths: set[Path] = set()
             for pattern in patterns:
-                paths.update(path for path in workspace.glob(pattern) if path.is_file() and not path.is_symlink())
+                matched = {path for path in workspace.glob(pattern)
+                           if path.is_file() and not path.is_symlink()}
+                if not matched:
+                    warnings.append({
+                        "kind": "artifact_pattern_no_match",
+                        "category": f"{kind}.{category}",
+                        "pattern": pattern,
+                    })
+                paths.update(matched)
             metric = {"files": 0, "lines": 0, "bytes": 0}
             for path in sorted(paths):
                 metric = _add_metric(metric, _file_metric(path))
@@ -267,7 +278,7 @@ def _artifact_metrics(workspace: Path, definition: dict[str, Any]) -> dict[str, 
         for path in sorted(kind_files):
             total = _add_metric(total, _file_metric(path))
         result[kind] = {"categories": category_values, "total": total}
-    return result
+    return result, warnings
 
 
 def _sum_values(values: list[dict[str, int]], names: tuple[str, ...]) -> dict[str, int]:
@@ -304,7 +315,7 @@ def collect_metrics(
         elapsed = time["span_ms"]
         time["waiting_ms"] = max(0, elapsed - time["active_ms"]) if elapsed is not None else None
         model = child.get("model", {})
-        artifacts = _artifact_metrics(workspace, definition or {})
+        artifacts, metric_warnings = _artifact_metrics(workspace, definition or {})
         work_fresh = sum(phase["tokens"]["fresh"] for phase in phases if phase["kind"] == "work")
         code_lines = artifacts.get("code", {}).get("total", {}).get("lines", 0)
         roles.append({
@@ -320,6 +331,7 @@ def collect_metrics(
             "tokens": _tokens(assistant),
             "phases": phases,
             "artifacts": artifacts,
+            "warnings": metric_warnings,
             "productivity": {
                 "code_lines_per_1k_work_fresh_tokens": round(code_lines * 1000 / work_fresh, 3) if work_fresh else None,
             },
@@ -332,6 +344,14 @@ def collect_metrics(
         role_tasks = [task for task in tasks if task["role"] == role["agent"]]
         role["tasks"] = role_tasks
         role["latest_task"] = role_tasks[-1] if role_tasks else None
+        if (role_tasks and role["classification"]["configured"]
+                and not role["classification"]["work_boundary_observed"]
+                and any(not all(name.startswith("lang-learn.") for name in task["artifacts"])
+                        for task in role_tasks)):
+            role["warnings"].append({
+                "kind": "work_boundary_not_observed",
+                "message": "task records contain non-learning work but no configured work file was observed",
+            })
 
     token_names = ("input", "output", "reasoning", "cache_read", "cache_write", "fresh")
     token_total = _sum_values([role["tokens"] for role in roles], token_names)

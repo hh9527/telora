@@ -71,7 +71,7 @@ def _artifact_owner(name: str, roles: list[str]) -> str | None:
 def validate_workflow(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TaskError("workflow must be an object")
-    _keys(value, {"schema", "roles", "start_artifacts", "finish_artifact", "stop_path", "artifacts"},
+    _keys(value, {"schema", "roles", "start_artifacts", "finish_artifact", "artifacts"},
           "workflow")
     if value.get("schema") != SCHEMA:
         raise TaskError("unsupported workflow schema")
@@ -160,13 +160,11 @@ def validate_workflow(value: Any) -> dict[str, Any]:
     finish_artifact = _id(value.get("finish_artifact"), "finish artifact")
     if finish_artifact not in artifacts or artifacts[finish_artifact]["owner"] is not None:
         raise TaskError("finish_artifact must name a Host-owned artifact")
-    stop_path = _paths([value.get("stop_path")], "workflow stop_path")[0]
     return {
         "schema": SCHEMA,
         "roles": roles,
         "start_artifacts": start_artifacts,
         "finish_artifact": finish_artifact,
-        "stop_path": stop_path,
         "artifacts": artifacts,
     }
 
@@ -413,8 +411,6 @@ def pull(root: Path, workflow: dict[str, Any], role: str,
     deadline = None if timeout is None else time.monotonic() + timeout
     while True:
         with _locked(root):
-            if (root / workflow["stop_path"]).is_file():
-                return {"schema": "telora.oc-task-stop/v1", "role": role, "stopped": True}
             status = evaluate(root, workflow)
             active_path = _active_task_path(root, role)
             active = _read_json(active_path)
@@ -454,7 +450,7 @@ def pull(root: Path, workflow: dict[str, Any], role: str,
                 "role": role,
                 "waiting": True,
                 "reason": ("waiting for artifact inputs" if waiting_for else
-                           "all role artifacts are current; waiting for input changes or stop"),
+                           "all role artifacts are current; waiting for input changes"),
                 "waiting_for": waiting_for,
             }
         time.sleep(.2)
@@ -510,7 +506,10 @@ def parser() -> argparse.ArgumentParser:
     pull_command = commands.add_parser("pull")
     pull_command.add_argument("role")
     pull_command.add_argument("--no-wait", action="store_true")
-    pull_command.add_argument("--timeout", type=float, default=60.0)
+    pull_command.add_argument(
+        "--timeout", type=float, default=None,
+        help="return a wait record after this many seconds; by default pull blocks indefinitely",
+    )
     submit_command = commands.add_parser("submit")
     submit_command.add_argument("role")
     submit_command.add_argument("artifacts", nargs="+")
