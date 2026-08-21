@@ -8,12 +8,10 @@ use crate::core::{
     DEFAULT_ENTRY_MODULE, EDGE_RUNTIME_MODULE, PRELUDE_MODULE, default_entry_source,
     edge_runtime_source, module_specs,
 };
-use crate::heap::{
-    DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_storage_bytes,
-    semantic_value_type_id,
-};
+use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_type_id};
 use crate::json::{
-    MaterializedValue, Provenance, SemanticDataTarget, materialize_json_semantic_registered,
+    Provenance, SemanticDataTarget, ValidatedDataPlan, data_plan_allocation_bytes,
+    materialize_data_plan, validate_json_registered,
 };
 use crate::module_id::{
     ModuleAuthority, ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver,
@@ -25,7 +23,7 @@ use crate::semantic::{
     WorkspaceModuleState, WorkspaceSnapshot,
 };
 use crate::source::{Diagnostic, SourceDatabase};
-use crate::toml::materialize_toml_semantic_registered;
+use crate::toml::validate_toml_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
     Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor, TypeFamilyTemplate,
@@ -35,7 +33,7 @@ use crate::types::{
 #[cfg(test)]
 use crate::vm::ValueRef;
 use crate::vm::WorkWorld;
-use crate::yaml::materialize_yaml_semantic_registered;
+use crate::yaml::validate_yaml_registered;
 use crate::{
     BuiltinAtom, BytecodeFunction, DebugSink, DiscardDebugSink, Instruction, Quota, QuotaAccount,
     Register, Vm,
@@ -47,7 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 struct StaticDataParse {
-    value: Option<MaterializedValue>,
+    plan: Option<ValidatedDataPlan>,
     diagnostics: Vec<Diagnostic>,
     kind: WorkspaceModuleKind,
 }
@@ -153,28 +151,20 @@ fn parse_static_data_registered(
     format: ModuleFormat,
     sources: &SourceDatabase,
     source_id: crate::SourceId,
-    heap: &mut Heap,
-    target: SemanticDataTarget<'_>,
 ) -> Option<StaticDataParse> {
     let kind = static_data_kind(format)?;
     let result = match format {
-        ModuleFormat::Json => {
-            materialize_json_semantic_registered(sources, source_id, heap, target)
-        }
-        ModuleFormat::Toml => {
-            materialize_toml_semantic_registered(sources, source_id, heap, target)
-        }
-        ModuleFormat::Yaml => {
-            materialize_yaml_semantic_registered(sources, source_id, heap, target)
-        }
+        ModuleFormat::Json => validate_json_registered(sources, source_id),
+        ModuleFormat::Toml => validate_toml_registered(sources, source_id),
+        ModuleFormat::Yaml => validate_yaml_registered(sources, source_id),
         _ => unreachable!("kind exists only for static data formats"),
     };
-    let (value, diagnostics) = match result {
-        Ok(value) => (Some(value), Vec::new()),
+    let (plan, diagnostics) = match result {
+        Ok(plan) => (Some(plan), Vec::new()),
         Err(diagnostics) => (None, diagnostics),
     };
     Some(StaticDataParse {
-        value,
+        plan,
         diagnostics,
         kind,
     })
@@ -219,52 +209,48 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
 }
 
 fn publish_static_data_module(
-    sourced: &MaterializedValue,
+    plan: &ValidatedDataPlan,
     core_modules: &HashMap<String, ModuleArtifact>,
     heap: &mut Heap,
     source_bytes: usize,
     allocation_limit: u64,
-) -> Result<(PersistentValue, ModuleInterface), ModuleError> {
+) -> Result<(PersistentValue, ModuleInterface, Provenance), ModuleError> {
     let (owner, descriptor) = semantic_value_contract(core_modules, heap)?;
-    let requested = u64::try_from(source_bytes)
-        .ok()
-        .and_then(|bytes| {
-            semantic_value_storage_bytes(heap, None, sourced.value, owner.runtime())
-                .ok()
-                .and_then(|storage| bytes.checked_add(storage))
-        })
-        .ok_or_else(|| ModuleError::new("static data allocation size overflowed"))?;
+    let requested = data_plan_allocation_bytes(plan, source_bytes)
+        .map_err(|_| ModuleError::new("static data allocation size overflowed"))?;
     if requested > allocation_limit {
         return Err(ModuleError::new(
             "static data module exceeds the allocation quota",
         ));
     }
+    let type_id = semantic_value_type_id(heap, None, owner.runtime())
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+    let sourced = materialize_data_plan(
+        plan,
+        heap,
+        Some(SemanticDataTarget {
+            background: None,
+            type_id,
+        }),
+    );
     let data = sourced.value;
     let root = heap
         .module([("data".into(), data)])
         .and_then(|value| heap.persistent(value))
         .map_err(|error| ModuleError::new(error.to_string()))?;
     let interface = static_data_interface(descriptor);
-    Ok((root, interface))
+    Ok((root, interface, sourced.provenance))
 }
 
-fn materialize_system_data_source(
+fn validate_system_data_source(
     format: SystemDataFormat,
     sources: &SourceDatabase,
     source_id: crate::SourceId,
-    heap: &mut Heap,
-    target: SemanticDataTarget<'_>,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     match format {
-        SystemDataFormat::Json => {
-            materialize_json_semantic_registered(sources, source_id, heap, target)
-        }
-        SystemDataFormat::Yaml => {
-            materialize_yaml_semantic_registered(sources, source_id, heap, target)
-        }
-        SystemDataFormat::Toml => {
-            materialize_toml_semantic_registered(sources, source_id, heap, target)
-        }
+        SystemDataFormat::Json => validate_json_registered(sources, source_id),
+        SystemDataFormat::Yaml => validate_yaml_registered(sources, source_id),
+        SystemDataFormat::Toml => validate_toml_registered(sources, source_id),
     }
 }
 
@@ -2516,7 +2502,7 @@ impl Engine {
         let (mut entry_world, main_argument) = entry_world
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let mut prepared_fields = Vec::new();
+        let mut prepared_plans = Vec::new();
         let mut requested_data_allocation = 0u64;
         for (key, request) in &caps.data_sources {
             let Some(source) = host.read_data_source(request).await.map_err(|error| {
@@ -2529,45 +2515,18 @@ impl Engine {
                 continue;
             };
             let source_id = entry.sources.add(request.src.clone(), &source);
-            let type_id = semantic_value_type_id(
-                entry_world.heap(),
-                Some(&shared_main.heap),
-                value_owner.runtime(),
-            )
-            .map_err(|error| ModuleError::new(error.to_string()))?;
-            let materialized = materialize_system_data_source(
-                request.format,
-                &entry.sources,
-                source_id,
-                entry_world.heap_mut(),
-                SemanticDataTarget {
-                    background: Some(&shared_main.heap),
-                    type_id,
-                },
-            )
-            .map_err(|diagnostics| {
-                ModuleError::new(
-                    diagnostics
-                        .iter()
-                        .map(|diagnostic| entry.sources.render(diagnostic))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            })?;
-            let data = materialized.value;
-            let raw_bytes = u64::try_from(source.len())
-                .ok()
-                .and_then(|bytes| {
-                    semantic_value_storage_bytes(
-                        entry_world.heap(),
-                        Some(&shared_main.heap),
-                        data,
-                        value_owner.runtime(),
+            let plan = validate_system_data_source(request.format, &entry.sources, source_id)
+                .map_err(|diagnostics| {
+                    ModuleError::new(
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| entry.sources.render(diagnostic))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
                     )
-                    .ok()
-                    .and_then(|storage| bytes.checked_add(storage))
-                })
-                .ok_or_else(|| ModuleError::new("Entry data allocation size overflowed"))?;
+                })?;
+            let raw_bytes = data_plan_allocation_bytes(&plan, source.len())
+                .map_err(|_| ModuleError::new("Entry data allocation size overflowed"))?;
             requested_data_allocation = requested_data_allocation
                 .checked_add(raw_bytes)
                 .ok_or_else(|| ModuleError::new("Entry data allocation size overflowed"))?;
@@ -2577,16 +2536,35 @@ impl Engine {
                     request.src
                 )));
             }
+            prepared_plans.push((key.clone(), request.src.clone(), plan));
+        }
+        let type_id = semantic_value_type_id(
+            entry_world.heap(),
+            Some(&shared_main.heap),
+            value_owner.runtime(),
+        )
+        .map_err(|error| ModuleError::new(error.to_string()))?;
+        let mut prepared_fields = Vec::with_capacity(prepared_plans.len());
+        for (key, source_name, plan) in prepared_plans {
+            let materialized = materialize_data_plan(
+                &plan,
+                entry_world.heap_mut(),
+                Some(SemanticDataTarget {
+                    background: Some(&shared_main.heap),
+                    type_id,
+                }),
+            );
+            let data = materialized.value;
             let src = Val::unknown(
                 entry_world
                     .heap_mut()
-                    .string(Some(&shared_main.heap), &request.src),
+                    .string(Some(&shared_main.heap), &source_name),
             );
             let item = allocate_record(
                 entry_world.heap_mut(),
                 [("data".into(), data), ("src".into(), src)],
             );
-            prepared_fields.push((key.clone(), item));
+            prepared_fields.push((key, item));
         }
         let prepared_data = allocate_record(entry_world.heap_mut(), prepared_fields);
         let caps_argument = entry_world.root_ref(&entry.runtime.main.heap).runtime();
@@ -3426,21 +3404,10 @@ impl WorkspaceBuilder<'_> {
         let source_id = self
             .sources
             .add_document(path.display().to_string(), source);
-        let (owner, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
+        let (_, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
             .expect("std/value provides the static data interface");
-        let type_id = semantic_value_type_id(&self.main.heap, None, owner.runtime())
-            .expect("std/value Value owner is linked");
-        let parsed = parse_static_data_registered(
-            module.format,
-            &self.sources,
-            source_id,
-            &mut self.main.heap,
-            SemanticDataTarget {
-                background: None,
-                type_id,
-            },
-        )?;
-        let sourced = parsed.value;
+        let parsed = parse_static_data_registered(module.format, &self.sources, source_id)?;
+        let plan = parsed.plan;
         let interface = static_data_interface(descriptor);
         self.inputs.insert(
             key.clone(),
@@ -3458,10 +3425,10 @@ impl WorkspaceBuilder<'_> {
                 diagnostics: parsed.diagnostics,
             },
         );
-        if let Some(sourced) = sourced {
+        if let Some(plan) = plan {
             let source_len = self.sources.get(source_id).text().byte_len();
-            let (root, interface) = match publish_static_data_module(
-                &sourced,
+            let (root, interface, provenance) = match publish_static_data_module(
+                &plan,
                 &self.core_modules,
                 &mut self.main.heap,
                 source_len,
@@ -3481,7 +3448,7 @@ impl WorkspaceBuilder<'_> {
             };
             self.interfaces.insert(module_id.clone(), interface);
             self.roots.insert(module_id.clone(), root);
-            self.provenances.insert(module_id, sourced.provenance);
+            self.provenances.insert(module_id, provenance);
             return Some(root);
         }
         None
@@ -4813,65 +4780,52 @@ impl ModuleLoader {
             ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => {
                 let source = read(&path)?;
                 let source_id = self.sources.add(path.display().to_string(), source);
-                let (owner, _) = semantic_value_contract(&self.core_modules, &self.main.heap)?;
-                let type_id = semantic_value_type_id(&self.main.heap, None, owner.runtime())
-                    .map_err(|error| ModuleError::new(error.to_string()))?;
                 let StaticDataParse {
-                    value,
+                    plan,
                     diagnostics,
                     kind,
-                } = parse_static_data_registered(
-                    format,
-                    &self.sources,
-                    source_id,
-                    &mut self.main.heap,
-                    SemanticDataTarget {
-                        background: None,
-                        type_id,
-                    },
-                )
-                .expect("static data format has a frontend");
-                value
-                    .ok_or_else(|| {
-                        ModuleError::new(
-                            diagnostics
-                                .iter()
-                                .map(|diagnostic| self.sources.render(diagnostic))
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                        )
+                } = parse_static_data_registered(format, &self.sources, source_id)
+                    .expect("static data format has a frontend");
+                plan.ok_or_else(|| {
+                    ModuleError::new(
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| self.sources.render(diagnostic))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    )
+                })
+                .and_then(|plan| {
+                    let (root, interface, provenance) = publish_static_data_module(
+                        &plan,
+                        &self.core_modules,
+                        &mut self.main.heap,
+                        self.sources.get(source_id).text().byte_len(),
+                        self.module_quota.allocation_bytes,
+                    )?;
+                    let key = module_id.to_string();
+                    self.semantic_inputs.insert(
+                        key.clone(),
+                        SemanticModuleInput {
+                            key,
+                            path: Some(path.clone()),
+                            kind,
+                            source: Some(source_id),
+                            program: None,
+                            analysis: None,
+                            partial: None,
+                            interface: Some(SemanticModuleInterface::new(&interface)),
+                            state: crate::semantic::WorkspaceModuleState::Available,
+                            imports: Vec::new(),
+                            diagnostics: Vec::new(),
+                        },
+                    );
+                    Ok(ModuleArtifact {
+                        root,
+                        interface,
+                        provenance: Some(provenance),
                     })
-                    .and_then(|sourced| {
-                        let (root, interface) = publish_static_data_module(
-                            &sourced,
-                            &self.core_modules,
-                            &mut self.main.heap,
-                            self.sources.get(source_id).text().byte_len(),
-                            self.module_quota.allocation_bytes,
-                        )?;
-                        let key = module_id.to_string();
-                        self.semantic_inputs.insert(
-                            key.clone(),
-                            SemanticModuleInput {
-                                key,
-                                path: Some(path.clone()),
-                                kind,
-                                source: Some(source_id),
-                                program: None,
-                                analysis: None,
-                                partial: None,
-                                interface: Some(SemanticModuleInterface::new(&interface)),
-                                state: crate::semantic::WorkspaceModuleState::Available,
-                                imports: Vec::new(),
-                                diagnostics: Vec::new(),
-                            },
-                        );
-                        Ok(ModuleArtifact {
-                            root,
-                            interface,
-                            provenance: Some(sourced.provenance),
-                        })
-                    })
+                })
             }
             ModuleFormat::Telora => {
                 let mut account = QuotaAccount::new(self.module_quota);

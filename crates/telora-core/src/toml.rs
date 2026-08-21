@@ -1,8 +1,8 @@
 use crate::DataWorld;
-use crate::heap::{DecodedValue, Heap, Object, Val};
+use crate::heap::Heap;
 use crate::json::{
-    DataScalar, MaterializedValue, Provenance, SemanticDataTarget, SourcedValue, ValuePath,
-    ValuePathSegment, semantic_tag,
+    DataField, DataNodeId, DataPlanNodeKind, DataScalar, SourcedValue, ValidatedDataPlan,
+    materialize_data_plan,
 };
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::toml::lexer::Token;
@@ -16,19 +16,17 @@ pub struct TomlParse {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub(crate) fn materialize_toml_semantic_registered(
+pub(crate) fn validate_toml_registered(
     sources: &SourceDatabase,
     source_id: SourceId,
-    heap: &mut Heap,
-    target: SemanticDataTarget<'_>,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let source = sources.get(source_id);
     let parsed = crate::syntax::toml::parse_document(source_id, source.text());
     if !parsed.diagnostics.is_empty() {
         return Err(parsed.diagnostics);
     }
     TomlLowerer::new(source_id, source.text(), &parsed.syntax)
-        .lower_with(heap, Some(target))
+        .validated_plan()
         .map_err(|diagnostic| vec![diagnostic])
 }
 
@@ -38,11 +36,14 @@ pub fn parse_toml_registered(sources: &SourceDatabase, source_id: SourceId) -> T
     let mut diagnostics = parsed.diagnostics;
     let value = if diagnostics.is_empty() {
         let mut heap = Heap::work();
-        match TomlLowerer::new(source_id, source.text(), &parsed.syntax).lower(&mut heap) {
-            Ok(value) => Some(SourcedValue {
-                value: DataWorld::new(heap, value.value),
-                provenance: value.provenance,
-            }),
+        match TomlLowerer::new(source_id, source.text(), &parsed.syntax).validated_plan() {
+            Ok(plan) => {
+                let value = materialize_data_plan(&plan, &mut heap, None);
+                Some(SourcedValue {
+                    value: DataWorld::new(heap, value.value),
+                    provenance: value.provenance,
+                })
+            }
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
                 None
@@ -63,7 +64,7 @@ pub(crate) fn materialize_toml_registered(
     sources: &SourceDatabase,
     source_id: SourceId,
     heap: &mut Heap,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<crate::json::MaterializedValue, Vec<Diagnostic>> {
     let source = sources.get(source_id);
     materialize_toml_source(source_id, source.text(), heap)
 }
@@ -73,35 +74,84 @@ pub(crate) fn materialize_toml_source(
     source_id: SourceId,
     source: &crate::document::DocumentText,
     heap: &mut Heap,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<crate::json::MaterializedValue, Vec<Diagnostic>> {
     let parsed = crate::syntax::toml::parse_document(source_id, source);
     if !parsed.diagnostics.is_empty() {
         return Err(parsed.diagnostics);
     }
-    TomlLowerer::new(source_id, source, &parsed.syntax)
-        .lower(heap)
-        .map_err(|diagnostic| vec![diagnostic])
+    let plan = TomlLowerer::new(source_id, source, &parsed.syntax)
+        .validated_plan()
+        .map_err(|diagnostic| vec![diagnostic])?;
+    Ok(materialize_data_plan(&plan, heap, None))
 }
 
 #[derive(Clone)]
 struct Entry {
-    node: TomlNode,
+    node: DataNodeId,
     key_location: Location,
 }
 
 #[derive(Clone)]
-enum TomlNode {
-    Scalar(DataScalar, Location),
-    Array(Vec<TomlNode>, Location, bool),
-    Table(Table),
-}
-
-#[derive(Clone)]
-struct Table {
-    fields: BTreeMap<String, Entry>,
-    location: Location,
+struct TableState {
     explicit: bool,
     sealed: bool,
+}
+
+struct TomlPlan {
+    data: ValidatedDataPlan,
+    tables: BTreeMap<DataNodeId, TableState>,
+    table_arrays: std::collections::BTreeSet<DataNodeId>,
+}
+
+impl TomlPlan {
+    fn new(root_location: Location) -> (Self, DataNodeId) {
+        let mut plan = Self {
+            data: ValidatedDataPlan::default(),
+            tables: BTreeMap::new(),
+            table_arrays: std::collections::BTreeSet::new(),
+        };
+        let root = plan.table(root_location, true);
+        (plan, root)
+    }
+
+    fn table(&mut self, location: Location, explicit: bool) -> DataNodeId {
+        let id = self.data.object(BTreeMap::new(), location);
+        self.tables.insert(
+            id,
+            TableState {
+                explicit,
+                sealed: false,
+            },
+        );
+        id
+    }
+
+    fn array(
+        &mut self,
+        values: Vec<DataNodeId>,
+        location: Location,
+        table_array: bool,
+    ) -> DataNodeId {
+        let id = self.data.array(values, location);
+        if table_array {
+            self.table_arrays.insert(id);
+        }
+        id
+    }
+
+    fn fields(&self, table: DataNodeId) -> &BTreeMap<String, DataField> {
+        let DataPlanNodeKind::Object(fields) = &self.data.node(table).kind else {
+            panic!("TOML table id must reference an object")
+        };
+        fields
+    }
+
+    fn fields_mut(&mut self, table: DataNodeId) -> &mut BTreeMap<String, DataField> {
+        let DataPlanNodeKind::Object(fields) = &mut self.data.node_mut(table).kind else {
+            panic!("TOML table id must reference an object")
+        };
+        fields
+    }
 }
 
 #[derive(Clone)]
@@ -131,36 +181,17 @@ impl<'a> TomlLowerer<'a> {
         }
     }
 
-    fn lower(self, heap: &mut Heap) -> Result<MaterializedValue, Diagnostic> {
-        self.lower_with(heap, None)
-    }
-
-    fn lower_with(
-        mut self,
-        heap: &mut Heap,
-        semantic: Option<SemanticDataTarget<'_>>,
-    ) -> Result<MaterializedValue, Diagnostic> {
+    fn validated_plan(mut self) -> Result<ValidatedDataPlan, Diagnostic> {
         let root_location = Location::from_usize(self.source_id, 0..self.source.byte_len())
             .expect("source range fits Location");
-        let mut root = Table {
-            fields: BTreeMap::new(),
-            location: root_location,
-            explicit: true,
-            sealed: false,
-        };
+        let (mut plan, root) = TomlPlan::new(root_location);
         let mut statements = Vec::new();
         self.collect_statements(NodeRef::ROOT, &mut statements);
         for statement in statements {
-            self.statement(&mut root, statement)?;
+            self.statement(&mut plan, root, statement)?;
         }
-        let mut provenance = Provenance::default();
-        let mut path = Vec::new();
-        let root = materialize_table(root, heap, &mut provenance, &mut path, semantic)
-            .map_err(|message| self.error(NodeRef::ROOT, message))?;
-        Ok(MaterializedValue {
-            value: root,
-            provenance,
-        })
+        plan.data.set_root(root);
+        Ok(plan.data)
     }
 
     fn collect_statements(&self, node: NodeRef, output: &mut Vec<NodeRef>) {
@@ -176,7 +207,12 @@ impl<'a> TomlLowerer<'a> {
         }
     }
 
-    fn statement(&mut self, root: &mut Table, node: NodeRef) -> Result<(), Diagnostic> {
+    fn statement(
+        &mut self,
+        plan: &mut TomlPlan,
+        root: DataNodeId,
+        node: NodeRef,
+    ) -> Result<(), Diagnostic> {
         let key_value = if self.rule(node) == Some(Rule::KeyValue) {
             Some(node)
         } else {
@@ -185,9 +221,9 @@ impl<'a> TomlLowerer<'a> {
         };
         if let Some(key_value) = key_value {
             let current = self.current.clone();
-            let table = table_at_mut(root, &current, self.location(node), false)
+            let table = table_at(plan, root, &current, self.location(node), false)
                 .map_err(|conflict| self.conflict(node, conflict))?;
-            return self.insert_key_value(table, key_value);
+            return self.insert_key_value(plan, table, key_value);
         }
         let tail = if self.rule(node) == Some(Rule::TableTail) {
             node
@@ -207,16 +243,22 @@ impl<'a> TomlLowerer<'a> {
             .is_some_and(|child| matches!(self.cst.get(child), Node::Token(Token::LBracket, _)));
         let location = self.location(node);
         if array_table {
-            open_array_table(root, &key, location)
+            open_array_table(plan, root, &key, location)
                 .map_err(|conflict| self.conflict(node, conflict))?;
         } else {
-            open_table(root, &key, location).map_err(|conflict| self.conflict(node, conflict))?;
+            open_table(plan, root, &key, location)
+                .map_err(|conflict| self.conflict(node, conflict))?;
         }
         self.current = key;
         Ok(())
     }
 
-    fn insert_key_value(&self, table: &mut Table, node: NodeRef) -> Result<(), Diagnostic> {
+    fn insert_key_value(
+        &self,
+        plan: &mut TomlPlan,
+        table: DataNodeId,
+        node: NodeRef,
+    ) -> Result<(), Diagnostic> {
         let key_node = self
             .rule_children(node)
             .find(|child| self.rule(*child) == Some(Rule::Key))
@@ -226,8 +268,8 @@ impl<'a> TomlLowerer<'a> {
             .find(|child| self.rule(*child) == Some(Rule::Value) || self.is_value(*child))
             .ok_or_else(|| self.error(node, "key/value pair has no value"))?;
         let key = self.key(key_node)?;
-        let value = self.value(value_node)?;
-        insert_entry(table, &key, value, self.location(key_node))
+        let value = self.value(plan, value_node)?;
+        insert_entry(plan, table, &key, value, self.location(key_node))
             .map_err(|conflict| self.conflict(key_node, conflict))
     }
 
@@ -265,7 +307,7 @@ impl<'a> TomlLowerer<'a> {
         }
     }
 
-    fn value(&self, node: NodeRef) -> Result<TomlNode, Diagnostic> {
+    fn value(&self, plan: &mut TomlPlan, node: NodeRef) -> Result<DataNodeId, Diagnostic> {
         let node = if self.rule(node) == Some(Rule::Value) {
             self.children(node)
                 .find(|child| self.is_value(*child))
@@ -274,18 +316,18 @@ impl<'a> TomlLowerer<'a> {
             node
         };
         match self.cst.get(node) {
-            Node::Token(Token::String, _) => Ok(TomlNode::Scalar(
+            Node::Token(Token::String, _) => Ok(plan.data.scalar(
                 DataScalar::String(self.decode_string(node)?),
                 self.location(node),
             )),
-            Node::Token(Token::Atom, _) => self.atom(node),
-            Node::Rule(Rule::Array, _) => self.array(node),
-            Node::Rule(Rule::InlineTable, _) => self.inline_table(node),
+            Node::Token(Token::Atom, _) => self.atom(plan, node),
+            Node::Rule(Rule::Array, _) => self.array(plan, node),
+            Node::Rule(Rule::InlineTable, _) => self.inline_table(plan, node),
             _ => Err(self.error(node, "expected a TOML value")),
         }
     }
 
-    fn atom(&self, node: NodeRef) -> Result<TomlNode, Diagnostic> {
+    fn atom(&self, plan: &mut TomlPlan, node: NodeRef) -> Result<DataNodeId, Diagnostic> {
         let text = self.text(node);
         let location = self.location(node);
         let value = match text.as_ref() {
@@ -303,32 +345,33 @@ impl<'a> TomlLowerer<'a> {
                 }
             }
         };
-        Ok(TomlNode::Scalar(value, location))
+        Ok(plan.data.scalar(value, location))
     }
 
-    fn array(&self, node: NodeRef) -> Result<TomlNode, Diagnostic> {
+    fn array(&self, plan: &mut TomlPlan, node: NodeRef) -> Result<DataNodeId, Diagnostic> {
         let mut values = Vec::new();
-        self.collect_array_values(node, &mut values)?;
-        Ok(TomlNode::Array(values, self.location(node), false))
+        self.collect_array_values(plan, node, &mut values)?;
+        Ok(plan.array(values, self.location(node), false))
     }
 
     fn collect_array_values(
         &self,
+        plan: &mut TomlPlan,
         node: NodeRef,
-        output: &mut Vec<TomlNode>,
+        output: &mut Vec<DataNodeId>,
     ) -> Result<(), Diagnostic> {
         for child in self.children(node) {
             match self.rule(child) {
                 Some(Rule::Value | Rule::Array | Rule::InlineTable) => {
-                    output.push(self.value(child)?)
+                    output.push(self.value(plan, child)?)
                 }
-                Some(Rule::ArrayTail) => self.collect_array_values(child, output)?,
+                Some(Rule::ArrayTail) => self.collect_array_values(plan, child, output)?,
                 _ if matches!(
                     self.cst.get(child),
                     Node::Token(Token::String | Token::Atom, _)
                 ) =>
                 {
-                    output.push(self.value(child)?)
+                    output.push(self.value(plan, child)?)
                 }
                 _ => {}
             }
@@ -336,21 +379,16 @@ impl<'a> TomlLowerer<'a> {
         Ok(())
     }
 
-    fn inline_table(&self, node: NodeRef) -> Result<TomlNode, Diagnostic> {
-        let mut table = Table {
-            fields: BTreeMap::new(),
-            location: self.location(node),
-            explicit: true,
-            sealed: false,
-        };
+    fn inline_table(&self, plan: &mut TomlPlan, node: NodeRef) -> Result<DataNodeId, Diagnostic> {
+        let table = plan.table(self.location(node), true);
         for key_value in self
             .rule_children(node)
             .filter(|child| self.rule(*child) == Some(Rule::KeyValue))
         {
-            self.insert_key_value(&mut table, key_value)?;
+            self.insert_key_value(plan, table, key_value)?;
         }
-        seal_table(&mut table);
-        Ok(TomlNode::Table(table))
+        seal_table(plan, table);
+        Ok(table)
     }
 
     fn decode_string(&self, node: NodeRef) -> Result<String, Diagnostic> {
@@ -422,44 +460,59 @@ impl<'a> TomlLowerer<'a> {
     }
 }
 
-fn table_at_mut<'a>(
-    table: &'a mut Table,
+fn table_at(
+    plan: &mut TomlPlan,
+    table: DataNodeId,
     path: &[String],
     location: Location,
     dotted: bool,
-) -> Result<&'a mut Table, Conflict> {
+) -> Result<DataNodeId, Conflict> {
     if path.is_empty() {
         return Ok(table);
     }
-    if table.sealed {
+    if plan.tables[&table].sealed {
         return Err(Conflict {
             message: "cannot extend an inline TOML table".into(),
-            previous: table.location,
+            previous: plan.data.node(table).location,
         });
     }
-    let entry = table
-        .fields
-        .entry(path[0].clone())
-        .or_insert_with(|| Entry {
-            node: TomlNode::Table(Table {
-                fields: BTreeMap::new(),
-                location,
-                explicit: dotted,
-                sealed: false,
-            }),
-            key_location: location,
-        });
-    let next = match &mut entry.node {
-        TomlNode::Table(table) => table,
-        TomlNode::Array(values, _, true) => match values.last_mut() {
-            Some(TomlNode::Table(table)) => table,
-            _ => {
+    let entry = match plan.fields(table).get(&path[0]).cloned() {
+        Some(entry) => Entry {
+            node: entry.value,
+            key_location: entry.key_location,
+        },
+        None => {
+            let child = plan.table(location, dotted);
+            plan.fields_mut(table).insert(
+                path[0].clone(),
+                DataField {
+                    value: child,
+                    key_location: location,
+                },
+            );
+            Entry {
+                node: child,
+                key_location: location,
+            }
+        }
+    };
+    let next = match &plan.data.node(entry.node).kind {
+        DataPlanNodeKind::Object(_) => entry.node,
+        DataPlanNodeKind::Array(values) if plan.table_arrays.contains(&entry.node) => {
+            let Some(next) = values.last().copied() else {
+                return Err(Conflict {
+                    message: "array of tables has no current element".into(),
+                    previous: entry.key_location,
+                });
+            };
+            if !matches!(plan.data.node(next).kind, DataPlanNodeKind::Object(_)) {
                 return Err(Conflict {
                     message: "array of tables has no current element".into(),
                     previous: entry.key_location,
                 });
             }
-        },
+            next
+        }
         _ => {
             return Err(Conflict {
                 message: format!("TOML key {:?} is not a table", path[0]),
@@ -467,60 +520,62 @@ fn table_at_mut<'a>(
             });
         }
     };
-    table_at_mut(next, &path[1..], location, dotted)
+    table_at(plan, next, &path[1..], location, dotted)
 }
 
 fn insert_entry(
-    table: &mut Table,
+    plan: &mut TomlPlan,
+    table: DataNodeId,
     path: &[String],
-    value: TomlNode,
+    value: DataNodeId,
     location: Location,
 ) -> Result<(), Conflict> {
     let (parents, name) = path.split_at(path.len() - 1);
-    let target = table_at_mut(table, parents, location, true)?;
-    if target.sealed {
+    let target = table_at(plan, table, parents, location, true)?;
+    if plan.tables[&target].sealed {
         return Err(Conflict {
             message: "cannot extend an inline TOML table".into(),
-            previous: target.location,
+            previous: plan.data.node(target).location,
         });
     }
-    if let Some(previous) = target.fields.get(&name[0]) {
+    if let Some(previous) = plan.fields(target).get(&name[0]) {
         return Err(Conflict {
             message: format!("duplicate TOML key {:?}", name[0]),
             previous: previous.key_location,
         });
     }
-    target.fields.insert(
+    plan.fields_mut(target).insert(
         name[0].clone(),
-        Entry {
-            node: value,
+        DataField {
+            value,
             key_location: location,
         },
     );
     Ok(())
 }
 
-fn open_table(root: &mut Table, path: &[String], location: Location) -> Result<(), Conflict> {
+fn open_table(
+    plan: &mut TomlPlan,
+    root: DataNodeId,
+    path: &[String],
+    location: Location,
+) -> Result<(), Conflict> {
     let (parents, name) = path.split_at(path.len() - 1);
-    let parent = table_at_mut(root, parents, location, false)?;
-    match parent.fields.get_mut(&name[0]) {
+    let parent = table_at(plan, root, parents, location, false)?;
+    match plan.fields(parent).get(&name[0]).cloned() {
         None => {
-            parent.fields.insert(
+            let table = plan.table(location, true);
+            plan.fields_mut(parent).insert(
                 name[0].clone(),
-                Entry {
-                    node: TomlNode::Table(Table {
-                        fields: BTreeMap::new(),
-                        location,
-                        explicit: true,
-                        sealed: false,
-                    }),
+                DataField {
+                    value: table,
                     key_location: location,
                 },
             );
             Ok(())
         }
-        Some(entry) => match &mut entry.node {
-            TomlNode::Table(table) if !table.explicit && !table.sealed => {
+        Some(entry) => match plan.tables.get_mut(&entry.value) {
+            Some(table) if !table.explicit && !table.sealed => {
                 table.explicit = true;
                 Ok(())
             }
@@ -532,28 +587,29 @@ fn open_table(root: &mut Table, path: &[String], location: Location) -> Result<(
     }
 }
 
-fn open_array_table(root: &mut Table, path: &[String], location: Location) -> Result<(), Conflict> {
+fn open_array_table(
+    plan: &mut TomlPlan,
+    root: DataNodeId,
+    path: &[String],
+    location: Location,
+) -> Result<(), Conflict> {
     let (parents, name) = path.split_at(path.len() - 1);
-    let parent = table_at_mut(root, parents, location, false)?;
-    let table = TomlNode::Table(Table {
-        fields: BTreeMap::new(),
-        location,
-        explicit: true,
-        sealed: false,
-    });
-    match parent.fields.get_mut(&name[0]) {
+    let parent = table_at(plan, root, parents, location, false)?;
+    let table = plan.table(location, true);
+    match plan.fields(parent).get(&name[0]).cloned() {
         None => {
-            parent.fields.insert(
+            let array = plan.array(vec![table], location, true);
+            plan.fields_mut(parent).insert(
                 name[0].clone(),
-                Entry {
-                    node: TomlNode::Array(vec![table], location, true),
+                DataField {
+                    value: array,
                     key_location: location,
                 },
             );
             Ok(())
         }
-        Some(entry) => match &mut entry.node {
-            TomlNode::Array(values, _, true) => {
+        Some(entry) => match &mut plan.data.node_mut(entry.value).kind {
+            DataPlanNodeKind::Array(values) if plan.table_arrays.contains(&entry.value) => {
                 values.push(table);
                 Ok(())
             }
@@ -565,84 +621,19 @@ fn open_array_table(root: &mut Table, path: &[String], location: Location) -> Re
     }
 }
 
-fn seal_table(table: &mut Table) {
-    table.sealed = true;
-    for entry in table.fields.values_mut() {
-        if let TomlNode::Table(child) = &mut entry.node {
-            seal_table(child);
-        }
-    }
-}
-
-fn materialize_table(
-    table: Table,
-    heap: &mut Heap,
-    provenance: &mut Provenance,
-    path: &mut ValuePath,
-    semantic: Option<SemanticDataTarget<'_>>,
-) -> Result<Val, String> {
-    let mut fields = Vec::with_capacity(table.fields.len());
-    for (name, entry) in table.fields {
-        path.push(ValuePathSegment::Key(name.clone()));
-        provenance.keys.insert(path.clone(), entry.key_location);
-        let value = materialize_node(entry.node, heap, provenance, path, semantic)?;
-        path.pop();
-        fields.push((name, value));
-    }
-    provenance.values.insert(path.clone(), table.location);
-    let names = fields
-        .iter()
-        .map(|(name, _)| heap.intern(name))
+fn seal_table(plan: &mut TomlPlan, table: DataNodeId) {
+    plan.tables
+        .get_mut(&table)
+        .expect("TOML table state exists")
+        .sealed = true;
+    let children = plan
+        .fields(table)
+        .values()
+        .map(|field| field.value)
+        .filter(|child| plan.tables.contains_key(child))
         .collect::<Vec<_>>();
-    let values = fields
-        .into_iter()
-        .map(|(_, value)| value)
-        .collect::<Vec<_>>();
-    let shape = heap.intern_shape(names);
-    let value = Val::original(
-        DecodedValue::Dict(heap.allocate(Object::Dict {
-            shape,
-            values: values.into_boxed_slice(),
-        })),
-        Some(table.location.into()),
-    );
-    Ok(semantic.map_or(value, |target| {
-        semantic_tag(heap, target, "Object", value, table.location)
-    }))
-}
-
-fn materialize_node(
-    node: TomlNode,
-    heap: &mut Heap,
-    provenance: &mut Provenance,
-    path: &mut ValuePath,
-    semantic: Option<SemanticDataTarget<'_>>,
-) -> Result<Val, String> {
-    match node {
-        TomlNode::Scalar(value, location) => {
-            provenance.values.insert(path.clone(), location);
-            Ok(match semantic {
-                Some(target) => value.lower_semantic(heap, target, location),
-                None => value.lower(heap, location),
-            })
-        }
-        TomlNode::Array(values, location, _) => {
-            let mut output = Vec::with_capacity(values.len());
-            for (index, value) in values.into_iter().enumerate() {
-                path.push(ValuePathSegment::Index(index));
-                output.push(materialize_node(value, heap, provenance, path, semantic)?);
-                path.pop();
-            }
-            provenance.values.insert(path.clone(), location);
-            let value = Val::original(
-                DecodedValue::Array(heap.allocate(Object::Array(output.into_boxed_slice()))),
-                Some(location.into()),
-            );
-            Ok(semantic.map_or(value, |target| {
-                semantic_tag(heap, target, "Array", value, location)
-            }))
-        }
-        TomlNode::Table(table) => materialize_table(table, heap, provenance, path, semantic),
+    for child in children {
+        seal_table(plan, child);
     }
 }
 

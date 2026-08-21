@@ -1,8 +1,8 @@
+use crate::DataWorld;
 use crate::heap::{DecodedValue, Heap, Object, Val};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
 use crate::syntax::json::lexer::Token;
 use crate::syntax::json::parser::{CstData, Node, NodeRef, Rule};
-use crate::{BuiltinAtom, DataWorld};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -66,13 +66,13 @@ pub(crate) enum DataScalar {
 }
 
 impl DataScalar {
-    pub(crate) fn lower(self, heap: &mut Heap, location: Location) -> Val {
+    pub(crate) fn lower(&self, heap: &mut Heap, location: Location) -> Val {
         let value = match self {
-            Self::Int(value) => DecodedValue::Int(value),
-            Self::Float(value) => DecodedValue::Float(value),
+            Self::Int(value) => DecodedValue::Int(*value),
+            Self::Float(value) => DecodedValue::Float(*value),
             Self::String(value) => heap.string(None, &value),
             Self::Bytes(value) => {
-                DecodedValue::Bytes(heap.allocate(Object::Bytes(value.into_boxed_slice())))
+                DecodedValue::Bytes(heap.allocate(Object::Bytes(value.clone().into_boxed_slice())))
             }
             Self::Atom(value) => heap.atom(None, &value),
             Self::TaggedString { tag, value } => {
@@ -85,7 +85,7 @@ impl DataScalar {
     }
 
     pub(crate) fn lower_semantic(
-        self,
+        &self,
         heap: &mut Heap,
         target: SemanticDataTarget<'_>,
         location: Location,
@@ -95,14 +95,14 @@ impl DataScalar {
                 heap,
                 target,
                 "Int",
-                Val::original(DecodedValue::Int(value), Some(location.into())),
+                Val::original(DecodedValue::Int(*value), Some(location.into())),
                 location,
             ),
             Self::Float(value) => semantic_tag(
                 heap,
                 target,
                 "Float",
-                Val::original(DecodedValue::Float(value), Some(location.into())),
+                Val::original(DecodedValue::Float(*value), Some(location.into())),
                 location,
             ),
             Self::String(value) => {
@@ -114,7 +114,9 @@ impl DataScalar {
             }
             Self::Bytes(value) => {
                 let payload = Val::original(
-                    DecodedValue::Bytes(heap.allocate(Object::Bytes(value.into_boxed_slice()))),
+                    DecodedValue::Bytes(
+                        heap.allocate(Object::Bytes(value.clone().into_boxed_slice())),
+                    ),
                     Some(location.into()),
                 );
                 semantic_tag(heap, target, "Bytes", payload, location)
@@ -132,6 +134,225 @@ impl DataScalar {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DataNodeId(usize);
+
+#[derive(Clone, Debug)]
+pub(crate) struct DataField {
+    pub(crate) key_location: Location,
+    pub(crate) value: DataNodeId,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum DataPlanNodeKind {
+    Scalar(DataScalar),
+    Array(Vec<DataNodeId>),
+    Object(BTreeMap<String, DataField>),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DataPlanNode {
+    pub(crate) kind: DataPlanNodeKind,
+    pub(crate) location: Location,
+}
+
+/// A validated, flat arena over source-backed nodes. Edges are node ids, so
+/// parsers never construct a second recursive data tree before Heap allocation.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ValidatedDataPlan {
+    nodes: Vec<DataPlanNode>,
+    root: Option<DataNodeId>,
+}
+
+impl ValidatedDataPlan {
+    pub(crate) fn scalar(&mut self, value: DataScalar, location: Location) -> DataNodeId {
+        self.push(DataPlanNodeKind::Scalar(value), location)
+    }
+
+    pub(crate) fn array(&mut self, values: Vec<DataNodeId>, location: Location) -> DataNodeId {
+        self.push(DataPlanNodeKind::Array(values), location)
+    }
+
+    pub(crate) fn object(
+        &mut self,
+        fields: BTreeMap<String, DataField>,
+        location: Location,
+    ) -> DataNodeId {
+        self.push(DataPlanNodeKind::Object(fields), location)
+    }
+
+    pub(crate) fn set_root(&mut self, root: DataNodeId) {
+        self.root = Some(root);
+    }
+
+    pub(crate) fn root(&self) -> DataNodeId {
+        self.root.expect("validated data plan has a root")
+    }
+
+    pub(crate) fn node(&self, id: DataNodeId) -> &DataPlanNode {
+        &self.nodes[id.0]
+    }
+
+    pub(crate) fn node_mut(&mut self, id: DataNodeId) -> &mut DataPlanNode {
+        &mut self.nodes[id.0]
+    }
+
+    pub(crate) fn clone_root_at(&mut self, id: DataNodeId, location: Location) -> DataNodeId {
+        let kind = self.node(id).kind.clone();
+        self.push(kind, location)
+    }
+
+    fn push(&mut self, kind: DataPlanNodeKind, location: Location) -> DataNodeId {
+        let id = DataNodeId(self.nodes.len());
+        self.nodes.push(DataPlanNode { kind, location });
+        id
+    }
+}
+
+pub(crate) fn materialize_data_plan(
+    plan: &ValidatedDataPlan,
+    heap: &mut Heap,
+    semantic: Option<SemanticDataTarget<'_>>,
+) -> MaterializedValue {
+    fn materialize(
+        plan: &ValidatedDataPlan,
+        id: DataNodeId,
+        heap: &mut Heap,
+        semantic: Option<SemanticDataTarget<'_>>,
+        provenance: &mut Provenance,
+        path: &mut ValuePath,
+    ) -> Val {
+        let node = plan.node(id);
+        let location = node.location;
+        let value = match &node.kind {
+            DataPlanNodeKind::Scalar(value) => match semantic {
+                Some(target) => value.lower_semantic(heap, target, location),
+                None => value.lower(heap, location),
+            },
+            DataPlanNodeKind::Array(items) => {
+                let mut values = Vec::with_capacity(items.len());
+                for (index, item) in items.iter().copied().enumerate() {
+                    path.push(ValuePathSegment::Index(index));
+                    values.push(materialize(plan, item, heap, semantic, provenance, path));
+                    path.pop();
+                }
+                let raw = Val::original(
+                    DecodedValue::Array(heap.allocate(Object::Array(values.into_boxed_slice()))),
+                    Some(location.into()),
+                );
+                semantic.map_or(raw, |target| {
+                    semantic_tag(heap, target, "Array", raw, location)
+                })
+            }
+            DataPlanNodeKind::Object(fields) => {
+                let mut names = Vec::with_capacity(fields.len());
+                let mut values = Vec::with_capacity(fields.len());
+                for (name, field) in fields {
+                    path.push(ValuePathSegment::Key(name.clone()));
+                    provenance.keys.insert(path.clone(), field.key_location);
+                    names.push(heap.intern(name));
+                    values.push(materialize(
+                        plan,
+                        field.value,
+                        heap,
+                        semantic,
+                        provenance,
+                        path,
+                    ));
+                    path.pop();
+                }
+                let shape = heap.intern_shape(names);
+                let raw = Val::original(
+                    DecodedValue::Dict(heap.allocate(Object::Dict {
+                        shape,
+                        values: values.into_boxed_slice(),
+                    })),
+                    Some(location.into()),
+                );
+                semantic.map_or(raw, |target| {
+                    semantic_tag(heap, target, "Object", raw, location)
+                })
+            }
+        };
+        provenance.values.insert(path.clone(), location);
+        value
+    }
+
+    let mut provenance = Provenance::default();
+    let value = materialize(
+        plan,
+        plan.root(),
+        heap,
+        semantic,
+        &mut provenance,
+        &mut Vec::new(),
+    );
+    MaterializedValue { value, provenance }
+}
+
+pub(crate) fn semantic_data_plan_storage_bytes(
+    plan: &ValidatedDataPlan,
+) -> Result<u64, &'static str> {
+    fn add(left: u64, right: u64) -> Result<u64, &'static str> {
+        left.checked_add(right)
+            .ok_or("semantic Value size overflowed")
+    }
+    fn visit(plan: &ValidatedDataPlan, id: DataNodeId) -> Result<u64, &'static str> {
+        let tagged = (std::mem::size_of::<Val>() as u64)
+            .checked_mul(2)
+            .ok_or("semantic Value size overflowed")?;
+        let payload = match &plan.node(id).kind {
+            DataPlanNodeKind::Scalar(DataScalar::Atom(value))
+                if matches!(value.as_str(), "None" | "True" | "False") =>
+            {
+                return Ok(0);
+            }
+            DataPlanNodeKind::Scalar(DataScalar::Int(_) | DataScalar::Float(_)) => 0,
+            DataPlanNodeKind::Scalar(DataScalar::String(value)) => value.len() as u64,
+            DataPlanNodeKind::Scalar(DataScalar::Bytes(value)) => value.len() as u64,
+            DataPlanNodeKind::Scalar(DataScalar::TaggedString { value, .. }) => value.len() as u64,
+            DataPlanNodeKind::Scalar(DataScalar::Atom(_)) => {
+                return Err("semantic Value contains an unsupported Atom");
+            }
+            DataPlanNodeKind::Array(items) => {
+                let mut bytes = (std::mem::size_of::<Val>() as u64)
+                    .checked_mul(items.len() as u64)
+                    .ok_or("semantic Value size overflowed")?;
+                for item in items {
+                    bytes = add(bytes, visit(plan, *item)?)?;
+                }
+                bytes
+            }
+            DataPlanNodeKind::Object(fields) => {
+                let mut bytes = (std::mem::size_of::<Val>() as u64)
+                    .checked_mul(fields.len() as u64)
+                    .ok_or("semantic Value size overflowed")?;
+                for (name, field) in fields {
+                    bytes = add(bytes, name.len() as u64)?;
+                    bytes = add(bytes, visit(plan, field.value)?)?;
+                }
+                bytes
+            }
+        };
+        add(tagged, payload)
+    }
+    visit(plan, plan.root())
+}
+
+pub(crate) fn data_plan_allocation_bytes(
+    plan: &ValidatedDataPlan,
+    source_bytes: usize,
+) -> Result<u64, &'static str> {
+    u64::try_from(source_bytes)
+        .ok()
+        .and_then(|source| {
+            semantic_data_plan_storage_bytes(plan)
+                .ok()?
+                .checked_add(source)
+        })
+        .ok_or("data allocation size overflowed")
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -179,14 +400,15 @@ pub fn parse_json_registered(sources: &SourceDatabase, source_id: SourceId) -> J
     let parsed = crate::syntax::json::parse_document(source_id, source.text());
     let mut diagnostics = parsed.diagnostics;
     let value = if diagnostics.is_empty() {
-        let mut heap = Heap::work();
-        match JsonLowerer::new(source_id, source.text(), &parsed.syntax, &mut heap)
-            .lower_materialized()
-        {
-            Ok(value) => Some(SourcedValue {
-                value: DataWorld::new(heap, value.value),
-                provenance: value.provenance,
-            }),
+        match JsonLowerer::new(source_id, source.text(), &parsed.syntax).validated_plan() {
+            Ok(plan) => {
+                let mut heap = Heap::work();
+                let value = materialize_data_plan(&plan, &mut heap, None);
+                Some(SourcedValue {
+                    value: DataWorld::new(heap, value.value),
+                    provenance: value.provenance,
+                })
+            }
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
                 None
@@ -212,22 +434,17 @@ pub(crate) fn materialize_json_registered(
     materialize_json_source(source_id, source.text(), heap)
 }
 
-pub(crate) fn materialize_json_semantic_registered(
+pub(crate) fn validate_json_registered(
     sources: &SourceDatabase,
     source_id: SourceId,
-    heap: &mut Heap,
-    target: SemanticDataTarget<'_>,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let source = sources.get(source_id);
     let parsed = crate::syntax::json::parse_document(source_id, source.text());
     if !parsed.diagnostics.is_empty() {
         return Err(parsed.diagnostics);
     }
-    if let Err(diagnostic) = validate_json(source_id, source.text(), &parsed.syntax) {
-        return Err(vec![diagnostic]);
-    }
-    JsonLowerer::new_semantic(source_id, source.text(), &parsed.syntax, heap, target)
-        .lower_materialized()
+    JsonLowerer::new(source_id, source.text(), &parsed.syntax)
+        .validated_plan()
         .map_err(|diagnostic| vec![diagnostic])
 }
 
@@ -241,23 +458,10 @@ pub(crate) fn materialize_json_source(
     if !parsed.diagnostics.is_empty() {
         return Err(parsed.diagnostics);
     }
-    // The validation pass decodes every scalar and checks every key before the
-    // target heap is touched. The second traversal is the only allocation pass.
-    if let Err(diagnostic) = validate_json(source_id, source, &parsed.syntax) {
-        return Err(vec![diagnostic]);
-    }
-    JsonLowerer::new(source_id, source, &parsed.syntax, heap)
-        .lower_materialized()
-        .map_err(|diagnostic| vec![diagnostic])
-}
-
-fn validate_json(
-    source_id: SourceId,
-    source: &crate::document::DocumentText,
-    cst: &CstData,
-) -> Result<(), Diagnostic> {
-    let mut heap = Heap::work();
-    JsonLowerer::new(source_id, source, cst, &mut heap).validate_document()
+    let plan = JsonLowerer::new(source_id, source, &parsed.syntax)
+        .validated_plan()
+        .map_err(|diagnostic| vec![diagnostic])?;
+    Ok(materialize_data_plan(&plan, heap, None))
 }
 
 fn compatibility_error(
@@ -281,92 +485,79 @@ fn compatibility_error(
     }
 }
 
-struct JsonLowerer<'a, 'heap> {
+struct JsonLowerer<'a> {
     source_id: SourceId,
     source: &'a crate::document::DocumentText,
     cst: &'a CstData,
-    heap: &'heap mut Heap,
-    path: ValuePath,
-    provenance: Provenance,
-    semantic: Option<SemanticDataTarget<'a>>,
 }
 
-impl<'a, 'heap> JsonLowerer<'a, 'heap> {
+impl<'a> JsonLowerer<'a> {
     fn new(
         source_id: SourceId,
         source: &'a crate::document::DocumentText,
         cst: &'a CstData,
-        heap: &'heap mut Heap,
     ) -> Self {
         Self {
             source_id,
             source,
             cst,
-            heap,
-            path: Vec::new(),
-            provenance: Provenance::default(),
-            semantic: None,
         }
     }
 
-    fn new_semantic(
-        source_id: SourceId,
-        source: &'a crate::document::DocumentText,
-        cst: &'a CstData,
-        heap: &'heap mut Heap,
-        semantic: SemanticDataTarget<'a>,
-    ) -> Self {
-        Self {
-            source_id,
-            source,
-            cst,
-            heap,
-            path: Vec::new(),
-            provenance: Provenance::default(),
-            semantic: Some(semantic),
-        }
-    }
-
-    fn lower_materialized(mut self) -> Result<MaterializedValue, Diagnostic> {
-        let value_node = self
-            .children(NodeRef::ROOT)
-            .find(|node| self.is_value(*node))
-            .ok_or_else(|| self.error(NodeRef::ROOT, "expected a JSON value"))?;
-        let root = self.value(value_node)?;
-        Ok(MaterializedValue {
-            value: root,
-            provenance: self.provenance,
-        })
-    }
-
-    fn validate_document(&self) -> Result<(), Diagnostic> {
+    fn validated_plan(&self) -> Result<ValidatedDataPlan, Diagnostic> {
         let value = self
             .children(NodeRef::ROOT)
             .find(|node| self.is_value(*node))
             .ok_or_else(|| self.error(NodeRef::ROOT, "expected a JSON value"))?;
-        self.validate_value(value)
+        let mut plan = ValidatedDataPlan::default();
+        let root = self.plan_value(value, &mut plan)?;
+        plan.set_root(root);
+        Ok(plan)
     }
 
-    fn validate_value(&self, node: NodeRef) -> Result<(), Diagnostic> {
+    fn plan_value(
+        &self,
+        node: NodeRef,
+        plan: &mut ValidatedDataPlan,
+    ) -> Result<DataNodeId, Diagnostic> {
+        let location = self.location(node);
         match self.cst.get(node) {
-            Node::Token(Token::Null | Token::True | Token::False, _) => Ok(()),
-            Node::Token(Token::Number, _) => self.number(node).map(|_| ()),
-            Node::Rule(Rule::StringLiteral, _) => self.decode_string(node).map(|_| ()),
+            Node::Token(Token::Null, _) => {
+                Ok(plan.scalar(DataScalar::Atom("None".into()), location))
+            }
+            Node::Token(Token::True, _) => {
+                Ok(plan.scalar(DataScalar::Atom("True".into()), location))
+            }
+            Node::Token(Token::False, _) => {
+                Ok(plan.scalar(DataScalar::Atom("False".into()), location))
+            }
+            Node::Token(Token::Number, _) => {
+                let value = match self.number(node)? {
+                    DecodedValue::Int(value) => DataScalar::Int(value),
+                    DecodedValue::Float(value) => DataScalar::Float(value),
+                    _ => unreachable!("JSON number decoder returns a number"),
+                };
+                Ok(plan.scalar(value, location))
+            }
+            Node::Rule(Rule::StringLiteral, _) => {
+                Ok(plan.scalar(DataScalar::String(self.decode_string(node)?), location))
+            }
             Node::Rule(Rule::Literal | Rule::Value, _) => {
                 let child = self
                     .children(node)
                     .find(|child| self.is_value(*child))
                     .ok_or_else(|| self.error(node, "empty JSON value"))?;
-                self.validate_value(child)
+                self.plan_value(child, plan)
             }
             Node::Rule(Rule::Array, _) => {
+                let mut values = Vec::new();
                 for child in self.children(node).filter(|child| self.is_value(*child)) {
-                    self.validate_value(child)?;
+                    values.push(self.plan_value(child, plan)?);
                 }
-                Ok(())
+                Ok(plan.array(values, location))
             }
             Node::Rule(Rule::Object, _) => {
-                let mut keys = BTreeMap::new();
+                let mut fields: BTreeMap<String, DataField> = BTreeMap::new();
                 for member in self
                     .rule_children(node)
                     .filter(|child| self.rule(*child) == Some(Rule::Member))
@@ -376,145 +567,31 @@ impl<'a, 'heap> JsonLowerer<'a, 'heap> {
                         .find(|child| self.rule(*child) == Some(Rule::StringLiteral))
                         .ok_or_else(|| self.error(member, "JSON object key must be a string"))?;
                     let key = self.decode_string(key_node)?;
-                    let location = self.location(key_node);
-                    if let Some(previous) = keys.insert(key.clone(), location) {
+                    let key_location = self.location(key_node);
+                    if let Some(previous) = fields.get(&key) {
                         return Err(Diagnostic::error(
                             format!("duplicate JSON object key {key:?}"),
-                            location,
+                            key_location,
                         )
-                        .with_secondary("first defined here", previous));
+                        .with_secondary("first defined here", previous.key_location));
                     }
                     let value = self
                         .children(member)
                         .find(|child| *child != key_node && self.is_value(*child))
                         .ok_or_else(|| self.error(member, "JSON member has no value"))?;
-                    self.validate_value(value)?;
+                    let value = self.plan_value(value, plan)?;
+                    fields.insert(
+                        key,
+                        DataField {
+                            key_location,
+                            value,
+                        },
+                    );
                 }
-                Ok(())
+                Ok(plan.object(fields, location))
             }
             _ => Err(self.error(node, "expected a JSON value")),
         }
-    }
-
-    fn value(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
-        let location = self.location(node);
-        let value = match self.cst.get(node) {
-            Node::Token(Token::Null, _) => DecodedValue::BuiltinAtom(BuiltinAtom::None),
-            Node::Token(Token::True, _) => DecodedValue::BuiltinAtom(BuiltinAtom::True),
-            Node::Token(Token::False, _) => DecodedValue::BuiltinAtom(BuiltinAtom::False),
-            Node::Rule(Rule::StringLiteral, _) => {
-                let value = self.decode_string(node)?;
-                if let Some(target) = self.semantic {
-                    return Ok(
-                        DataScalar::String(value).lower_semantic(self.heap, target, location)
-                    );
-                }
-                self.heap.string(None, &value)
-            }
-            Node::Token(Token::Number, _) => self.number(node)?,
-            Node::Rule(Rule::Literal | Rule::Value, _) => {
-                let child = self
-                    .children(node)
-                    .find(|child| self.is_value(*child))
-                    .ok_or_else(|| self.error(node, "empty JSON value"))?;
-                return self.value(child);
-            }
-            Node::Rule(Rule::Array, _) => return self.array(node),
-            Node::Rule(Rule::Object, _) => return self.object(node),
-            _ => return Err(self.error(node, "expected a JSON value")),
-        };
-        self.provenance
-            .values
-            .insert(self.path.clone(), self.location(node));
-        let value = Val::original(value, Some(location.into()));
-        if let Some(target) = self.semantic {
-            Ok(match value.value() {
-                DecodedValue::BuiltinAtom(_) => value.with_type_id(target.type_id),
-                DecodedValue::Int(_) => semantic_tag(self.heap, target, "Int", value, location),
-                DecodedValue::Float(_) => semantic_tag(self.heap, target, "Float", value, location),
-                _ => unreachable!("JSON scalar classification is complete"),
-            })
-        } else {
-            Ok(value)
-        }
-    }
-
-    fn array(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
-        let children = self
-            .children(node)
-            .filter(|child| self.is_value(*child))
-            .collect::<Vec<_>>();
-        let mut values = Vec::with_capacity(children.len());
-        for (index, child) in children.into_iter().enumerate() {
-            self.path.push(ValuePathSegment::Index(index));
-            values.push(self.value(child)?);
-            self.path.pop();
-        }
-        self.provenance
-            .values
-            .insert(self.path.clone(), self.location(node));
-        let location = self.location(node);
-        let array = Val::original(
-            DecodedValue::Array(self.heap.allocate(Object::Array(values.into_boxed_slice()))),
-            Some(location.into()),
-        );
-        Ok(self.semantic.map_or(array, |target| {
-            semantic_tag(self.heap, target, "Array", array, location)
-        }))
-    }
-
-    fn object(&mut self, node: NodeRef) -> Result<Val, Diagnostic> {
-        let members = self
-            .rule_children(node)
-            .filter(|child| self.rule(*child) == Some(Rule::Member))
-            .collect::<Vec<_>>();
-        let mut fields = BTreeMap::new();
-        let mut key_spans: BTreeMap<String, Location> = BTreeMap::new();
-        for member in members {
-            let key_node = self
-                .rule_children(member)
-                .find(|child| self.rule(*child) == Some(Rule::StringLiteral))
-                .ok_or_else(|| self.error(member, "JSON object key must be a string"))?;
-            let key = self.decode_string(key_node)?;
-            let key_span = self.location(key_node);
-            if let Some(previous) = key_spans.get(&key) {
-                return Err(Diagnostic::error(
-                    format!("duplicate JSON object key {key:?}"),
-                    key_span,
-                )
-                .with_secondary("first defined here", *previous));
-            }
-            let value_node = self
-                .children(member)
-                .find(|child| *child != key_node && self.is_value(*child))
-                .ok_or_else(|| self.error(member, "JSON member has no value"))?;
-            self.path.push(ValuePathSegment::Key(key.clone()));
-            self.provenance.keys.insert(self.path.clone(), key_span);
-            let value = self.value(value_node)?;
-            self.path.pop();
-            key_spans.insert(key.clone(), key_span);
-            fields.insert(key, value);
-        }
-        let names = fields
-            .keys()
-            .map(|name| self.heap.intern(name))
-            .collect::<Vec<_>>();
-        let values = fields.into_values().collect::<Vec<_>>();
-        let shape = self.heap.intern_shape(names);
-        self.provenance
-            .values
-            .insert(self.path.clone(), self.location(node));
-        let location = self.location(node);
-        let object = Val::original(
-            DecodedValue::Dict(self.heap.allocate(Object::Dict {
-                shape,
-                values: values.into_boxed_slice(),
-            })),
-            Some(location.into()),
-        );
-        Ok(self.semantic.map_or(object, |target| {
-            semantic_tag(self.heap, target, "Object", object, location)
-        }))
     }
 
     fn number(&self, node: NodeRef) -> Result<DecodedValue, Diagnostic> {
@@ -718,6 +795,23 @@ mod tests {
         let before = heap.allocation_count();
         assert!(materialize_json_registered(&sources, source_id, &mut heap).is_err());
         assert_eq!(heap.allocation_count(), before);
+    }
+
+    #[test]
+    fn validated_plan_accounts_the_complete_semantic_graph_before_materialization() {
+        let source = r#"{"a":"xyz","b":[1,true]}"#;
+        let mut sources = SourceDatabase::default();
+        let source_id = sources.add("quota.json", source);
+        let plan = validate_json_registered(&sources, source_id).unwrap();
+        let value_bytes = std::mem::size_of::<Val>() as u64;
+
+        // Object wrapper + two fields, String wrapper, Array wrapper + two
+        // items, and Int wrapper. Builtin True itself allocates no graph node.
+        let expected = source.len() as u64 + 12 * value_bytes + 5;
+        assert_eq!(
+            data_plan_allocation_bytes(&plan, source.len()).unwrap(),
+            expected
+        );
     }
 
     #[test]

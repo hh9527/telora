@@ -1279,11 +1279,13 @@ TOML table 冲突、非法数字/时间值，以及不受支持或有歧义的 Y
 带 source location 的诊断，不产生部分 `Value`。这一层不检查业务 schema：import 和
 `data_srcs` 的结果都只是 `Value`，业务数据是否符合某个 struct/enum 属于 codec。
 
-验证阶段必须优先借用 lossless CST，而不是再构造一棵 Owned 数据树。实现以 CST node
-ID、span 和对 source/CST storage 的引用表达 validated plan；不得复制 scalar text，也
-不得把完整 array/object 预先规范化到中间 graph。重复键检测、YAML graph 解引用、TOML
-table 组装和确定性物化顺序可以使用必要的轻量 side table，但表项应引用 CST node，不
-拥有重复 payload。validated plan 由目标 Heap materializer 单次消费。
+验证阶段必须优先借用 lossless CST，而不是再构造一棵递归 Owned 数据树。实现以一个
+扁平 arena 表达 validated plan：节点只保存 source span、已验证的节点种类，以及指向
+arena 节点的轻量边；JSON/TOML 节点来自对应 CST node，YAML 节点来自行级 CST span。
+字符串、规范化时间、binary 等必须在物化前验证的解码结果，以及重复键检测、YAML
+graph 解引用、TOML table 组装所需的索引，进入必要的 side table。plan
+不会包含递归 Owned payload graph，也不会分配运行时对象；目标 Heap materializer 在
+验证和 quota 预检全部成功后单次消费它。
 
 数据物化不消耗 Telora 跳转/fuel 配额，因为它不会调用或递归；生成的 Heap 对象仍受
 allocation quota 约束。每个节点直接携带本次运行共享 source registry 分配的

@@ -1,10 +1,12 @@
 use crate::DataWorld;
-use crate::heap::{DecodedValue, Heap, Object, Val};
+use crate::heap::Heap;
 use crate::json::{
-    DataScalar, MaterializedValue, Provenance, SemanticDataTarget, SourcedValue, ValuePath,
-    ValuePathSegment, semantic_tag,
+    DataField, DataNodeId, DataPlanNodeKind, DataScalar, SourcedValue, ValidatedDataPlan,
+    materialize_data_plan,
 };
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
+use crate::syntax::yaml::lexer::Token;
+use crate::syntax::yaml::parser::{CstData, Node, NodeRef};
 use std::collections::BTreeMap;
 
 const MAX_ALIAS_EXPANSIONS: usize = 10_000;
@@ -17,19 +19,17 @@ pub struct YamlParse {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub(crate) fn materialize_yaml_semantic_registered(
+pub(crate) fn validate_yaml_registered(
     sources: &SourceDatabase,
     source_id: SourceId,
-    heap: &mut Heap,
-    target: SemanticDataTarget<'_>,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<ValidatedDataPlan, Vec<Diagnostic>> {
     let source = sources.get(source_id);
     let parsed = crate::syntax::yaml::parse_document(source_id, source.text());
     if !parsed.diagnostics.is_empty() {
         return Err(parsed.diagnostics);
     }
-    YamlLowerer::new(source_id, source.text())
-        .lower_with(heap, Some(target))
+    YamlLowerer::new(source_id, source.text(), &parsed.syntax)
+        .validated_plan()
         .map_err(|diagnostic| vec![diagnostic])
 }
 
@@ -39,11 +39,14 @@ pub fn parse_yaml_registered(sources: &SourceDatabase, source_id: SourceId) -> Y
     let mut diagnostics = parsed.diagnostics;
     let value = if diagnostics.is_empty() {
         let mut heap = Heap::work();
-        match YamlLowerer::new(source_id, source.text()).lower(&mut heap) {
-            Ok(value) => Some(SourcedValue {
-                value: DataWorld::new(heap, value.value),
-                provenance: value.provenance,
-            }),
+        match YamlLowerer::new(source_id, source.text(), &parsed.syntax).validated_plan() {
+            Ok(plan) => {
+                let value = materialize_data_plan(&plan, &mut heap, None);
+                Some(SourcedValue {
+                    value: DataWorld::new(heap, value.value),
+                    provenance: value.provenance,
+                })
+            }
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
                 None
@@ -64,7 +67,7 @@ pub(crate) fn materialize_yaml_registered(
     sources: &SourceDatabase,
     source_id: SourceId,
     heap: &mut Heap,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<crate::json::MaterializedValue, Vec<Diagnostic>> {
     let source = sources.get(source_id);
     materialize_yaml_source(source_id, source.text(), heap)
 }
@@ -74,21 +77,15 @@ pub(crate) fn materialize_yaml_source(
     source_id: SourceId,
     source: &crate::document::DocumentText,
     heap: &mut Heap,
-) -> Result<MaterializedValue, Vec<Diagnostic>> {
+) -> Result<crate::json::MaterializedValue, Vec<Diagnostic>> {
     let parsed = crate::syntax::yaml::parse_document(source_id, source);
     if !parsed.diagnostics.is_empty() {
         return Err(parsed.diagnostics);
     }
-    YamlLowerer::new(source_id, source)
-        .lower(heap)
-        .map_err(|diagnostic| vec![diagnostic])
-}
-
-#[derive(Clone)]
-enum YamlNode {
-    Scalar(DataScalar, Location),
-    Sequence(Vec<YamlNode>, Location),
-    Mapping(Vec<(String, Location, YamlNode)>, Location),
+    let plan = YamlLowerer::new(source_id, source, &parsed.syntax)
+        .validated_plan()
+        .map_err(|diagnostic| vec![diagnostic])?;
+    Ok(materialize_data_plan(&plan, heap, None))
 }
 
 #[derive(Clone)]
@@ -96,15 +93,17 @@ struct Line {
     start: usize,
     end: usize,
     indent: usize,
-    content: String,
+    content_start: usize,
 }
 
-struct YamlLowerer {
+struct YamlLowerer<'a> {
     source_id: SourceId,
+    source: &'a crate::document::DocumentText,
     source_len: usize,
     lines: Vec<Line>,
     position: usize,
-    anchors: BTreeMap<String, YamlNode>,
+    plan: ValidatedDataPlan,
+    anchors: BTreeMap<String, DataNodeId>,
     alias_expansion_work: usize,
 }
 
@@ -114,70 +113,65 @@ fn push_line(lines: &mut Vec<Line>, start: usize, text: &str) {
         start,
         end: start + text.len(),
         indent,
-        content: text[indent..].to_owned(),
+        content_start: start + indent,
     });
 }
 
-impl YamlLowerer {
-    fn new(source_id: SourceId, source: &crate::document::DocumentText) -> Self {
+impl<'a> YamlLowerer<'a> {
+    fn new(source_id: SourceId, source: &'a crate::document::DocumentText, cst: &CstData) -> Self {
         let source_len = source.byte_len();
         let mut lines = Vec::new();
-        let mut start = 0;
-        let mut pending = String::new();
-        for fragment in source.chunks() {
-            pending.push_str(fragment);
-            while let Some(newline) = pending.find('\n') {
-                let raw = pending[..newline].trim_end_matches('\r');
-                push_line(&mut lines, start, raw);
-                pending.drain(..newline + 1);
-                start += newline + 1;
+        for node in cst.children(NodeRef::ROOT) {
+            if !matches!(cst.get(node), Node::Token(Token::Line, _)) {
+                continue;
             }
-        }
-        if !pending.is_empty() {
-            push_line(&mut lines, start, pending.trim_end_matches('\r'));
+            let span = cst.span(node);
+            let text = source
+                .slice(
+                    crate::source::TextRange::from_usize(span.clone())
+                        .expect("YAML CST span fits registered source"),
+                )
+                .expect("YAML CST line is valid UTF-8");
+            let raw = text.trim_end_matches('\n').trim_end_matches('\r');
+            push_line(&mut lines, span.start, raw);
         }
         if source_len == 0 {
             lines.push(Line {
                 start: 0,
                 end: 0,
                 indent: 0,
-                content: String::new(),
+                content_start: 0,
             });
         }
         Self {
             source_id,
+            source,
             source_len,
             lines,
             position: 0,
+            plan: ValidatedDataPlan::default(),
             anchors: BTreeMap::new(),
             alias_expansion_work: 0,
         }
     }
 
-    fn lower(self, heap: &mut Heap) -> Result<MaterializedValue, Diagnostic> {
-        self.lower_with(heap, None)
-    }
-
-    fn lower_with(
-        mut self,
-        heap: &mut Heap,
-        semantic: Option<SemanticDataTarget<'_>>,
-    ) -> Result<MaterializedValue, Diagnostic> {
+    fn validated_plan(mut self) -> Result<ValidatedDataPlan, Diagnostic> {
         if let Some((index, _)) = self
             .lines
             .iter()
             .enumerate()
-            .find(|(_, line)| line.content.starts_with('\t'))
+            .find(|(index, _)| self.line_content(*index).starts_with('\t'))
         {
             return Err(self.line_error(index, "tabs cannot be used for YAML indentation"));
         }
         self.skip_trivia();
-        if self.current_content() == Some("---") {
+        if self.current_content().as_deref() == Some("---") {
             self.position += 1;
             self.skip_trivia();
         }
         let node = if self.position == self.lines.len() {
-            YamlNode::Scalar(DataScalar::Atom("None".into()), self.location(0, 0))
+            self.plan
+                .scalar(DataScalar::Atom("None".into()), self.location(0, 0))
         } else {
             let indent = self.lines[self.position].indent;
             self.parse_block(indent)?
@@ -189,17 +183,11 @@ impl YamlLowerer {
                 "YAML module must contain exactly one document",
             ));
         }
-        let mut provenance = Provenance::default();
-        let mut path = Vec::new();
-        let root = materialize(node, heap, &mut provenance, &mut path, semantic)
-            .map_err(|message| Diagnostic::error(message, self.location(0, self.source_len)))?;
-        Ok(MaterializedValue {
-            value: root,
-            provenance,
-        })
+        self.plan.set_root(node);
+        Ok(self.plan)
     }
 
-    fn parse_block(&mut self, indent: usize) -> Result<YamlNode, Diagnostic> {
+    fn parse_block(&mut self, indent: usize) -> Result<DataNodeId, Diagnostic> {
         self.skip_trivia();
         let line = self
             .lines
@@ -208,18 +196,20 @@ impl YamlLowerer {
         if line.indent != indent {
             return Err(self.line_error(self.position, "inconsistent YAML indentation"));
         }
-        if line.content == "-" || line.content.starts_with("- ") {
+        let line_start = line.start;
+        let content = self.line_content(self.position).into_owned();
+        if content == "-" || content.starts_with("- ") {
             self.parse_sequence(indent)
-        } else if split_mapping(&line.content).is_some() {
+        } else if split_mapping(&content).is_some() {
             self.parse_mapping(indent, None)
         } else {
             let index = self.position;
             self.position += 1;
-            self.parse_inline_value(index, line.content.clone(), line.start + indent)
+            self.parse_inline_value(index, content, line_start + indent)
         }
     }
 
-    fn parse_sequence(&mut self, indent: usize) -> Result<YamlNode, Diagnostic> {
+    fn parse_sequence(&mut self, indent: usize) -> Result<DataNodeId, Diagnostic> {
         let start = self.lines[self.position].start + indent;
         let mut values = Vec::new();
         while self.position < self.lines.len() {
@@ -228,7 +218,7 @@ impl YamlLowerer {
                 break;
             }
             let index = self.position;
-            let content = self.lines[index].content.clone();
+            let content = self.line_content(index).into_owned();
             let Some(rest) = content.strip_prefix('-') else {
                 break;
             };
@@ -250,15 +240,15 @@ impl YamlLowerer {
             };
             values.push(value);
         }
-        let end = values.last().map_or(start, node_end);
-        Ok(YamlNode::Sequence(values, self.location(start, end)))
+        let end = values.last().map_or(start, |node| self.node_end(*node));
+        Ok(self.plan.array(values, self.location(start, end)))
     }
 
     fn parse_mapping(
         &mut self,
         indent: usize,
         first: Option<(usize, String)>,
-    ) -> Result<YamlNode, Diagnostic> {
+    ) -> Result<DataNodeId, Diagnostic> {
         let start = first.as_ref().map_or_else(
             || self.lines[self.position].start + indent,
             |(index, _)| self.lines[*index].start + self.lines[*index].indent + 2,
@@ -276,7 +266,7 @@ impl YamlLowerer {
                     break;
                 }
                 let index = self.position;
-                let content = self.lines[index].content.clone();
+                let content = self.line_content(index).into_owned();
                 if split_mapping(&content).is_none() {
                     break;
                 }
@@ -305,7 +295,8 @@ impl YamlLowerer {
             let value = if rest.is_empty() {
                 self.skip_trivia();
                 if self.position >= self.lines.len() || self.lines[self.position].indent <= indent {
-                    YamlNode::Scalar(DataScalar::Atom("None".into()), key_location)
+                    self.plan
+                        .scalar(DataScalar::Atom("None".into()), key_location)
                 } else {
                     self.parse_block(self.lines[self.position].indent)?
                 }
@@ -316,7 +307,7 @@ impl YamlLowerer {
                 self.parse_inline_value(index, rest.to_owned(), value_offset)?
             };
             if key == "<<" {
-                collect_merge_entries(value, &mut merged)
+                collect_merge_entries(&self.plan, value, &mut merged)
                     .map_err(|message| Diagnostic::error(message, key_location))?;
             } else {
                 entries.push((key, key_location, value));
@@ -345,8 +336,20 @@ impl YamlLowerer {
         let entries = effective;
         let end = entries
             .last()
-            .map_or(start, |(_, _, value)| node_end(value));
-        Ok(YamlNode::Mapping(entries, self.location(start, end)))
+            .map_or(start, |(_, _, value)| self.node_end(*value));
+        let fields = entries
+            .into_iter()
+            .map(|(name, key_location, value)| {
+                (
+                    name,
+                    DataField {
+                        key_location,
+                        value,
+                    },
+                )
+            })
+            .collect();
+        Ok(self.plan.object(fields, self.location(start, end)))
     }
 
     fn parse_inline_value(
@@ -354,7 +357,7 @@ impl YamlLowerer {
         line: usize,
         text: String,
         offset: usize,
-    ) -> Result<YamlNode, Diagnostic> {
+    ) -> Result<DataNodeId, Diagnostic> {
         let text = strip_comment(&text).trim().to_owned();
         if let Some(encoded) = text.strip_prefix("!!binary") {
             let encoded = encoded.trim();
@@ -364,7 +367,7 @@ impl YamlLowerer {
             let location = self.location(offset, offset + text.len());
             let bytes =
                 decode_base64(encoded).map_err(|message| Diagnostic::error(message, location))?;
-            return Ok(YamlNode::Scalar(DataScalar::Bytes(bytes), location));
+            return Ok(self.plan.scalar(DataScalar::Bytes(bytes), location));
         }
         if text.starts_with('!') {
             return Err(self.line_error(line, "custom YAML tags are not supported"));
@@ -373,21 +376,21 @@ impl YamlLowerer {
             if !valid_anchor_name(alias) {
                 return Err(self.line_error(line, "invalid YAML alias"));
             }
-            let anchored = self.anchors.get(alias).ok_or_else(|| {
+            let anchored = self.anchors.get(alias).copied().ok_or_else(|| {
                 self.line_error(line, format!("unknown or cyclic YAML alias {alias:?}"))
             })?;
             self.alias_expansion_work = self
                 .alias_expansion_work
-                .saturating_add(node_count(anchored));
+                .saturating_add(node_count(&self.plan, anchored));
             if self.alias_expansion_work > MAX_ALIAS_EXPANSIONS {
                 return Err(self.line_error(line, "YAML alias expansion limit exceeded"));
             }
-            let mut node = anchored.clone();
-            if node_depth(&node) > MAX_ALIAS_DEPTH {
+            if node_depth(&self.plan, anchored) > MAX_ALIAS_DEPTH {
                 return Err(self.line_error(line, "YAML alias depth limit exceeded"));
             }
-            set_node_location(&mut node, self.location(offset, offset + text.len()));
-            return Ok(node);
+            return Ok(self
+                .plan
+                .clone_root_at(anchored, self.location(offset, offset + text.len())));
         }
         if let Some(anchor) = text.strip_prefix('&') {
             let split = anchor.find(char::is_whitespace).unwrap_or(anchor.len());
@@ -396,7 +399,7 @@ impl YamlLowerer {
                 return Err(self.line_error(line, "YAML anchor must name a value"));
             }
             let node = self.parse_inline_value(line, rest.trim().to_owned(), offset + split + 1)?;
-            if self.anchors.insert(name.to_owned(), node.clone()).is_some() {
+            if self.anchors.insert(name.to_owned(), node).is_some() {
                 return Err(self.line_error(line, format!("duplicate YAML anchor {name:?}")));
             }
             return Ok(node);
@@ -407,6 +410,7 @@ impl YamlLowerer {
                 self.source_id,
                 offset,
                 &text,
+                &mut self.plan,
                 &self.anchors,
                 MAX_ALIAS_EXPANSIONS.saturating_sub(self.alias_expansion_work),
             )
@@ -414,7 +418,8 @@ impl YamlLowerer {
             self.alias_expansion_work = self.alias_expansion_work.saturating_add(work);
             return Ok(node);
         }
-        parse_scalar(&text, location).map_err(|message| Diagnostic::error(message, location))
+        parse_scalar(&mut self.plan, &text, location)
+            .map_err(|message| Diagnostic::error(message, location))
     }
 
     fn parse_block_scalar(
@@ -422,7 +427,7 @@ impl YamlLowerer {
         line: usize,
         header: &str,
         parent_indent: usize,
-    ) -> Result<YamlNode, Diagnostic> {
+    ) -> Result<DataNodeId, Diagnostic> {
         let style = header.as_bytes()[0];
         let indicators = header[1..].trim();
         if indicators.len() > 2
@@ -438,31 +443,31 @@ impl YamlLowerer {
             .find_map(|ch| ch.to_digit(10))
             .map(|n| parent_indent + n as usize);
         let start_pos = self.position;
-        let inferred = self.lines[start_pos..]
-            .iter()
-            .filter(|candidate| {
-                !candidate.content.trim().is_empty() && candidate.indent > parent_indent
+        let inferred = (start_pos..self.lines.len())
+            .filter(|index| {
+                !self.line_content(*index).trim().is_empty()
+                    && self.lines[*index].indent > parent_indent
             })
-            .map(|candidate| candidate.indent)
+            .map(|index| self.lines[index].indent)
             .next();
         let content_indent = explicit.or(inferred).unwrap_or(parent_indent + 1);
         let mut pieces = Vec::new();
         let mut end = self.lines[line].end;
         while self.position < self.lines.len() {
             let candidate = &self.lines[self.position];
-            if !candidate.content.trim().is_empty() && candidate.indent < content_indent {
+            let candidate_indent = candidate.indent;
+            let candidate_end = candidate.end;
+            let content = self.line_content(self.position).into_owned();
+            if !content.trim().is_empty() && candidate_indent < content_indent {
                 break;
             }
-            if candidate.indent <= parent_indent && candidate.content.trim().is_empty() {
+            if candidate_indent <= parent_indent && content.trim().is_empty() {
                 pieces.push((String::new(), false));
             } else {
-                let extra = candidate.indent.saturating_sub(content_indent);
-                pieces.push((
-                    format!("{}{}", " ".repeat(extra), candidate.content),
-                    extra > 0,
-                ));
+                let extra = candidate_indent.saturating_sub(content_indent);
+                pieces.push((format!("{}{}", " ".repeat(extra), content), extra > 0));
             }
-            end = candidate.end;
+            end = candidate_end;
             self.position += 1;
         }
         let mut value = if style == b'|' {
@@ -492,7 +497,7 @@ impl YamlLowerer {
                 }
             }
         }
-        Ok(YamlNode::Scalar(
+        Ok(self.plan.scalar(
             DataScalar::String(value),
             self.location(self.lines[line].start, end),
         ))
@@ -500,7 +505,8 @@ impl YamlLowerer {
 
     fn skip_trivia(&mut self) {
         while self.position < self.lines.len() {
-            let content = self.lines[self.position].content.trim();
+            let content = self.line_content(self.position);
+            let content = content.trim();
             if content.is_empty() || content.starts_with('#') {
                 self.position += 1;
             } else {
@@ -509,10 +515,26 @@ impl YamlLowerer {
         }
     }
 
-    fn current_content(&self) -> Option<&str> {
+    fn current_content(&self) -> Option<std::borrow::Cow<'_, str>> {
         self.lines
             .get(self.position)
-            .map(|line| line.content.trim())
+            .map(|_| self.line_content(self.position))
+            .map(|content| match content {
+                std::borrow::Cow::Borrowed(content) => std::borrow::Cow::Borrowed(content.trim()),
+                std::borrow::Cow::Owned(content) => {
+                    std::borrow::Cow::Owned(content.trim().to_owned())
+                }
+            })
+    }
+
+    fn line_content(&self, line: usize) -> std::borrow::Cow<'_, str> {
+        let line = &self.lines[line];
+        self.source
+            .slice(
+                crate::source::TextRange::from_usize(line.content_start..line.end)
+                    .expect("YAML line span fits registered source"),
+            )
+            .expect("YAML line span is valid UTF-8")
     }
     fn location(&self, start: usize, end: usize) -> Location {
         Location::from_usize(self.source_id, start..end).expect("YAML range fits Location")
@@ -523,6 +545,10 @@ impl YamlLowerer {
     }
     fn eof_error(&self, message: impl Into<String>) -> Diagnostic {
         Diagnostic::error(message, self.location(self.source_len, self.source_len))
+    }
+
+    fn node_end(&self, node: DataNodeId) -> usize {
+        self.plan.node(node).location.end as usize
     }
 }
 
@@ -580,9 +606,13 @@ fn parse_key(text: &str) -> Result<String, &'static str> {
     Ok(text.to_owned())
 }
 
-fn parse_scalar(text: &str, location: Location) -> Result<YamlNode, &'static str> {
+fn parse_scalar(
+    plan: &mut ValidatedDataPlan,
+    text: &str,
+    location: Location,
+) -> Result<DataNodeId, &'static str> {
     if let Some(value) = decode_quoted(text) {
-        return Ok(YamlNode::Scalar(DataScalar::String(value), location));
+        return Ok(plan.scalar(DataScalar::String(value), location));
     }
     if text.starts_with(['\'', '"']) {
         return Err("invalid quoted YAML String");
@@ -607,24 +637,33 @@ fn parse_scalar(text: &str, location: Location) -> Result<YamlNode, &'static str
         }
         _ => DataScalar::String(text.into()),
     };
-    Ok(YamlNode::Scalar(value, location))
+    Ok(plan.scalar(value, location))
 }
 
 fn collect_merge_entries(
-    value: YamlNode,
-    output: &mut Vec<(String, Location, YamlNode)>,
+    plan: &ValidatedDataPlan,
+    value: DataNodeId,
+    output: &mut Vec<(String, Location, DataNodeId)>,
 ) -> Result<(), &'static str> {
-    match value {
-        YamlNode::Mapping(entries, _) => {
-            output.extend(entries);
+    match &plan.node(value).kind {
+        DataPlanNodeKind::Object(entries) => {
+            output.extend(
+                entries
+                    .iter()
+                    .map(|(name, field)| (name.clone(), field.key_location, field.value)),
+            );
             Ok(())
         }
-        YamlNode::Sequence(values, _) => {
+        DataPlanNodeKind::Array(values) => {
             for value in values {
-                let YamlNode::Mapping(entries, _) = value else {
+                let DataPlanNodeKind::Object(entries) = &plan.node(*value).kind else {
                     return Err("YAML merge sequence items must be mappings");
                 };
-                output.extend(entries);
+                output.extend(
+                    entries
+                        .iter()
+                        .map(|(name, field)| (name.clone(), field.key_location, field.value)),
+                );
             }
             Ok(())
         }
@@ -804,28 +843,38 @@ fn fold_lines(lines: &[(String, bool)]) -> String {
     }
     output
 }
-fn node_end(node: &YamlNode) -> usize {
-    match node {
-        YamlNode::Scalar(_, l) | YamlNode::Sequence(_, l) | YamlNode::Mapping(_, l) => {
-            l.end as usize
+fn node_depth(plan: &ValidatedDataPlan, node: DataNodeId) -> usize {
+    match &plan.node(node).kind {
+        DataPlanNodeKind::Scalar(..) => 1,
+        DataPlanNodeKind::Array(values) => {
+            1 + values
+                .iter()
+                .map(|node| node_depth(plan, *node))
+                .max()
+                .unwrap_or(0)
         }
-    }
-}
-fn node_depth(node: &YamlNode) -> usize {
-    match node {
-        YamlNode::Scalar(..) => 1,
-        YamlNode::Sequence(v, _) => 1 + v.iter().map(node_depth).max().unwrap_or(0),
-        YamlNode::Mapping(v, _) => 1 + v.iter().map(|(_, _, v)| node_depth(v)).max().unwrap_or(0),
+        DataPlanNodeKind::Object(fields) => {
+            1 + fields
+                .values()
+                .map(|field| node_depth(plan, field.value))
+                .max()
+                .unwrap_or(0)
+        }
     }
 }
 
-fn node_count(node: &YamlNode) -> usize {
-    match node {
-        YamlNode::Scalar(..) => 1,
-        YamlNode::Sequence(values, _) => 1usize.saturating_add(values.iter().map(node_count).sum()),
-        YamlNode::Mapping(entries, _) => {
-            1usize.saturating_add(entries.iter().map(|(_, _, value)| node_count(value)).sum())
+fn node_count(plan: &ValidatedDataPlan, node: DataNodeId) -> usize {
+    match &plan.node(node).kind {
+        DataPlanNodeKind::Scalar(..) => 1,
+        DataPlanNodeKind::Array(values) => {
+            1usize.saturating_add(values.iter().map(|node| node_count(plan, *node)).sum())
         }
+        DataPlanNodeKind::Object(fields) => 1usize.saturating_add(
+            fields
+                .values()
+                .map(|field| node_count(plan, field.value))
+                .sum(),
+        ),
     }
 }
 
@@ -854,20 +903,13 @@ fn core_non_string(text: &str) -> bool {
         || text.parse::<f64>().is_ok()
 }
 
-fn set_node_location(node: &mut YamlNode, location: Location) {
-    match node {
-        YamlNode::Scalar(_, current)
-        | YamlNode::Sequence(_, current)
-        | YamlNode::Mapping(_, current) => *current = location,
-    }
-}
-
 struct FlowParser<'a> {
     source_id: SourceId,
     offset: usize,
     text: &'a str,
     pos: usize,
-    anchors: &'a BTreeMap<String, YamlNode>,
+    plan: &'a mut ValidatedDataPlan,
+    anchors: &'a BTreeMap<String, DataNodeId>,
     alias_work: usize,
     alias_limit: usize,
 }
@@ -876,7 +918,8 @@ impl<'a> FlowParser<'a> {
         source_id: SourceId,
         offset: usize,
         text: &'a str,
-        anchors: &'a BTreeMap<String, YamlNode>,
+        plan: &'a mut ValidatedDataPlan,
+        anchors: &'a BTreeMap<String, DataNodeId>,
         alias_limit: usize,
     ) -> Self {
         Self {
@@ -884,12 +927,13 @@ impl<'a> FlowParser<'a> {
             offset,
             text,
             pos: 0,
+            plan,
             anchors,
             alias_work: 0,
             alias_limit,
         }
     }
-    fn parse(mut self) -> Result<(YamlNode, usize), Diagnostic> {
+    fn parse(mut self) -> Result<(DataNodeId, usize), Diagnostic> {
         let value = self.value()?;
         self.ws();
         if self.pos != self.text.len() {
@@ -897,7 +941,7 @@ impl<'a> FlowParser<'a> {
         }
         Ok((value, self.alias_work))
     }
-    fn value(&mut self) -> Result<YamlNode, Diagnostic> {
+    fn value(&mut self) -> Result<DataNodeId, Diagnostic> {
         self.ws();
         let start = self.pos;
         match self.peek() {
@@ -916,7 +960,7 @@ impl<'a> FlowParser<'a> {
                     }
                     self.expect(',')?;
                 }
-                Ok(YamlNode::Sequence(values, self.loc(start, self.pos)))
+                Ok(self.plan.array(values, self.loc(start, self.pos)))
             }
             Some('{') => {
                 self.bump();
@@ -944,7 +988,7 @@ impl<'a> FlowParser<'a> {
                     self.expect(':')?;
                     let value = self.value()?;
                     if key == "<<" {
-                        collect_merge_entries(value, &mut merged)
+                        collect_merge_entries(self.plan, value, &mut merged)
                             .map_err(|message| self.error(message))?;
                     } else {
                         entries.push((key, key_loc, value));
@@ -975,7 +1019,19 @@ impl<'a> FlowParser<'a> {
                     effective.push((key, location, value));
                 }
                 effective.extend(entries);
-                Ok(YamlNode::Mapping(effective, self.loc(start, self.pos)))
+                let fields = effective
+                    .into_iter()
+                    .map(|(name, key_location, value)| {
+                        (
+                            name,
+                            DataField {
+                                key_location,
+                                value,
+                            },
+                        )
+                    })
+                    .collect();
+                Ok(self.plan.object(fields, self.loc(start, self.pos)))
             }
             _ => {
                 let raw = self.scalar_text(&[',', ']', '}'])?.trim();
@@ -983,7 +1039,7 @@ impl<'a> FlowParser<'a> {
                 if let Some(encoded) = raw.strip_prefix("!!binary") {
                     let bytes =
                         decode_base64(encoded.trim()).map_err(|message| self.error(message))?;
-                    return Ok(YamlNode::Scalar(DataScalar::Bytes(bytes), loc));
+                    return Ok(self.plan.scalar(DataScalar::Bytes(bytes), loc));
                 }
                 if raw.starts_with('!') {
                     return Err(self.error("custom YAML tags are not supported"));
@@ -992,15 +1048,18 @@ impl<'a> FlowParser<'a> {
                     let anchored = self
                         .anchors
                         .get(name)
+                        .copied()
                         .ok_or_else(|| self.error(format!("unknown YAML alias {name:?}")));
                     let anchored = anchored?;
-                    self.alias_work = self.alias_work.saturating_add(node_count(anchored));
+                    self.alias_work = self
+                        .alias_work
+                        .saturating_add(node_count(self.plan, anchored));
                     if self.alias_work > self.alias_limit {
                         return Err(self.error("YAML alias expansion limit exceeded"));
                     }
-                    return Ok(anchored.clone());
+                    return Ok(self.plan.clone_root_at(anchored, loc));
                 }
-                parse_scalar(raw, loc).map_err(|m| self.error(m))
+                parse_scalar(self.plan, raw, loc).map_err(|m| self.error(m))
             }
         }
     }
@@ -1065,70 +1124,6 @@ impl<'a> FlowParser<'a> {
     }
     fn error(&self, message: impl Into<String>) -> Diagnostic {
         Diagnostic::error(message, self.loc(self.pos, self.pos))
-    }
-}
-
-fn materialize(
-    node: YamlNode,
-    heap: &mut Heap,
-    provenance: &mut Provenance,
-    path: &mut ValuePath,
-    semantic: Option<SemanticDataTarget<'_>>,
-) -> Result<Val, String> {
-    match node {
-        YamlNode::Scalar(value, location) => {
-            provenance.values.insert(path.clone(), location);
-            Ok(match semantic {
-                Some(target) => value.lower_semantic(heap, target, location),
-                None => value.lower(heap, location),
-            })
-        }
-        YamlNode::Sequence(values, location) => {
-            let mut result = Vec::new();
-            for (index, value) in values.into_iter().enumerate() {
-                path.push(ValuePathSegment::Index(index));
-                result.push(materialize(value, heap, provenance, path, semantic)?);
-                path.pop();
-            }
-            provenance.values.insert(path.clone(), location);
-            let value = Val::original(
-                DecodedValue::Array(heap.allocate(Object::Array(result.into_boxed_slice()))),
-                Some(location.into()),
-            );
-            Ok(semantic.map_or(value, |target| {
-                semantic_tag(heap, target, "Array", value, location)
-            }))
-        }
-        YamlNode::Mapping(entries, location) => {
-            let mut result = Vec::new();
-            for (key, key_location, value) in entries {
-                path.push(ValuePathSegment::Key(key.clone()));
-                provenance.keys.insert(path.clone(), key_location);
-                result.push((key, materialize(value, heap, provenance, path, semantic)?));
-                path.pop();
-            }
-            provenance.values.insert(path.clone(), location);
-            result.sort_by(|left, right| left.0.cmp(&right.0));
-            let names = result
-                .iter()
-                .map(|(name, _)| heap.intern(name))
-                .collect::<Vec<_>>();
-            let values = result
-                .into_iter()
-                .map(|(_, value)| value)
-                .collect::<Vec<_>>();
-            let shape = heap.intern_shape(names);
-            let value = Val::original(
-                DecodedValue::Dict(heap.allocate(Object::Dict {
-                    shape,
-                    values: values.into_boxed_slice(),
-                })),
-                Some(location.into()),
-            );
-            Ok(semantic.map_or(value, |target| {
-                semantic_tag(heap, target, "Object", value, location)
-            }))
-        }
     }
 }
 
