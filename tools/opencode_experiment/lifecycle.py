@@ -18,8 +18,10 @@ from .context import Context
 from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
 from .permissions import preflight_permissions
-from .state import SCHEMA, atomic_json, atomic_write, bind_plan, load_state, locked, now, save_state
-from .task_cli import TaskError, publish_artifact
+from .state import (
+    SCHEMA, atomic_json, atomic_write, bind_plan, execution_root, load_state, locked, now, save_state,
+)
+from .task_cli import TaskError, evaluate, publish_artifact, restore_artifacts
 
 
 def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
@@ -81,13 +83,18 @@ def _port_free(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) != 0
 
 
-def reserve(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None) -> tuple[Path, dict[str, Any]]:
+def reserve(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None,
+            from_test_id: str | None = None) -> tuple[Path, dict[str, Any]]:
     repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
     if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
     # Validate that the plan exists, but deliberately defer cloning, builds and
     # permission preflight until oc-ctl start releases this execution.
     load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
     overrides = dict(artifacts or {})
+    if from_test_id is not None:
+        validate_identifier(from_test_id, "source test-id")
+        if from_test_id == exec_name:
+            raise ControlError("an execution cannot inherit from itself", 64)
     with locked(root):
         if (root / "state.json").exists():
             state = load_state(root)
@@ -95,6 +102,7 @@ def reserve(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"execution {exec_name} is {state['phase']}")
             if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError("execution already uses another port", 64)
             if state.get("artifact_overrides", {}) != overrides: raise ControlError("execution already uses other artifact overrides", 64)
+            if state.get("from_test_id") != from_test_id: raise ControlError("execution already uses another source", 64)
             return root, state
         selected_port = port or 4096
         state = {
@@ -108,6 +116,7 @@ def reserve(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             "session_id": None,
             "server_url": f"http://127.0.0.1:{selected_port}",
             "artifact_overrides": overrides,
+            "from_test_id": from_test_id,
             "next_round": 0,
             "active_round": None,
             "created_at": now(),
@@ -170,10 +179,15 @@ def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
             raise ControlError(f"workspace artifact changed since preparation: {name}")
 
 
-def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None) -> tuple[Path, dict[str, Any], bool]:
+def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None,
+            from_test_id: str | None = None) -> tuple[Path, dict[str, Any], bool]:
     repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
     if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
     manifest = load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
+    if from_test_id is not None:
+        validate_identifier(from_test_id, "source test-id")
+        if from_test_id == exec_name:
+            raise ControlError("an execution cannot inherit from itself", 64)
     reserved_state: dict[str, Any] | None = None
     with locked(root):
         if (root / "state.json").exists():
@@ -186,6 +200,7 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
                 verify_prepared(manifest, state); return root, state, False
             if not start_requested(root): raise ControlError("execution is waiting for oc-ctl start", 75)
             artifacts = state.get("artifact_overrides", {})
+            from_test_id = state.get("from_test_id")
             port = int(state["server_url"].rsplit(":", 1)[1])
             reserved_state = state
         port = port or 4096
@@ -199,6 +214,7 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             "workflow": manifest.workflow,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
             "artifact_overrides": dict(artifacts or {}),
+            "from_test_id": from_test_id,
             "created_at": reserved_state.get("created_at", now()) if reserved_state else now(),
             "start_requested_at": reserved_state.get("start_requested_at") if reserved_state else None,
             "started_at": None, "finished_at": None}
@@ -220,11 +236,121 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             state["reporting"] = manifest.reporting
             state["metrics"] = manifest.metrics
             state["input_hashes"][manifest.manifest_name] = sha256(manifest.root / manifest.manifest_name)
-            state["input_hashes"]["opencode.json"] = sha256(manifest.root / "opencode.json"); save_state(root, state)
+            state["input_hashes"]["opencode.json"] = sha256(manifest.root / "opencode.json")
+            if from_test_id is not None:
+                state["inheritance"] = _inherit_execution(repo, from_test_id, plan_id, workspace,
+                                                            manifest.workflow)
+            save_state(root, state)
         except Exception:
             state["phase"] = "failed"; save_state(root, state); raise
     return root, state, True
 
+
+def _inherit_execution(repo: Path, source_id: str, plan_id: str, workspace: Path,
+                       workflow: dict[str, Any] | None) -> dict[str, Any]:
+    if workflow is None:
+        raise ControlError("target experiment has no artifact workflow", 64)
+    source_root = execution_root(repo, source_id)
+    source_state = load_state(source_root)
+    if source_state["plan_id"] != plan_id:
+        raise ControlError("source execution uses another plan", 64)
+    source_workspace_value = source_state.get("workspace")
+    source_workspace = (Path(source_workspace_value)
+                        if isinstance(source_workspace_value, str) and source_workspace_value
+                        else source_root / "result" / "workspace")
+    if not source_workspace.is_dir():
+        source_workspace = source_root / "result" / "workspace"
+    if not source_workspace.is_dir():
+        raise ControlError(f"source execution workspace is unavailable: {source_id}", 66)
+    source_workflow = source_state.get("workflow")
+    if not isinstance(source_workflow, dict):
+        raise ControlError("source execution has no artifact workflow", 64)
+    try:
+        source_status = evaluate(source_workspace, source_workflow)["artifacts"]
+    except TaskError as exc:
+        raise ControlError(f"cannot inspect source artifacts: {exc}", exc.code) from None
+
+    candidates = {
+        name for name, artifact in workflow["artifacts"].items()
+        if (name in source_status and source_status[name]["current"]
+            and _inheritance_compatible(source_workflow["artifacts"].get(name), artifact,
+                                        source_status[name], source_status))
+    }
+    inherited: list[str] = []
+    inherited_set: set[str] = set()
+    copied: set[str] = set()
+    while candidates - inherited_set:
+        progressed = False
+        for name, artifact in workflow["artifacts"].items():
+            if name not in candidates or name in inherited_set:
+                continue
+            dependencies_ready = all(
+                reference["optional"] and not source_status[reference["id"]]["stamp_mtime_ns"]
+                or reference["id"] in inherited_set
+                for reference in artifact["input"]
+            )
+            if not dependencies_ready:
+                continue
+            # Start roots come from the current plan/build. Other roots, such as Host feedback,
+            # contain curated experiment output and must be transferred.
+            if name not in workflow["start_artifacts"]:
+                for pattern in artifact["checks"]:
+                    for source in source_workspace.glob(pattern):
+                        if not source.is_file() or source.is_symlink():
+                            continue
+                        relative = source.relative_to(source_workspace)
+                        target = workspace / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source, target)
+                        copied.add(relative.as_posix())
+            inherited.append(name)
+            inherited_set.add(name)
+            progressed = True
+        if not progressed:
+            break
+    try:
+        restored = restore_artifacts(workspace, workflow, inherited)
+    except TaskError as exc:
+        raise ControlError(f"cannot restore inherited artifacts: {exc}", exc.code) from None
+    return {
+        "source_test_id": source_id,
+        "source_plan_revision": source_state.get("plan_revision"),
+        "artifacts": [item["artifact"] for item in restored],
+        "files": sorted(copied),
+        "inherited_at": now(),
+    }
+
+
+def _inheritance_compatible(old: Any, new: dict[str, Any], old_status: dict[str, Any],
+                            source_status: dict[str, dict[str, Any]]) -> bool:
+    if old == new:
+        return True
+    if not isinstance(old, dict):
+        return False
+    # A later plan may strengthen a Host promotion by making reviews explicit. It remains safe to
+    # inherit only when nothing else changed and every added prerequisite was already current before
+    # the Host published the old promotion.
+    stable_keys = ("id", "desc", "owner", "checks", "instruction")
+    if (new["owner"] is not None or new["checks"] or any(old.get(key) != new.get(key)
+                                                        for key in stable_keys)):
+        return False
+    old_inputs = old.get("input")
+    new_inputs = new.get("input")
+    if not isinstance(old_inputs, list) or not isinstance(new_inputs, list):
+        return False
+    old_refs = {(item["id"], item["optional"]) for item in old_inputs}
+    new_refs = {(item["id"], item["optional"]) for item in new_inputs}
+    added = new_refs - old_refs
+    if not old_refs.issubset(new_refs) or not added:
+        return False
+    approval_stamp = old_status["stamp_mtime_ns"]
+    return all(
+        not optional
+        and dependency in source_status
+        and source_status[dependency]["current"]
+        and source_status[dependency]["stamp_mtime_ns"] < approval_stamp
+        for dependency, optional in added
+    )
 
 def publish_workflow_artifact(context: Context, artifact: str, reason: str, *,
                               once: str | None = None) -> dict[str, Any]:

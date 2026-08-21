@@ -116,6 +116,23 @@ artifact、执行权限预检，在同一个 daemon 上为正式 workspace 创�
 attach。TUI 退出时 `oc-run` 终止 daemon。`start` 还会发布 `start_artifacts`，并只提示
 coordinator 一次。
 
+需要在新版 DAG 中复用旧执行已经验收的长耗时阶段时，先为新 test-id 启动并测试一个新
+实验室，然后显式指定来源：
+
+```bash
+./oc-run ontology-3-010 4200
+./oc-ctl test-connect ontology-3-010
+./oc-ctl start ontology-3-010 ontology-3 --from ontology-3-009
+```
+
+这会创建全新的 workspace 和 OpenCode session。通常只有在旧执行中仍为 current、且在新版
+DAG 中定义未变的同名 artifact 才会被继承；唯一例外是 Host promotion 仅增加了在旧审批前
+已经 current 的必要前置项。`--from` 本身代表 Host 明确接受旧产物，即使新版 plan 的根输入
+文件已经变化也不会强制重跑上游；若需要让新语言或需求使上游失效，应执行普通 start。
+对应 checks 文件和 artifact freshness
+会按 DAG 顺序重建。旧 session、`.oc-task` 工作窗口和角色上下文不会复制。由此可以保留
+A1-A3 等昂贵的已验收输出，同时从新增的 A5 或其他后续节点开始工作。
+
 所有 Host 控制命令都从主仓库根目录以 `./oc-ctl` 运行，避免因相对路径变化产生额外的
 命令授权。`plan-id` 是 `experiments/` 下的目录名，不是任意文件系统路径。
 

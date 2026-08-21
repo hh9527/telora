@@ -21,6 +21,7 @@ from tools.opencode_experiment.external import probe_direct, probe_mise, resolve
 from tools.opencode_experiment.state import (
     SCHEMA,
     atomic_json,
+    bind_plan,
     create_runner_config,
     create_run_config,
     load_connect_test,
@@ -31,6 +32,8 @@ from tools.opencode_experiment.state import (
     save_state,
 )
 from tools.opencode_experiment.lifecycle import (
+    _inherit_execution,
+    _inheritance_compatible,
     copy_archive,
     export_session,
     opencode_environment,
@@ -45,7 +48,7 @@ from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
-from tools.opencode_experiment.task_cli import publish_artifact, pull, submit, validate_workflow
+from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull, submit, validate_workflow
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
@@ -167,9 +170,13 @@ class ConfigStateTest(unittest.TestCase):
     def test_start_requires_test_and_plan_identity(self):
         args = control_parser().parse_args(["start", "ontology-3-009", "ontology-3"])
         self.assertEqual(
-            (args.command, args.test_id, args.plan_id),
-            ("start", "ontology-3-009", "ontology-3"),
+            (args.command, args.test_id, args.plan_id, args.from_test_id),
+            ("start", "ontology-3-009", "ontology-3", None),
         )
+        inherited = control_parser().parse_args(
+            ["start", "ontology-3-010", "ontology-3", "--from", "ontology-3-009"]
+        )
+        self.assertEqual(inherited.from_test_id, "ontology-3-009")
 
     def test_run_requires_test_id_and_reserved_port(self):
         args = run_parser().parse_args(["ontology-3-006", "4199"])
@@ -200,6 +207,84 @@ class ConfigStateTest(unittest.TestCase):
             self.assertEqual(value["port"], 43123)
             self.assertEqual(load_run_config(repo, "run-001"), value)
             self.assertEqual(create_run_config(repo, "run-001", "demo", 49999), value)
+
+    def test_run_configuration_records_inherited_execution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            value = create_run_config(repo, "run-002", "demo", 4199, "run-001")
+            self.assertEqual(value["from_test_id"], "run-001")
+            self.assertEqual(load_run_config(repo, "run-002"), value)
+            with self.assertRaisesRegex(ControlError, "another source"):
+                create_run_config(repo, "run-002", "demo", 4199, "other")
+
+    def test_inheritance_copies_only_current_unchanged_artifact_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            plan = repo / "experiments" / "demo"
+            plan.mkdir(parents=True)
+            workflow = validate_workflow({
+                "schema": "telora.opencode-artifact-workflow/v1",
+                "roles": ["a1", "a5"],
+                "start_artifacts": ["lang"],
+                "finish_artifact": "answer",
+                "artifacts": {
+                    "lang": {"desc": "language", "checks": ["GOAL.md"]},
+                    "feedback": {"desc": "feedback", "checks": ["FEEDBACK.md"]},
+                    "draft.a1": {"desc": "draft", "input": ["lang", "feedback?"],
+                                 "checks": ["output.txt"], "instruction": "build"},
+                    "approved": {"desc": "approved", "input": ["draft.a1"]},
+                    "homework.a5": {"desc": "homework", "input": ["approved"],
+                                    "instruction": "answer"},
+                    "answer": {"desc": "answer", "input": ["homework.a5"]},
+                },
+            })
+            source_root = bind_plan(repo, "demo", "old")
+            source_workspace = repo / "old-workspace"
+            source_workspace.mkdir()
+            (source_workspace / "GOAL.md").write_text("old language", encoding="utf-8")
+            publish_artifact(source_workspace, workflow, "lang")
+            (source_workspace / "FEEDBACK.md").write_text("accepted feedback", encoding="utf-8")
+            publish_artifact(source_workspace, workflow, "feedback")
+            (source_workspace / "output.txt").write_text("accepted output", encoding="utf-8")
+            pull(source_workspace, workflow, "a1", False, None)
+            submit(source_workspace, workflow, "a1", ["draft.a1"])
+            publish_artifact(source_workspace, workflow, "approved")
+            save_state(source_root, {
+                "schema": SCHEMA, "plan_id": "demo", "exec_name": "old", "phase": "idle",
+                "workspace": str(source_workspace), "workflow": workflow,
+            })
+
+            target = repo / "new-workspace"
+            target.mkdir()
+            (target / "GOAL.md").write_text("old language", encoding="utf-8")
+            result = _inherit_execution(repo, "old", "demo", target, workflow)
+            self.assertEqual(result["artifacts"], ["lang", "feedback", "draft.a1", "approved"])
+            self.assertEqual((target / "output.txt").read_text(), "accepted output")
+            self.assertEqual((target / "FEEDBACK.md").read_text(), "accepted feedback")
+            self.assertEqual((target / "GOAL.md").read_text(), "old language")
+            status = evaluate(target, workflow)["artifacts"]
+            self.assertTrue(status["approved"]["current"])
+            self.assertTrue(status["homework.a5"]["runnable"])
+            self.assertFalse((target / ".oc-task" / "active").exists())
+            self.assertFalse((target / ".oc-task" / "history").exists())
+
+    def test_inheritance_accepts_only_preexisting_host_gate_strengthening(self):
+        old = {
+            "id": "approved", "desc": "approved", "owner": None,
+            "input": [{"id": "draft.a1", "optional": False}],
+            "checks": [], "instruction": None,
+        }
+        new = {**old, "input": [
+            {"id": "draft.a1", "optional": False},
+            {"id": "review.a2", "optional": False},
+        ]}
+        approval = {"stamp_mtime_ns": 30}
+        statuses = {"review.a2": {"current": True, "stamp_mtime_ns": 20}}
+        self.assertTrue(_inheritance_compatible(old, new, approval, statuses))
+        statuses["review.a2"]["stamp_mtime_ns"] = 40
+        self.assertFalse(_inheritance_compatible(old, new, approval, statuses))
+        new["desc"] = "changed semantics"
+        self.assertFalse(_inheritance_compatible(old, new, approval, statuses))
 
     def test_runner_configuration_records_the_external_port(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -344,11 +429,11 @@ class ConfigStateTest(unittest.TestCase):
         plan = repo / "experiments" / "ontology-3"
         model = "deepseek/deepseek-v4-flash"
         self.assertEqual(json.loads((plan / "opencode.json").read_text())["model"], model)
-        for role in ("coordinator", "a1", "a2", "a3", "a4"):
+        for role in ("coordinator", "a1", "a2", "a3", "a4", "a5"):
             text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
             self.assertIn(f'model: "{model}"', text)
         coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
-        self.assertIn("同时启动 A1、A2、A3、A4 各一次", coordinator)
+        self.assertIn("同时启动 A1、A2、A3、A4、A5 各一次", coordinator)
         self.assertNotIn("touch", coordinator)
         manifest = load_manifest(repo, "ontology-3")
         self.assertEqual(
@@ -358,13 +443,16 @@ class ConfigStateTest(unittest.TestCase):
         workflow = manifest.workflow
         self.assertEqual(workflow["schema"], "telora.opencode-artifact-workflow/v1")
         self.assertEqual(workflow["start_artifacts"],
-                         ["lang", "qb-req", "edsl-req", "domain-ent-1", "intent-req"])
-        self.assertEqual(workflow["finish_artifact"], "intent-1")
+                         ["lang", "qb-req", "edsl-req", "domain-ent-1", "intent-req", "homework"])
+        self.assertEqual(workflow["finish_artifact"], "answer")
         artifacts = workflow["artifacts"]
         self.assertEqual(artifacts["qb.a1"]["owner"], "a1")
         self.assertEqual(artifacts["edsl.a2"]["owner"], "a2")
         self.assertEqual(artifacts["ent-1-model.a3"]["owner"], "a3")
         self.assertEqual(artifacts["intent-1.a4"]["owner"], "a4")
+        self.assertEqual(artifacts["homework.a5"]["owner"], "a5")
+        self.assertEqual(artifacts["answer.a5"]["owner"], "a5")
+        self.assertIsNone(artifacts["lic"]["owner"])
         self.assertIsNone(artifacts["qb"]["owner"])
         self.assertEqual(artifacts["qb.a1"]["input"], [
             {"id": "lang", "optional": False},

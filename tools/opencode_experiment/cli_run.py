@@ -83,12 +83,13 @@ def main(argv: list[str] | None = None) -> int:
             if config["port"] != args.port:
                 raise ControlError("Host configuration does not match the reserved runner port", 64)
             plan_id, port = config["plan_id"], config["port"]
-            root, state = reserve(plan_id, test_id, port)
+            from_test_id = config.get("from_test_id")
+            root, state = reserve(plan_id, test_id, port, from_test_id=from_test_id)
             if state["phase"] == "waiting":
                 print(f"Execution {test_id} is waiting for: ./oc-ctl start {test_id} {plan_id}", flush=True)
                 while not start_requested(root):
                     time.sleep(.25)
-            root, state, _ = prepare(plan_id, test_id, port)
+            root, state, _ = prepare(plan_id, test_id, port, from_test_id=from_test_id)
             state = create_execution_session(root, state, f"{plan_id} / {test_id} (ready)")
             workspace, server_url, session_id = state["workspace"], state["server_url"], state["session_id"]
             print(f"Workspace ready: {workspace}\nEmpty session ready: {session_id}", flush=True)

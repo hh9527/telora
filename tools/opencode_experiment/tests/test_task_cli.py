@@ -18,6 +18,7 @@ from tools.opencode_experiment.task_cli import (
     publish_artifact,
     pull,
     remove_artifact,
+    restore_artifacts,
     submit,
     task_records,
     validate_workflow,
@@ -181,6 +182,24 @@ class ArtifactWorkflowTest(unittest.TestCase):
             self.assertFalse(evaluate(root, value)["artifacts"]["lang"]["current"])
             with self.assertRaisesRegex(TaskError, "role-owned"):
                 remove_artifact(root, value, "qb.a1")
+
+    def test_host_publish_does_not_touch_artifact_when_checks_fail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            with self.assertRaisesRegex(TaskError, "checks are incomplete"):
+                publish_artifact(root, value, "qb-feedback")
+            self.assertFalse((root / "control" / "artifacts" / "qb-feedback").exists())
+
+    def test_trusted_artifacts_can_be_restored_without_task_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            (root / "output.txt").write_text("inherited", encoding="utf-8")
+            restored = restore_artifacts(root, value, ["lang", "qb.a1"])
+            self.assertEqual([item["artifact"] for item in restored], ["lang", "qb.a1"])
+            self.assertTrue(evaluate(root, value)["artifacts"]["qb.a1"]["current"])
+            self.assertEqual(task_records(root), {"active": [], "history": []})
 
     def test_submit_requires_runnable_complete_checks(self):
         with tempfile.TemporaryDirectory() as temporary:

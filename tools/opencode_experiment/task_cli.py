@@ -404,6 +404,39 @@ def remove_artifact(root: Path, workflow: dict[str, Any], name: str) -> dict[str
             "removed": True, "existed": existed}
 
 
+def restore_artifacts(root: Path, workflow: dict[str, Any], names: list[str]) -> list[dict[str, Any]]:
+    """Restore trusted artifact state in dependency order without creating task history."""
+    requested = set(names)
+    unknown = requested - set(workflow["artifacts"])
+    if unknown:
+        raise TaskError(f"unknown artifact(s): {', '.join(sorted(unknown))}", 64)
+    restored = []
+    with _locked(root):
+        pending = set(requested)
+        while pending:
+            progressed = False
+            status = evaluate(root, workflow)["artifacts"]
+            for name in workflow["artifacts"]:
+                if name not in pending:
+                    continue
+                value = status[name]
+                if value["blocked_by"]:
+                    continue
+                if not value["checks"]["ready"]:
+                    raise TaskError(f"cannot restore {name}; checks are incomplete", 75)
+                stamp = _atomic_write(_artifact_path(root, name), b"", value["input_mtime_ns"])
+                restored.append({"artifact": name, "mtime_ns": stamp})
+                pending.remove(name)
+                progressed = True
+            if not progressed:
+                blocked = evaluate(root, workflow)["artifacts"]
+                details = "; ".join(
+                    f"{name}: {', '.join(blocked[name]['blocked_by'])}" for name in sorted(pending)
+                )
+                raise TaskError(f"cannot restore artifacts; inputs are incomplete: {details}", 75)
+    return restored
+
+
 def pull(root: Path, workflow: dict[str, Any], role: str,
          wait: bool, timeout: float | None) -> dict[str, Any]:
     if role not in workflow["roles"]:

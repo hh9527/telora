@@ -51,6 +51,10 @@ def parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start")
     start.add_argument("test_id")
     start.add_argument("plan_id")
+    start.add_argument(
+        "--from", dest="from_test_id",
+        help="inherit current artifacts and checked files from an earlier execution",
+    )
     update = commands.add_parser("update")
     update.add_argument("test_id")
     update.add_argument("files", nargs="+")
@@ -78,7 +82,8 @@ def _controller_repo() -> Path:
     return repository_root(Path(__file__).resolve().parent)
 
 
-def _configure_start(repo: Path, test_id: str, plan_id: str) -> dict[str, Any]:
+def _configure_start(repo: Path, test_id: str, plan_id: str,
+                     from_test_id: str | None = None) -> dict[str, Any]:
     load_connect_test(repo, test_id)
     runner = load_runner_config(repo, test_id)
     load_manifest(repo, plan_id)
@@ -89,8 +94,10 @@ def _configure_start(repo: Path, test_id: str, plan_id: str) -> dict[str, Any]:
             raise ControlError("execution plan does not match the requested plan", 64)
         if configured["port"] != runner["port"]:
             raise ControlError("execution port does not match the external runner", 64)
+        if configured.get("from_test_id") != from_test_id:
+            raise ControlError("execution source does not match the requested source", 64)
         return configured
-    return create_run_config(repo, test_id, plan_id, runner["port"])
+    return create_run_config(repo, test_id, plan_id, runner["port"], from_test_id)
 
 
 def _test_connect(repo: Path, test_id: str) -> dict[str, Any]:
@@ -251,8 +258,10 @@ def _start(context: Context) -> dict[str, Any]:
     verify_prepared(context.manifest, context.state)
     workflow = context.state.get("workflow")
     if workflow:
+        artifact_status = workflow_status(_workspace(context), workflow)["artifacts"]
         for artifact in workflow["start_artifacts"]:
-            publish_workflow_artifact(context, artifact, "start", once=f"workflow_started_{artifact}")
+            if not artifact_status[artifact]["current"]:
+                publish_workflow_artifact(context, artifact, "start", once=f"workflow_started_{artifact}")
     initial = [record for record in context.rounds() if record.get("kind") == "initial"]
     if initial and initial[0].get("user_message_id"):
         return initial[0]
@@ -267,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "start":
             repo = _controller_repo()
-            _configure_start(repo, args.test_id, args.plan_id)
+            _configure_start(repo, args.test_id, args.plan_id, args.from_test_id)
             deadline = time.monotonic() + 30
             state_path = run_config_path(repo, args.test_id).parent / "state.json"
             while not state_path.is_file():

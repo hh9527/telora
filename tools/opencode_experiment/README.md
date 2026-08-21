@@ -49,6 +49,7 @@ The Host control surface is deliberately limited to:
 ```text
 oc-ctl test-connect <test-id>
 oc-ctl start <test-id> <plan-id>
+oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
 oc-ctl update <test-id> <dest-file>=<src-file>...
@@ -65,6 +66,17 @@ runtime state. `stat` reports each role/task duration and tokens, longest thinki
 Telora command count. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.
 
+`start --from` creates a fresh workspace and OpenCode session while inheriting trusted progress from
+an earlier execution of the same plan. An artifact is inherited only when it is current and its
+normalized definition is unchanged in the new plan. The sole compatibility exception is a Host
+promotion strengthened with required prerequisites that were already current before that promotion;
+required dependencies must be inherited too. Supplying `--from` is an explicit Host decision to
+accept those old outputs even when current root files have changed; use a normal start when changed
+language or requirements are intended to invalidate upstream work.
+The checked files for those non-root artifacts are copied and their touch-files are rebuilt in DAG
+order. Session context, `.oc-task` records, and old role state are never copied. New artifacts are
+therefore runnable immediately, while unchanged completed stages remain current.
+
 An `input` ending in `?` is optional. Its absence never blocks the first run; once published, its
 mtime participates in freshness exactly like any other input. Required inputs must be current.
 When an input becomes newer, dependent artifacts become stale and are returned by `pull` again.
@@ -74,7 +86,9 @@ state is reconstructed from `control/artifacts/*` mtimes. `.oc-task` records onl
 windows; it never becomes scheduling state. File locking and atomic replacement serialize
 concurrent publication.
 
-`oc-ctl start` publishes `start_artifacts` once and prompts the coordinator once. The coordinator
+`oc-ctl start` publishes absent `start_artifacts` once and prompts the coordinator once. Inherited
+current roots are not touched again, so their completed downstream artifacts do not become stale.
+The coordinator
 starts every role once and exits; it never dispatches, retries, observes, or interprets work.
 
 ## Host scheduling contract

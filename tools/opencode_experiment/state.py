@@ -135,7 +135,10 @@ def load_connect_test(repo: Path, test_id: str) -> dict[str, Any]:
 
 
 def _validate_run_config(value: Any, test_id: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"schema", "test_id", "plan_id", "port", "created_at"}:
+    if not isinstance(value, dict) or set(value) not in (
+        {"schema", "test_id", "plan_id", "port", "created_at"},
+        {"schema", "test_id", "plan_id", "port", "created_at", "from_test_id"},
+    ):
         raise ControlError("invalid run configuration")
     if value.get("schema") != RUN_CONFIG_SCHEMA or value.get("test_id") != test_id:
         raise ControlError("run configuration identity mismatch")
@@ -144,6 +147,13 @@ def _validate_run_config(value: Any, test_id: str) -> dict[str, Any]:
     validate_identifier(value["plan_id"], "plan-id")
     if not isinstance(value.get("port"), int) or not 1 <= value["port"] <= 65535:
         raise ControlError("invalid run configuration port")
+    if "from_test_id" in value:
+        source = value["from_test_id"]
+        if not isinstance(source, str):
+            raise ControlError("invalid source test-id")
+        validate_identifier(source, "source test-id")
+        if source == test_id:
+            raise ControlError("an execution cannot inherit from itself")
     return value
 
 
@@ -158,9 +168,14 @@ def load_run_config(repo: Path, test_id: str) -> dict[str, Any]:
     return _validate_run_config(value, test_id)
 
 
-def create_run_config(repo: Path, test_id: str, plan_id: str, port: int) -> dict[str, Any]:
+def create_run_config(repo: Path, test_id: str, plan_id: str, port: int,
+                      from_test_id: str | None = None) -> dict[str, Any]:
     validate_identifier(test_id, "test-id")
     validate_identifier(plan_id, "plan-id")
+    if from_test_id is not None:
+        validate_identifier(from_test_id, "source test-id")
+        if from_test_id == test_id:
+            raise ControlError("an execution cannot inherit from itself", 64)
     if not 1 <= port <= 65535:
         raise ControlError("port must be from 1 through 65535", 64)
     root = execution_root(repo, test_id)
@@ -173,9 +188,13 @@ def create_run_config(repo: Path, test_id: str, plan_id: str, port: int) -> dict
                 raise ControlError(f"invalid run configuration: {exc}") from None
             if value["plan_id"] != plan_id:
                 raise ControlError(f"execution {test_id} is already configured for {value['plan_id']}")
+            if value.get("from_test_id") != from_test_id:
+                raise ControlError("execution is already configured with another source", 64)
             return value
         value = {"schema": RUN_CONFIG_SCHEMA, "test_id": test_id, "plan_id": plan_id,
                  "port": port, "created_at": now()}
+        if from_test_id is not None:
+            value["from_test_id"] = from_test_id
         atomic_json(path, value)
         return value
 
