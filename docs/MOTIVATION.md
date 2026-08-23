@@ -2,7 +2,8 @@
 
 本文档定义 Telora 稳定的问题陈述和设计动机，回答“为什么需要这门语言”。当前
 语言的整体设计见 [`design/LANGUAGE.md`](design/LANGUAGE.md)，共同概念和术语见
-[`design/CONCEPT.md`](design/CONCEPT.md)。
+[`design/CONCEPT.md`](design/CONCEPT.md)，当前实现架构见
+[`design/IMPLEMENTATION.md`](design/IMPLEMENTATION.md)。
 文档的权威关系与维护规则见 [`README.md`](README.md)。
 
 RFC 记录单项决策、备选方案与实现证据。它们是设计演进的历史，而不是重新理解

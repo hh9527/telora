@@ -264,8 +264,10 @@ polymorphism 的通用替代品。
 
 ### `Never`
 
-`Never` 是根失败后不能产生值的路径所使用的内部静态类型。它支持 directional
-checking 并抑制连锁错误，不是用户可以构造的普通数据。
+`Never` 是公开契约中可见的无居住者（bottom）静态类型，表示一条路径不产生普通值。
+`return`、`fail!` 和 `panic!` 等终止路径可以得到 `Never`，使 directional checking
+不必为不可达结果伪造类型，并抑制连锁错误。用户不能把 `Never` 构造成普通数据；
+best-effort evaluator 内部保存的 Fail 节点也不是 `Never` 的源码可观察实例。
 
 ### Decorator 与 Attribute
 
@@ -335,7 +337,7 @@ expression。其状态至少区分：
 
 不能仅为了简化 completion 或 display 就合并这些状态。
 
-### `Option`、`Result` 与 Host-Observed Error
+### `Option`、`Result` 与 Host-Observed Diagnostic
 
 这些机制具有不同含义和所有者：
 
@@ -343,11 +345,15 @@ expression。其状态至少区分：
 | --- | --- | --- |
 | `Option(T)` | 预期内的缺失或可选证据 | 普通 Telora 代码 |
 | `Result(T, E)` | 显式 value-level boundary outcome | 普通 Telora caller |
-| `raise!` | 当前计算的终止性结构化失败 | VM 与 Host |
-| `emit_error!` | 报告错误，同时继续独立控制流 | Host 发布策略 |
+| `should_ok!`、`try_unwrap!` | Warning，并把可恢复缺失留给普通控制流 | VM 记录、Host 观察 |
+| `must_ok!`、`unwrap!`、`fail!` | 当前结果不能产生；保留结构化原因和 subject 来源 | VM 与 Host |
+| `panic!` | 实现不变量破坏，不是普通领域拒绝 | VM 与 Host |
+| `dbg!` | 不影响值与资源核算的 Host-only observation | Host observer |
 
-`emit_error!` 之后继续执行是为了发现更多诊断，并不允许 Host 把产生的 candidate
-作为成功 artifact 发布。
+Best-effort continuation 是 evaluator 对已经证明独立的计算单元所采用的策略，不是
+源码中的“报告后继续” intrinsic。它可以帮助 Host 一次观察更多根因，但任何 Error
+仍阻止 candidate artifact 和 effect 发布。完整表面与传播规则见
+[`LANGUAGE.md`](LANGUAGE.md#9-来源失败和诊断)。
 
 ## Agent
 

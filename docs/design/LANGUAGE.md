@@ -6,7 +6,8 @@ Host 能够观察到的语义出发，定义语言表面、静态语义、求值
 
 核心概念与术语见 [`CONCEPT.md`](CONCEPT.md)，问题与动机见
 [`../MOTIVATION.md`](../MOTIVATION.md)，文档的权威关系与维护规则见
-[`../README.md`](../README.md)。具体写法与编程指导属于
+[`../README.md`](../README.md)，当前实现架构与源码证据地图见
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md)。具体写法与编程指导属于
 [`../../guide/TELORA.md`](../../guide/TELORA.md)。
 
 本文描述当前成立的语言，不记录设计演进过程，也不讨论备选方案。它不是完整的
@@ -1011,6 +1012,8 @@ Workspace recovery 可以在一个 binding 或模块失败后继续独立工作�
 
 当前工具链使用 lossless CST、AST/HIR、类型分析、LIR、bytecode 和寄存器 VM 实现
 语言。各层共同服从本文定义的可观察语义和来源映射，不建立彼此竞争的语言模型。
+各阶段、运行时布局、模块骨架、World 和 promotion 的当前实现见
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md)；这些私有结构不是第二套语言语义。
 
 ### 10.1 两个阶段，一个求值器
 

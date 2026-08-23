@@ -5,7 +5,7 @@
 
 ## 文档地图
 
-第一批设计基线由三份文档组成：
+当前设计基线由四份文档组成：
 
 - [`MOTIVATION.md`](MOTIVATION.md)：定义 MRT 问题域、项目动机、语言定位与价值
   主张，回答“为什么”。
@@ -13,9 +13,12 @@
   “我们讨论的概念分别是什么”。
 - [`design/LANGUAGE.md`](design/LANGUAGE.md)：描述当前语言的整体机制与语义边界，
   回答“语言整体如何工作”。
+- [`design/IMPLEMENTATION.md`](design/IMPLEMENTATION.md)：描述上述语义当前如何落到
+  frontend、模块图、类型身份、VM、World 和 Host，回答“当前实现由什么组成”。
 
 未来按实际需要增加专题设计文档，例如 type system、evaluation、module、diagnostic、
-Host 和 tooling。专题文档细化 `LANGUAGE.md`，不能建立一套与其竞争的总设计。
+Host 和 tooling。专题文档细化 `LANGUAGE.md` 或 `IMPLEMENTATION.md`，不能建立一套与其
+竞争的总设计。
 
 ## 文档职责
 
@@ -35,6 +38,10 @@ Host 和 tooling。专题文档细化 `LANGUAGE.md`，不能建立一套与其�
 
 “SSOT”不表示一份文件包含所有细节，而是每类事实只有一个明确的权威入口。总览与
 专题文档可以形成层次，但不能互相给出不兼容的定义。
+
+推荐阅读顺序是 `MOTIVATION.md` -> `CONCEPT.md` -> `LANGUAGE.md`。只使用或设计语言时
+到此已经足够；需要修改实现、判断实现风险或定位可执行证据时，再读
+`IMPLEMENTATION.md`。RFC 只用于理解某项决策当时的取舍。
 
 ## 权威与冲突
 
