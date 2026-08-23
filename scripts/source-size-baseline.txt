@@ -1,3 +1,2 @@
 # Temporary migration exceptions. Remove each entry when its file is split.
 # path maximum-lines
-crates/telora-core/src/heap.rs 3745
