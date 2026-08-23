@@ -188,6 +188,17 @@
             .unwrap()
             .declared_body()
             .expect("Endpoint Type metadata");
+        assert_eq!(target.get("kind").unwrap().to_string(), "'WithAttributes");
+        assert!(
+            target
+                .get("attributes")
+                .unwrap()
+                .dict_fields()
+                .unwrap()
+                .is_empty(),
+            "typed property must not modify target metadata"
+        );
+        let target = target.get("inner").expect("Endpoint metadata body");
         assert_eq!(target.get("kind").unwrap().to_string(), "'Struct");
         assert_eq!(
             target.get("fields").unwrap().dict_fields().unwrap(),
