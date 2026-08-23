@@ -1,0 +1,1230 @@
+    #[test]
+    fn recursive_values_cross_builtin_boundaries_without_losing_sealed_types() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/array" as array;
+               import "std/codec" as codec;
+               import "std/dict" as dict;
+               import "std/dyn" as dyn;
+               import "std/fmt" as fmt;
+               import "std/json" as json;
+               import "std/option" as option;
+               import "std/result" as result;
+
+               @fmt.display_by("{value}")
+               type Node = struct {value: Int, children: Array(Node)};
+               type NodeResult = Result(Node, String);
+               def identity: Fn(Node) -> Node = fn(node) { node };
+               let leaf: Node = {value: 2, children: []};
+               let root: Node = {value: 1, children: [leaf]};
+               let nodes: Array(Node) = [root, leaf];
+               let mapped: Array(Node) = array.map(nodes, identity);
+               let filtered: Array(Node) = array.filter(mapped, fn(node) { node.value > 0 });
+               let flattened: Array(Node) = array.flat_map(filtered, fn(node) { [node] });
+               let sum: Int = array.fold(flattened, 0, fn(total, node) {
+                   total + node.value
+               });
+               let indexed: Dict(Node) = {root: root, leaf: leaf};
+               let mapped_dict: Dict(Node) = dict.map_values(indexed, identity);
+               let maybe: Option(Node) = option.map('Some(root), identity);
+               let outcome: NodeResult = result.map('Ok(root), identity);
+               let packed = dyn.pack(Node, root);
+               let decoded: Node = codec.decode(
+                   Node,
+                   codec.encode(codec.Value, root) |> result.unwrap,
+               ) |> result.unwrap;
+               export def output = {
+                   sum,
+                   mapped: mapped[0],
+                   dict_root: dict.get(mapped_dict, "root"),
+                   maybe,
+                   outcome,
+                   dyn_kind: dyn.kind(packed),
+                   decoded,
+                   display: fmt.display(Node, root),
+                   schema: json.schema(Node),
+               };"#,
+        )
+        .unwrap();
+
+        let module = load_module(&main, BTreeMap::new(), 1_000_000).unwrap();
+        for name in [
+            "NodeResult",
+            "identity",
+            "nodes",
+            "mapped",
+            "filtered",
+            "flattened",
+            "indexed",
+            "mapped_dict",
+            "maybe",
+            "outcome",
+            "decoded",
+        ] {
+            let ty = module
+                .analysis
+                .declared_types
+                .get(name)
+                .or_else(|| module.analysis.binding_types.get(name))
+                .copied()
+                .expect("audited binding has a type");
+            assert!(!module.analysis.display(ty).contains("Any"), "{name}");
+        }
+        let output = module.execute(1_000_000).unwrap().to_string();
+        assert!(output.contains("sum: 3"), "{output}");
+        assert!(output.contains("display: \"1\""), "{output}");
+        assert!(output.contains("dyn_kind: 'Dict"), "{output}");
+        assert!(output.contains("$defs"), "{output}");
+        assert!(output.contains("$ref"), "{output}");
+
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{next}")
+               type Loop = struct {next: Loop};
+               export {Loop};"#,
+        )
+        .unwrap();
+        let error = load_module(&main, BTreeMap::new(), 1_000_000).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("type has no std/fmt.display capability"),
+            "{error}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn imported_nested_type_families_preserve_recursive_codec_metadata() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"type IntValue = struct {value: Int};
+               type StringValue = struct {value: String};
+               type Val = enum {'Int(IntValue), 'Str(StringValue)};
+               type BinaryNode = struct {left: Expr, right: Expr};
+               type ColumnRef = struct {alias: String, column: String};
+               type Expr = enum {
+                   'Value(Val),
+                   'Add(BinaryNode),
+                   'Column(ColumnRef),
+               };
+               type Mapping = struct {predicate: Expr};
+               type Relation(M) = struct {mapping: M};
+               type RelationUse(Entity) = struct {
+                   entity: Entity,
+                   relation: Relation(Mapping),
+               };
+               export {Expr, Val, Mapping, Relation, RelationUse};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+               type Entity = enum {'Order};
+               type Use = types.RelationUse(Entity);
+               let relation: Use = {
+                   entity: 'Order,
+                   relation: {mapping: {predicate: 'Add({
+                       left: 'Value('Int({value: 1})),
+                       right: 'Column({alias: "t", column: "id"}),
+                   })}},
+               };
+                {
+                    encoded: codec.encode(codec.Value, relation)
+                       |> result.unwrap
+                       |> json.stringify,
+                    schema: json.schema(Use),
+                }"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("\\\"left\\\""), "{output}");
+        assert!(output.contains("\\\"column\\\":\\\"id\\\""), "{output}");
+        assert!(output.contains("$defs"), "{output}");
+        assert!(output.contains("#/$defs/Type"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cross_module_recursive_enum_rebuild_preserves_declared_codec_witness() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"type Call = struct {args: Array(Expr)};
+               type Expr = enum {'Int(Int), 'Call(Call)};
+               type Plan = struct {grouping: Array(Expr)};
+               export {Expr, Plan};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("creator.telora"),
+            r#"import "./types.telora" as types;
+               import "std/array" as array;
+               def normalize_expr: Fn(types.Expr) -> types.Expr = fn(expr) {
+                   match expr {
+                       'Int(value) => 'Int(value),
+                       'Call(call) => 'Call({
+                           args: array.map(call.args, normalize_expr),
+                       }),
+                   }
+               };
+               def make_plan: Fn(types.Expr) -> types.Plan = fn(expr) {
+                   {grouping: [normalize_expr(expr)]}
+               };
+               export {make_plan};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               import "./creator.telora" as creator;
+               import "std/codec" as codec;
+               import "std/result" as result;
+               import "std/value" {Value};
+               let expr: types.Expr = 'Call({args: [
+                   'Call({args: ['Int(1)]}),
+                   'Int(2),
+               ]});
+               let produced: types.Plan = creator.make_plan(expr);
+               let direct: types.Plan = {grouping: [expr]};
+               let direct_encoded = codec.encode(Value, direct) |> result.unwrap;
+               let produced_encoded = codec.encode(Value, produced) |> result.unwrap;
+               {
+                   direct: codec.decode(types.Plan, direct_encoded) |> result.unwrap,
+                   produced: codec.decode(types.Plan, produced_encoded) |> result.unwrap,
+               }"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("produced"), "{output}");
+        assert!(output.contains("grouping"), "{output}");
+        assert!(output.contains("'Int(2)"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exported_codec_boundary_owns_complex_family_witness() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("types.telora"),
+            r#"import "std/codec" as codec;
+               type Binary = struct {left: Expr, right: Expr};
+               type Expr = enum {'Lit(Int), 'Add(Binary)};
+               type Payload(A, B, C, D, E, F, G) = struct {
+                   a: A, b: B, c: C, d: D, e: E, f: F, g: G,
+               };
+               type Rejection = Payload(
+                   Int, String, Bool, Float, Expr, Array(Int), Option(String)
+               );
+               def encode_rejection = fn(value: Rejection) {
+                   codec.encode(codec.Value, value)
+               };
+               export {Expr, Rejection, encode_rejection};"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "./types.telora" as types;
+               import "std/json" as json;
+               import "std/result" as result;
+               let rejection: types.Rejection = {
+                   a: 1,
+                   b: "two",
+                   c: 'True,
+                   d: 4.0,
+                   e: 'Add({left: 'Lit(5), right: 'Lit(6)}),
+                   f: [7],
+                   g: 'Some("eight"),
+               };
+               types.encode_rejection(rejection)
+                   |> result.unwrap
+                   |> json.stringify"#,
+        )
+        .unwrap();
+
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output = module.execute(100_000).unwrap().to_string();
+        assert!(output.contains("\\\"left\\\""), "{output}");
+        assert!(output.contains("\\\"g\\\":\\\"eight\\\""), "{output}");
+
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "./types.telora" as types;
+               types.encode_rejection({
+                   a: "wrong",
+                   b: "two",
+                   c: 'True,
+                   d: 4.0,
+                   e: 'Lit(5),
+                   f: [7],
+                   g: 'None,
+               })"#,
+        )
+        .unwrap();
+        let error = load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("String") && error.contains("Int"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recursive_metadata_remains_observable_without_a_legacy_value_boundary() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"type CallExpr = struct { args: Array(Expr) };
+type Expr = enum { 'Call(CallExpr), 'Text(String) };
+export { CallExpr, Expr };"#,
+        )
+        .unwrap();
+
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        engine.check(&module).unwrap();
+        let value = engine.execute(&module).unwrap();
+        assert_eq!(value.value().dict_fields(), Some(vec!["CallExpr", "Expr"]));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recursive_type_metadata_keeps_typed_module_import_surfaces() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("expr.telora"),
+            r#"type Binary = struct {left: Expr, right: Expr};
+               type Expr = enum {'Lit(Int), 'Add(Binary)};
+               def lit: Fn(Int) -> Expr = fn(value) { 'Lit(value) };
+               def add: Fn(Expr, Expr) -> Expr = fn(left, right) {
+                   'Add({left, right})
+               };
+               def depth: Fn(Expr) -> Int = fn(expr) {
+                   match expr {
+                       'Lit(_) => 1,
+                       'Add({left, right}) => 1 + depth(left) + depth(right),
+                   }
+               };
+               export {Binary, Expr, lit, add, depth};"#,
+        )
+        .unwrap();
+
+        fs::write(
+            directory.join("whole.telora"),
+            r#"import "./expr.telora" as expr;
+               import "std/array" as array;
+               import "std/type-desc" as desc;
+               def has_ref = fn(ty, fuel) {
+                   if fuel < 1 {
+                       'False
+                   } else {
+                       if desc.kind(ty) == 'Ref {
+                           'True
+                       } else {
+                           array.any(desc.children(ty), fn(child) {
+                               has_ref(child, fuel - 1)
+                           })
+                       }
+                   }
+               };
+               def value: expr.Expr = expr.add(
+                   expr.lit(1),
+                   expr.add(expr.lit(2), expr.lit(3)),
+               );
+               export def output = (expr.depth(value), has_ref(expr.Expr, 8));"#,
+        )
+        .unwrap();
+        let whole = load_module(directory.join("whole.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            whole.execute(100_000).unwrap().to_string(),
+            "{output: (5, 'True)}"
+        );
+
+        for (name, import) in [
+            (
+                "selective.telora",
+                r#"import "./expr.telora" {Expr, lit, add, depth};"#,
+            ),
+            ("open.telora", r#"import "./expr.telora" *;"#),
+        ] {
+            fs::write(
+                directory.join(name),
+                format!(
+                    r#"{import}
+                       let value: Expr = add(lit(1), lit(2));
+                       export def output = depth(value);"#
+                ),
+            )
+            .unwrap();
+            let module = load_module(directory.join(name), BTreeMap::new(), 100_000).unwrap();
+            assert_eq!(module.execute(100_000).unwrap().to_string(), "{output: 3}");
+        }
+
+        fs::write(
+            directory.join("invalid.telora"),
+            r#"import "./expr.telora" {Expr, depth};
+               export def output = depth("bad");"#,
+        )
+        .unwrap();
+        let invalid = load_module(directory.join("invalid.telora"), BTreeMap::new(), 100_000)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            invalid.contains("String") && invalid.contains("Expr"),
+            "{invalid}"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn final_program_observes_only_presealed_recursive_type_roots() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/result" as result;
+               type Forward = struct {next: Later};
+               let premature = codec.decode(Forward, codec.encode(codec.Value, {next: 1}) |> result.unwrap);
+               type Later = Int;
+               premature"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "'Ok({next: 1})"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn builtin_bool_option_and_result_are_normalized_enum_metadata() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/attributes" as attributes;
+               type Maybe = Option(attributes.add(Int, { marker: "payload" }));
+               type Outcome = Result(String, Int);
+               let compared: Bool = 1 < 2;
+               let none: Maybe = 'None;
+               let some: Maybe = 'Some(42);
+               let ok: Outcome = 'Ok("done");
+               let err: Outcome = 'Err(7);
+               {
+                   bool: Bool,
+                   maybe: Maybe,
+                   outcome: Outcome,
+                   compared: validate(Bool, compared),
+                   none: validate(Maybe, none),
+                   some: validate(Maybe, some),
+                   ok: validate(Outcome, ok),
+                   err: validate(Outcome, err),
+                   wrong_bool: validate(Bool, 'Other),
+                   wrong_some: validate(Maybe, 'Some("forty-two")),
+               }"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let result_world = module.execute(100_000).unwrap();
+        let result = result_world.value();
+        for field in ["compared", "none", "some", "ok", "err"] {
+            assert!(result.get(field).unwrap().to_string().starts_with("'Ok("));
+        }
+        for field in ["wrong_bool", "wrong_some"] {
+            assert!(result.get(field).unwrap().to_string().starts_with("'Err("));
+        }
+
+        fn wrapper(value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
+            let wrapper = value;
+            assert_eq!(wrapper.get("kind").unwrap().to_string(), "'WithAttributes");
+            assert!(wrapper.get("attributes").unwrap().dict_fields().is_some());
+            wrapper
+        }
+        for field in ["bool", "maybe", "outcome"] {
+            let root = wrapper(result.get(field).unwrap());
+            let metadata = root.get("inner").unwrap();
+            assert_eq!(metadata.get("kind").unwrap().to_string(), "'Enum");
+            let variants = metadata.get("variants").unwrap();
+            for variant in variants.dict_values().unwrap() {
+                wrapper(variant);
+            }
+        }
+        let maybe = wrapper(result.get("maybe").unwrap());
+        let metadata = maybe.get("inner").unwrap();
+        let variants = metadata.get("variants").unwrap();
+        let some = wrapper(variants.get("Some").unwrap());
+        assert_eq!(
+            some.get("attributes").unwrap().to_string(),
+            "{marker: \"payload\"}"
+        );
+        let none = wrapper(variants.get("None").unwrap());
+        assert_eq!(none.get("inner").unwrap().to_string(), "'None");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn builtin_enum_type_constructors_validate_inputs_and_charge_quota() {
+        let directory = fixture_dir();
+        let invalid_path = directory.join("invalid.telora");
+        fs::write(&invalid_path, "Option(1)").unwrap();
+        let invalid = load_module(&invalid_path, BTreeMap::new(), 100_000).unwrap_err();
+        assert!(invalid.message.contains("cannot unify Int with Type"));
+
+        let quota_path = directory.join("quota.telora");
+        fs::write(&quota_path, "Result(String, Int)").unwrap();
+        let module = load_module(&quota_path, BTreeMap::new(), 100_000).unwrap();
+        let mut account = QuotaAccount::new(Quota::new(10, 1_000, 0));
+        let error = Vm::new()
+            .execute_in_work(
+                &module.runtime.main.heap,
+                &module.runtime.externals,
+                &module.function,
+                &[],
+                &mut account,
+            )
+            .err()
+            .expect("Result construction must exhaust allocation quota");
+        assert_eq!(error.kind, crate::RuntimeErrorKind::AllocationQuotaExceeded);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn removed_model_constructors_are_unavailable_and_union_remains_accounted() {
+        let directory = fixture_dir();
+        let run_error = |name: &str, expression: &str| {
+            let path = directory.join(name);
+            fs::write(&path, expression).unwrap();
+            let module = load_module(path, BTreeMap::new(), 100_000).unwrap();
+            module.execute(100_000).unwrap_err()
+        };
+        assert!(
+            run_error("empty-union.telora", "union('None, [])")
+                .message
+                .contains("at least one variant")
+        );
+        assert!(
+            run_error("union-variant.telora", "union('None, [1])")
+                .message
+                .contains("Type metadata")
+        );
+        assert!(
+            run_error(
+                "union-wrapper.telora",
+                "union('None, [{kind: 'WithAttributes, inner: Int, attributes: []}])",
+            )
+            .message
+            .contains("attributes must be a Dict")
+        );
+
+        for (name, source) in [
+            ("struct.telora", "struct('None, {x: Int})"),
+            ("enum.telora", "enum('None, {X: 'None})"),
+            ("uppercase-struct.telora", "Struct({x: Int})"),
+            ("uppercase-enum.telora", "Enum({X: 'None})"),
+            ("uppercase-union.telora", "Union([Int, String])"),
+        ] {
+            let path = directory.join(name);
+            fs::write(&path, source).unwrap();
+            let error = match load_module(path, BTreeMap::new(), 100_000) {
+                Ok(_) => panic!("removed constructor must be absent"),
+                Err(error) => error,
+            };
+            assert!(error.message.contains("unknown binding"));
+        }
+
+        let path = directory.join("quota.telora");
+        fs::write(&path, "union('None, [Int, String])").unwrap();
+        let module = load_module(path, BTreeMap::new(), 100_000).unwrap();
+        let mut account = QuotaAccount::new(Quota::new(10, 1_000, 0));
+        let error = Vm::new()
+            .execute_in_work(
+                &module.runtime.main.heap,
+                &module.runtime.externals,
+                &module.function,
+                &[],
+                &mut account,
+            )
+            .err()
+            .expect("model normalization must exhaust allocation quota");
+        assert_eq!(error.kind, crate::RuntimeErrorKind::AllocationQuotaExceeded);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn core_attributes_rejects_malformed_wrappers_and_obeys_allocation_quota() {
+        let directory = fixture_dir();
+        let path = directory.join("main.telora");
+        fs::write(
+            &path,
+            r#"import "std/attributes" as attributes;
+               attributes.normalize({kind: 'WithAttributes, inner: 1, attributes: []})"#,
+        )
+        .unwrap();
+        let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
+        let error = module.execute(100_000).unwrap_err();
+        assert!(error.message.contains("attributes must be a Dict"));
+
+        fs::write(
+            &path,
+            r#"import "std/attributes" as attributes;
+               attributes.normalize(1)"#,
+        )
+        .unwrap();
+        let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
+        let mut account = QuotaAccount::new(Quota::new(10, 1_000, 0));
+        let error = Vm::new()
+            .execute_in_work(
+                &module.runtime.main.heap,
+                &module.runtime.externals,
+                &module.function,
+                &[],
+                &mut account,
+            )
+            .err()
+            .expect("normalization must exhaust allocation quota");
+        assert_eq!(error.kind, crate::RuntimeErrorKind::AllocationQuotaExceeded);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn core_json_decorators_build_flat_standard_attribute_metadata() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/json" as json;
+               type Nested = struct { child_value: String };
+               @json.rename_all('CamelCase)
+               type Model = struct {
+                   @json.rename("outerName")
+                   @json.rename("innerName")
+                   @json.default(7)
+                   @json.skip_serializing_if('None)
+                   value_name: Option(Int),
+
+                   @json.flatten
+                   nested: Nested,
+               };
+               Model"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let model_world = module.execute(100_000).unwrap();
+        let root = model_world.value().declared_body().expect("declared model");
+        let root_attributes = root.get("attributes").unwrap();
+        assert_eq!(
+            root_attributes
+                .get("std/json.rename_all")
+                .unwrap()
+                .to_string(),
+            "'CamelCase"
+        );
+        let metadata = root.get("inner").unwrap();
+        let fields = metadata.get("fields").unwrap();
+        let value = fields.get("value_name").unwrap();
+        assert_ne!(
+            value.get("inner").unwrap().get("kind").unwrap().to_string(),
+            "'WithAttributes"
+        );
+        let attributes = value.get("attributes").unwrap();
+        assert_eq!(
+            attributes.get("std/json.rename").unwrap().to_string(),
+            "\"outerName\""
+        );
+        assert_eq!(attributes.get("std/json.default").unwrap().to_string(), "7");
+        assert_eq!(
+            attributes
+                .get("std/json.skip_serializing_if")
+                .unwrap()
+                .to_string(),
+            "'None"
+        );
+        let nested = fields.get("nested").unwrap();
+        let nested_attributes = nested.get("attributes").unwrap();
+        assert_eq!(
+            nested_attributes
+                .get("std/json.flatten")
+                .unwrap()
+                .to_string(),
+            "'True"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn struct_json_codecs_apply_serde_style_attributes_bidirectionally() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+
+               type Coordinates = struct {
+                   latitude: Int,
+               };
+               type Address = struct {
+                   city_name: String,
+                   @json.flatten coordinates: Coordinates,
+               };
+               @json.rename_all('CamelCase)
+               type User = struct {
+                   user_id: Int,
+                   @json.rename("display") display_name: String,
+                   @json.flatten address: Address,
+                   @json.default('None)
+                   @json.skip_serializing_if('None)
+                   nickname: Option(String),
+                   @json.skip_serializing_if('False) hidden: Any,
+                   @json.skip_serializing_if('Empty) notes: String,
+                   @json.skip_serializing_if('Empty) tags: Array(String),
+                   @json.skip_serializing_if('Empty) extras: Any,
+               };
+               let decoded = codec.decode(User, codec.encode(codec.Value, {
+                   userId: 7,
+                   display: "Ada",
+                   city_name: "London",
+                   latitude: 51,
+                   hidden: 'False,
+                   notes: "",
+                   tags: [],
+                   extras: {},
+               }) |> result.unwrap) |> result.unwrap;
+               { decoded: decoded, encoded: codec.encode(codec.Value, decoded) |> result.unwrap }"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        let output_world = module.execute(100_000).unwrap();
+        let output = output_world.value();
+        assert_eq!(
+            output.get("decoded").unwrap().to_string(),
+            "{address: {city_name: \"London\", coordinates: {latitude: 51}}, display_name: \"Ada\", extras: {}, hidden: 'False, nickname: 'None, notes: \"\", tags: [], user_id: 7}"
+        );
+        assert_eq!(
+            output.get("encoded").unwrap().to_string(),
+            "'Object({city_name: 'String(\"London\"), display: 'String(\"Ada\"), latitude: 'Int(51), userId: 'Int(7)})"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn json_skip_serializing_if_calls_promoted_bytecode_and_builtin_predicates() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               import "std/result" as result;
+               let zero = 0;
+               def is_zero: Fn(Int) -> Bool = fn(value) { value == zero };
+               type Model = struct {
+                   @json.skip_serializing_if(is_zero) omitted: Int,
+                   @json.skip_serializing_if(is_zero) retained: Int,
+                   @json.skip_serializing_if('False) native_omitted: Bool,
+               };
+               let model: Model = {
+                   omitted: 0,
+                   retained: 7,
+                   native_omitted: 'False,
+               };
+               codec.encode(codec.Value, model)"#,
+        )
+        .unwrap();
+        let module = load_module_with_quota_and_debug_sink(
+            directory.join("main.telora"),
+            BTreeMap::new(),
+            Quota::with_fuel(100_000),
+            Arc::new(crate::DiscardDebugSink),
+        )
+        .unwrap();
+        let failure = module.execute_with_quota(Quota::with_fuel(2)).unwrap_err();
+        assert_eq!(failure.kind, crate::RuntimeErrorKind::FuelExhausted);
+        let value = module.execute_with_quota(Quota::with_fuel(4)).unwrap();
+        assert_eq!(value.to_string(), "'Ok('Object({retained: 'Int(7)}))");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn json_skip_serializing_if_rejects_invalid_function_contracts() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("arity.telora"),
+            r#"import "std/json" as json;
+               def wrong: Fn(Any, Any) -> Bool = fn(left, right) { 'False };
+               type Model = struct {
+                   @json.skip_serializing_if(wrong) value: Int,
+               };
+               0"#,
+        )
+        .unwrap();
+        let arity =
+            load_module(directory.join("arity.telora"), BTreeMap::new(), 100_000).unwrap_err();
+        assert!(arity.message().contains("unary Func"), "{arity}");
+
+        fs::write(
+            directory.join("result.telora"),
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               def identity: Fn(Any) -> Any = fn(value) { value };
+               type Model = struct {
+                   @json.skip_serializing_if(identity) value: Int,
+               };
+               let model: Model = {value: 1};
+               codec.encode(codec.Value, model)"#,
+        )
+        .unwrap();
+        let module =
+            load_module(directory.join("result.telora"), BTreeMap::new(), 100_000).unwrap();
+        let result = module.execute(100_000).unwrap_err();
+        assert_eq!(result.kind, crate::RuntimeErrorKind::TypeMismatch);
+        assert!(result.message.contains("must return 'True or 'False"));
+        assert!(
+            result
+                .trace
+                .iter()
+                .any(|frame| frame.function == "std/codec.encode")
+        );
+
+        fs::write(
+            directory.join("callback.telora"),
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               def fails: Fn(Any) -> Int = fn(value) { 1 / 0 };
+               type Model = struct {
+                   @json.skip_serializing_if(fails) value: Int,
+               };
+               let model: Model = {value: 1};
+               codec.encode(codec.Value, model)"#,
+        )
+        .unwrap();
+        let callback =
+            load_module(directory.join("callback.telora"), BTreeMap::new(), 100_000).unwrap();
+        let failure = callback.execute(100_000).unwrap_err();
+        assert_eq!(failure.kind, crate::RuntimeErrorKind::DivisionByZero);
+        assert!(
+            failure
+                .trace
+                .iter()
+                .any(|frame| frame.function.contains("closure"))
+        );
+        assert!(
+            failure
+                .trace
+                .iter()
+                .any(|frame| frame.function == "std/codec.encode")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn json_skip_predicates_resume_at_nested_paths_and_before_flattening() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/codec" as codec;
+               import "std/json" as json;
+               def is_zero: Fn(Int) -> Bool = fn(value) { value == 0 };
+               def always: Fn(Any) -> Bool = fn(value) { 'True };
+               type Item = struct {
+                   @json.skip_serializing_if(is_zero) value: Int,
+               };
+               type Nested = struct {required: String};
+               type Model = struct {
+                   items: Array(Item),
+                   @json.skip_serializing_if(always)
+                   @json.flatten nested: Nested,
+               };
+               let model: Model = {
+                   items: [{value: 0}, {value: 2}],
+                   nested: {required: "present"},
+               };
+               codec.encode(codec.Value, model)"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
+        assert_eq!(
+            module.execute(100_000).unwrap().to_string(),
+            "'Ok('Object({items: 'Array(['Object({}), 'Object({value: 'Int(2)})])}))"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn struct_json_codecs_reject_attribute_conflicts_and_invalid_defaults() {
+        let directory = fixture_dir();
+        let cases = [
+            (
+                "collision.telora",
+                r#"import "std/codec" as codec;
+                   import "std/json" as json;
+                   import "std/result" as result;
+                   type T = struct {
+                       @json.rename("same") first: Int,
+                       @json.rename("same") second: Int,
+                   };
+                   codec.decode(T, codec.encode(codec.Value, {same: 1}) |> result.unwrap)"#,
+                "duplicate external field name",
+            ),
+            (
+                "flatten-type.telora",
+                r#"import "std/codec" as codec;
+                   import "std/json" as json;
+                   import "std/result" as result;
+                   type T = struct {@json.flatten value: Int};
+                   codec.decode(T, codec.encode(codec.Value, {}) |> result.unwrap)"#,
+                "flatten requires Struct metadata",
+            ),
+            (
+                "flatten-rename.telora",
+                r#"import "std/codec" as codec;
+                   import "std/json" as json;
+                   import "std/result" as result;
+                   type Inner = struct {value: Int};
+                   type T = struct {
+                       @json.flatten @json.rename("x") inner: Inner,
+                   };
+                   codec.decode(T, codec.encode(codec.Value, {value: 1}) |> result.unwrap)"#,
+                "flatten cannot be combined",
+            ),
+            (
+                "default.telora",
+                r#"import "std/codec" as codec;
+                   import "std/json" as json;
+                   import "std/result" as result;
+                   type T = struct {@json.default("wrong") value: Int};
+                   codec.decode(T, codec.encode(codec.Value, {}) |> result.unwrap)"#,
+                "expected Int",
+            ),
+        ];
+        for (name, source, expected) in cases {
+            let path = directory.join(name);
+            fs::write(&path, source).unwrap();
+            let module = load_module(path, BTreeMap::new(), 100_000).unwrap();
+            let result = module.execute(100_000).unwrap();
+            assert!(result.to_string().contains("'Err"), "{result}");
+            assert!(result.to_string().contains(expected), "{result}");
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn core_json_decorators_validate_policies_and_charge_allocations() {
+        let directory = fixture_dir();
+        let run_error = |name: &str, expression: &str| {
+            let path = directory.join(name);
+            fs::write(&path, format!("import \"std/json\" as json; {expression}")).unwrap();
+            match load_module(path, BTreeMap::new(), 100_000) {
+                Ok(module) => module.execute(100_000).unwrap_err().message,
+                Err(error) => error.to_string(),
+            }
+        };
+        assert!(run_error("rename.telora", "json.rename(1)").contains("String"));
+        assert!(run_error("case.telora", "json.rename_all('SnakeCase)").contains("CamelCase"));
+        assert!(run_error("skip.telora", "json.skip_serializing_if('Zero)").contains("'Empty"));
+
+        let path = directory.join("quota.telora");
+        fs::write(&path, "import \"std/json\" as json; json.rename(\"name\")").unwrap();
+        let module = load_module(path, BTreeMap::new(), 100_000).unwrap();
+        let mut account = QuotaAccount::new(Quota::new(10, 1_000, 0));
+        let error = Vm::new()
+            .execute_in_work(
+                &module.runtime.main.heap,
+                &module.runtime.externals,
+                &module.function,
+                &[],
+                &mut account,
+            )
+            .err()
+            .expect("decorator factory must exhaust allocation quota");
+        assert_eq!(error.kind, crate::RuntimeErrorKind::AllocationQuotaExceeded);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn core_dict_rejects_invalid_arguments_pairs_and_duplicates() {
+        let directory = fixture_dir();
+        let run_error = |name: &str, expression: &str| {
+            let path = directory.join(name);
+            fs::write(&path, format!("import \"std/dict\" as dicts; {expression}")).unwrap();
+            match load_module(path, BTreeMap::new(), 100_000) {
+                Ok(module) => module.execute(100_000).unwrap_err().message,
+                Err(error) => error.to_string(),
+            }
+        };
+
+        assert!(run_error("keys.telora", "dicts.keys([])").contains("Dict"));
+        assert!(run_error("merge.telora", "dicts.merge({}, [])").contains("right Dict"));
+        assert!(run_error("pairs-array.telora", "dicts.from_pairs({})").contains("Array"));
+        assert!(!run_error("pair-shape.telora", "dicts.from_pairs([(\"a\", 1, 2)])").is_empty());
+        assert!(run_error("pair-key.telora", "dicts.from_pairs([('a, 1)])").contains("String"));
+        let duplicate = run_error(
+            "duplicate.telora",
+            "dicts.from_pairs([(\"a\", 1), (\"a\", 2)])",
+        );
+        assert!(duplicate.contains("duplicate field"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn diamond_dependencies_reuse_the_same_persistent_root() {
+        let directory = fixture_dir();
+        let c = directory.join("c.telora");
+        let a = directory.join("a.telora");
+        let b = directory.join("b.telora");
+        fs::write(&c, r#"{value: [1, 2, 3]}"#).unwrap();
+        fs::write(&a, r#"import "./c.telora" as c; c"#).unwrap();
+        fs::write(&b, r#"import "./c.telora" as c; c"#).unwrap();
+        let mut loader = ModuleLoader {
+            resolver: ModuleResolver::for_root(&a).unwrap(),
+            cache: HashMap::new(),
+            core_modules: HashMap::new(),
+            main: MainWorld::building(),
+            visiting: Vec::new(),
+            dependencies: BTreeSet::new(),
+            module_quota: Quota::with_fuel(100_000),
+            data_limits: DataLimits::default(),
+            debug_sink: Arc::new(DiscardDebugSink),
+            sources: SourceDatabase::default(),
+            semantic_inputs: BTreeMap::new(),
+            source_policy: ModuleSourcePolicy::ExpressionHarness,
+        };
+
+        loader.load_value(&a).unwrap();
+        let counts_after_a = loader.main.heap.counts();
+        loader.load_value(&b).unwrap();
+        let a_id = loader.resolver.resolve_root(&a).unwrap().id;
+        let b_id = loader.resolver.resolve_root(&b).unwrap().id;
+        let c_id = loader
+            .resolver
+            .resolve_import(&a_id, "./c.telora")
+            .unwrap()
+            .id;
+        let root = |id: &ModuleCName| match loader.cache.get(id).unwrap() {
+            ModuleState::Ready(artifact) => artifact.root,
+        };
+
+        assert_eq!(root(&a_id), root(&c_id));
+        assert_eq!(root(&b_id), root(&c_id));
+        assert_eq!(counts_after_a, loader.main.heap.counts());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exported_closures_preserve_module_type_slots() {
+        let directory = fixture_dir();
+        let library = directory.join("library.telora");
+        let main = directory.join("main.telora");
+        fs::write(
+            &library,
+            r#"import "std/rt-types/exec.telora" as exec_types;
+               import "std/hash" as hash;
+               type ExecSettings = exec_types.ExecSettings;
+               type ExecRequest = exec_types.ExecRequest;
+               type ExecEnv = exec_types.ExecEnv;
+               type Platform = exec_types.Platform;
+               type Config = struct {platform: Platform, offset: Int};
+               def helper = fn(value) { value + 1 };
+               def helper2 = fn(value) { helper(value) + 1 };
+               def select = fn(platform) {
+                   let host = `\{platform.os}-\{platform.arch}`;
+                   match host {
+                       "linux-x86_64" => 1,
+                       _ => 0,
+                   }
+               };
+               def even = fn(value: Int) {
+                   if value == 0 { 'True } else { odd(value - 1) }
+               };
+               def odd = fn(value: Int) {
+                   if value == 0 { 'False } else { even(value - 1) }
+               };
+               export { even };
+               export def direct = fn(value) { helper(value) };
+               export def factory:
+                   Fn(Config) -> Fn(Int) -> Int = fn(config) {
+                   fn(value) {
+                       let ignored = hash.sha256("gcc");
+                       helper2(value) + config.offset + select(config.platform) - 2
+                   }
+               };
+               export def command:
+                   Fn(String) -> Fn(ExecSettings, ExecRequest) -> ExecEnv = fn(tool) {
+                   fn(settings, request) {
+                       let selected = select(settings.platform);
+                       let suffix = helper(selected);
+                       {
+                           install: [],
+                           cwd: 'Some(request.cwd),
+                           bin: `\{settings.install_prefix}/\{tool}-\{suffix}`,
+                           args: request.args,
+                           env: {clear: 'False, update: {}},
+                       }
+                   }
+               };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./library.telora" as library;
+               export def output = (
+                   library.direct(40),
+                   library.factory({platform: {os: "linux", arch: "x86_64"}, offset: 2})(39),
+                   library.command("gcc")(
+                       {
+                           platform: {os: "linux", arch: "x86_64"},
+                           download_prefix: "/downloads",
+                           install_prefix: "/cache",
+                       },
+                       {args: ["-c", "x.c"], env: {TARGET: "aarch64"}, cwd: "/work"},
+                   ),
+                   library.even(10),
+               );"#,
+        )
+        .unwrap();
+
+        let engine = recovery_engine();
+        let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
+        assert_eq!(
+            named_output(&engine.execute(&loaded).unwrap()).to_string(),
+            "(41, 42, {args: [\"-c\", \"x.c\"], bin: \"/cache/gcc-2\", cwd: 'Some(\"/work\"), env: {clear: 'False, update: {}}, install: []}, 'True)"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn pending_modules_defer_imports_and_cache_initialization_outcomes() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"option "test.action" 1;
+               option "test.action" 2;
+               import "./missing.telora" as missing;
+               export { missing as output };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let pending = engine.prepare_module(&main).unwrap();
+        assert_eq!(pending.path(), main);
+        let first = pending.initialize().unwrap_err().to_string();
+        let second = pending.initialize().unwrap_err().to_string();
+        assert_eq!(first, second);
+        assert!(first.contains("missing.telora"), "{first}");
+
+        fs::write(&main, "export def output = 42;").unwrap();
+        let pending = engine.prepare_module(&main).unwrap();
+        let first = pending.initialize().unwrap();
+        let second = pending.initialize().unwrap();
+        assert!(std::ptr::eq(first.module(), second.module()));
+        assert_eq!(
+            named_output(&engine.execute(first.module()).unwrap()).to_string(),
+            "42"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn host_invocation_materializes_ready_definition_captures() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"def helper = fn(value) { value + 1 };
+               def helper2 = fn(value) { helper(value) + 1 };
+               export def factory: Fn(Int) -> Fn(Int) -> Int = fn(offset) {
+                   fn(value) { helper2(value) + offset }
+               };"#,
+        )
+        .unwrap();
+
+        let engine = recovery_engine();
+        let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let factory = engine.execute(&loaded).unwrap().select("factory").unwrap();
+        let generated = engine
+            .invoke_world(&loaded, factory, &[crate::DataWorld::int(2)])
+            .unwrap();
+        assert_eq!(
+            engine
+                .invoke_world(&loaded, generated, &[crate::DataWorld::int(38)])
+                .unwrap()
+                .to_string(),
+            "42"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recoverable_workspace_blocks_failed_imports_and_keeps_independent_facts() {
+        let directory = fixture_dir();
+        let model = directory.join("model.telora");
+        let main = directory.join("main.telora");
+        fs::write(
+            &model,
+            "type Broken = missing(Int); type Good = String; export { Good };",
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            "import \"./model.telora\" as model;\
+             type Local = String;\
+             type Uses = model.Good;\
+             type Down = Array(Uses);\
+             export { Local as output };",
+        )
+        .unwrap();
+        let snapshot = recovery_engine().recover_workspace(&main).unwrap();
+        let main = snapshot
+            .module_by_path(&canonicalize(&main).unwrap())
+            .unwrap();
+        let model = snapshot
+            .module_by_path(&canonicalize(&model).unwrap())
+            .unwrap();
+        assert_eq!(main.state, WorkspaceModuleState::Available);
+        assert_eq!(model.state, WorkspaceModuleState::Available);
+        let fact = |module, name: &str| {
+            &snapshot
+                .definitions()
+                .iter()
+                .find(|definition| definition.module == module && definition.name == name)
+                .unwrap()
+                .ty
+        };
+        assert_eq!(fact(main.id, "Local").state, crate::FactState::Known);
+        assert!(matches!(
+            fact(main.id, "Uses").state,
+            crate::FactState::Unknown(crate::UnknownReason::BlockedBy(_))
+        ));
+        assert!(matches!(
+            fact(main.id, "Down").state,
+            crate::FactState::Unknown(crate::UnknownReason::BlockedBy(_))
+        ));
+        assert_eq!(fact(model.id, "Good").state, crate::FactState::Known);
+        let broken = fact(model.id, "Broken");
+        let diagnostic = broken.diagnostics[0];
+        assert!(
+            snapshot.diagnostics()[diagnostic.index()]
+                .message
+                .contains("unknown binding")
+        );
+        assert!(main.imports.iter().any(|import| import.target == model.id));
+        assert_ne!(main.source, model.source);
+        let model_path = model.path.as_ref().unwrap();
+        assert_eq!(model.name, "@src/model.telora");
+        assert_eq!(
+            snapshot.sources().get(model.source.unwrap()).name.as_ref(),
+            model_path.to_string_lossy()
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+

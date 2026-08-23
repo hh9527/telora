@@ -27,30 +27,5 @@ pub fn parse_document(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use parser::{Node, NodeRef};
-
-    fn reconstruct(cst: &CstData, source: &str, node: NodeRef, output: &mut String) {
-        match cst.get(node) {
-            Node::Token(..) => output.push_str(&source[cst.span(node)]),
-            Node::Rule(..) => {
-                for child in cst.children(node) {
-                    reconstruct(cst, source, child, output);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn cst_is_lossless_for_toml_tables_comments_and_strings() {
-        let source = "# package\n[package]\nname = \"telora\" # comment\nlines = '''a\nb'''\n";
-        let mut sources = crate::SourceDatabase::default();
-        let id = sources.add("data.toml", source);
-        let parsed = parse(id, source);
-        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
-        let mut reconstructed = String::new();
-        reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
-        assert_eq!(reconstructed, source);
-    }
-}
+#[path = "tests/mod.rs"]
+mod tests;

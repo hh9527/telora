@@ -1,0 +1,2 @@
+# Temporary migration exceptions. Remove each entry when its file is split.
+# path maximum-lines
