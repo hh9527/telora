@@ -160,8 +160,11 @@ String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的�
 
 Main heap 的 property registry 使用有序的 `PropertyKey`：`Ty(TypeId, TypeId)`、
 `Field(TypeId, u32, TypeId)`、`Variant(TypeId, u32, TypeId)`，值是 MainWorld `Val`。
-Tool stage 先封闭具名 Struct/Enum 目标，再执行 decorator provider；provider 的静态
-结果、运行时 `Val.ty` 与 property carrier TypeId 必须一致。carrier 的 owner 能力由
+Tool stage 先封闭具名 Struct/Enum 的 TypeMetadata、TypeId 和 canonical member index，
+再执行 decorator provider。provider 没有写回目标 descriptor 的通道，只能从只读
+context 计算 property value；所以结构不变性由数据流强制保证，而非依靠 provider
+自律。provider 的静态结果、运行时 `Val.ty` 与 property carrier TypeId 必须一致。
+carrier 的 owner 能力由
 `Ty(Carrier, PropertyAttr) -> PropertyAttr { bits }` 记录；`PropertyAttr` 自举自己的
 TypeId，内部 capability 使用 `u32` 位集。
 

@@ -531,8 +531,11 @@ type Endpoint = struct { host: String, port: Int };
 
 capability 包括 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant`；
 `Type`/`Member` 分别覆盖两类 type/member owner，多个标记按位合并。系统先封闭
-`Endpoint` 的 TypeId 和 TypeMetadata，再执行 provider，并以 `Ty(Endpoint,
-DisplayBy)` 发布结果。Field/Variant 使用 owner TypeId、按 member name 排序得到的
+`Endpoint` 的 TypeId、TypeMetadata 和 canonical member index，再执行 provider，并以
+`Ty(Endpoint, DisplayBy)` 发布结果。provider 接收的是只读 context，返回值只能发布
+为 property；语言没有让 provider 写回 descriptor 的路径。因此目标结构与身份不变是
+执行模型保证的语义，不是 decorator 必须自觉遵守的限制。Field/Variant 使用 owner
+TypeId、按 member name 排序得到的
 零基 canonical index 和 property TypeId 作为键。目标 metadata 与没有 decorator 时
 完全一致；Dict 字段、alias 和参数化 type family template 不接受 decorator。
 
@@ -556,6 +559,9 @@ member 查询分别是 `get_field_prop(Owner, index, P)` 和
 `std/dyn.get_field_value/get_variant_index/get_variant_payload` 根据 `Dyn` 携带的权威
 descriptor 安全投影。错误 kind、越界和 variant mismatch 是有来源的运行错误；合法
 unit variant 的 payload 是 `None`。
+
+后续 interpreter、quote/codegen 或 trait 机制可以读取同一封闭骨架和 property
+registry；任何消费者赋予 property 的行为意义都不会反向改变被装饰类型的结构。
 
 ### 7.2 参数化 TypeMetadata family
 

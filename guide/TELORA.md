@@ -419,8 +419,9 @@ type Scalar = enum {
 
 `rename_all` 和 `untagged` 产生具名 property，codec 和 schema 按目标 TypeId 与
 property TypeId 查询同一份 MainWorld 数据。Decorator 不改写 TypeMetadata。字段和
-variant 当前没有 property identity，因此 `rename`、`flatten`、`default` 和
-`skip_serializing_if` 不再提供；遇到这些需求应在领域模型或显式 codec 层表达。
+variant property 已可按 owner TypeId、canonical member index 和 property TypeId 安全
+存取，但这些旧 JSON member decorator 尚未迁移，因此 `rename`、`flatten`、`default`
+和 `skip_serializing_if` 当前不再提供；遇到这些需求应在领域模型或显式 codec 层表达。
 
 JSON/TOML/YAML 文件也可以作为静态数据模块 import。它们在封闭模块图建立时由
 Host 加载，不是运行时文件 IO，并且只导出 `data: Value`：

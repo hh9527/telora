@@ -272,8 +272,11 @@ best-effort evaluator 内部保存的 Fail 节点也不是 `Never` 的源码可�
 ### Decorator 与 Typed Property
 
 **Decorator** 是在 tool stage 为一个已经封闭的具名类型或其 member 计算 typed
-property 的函数，不转换 TypeMetadata，也不能替换目标类型身份。Property carrier
-必须是由 `@property('Capability)` 标记的具体具名类型；capability 可以是 `Type`、
+property 的函数。目标的 TypeMetadata、TypeId 和 canonical member index 在 provider
+运行前已经封闭；provider 只接收只读 context，并且只能返回 property value。因此
+decorator 不转换 TypeMetadata、不能替换目标身份或改变 member 骨架，这是协议和执行
+顺序保证的不变量，不是对 provider 行为的约定。Property carrier 必须是由
+`@property('Capability)` 标记的具体具名类型；capability 可以是 `Type`、
 `StructType`、`EnumType`、`Member`、`Field` 或 `Variant`，多个标记按位合并。
 
 系统使用 `Ty(target, property)`、`Field(target, canonical_index, property)` 或
@@ -284,6 +287,9 @@ TypeId 和 member index 查询，不使用字符串属性名。
 
 当前 decorator 只适用于无类型参数的具名 Struct/Enum 声明及其直接 member；alias、
 结构类型和 type family template 不接受 decorator。
+
+Interpreter、未来的 quote/codegen 和 trait binding 都可以把封闭类型骨架与独立的
+typed property registry 作为稳定输入；它们不需要防御 decorator 对目标结构的改写。
 
 ### Interpreter
 
