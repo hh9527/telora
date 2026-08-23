@@ -3216,17 +3216,96 @@ let decorators = {
 
     #[test]
     fn fail_preserves_structured_diagnostic_locations() {
-        let error = run("let stop = fn() {\n  let data = 1;\n  fail!(\"bad\", data)\n};\nstop()")
-            .unwrap_err();
+        let source = "let stop = fn() {\n  let data = 1;\n  fail!(\"bad\", data)\n};\nstop()";
+        let error = run(source).unwrap_err();
         let ExecutionError::Runtime(error) = error else {
             panic!("expected raised blame")
         };
         assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
         assert_eq!(error.message, "bad");
-        assert!(error.data_location().is_some());
-        assert!(error.rule_location().is_some());
-        assert_ne!(error.data_location(), error.rule_location());
+        assert_eq!(
+            &source[error.data_location().expect("data location").range()],
+            "1"
+        );
+        assert_eq!(
+            &source[error.rule_location().expect("rule location").range()],
+            "stop()"
+        );
+        assert_eq!(
+            &source[error
+                .implementation_rule_location()
+                .expect("implementation rule location")
+                .range()],
+            "fail!(\"bad\", data)"
+        );
+        let diagnostic = error.diagnostic().expect("structured diagnostic");
+        assert_eq!(
+            &source[diagnostic
+                .labels
+                .iter()
+                .find(|label| label.primary)
+                .expect("primary label")
+                .location
+                .range()],
+            "stop()"
+        );
         assert!(error.trace.iter().any(|frame| frame.origin.is_some()));
+    }
+
+    #[test]
+    fn direct_fail_uses_its_own_rule_location() {
+        let source = "fail!(\"bad\", 1)";
+        let ExecutionError::Runtime(error) = run(source).unwrap_err() else {
+            panic!("expected raised blame")
+        };
+        assert_eq!(
+            &source[error.rule_location().expect("rule location").range()],
+            source
+        );
+        assert_eq!(
+            &source[error.data_location().expect("data location").range()],
+            "1"
+        );
+    }
+
+    #[test]
+    fn fail_retains_ordered_unique_subject_locations_without_expanding_values() {
+        let source = "let shared = 1; fail!(\"bad\", shared, 2, shared, {nested: 3})";
+        let ExecutionError::Runtime(error) = run(source).unwrap_err() else {
+            panic!("expected raised blame")
+        };
+        let subjects = error
+            .data_sources()
+            .iter()
+            .map(|location| &source[location.range()])
+            .collect::<Vec<_>>();
+        assert_eq!(subjects, ["1", "2", "{nested: 3}"]);
+    }
+
+    #[test]
+    fn fail_keeps_the_outermost_rule_boundary_through_tail_calls() {
+        let source = "let leaf = fn(value) { fail!(\"bad\", value) };\n\
+            let middle = fn(value) { leaf(value) };\n\
+            let outer = fn(value) { middle(value) };\n\
+            outer(7)";
+        let ExecutionError::Runtime(error) = run(source).unwrap_err() else {
+            panic!("expected raised blame")
+        };
+        assert_eq!(
+            &source[error.rule_location().expect("rule location").range()],
+            "outer(7)"
+        );
+        assert_eq!(
+            &source[error
+                .implementation_rule_location()
+                .expect("implementation rule location")
+                .range()],
+            "fail!(\"bad\", value)"
+        );
+        assert_eq!(
+            &source[error.data_location().expect("data location").range()],
+            "7"
+        );
     }
 
     #[test]
@@ -3396,15 +3475,25 @@ let decorators = {
         assert_eq!(value.to_string(), "7");
         assert!(account.diagnostics().is_empty());
 
-        let error = run(
-            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { 'Err(\"rejected\") }; reject.must_ok!(1, \"two\")",
-        )
-        .unwrap_err();
+        let source = "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { 'Err(\"rejected\") }; reject.must_ok!(1, \"two\")";
+        let error = run(source).unwrap_err();
         let ExecutionError::Runtime(error) = error else {
             panic!("expected check failure")
         };
         assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
         assert_eq!(error.message, "rejected");
+        assert_eq!(
+            &source[error.rule_location().expect("rule location").range()],
+            "reject.must_ok!(1, \"two\")"
+        );
+        assert_eq!(
+            error
+                .data_sources()
+                .iter()
+                .map(|location| &source[location.range()])
+                .collect::<Vec<_>>(),
+            ["1", "\"two\""]
+        );
 
         let error = run("fail!(\"stopped\", 42)").unwrap_err();
         let ExecutionError::Runtime(error) = error else {
@@ -3434,13 +3523,21 @@ let decorators = {
         assert_eq!(account.diagnostics().len(), 1);
         assert_eq!(account.diagnostics()[0].message, "recoverable");
 
-        let error = run("let result: Result(Int, String) = 'Err(\"required\"); result.unwrap!()")
-            .unwrap_err();
+        let source = "let result: Result(Int, String) = 'Err(\"required\"); result.unwrap!()";
+        let error = run(source).unwrap_err();
         let ExecutionError::Runtime(error) = error else {
             panic!("expected unwrap failure")
         };
         assert_eq!(error.kind, RuntimeErrorKind::RaisedBlame);
         assert_eq!(error.message, "required");
+        assert_eq!(
+            &source[error.rule_location().expect("rule location").range()],
+            "result.unwrap!()"
+        );
+        assert_eq!(
+            &source[error.data_location().expect("data location").range()],
+            "'Err(\"required\")"
+        );
     }
 
     #[test]

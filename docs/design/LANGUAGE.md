@@ -893,6 +893,20 @@ result 只求值一次并作为诊断证据。两者不同于 `?`：`?` 只传�
 作为有序证据保留来源。`panic!(message)` 表示实现错误或无法恢复的不变量破坏，
 而不是可预期的领域拒绝。
 
+`must_ok!`、`unwrap!` 和 `fail!` 产生的结构化诊断由两部分组成：
+
+```text
+rule = { message, location }
+data_sources = [location...]
+```
+
+`rule` 说明为何拒绝以及规则应用在哪里；`data_sources` 按显式 subjects 的参数顺序
+记录错误数据从哪里产生。相同位置只保留一次，值内部的对象图不会被递归展开。直接在
+模块根调用 `fail!` 时，rule location 是 `fail!` 自身；失败发生在函数或 callback
+内部时，rule location rebase 到最外层 authored caller boundary。内部 intrinsic 的
+位置仍作为实现 trace 保留。Host 可以把 rule 渲染为 primary、把 data sources 和实现
+trace 渲染为 secondary，但 primary/secondary 不是语言核心诊断模型的一部分。
+
 所有 contextual intrinsic 都支持统一的后置糖：
 
 ```text
@@ -956,6 +970,10 @@ Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返�
 负责排序、去重、渲染、JSONL 格式和退出协议；Telora 代码不能观察 Host 是否保存或
 展示 Warning。`should_ok!` 与 `try_unwrap!` 产生非阻塞 Warning；`must_ok!`、
 `unwrap!` 和 `fail!` 使当前结果不可产生。
+
+严格求值和 best-effort 求值使用相同的 rule 与 data sources。Fail 进入 failure arena
+之后，所有依赖传播都引用同一个 root failure；传播点不得生成替代诊断，也不得改写
+原 rule、data sources 或其顺序。
 
 在 best-effort 求值中，`fail!` 得到的内部 `Never` 会阻止所有依赖计算执行；Host
 仍可继续已经证明独立的求值单元，以一次收集更多根因。Struct、Tuple、Array、tagged

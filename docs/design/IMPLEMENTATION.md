@@ -198,6 +198,13 @@ Fail child，以保留形状并继续健康的独立分支；Fail 不是用户�
 依赖失败的 unit 不执行，独立 unit 继续。传播节点保留有界 lineage，但不产生新的
 “类型不对”根因。
 
+`RuntimeError` 为 contextual failure 保存一个 rule location、有序去重的 data source
+locations，以及可选的 intrinsic implementation location。执行帧同时携带最外层
+authored rule boundary；普通调用继承该边界，第一次调用建立边界，tail call 显式搬运
+边界，native continuation 回调使用其 authored call site。`Raise` 读取 opaque
+`BlameError` carrier 后一次建立 root diagnostic。failure arena 的传播节点只保存 root
+failure id，因此 strict 与 best-effort 不会产生两套归因路径。
+
 Best-effort 不是另一套成功语义。没有 error 时，它与严格执行同属成功并产生相同
 可观察值；存在任意 root error 时，即使某个最终表达式可算出，也没有可发布结果。
 `check` 使用这条恢复管线；`run --best-effort` 在 Entry 启动前做诊断求值。

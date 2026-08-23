@@ -725,7 +725,8 @@ checker 可以接收零到多个参数，但不能省略 checker。checker 与�
 - `must_ok!` 返回 checker 的 Ok payload；Err 产生失败和 `Never`。
 - `try_unwrap!` 和 `unwrap!` 对已有 `Result(R, String)` 应用相同两种策略。
 - `?` 只传播原容器的失败分支，不产生诊断或转换容器。
-- `fail!(message, subjects...)` 产生失败，并保留 subjects 的来源。
+- `fail!(message, subjects...)` 产生失败；规则归因到 authored caller，subjects 按参数
+  顺序提供数据来源。直接调用时 caller 就是 `fail!` 自身。
 - `panic!(message)` 只用于实现错误或不变量破坏。
 
 `for` 契约引入的类型参数在对应实现体的局部标注、嵌套类型应用和内层闭包注解中

@@ -1190,10 +1190,12 @@ pub struct RuntimeError {
     propagated_failure: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct RuntimeLocations {
-    data: Option<crate::Loc>,
+    data_sources: Vec<crate::Loc>,
     rule: Option<crate::Loc>,
+    implementation_rule: Option<crate::Loc>,
+    rule_primary: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1244,9 +1246,13 @@ impl RuntimeError {
     }
 
     pub fn data_location(&self) -> Option<crate::Loc> {
+        self.data_sources().first().copied()
+    }
+
+    pub fn data_sources(&self) -> &[crate::Loc] {
         self.locations
             .as_deref()
-            .and_then(|locations| locations.data)
+            .map_or(&[], |locations| locations.data_sources.as_slice())
     }
 
     pub fn rule_location(&self) -> Option<crate::Loc> {
@@ -1255,17 +1261,62 @@ impl RuntimeError {
             .and_then(|locations| locations.rule)
     }
 
+    pub fn implementation_rule_location(&self) -> Option<crate::Loc> {
+        self.locations
+            .as_deref()
+            .and_then(|locations| locations.implementation_rule)
+    }
+
     pub(crate) const fn propagated_failure(&self) -> Option<u32> {
         self.propagated_failure
     }
 
     fn set_locations(&mut self, data: Option<crate::Loc>, rule: Option<crate::Loc>) {
-        self.locations =
-            (data.is_some() || rule.is_some()).then(|| Box::new(RuntimeLocations { data, rule }));
+        self.set_data_sources(data, rule);
+    }
+
+    fn set_data_sources(
+        &mut self,
+        data_sources: impl IntoIterator<Item = crate::Loc>,
+        rule: Option<crate::Loc>,
+    ) {
+        let mut unique = Vec::new();
+        for location in data_sources {
+            if !unique.contains(&location) {
+                unique.push(location);
+            }
+        }
+        self.locations = (!unique.is_empty() || rule.is_some()).then(|| {
+            Box::new(RuntimeLocations {
+                data_sources: unique,
+                rule,
+                implementation_rule: None,
+                rule_primary: false,
+            })
+        });
+    }
+
+    fn set_contextual_locations(
+        &mut self,
+        data_sources: impl IntoIterator<Item = crate::Loc>,
+        rule: Option<crate::Loc>,
+        implementation_rule: Option<crate::Loc>,
+    ) {
+        self.set_data_sources(data_sources, rule);
+        let locations = self.locations.get_or_insert_with(|| {
+            Box::new(RuntimeLocations {
+                data_sources: Vec::new(),
+                rule: None,
+                implementation_rule: None,
+                rule_primary: true,
+            })
+        });
+        locations.implementation_rule = implementation_rule.filter(|origin| Some(*origin) != rule);
+        locations.rule_primary = true;
     }
 
     fn set_data_location(&mut self, data: Option<crate::Loc>) {
-        self.set_locations(data, self.rule_location());
+        self.set_data_sources(data, self.rule_location());
     }
 
     pub(crate) fn diagnostic(&self) -> Option<Diagnostic> {
@@ -1277,19 +1328,38 @@ impl RuntimeError {
             Origin::Synthetic { derived_from } => derived_from,
         });
         let rule_location = self.rule_location().or(operation_location);
-        let secondary_message = if self.rule_location().is_some() {
-            "contract rule declared here"
+        let locations = self.locations.as_deref();
+        if locations.is_some_and(|locations| locations.rule_primary) {
+            let primary = rule_location.or_else(|| self.data_location())?;
+            let mut diagnostic = Diagnostic::error(self.message.clone(), primary);
+            for (index, source) in self.data_sources().iter().copied().enumerate() {
+                if source != primary {
+                    diagnostic = diagnostic
+                        .with_secondary(format!("subject {} originated here", index + 1), source);
+                }
+            }
+            if let Some(implementation) = self.implementation_rule_location()
+                && implementation != primary
+                && !self.data_sources().contains(&implementation)
+            {
+                diagnostic = diagnostic.with_secondary("failure raised here", implementation);
+            }
+            Some(diagnostic)
         } else {
-            "operation originated here"
-        };
-        match (self.data_location(), rule_location) {
-            (Some(data), Some(rule)) if data != rule => Some(
-                Diagnostic::error(self.message.clone(), data)
-                    .with_secondary(secondary_message, rule),
-            ),
-            (Some(data), _) => Some(Diagnostic::error(self.message.clone(), data)),
-            (None, Some(rule)) => Some(Diagnostic::error(self.message.clone(), rule)),
-            (None, None) => None,
+            let secondary_message = if self.rule_location().is_some() {
+                "contract rule declared here"
+            } else {
+                "operation originated here"
+            };
+            match (self.data_location(), rule_location) {
+                (Some(data), Some(rule)) if data != rule => Some(
+                    Diagnostic::error(self.message.clone(), data)
+                        .with_secondary(secondary_message, rule),
+                ),
+                (Some(data), _) => Some(Diagnostic::error(self.message.clone(), data)),
+                (None, Some(rule)) => Some(Diagnostic::error(self.message.clone(), rule)),
+                (None, None) => None,
+            }
         }
     }
 
@@ -1366,6 +1436,7 @@ struct ExecutionFrame {
     base: usize,
     pc: usize,
     return_target: ReturnTarget,
+    rule_boundary: Option<crate::Loc>,
 }
 
 #[derive(Debug)]
@@ -1436,6 +1507,7 @@ enum VmAction {
         return_target: ReturnTarget,
         call_function: Arc<BytecodeFunction>,
         call_pc: usize,
+        rule_boundary: Option<crate::Loc>,
     },
     Return {
         value: Val,
@@ -2004,6 +2076,7 @@ impl Vm {
             &runtime_arguments,
             &captures,
             ReturnTarget::Root,
+            None,
             &mut stack,
             account.stack_limit(),
         );
@@ -2046,6 +2119,7 @@ impl Vm {
                         let frame = frames.last().expect("execution frame");
                         let base = frame.base;
                         let end = base + frame.function.register_count();
+                        let rule_boundary = frame.rule_boundary;
                         let mut registers = &mut stack[base..end];
                         let view = WorkView {
                             main: background,
@@ -3317,6 +3391,7 @@ impl Vm {
                                         },
                                         call_function: function_arc,
                                         call_pc: pc,
+                                        rule_boundary: None,
                                     },
                                     &mut frames,
                                     &mut stack,
@@ -3341,6 +3416,9 @@ impl Vm {
                                     pc,
                                 )?;
                                 let completed = frames.pop().expect("tail caller frame");
+                                let rule_boundary = completed
+                                    .rule_boundary
+                                    .or_else(|| instruction_location(function, pc));
                                 let _ = registers;
                                 stack.truncate(completed.base);
                                 match drive_vm_action(
@@ -3350,6 +3428,7 @@ impl Vm {
                                         return_target: completed.return_target,
                                         call_function: function_arc,
                                         call_pc: pc,
+                                        rule_boundary,
                                     },
                                     &mut frames,
                                     &mut stack,
@@ -3508,7 +3587,44 @@ impl Vm {
                                 };
                                 let mut runtime =
                                     error(RuntimeErrorKind::RaisedBlame, text, function, pc);
-                                runtime.set_locations(data.loc(), rule.loc());
+                                let data_sources = match data.value() {
+                                    DecodedValue::Tuple(handle) => view
+                                        .sequence(handle, true)
+                                        .map_err(|heap_error| {
+                                            error(
+                                                RuntimeErrorKind::InvalidBytecode,
+                                                heap_error.to_string(),
+                                                function,
+                                                pc,
+                                            )
+                                        })?
+                                        .iter()
+                                        .filter_map(|value| value.loc())
+                                        .collect::<Vec<_>>(),
+                                    _ => data.loc().into_iter().collect(),
+                                };
+                                let contextual = view
+                                    .string_text(rule)
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            function,
+                                            pc,
+                                        )
+                                    })?
+                                    .is_some_and(|marker| {
+                                        matches!(marker.as_str(), "fail!" | "must_ok!" | "unwrap!")
+                                    });
+                                if contextual {
+                                    runtime.set_contextual_locations(
+                                        data_sources,
+                                        rule_boundary.or(rule.loc()),
+                                        rule.loc(),
+                                    );
+                                } else {
+                                    runtime.set_data_sources(data_sources, rule.loc());
+                                }
                                 return Err(runtime);
                             }
                             Opcode::Debug {
@@ -3787,6 +3903,7 @@ fn make_execution_frame(
     arguments: &[Val],
     captures: &[Val],
     return_target: ReturnTarget,
+    rule_boundary: Option<crate::Loc>,
     stack: &mut Vec<Option<Val>>,
     stack_limit: usize,
 ) -> Result<ExecutionFrame, RuntimeError> {
@@ -3845,6 +3962,7 @@ fn make_execution_frame(
         base,
         pc: 0,
         return_target,
+        rule_boundary,
     })
 }
 
@@ -3908,6 +4026,7 @@ fn drive_vm_action(
                 return_target,
                 call_function,
                 call_pc,
+                rule_boundary,
             } => {
                 consume_fuel(account, &call_function, call_pc).map_err(|mut runtime_error| {
                     return_target.append_native_trace(&mut runtime_error.trace);
@@ -4046,12 +4165,16 @@ fn drive_vm_action(
                                 })?;
                             let callee_function =
                                 Arc::new(BytecodeFunction::from_linked_code(Arc::clone(code)));
+                            let rule_boundary = rule_boundary
+                                .or_else(|| frames.last().and_then(|frame| frame.rule_boundary))
+                                .or_else(|| instruction_location(&call_function, call_pc));
                             let next = make_execution_frame(
                                 callee_function,
                                 prototype,
                                 &arguments,
                                 &upvalues,
                                 return_target,
+                                rule_boundary,
                                 stack,
                                 account.stack_limit(),
                             )
@@ -5092,6 +5215,7 @@ fn next_array_action(
         return_target: ReturnTarget::Native(Box::new(continuation)),
         call_function,
         call_pc,
+        rule_boundary: None,
     })
 }
 
@@ -6051,6 +6175,7 @@ fn next_dict_action(
         return_target: ReturnTarget::Native(Box::new(continuation)),
         call_function,
         call_pc,
+        rule_boundary: None,
     })
 }
 
@@ -8290,6 +8415,7 @@ fn continue_json_encode(
             return_target: ReturnTarget::Native(Box::new(continuation)),
             call_function,
             call_pc,
+            rule_boundary: None,
         });
     }
     let result = result.map(|raw| CodecNode::SemanticValue {

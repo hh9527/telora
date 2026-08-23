@@ -350,6 +350,12 @@ expression。其状态至少区分：
 | `panic!` | 实现不变量破坏，不是普通领域拒绝 | VM 与 Host |
 | `dbg!` | 不影响值与资源核算的 Host-only observation | Host observer |
 
+结构化 failure diagnostic 的核心是 `rule + data_sources`。rule 包含拒绝消息与规则
+应用位置；data sources 是显式 subjects 的有序来源位置。函数边界内触发的 contextual
+failure 把 rule 归因到最外层 authored caller，内部 `fail!` 位置只保留为实现 trace。
+Host 如何把这些位置显示为 primary/secondary 属于呈现策略。Fail 在 best-effort 图中
+传播时继续引用原 root diagnostic，不增加新的根因。
+
 Best-effort continuation 是 evaluator 对已经证明独立的计算单元所采用的策略，不是
 源码中的“报告后继续” intrinsic。它可以帮助 Host 一次观察更多根因，但任何 Error
 仍阻止 candidate artifact 和 effect 发布。完整表面与传播规则见

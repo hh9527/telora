@@ -2069,11 +2069,9 @@ impl<'a> Lowerer<'a> {
         let location = self.location(node);
         let mut arguments = arguments.into_iter();
         let message = arguments.next().expect("blame message was checked");
-        let subjects = arguments.collect::<Vec<_>>();
-        let data = match subjects.len() {
-            1 => subjects.into_iter().next().expect("one blame subject"),
-            _ => located(ExprKind::Tuple(subjects), location),
-        };
+        // Keep the explicit subject boundary in the internal envelope. The VM
+        // uses this tuple to retain one ordered provenance location per subject.
+        let data = located(ExprKind::Tuple(arguments.collect()), location);
         let rule = located(ExprKind::String(format!("{name}!")), location);
         let fields = [("data", data), ("message", message), ("rule", rule)]
             .into_iter()

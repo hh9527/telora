@@ -1190,12 +1190,11 @@ export def config: Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initial
     assert!(!run.status.success());
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
-        stderr.contains("input.json:1:9: review data provenance"),
+        stderr.contains("provenance.entry.telora:19:40: review data provenance"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("provenance.entry.telora")
-            && stderr.contains("contract rule declared here"),
+        stderr.contains("input.json:1:9: subject 1 originated here"),
         "{stderr}"
     );
 }
