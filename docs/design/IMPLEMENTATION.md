@@ -175,6 +175,11 @@ member snapshot。整个声明的 effective heads 在失败检查后一次复制
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
 无限递归；函数和 opaque value 使用各自的不透明身份规则。来源位置不参与相等。
 
+`Dyn.project_with` 对目标 witness 和 package descriptor 直接执行
+`TypeGraph::decode_persistent + canonicalize`。它先为 declared node 建立 canonical
+TypeId，再闭合递归边；不能先降成扁平 `TypeDescriptor`，否则 `Option(Node)` 一类
+递归复合 witness 会丢失名义回边并退化成不可 canonicalize 的结构递归。
+
 ## 6. MainWorld、WorkWorld 与原子晋升
 
 构建期 `MainWorld` 持有本次封闭模块图的 persistent heap、module skeleton、canonical

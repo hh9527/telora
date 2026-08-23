@@ -172,6 +172,14 @@ impl Heap {
             .map_err(HeapError::owned)
     }
 
+    pub(crate) fn canonical_type_value_id(
+        &self,
+        value: crate::ValueRef<'_>,
+        path: &str,
+    ) -> Result<crate::TypeId, HeapError> {
+        crate::types::canonical_type_ref_id(value, path, &self.types).map_err(HeapError::owned)
+    }
+
     pub(crate) fn canonical_type_name(
         &self,
         type_id: crate::TypeId,

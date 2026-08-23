@@ -113,16 +113,16 @@ fn decorator_property_descriptor(
     environment: &HashMap<String, TypeDescriptor>,
     sources: &SourceDatabase,
 ) -> Result<TypeDescriptor, FrontendError> {
-    let mut provider = infer_expr_recorded(
-        &decorator.value.callee,
-        environment,
-        &mut HashMap::new(),
-    );
+    let mut provider =
+        infer_expr_recorded(&decorator.value.callee, environment, &mut HashMap::new());
     if decorator.value.configured {
         let TypeDescriptor::Function { parameters, result } = provider else {
             return Err(FrontendError::from_diagnostic(
                 sources,
-                Diagnostic::error("configured decorator target is not callable", decorator.location),
+                Diagnostic::error(
+                    "configured decorator target is not callable",
+                    decorator.location,
+                ),
             ));
         };
         if parameters.len() != decorator.value.arguments.len() {
@@ -179,9 +179,7 @@ fn decorator_property_descriptor(
         TypeDescriptor::Declared(declared) => assignable(&expected_context, &declared.body),
         parameter => assignable(&expected_context, parameter),
     };
-    if !matches!(parameters[0], TypeDescriptor::Any)
-        && !accepts_context
-    {
+    if !matches!(parameters[0], TypeDescriptor::Any) && !accepts_context {
         return Err(FrontendError::from_diagnostic(
             sources,
             Diagnostic::error(
@@ -223,10 +221,7 @@ fn property_call(
             arguments: vec![
                 context,
                 located(
-                    ExprKind::Variable(located(
-                        PROPERTY_PREVIOUS_BINDING.to_owned(),
-                        location,
-                    )),
+                    ExprKind::Variable(located(PROPERTY_PREVIOUS_BINDING.to_owned(), location)),
                     location,
                 ),
             ],
@@ -283,12 +278,14 @@ fn evaluate_property_decorator(
             ),
         ));
     }
-    let capabilities = evaluator.property_capabilities(property_type).map_err(|error| {
-        FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error(error.to_string(), decorator.location),
-        )
-    })?;
+    let capabilities = evaluator
+        .property_capabilities(property_type)
+        .map_err(|error| {
+            FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error(error.to_string(), decorator.location),
+            )
+        })?;
     if capabilities & owner_capability(owner) == 0 {
         return Err(FrontendError::from_diagnostic(
             sources,
@@ -364,7 +361,11 @@ fn owner_expression(binding: &Binding) -> Expr {
     )
 }
 
-fn context_field(name: &str, value: Expr, location: crate::source::Location) -> crate::ast::DictField {
+fn context_field(
+    name: &str,
+    value: Expr,
+    location: crate::source::Location,
+) -> crate::ast::DictField {
     located(
         crate::ast::DictFieldKind {
             decorators: Vec::new(),
@@ -401,11 +402,9 @@ fn member_context(
         ),
     ];
     match owner {
-        PropertyOwnerKind::Field => fields.push(context_field(
-            "ty",
-            member.value.value.clone(),
-            location,
-        )),
+        PropertyOwnerKind::Field => {
+            fields.push(context_field("ty", member.value.value.clone(), location))
+        }
         PropertyOwnerKind::Variant => {
             let payload = if matches!(&member.value.value.value, ExprKind::Atom(tag) if tag == "None")
             {
@@ -478,8 +477,8 @@ fn establish_property_markers(
         for decorator in &markers {
             capabilities |= property_capability(decorator, sources)?;
         }
-        let bootstrap = binding.value.name.value == "PropertyAttr"
-            && evaluator.property_attr_type().is_none();
+        let bootstrap =
+            binding.value.name.value == "PropertyAttr" && evaluator.property_attr_type().is_none();
         let marker_type = if bootstrap {
             target_type
         } else {
@@ -494,8 +493,8 @@ fn establish_property_markers(
             })?
         };
         let key = PropertyKey::Ty {
-                ty: target_type,
-                property_ty: marker_type,
+            ty: target_type,
+            property_ty: marker_type,
         };
         let value = evaluator.property_attr_value(marker_type, capabilities);
         if bootstrap {
@@ -573,9 +572,8 @@ fn evaluate_declared_properties(
                 )
         });
         for (index, member) in members.into_iter().enumerate() {
-            let index = u32::try_from(index).map_err(|_| {
-                frontend_error(source_name, "declared type has too many members")
-            })?;
+            let index = u32::try_from(index)
+                .map_err(|_| frontend_error(source_name, "declared type has too many members"))?;
             for decorator in &member.value.decorators {
                 if intrinsic_property_marker(decorator) {
                     return Err(FrontendError::from_diagnostic(

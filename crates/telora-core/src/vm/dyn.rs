@@ -53,21 +53,17 @@ fn run_core_dyn(
         let (_, packaged_descriptor, payload) = view
             .dyn_parts(handle)
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
-        let target = crate::types::decode_type_ref(
-            ValueRef::work(arguments[0], current, background),
-            "std/dyn.project_with target",
-        )
-        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        let packaged = crate::types::decode_type_ref(
-            ValueRef::work(packaged_descriptor, current, background),
-            "std/dyn.project_with package",
-        )
-        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
         let target_id = current
-            .canonical_descriptor_type_id(&target)
+            .canonical_type_value_id(
+                ValueRef::work(arguments[0], current, background),
+                "std/dyn.project_with target",
+            )
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
         let packaged_id = current
-            .canonical_descriptor_type_id(&packaged)
+            .canonical_type_value_id(
+                ValueRef::work(packaged_descriptor, current, background),
+                "std/dyn.project_with package",
+            )
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
         if target_id != packaged_id {
             return Ok(VmAction::Return {

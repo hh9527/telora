@@ -324,6 +324,44 @@
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         let error = module.execute(100_000).unwrap_err();
         assert!(error.message.contains("variant index is 1, not 0"));
+
+        fs::write(
+            &main,
+            r#"import "std/dyn" as dyn;
+               type User = struct { value: Int };
+               def user: User = { value: 1 };
+               dyn.get_field_value(dyn.pack(User, user), 1)"#,
+        )
+        .unwrap();
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let error = module.execute(100_000).unwrap_err();
+        assert!(error.message.contains("field index 1 is out of range"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn indexed_reflection_is_finite_for_recursive_nominal_types() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/dyn" as dyn;
+               import "std/type-desc" as type_desc;
+               type Node = struct { value: Int, next: Option(Node) };
+               def node: Node = { value: 7, next: 'None };
+               def next = dyn.get_field_value(dyn.pack(Node, node), 0);
+               export def output = {
+                   fields: type_desc.fields(Node),
+                   next: dyn.project_with(Option(Node), next),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(output.contains("name: \"next\""), "{output}");
+        assert!(output.contains("name: \"value\""), "{output}");
+        assert!(output.contains("next: 'Some('None)"), "{output}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -383,9 +421,17 @@
             &main,
             r#"import "std/type-property" as prop;
                import "std/type-property" { FieldPropertyCtx, VariantPropertyCtx };
+               @property('Type)
                @property('Field)
                @property('Variant)
                type Mark = struct { value: Int };
+               def type_mark: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(value) {
+                   fn(ctx, previous) {
+                       let prior = match previous { 'Some(item) => item.value, 'None => 0 };
+                       let result: Mark = { value: prior + value };
+                       result
+                   }
+               };
                def field_mark: Fn(FieldPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) {
                    let result: Mark = { value: ctx.index + 10 };
                    result
@@ -394,9 +440,12 @@
                    let result: Mark = { value: ctx.index + 20 };
                    result
                };
+               @type_mark(40)
+               @type_mark(2)
                type User = struct { @field_mark name: String };
                type Choice = enum { @variant_mark 'Some(Int), 'None };
                export def output = {
+                   type_prop: prop.get_type_prop(User, Mark),
                    field: prop.get_field_prop(User, 0, Mark),
                    variant: prop.get_variant_prop(Choice, 1, Mark),
                };"#,
@@ -405,6 +454,10 @@
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(
+            output.contains("type_prop: 'Some({value: 42})"),
+            "{output}"
+        );
         assert!(output.contains("field: 'Some({value: 10})"), "{output}");
         assert!(output.contains("variant: 'Some({value: 21})"), "{output}");
         fs::remove_dir_all(directory).unwrap();
