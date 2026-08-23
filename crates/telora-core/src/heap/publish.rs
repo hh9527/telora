@@ -76,8 +76,8 @@ pub(crate) fn publish_root(
 pub(crate) fn publish_type_properties(
     target: &mut Heap,
     current: &Heap,
-    native_decorator_type: Option<crate::TypeId>,
-    properties: &[(crate::TypeId, crate::TypeId, Val)],
+    property_attr_type: Option<crate::TypeId>,
+    properties: &[(PropertyKey, Val)],
 ) -> Result<(), HeapError> {
     if target.storage != Storage::Main || current.storage != Storage::Work {
         return Err(HeapError(
@@ -89,12 +89,11 @@ pub(crate) fn publish_type_properties(
         current,
         background: Some(target),
     };
-    for (target_type, property_type, value) in properties {
-        let key = (*target_type, *property_type);
-        if !keys.insert(key) {
+    for (key, value) in properties {
+        if !keys.insert(*key) {
             return Err(HeapError("duplicate typed property for target"));
         }
-        if value.type_id() != Some(*property_type) {
+        if value.type_id() != Some(key.property_type()) {
             return Err(HeapError(
                 "typed property runtime witness does not match its property TypeId",
             ));
@@ -104,31 +103,27 @@ pub(crate) fn publish_type_properties(
                 "failed evaluation node cannot be published as a typed property",
             ));
         }
-        if let Some(existing) = target.type_properties.get(&key)
+        if let Some(existing) = target.properties.get(key)
             && !view.values_equal(*value, *existing)?
         {
             return Err(HeapError("conflicting typed property for target"));
         }
     }
-    if let Some(marker) = native_decorator_type {
-        match target.native_decorator_type {
+    if let Some(marker) = property_attr_type {
+        match target.property_attr_type {
             Some(existing) if existing != marker => {
-                return Err(HeapError("NativeDecorator TypeId is already established"));
+                return Err(HeapError("PropertyAttr TypeId is already established"));
             }
             _ => {}
         }
     }
     let unpublished = properties
         .iter()
-        .filter(|(target_type, property_type, _)| {
-            !target
-                .type_properties
-                .contains_key(&(*target_type, *property_type))
-        })
+        .filter(|(key, _)| !target.properties.contains_key(key))
         .collect::<Vec<_>>();
     let roots = unpublished
         .iter()
-        .map(|(_, _, value)| *value)
+        .map(|(_, value)| *value)
         .collect::<Vec<_>>();
     let copied = copy_roots(
         target,
@@ -138,15 +133,11 @@ pub(crate) fn publish_type_properties(
         },
         &roots,
     )?;
-    for ((target_type, property_type, _), value) in
-        unpublished.into_iter().zip(copied.into_iter())
-    {
-        target
-            .type_properties
-            .insert((*target_type, *property_type), value);
+    for ((key, _), value) in unpublished.into_iter().zip(copied.into_iter()) {
+        target.properties.insert(*key, value);
     }
-    if let Some(marker) = native_decorator_type {
-        target.native_decorator_type = Some(marker);
+    if let Some(marker) = property_attr_type {
+        target.property_attr_type = Some(marker);
     }
     Ok(())
 }

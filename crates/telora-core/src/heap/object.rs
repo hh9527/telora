@@ -135,6 +135,34 @@ pub(crate) struct Heap {
     bootstrap_root: Option<PersistentValue>,
     functions: HashMap<crate::FuncId, Option<Val>>,
     declared_types: HashMap<crate::TypeId, Val>,
-    type_properties: HashMap<(crate::TypeId, crate::TypeId), Val>,
-    native_decorator_type: Option<crate::TypeId>,
+    properties: BTreeMap<PropertyKey, Val>,
+    property_attr_type: Option<crate::TypeId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum PropertyKey {
+    Ty {
+        ty: crate::TypeId,
+        property_ty: crate::TypeId,
+    },
+    Field {
+        ty: crate::TypeId,
+        member_index: u32,
+        property_ty: crate::TypeId,
+    },
+    Variant {
+        ty: crate::TypeId,
+        member_index: u32,
+        property_ty: crate::TypeId,
+    },
+}
+
+impl PropertyKey {
+    pub(crate) const fn property_type(self) -> crate::TypeId {
+        match self {
+            Self::Ty { property_ty, .. }
+            | Self::Field { property_ty, .. }
+            | Self::Variant { property_ty, .. } => property_ty,
+        }
+    }
 }

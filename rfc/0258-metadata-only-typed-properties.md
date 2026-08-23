@@ -4,6 +4,10 @@
 - Supersedes: decorator transformation and string-keyed decorator attributes in RFC 0025, RFC 0026, RFC 0030, and RFC 0036
 - Depends on: RFC 0235, RFC 0237, RFC 0248, RFC 0249
 
+> RFC 0259 supersedes this RFC's single marker, one-argument provider ABI,
+> duplicate-key rejection, query names, and type-only key space. This document
+> remains the historical rationale for the metadata-only transition.
+
 ## Summary
 
 Telora changes a decorator from a function that replaces `TypeMetadata` into a

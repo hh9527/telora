@@ -13,21 +13,21 @@ native trim_margin: Fn(String, String) -> String;
 import "std/regex" { ParseBy };
 import "std/type-desc" { TypeDesc };
 
-@property
+@property('Type)
 type DecodeByParse = struct {};
 
-@property
+@property('Type)
 type EncodeByDisplay = struct {};
 
 native parse_with: for(A) Fn(Type, TypeOf(A), String) -> Result(A, BlameError);
 def parse: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, input) {
     parse_with(ParseBy, target, input)
 };
-def decode_by_parse: Fn(TypeDesc) -> DecodeByParse = fn(target) {
+def decode_by_parse: Fn(TypeDesc, Option(DecodeByParse)) -> DecodeByParse = fn(target, previous) {
     let property: DecodeByParse = {};
     property
 };
-def encode_by_display: Fn(TypeDesc) -> EncodeByDisplay = fn(target) {
+def encode_by_display: Fn(TypeDesc, Option(EncodeByDisplay)) -> EncodeByDisplay = fn(target, previous) {
     let property: EncodeByDisplay = {};
     property
 };

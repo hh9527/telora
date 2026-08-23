@@ -318,6 +318,59 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         target: RegisterId,
         property: RegisterId,
     ) -> Result<(), NativeError> {
+        let (target, property) = self.property_type_ids(target, property)?;
+        self.set_property_option(
+            destination,
+            PropertyKey::Ty {
+                ty: target,
+                property_ty: property,
+            },
+        )
+    }
+
+    pub(crate) fn set_field_property_option(
+        &mut self,
+        destination: RegisterId,
+        target: RegisterId,
+        index: RegisterId,
+        property: RegisterId,
+    ) -> Result<(), NativeError> {
+        let (target, property) = self.property_type_ids(target, property)?;
+        let member_index = self.member_index(index)?;
+        self.set_property_option(
+            destination,
+            PropertyKey::Field {
+                ty: target,
+                member_index,
+                property_ty: property,
+            },
+        )
+    }
+
+    pub(crate) fn set_variant_property_option(
+        &mut self,
+        destination: RegisterId,
+        target: RegisterId,
+        index: RegisterId,
+        property: RegisterId,
+    ) -> Result<(), NativeError> {
+        let (target, property) = self.property_type_ids(target, property)?;
+        let member_index = self.member_index(index)?;
+        self.set_property_option(
+            destination,
+            PropertyKey::Variant {
+                ty: target,
+                member_index,
+                property_ty: property,
+            },
+        )
+    }
+
+    fn property_type_ids(
+        &self,
+        target: RegisterId,
+        property: RegisterId,
+    ) -> Result<(crate::TypeId, crate::TypeId), NativeError> {
         let target = self.owned(target)?;
         let property = self.owned(property)?;
         let view = HeapView {
@@ -330,7 +383,28 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         let property = view
             .declared_type_id(property)
             .map_err(|error| NativeError::new(error.to_string()))?;
-        let Some(value) = view.type_property(target, property) else {
+        Ok((target, property))
+    }
+
+    fn member_index(&self, index: RegisterId) -> Result<u32, NativeError> {
+        let value = self.owned(index)?;
+        let DecodedValue::Int(index) = value.value() else {
+            return Err(NativeError::new("property member index must be an Int"));
+        };
+        u32::try_from(index)
+            .map_err(|_| NativeError::new("property member index must fit an unsigned 32-bit Int"))
+    }
+
+    fn set_property_option(
+        &mut self,
+        destination: RegisterId,
+        key: PropertyKey,
+    ) -> Result<(), NativeError> {
+        let view = HeapView {
+            current: self.current,
+            background: self.background,
+        };
+        let Some(value) = view.property(key) else {
             return self.set_none(destination);
         };
         let tag = self.scratch()?;

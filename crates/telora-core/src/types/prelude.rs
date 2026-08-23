@@ -209,7 +209,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["NativeDecorator", "union", "validate"]
+    let expected = ["PropertyAttr", "union", "validate"]
         .into_iter()
         .collect::<BTreeSet<_>>();
     let actual = interface
@@ -218,9 +218,7 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err(
-            "core/prelude must export exactly NativeDecorator, union, and validate".into(),
-        );
+        return Err("core/prelude must export exactly PropertyAttr, union, and validate".into());
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];

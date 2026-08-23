@@ -2,15 +2,15 @@ import "std/type-desc" { TypeDesc };
 
 native type Regex @0;
 
-@property
+@property('Type)
 type ParseBy = struct { regex: Regex };
 
 native compile: Fn(String) -> Regex;
 native is_match: Fn(Regex, String) -> Bool;
 native prepare: Fn(Regex, Type, TypeDesc) -> Regex;
 
-def parse_by: Fn(Regex) -> Fn(TypeDesc) -> ParseBy = fn(regex) {
-    fn(target) {
+def parse_by: Fn(Regex) -> Fn(TypeDesc, Option(ParseBy)) -> ParseBy = fn(regex) {
+    fn(target, previous) {
         let property: ParseBy = {regex: prepare(regex, ParseBy, target)};
         property
     }

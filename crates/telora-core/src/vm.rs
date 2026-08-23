@@ -1,8 +1,8 @@
 use crate::bytecode::{BytecodeFunction, Opcode, Register};
 use crate::heap::{
-    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, Val, publish_module_root,
-    publish_root, relocate_work_roots, semantic_value_unwrap_bytes, semantic_value_wrapper_bytes,
-    unwrap_semantic_value, wrap_semantic_value,
+    DecodedValue, Handle, Heap, HeapView, Object, PersistentValue, PropertyKey, Val,
+    publish_module_root, publish_root, relocate_work_roots, semantic_value_unwrap_bytes,
+    semantic_value_wrapper_bytes, unwrap_semantic_value, wrap_semantic_value,
 };
 use crate::lir::RegisterId;
 use crate::value::{

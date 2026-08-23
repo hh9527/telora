@@ -107,32 +107,71 @@ impl<'a> ToolEvaluator<'a> {
             .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
     }
 
-    fn native_decorator_type(&self) -> Option<TypeId> {
-        self.main.native_decorator_type()
+    fn property_attr_type(&self) -> Option<TypeId> {
+        self.work
+            .property_attr_type()
+            .or_else(|| self.main.property_attr_type())
     }
 
-    fn has_type_property(&self, target: TypeId, property: TypeId) -> bool {
-        HeapView {
+    fn establish_property_attr_type(&mut self, type_id: TypeId) -> Result<(), FrontendError> {
+        self.work
+            .establish_property_attr_type(type_id)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
+    }
+
+    fn property_capabilities(&self, target: TypeId) -> Result<u32, crate::heap::HeapError> {
+        let marker = self
+            .property_attr_type()
+            .ok_or(crate::heap::HeapError::new("PropertyAttr is not established"))?;
+        let view = HeapView {
             current: &self.work,
             background: Some(self.main),
-        }
-        .type_property(target, property)
-        .is_some()
+        };
+        let value = view
+            .type_property(target, marker)
+            .ok_or(crate::heap::HeapError::new(
+                "decorator result type is not marked with @property",
+            ))?;
+        let crate::heap::DecodedValue::Dict(handle) = value.value() else {
+            return Err(crate::heap::HeapError::new(
+                "PropertyAttr value is not a record",
+            ));
+        };
+        let bits = view
+            .dict_get_text(handle, "bits")?
+            .ok_or(crate::heap::HeapError::new(
+                "PropertyAttr value has no bits field",
+            ))?;
+        let crate::heap::DecodedValue::Int(bits) = bits.value() else {
+            return Err(crate::heap::HeapError::new("PropertyAttr.bits is not Int"));
+        };
+        u32::try_from(bits)
+            .map_err(|_| crate::heap::HeapError::new("PropertyAttr.bits is outside u32"))
     }
 
-    fn property_marker(&mut self, property_type: TypeId) -> Val {
-        self.work.empty_record_with_type(property_type)
+    fn property_attr_value(&mut self, property_type: TypeId, bits: u32) -> Val {
+        self.work.property_attr_value(property_type, bits)
+    }
+
+    fn previous_property_value(&mut self, previous: Option<Val>) -> Val {
+        self.work.option_value(previous)
+    }
+
+    fn stage_property(&mut self, key: PropertyKey, value: Val) -> Result<(), FrontendError> {
+        self.work
+            .stage_property(key, value)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
     }
 
     fn publish_type_properties(
         &mut self,
-        native_decorator_type: Option<TypeId>,
-        properties: &[(TypeId, TypeId, Val)],
+        property_attr_type: Option<TypeId>,
+        properties: &[(PropertyKey, Val)],
     ) -> Result<(), FrontendError> {
         publish_type_properties(
             self.main,
             &self.work,
-            native_decorator_type,
+            property_attr_type,
             properties,
         )
         .map_err(|error| frontend_error("<tool-stage>", error.to_string()))

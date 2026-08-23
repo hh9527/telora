@@ -158,12 +158,18 @@ property 集合。
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
 
-Main heap 的 property registry 使用 `(TypeId(Target), TypeId(Property))` 作为键，值是
-MainWorld `Val`。Tool stage 先封闭具名 Struct/Enum 目标，再执行 decorator provider；
-provider 的静态结果、运行时 `Val.ty` 和 `@property` marker 必须指向同一个 concrete
-Property TypeId。同一声明的 property batch 在复制前完成失败检查、重复检查和既有值
-冲突检查，然后一次复制并提交。重复安装相同键和相等值是幂等的，不同值则拒绝。
-`std/type-property.get` 只读取 registry，并返回引用同一 Main 值的 `Option(P)`。
+Main heap 的 property registry 使用有序的 `PropertyKey`：`Ty(TypeId, TypeId)`、
+`Field(TypeId, u32, TypeId)`、`Variant(TypeId, u32, TypeId)`，值是 MainWorld `Val`。
+Tool stage 先封闭具名 Struct/Enum 目标，再执行 decorator provider；provider 的静态
+结果、运行时 `Val.ty` 与 property carrier TypeId 必须一致。carrier 的 owner 能力由
+`Ty(Carrier, PropertyAttr) -> PropertyAttr { bits }` 记录；`PropertyAttr` 自举自己的
+TypeId，内部 capability 使用 `u32` 位集。
+
+同 key provider 以 `Fn(Ctx, Option(P)) -> P` 逐个 fold，只保留成功的最终 head。
+member property 完成并暂存后才运行 type property，因此 type provider 可读取完整
+member snapshot。整个声明的 effective heads 在失败检查后一次复制和提交；失败 fold
+不会发布部分结果。`std/type-property` 的 `get_type_prop`、`get_field_prop` 和
+`get_variant_prop` 只读取 registry，并返回引用同一 Main 值的 `Option(P)`。
 
 运行时相等先服从 [`LANGUAGE.md`](LANGUAGE.md#33-相等性和顺序) 的 typed equality：
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止

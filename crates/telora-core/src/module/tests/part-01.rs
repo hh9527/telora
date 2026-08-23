@@ -161,7 +161,7 @@
     }
 
     #[test]
-    fn core_prelude_exposes_native_decorator_union_and_validate() {
+    fn core_prelude_exposes_property_attr_union_and_validate() {
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),

@@ -11,8 +11,8 @@ native schema_with: Fn(codec.Properties, Type) -> Any;
 def decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, text) {
     decode_with(codec.properties, target, text)
 };
-def rename_all: Fn(Any) -> Fn(TypeDesc) -> RenameAll = fn(case) {
-    fn(target) {
+def rename_all: Fn(Any) -> Fn(TypeDesc, Option(RenameAll)) -> RenameAll = fn(case) {
+    fn(target, previous) {
         if case == 'CamelCase {
             let property: RenameAll = {case};
             property
@@ -21,7 +21,7 @@ def rename_all: Fn(Any) -> Fn(TypeDesc) -> RenameAll = fn(case) {
         }
     }
 };
-def untagged: Fn(TypeDesc) -> Untagged = fn(target) {
+def untagged: Fn(TypeDesc, Option(Untagged)) -> Untagged = fn(target, previous) {
     let property: Untagged = {};
     property
 };

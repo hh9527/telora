@@ -361,12 +361,6 @@ impl<'a> Lowerer<'a> {
                         })
                         .ok_or_else(|| self.error(field, "Struct field has no type"))?;
                     let decorators = self.decorators(field)?;
-                    if !decorators.is_empty() {
-                        return Err(self.error(
-                            field,
-                            "decorators are only supported on concrete nominal type declarations; Struct fields do not have property identity",
-                        ));
-                    }
                     let value = self.expression(value_node)?;
                     fields.push(located(
                         DictFieldKind {
@@ -410,12 +404,6 @@ impl<'a> Lowerer<'a> {
                         located(ExprKind::Atom("None".to_owned()), self.location(tag_node))
                     };
                     let decorators = self.decorators(variant)?;
-                    if !decorators.is_empty() {
-                        return Err(self.error(
-                            variant,
-                            "decorators are only supported on concrete nominal type declarations; Enum variants do not have property identity",
-                        ));
-                    }
                     let value = payload;
                     variants.push(located(
                         DictFieldKind {

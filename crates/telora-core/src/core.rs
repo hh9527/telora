@@ -51,10 +51,32 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             native_id: 25,
             name: TYPE_PROPERTY_MODULE,
             source: include_str!("../modules/std/type-property.native.telora"),
-            functions: vec![(
-                "get",
-                NativeFunction::new("std/type-property.get", 2, crate::property::native_get),
-            )],
+            functions: vec![
+                (
+                    "get_type_prop",
+                    NativeFunction::new(
+                        "std/type-property.get_type_prop",
+                        2,
+                        crate::property::native_get_type,
+                    ),
+                ),
+                (
+                    "get_field_prop",
+                    NativeFunction::new(
+                        "std/type-property.get_field_prop",
+                        3,
+                        crate::property::native_get_field,
+                    ),
+                ),
+                (
+                    "get_variant_prop",
+                    NativeFunction::new(
+                        "std/type-property.get_variant_prop",
+                        3,
+                        crate::property::native_get_variant,
+                    ),
+                ),
+            ],
         },
         CoreModuleSpec {
             native_id: 23,
@@ -111,6 +133,18 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     "payload",
                     NativeFunction::core_dyn(CoreDynFunction::Payload),
                 ),
+                (
+                    "get_field_value",
+                    NativeFunction::core_dyn(CoreDynFunction::GetFieldValue),
+                ),
+                (
+                    "get_variant_index",
+                    NativeFunction::core_dyn(CoreDynFunction::GetVariantIndex),
+                ),
+                (
+                    "get_variant_payload",
+                    NativeFunction::core_dyn(CoreDynFunction::GetVariantPayload),
+                ),
             ],
         },
         CoreModuleSpec {
@@ -123,6 +157,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Children),
                 ),
                 (
+                    "fields",
+                    NativeFunction::core_type_desc(CoreTypeDescFunction::Fields),
+                ),
+                (
                     "kind",
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Kind),
                 ),
@@ -133,6 +171,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 (
                     "resolve",
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Resolve),
+                ),
+                (
+                    "variants",
+                    NativeFunction::core_type_desc(CoreTypeDescFunction::Variants),
                 ),
             ],
         },
