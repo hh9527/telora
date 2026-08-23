@@ -1,22 +1,62 @@
 fn transform_codec(
     schema: &CodecType,
+    properties: &CodecProperties,
     value: Val,
     direction: CodecDirection,
     path: &str,
-    predicate_decisions: &BTreeMap<String, bool>,
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecNode, CodecFailure> {
     if let Some(owner) = schema.declared_owner {
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        let metadata = ValueRef { value: owner, view };
+        let bridged = text_codec_bridge(metadata, properties).map_err(|message| {
+            CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
+        })?;
+        if bridged {
+            return match direction {
+                CodecDirection::Decode => {
+                    let source = view
+                        .string_text(value)
+                        .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
+                        .ok_or_else(|| {
+                            CodecFailure::new(
+                                format!("{path}: expected String text representation"),
+                                value,
+                                schema.rule,
+                            )
+                        })?;
+                    crate::regex::parse_value(metadata, source.as_str(), properties.parse_by)
+                        .map(|parsed| parsed_codec_node(parsed, value.loc()))
+                        .map_err(|message| {
+                            CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
+                        })
+                }
+                CodecDirection::Encode => crate::fmt::display_value(
+                    metadata,
+                    ValueRef { value, view },
+                    Some(properties.display_by),
+                )
+                .map(|text| CodecNode::String(text, value.loc()))
+                .map_err(|error| {
+                    CodecFailure::new(format!("{path}: {}", error.message), value, schema.rule)
+                }),
+            };
+        }
         let mut structural = schema.clone();
         structural.declared_owner = None;
+        apply_codec_type_properties(&mut structural, metadata, properties)
+            .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
         return match direction {
             CodecDirection::Decode => transform_codec(
                 &structural,
+                properties,
                 value,
                 direction,
                 path,
-                predicate_decisions,
                 current,
                 background,
             )
@@ -52,10 +92,10 @@ fn transform_codec(
                 }
                 transform_codec(
                     &structural,
+                    properties,
                     value.without_type_id(),
                     direction,
                     path,
-                    predicate_decisions,
                     current,
                     background,
                 )
@@ -65,10 +105,10 @@ fn transform_codec(
     if option_item(schema).is_some() {
         return transform_codec_field(
             schema,
+            properties,
             value,
             direction,
             path,
-            predicate_decisions,
             current,
             background,
         );
@@ -77,47 +117,6 @@ fn transform_codec(
         current,
         background: Some(background),
     };
-    if !matches!(schema.kind, CodecKind::TypeSlot(_) | CodecKind::TypeRef(_)) {
-        let bridged = text_codec_bridge(schema, &view).map_err(|message| {
-            CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
-        })?;
-        if bridged {
-            let metadata = ValueRef {
-                value: schema.rule,
-                view,
-            };
-            return match direction {
-                CodecDirection::Decode => {
-                    let source = view
-                        .string_text(value)
-                        .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
-                        .ok_or_else(|| {
-                            CodecFailure::new(
-                                format!("{path}: expected String text representation"),
-                                value,
-                                schema.rule,
-                            )
-                        })?;
-                    crate::regex::parse_value(metadata, source.as_str())
-                        .map(|parsed| parsed_codec_node(parsed, value.loc()))
-                        .map_err(|message| {
-                            CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
-                        })
-                }
-                CodecDirection::Encode => {
-                    crate::fmt::display_value(metadata, ValueRef { value, view })
-                        .map(|text| CodecNode::String(text, value.loc()))
-                        .map_err(|error| {
-                            CodecFailure::new(
-                                format!("{path}: {}", error.message),
-                                value,
-                                schema.rule,
-                            )
-                        })
-                }
-            };
-        }
-    }
     match &schema.kind {
         CodecKind::TypeSlot(handle) => {
             let resolved = view
@@ -130,10 +129,10 @@ fn transform_codec(
                 .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
             transform_codec(
                 &resolved,
+                properties,
                 value,
                 direction,
                 path,
-                predicate_decisions,
                 current,
                 background,
             )
@@ -154,10 +153,10 @@ fn transform_codec(
             resolved.declared_owner = Some(Val::unknown(DecodedValue::DeclaredType(*handle)));
             transform_codec(
                 &resolved,
+                properties,
                 value,
                 direction,
                 path,
-                predicate_decisions,
                 current,
                 background,
             )
@@ -215,10 +214,10 @@ fn transform_codec(
                 .map(|(index, value)| {
                     transform_codec(
                         item,
+                        properties,
                         value,
                         direction,
                         &format!("{path}[{index}]"),
-                        predicate_decisions,
                         current,
                         background,
                     )
@@ -247,10 +246,10 @@ fn transform_codec(
                         .to_owned();
                     let node = transform_codec(
                         item,
+                        properties,
                         *item_value,
                         direction,
                         &format!("{path}.{name}"),
-                        predicate_decisions,
                         current,
                         background,
                     )?;
@@ -285,10 +284,10 @@ fn transform_codec(
                 tag: Box::new(CodecNode::NamedAtom(tag.clone(), value.loc())),
                 payload: Box::new(transform_codec(
                     payload,
+                    properties,
                     actual_payload,
                     direction,
                     path,
-                    predicate_decisions,
                     current,
                     background,
                 )?),
@@ -332,10 +331,10 @@ fn transform_codec(
                 .map(|(index, (item, value))| {
                     transform_codec(
                         item,
+                        properties,
                         value,
                         direction,
                         &format!("{path}[{index}]"),
-                        predicate_decisions,
                         current,
                         background,
                     )
@@ -348,11 +347,11 @@ fn transform_codec(
         }
         CodecKind::Struct(fields) => transform_codec_struct(
             schema,
+            properties,
             fields,
             value,
             direction,
             path,
-            predicate_decisions,
             current,
             background,
         ),
@@ -361,15 +360,14 @@ fn transform_codec(
             for variant in variants {
                 match transform_codec(
                     variant,
+                    properties,
                     value,
                     direction,
                     path,
-                    predicate_decisions,
                     current,
                     background,
                 ) {
                     Ok(node) => return Ok(node),
-                    Err(failure) if failure.predicate.is_some() => return Err(failure),
                     Err(failure) => errors.push(failure.message),
                 }
             }
@@ -398,11 +396,11 @@ fn transform_codec(
         }
         CodecKind::Enum(variants) => transform_codec_enum(
             schema,
+            properties,
             variants,
             value,
             direction,
             path,
-            predicate_decisions,
             current,
             background,
         ),
@@ -429,43 +427,14 @@ fn transform_codec(
     }
 }
 
-fn validate_codec_value_without_skipping(
-    schema: &CodecType,
-    value: Val,
-    path: &str,
-    current: &Heap,
-    background: &Heap,
-) -> Result<CodecNode, CodecFailure> {
-    let mut decisions = BTreeMap::new();
-    loop {
-        match transform_codec(
-            schema,
-            value,
-            CodecDirection::Encode,
-            path,
-            &decisions,
-            current,
-            background,
-        ) {
-            Ok(node) => return Ok(node),
-            Err(failure) => {
-                let Some(request) = &failure.predicate else {
-                    return Err(failure);
-                };
-                decisions.insert(request.path.clone(), false);
-            }
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn transform_codec_struct(
     schema: &CodecType,
+    properties: &CodecProperties,
     fields: &BTreeMap<String, CodecType>,
     value: Val,
     direction: CodecDirection,
     path: &str,
-    predicate_decisions: &BTreeMap<String, bool>,
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecNode, CodecFailure> {
@@ -495,11 +464,11 @@ fn transform_codec_struct(
             let mut consumed = HashSet::new();
             let output = decode_struct_fields(
                 &plan,
+                properties,
                 &input,
                 &mut consumed,
                 value,
                 path,
-                predicate_decisions,
                 current,
                 background,
             )?;
@@ -516,11 +485,11 @@ fn transform_codec_struct(
             let mut emitted = BTreeMap::new();
             encode_struct_fields(
                 &plan,
+                properties,
                 &input,
                 &mut emitted,
                 value,
                 path,
-                predicate_decisions,
                 current,
                 background,
             )?;
@@ -529,27 +498,14 @@ fn transform_codec_struct(
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum SkipPolicy {
-    None,
-    False,
-    Empty,
-    Function(Val),
-}
-
 #[derive(Clone, Debug)]
 struct StructFieldPlan {
     internal_name: String,
-    external_name: Option<String>,
+    external_name: String,
     schema: CodecType,
-    flattened: Option<Box<StructPlan>>,
-    default: Option<Val>,
-    skip: Option<SkipPolicy>,
-    config_rule: Val,
 }
 
 #[derive(Clone, Debug)]
 struct StructPlan {
     fields: Vec<StructFieldPlan>,
 }
-

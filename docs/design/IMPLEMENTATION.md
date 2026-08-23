@@ -41,6 +41,7 @@ workspace snapshot 中的 source、定义、引用、类型图和诊断，不从
 | elaboration、LIR、bytecode | `elaboration.rs`、`lir.rs`、`compiler.rs`、`bytecode.rs` |
 | VM、配额、失败 | `vm.rs`、`evaluation.rs` |
 | 值、heap、复制 | `heap.rs`、`value.rs` |
+| typed property registry / 反射 bridge | `property.rs`、`heap/`、`types/dependency.rs` |
 | 模块解析与 Host 生命周期 | `module_id.rs`、`module.rs` |
 | canonical runtime types | `type_store.rs` |
 | CLI Host | `crates/telora/src/main.rs` |
@@ -152,18 +153,41 @@ Int、Float、短 String/Atom、内建 Atom、native type identity 和静态 `Fu
 Declared/Symbolic TypeMetadata 和 opaque value 使用 scoped handle 指向 heap object。
 handle 的 work bit 让复制器无需间接查询即可区分 Main 与 Work 引用。
 
-Heap 是按 storage scope 管理的对象、text、shape、静态函数和类型 witness 集合。
+Heap 是按 storage scope 管理的对象、text、shape、静态函数、类型 witness 和 typed
+property 集合。
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
+
+Main heap 的 property registry 使用有序的 `PropertyKey`：`Ty(TypeId, TypeId)`、
+`Field(TypeId, u32, TypeId)`、`Variant(TypeId, u32, TypeId)`，值是 MainWorld `Val`。
+Tool stage 先封闭具名 Struct/Enum 的 TypeMetadata、TypeId 和 canonical member index，
+再执行 decorator provider。provider 从只读 context 计算 property value，结果写入
+独立的 property registry；这个单向数据流保持目标 descriptor 稳定。provider 的静态
+结果、运行时 `Val.ty` 与 property carrier TypeId 必须一致。
+carrier 的 owner 能力由
+`Ty(Carrier, PropertyAttr) -> PropertyAttr { bits }` 记录；`PropertyAttr` 自举自己的
+TypeId，内部 capability 使用 `u32` 位集。
+
+同 key provider 以 `Fn(Ctx, Option(P)) -> P` 逐个 fold，只保留成功的最终 head。
+member property 完成并暂存后才运行 type property，因此 type provider 可读取完整
+member snapshot。整个声明的 effective heads 在失败检查后一次复制和提交；失败 fold
+不会发布部分结果。`std/type-property` 的 `get_type_prop`、`get_field_prop` 和
+`get_variant_prop` 只读取 registry，并返回引用同一 Main 值的 `Option(P)`。
 
 运行时相等先服从 [`LANGUAGE.md`](LANGUAGE.md#33-相等性和顺序) 的 typed equality：
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
 无限递归；函数和 opaque value 使用各自的不透明身份规则。来源位置不参与相等。
 
+`Dyn.project_with` 对目标 witness 和 package descriptor 直接执行
+`TypeGraph::decode_persistent + canonicalize`。它先为 declared node 建立 canonical
+TypeId，再闭合递归边；不能先降成扁平 `TypeDescriptor`，否则 `Option(Node)` 一类
+递归复合 witness 会丢失名义回边并退化成不可 canonicalize 的结构递归。
+
 ## 6. MainWorld、WorkWorld 与原子晋升
 
 构建期 `MainWorld` 持有本次封闭模块图的 persistent heap、module skeleton、canonical
-`TypeStore`，并在 best-effort 路径持有稳定 failure arena。模块依赖和静态根成功晋升
+`TypeStore`、typed property registry，并在 best-effort 路径持有稳定 failure arena。
+模块依赖和静态根成功晋升
 后，当前严格运行路径把 persistent heap 封装为只读 `FrozenMainWorld`；运行期所需的
 canonical witness 已经在该 heap 内闭合，构建用 `TypeStore` 本身不进入 Frozen API。
 所选根模块的执行结果、Entry transition 和普通调用仍位于 Work heap，并把冻结 Main

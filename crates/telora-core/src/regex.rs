@@ -199,50 +199,56 @@ fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> 
     (!payload.as_atom().is_some_and(|atom| atom == "None")).then_some(payload)
 }
 
-fn attached_regex(metadata: crate::ValueRef<'_>) -> Result<Option<CompiledRegex>, NativeError> {
-    let mut metadata = metadata;
-    loop {
-        metadata = resolve_metadata(metadata)?;
-        if let Some(provider) = metadata
-            .dict_get("attributes")
-            .and_then(|attributes| attributes.dict_get("std/string.parse"))
-        {
-            let (tag, payload) = provider
-                .tagged_parts()
-                .ok_or_else(|| NativeError::new("std/string.parse provider must be Tagged"))?;
-            if !tag.as_atom().is_some_and(|tag| tag == "Regex") {
-                return Err(NativeError::new("unknown std/string.parse provider"));
-            }
-            let native_type = payload
-                .opaque_native_type()
-                .ok_or_else(|| NativeError::new("regex parse provider has an invalid payload"))?;
-            if native_type.qualified_name() != "std/regex#Regex" {
-                return Err(NativeError::new(
-                    "regex parse provider has an invalid payload",
-                ));
-            }
-            return payload
-                .as_opaque::<CompiledRegex>(native_type)
-                .cloned()
-                .map(Some)
-                .ok_or_else(|| NativeError::new("regex parse provider has an invalid payload"));
+fn attached_regex(
+    mut metadata: crate::ValueRef<'_>,
+    property_type: crate::TypeId,
+) -> Result<Option<CompiledRegex>, NativeError> {
+    for _ in 0..128 {
+        if metadata.is_hidden_type_slot() {
+            metadata = metadata
+                .resolve_hidden_type_slot()
+                .map_err(NativeError::new)?;
+            continue;
         }
-        if !metadata
+        if metadata
             .dict_get("kind")
             .and_then(|kind| kind.as_atom())
             .is_some_and(|kind| kind == "WithAttributes")
         {
-            return Ok(None);
+            metadata = metadata
+                .dict_get("inner")
+                .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
+            continue;
         }
-        metadata = metadata
-            .dict_get("inner")
-            .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
+        break;
     }
+    let Some(property) = metadata.type_property(property_type) else {
+        return Ok(None);
+    };
+    let payload = property
+        .dict_get("regex")
+        .ok_or_else(|| NativeError::new("regex ParseBy property has no regex"))?;
+    let native_type = payload
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("regex ParseBy property has an invalid payload"))?;
+    if native_type.qualified_name() != "std/regex#Regex" {
+        return Err(NativeError::new(
+            "regex ParseBy property has an invalid payload",
+        ));
+    }
+    payload
+        .as_opaque::<CompiledRegex>(native_type)
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| NativeError::new("regex ParseBy property has an invalid payload"))
 }
 
-fn parse_plan(metadata: crate::ValueRef<'_>) -> Result<ParsePlan, NativeError> {
-    if let Some(compiled) = attached_regex(metadata)? {
-        let fields = validate_relation(&compiled, metadata)?;
+fn parse_plan(
+    metadata: crate::ValueRef<'_>,
+    property_type: crate::TypeId,
+) -> Result<ParsePlan, NativeError> {
+    if let Some(compiled) = attached_regex(metadata, property_type)? {
+        let fields = validate_relation(&compiled, metadata, property_type)?;
         return Ok(ParsePlan::Regex { compiled, fields });
     }
     let metadata = stripped_metadata(metadata)?;
@@ -258,6 +264,7 @@ fn parse_plan(metadata: crate::ValueRef<'_>) -> Result<ParsePlan, NativeError> {
 fn validate_relation(
     compiled: &CompiledRegex,
     metadata: crate::ValueRef<'_>,
+    property_type: crate::TypeId,
 ) -> Result<BTreeMap<String, FieldPlan>, NativeError> {
     let metadata = stripped_metadata(metadata)?;
     if !metadata
@@ -300,7 +307,7 @@ fn validate_relation(
                 .expect("field name came from metadata");
             let (optional, metadata) =
                 option_payload(metadata).map_or((false, metadata), |payload| (true, payload));
-            let plan = parse_plan(metadata).map_err(|error| {
+            let plan = parse_plan(metadata, property_type).map_err(|error| {
                 NativeError::new(format!(
                     "regex field {name:?} is not string-parsable: {}",
                     error.message
@@ -326,28 +333,16 @@ fn validate_relation(
 pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let native_type = regex_type(context)?;
     let compiled = compiled_argument(context, 0, &native_type)?;
-    validate_relation(&compiled, context.value(context.argument(2)?)?)?;
-
-    let regex = context.scratch()?;
-    context.copy(regex, context.argument(0)?)?;
-    let attributes = context.scratch()?;
-    let provider_tag = context.scratch()?;
-    context.set_atom(provider_tag, "Regex")?;
-    let provider = context.scratch()?;
-    context.make_tagged(provider, provider_tag, regex)?;
-    context.make_dict(attributes, &[("std/string.parse".into(), provider)])?;
-    let kind = context.scratch()?;
-    context.set_atom(kind, "WithAttributes")?;
-    let inner = context.scratch()?;
-    context.copy(inner, context.argument(2)?)?;
-    context.make_dict(
-        context.result(),
-        &[
-            ("kind".into(), kind),
-            ("inner".into(), inner),
-            ("attributes".into(), attributes),
-        ],
-    )
+    let property_type = context
+        .value(context.argument(1)?)?
+        .declared_type_id()
+        .ok_or_else(|| NativeError::new("std/regex.prepare expects ParseBy Type metadata"))?;
+    validate_relation(
+        &compiled,
+        context.value(context.argument(2)?)?,
+        property_type,
+    )?;
+    context.copy(context.result(), context.argument(0)?)
 }
 
 fn set_error(context: &mut CallContext<'_, '_>, message: String) -> Result<(), NativeError> {
@@ -360,7 +355,7 @@ fn set_error(context: &mut CallContext<'_, '_>, message: String) -> Result<(), N
         error,
         &[
             ("message".into(), message_register),
-            ("data".into(), context.argument(1)?),
+            ("data".into(), context.argument(2)?),
             ("rule".into(), context.argument(0)?),
         ],
     )?;
@@ -413,8 +408,9 @@ fn execute_plan(plan: &ParsePlan, input: &str) -> Result<ParsedValue, String> {
 pub(crate) fn parse_value(
     metadata: crate::ValueRef<'_>,
     input: &str,
+    property_type: crate::TypeId,
 ) -> Result<ParsedValue, String> {
-    let plan = parse_plan(metadata).map_err(|error| error.message)?;
+    let plan = parse_plan(metadata, property_type).map_err(|error| error.message)?;
     execute_plan(&plan, input)
 }
 
@@ -448,13 +444,17 @@ fn materialize(
 }
 
 pub(crate) fn native_parse(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let metadata = context.value(context.argument(0)?)?;
+    let property_type = context
+        .value(context.argument(0)?)?
+        .declared_type_id()
+        .ok_or_else(|| NativeError::new("std/string.parse_with expects ParseBy Type metadata"))?;
+    let metadata = context.value(context.argument(1)?)?;
     let input = context
-        .value(context.argument(1)?)?
+        .value(context.argument(2)?)?
         .as_str()
         .ok_or_else(|| NativeError::new("std/string.parse expects String"))?
         .to_owned();
-    let parsed = match parse_value(metadata, &input) {
+    let parsed = match parse_value(metadata, &input, property_type) {
         Ok(value) => value,
         Err(message) => return set_error(context, message),
     };
@@ -463,48 +463,6 @@ pub(crate) fn native_parse(context: &mut CallContext<'_, '_>) -> Result<(), Nati
     let tag = context.scratch()?;
     context.set_atom(tag, "Ok")?;
     context.make_tagged(context.result(), tag, value)
-}
-
-fn native_text_codec_marker(
-    context: &mut CallContext<'_, '_>,
-    key: &str,
-) -> Result<(), NativeError> {
-    let decorator_context = context.value(context.argument(0)?)?;
-    if decorator_context
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-        .is_none_or(|kind| kind != "Type")
-    {
-        return Err(NativeError::new(format!(
-            "{key} is only supported on a type container"
-        )));
-    }
-    let marker = context.scratch()?;
-    context.set_atom(marker, "True")?;
-    let attributes = context.scratch()?;
-    context.make_dict(attributes, &[(key.into(), marker)])?;
-    let kind = context.scratch()?;
-    context.set_atom(kind, "WithAttributes")?;
-    let inner = context.scratch()?;
-    context.copy(inner, context.argument(1)?)?;
-    context.make_dict(
-        context.result(),
-        &[
-            ("kind".into(), kind),
-            ("inner".into(), inner),
-            ("attributes".into(), attributes),
-        ],
-    )
-}
-
-pub(crate) fn native_decode_by_parse(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    native_text_codec_marker(context, "std/string.decode_by_parse")
-}
-
-pub(crate) fn native_encode_by_display(
-    context: &mut CallContext<'_, '_>,
-) -> Result<(), NativeError> {
-    native_text_codec_marker(context, "std/string.encode_by_display")
 }
 
 #[cfg(test)]

@@ -12,6 +12,29 @@ type BytecodeLinks<'a> = (
 );
 
 impl<'a> HeapView<'a> {
+    pub(crate) fn property(&self, key: PropertyKey) -> Option<Val> {
+        self.current
+            .properties
+            .get(&key)
+            .or_else(|| {
+                self.background?
+                    .properties
+                    .get(&key)
+            })
+            .copied()
+    }
+
+    pub(crate) fn type_property(
+        &self,
+        target: crate::TypeId,
+        property: crate::TypeId,
+    ) -> Option<Val> {
+        self.property(PropertyKey::Ty {
+            ty: target,
+            property_ty: property,
+        })
+    }
+
     pub(crate) fn static_func(&self, id: crate::FuncId) -> Option<Val> {
         self.current
             .static_func(id)

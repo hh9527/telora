@@ -2,7 +2,6 @@
 fn continue_json_encode(
     input: JsonEncodeInput,
     value_owner: Val,
-    decisions: BTreeMap<String, bool>,
     diagnostic_input: Val,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
@@ -12,52 +11,29 @@ fn continue_json_encode(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let result = match &input {
-        JsonEncodeInput::Typed { schema, value } => transform_codec(
+        JsonEncodeInput::Typed {
             schema,
+            properties,
+            value,
+        } => transform_codec(
+            schema,
+            properties,
             *value,
             CodecDirection::Encode,
             "$",
-            &decisions,
             current,
             background,
         ),
-        JsonEncodeInput::Dynamic(value) => transform_dynamic_encode(
+        JsonEncodeInput::Dynamic { properties, value } => transform_dynamic_encode(
             *value,
+            properties,
             "$",
-            &decisions,
             current,
             background,
             &mut HashSet::new(),
         )
         .map(|(node, _)| node),
     };
-    if let Err(failure) = &result
-        && let Some(request) = &failure.predicate
-    {
-        let continuation = JsonEncodeContinuation {
-            input,
-            value_owner,
-            decisions,
-            pending_path: request.path.clone(),
-            pending_rule: failure.rule,
-            return_target,
-            trace_frame: RuntimeFrame {
-                function: "std/codec.encode".into(),
-                instruction: 0,
-                origin: call_function.origin_at(call_pc),
-            },
-            call_function: Arc::clone(&call_function),
-            call_pc,
-        };
-        return Ok(VmAction::Call {
-            callee: request.callee,
-            arguments: vec![request.value],
-            return_target: ReturnTarget::Native(Box::new(continuation)),
-            call_function,
-            call_pc,
-            rule_boundary: None,
-        });
-    }
     let result = result.map(|raw| CodecNode::SemanticValue {
         owner: value_owner,
         raw: Box::new(raw),
@@ -74,49 +50,10 @@ fn continue_json_encode(
     )
 }
 
-fn resume_json_encode_continuation(
-    mut continuation: JsonEncodeContinuation,
-    value: Val,
-    current: &mut Heap,
-    background: &Heap,
-    account: &mut QuotaAccount,
-) -> Result<VmAction, RuntimeError> {
-    let decision = match value.value() {
-        DecodedValue::BuiltinAtom(BuiltinAtom::True) => true,
-        DecodedValue::BuiltinAtom(BuiltinAtom::False) => false,
-        _ => {
-            let mut runtime = error(
-                RuntimeErrorKind::TypeMismatch,
-                "std/json.skip_serializing_if predicate must return 'True or 'False",
-                &continuation.call_function,
-                continuation.call_pc,
-            );
-            runtime.set_locations(value.loc(), continuation.pending_rule.loc());
-            return Err(runtime);
-        }
-    };
-    continuation
-        .decisions
-        .insert(continuation.pending_path.clone(), decision);
-    let diagnostic_input = continuation.input.value();
-    continue_json_encode(
-        continuation.input,
-        continuation.value_owner,
-        continuation.decisions,
-        diagnostic_input,
-        continuation.return_target,
-        continuation.call_function,
-        continuation.call_pc,
-        current,
-        background,
-        account,
-    )
-}
-
 fn transform_dynamic_encode(
     value: Val,
+    properties: &CodecProperties,
     path: &str,
-    predicate_decisions: &BTreeMap<String, bool>,
     current: &Heap,
     background: &Heap,
     active: &mut HashSet<Handle>,
@@ -142,10 +79,10 @@ fn transform_dynamic_encode(
         })?;
         return transform_codec(
             &schema,
+            properties,
             value,
             CodecDirection::Encode,
             path,
-            predicate_decisions,
             current,
             background,
         )
@@ -182,8 +119,8 @@ fn transform_dynamic_encode(
                 .map(|(index, item)| {
                     transform_dynamic_encode(
                         *item,
+                        properties,
                         &format!("{path}[{index}]"),
-                        predicate_decisions,
                         current,
                         background,
                         active,
@@ -226,8 +163,8 @@ fn transform_dynamic_encode(
                         .to_owned();
                     transform_dynamic_encode(
                         *item,
+                        properties,
                         &format!("{path}.{name}"),
-                        predicate_decisions,
                         current,
                         background,
                         active,
@@ -260,8 +197,8 @@ fn transform_dynamic_encode(
             if tag.value() == DecodedValue::BuiltinAtom(BuiltinAtom::Some) {
                 return transform_dynamic_encode(
                     payload,
+                    properties,
                     path,
-                    predicate_decisions,
                     current,
                     background,
                     active,
@@ -365,4 +302,3 @@ fn finish_codec_result(
         return_target,
     })
 }
-

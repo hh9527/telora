@@ -161,7 +161,7 @@
     }
 
     #[test]
-    fn core_prelude_exposes_only_union_and_validate() {
+    fn core_prelude_exposes_property_attr_union_and_validate() {
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
@@ -1282,4 +1282,3 @@ type Independent = String;
         assert_eq!(payload.get("rule").unwrap().to_string(), "{kind: 'String}");
         fs::remove_dir_all(directory).unwrap();
     }
-

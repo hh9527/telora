@@ -30,87 +30,6 @@
         fs::remove_dir_all(directory).unwrap();
     }
 
-    #[test]
-    fn parameterized_type_families_preserve_attributes_and_codec_rules() {
-        let directory = fixture_dir();
-        fs::write(
-            directory.join("main.telora"),
-            r#"import "std/codec" as codec;
-               import "std/json" as json;
-               import "std/result" as result;
-               @json.rename_all('CamelCase)
-               type Box(Item) = struct {
-                   @json.rename("payload") value: Item,
-               };
-               {
-                   metadata: Box(String),
-               decoded: codec.decode(Box(String), codec.encode(codec.Value, {payload: "ready"}) |> result.unwrap),
-               }"#,
-        )
-        .unwrap();
-
-        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let result_world = module.execute(100_000).unwrap();
-        let result = result_world.value();
-        assert!(
-            result
-                .get("decoded")
-                .unwrap()
-                .to_string()
-                .starts_with("'Ok("),
-            "{}",
-            result.get("decoded").unwrap()
-        );
-        let metadata = result
-            .get("metadata")
-            .unwrap()
-            .declared_body()
-            .expect("declared family metadata");
-        assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
-        let model_attributes = metadata.get("attributes").unwrap();
-        assert_eq!(
-            model_attributes
-                .get("std/json.rename_all")
-                .unwrap()
-                .to_string(),
-            "'CamelCase"
-        );
-        let struct_metadata = metadata.get("inner").unwrap();
-        let fields = struct_metadata.get("fields").unwrap();
-        let field = fields.get("value").unwrap();
-        let field_attributes = field.get("attributes").unwrap();
-        assert_eq!(
-            field_attributes.get("std/json.rename").unwrap().to_string(),
-            "\"payload\""
-        );
-
-        fs::write(
-            directory.join("family.telora"),
-            r#"import "std/json" as json;
-               @json.rename_all('CamelCase)
-               type Box(Item) = struct {
-                   @json.rename("payload") value: Item,
-               };
-               export {Box};"#,
-        )
-        .unwrap();
-        fs::write(
-            directory.join("imported.telora"),
-            r#"import "std/codec" as codec;
-               import "std/result" as result;
-               import "./family.telora" {Box};
-               type StringBox = Box(String);
-               codec.decode(StringBox, codec.encode(codec.Value, {payload: "imported"}) |> result.unwrap)"#,
-        )
-        .unwrap();
-        let imported =
-            load_module(directory.join("imported.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(
-            imported.execute(100_000).unwrap().to_string(),
-            "'Ok({value: \"imported\"})"
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
 
     #[test]
     fn local_concrete_family_dependencies_preserve_metadata_and_match_imports() {
@@ -1232,4 +1151,3 @@
         assert_eq!(output.get("kinds_differ").unwrap().to_string(), "'False");
         fs::remove_dir_all(directory).unwrap();
     }
-

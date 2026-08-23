@@ -103,6 +103,78 @@ fn run_core_type_desc(
                 return_target,
             })
         }
+        CoreTypeDescFunction::Fields | CoreTypeDescFunction::Variants => {
+            let variants = operation == CoreTypeDescFunction::Variants;
+            let members = type_desc_members(input, variants, &view)
+                .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+            charge_allocation(
+                account,
+                logical_value_bytes(2 + members.len() * 6)
+                    .map_err(|native_error| allocation_error(native_error.message, function, pc))?,
+                function,
+                pc,
+            )?;
+            let field_names = if variants {
+                ["index", "name", "payload"]
+            } else {
+                ["index", "name", "ty"]
+            };
+            let fields = field_names
+                .into_iter()
+                .map(|field| current.intern(field))
+                .collect();
+            let shape = current.intern_shape(fields);
+            let mut records = Vec::with_capacity(members.len());
+            for (index, (name, member)) in members.into_iter().enumerate() {
+                let index = i64::try_from(index).map_err(|_| {
+                    error(
+                        RuntimeErrorKind::AllocationQuotaExceeded,
+                        "Type member index exceeds Int",
+                        function,
+                        pc,
+                    )
+                })?;
+                let name = Val::new(current.string(Some(background), &name), input.loc());
+                let member = if variants {
+                    match member {
+                        Some(payload) => Val::new(
+                            DecodedValue::Tagged(current.allocate(Object::Tagged {
+                                tag: Val::new(
+                                    DecodedValue::BuiltinAtom(BuiltinAtom::Some),
+                                    input.loc(),
+                                ),
+                                payload,
+                            })),
+                            input.loc(),
+                        ),
+                        None => Val::new(
+                            DecodedValue::BuiltinAtom(BuiltinAtom::None),
+                            input.loc(),
+                        ),
+                    }
+                } else {
+                    member.expect("Struct field always has a descriptor")
+                };
+                records.push(Val::new(
+                    DecodedValue::Dict(current.allocate(Object::Dict {
+                        shape,
+                        values: Box::new([
+                            Val::new(DecodedValue::Int(index), input.loc()),
+                            name,
+                            member,
+                        ]),
+                    })),
+                    input.loc(),
+                ));
+            }
+            Ok(VmAction::Return {
+                value: Val::new(
+                    DecodedValue::Array(current.allocate(Object::Array(records.into()))),
+                    input.loc(),
+                ),
+                return_target,
+            })
+        }
         CoreTypeDescFunction::OpaqueName => {
             let name = if let DecodedValue::NativeType(id) = input.value() {
                 Some(
@@ -199,4 +271,3 @@ fn run_core_type_desc(
         }
     }
 }
-

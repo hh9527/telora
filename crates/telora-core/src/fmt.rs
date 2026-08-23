@@ -64,44 +64,53 @@ fn strip(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
     Ok(metadata)
 }
 
-fn attached_template(mut metadata: ValueRef<'_>) -> Result<Option<DisplayTemplate>, NativeError> {
-    loop {
-        metadata = resolve(metadata)?;
-        if let Some(provider) = metadata
-            .dict_get("attributes")
-            .and_then(|attributes| attributes.dict_get("std/fmt.display"))
-        {
-            let (tag, payload) = provider
-                .tagged_parts()
-                .ok_or_else(|| NativeError::new("std/fmt.display provider must be Tagged"))?;
-            if !tag.as_atom().is_some_and(|tag| tag == "Template") {
-                return Err(NativeError::new("unknown std/fmt.display provider"));
-            }
-            let native_type = payload
-                .opaque_native_type()
-                .ok_or_else(|| NativeError::new("invalid std/fmt.display template provider"))?;
-            if native_type.qualified_name() != "std/fmt#DisplayTemplate" {
-                return Err(NativeError::new(
-                    "invalid std/fmt.display template provider",
-                ));
-            }
-            return payload
-                .as_opaque::<DisplayTemplate>(native_type)
-                .cloned()
-                .map(Some)
-                .ok_or_else(|| NativeError::new("invalid std/fmt.display template provider"));
-        }
-        if !metadata
-            .dict_get("kind")
-            .and_then(|kind| kind.as_atom())
-            .is_some_and(|kind| kind == "WithAttributes")
-        {
-            return Ok(None);
+fn resolve_link(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
+    for _ in 0..128 {
+        if !metadata.is_hidden_type_slot() {
+            return Ok(metadata);
         }
         metadata = metadata
-            .dict_get("inner")
-            .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
+            .resolve_hidden_type_slot()
+            .map_err(NativeError::new)?;
     }
+    Err(NativeError::new(
+        "std/fmt.display type link exceeds the recursive type limit",
+    ))
+}
+
+fn attached_template(
+    metadata: ValueRef<'_>,
+    property_type: crate::TypeId,
+) -> Result<Option<DisplayTemplate>, NativeError> {
+    let mut metadata = resolve_link(metadata)?;
+    while metadata
+        .dict_get("kind")
+        .and_then(|kind| kind.as_atom())
+        .is_some_and(|kind| kind == "WithAttributes")
+    {
+        metadata = resolve_link(
+            metadata
+                .dict_get("inner")
+                .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?,
+        )?;
+    }
+    let Some(property) = metadata.type_property(property_type) else {
+        return Ok(None);
+    };
+    let payload = property
+        .dict_get("template")
+        .ok_or_else(|| NativeError::new("fmt DisplayBy property has no template"))?;
+    let native_type = payload
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("invalid fmt DisplayBy template"))?;
+    if native_type.qualified_name() != "std/fmt#DisplayTemplate" {
+        return Err(NativeError::new("invalid fmt DisplayBy template"));
+    }
+    payload
+        .as_opaque::<DisplayTemplate>(native_type)
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| NativeError::new("invalid fmt DisplayBy template"))
 }
 
 fn parse_template(source: &str) -> Result<DisplayTemplate, NativeError> {
@@ -155,49 +164,25 @@ fn parse_template(source: &str) -> Result<DisplayTemplate, NativeError> {
     Ok(DisplayTemplate(parts))
 }
 
-fn display_plan(metadata: ValueRef<'_>) -> Result<DisplayPlan, NativeError> {
-    display_plan_at(metadata, 0)
+fn display_plan(
+    metadata: ValueRef<'_>,
+    property_type: crate::TypeId,
+) -> Result<DisplayPlan, NativeError> {
+    display_plan_at(metadata, property_type, 0)
 }
 
-fn display_plan_at(metadata: ValueRef<'_>, depth: usize) -> Result<DisplayPlan, NativeError> {
+fn display_plan_at(
+    metadata: ValueRef<'_>,
+    property_type: crate::TypeId,
+    depth: usize,
+) -> Result<DisplayPlan, NativeError> {
     if depth >= 128 {
         return Err(NativeError::new(
             "std/fmt.display plan exceeds the recursive type limit",
         ));
     }
-    if let Some(template) = attached_template(metadata)? {
-        let inner = strip(metadata)?;
-        if !inner
-            .dict_get("kind")
-            .and_then(|kind| kind.as_atom())
-            .is_some_and(|kind| kind == "Struct")
-        {
-            return Err(NativeError::new("fmt.display_by requires a struct type"));
-        }
-        let members = inner
-            .dict_get("fields")
-            .ok_or_else(|| NativeError::new("struct type metadata has no fields"))?;
-        let mut fields = BTreeMap::new();
-        for part in &template.0 {
-            let TemplatePart::Field(name) = part else {
-                continue;
-            };
-            if fields.contains_key(name) {
-                continue;
-            }
-            let field = members.dict_get(name).ok_or_else(|| {
-                NativeError::new(format!(
-                    "Display template references unknown field {name:?}"
-                ))
-            })?;
-            fields.insert(
-                name.clone(),
-                display_plan_at(field, depth + 1).map_err(|error| {
-                    NativeError::new(format!("Display field {name:?}: {}", error.message))
-                })?,
-            );
-        }
-        return Ok(DisplayPlan::Template { template, fields });
+    if let Some(template) = attached_template(metadata, property_type)? {
+        return display_template_plan(metadata, template, property_type, depth);
     }
     let kind = strip(metadata)?
         .dict_get("kind")
@@ -208,6 +193,46 @@ fn display_plan_at(metadata: ValueRef<'_>, depth: usize) -> Result<DisplayPlan, 
         Some("Float") => Ok(DisplayPlan::Float),
         _ => Err(NativeError::new("type has no std/fmt.display capability")),
     }
+}
+
+fn display_template_plan(
+    metadata: ValueRef<'_>,
+    template: DisplayTemplate,
+    property_type: crate::TypeId,
+    depth: usize,
+) -> Result<DisplayPlan, NativeError> {
+    let inner = strip(metadata)?;
+    if !inner
+        .dict_get("kind")
+        .and_then(|kind| kind.as_atom())
+        .is_some_and(|kind| kind == "Struct")
+    {
+        return Err(NativeError::new("fmt.display_by requires a struct type"));
+    }
+    let members = inner
+        .dict_get("fields")
+        .ok_or_else(|| NativeError::new("struct type metadata has no fields"))?;
+    let mut fields = BTreeMap::new();
+    for part in &template.0 {
+        let TemplatePart::Field(name) = part else {
+            continue;
+        };
+        if fields.contains_key(name) {
+            continue;
+        }
+        let field = members.dict_get(name).ok_or_else(|| {
+            NativeError::new(format!(
+                "Display template references unknown field {name:?}"
+            ))
+        })?;
+        fields.insert(
+            name.clone(),
+            display_plan_at(field, property_type, depth + 1).map_err(|error| {
+                NativeError::new(format!("Display field {name:?}: {}", error.message))
+            })?,
+        );
+    }
+    Ok(DisplayPlan::Template { template, fields })
 }
 
 fn render(plan: &DisplayPlan, value: ValueRef<'_>, output: &mut String) -> Result<(), NativeError> {
@@ -259,35 +284,26 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
         .ok_or_else(|| NativeError::new("std/fmt.display_by expects String"))?;
     let template = parse_template(source.as_str())?;
 
-    let opaque = context.scratch()?;
-    context.set_opaque(opaque, native_type.clone(), template)?;
-    let tag = context.scratch()?;
-    context.set_atom(tag, "Template")?;
-    let provider = context.scratch()?;
-    context.make_tagged(provider, tag, opaque)?;
-    let attributes = context.scratch()?;
-    context.make_dict(attributes, &[("std/fmt.display".into(), provider)])?;
-    let kind = context.scratch()?;
-    context.set_atom(kind, "WithAttributes")?;
-    let inner = context.scratch()?;
-    context.copy(inner, context.argument(2)?)?;
+    let property_type = context
+        .value(context.argument(1)?)?
+        .declared_type_id()
+        .ok_or_else(|| NativeError::new("std/fmt.prepare expects DisplayBy Type metadata"))?;
+    let target = context.value(context.argument(2)?)?;
+    display_template_plan(target, template.clone(), property_type, 0)?;
+
     let result = context.result();
-    context.make_dict(
-        result,
-        &[
-            ("kind".into(), kind),
-            ("inner".into(), inner),
-            ("attributes".into(), attributes),
-        ],
-    )?;
-    display_plan(context.value(result)?)?;
-    Ok(())
+    context.set_opaque(result, native_type, template)
 }
 
 pub(crate) fn native_display(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let property_type = context
+        .value(context.argument(0)?)?
+        .declared_type_id()
+        .ok_or_else(|| NativeError::new("std/fmt.render expects DisplayBy Type metadata"))?;
     let output = display_value(
-        context.value(context.argument(0)?)?,
         context.value(context.argument(1)?)?,
+        context.value(context.argument(2)?)?,
+        Some(property_type),
     )?;
     context.set_string(context.result(), output)
 }
@@ -295,8 +311,21 @@ pub(crate) fn native_display(context: &mut CallContext<'_, '_>) -> Result<(), Na
 pub(crate) fn display_value(
     metadata: ValueRef<'_>,
     value: ValueRef<'_>,
+    property_type: Option<crate::TypeId>,
 ) -> Result<String, NativeError> {
-    let plan = display_plan(metadata)?;
+    let plan = if let Some(property_type) = property_type {
+        display_plan(metadata, property_type)?
+    } else {
+        let kind = strip(metadata)?
+            .dict_get("kind")
+            .and_then(|kind| kind.as_atom());
+        match kind.as_ref().map(crate::TextRef::as_str) {
+            Some("String") => DisplayPlan::String,
+            Some("Int") => DisplayPlan::Int,
+            Some("Float") => DisplayPlan::Float,
+            _ => return Err(NativeError::new("type has no std/fmt.display capability")),
+        }
+    };
     let mut output = String::new();
     render(&plan, value, &mut output)?;
     Ok(output)

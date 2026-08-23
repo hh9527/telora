@@ -433,6 +433,20 @@ impl<'a> ValueRef<'a> {
         self.declared_type_parts().map(|(_, _, body)| body)
     }
 
+    pub(crate) fn declared_type_id(self) -> Option<crate::TypeId> {
+        self.view.declared_type_id(self.value).ok()
+    }
+
+    pub(crate) fn type_property(self, property: crate::TypeId) -> Option<ValueRef<'a>> {
+        let target = self.declared_type_id()?;
+        self.view
+            .type_property(target, property)
+            .map(|value| ValueRef {
+                value,
+                view: self.view,
+            })
+    }
+
     pub(crate) fn unwrap_declared(self) -> Option<ValueRef<'a>> {
         let value = self.view.unwrap_declared(self.value).ok()?;
         Some(ValueRef {
@@ -598,4 +612,3 @@ impl fmt::Display for ValueRef<'_> {
         }
     }
 }
-

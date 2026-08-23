@@ -371,7 +371,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     for node in &type_dependencies.nodes {
         let binding = type_bindings[&node.definition];
         if binding.value.type_parameters.is_empty()
-            && !binding.value.decorators.is_empty()
+            && binding.value.declared_initializer.is_some()
             && dependency_reaches(&type_dependencies, node.definition, node.definition)
         {
             let name = binding.value.name.value.clone();
@@ -698,11 +698,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 evaluated_types.insert(definition);
                 continue;
             }
-            let concrete_decorated = !contains_family
+            let concrete_nominal = !contains_family
                 && component
                     .iter()
-                    .all(|definition| !type_bindings[definition].value.decorators.is_empty());
-            if concrete_decorated {
+                    .all(|definition| {
+                        type_bindings[definition]
+                            .value
+                            .declared_initializer
+                            .is_some()
+                    });
+            if concrete_nominal {
                 let mut type_refs = BTreeMap::new();
                 for definition in &component {
                     let binding = type_bindings[definition];
@@ -1171,6 +1176,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
             }
         }
     }
+
+    evaluate_declared_properties(
+        source_name,
+        program,
+        &tool_values,
+        &static_environment,
+        account,
+        sources,
+        &mut evaluator,
+    )?;
 
     for (name, location) in &declaration_locations {
         if definition_counts.get(name).copied().unwrap_or(0) == 0 {
@@ -1977,4 +1992,3 @@ pub(crate) fn analyze_program_with_bindings_observed(
         declared_value_owners,
     })
 }
-

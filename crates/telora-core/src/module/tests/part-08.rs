@@ -144,6 +144,326 @@
     }
 
     #[test]
+    fn typed_properties_are_queried_by_target_and_property_identity() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               import "std/type-property" as type_property;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               type Plain = struct { value: Int };
+               def endpoint_property = type_property.get_type_prop(Endpoint, fmt.DisplayBy);
+               def has_endpoint = match endpoint_property {
+                   'Some(_) => 'True,
+                   'None => 'False,
+               };
+               def has_plain = match type_property.get_type_prop(Plain, fmt.DisplayBy) {
+                   'Some(_) => 'True,
+                   'None => 'False,
+               };
+               def property_valid = match endpoint_property {
+                   'Some(property) => validate(fmt.DisplayBy, property),
+                   'None => 'Err("missing"),
+               };
+               export def output = {has_endpoint, has_plain, property_valid, target: Endpoint};"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        let output = named_output(&executed);
+        assert_eq!(output.get("has_endpoint").unwrap().to_string(), "'True");
+        assert_eq!(output.get("has_plain").unwrap().to_string(), "'False");
+        assert!(
+            output
+                .get("property_valid")
+                .unwrap()
+                .to_string()
+                .starts_with("'Ok(")
+        );
+        let target = output
+            .get("target")
+            .unwrap()
+            .declared_body()
+            .expect("Endpoint Type metadata");
+        assert_eq!(target.get("kind").unwrap().to_string(), "'WithAttributes");
+        assert!(
+            target
+                .get("attributes")
+                .unwrap()
+                .dict_fields()
+                .unwrap()
+                .is_empty(),
+            "typed property must not modify target metadata"
+        );
+        let target = target.get("inner").expect("Endpoint metadata body");
+        assert_eq!(target.get("kind").unwrap().to_string(), "'Struct");
+        assert_eq!(
+            target.get("fields").unwrap().dict_fields().unwrap(),
+            vec!["host", "port"]
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn typed_properties_reject_targets_carriers_and_duplicate_identity() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        let cases = [
+            (
+                "@property('Type) type Prop = Int; export { Prop };",
+                "concrete nominal",
+            ),
+            (
+                "@property('Type) type Prop(T) = struct { value: T }; export { Prop };",
+                "concrete nominal struct or enum declarations",
+            ),
+            (
+                r#"import "std/type-desc" { TypeDesc };
+                   type Prop = struct {};
+                   def deco: Fn(TypeDesc, Option(Prop)) -> Prop = fn(target, previous) { let value: Prop = {}; value };
+                   @deco type Target = struct {};
+                   export { Prop, Target };"#,
+                "is not marked with @property",
+            ),
+            (
+                r#"import "std/type-desc" { TypeDesc };
+                   def deco: Fn(TypeDesc, Option(Int)) -> Int = fn(target, previous) { 1 };
+                   @deco type Target = struct {};
+                   export { Target };"#,
+                "concrete nominal property type",
+            ),
+            (
+                r#"import "std/type-desc" { TypeDesc };
+                   @property('Field) type Prop = struct {};
+                   def deco: Fn(TypeDesc, Option(Prop)) -> Prop = fn(target, previous) { let value: Prop = {}; value };
+                   @deco type Target = struct {};
+                   export { Prop, Target };"#,
+                "does not support this decorator target",
+            ),
+        ];
+        for (source, expected) in cases {
+            fs::write(&main, source).unwrap();
+            let error = recovery_engine().load_module(&main, BTreeMap::new()).unwrap_err();
+            assert!(error.message().contains(expected), "{source}\n{error}");
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_property_markers_are_source_order_independent() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/type-desc" { TypeDesc };
+               import "std/type-property" as type_property;
+               def deco: Fn(TypeDesc, Option(Prop)) -> Prop = fn(target, previous) { let value: Prop = {}; value };
+               @deco type Target = struct {};
+               @property('Type) type Prop = struct {};
+               export def output = match type_property.get_type_prop(Target, Prop) {
+                   'Some(_) => 'True,
+                   'None => 'False,
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        assert_eq!(
+            named_output(&engine.execute(&module).unwrap()).to_string(),
+            "'True"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn indexed_reflection_uses_canonical_member_coordinates() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/dyn" as dyn;
+               import "std/type-desc" as type_desc;
+               type User = struct { z: Int, a: String };
+               type Choice = enum { 'Some(Int), 'None };
+               def user: User = { z: 7, a: "alpha" };
+               def choice: Choice = 'Some(9);
+               def user_dyn = dyn.pack(User, user);
+               def choice_dyn = dyn.pack(Choice, choice);
+               export def output = {
+                   fields: type_desc.fields(User),
+                   variants: type_desc.variants(Choice),
+                   first_field: dyn.project_with(String, dyn.get_field_value(user_dyn, 0)),
+                   variant_index: dyn.get_variant_index(choice_dyn),
+                   payload: match dyn.get_variant_payload(choice_dyn, 1) {
+                       'Some(value) => dyn.project_with(Int, value),
+                       'None => 'None,
+                   },
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(output.contains("name: \"a\""), "{output}");
+        assert!(output.contains("name: \"z\""), "{output}");
+        assert!(output.contains("first_field: 'Some(\"alpha\")"), "{output}");
+        assert!(output.contains("variant_index: 1"), "{output}");
+        assert!(output.contains("payload: 'Some(9)"), "{output}");
+
+        fs::write(
+            &main,
+            r#"import "std/dyn" as dyn;
+               type Choice = enum { 'Some(Int), 'None };
+               def choice: Choice = 'Some(9);
+               dyn.get_variant_payload(dyn.pack(Choice, choice), 0)"#,
+        )
+        .unwrap();
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let error = module.execute(100_000).unwrap_err();
+        assert!(error.message.contains("variant index is 1, not 0"));
+
+        fs::write(
+            &main,
+            r#"import "std/dyn" as dyn;
+               type User = struct { value: Int };
+               def user: User = { value: 1 };
+               dyn.get_field_value(dyn.pack(User, user), 1)"#,
+        )
+        .unwrap();
+        let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+        let error = module.execute(100_000).unwrap_err();
+        assert!(error.message.contains("field index 1 is out of range"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn indexed_reflection_is_finite_for_recursive_nominal_types() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/dyn" as dyn;
+               import "std/type-desc" as type_desc;
+               type Node = struct { value: Int, next: Option(Node) };
+               def node: Node = { value: 7, next: 'None };
+               def next = dyn.get_field_value(dyn.pack(Node, node), 0);
+               export def output = {
+                   fields: type_desc.fields(Node),
+                   next: dyn.project_with(Option(Node), next),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(output.contains("name: \"next\""), "{output}");
+        assert!(output.contains("name: \"value\""), "{output}");
+        assert!(output.contains("next: 'Some('None)"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn member_properties_fold_before_type_properties() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/type-desc" { TypeDesc };
+               import "std/type-property" as prop;
+               import "std/type-property" { FieldPropertyCtx };
+               @property('Field)
+               type Count = struct { value: Int };
+               @property('Type)
+               type Total = struct { value: Int };
+               def count: Fn(Int) -> Fn(FieldPropertyCtx, Option(Count)) -> Count = fn(value) {
+                   fn(ctx, previous) {
+                       let prior = match previous { 'Some(item) => item.value, 'None => 0 };
+                       let result: Count = { value: prior + value };
+                       result
+                   }
+               };
+               def total: Fn(TypeDesc, Option(Total)) -> Total = fn(target, previous) {
+                   let count_value = match prop.get_field_prop(target, 0, Count) {
+                       'Some(item) => item.value,
+                       'None => 0,
+                   };
+                   let result: Total = { value: count_value };
+                   result
+               };
+               @total
+               type User = struct {
+                   @count(2)
+                   @count(3)
+                   name: String,
+               };
+               export def output = {
+                   field: prop.get_field_prop(User, 0, Count),
+                   total: prop.get_type_prop(User, Total),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(output.contains("field: 'Some({value: 5})"), "{output}");
+        assert!(output.contains("total: 'Some({value: 5})"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn property_capabilities_merge_across_field_and_variant_owners() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/type-property" as prop;
+               import "std/type-property" { FieldPropertyCtx, VariantPropertyCtx };
+               @property('Type)
+               @property('Field)
+               @property('Variant)
+               type Mark = struct { value: Int };
+               def type_mark: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(value) {
+                   fn(ctx, previous) {
+                       let prior = match previous { 'Some(item) => item.value, 'None => 0 };
+                       let result: Mark = { value: prior + value };
+                       result
+                   }
+               };
+               def field_mark: Fn(FieldPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) {
+                   let result: Mark = { value: ctx.index + 10 };
+                   result
+               };
+               def variant_mark: Fn(VariantPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) {
+                   let result: Mark = { value: ctx.index + 20 };
+                   result
+               };
+               @type_mark(40)
+               @type_mark(2)
+               type User = struct { @field_mark name: String };
+               type Choice = enum { @variant_mark 'Some(Int), 'None };
+               export def output = {
+                   type_prop: prop.get_type_prop(User, Mark),
+                   field: prop.get_field_prop(User, 0, Mark),
+                   variant: prop.get_variant_prop(Choice, 1, Mark),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(
+            output.contains("type_prop: 'Some({value: 42})"),
+            "{output}"
+        );
+        assert!(output.contains("field: 'Some({value: 10})"), "{output}");
+        assert!(output.contains("variant: 'Some({value: 21})"), "{output}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn container_text_codec_bridge_round_trips_nested_values_and_schema() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
@@ -212,24 +532,6 @@
         let output = named_output(&engine.execute(&module).unwrap()).to_string();
         assert!(output.contains("must be used together"), "{output}");
 
-        fs::write(
-            &main,
-            r#"import "std/string" as string;
-               type Bad = struct {
-                   @string.decode_by_parse
-                   value: String,
-               };
-               export { Bad };"#,
-        )
-        .unwrap();
-        let error = recovery_engine()
-            .load_module(&main, BTreeMap::new())
-            .unwrap_err();
-        assert!(
-            error
-                .message()
-                .contains("only supported on a type container")
-        );
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -329,6 +329,41 @@
     }
 
     #[test]
+    fn typed_property_batch_failure_publishes_no_partial_heads() {
+        let mut main = Heap::main();
+        let work = Heap::work_for(&main);
+        let property_ty = crate::TypeId::builtin(2);
+        let first = PropertyKey::Ty {
+            ty: crate::TypeId::builtin(3),
+            property_ty,
+        };
+        let second = PropertyKey::Field {
+            ty: crate::TypeId::builtin(3),
+            member_index: 0,
+            property_ty,
+        };
+        let valid = work.int(1).with_type_id(property_ty);
+        let failed = Val::unknown(DecodedValue::Failed(7)).with_type_id(property_ty);
+
+        assert!(
+            publish_type_properties(
+                &mut main,
+                &work,
+                Some(property_ty),
+                &[(first, valid), (second, failed)],
+            )
+            .is_err()
+        );
+        let view = HeapView {
+            current: &main,
+            background: None,
+        };
+        assert!(view.property(first).is_none());
+        assert!(view.property(second).is_none());
+        assert_eq!(main.property_attr_type(), None);
+    }
+
+    #[test]
     fn publication_preserves_main_edges_and_relocates_work_edges() {
         let mut main = Heap::main();
         let stable = rv(DecodedValue::Bytes(

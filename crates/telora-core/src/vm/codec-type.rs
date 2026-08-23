@@ -2,6 +2,57 @@ fn decode_runtime_type(value: Val, current: &Heap, background: &Heap) -> Result<
     decode_runtime_type_at(value, "Type", current, background)
 }
 
+fn decode_codec_properties(
+    value: Val,
+    current: &Heap,
+    background: &Heap,
+) -> Result<CodecProperties, String> {
+    let view = HeapView {
+        current,
+        background: Some(background),
+    };
+    let DecodedValue::Dict(handle) = value.without_type_id().value() else {
+        return Err("std/codec properties must be a Struct value".into());
+    };
+    let property = |name| {
+        let value = view
+            .dict_get_text(handle, name)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("std/codec properties has no {name:?} field"))?;
+        view.declared_type_id(value)
+            .map_err(|error| error.to_string())
+    };
+    Ok(CodecProperties {
+        parse_by: property("parse_by")?,
+        decode_by_parse: property("decode_by_parse")?,
+        encode_by_display: property("encode_by_display")?,
+        display_by: property("display_by")?,
+        json_rename_all: Some(property("json_rename_all")?),
+        json_untagged: Some(property("json_untagged")?),
+    })
+}
+
+fn apply_codec_type_properties(
+    schema: &mut CodecType,
+    metadata: ValueRef<'_>,
+    properties: &CodecProperties,
+) -> Result<(), String> {
+    if let Some(property_type) = properties.json_rename_all
+        && let Some(property) = metadata.type_property(property_type)
+    {
+        let case = property
+            .dict_get("case")
+            .ok_or_else(|| "json RenameAll property has no case".to_owned())?;
+        schema.json_rename_all = Some(case.runtime());
+    }
+    if let Some(property_type) = properties.json_untagged
+        && let Some(property) = metadata.type_property(property_type)
+    {
+        schema.json_untagged = Some(property.runtime());
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 enum CodecGraphError {
     Pending,
@@ -97,7 +148,8 @@ fn decode_runtime_type_at(
         return Ok(CodecType {
             kind: CodecKind::Opaque,
             rule: value,
-            attributes: BTreeMap::new(),
+            json_rename_all: None,
+            json_untagged: None,
             declared_owner: None,
         });
     }
@@ -105,7 +157,8 @@ fn decode_runtime_type_at(
         return Ok(CodecType {
             kind: CodecKind::TypeSlot(handle),
             rule: value,
-            attributes: BTreeMap::new(),
+            json_rename_all: None,
+            json_untagged: None,
             declared_owner: None,
         });
     }
@@ -117,7 +170,8 @@ fn decode_runtime_type_at(
         return Ok(CodecType {
             kind: CodecKind::TypeRef(handle),
             rule: value,
-            attributes: BTreeMap::new(),
+            json_rename_all: None,
+            json_untagged: None,
             declared_owner: None,
         });
     }
@@ -145,23 +199,17 @@ fn decode_runtime_type_at(
         let DecodedValue::Dict(attribute_handle) = attributes.value() else {
             return Err(format!("{path}.attributes must be a Dict"));
         };
+        let has_attributes = !view
+            .dict_parts(attribute_handle)
+            .map_err(|error| error.to_string())?
+            .0
+            .is_empty();
         let inner = view
             .dict_get_text(handle, "inner")
             .map_err(|error| error.to_string())?
             .expect("validated wrapper field");
         let mut decoded = decode_runtime_type_at(inner, path, current, background)?;
-        let (names, values) = view
-            .dict_parts(attribute_handle)
-            .map_err(|error| error.to_string())?;
-        for (name, attribute) in names.iter().zip(values) {
-            decoded.attributes.insert(
-                view.text(*name)
-                    .map_err(|error| error.to_string())?
-                    .to_owned(),
-                *attribute,
-            );
-        }
-        if !decoded.attributes.is_empty() || decoded.rule.loc().is_none() {
+        if has_attributes || decoded.rule.loc().is_none() {
             decoded.rule = value;
         }
         return Ok(decoded);
@@ -308,7 +356,7 @@ fn decode_runtime_type_at(
             for (name, variant) in names.iter().zip(values) {
                 let name = view.text(*name).map_err(|error| error.to_string())?;
                 let variant_path = format!("{path}.variants.{name}");
-                let (inner, attributes) = strip_runtime_attributes(*variant, &variant_path, &view)?;
+                let inner = strip_runtime_attributes(*variant, &variant_path, &view)?;
                 let payload = if view
                     .atom_text(inner)
                     .map_err(|error| error.to_string())?
@@ -327,7 +375,6 @@ fn decode_runtime_type_at(
                     name.to_owned(),
                     CodecEnumVariant {
                         payload,
-                        attributes,
                         rule: *variant,
                     },
                 );
@@ -340,7 +387,8 @@ fn decode_runtime_type_at(
     Ok(CodecType {
         kind,
         rule: value,
-        attributes: BTreeMap::new(),
+        json_rename_all: None,
+        json_untagged: None,
         declared_owner: None,
     })
 }
@@ -349,8 +397,7 @@ fn strip_runtime_attributes(
     mut value: Val,
     path: &str,
     view: &HeapView<'_>,
-) -> Result<(Val, BTreeMap<String, Val>), String> {
-    let mut collected = BTreeMap::new();
+) -> Result<Val, String> {
     while let DecodedValue::Dict(handle) = value.value() {
         let kind = view
             .dict_get_text(handle, "kind")
@@ -371,27 +418,15 @@ fn strip_runtime_attributes(
             .dict_get_text(handle, "attributes")
             .map_err(|error| error.to_string())?
             .expect("validated wrapper field");
-        let DecodedValue::Dict(attributes) = attributes.value() else {
+        let DecodedValue::Dict(_) = attributes.value() else {
             return Err(format!("{path}.attributes must be a Dict"));
         };
-        let (names, values) = view
-            .dict_parts(attributes)
-            .map_err(|error| error.to_string())?;
-        for (name, attribute) in names.iter().zip(values) {
-            collected
-                .entry(
-                    view.text(*name)
-                        .map_err(|error| error.to_string())?
-                        .to_owned(),
-                )
-                .or_insert(*attribute);
-        }
         value = view
             .dict_get_text(handle, "inner")
             .map_err(|error| error.to_string())?
             .expect("validated wrapper field");
     }
-    Ok((value, collected))
+    Ok(value)
 }
 
 fn option_item(schema: &CodecType) -> Option<&CodecType> {
@@ -436,9 +471,12 @@ fn is_bool_enum(variants: &BTreeMap<String, CodecEnumVariant>) -> bool {
             .is_some_and(|variant| variant.payload.is_none())
 }
 
-fn text_codec_bridge(schema: &CodecType, view: &HeapView<'_>) -> Result<bool, String> {
-    let decode = schema.attributes.get("std/string.decode_by_parse");
-    let encode = schema.attributes.get("std/string.encode_by_display");
+fn text_codec_bridge(
+    metadata: ValueRef<'_>,
+    properties: &CodecProperties,
+) -> Result<bool, String> {
+    let decode = metadata.type_property(properties.decode_by_parse);
+    let encode = metadata.type_property(properties.encode_by_display);
     if decode.is_none() && encode.is_none() {
         return Ok(false);
     }
@@ -447,18 +485,6 @@ fn text_codec_bridge(schema: &CodecType, view: &HeapView<'_>) -> Result<bool, St
             "std/string.decode_by_parse and std/string.encode_by_display must be used together"
                 .into(),
         );
-    }
-    for (name, marker) in [
-        ("std/string.decode_by_parse", decode.expect("checked")),
-        ("std/string.encode_by_display", encode.expect("checked")),
-    ] {
-        if !view
-            .atom_text(*marker)
-            .map_err(|error| error.to_string())?
-            .is_some_and(|atom| atom == "True")
-        {
-            return Err(format!("{name} must be 'True"));
-        }
     }
     Ok(true)
 }
@@ -487,4 +513,3 @@ fn parsed_codec_node(value: crate::regex::ParsedValue, loc: Option<crate::Loc>) 
         ),
     }
 }
-

@@ -680,199 +680,6 @@
         fs::remove_dir_all(directory).unwrap();
     }
 
-    #[test]
-    fn attributed_type_metadata_is_transparent_and_preserved() {
-        let directory = fixture_dir();
-        fs::write(
-            directory.join("main.telora"),
-            r#"import "std/attributes" as attributes;
-               import "std/codec" as codec;
-               import "std/result" as result;
-               let rename = fn(name) {
-                   let decorate: Fn(Any, Any) -> Any = fn(ctx, value) {
-                       attributes.add(value, { "std/json.rename": name })
-                   }; decorate
-               };
-               let model: Fn(Any, Any) -> Any = fn(ctx, value) {
-                   attributes.add(value, { "vendor:acme.model": ctx.name })
-               };
-               @model
-               type User = struct {
-                   @rename("type")
-                   ty: String,
-               };
-               let user: User = { ty: "admin" };
-               {
-                   metadata: User,
-                   checked: validate(User, user),
-                   decoded: codec.decode(User, codec.encode(codec.Value, { "type": "member" }) |> result.unwrap),
-               }"#,
-        )
-        .unwrap();
-
-        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let result_world = module.execute(100_000).unwrap();
-        let result = result_world.value();
-        assert!(
-            result
-                .get("checked")
-                .unwrap()
-                .to_string()
-                .starts_with("'Ok(")
-        );
-        assert!(
-            result
-                .get("decoded")
-                .unwrap()
-                .to_string()
-                .starts_with("'Ok(")
-        );
-
-        let metadata = result
-            .get("metadata")
-            .unwrap()
-            .declared_body()
-            .expect("attributed declared body");
-        assert_eq!(metadata.get("kind").unwrap().to_string(), "'WithAttributes");
-        let model_attributes = metadata.get("attributes").unwrap();
-        assert_eq!(
-            model_attributes
-                .get("vendor:acme.model")
-                .unwrap()
-                .to_string(),
-            "\"User\""
-        );
-        let struct_metadata = metadata.get("inner").unwrap();
-        let fields = struct_metadata.get("fields").unwrap();
-        let field = fields.get("ty").unwrap();
-        assert_eq!(field.get("kind").unwrap().to_string(), "'WithAttributes");
-        let field_attributes = field.get("attributes").unwrap();
-        assert_eq!(
-            field_attributes.get("std/json.rename").unwrap().to_string(),
-            "\"type\""
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn declared_struct_and_enum_models_preserve_uniform_member_attributes() {
-        let directory = fixture_dir();
-        fs::write(
-            directory.join("main.telora"),
-            r#"import "std/attributes" as attributes;
-               let annotate = fn(key, payload) {
-                   let decorate: Fn(Any, Any) -> Any = fn(ctx, value) { attributes.add(value, { marker: (key, payload) }) };
-                   decorate
-               };
-
-               @annotate("model", 1)
-               type User = struct {
-                   name: String,
-                   @annotate("field", 2)
-                   role: String,
-               };
-
-               @annotate("enum", 3)
-               type Choice = enum {
-                   'None,
-                   'User(User),
-               };
-
-               @union
-               type Scalar = [
-                   attributes.add(Int, { marker: ("union", 4) }),
-                   String,
-               ];
-
-               let explicit_union = union('None, [Int, String]);
-               let unit: Choice = 'None;
-               let payload: Choice = 'User({ name: "Ada", role: "admin" });
-               let scalar_value: Scalar = 42;
-               {
-                   user: User,
-                   choice: Choice,
-                   explicit_union: explicit_union,
-                   scalar: Scalar,
-                   scalar_value: scalar_value,
-                   unit: validate(Choice, unit),
-                   payload: validate(Choice, payload),
-               }"#,
-        )
-        .unwrap();
-
-        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
-        let result_world = module.execute(100_000).unwrap();
-        let result = result_world.value();
-        assert!(result.get("unit").unwrap().to_string().starts_with("'Ok("));
-        assert!(
-            result
-                .get("payload")
-                .unwrap()
-                .to_string()
-                .starts_with("'Ok(")
-        );
-
-        fn assert_wrapper(value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
-            let wrapper = value;
-            assert_eq!(wrapper.get("kind").unwrap().to_string(), "'WithAttributes");
-            assert!(wrapper.get("attributes").unwrap().dict_fields().is_some());
-            wrapper
-        }
-        fn declared_body(value: crate::ValueRef<'_>) -> crate::ValueRef<'_> {
-            value.declared_body().expect("declared type metadata")
-        }
-        let user = assert_wrapper(declared_body(result.get("user").unwrap()));
-        let user_metadata = user.get("inner").unwrap();
-        assert_eq!(user_metadata.get("kind").unwrap().to_string(), "'Struct");
-        let fields = user_metadata.get("fields").unwrap();
-        let name = assert_wrapper(fields.get("name").unwrap());
-        assert_eq!(name.get("attributes").unwrap().to_string(), "{}");
-        let role = assert_wrapper(fields.get("role").unwrap());
-        assert_eq!(
-            role.get("attributes").unwrap().to_string(),
-            "{marker: (\"field\", 2)}"
-        );
-        assert_eq!(
-            user.get("attributes").unwrap().to_string(),
-            "{marker: (\"model\", 1)}"
-        );
-
-        let choice = assert_wrapper(declared_body(result.get("choice").unwrap()));
-        let enum_metadata = choice.get("inner").unwrap();
-        assert_eq!(enum_metadata.get("kind").unwrap().to_string(), "'Enum");
-        let variants = enum_metadata.get("variants").unwrap();
-        for variant in variants.dict_values().unwrap() {
-            assert_wrapper(variant);
-        }
-        let none = assert_wrapper(variants.get("None").unwrap());
-        assert_eq!(none.get("inner").unwrap().to_string(), "'None");
-        assert_eq!(
-            choice.get("attributes").unwrap().to_string(),
-            "{marker: (\"enum\", 3)}"
-        );
-
-        let scalar = assert_wrapper(result.get("scalar").unwrap());
-        let union_metadata = scalar.get("inner").unwrap();
-        assert_eq!(union_metadata.get("kind").unwrap().to_string(), "'Union");
-        let union_variants = union_metadata.get("variants").unwrap();
-        assert_eq!(union_variants.sequence_len(), Some(2));
-        let first = assert_wrapper(union_variants.sequence_get(0).unwrap());
-        assert_eq!(
-            first.get("attributes").unwrap().to_string(),
-            "{marker: (\"union\", 4)}"
-        );
-        let second = assert_wrapper(union_variants.sequence_get(1).unwrap());
-        assert_eq!(second.get("attributes").unwrap().to_string(), "{}");
-
-        let explicit_union = assert_wrapper(result.get("explicit_union").unwrap());
-        let explicit_union_metadata = explicit_union.get("inner").unwrap();
-        let explicit_variants = explicit_union_metadata.get("variants").unwrap();
-        for index in 0..explicit_variants.sequence_len().unwrap() {
-            let variant = explicit_variants.sequence_get(index).unwrap();
-            assert_wrapper(variant);
-        }
-        fs::remove_dir_all(directory).unwrap();
-    }
 
     #[test]
     fn enum_validation_rejects_unknown_tags_and_payload_shape_mismatches() {
@@ -914,7 +721,7 @@
                type Event = enum {
                    'Idle,
                    'UserJoined(User),
-                   @json.rename("fatal") 'FatalError(String),
+                   'FatalError(String),
                };
                @json.untagged
                type Scalar = enum {'Text(String), 'Count(Int)};
@@ -942,7 +749,7 @@
         );
         assert_eq!(
             output.get("fatal").unwrap().to_string(),
-            "'Object({fatal: 'String(\"boom\")})"
+            "'Object({fatalError: 'String(\"boom\")})"
         );
         assert_eq!(
             output.get("nested").unwrap().to_string(),
@@ -994,7 +801,7 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("data.json"),
-            r#"{"userId":7,"city_name":"London","event":{"userJoined":{"name":"Ada"}},"scalar":"active","notes":""}"#,
+            r#"{"userId":7,"cityName":"London","event":{"userJoined":{"name":"Ada"}},"scalar":"active","notes":""}"#,
         )
         .unwrap();
         fs::write(
@@ -1004,18 +811,17 @@
                import "std/json" as json;
                import "std/result" as result;
                type User = struct {name: String};
-               type Details = struct {city_name: String};
                @json.rename_all('CamelCase)
                type Event = enum {'Idle, 'UserJoined(User)};
                @json.untagged type Scalar = enum {'Text(String), 'Count(Int)};
                @json.rename_all('CamelCase)
                type Model = struct {
                    user_id: Int,
-                   @json.flatten details: Details,
-                   @json.default('None) nickname: Option(String),
+                   city_name: String,
+                   nickname: Option(String),
                    event: Event,
                    scalar: Scalar,
-                   @json.skip_serializing_if('Empty) notes: String,
+                   notes: String,
                };
                let decoded = codec.decode(Model, data) |> result.unwrap;
                let schema = json.schema(Model);
@@ -1046,7 +852,7 @@
         let properties = model_schema.get("properties").unwrap();
         for key in [
             "userId",
-            "city_name",
+            "cityName",
             "nickname",
             "event",
             "scalar",
@@ -1078,7 +884,7 @@
                 .to_string()
                 .contains("$schema")
         );
-        assert!(!output.get("encoded").unwrap().to_string().contains("notes"));
+        assert!(output.get("encoded").unwrap().to_string().contains("notes"));
         assert!(
             output
                 .get("encoded")
@@ -1089,7 +895,7 @@
 
         fs::write(
             directory.join("data.json"),
-            r#"{"userId":"wrong","city_name":"London","event":"idle","scalar":1,"notes":""}"#,
+            r#"{"userId":"wrong","cityName":"London","event":"idle","scalar":1,"notes":""}"#,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -1170,7 +976,7 @@
                    value: Int,
                    children: Array(Node),
                };
-               type Left = struct {@json.rename("rightValue") right: Option(Right)};
+               type Left = struct {right: Option(Right)};
                type Right = struct {left: Option(Left)};
                {Node: Node, Left: Left, Right: Right}"#,
         )
@@ -1207,7 +1013,7 @@
                    children: [{value: 2, children: []}],
                }) |> result.unwrap) |> result.unwrap;
                let pair = codec.decode(Types.Left, codec.encode(codec.Value, {
-                   rightValue: {left: 'None},
+                   right: {left: 'None},
                }) |> result.unwrap) |> result.unwrap;
                {
                    node: node,

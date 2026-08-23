@@ -17,6 +17,9 @@ native array_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
 native tuple_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
 native tag: Fn(Dyn) -> Result(String, BlameError);
 native payload: Fn(Dyn) -> Result(Option(Dyn), BlameError);
+native get_field_value: Fn(Dyn, Int) -> Dyn;
+native get_variant_index: Fn(Dyn) -> Int;
+native get_variant_payload: Fn(Dyn, Int) -> Option(Dyn);
 export {
     Dyn,
     ValueKind,
@@ -34,4 +37,7 @@ export {
     tuple_items,
     tag,
     payload,
+    get_field_value,
+    get_variant_index,
+    get_variant_payload,
 };

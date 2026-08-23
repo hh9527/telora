@@ -9,6 +9,8 @@ fn run_core_codec(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
+    let properties = decode_codec_properties(arguments[0], current, background)
+        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
     let direction = match operation {
         CoreCodecFunction::Decode => CodecDirection::Decode,
         CoreCodecFunction::Encode => CodecDirection::Encode,
@@ -19,8 +21,8 @@ fn run_core_codec(
                 current,
                 background: Some(background),
             };
-            propagate_data_failures(&[arguments[1]], &view, function, pc)?;
-            view.type_witness(arguments[1]).map_err(|heap_error| {
+            propagate_data_failures(&[arguments[2]], &view, function, pc)?;
+            view.type_witness(arguments[2]).map_err(|heap_error| {
                 error(
                     RuntimeErrorKind::TypeMismatch,
                     heap_error.to_string(),
@@ -31,10 +33,12 @@ fn run_core_codec(
         };
         if source_owner.is_none() {
             return continue_json_encode(
-                JsonEncodeInput::Dynamic(arguments[1]),
-                arguments[0],
-                BTreeMap::new(),
+                JsonEncodeInput::Dynamic {
+                    properties,
+                    value: arguments[2],
+                },
                 arguments[1],
+                arguments[2],
                 return_target,
                 Arc::new(function.clone()),
                 pc,
@@ -49,11 +53,11 @@ fn run_core_codec(
             current,
             background: Some(background),
         };
-        propagate_data_failures(&[arguments[1]], &view, function, pc)?;
+        propagate_data_failures(&[arguments[2]], &view, function, pc)?;
         match direction {
             CodecDirection::Decode => {
                 let owner = view
-                    .type_witness(arguments[1])
+                    .type_witness(arguments[2])
                     .map_err(|heap_error| {
                         error(
                             RuntimeErrorKind::TypeMismatch,
@@ -70,11 +74,11 @@ fn run_core_codec(
                             pc,
                         )
                     })?;
-                (arguments[0], owner)
+                (arguments[1], owner)
             }
             CodecDirection::Encode => {
                 let owner = view
-                    .type_witness(arguments[1])
+                    .type_witness(arguments[2])
                     .map_err(|heap_error| {
                         error(
                             RuntimeErrorKind::TypeMismatch,
@@ -84,7 +88,7 @@ fn run_core_codec(
                         )
                     })?
                     .expect("unowned encode inputs returned above");
-                (owner, arguments[0])
+                (owner, arguments[1])
             }
         }
     };
@@ -103,8 +107,8 @@ fn run_core_codec(
     };
     if identity {
         return finish_codec_result(
-            Ok(CodecNode::Existing(arguments[1])),
-            arguments[1],
+            Ok(CodecNode::Existing(arguments[2])),
+            arguments[2],
             return_target,
             function,
             pc,
@@ -132,11 +136,11 @@ fn run_core_codec(
         return continue_json_encode(
             JsonEncodeInput::Typed {
                 schema,
-                value: arguments[1],
+                properties,
+                value: arguments[2],
             },
             value_owner,
-            BTreeMap::new(),
-            arguments[1],
+            arguments[2],
             return_target,
             Arc::new(function.clone()),
             pc,
@@ -146,7 +150,7 @@ fn run_core_codec(
         );
     }
     let unwrap_bytes =
-        semantic_value_unwrap_bytes(current, Some(background), arguments[1], value_owner).map_err(
+        semantic_value_unwrap_bytes(current, Some(background), arguments[2], value_owner).map_err(
             |heap_error| {
                 error(
                     RuntimeErrorKind::TypeMismatch,
@@ -157,7 +161,7 @@ fn run_core_codec(
             },
         )?;
     charge_allocation(account, unwrap_bytes, function, pc)?;
-    let raw = unwrap_semantic_value(current, Some(background), arguments[1], value_owner).map_err(
+    let raw = unwrap_semantic_value(current, Some(background), arguments[2], value_owner).map_err(
         |heap_error| {
             error(
                 RuntimeErrorKind::TypeMismatch,
@@ -169,16 +173,16 @@ fn run_core_codec(
     )?;
     let result = transform_codec(
         &schema,
+        &properties,
         raw,
         direction,
         "$",
-        &BTreeMap::new(),
         current,
         background,
     );
     finish_codec_result(
         result,
-        arguments[1],
+        arguments[2],
         return_target,
         function,
         pc,
@@ -187,4 +191,3 @@ fn run_core_codec(
         account,
     )
 }
-

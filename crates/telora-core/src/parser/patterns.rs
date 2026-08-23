@@ -361,13 +361,7 @@ impl<'a> Lowerer<'a> {
                         })
                         .ok_or_else(|| self.error(field, "Struct field has no type"))?;
                     let decorators = self.decorators(field)?;
-                    let value = self.apply_decorators(
-                        &decorators,
-                        "Field",
-                        &name,
-                        self.expression(value_node)?,
-                        self.location(field),
-                    );
+                    let value = self.expression(value_node)?;
                     fields.push(located(
                         DictFieldKind {
                             decorators,
@@ -410,13 +404,7 @@ impl<'a> Lowerer<'a> {
                         located(ExprKind::Atom("None".to_owned()), self.location(tag_node))
                     };
                     let decorators = self.decorators(variant)?;
-                    let value = self.apply_decorators(
-                        &decorators,
-                        "Field",
-                        &name,
-                        payload,
-                        self.location(variant),
-                    );
+                    let value = payload;
                     variants.push(located(
                         DictFieldKind {
                             decorators,
@@ -514,4 +502,3 @@ impl<'a> Lowerer<'a> {
     }
 
 }
-

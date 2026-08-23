@@ -269,16 +269,32 @@ polymorphism 的通用替代品。
 不必为不可达结果伪造类型，并抑制连锁错误。用户不能把 `Never` 构造成普通数据；
 best-effort evaluator 内部保存的 Fail 节点也不是 `Never` 的源码可观察实例。
 
-### Decorator 与 Attribute
+### Decorator 与 Typed Property
 
-**Decorator** 是转换 TypeMetadata 的普通函数。**Attribute** 是存储在 metadata
-上、供 interpreter 或 capability 使用的数据。二者出现在类型语法中，并不意味
-其领域政策由编译器拥有。
+**Decorator** 是在 tool stage 为一个已经封闭的具名类型或其 member 计算 typed
+property 的函数。目标的 TypeMetadata、TypeId 和 canonical member index 在 provider
+运行前已经封闭；provider 从只读 context 计算并返回 property value。类型骨架和
+property registry 是两个独立的数据域，协议与执行顺序保证目标的结构和身份稳定。
+Property carrier 必须是由
+`@property('Capability)` 标记的具体具名类型；capability 可以是 `Type`、
+`StructType`、`EnumType`、`Member`、`Field` 或 `Variant`，多个标记按位合并。
+
+系统使用 `Ty(target, property)`、`Field(target, canonical_index, property)` 或
+`Variant(target, canonical_index, property)` 作为键并发布到 MainWorld。相同 key 的
+provider 接受 `Option(previous)` 并按词法顺序 fold。字段/variant provider 先运行，
+type provider 后运行并可查询完整 member-property snapshot。Interpreter 只通过
+TypeId 和 member index 查询，不使用字符串属性名。
+
+当前 decorator 只适用于无类型参数的具名 Struct/Enum 声明及其直接 member；alias、
+结构类型和 type family template 不接受 decorator。
+
+Interpreter、未来的 quote/codegen 和 trait binding 都可以把封闭类型骨架与独立的
+typed property registry 作为稳定输入。
 
 ### Interpreter
 
-**Interpreter** 是消费 `TypeDesc` 并实现类型导向操作的普通代码。受控的 typed
-bridge 可以把它连接到 `TypeOf(A)`，但不能允许它任意构造或提取 `A`。
+**Interpreter** 是消费 `TypeDesc` 和 typed property 并实现类型导向操作的普通代码。
+受控的 typed bridge 可以把它连接到 `TypeOf(A)`，但不能允许它任意构造或提取 `A`。
 
 ## Stage 与 Execution
 

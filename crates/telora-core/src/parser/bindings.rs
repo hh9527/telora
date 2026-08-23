@@ -643,7 +643,7 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             Rule::TypeBinding => {
-                let mut decorators = self.decorators(node)?;
+                let decorators = self.decorators(node)?;
                 let type_parameters = self
                     .rule_children(node)
                     .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
@@ -671,8 +671,13 @@ impl<'a> Lowerer<'a> {
                     });
                 let value = if let Some(initializer) = initializer {
                     let (value, model) = self.declared_type_initializer(initializer)?;
-                    decorators.push(model);
-                    value
+                    self.apply_decorators(
+                        std::slice::from_ref(&model),
+                        "Type",
+                        &name,
+                        value,
+                        self.location(node),
+                    )
                 } else {
                     self.expression(
                         self.children(node)
@@ -682,8 +687,6 @@ impl<'a> Lowerer<'a> {
                             .ok_or_else(|| self.error(node, "type has no value"))?,
                     )?
                 };
-                let value =
-                    self.apply_decorators(&decorators, "Type", &name, value, self.location(node));
                 Ok(located(
                     BindingData {
                         decorators,
@@ -877,4 +880,3 @@ impl<'a> Lowerer<'a> {
     }
 
 }
-

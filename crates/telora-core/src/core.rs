@@ -22,6 +22,7 @@ pub(crate) const STRING_MODULE: &str = "std/string";
 pub(crate) const PATH_MODULE: &str = "std/path";
 pub(crate) const TOML_MODULE: &str = "std/toml";
 pub(crate) const TYPE_DESC_MODULE: &str = "std/type-desc";
+pub(crate) const TYPE_PROPERTY_MODULE: &str = "std/type-property";
 pub(crate) const DYN_MODULE: &str = "std/dyn";
 pub(crate) const EQ_MODULE: &str = "std/eq";
 pub(crate) const REGEX_MODULE: &str = "std/regex";
@@ -45,7 +46,38 @@ pub(crate) struct CoreModuleSpec {
 }
 
 pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
-    vec![
+    let mut specs = vec![
+        CoreModuleSpec {
+            native_id: 25,
+            name: TYPE_PROPERTY_MODULE,
+            source: include_str!("../modules/std/type-property.native.telora"),
+            functions: vec![
+                (
+                    "get_type_prop",
+                    NativeFunction::new(
+                        "std/type-property.get_type_prop",
+                        2,
+                        crate::property::native_get_type,
+                    ),
+                ),
+                (
+                    "get_field_prop",
+                    NativeFunction::new(
+                        "std/type-property.get_field_prop",
+                        3,
+                        crate::property::native_get_field,
+                    ),
+                ),
+                (
+                    "get_variant_prop",
+                    NativeFunction::new(
+                        "std/type-property.get_variant_prop",
+                        3,
+                        crate::property::native_get_variant,
+                    ),
+                ),
+            ],
+        },
         CoreModuleSpec {
             native_id: 23,
             name: VALUE_MODULE,
@@ -101,6 +133,18 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     "payload",
                     NativeFunction::core_dyn(CoreDynFunction::Payload),
                 ),
+                (
+                    "get_field_value",
+                    NativeFunction::core_dyn(CoreDynFunction::GetFieldValue),
+                ),
+                (
+                    "get_variant_index",
+                    NativeFunction::core_dyn(CoreDynFunction::GetVariantIndex),
+                ),
+                (
+                    "get_variant_payload",
+                    NativeFunction::core_dyn(CoreDynFunction::GetVariantPayload),
+                ),
             ],
         },
         CoreModuleSpec {
@@ -113,6 +157,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Children),
                 ),
                 (
+                    "fields",
+                    NativeFunction::core_type_desc(CoreTypeDescFunction::Fields),
+                ),
+                (
                     "kind",
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Kind),
                 ),
@@ -123,6 +171,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 (
                     "resolve",
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Resolve),
+                ),
+                (
+                    "variants",
+                    NativeFunction::core_type_desc(CoreTypeDescFunction::Variants),
                 ),
             ],
         },
@@ -278,24 +330,8 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     NativeFunction::core_string(CoreStringFunction::StartsWith),
                 ),
                 (
-                    "parse",
-                    NativeFunction::new("std/string.parse", 2, crate::regex::native_parse),
-                ),
-                (
-                    "decode_by_parse",
-                    NativeFunction::new(
-                        "std/string.decode_by_parse",
-                        2,
-                        crate::regex::native_decode_by_parse,
-                    ),
-                ),
-                (
-                    "encode_by_display",
-                    NativeFunction::new(
-                        "std/string.encode_by_display",
-                        2,
-                        crate::regex::native_encode_by_display,
-                    ),
+                    "parse_with",
+                    NativeFunction::new("std/string.parse_with", 3, crate::regex::native_parse),
                 ),
             ],
         },
@@ -349,11 +385,11 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             source: include_str!("../modules/std/codec.native.telora"),
             functions: vec![
                 (
-                    "decode",
+                    "decode_with",
                     NativeFunction::core_codec(CoreCodecFunction::Decode),
                 ),
                 (
-                    "encode",
+                    "encode_with",
                     NativeFunction::core_codec(CoreCodecFunction::Encode),
                 ),
             ],
@@ -439,36 +475,12 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     NativeFunction::core_json(CoreJsonFunction::Parse),
                 ),
                 (
-                    "decode",
+                    "decode_with",
                     NativeFunction::core_json(CoreJsonFunction::Decode),
                 ),
                 (
-                    "default",
-                    NativeFunction::core_json(CoreJsonFunction::Default),
-                ),
-                (
-                    "flatten",
-                    NativeFunction::core_json(CoreJsonFunction::Flatten),
-                ),
-                (
-                    "untagged",
-                    NativeFunction::core_json(CoreJsonFunction::Untagged),
-                ),
-                (
-                    "schema",
+                    "schema_with",
                     NativeFunction::core_json(CoreJsonFunction::Schema),
-                ),
-                (
-                    "rename",
-                    NativeFunction::core_json(CoreJsonFunction::Rename),
-                ),
-                (
-                    "rename_all",
-                    NativeFunction::core_json(CoreJsonFunction::RenameAll),
-                ),
-                (
-                    "skip_serializing_if",
-                    NativeFunction::core_json(CoreJsonFunction::SkipSerializingIf),
                 ),
                 (
                     "stringify",
@@ -544,10 +556,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     ),
                 ),
                 (
-                    "display",
+                    "render",
                     NativeFunction::new_with_native_type(
-                        "std/fmt.display",
-                        2,
+                        "std/fmt.render",
+                        3,
                         0,
                         crate::fmt::native_display,
                     ),
@@ -566,5 +578,24 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             source: include_str!("../modules/std/argv.telora"),
             functions: vec![],
         },
-    ]
+    ];
+    // Built-in sources are installed in dependency order. Native IDs remain
+    // stable and are independent of this installation sequence.
+    specs.sort_by_key(|spec| match spec.name {
+        TYPE_PROPERTY_MODULE => 0,
+        VALUE_MODULE => 1,
+        EQ_MODULE => 2,
+        DYN_MODULE => 3,
+        TYPE_DESC_MODULE => 4,
+        ATTRIBUTES_MODULE => 5,
+        ARRAY_MODULE => 6,
+        DICT_MODULE => 7,
+        REGEX_MODULE => 8,
+        STRING_MODULE => 9,
+        FMT_MODULE => 10,
+        CODEC_MODULE => 11,
+        JSON_MODULE => 12,
+        _ => 13,
+    });
+    specs
 }

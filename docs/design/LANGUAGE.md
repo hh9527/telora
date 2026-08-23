@@ -482,11 +482,11 @@ Option(String)
 Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函数元数据的 kind
 观察均返回 `'Func`。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
 
-类型 annotation、decorator 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
+类型 annotation、decorator property 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
 阶段与程序阶段共享函数语义、值模型、fuel 和失败规则；区别在于 Host 调用它们的
 目的和允许发布的结果，而不是存在第二门类型级语言。
 
-### 7.1 Struct、Enum 和 decorator
+### 7.1 Struct、Enum 和 typed property decorator
 
 具名 Struct 和 Enum 使用 `type` 的专用声明初始化器：
 
@@ -508,14 +508,59 @@ type Status = enum {
 
 每个直接声明拥有由 provider module 与声明位置确定的私有身份。不同声明即使字段或
 variant 完全相同，也不是同一个类型；alias、import 和 reexport 则保留原身份。普通
-TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具仍从同一份权威元数据图工作，
-没有第二套编译器专属类型世界。
+TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具从同一份权威元数据图工作。
 
-Struct 字段和 Enum variant 可以使用普通 decorator 添加 attribute，供 codec、schema、
-文本表示或用户态解释器消费。根 decorator 在结构 draft 上运行，但必须保留声明的
-Struct 或 Enum kind，且不能创建或替换声明身份。
+Decorator 只适用于没有类型参数的具名 Struct/Enum 声明及其直接字段/variant。
+Property carrier 本身也必须是具名 Struct/Enum，并用内建 capability 标记：
 
-Decorator 应保持确定和纯粹。失败的 metadata 构造不能发布部分类型图。
+```telora
+@property('Type)
+type DisplayBy = struct { template: String };
+
+def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(template) {
+    fn(target, previous) {
+        let property: DisplayBy = {template};
+        property
+    }
+};
+
+@display_by("{host}:{port}")
+type Endpoint = struct { host: String, port: Int };
+```
+
+capability 包括 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant`；
+`Type`/`Member` 分别覆盖两类 type/member owner，多个标记按位合并。系统先封闭
+`Endpoint` 的 TypeId、TypeMetadata 和 canonical member index，再执行 provider，并以
+`Ty(Endpoint, DisplayBy)` 发布结果。provider 从只读 context 计算 property value，
+property registry 与目标 descriptor 独立；这个执行模型保持目标结构与身份稳定。
+Field/Variant 使用 owner
+TypeId、按 member name 排序得到的
+零基 canonical index 和 property TypeId 作为键。Decorator 的当前适用范围是具名
+Struct/Enum 及其直接 member。
+
+同 key 的多个 provider 接受 `Option(previous)` 并按词法顺序 fold，provider 可自行
+合并、替换或拒绝前值。字段/variant decorator 全部完成后才运行 type decorator；后者
+可读取完整 member-property snapshot。失败不会发布声明的部分 property。
+
+当前反射接口显式传递两个类型 witness：
+
+```telora
+import "std/type-property" as type_property;
+let property: Option(DisplayBy) = type_property.get_type_prop(Endpoint, DisplayBy);
+```
+
+member 查询分别是 `get_field_prop(Owner, index, P)` 和
+`get_variant_prop(Owner, index, P)`。查询返回 MainWorld 中 property 的廉价引用。
+未来泛型 witness sugar 应由通用的隐式 `TypeOf(T)` 规则提供，而不是增加 property
+专用语法魔法。
+
+`std/type-desc.fields/variants` 使用相同 canonical index 枚举 member；
+`std/dyn.get_field_value/get_variant_index/get_variant_payload` 根据 `Dyn` 携带的权威
+descriptor 安全投影。错误 kind、越界和 variant mismatch 是有来源的运行错误；合法
+unit variant 的 payload 是 `None`。
+
+后续 interpreter、quote/codegen 或 trait 机制可以读取同一封闭骨架和 property
+registry，并基于这两个稳定输入赋予 property 行为意义。
 
 ### 7.2 参数化 TypeMetadata family
 

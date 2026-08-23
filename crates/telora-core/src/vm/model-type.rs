@@ -247,8 +247,19 @@ fn validate_model_context(
 struct CodecType {
     kind: CodecKind,
     rule: Val,
-    attributes: BTreeMap<String, Val>,
+    json_rename_all: Option<Val>,
+    json_untagged: Option<Val>,
     declared_owner: Option<Val>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CodecProperties {
+    parse_by: crate::TypeId,
+    decode_by_parse: crate::TypeId,
+    encode_by_display: crate::TypeId,
+    display_by: crate::TypeId,
+    json_rename_all: Option<crate::TypeId>,
+    json_untagged: Option<crate::TypeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -280,7 +291,6 @@ enum CodecKind {
 #[derive(Clone, Debug)]
 struct CodecEnumVariant {
     payload: Option<Box<CodecType>>,
-    attributes: BTreeMap<String, Val>,
     rule: Val,
 }
 
@@ -320,7 +330,6 @@ struct CodecFailure {
     message: String,
     data: Val,
     rule: Val,
-    predicate: Option<Box<PredicateRequest>>,
 }
 
 impl CodecFailure {
@@ -329,88 +338,19 @@ impl CodecFailure {
             message: message.into(),
             data,
             rule,
-            predicate: None,
         }
     }
-
-    fn predicate(path: String, callee: Val, value: Val, rule: Val) -> Self {
-        Self {
-            message: "JSON skip predicate requires evaluation".into(),
-            data: value,
-            rule,
-            predicate: Some(Box::new(PredicateRequest {
-                path,
-                callee,
-                value,
-            })),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct PredicateRequest {
-    path: String,
-    callee: Val,
-    value: Val,
-}
-
-#[derive(Debug)]
-struct JsonEncodeContinuation {
-    input: JsonEncodeInput,
-    value_owner: Val,
-    decisions: BTreeMap<String, bool>,
-    pending_path: String,
-    pending_rule: Val,
-    return_target: ReturnTarget,
-    call_function: Arc<BytecodeFunction>,
-    call_pc: usize,
-    trace_frame: RuntimeFrame,
 }
 
 #[derive(Debug)]
 enum JsonEncodeInput {
-    Typed { schema: CodecType, value: Val },
-    Dynamic(Val),
-}
-
-impl JsonEncodeInput {
-    fn value(&self) -> Val {
-        match self {
-            Self::Typed { value, .. } | Self::Dynamic(value) => *value,
-        }
-    }
-}
-
-impl NativeContinuation for JsonEncodeContinuation {
-    fn return_target(&self) -> &ReturnTarget {
-        &self.return_target
-    }
-
-    fn trace_frame(&self) -> &RuntimeFrame {
-        &self.trace_frame
-    }
-
-    fn resume(
-        self: Box<Self>,
+    Typed {
+        schema: CodecType,
+        properties: CodecProperties,
         value: Val,
-        current: &mut Heap,
-        background: &Heap,
-        account: &mut QuotaAccount,
-    ) -> Result<VmAction, RuntimeError> {
-        resume_json_encode_continuation(*self, value, current, background, account)
-    }
-
-    fn resume_failed(
-        self: Box<Self>,
-        failure: Val,
-        _current: &mut Heap,
-        _background: &Heap,
-        _account: &mut QuotaAccount,
-    ) -> Result<VmAction, RuntimeError> {
-        Ok(VmAction::Return {
-            value: failure,
-            return_target: self.return_target,
-        })
-    }
+    },
+    Dynamic {
+        properties: CodecProperties,
+        value: Val,
+    },
 }
-

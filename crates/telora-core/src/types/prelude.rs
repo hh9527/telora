@@ -209,14 +209,16 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["union", "validate"].into_iter().collect::<BTreeSet<_>>();
+    let expected = ["PropertyAttr", "union", "validate"]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let actual = interface
         .exports
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("core/prelude must export exactly union and validate".into());
+        return Err("core/prelude must export exactly PropertyAttr, union, and validate".into());
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];
@@ -473,6 +475,19 @@ pub(crate) fn decode_type_ref(value: ValueRef<'_>, path: &str) -> Result<TypeDes
     let mut graph = TypeGraph::default();
     let root = graph.decode_persistent(value, path, &mut HashMap::new())?;
     graph.descriptor(root)
+}
+
+pub(crate) fn canonical_type_ref_id(
+    value: ValueRef<'_>,
+    path: &str,
+    types: &crate::type_store::SharedTypeStore,
+) -> Result<TypeId, String> {
+    let mut graph = TypeGraph::default();
+    let root = graph.decode_persistent(value, path, &mut HashMap::new())?;
+    let mut types = types
+        .lock()
+        .map_err(|_| "type store poisoned".to_owned())?;
+    graph.canonicalize(root, &mut types)
 }
 
 fn decode_type_ref_with(
@@ -1057,4 +1072,3 @@ fn collect_declared_bodies(
         | TypeDescriptor::Atom(_) => {}
     }
 }
-

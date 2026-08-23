@@ -400,20 +400,14 @@ Value 与领域 model 的 rename/default/flatten 转换只能由 codec 完成。
 `unwrap!`，或匹配 Err 后调用 `fail!(error.message, error, input)`。Codec 失败不会
 发布部分解码值。
 
-Struct 和 enum 默认从同一份 TypeMetadata 派生 codec 与 JSON schema。常用的
-`std/json` decorator 可以显式调整其 JSON 表示：
+Struct 和 enum 默认从同一份 TypeMetadata 派生 codec 与 JSON schema。`std/json`
+目前保留两个类型级 typed-property decorator：
 
 ```telora
 @json.rename_all('CamelCase)
 type Details = struct {
     order_id: String,
-    @json.default('None)
     note: Option(String),
-};
-
-type Envelope = struct {
-    kind: String,
-    @json.flatten details: Details,
 };
 
 @json.untagged
@@ -423,10 +417,10 @@ type Scalar = enum {
 };
 ```
 
-此外可以用 `@json.rename("name")` 改写单个字段名，用
-`@json.skip_serializing_if('None)`、`@json.skip_serializing_if('Empty)` 或一个返回
-Bool 的函数省略满足条件的字段。Decorator 是产生 attribute 的普通元数据函数；
-codec 和 schema 读取相同 attribute，因此二者不会形成两套独立模型。
+`rename_all` 和 `untagged` 产生具名 property，codec 和 schema 按目标 TypeId 与
+property TypeId 查询同一份 MainWorld 数据。字段和 variant property 按 owner TypeId、
+canonical member index 和 property TypeId 安全存取。当前 JSON API 在类型层提供
+`rename_all` 和 `untagged`；member 表示定制在领域模型或显式 codec 层表达。
 
 JSON/TOML/YAML 文件也可以作为静态数据模块 import。它们在封闭模块图建立时由
 Host 加载，不是运行时文件 IO，并且只导出 `data: Value`：

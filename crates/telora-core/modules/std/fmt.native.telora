@@ -1,10 +1,22 @@
+import "std/type-desc" { TypeDesc };
+
 native type DisplayTemplate @0;
 
-native prepare: Fn(String, Any, Any) -> Any;
-native display: for(A) Fn(TypeOf(A), A) -> String;
+@property('Type)
+type DisplayBy = struct { template: DisplayTemplate };
 
-def display_by = fn(template) {
-    fn(ctx, value) { prepare(template, ctx, value) }
+native prepare: Fn(String, Type, TypeDesc) -> DisplayTemplate;
+native render: for(A) Fn(Type, TypeOf(A), A) -> String;
+
+def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(template) {
+    fn(target, previous) {
+        let property: DisplayBy = {template: prepare(template, DisplayBy, target)};
+        property
+    }
 };
 
-export { display, display_by };
+def display: for(A) Fn(TypeOf(A), A) -> String = fn(target, value) {
+    render(DisplayBy, target, value)
+};
+
+export { DisplayBy, display, display_by };

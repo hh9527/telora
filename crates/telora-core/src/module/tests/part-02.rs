@@ -42,9 +42,8 @@
                import "std/result" as result;
                import "std/value" {Value};
                type Val = enum {'String(String), 'Int(Int)};
-               def empty: Fn(String) -> Bool = fn(value) { value == "" };
                type Query = struct {
-                   @json.skip_serializing_if(empty) sql: String,
+                   sql: String,
                    bindings: Array(Val),
                };
                let first: Query = {sql: "SELECT ?", bindings: ['Int(1)]};
@@ -1224,4 +1223,3 @@ unchanged", "|"),
         }
         fs::remove_dir_all(directory).unwrap();
     }
-

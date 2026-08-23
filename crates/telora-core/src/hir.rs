@@ -424,6 +424,22 @@ impl Resolver {
             .map(|parameter| self.external_names.insert(parameter.value.clone()))
             .collect::<Vec<_>>();
         let expression = self.index_expr(expression, scopes);
+        if self.static_expressions && binding.value.kind == BindingKind::Type {
+            self.expression_stack.push(expression);
+            for decorator in &binding.value.decorators {
+                let intrinsic_property = matches!(
+                    &decorator.value.callee.value,
+                    ExprKind::Variable(name) if name.value == "property"
+                );
+                if !intrinsic_property {
+                    self.index_expr(&decorator.value.callee, scopes);
+                }
+                for argument in &decorator.value.arguments {
+                    self.index_expr(argument, scopes);
+                }
+            }
+            self.expression_stack.pop();
+        }
         for (parameter, inserted) in binding.value.type_parameters.iter().zip(inserted) {
             if inserted {
                 self.external_names.remove(&parameter.value);
@@ -482,6 +498,20 @@ impl Resolver {
             }
             ExprKind::Dict(fields) => {
                 for field in fields {
+                    if self.static_expressions {
+                        for decorator in &field.value.decorators {
+                            let intrinsic_property = matches!(
+                                &decorator.value.callee.value,
+                                ExprKind::Variable(name) if name.value == "property"
+                            );
+                            if !intrinsic_property {
+                                self.index_expr(&decorator.value.callee, scopes);
+                            }
+                            for argument in &decorator.value.arguments {
+                                self.index_expr(argument, scopes);
+                            }
+                        }
+                    }
                     self.index_expr(&field.value.value, scopes);
                 }
                 None

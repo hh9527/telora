@@ -53,21 +53,17 @@ fn run_core_dyn(
         let (_, packaged_descriptor, payload) = view
             .dyn_parts(handle)
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
-        let target = crate::types::decode_type_ref(
-            ValueRef::work(arguments[0], current, background),
-            "std/dyn.project_with target",
-        )
-        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        let packaged = crate::types::decode_type_ref(
-            ValueRef::work(packaged_descriptor, current, background),
-            "std/dyn.project_with package",
-        )
-        .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
         let target_id = current
-            .canonical_descriptor_type_id(&target)
+            .canonical_type_value_id(
+                ValueRef::work(arguments[0], current, background),
+                "std/dyn.project_with target",
+            )
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
         let packaged_id = current
-            .canonical_descriptor_type_id(&packaged)
+            .canonical_type_value_id(
+                ValueRef::work(packaged_descriptor, current, background),
+                "std/dyn.project_with package",
+            )
             .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
         if target_id != packaged_id {
             return Ok(VmAction::Return {
@@ -109,8 +105,91 @@ fn run_core_dyn(
     let (_, descriptor, value) = view
         .dyn_parts(handle)
         .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?;
+    if operation == CoreDynFunction::GetFieldValue {
+        let index = dyn_member_index(arguments[1], function, pc)?;
+        let (child_descriptor, child_value) = dyn_field_by_index(descriptor, value, index, &view)
+            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+        charge_allocation(
+            account,
+            logical_value_bytes(3)
+                .map_err(|native_error| allocation_error(native_error.message, function, pc))?,
+            function,
+            pc,
+        )?;
+        return Ok(VmAction::Return {
+            value: child_value.with_value(DecodedValue::Dyn(current.allocate(Object::Dyn {
+                identity: Arc::new(()),
+                descriptor: child_descriptor,
+                value: child_value,
+                scheme: None,
+                origin: None,
+            }))),
+            return_target,
+        });
+    }
+    if matches!(
+        operation,
+        CoreDynFunction::GetVariantIndex | CoreDynFunction::GetVariantPayload
+    ) {
+        let (index, payload) = dyn_variant_by_index(descriptor, value, &view)
+            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+        if operation == CoreDynFunction::GetVariantIndex {
+            return Ok(VmAction::Return {
+                value: Val::new(DecodedValue::Int(i64::from(index)), value.loc()),
+                return_target,
+            });
+        }
+        let expected = dyn_member_index(arguments[1], function, pc)?;
+        if expected != index {
+            return Err(error(
+                RuntimeErrorKind::TypeMismatch,
+                format!("Dyn variant index is {index}, not {expected}"),
+                function,
+                pc,
+            ));
+        }
+        charge_allocation(
+            account,
+            logical_value_bytes(if payload.is_some() { 5 } else { 2 })
+                .map_err(|native_error| allocation_error(native_error.message, function, pc))?,
+            function,
+            pc,
+        )?;
+        let payload = match payload {
+            Some((child_descriptor, child_value)) => {
+                let child = child_value.with_value(DecodedValue::Dyn(current.allocate(
+                    Object::Dyn {
+                        identity: Arc::new(()),
+                        descriptor: child_descriptor,
+                        value: child_value,
+                        scheme: None,
+                        origin: None,
+                    },
+                )));
+                Val::new(
+                    DecodedValue::Tagged(current.allocate(Object::Tagged {
+                        tag: Val::new(
+                            DecodedValue::BuiltinAtom(BuiltinAtom::Some),
+                            value.loc(),
+                        ),
+                        payload: child,
+                    })),
+                    value.loc(),
+                )
+            }
+            None => Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), value.loc()),
+        };
+        return Ok(VmAction::Return {
+            value: payload,
+            return_target,
+        });
+    }
     match operation {
-        CoreDynFunction::Pack | CoreDynFunction::ProjectWith => {
+        CoreDynFunction::Pack
+        | CoreDynFunction::ProjectWith
+        | CoreDynFunction::GetFieldValue
+        | CoreDynFunction::GetVariantIndex
+        | CoreDynFunction::GetVariantPayload => {
             unreachable!("operation handled above")
         }
         CoreDynFunction::Desc => Ok(VmAction::Return {
@@ -494,6 +573,109 @@ fn normalize_dyn_descriptor(mut descriptor: Val, view: &HeapView<'_>) -> Result<
     }
 }
 
+fn dyn_member_index(
+    value: Val,
+    function: &BytecodeFunction,
+    pc: usize,
+) -> Result<u32, RuntimeError> {
+    let DecodedValue::Int(index) = value.value() else {
+        return Err(runtime_shallow_type_error("Int", value, function, pc));
+    };
+    u32::try_from(index).map_err(|_| {
+        error(
+            RuntimeErrorKind::TypeMismatch,
+            "member index must be a non-negative u32",
+            function,
+            pc,
+        )
+    })
+}
+
+fn dyn_field_by_index(
+    descriptor: Val,
+    value: Val,
+    index: u32,
+    view: &HeapView<'_>,
+) -> Result<(Val, Val), String> {
+    let descriptor = normalize_dyn_descriptor(descriptor, view)?;
+    let value = view
+        .unwrap_declared(value)
+        .map_err(|error| error.to_string())?;
+    let DecodedValue::Dict(type_handle) = descriptor.value() else {
+        return Err("Dyn descriptor is not Type metadata".into());
+    };
+    let kind = view
+        .dict_get_text(type_handle, "kind")
+        .map_err(|error| error.to_string())?
+        .and_then(|kind| view.atom_text(kind).ok().flatten())
+        .ok_or_else(|| "Dyn descriptor has no Atom kind".to_owned())?;
+    if kind != "Struct" {
+        return Err(format!("dyn.get_field_value expects Struct, got {kind}"));
+    }
+    let DecodedValue::Dict(fields) = view
+        .dict_get_text(type_handle, "fields")
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Struct descriptor has no fields".to_owned())?
+        .value()
+    else {
+        return Err("Struct.fields descriptor must be a Dict".into());
+    };
+    let (field_names, descriptors) = view.dict_parts(fields).map_err(|error| error.to_string())?;
+    let DecodedValue::Dict(values) = value.value() else {
+        return Err("dyn.get_field_value expects runtime Struct record".into());
+    };
+    let (value_names, values) = view.dict_parts(values).map_err(|error| error.to_string())?;
+    if field_names != value_names || descriptors.len() != values.len() {
+        return Err("Struct descriptor and runtime value have different fields".into());
+    }
+    let index = usize::try_from(index).map_err(|_| "field index exceeds usize".to_owned())?;
+    let descriptor = descriptors
+        .get(index)
+        .copied()
+        .ok_or_else(|| format!("Struct field index {index} is out of range"))?;
+    Ok((descriptor, values[index]))
+}
+
+fn dyn_variant_by_index(
+    descriptor: Val,
+    value: Val,
+    view: &HeapView<'_>,
+) -> Result<(u32, Option<(Val, Val)>), String> {
+    let descriptor = normalize_dyn_descriptor(descriptor, view)?;
+    let value = view
+        .unwrap_declared(value)
+        .map_err(|error| error.to_string())?;
+    let DecodedValue::Dict(type_handle) = descriptor.value() else {
+        return Err("Dyn descriptor is not Type metadata".into());
+    };
+    let kind = view
+        .dict_get_text(type_handle, "kind")
+        .map_err(|error| error.to_string())?
+        .and_then(|kind| view.atom_text(kind).ok().flatten())
+        .ok_or_else(|| "Dyn descriptor has no Atom kind".to_owned())?;
+    if kind != "Enum" {
+        return Err(format!("dyn.get_variant_index expects Enum, got {kind}"));
+    }
+    let (tag, payload) = dyn_tagged_parts("Enum", type_handle, value, view)?;
+    let DecodedValue::Dict(variants) = view
+        .dict_get_text(type_handle, "variants")
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Enum descriptor has no variants".to_owned())?
+        .value()
+    else {
+        return Err("Enum.variants descriptor must be a Dict".into());
+    };
+    let (names, _) = view
+        .dict_parts(variants)
+        .map_err(|error| error.to_string())?;
+    let index = names
+        .iter()
+        .position(|name| view.text(*name).is_ok_and(|name| name == tag))
+        .ok_or_else(|| format!("Enum has no variant {tag:?}"))?;
+    let index = u32::try_from(index).map_err(|_| "variant index exceeds u32".to_owned())?;
+    Ok((index, payload))
+}
+
 fn dyn_tagged_parts(
     kind: &str,
     type_handle: Handle,
@@ -569,7 +751,7 @@ fn dyn_tagged_parts(
                 .dict_get_text(variants, &runtime.0)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("Enum has no variant {:?}", runtime.0))?;
-            let (inner, _) = strip_runtime_attributes(variant, "Dyn.enum.variant", view)?;
+            let inner = strip_runtime_attributes(variant, "Dyn.enum.variant", view)?;
             let unit = view
                 .atom_text(inner)
                 .ok()
@@ -854,7 +1036,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
                 .filter_map(|value| {
                     let stripped = strip_runtime_attributes(*value, "Type.variants", view);
                     match stripped {
-                        Ok((inner, _))
+                        Ok(inner)
                             if view
                                 .atom_text(inner)
                                 .ok()
@@ -863,7 +1045,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
                         {
                             None
                         }
-                        Ok((inner, _)) => Some(Ok(inner)),
+                        Ok(inner) => Some(Ok(inner)),
                         Err(error) => Some(Err(error)),
                     }
                 })
@@ -873,6 +1055,61 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
         | "Atom" | "Func" | "Bound" | "Named" => Ok(Vec::new()),
         other => Err(format!("unknown Type metadata kind '{other}")),
     }
+}
+
+fn type_desc_members(
+    input: Val,
+    variants: bool,
+    view: &HeapView<'_>,
+) -> Result<Vec<(String, Option<Val>)>, String> {
+    let descriptor = normalize_dyn_descriptor(input, view)?;
+    let DecodedValue::Dict(handle) = descriptor.value() else {
+        return Err("Type descriptor is not canonical metadata".into());
+    };
+    let kind = view
+        .dict_get_text(handle, "kind")
+        .map_err(|error| error.to_string())?
+        .and_then(|value| view.atom_text(value).ok().flatten())
+        .ok_or_else(|| "Type descriptor has no Atom kind".to_owned())?;
+    let expected = if variants { "Enum" } else { "Struct" };
+    if kind != expected {
+        return Err(format!(
+            "std/type-desc.{} expects {expected}, got {kind}",
+            if variants { "variants" } else { "fields" }
+        ));
+    }
+    let member_field = if variants { "variants" } else { "fields" };
+    let DecodedValue::Dict(members) = view
+        .dict_get_text(handle, member_field)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("{expected}.{member_field} is missing"))?
+        .value()
+    else {
+        return Err(format!("{expected}.{member_field} must be a Dict"));
+    };
+    let (names, values) = view
+        .dict_parts(members)
+        .map_err(|error| error.to_string())?;
+    names
+        .iter()
+        .zip(values)
+        .map(|(name, value)| {
+            let name = view
+                .text(*name)
+                .map(str::to_owned)
+                .map_err(|error| error.to_string())?;
+            if !variants {
+                return Ok((name, Some(*value)));
+            }
+            let inner = strip_runtime_attributes(*value, "Type.variant", view)?;
+            let unit = view
+                .atom_text(inner)
+                .ok()
+                .flatten()
+                .is_some_and(|atom| atom == "None");
+            Ok((name, (!unit).then_some(inner)))
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -920,4 +1157,3 @@ fn type_desc_resolve_error(
         return_target,
     })
 }
-

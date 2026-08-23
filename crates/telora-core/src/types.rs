@@ -3,7 +3,10 @@ use crate::ast::{
     TypeArgumentKind, UnaryOperator, located,
 };
 use crate::compiler::compile_expression_with_external_bindings;
-use crate::heap::{Handle, Heap, PersistentValue, Val, publish_root};
+use crate::heap::{
+    Handle, Heap, HeapView, PersistentValue, PropertyKey, Val, publish_root,
+    publish_type_properties,
+};
 use crate::hir::{HirDefinitionId, HirDefinitionKind, HirExpressionId, HirProgram, HirResolution};
 use crate::json::{Provenance, ValuePath, ValuePathSegment};
 use crate::lexer::{FrontendError, SourceLocation};
@@ -36,6 +39,7 @@ include!("types/analysis.rs");
 include!("types/dependency.rs");
 include!("types/metadata.rs");
 include!("types/tool.rs");
+include!("types/properties.rs");
 include!("types/prelude.rs");
 include!("types/inference-state.rs");
 include!("types/inference-context.rs");

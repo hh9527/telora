@@ -103,6 +103,12 @@ impl<'a> Lowerer<'a> {
                         self.identifier(key)
                     };
                     let decorators = self.decorators(field)?;
+                    if !decorators.is_empty() {
+                        return Err(self.error(
+                            field,
+                            "decorators are only supported on concrete nominal type declarations; Dict fields do not have property identity",
+                        ));
+                    }
                     let value = if let Ok(colon) = self.first_token(field, Token::Colon) {
                         let value = self
                             .children(field)
@@ -119,13 +125,6 @@ impl<'a> Lowerer<'a> {
                         }
                         located(ExprKind::Variable(name.clone()), name.location)
                     };
-                    let value = self.apply_decorators(
-                        &decorators,
-                        "Field",
-                        &name,
-                        value,
-                        self.location(field),
-                    );
                     fields.push(located(
                         DictFieldKind {
                             decorators,
@@ -1111,4 +1110,3 @@ impl<'a> Lowerer<'a> {
     }
 
 }
-

@@ -486,6 +486,8 @@ pub(crate) enum CoreCodecFunction {
 pub(crate) enum CoreTypeDescFunction {
     Kind,
     Children,
+    Fields,
+    Variants,
     OpaqueName,
     Resolve,
 }
@@ -506,6 +508,9 @@ pub(crate) enum CoreDynFunction {
     TupleItems,
     Tag,
     Payload,
+    GetFieldValue,
+    GetVariantIndex,
+    GetVariantPayload,
 }
 
 impl CoreDynFunction {
@@ -525,12 +530,19 @@ impl CoreDynFunction {
             Self::TupleItems => "std/dyn.tuple_items",
             Self::Tag => "std/dyn.tag",
             Self::Payload => "std/dyn.payload",
+            Self::GetFieldValue => "std/dyn.get_field_value",
+            Self::GetVariantIndex => "std/dyn.get_variant_index",
+            Self::GetVariantPayload => "std/dyn.get_variant_payload",
         }
     }
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Pack | Self::ProjectWith | Self::Field => 2,
+            Self::Pack
+            | Self::ProjectWith
+            | Self::Field
+            | Self::GetFieldValue
+            | Self::GetVariantPayload => 2,
             _ => 1,
         }
     }
@@ -541,6 +553,8 @@ impl CoreTypeDescFunction {
         match self {
             Self::Kind => "std/type-desc.kind",
             Self::Children => "std/type-desc.children",
+            Self::Fields => "std/type-desc.fields",
+            Self::Variants => "std/type-desc.variants",
             Self::OpaqueName => "std/type-desc.opaque_name",
             Self::Resolve => "std/type-desc.resolve",
         }
@@ -554,13 +568,13 @@ impl CoreTypeDescFunction {
 impl CoreCodecFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
-            Self::Decode => "std/codec.decode",
-            Self::Encode => "std/codec.encode",
+            Self::Decode => "std/codec.decode_with",
+            Self::Encode => "std/codec.encode_with",
         }
     }
 
     pub(crate) const fn arity(self) -> usize {
-        2
+        3
     }
 }
 
@@ -588,17 +602,7 @@ pub(crate) enum CoreJsonFunction {
     Stringify,
     StringifyPretty,
     StringifyPrettyValue,
-    Rename,
-    RenameDecorator,
-    RenameAll,
-    RenameAllDecorator,
-    Flatten,
-    Untagged,
     Schema,
-    Default,
-    DefaultDecorator,
-    SkipSerializingIf,
-    SkipSerializingIfDecorator,
 }
 
 impl CoreJsonFunction {
@@ -607,33 +611,19 @@ impl CoreJsonFunction {
             Self::Parse => "std/json.parse",
             Self::ParseYaml => "std/yaml.parse",
             Self::ParseToml => "std/toml.parse",
-            Self::Decode => "std/json.decode",
+            Self::Decode => "std/json.decode_with",
             Self::Stringify => "std/json.stringify",
             Self::StringifyPretty => "std/json.stringify_pretty",
             Self::StringifyPrettyValue => "std/json.stringify_pretty.configured",
-            Self::Rename => "std/json.rename",
-            Self::RenameDecorator => "std/json.rename.configured",
-            Self::RenameAll => "std/json.rename_all",
-            Self::RenameAllDecorator => "std/json.rename_all.configured",
-            Self::Flatten => "std/json.flatten",
-            Self::Untagged => "std/json.untagged",
-            Self::Schema => "std/json.schema",
-            Self::Default => "std/json.default",
-            Self::DefaultDecorator => "std/json.default.configured",
-            Self::SkipSerializingIf => "std/json.skip_serializing_if",
-            Self::SkipSerializingIfDecorator => "std/json.skip_serializing_if.configured",
+            Self::Schema => "std/json.schema_with",
         }
     }
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Parse | Self::ParseYaml | Self::ParseToml | Self::Decode => 2,
-            Self::Flatten
-            | Self::Untagged
-            | Self::RenameDecorator
-            | Self::RenameAllDecorator
-            | Self::DefaultDecorator
-            | Self::SkipSerializingIfDecorator => 2,
+            Self::Parse | Self::ParseYaml | Self::ParseToml => 2,
+            Self::Decode => 3,
+            Self::Schema => 2,
             _ => 1,
         }
     }

@@ -16,6 +16,7 @@ type SchemaProperties = Vec<(String, CodecNode)>;
 
 fn generate_json_schema(
     schema: &CodecType,
+    properties: &CodecProperties,
     data: Val,
     current: &Heap,
     background: &Heap,
@@ -24,6 +25,7 @@ fn generate_json_schema(
     let mut definitions = BTreeMap::new();
     let mut root = generate_json_schema_node(
         schema,
+        properties,
         data,
         current,
         background,
@@ -45,6 +47,7 @@ fn generate_json_schema(
 #[allow(clippy::too_many_arguments)]
 fn generate_json_schema_node(
     schema: &CodecType,
+    properties: &CodecProperties,
     data: Val,
     current: &Heap,
     background: &Heap,
@@ -52,18 +55,33 @@ fn generate_json_schema_node(
     definitions: &mut BTreeMap<String, CodecNode>,
 ) -> Result<CodecNode, CodecFailure> {
     let loc = schema.rule.loc();
-    let view = HeapView {
-        current,
-        background: Some(background),
-    };
-    if !matches!(schema.kind, CodecKind::TypeSlot(_) | CodecKind::TypeRef(_))
-        && text_codec_bridge(schema, &view)
+    if let Some(owner) = schema.declared_owner {
+        let view = HeapView {
+            current,
+            background: Some(background),
+        };
+        let metadata = ValueRef { value: owner, view };
+        if text_codec_bridge(metadata, properties)
             .map_err(|message| CodecFailure::new(message, data, schema.rule))?
-    {
-        return Ok(schema_dict(
-            vec![("type", schema_string("string", loc))],
-            loc,
-        ));
+        {
+            return Ok(schema_dict(
+                vec![("type", schema_string("string", loc))],
+                loc,
+            ));
+        }
+        let mut structural = schema.clone();
+        structural.declared_owner = None;
+        apply_codec_type_properties(&mut structural, metadata, properties)
+            .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
+        return generate_json_schema_node(
+            &structural,
+            properties,
+            data,
+            current,
+            background,
+            links,
+            definitions,
+        );
     }
     if let Some(item) = option_item(schema) {
         return Ok(schema_dict(
@@ -74,6 +92,7 @@ fn generate_json_schema_node(
                         schema_dict(vec![("type", schema_string("null", loc))], loc),
                         generate_json_schema_node(
                             item,
+                            properties,
                             data,
                             current,
                             background,
@@ -111,6 +130,7 @@ fn generate_json_schema_node(
                 .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
             let definition = generate_json_schema_node(
                 &resolved,
+                properties,
                 data,
                 current,
                 background,
@@ -136,6 +156,18 @@ fn generate_json_schema_node(
                 current,
                 background: Some(background),
             };
+            let metadata = ValueRef {
+                value: Val::unknown(DecodedValue::DeclaredType(*handle)),
+                view,
+            };
+            let bridged = text_codec_bridge(metadata, properties)
+                .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
+            if bridged {
+                return Ok(schema_dict(
+                    vec![("type", schema_string("string", loc))],
+                    loc,
+                ));
+            }
             let Object::DeclaredType { body, .. } = view
                 .object(*handle)
                 .map_err(|error| CodecFailure::new(error.to_string(), data, schema.rule))?
@@ -146,10 +178,13 @@ fn generate_json_schema_node(
                     schema.rule,
                 ));
             };
-            let resolved = decode_runtime_type(*body, current, background)
+            let mut resolved = decode_runtime_type(*body, current, background)
+                .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
+            apply_codec_type_properties(&mut resolved, metadata, properties)
                 .map_err(|message| CodecFailure::new(message, data, schema.rule))?;
             let definition = generate_json_schema_node(
                 &resolved,
+                properties,
                 data,
                 current,
                 background,
@@ -194,7 +229,7 @@ fn generate_json_schema_node(
                 ("type", schema_string("array", loc)),
                 (
                     "items",
-                    generate_json_schema_node(item, data, current, background, links, definitions)?,
+                    generate_json_schema_node(item, properties, data, current, background, links, definitions)?,
                 ),
             ],
             loc,
@@ -204,19 +239,19 @@ fn generate_json_schema_node(
                 ("type", schema_string("object", loc)),
                 (
                     "additionalProperties",
-                    generate_json_schema_node(item, data, current, background, links, definitions)?,
+                    generate_json_schema_node(item, properties, data, current, background, links, definitions)?,
                 ),
             ],
             loc,
         )),
         CodecKind::Tagged { payload, .. } => {
-            generate_json_schema_node(payload, data, current, background, links, definitions)
+            generate_json_schema_node(payload, properties, data, current, background, links, definitions)
         }
         CodecKind::Tuple(items) => {
             let schemas = items
                 .iter()
                 .map(|item| {
-                    generate_json_schema_node(item, data, current, background, links, definitions)
+                    generate_json_schema_node(item, properties, data, current, background, links, definitions)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let length = Val::unknown(DecodedValue::Int(items.len() as i64));
@@ -238,6 +273,7 @@ fn generate_json_schema_node(
             let plan = plan_struct(schema, fields, data, "$", &view)?;
             let (properties, required) = generate_struct_schema_fields(
                 &plan,
+                properties,
                 data,
                 current,
                 background,
@@ -282,6 +318,7 @@ fn generate_json_schema_node(
                     .map(|variant| {
                         generate_json_schema_node(
                             variant.payload.as_ref().expect("planned untagged payload"),
+                            properties,
                             data,
                             current,
                             background,
@@ -297,6 +334,7 @@ fn generate_json_schema_node(
                         if let Some(payload) = &variant.payload {
                             let property = generate_json_schema_node(
                                 payload,
+                                properties,
                                 data,
                                 current,
                                 background,
@@ -356,6 +394,7 @@ fn generate_json_schema_node(
                         .map(|variant| {
                             generate_json_schema_node(
                                 variant,
+                                properties,
                                 data,
                                 current,
                                 background,
@@ -382,6 +421,7 @@ fn generate_json_schema_node(
 
 fn generate_struct_schema_fields(
     plan: &StructPlan,
+    codec_properties: &CodecProperties,
     data: Val,
     current: &Heap,
     background: &Heap,
@@ -391,42 +431,17 @@ fn generate_struct_schema_fields(
     let mut properties = Vec::new();
     let mut required = Vec::new();
     for field in &plan.fields {
-        if let Some(nested) = &field.flattened {
-            let (nested_properties, nested_required) = generate_struct_schema_fields(
-                nested,
-                data,
-                current,
-                background,
-                links,
-                definitions,
-            )?;
-            properties.extend(nested_properties);
-            required.extend(nested_required);
-            continue;
-        }
-        let external = field.external_name.clone().expect("ordinary field name");
-        let mut property = generate_json_schema_node(
+        let external = field.external_name.clone();
+        let property = generate_json_schema_node(
             &field.schema,
+            codec_properties,
             data,
             current,
             background,
             links,
             definitions,
         )?;
-        if let Some(default) = field.default {
-            let encoded = validate_codec_value_without_skipping(
-                &field.schema,
-                default,
-                &format!("$.{}", field.internal_name),
-                current,
-                background,
-            )
-            .map_err(|failure| CodecFailure::new(failure.message, default, default))?;
-            let CodecNode::Dict(fields, _) = &mut property else {
-                unreachable!("every generated schema is an object")
-            };
-            fields.push(("default".into(), encoded));
-        } else if option_item(&field.schema).is_none() {
+        if option_item(&field.schema).is_none() {
             required.push(external.clone());
         }
         properties.push((external, property));
@@ -644,4 +659,3 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
         }
     }
 }
-

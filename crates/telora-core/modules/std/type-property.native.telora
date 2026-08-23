@@ -1,0 +1,25 @@
+type FieldPropertyCtx = struct {
+    owner: Type,
+    index: Int,
+    name: String,
+    ty: Type,
+};
+
+type VariantPropertyCtx = struct {
+    owner: Type,
+    index: Int,
+    name: String,
+    payload: Option(Type),
+};
+
+native get_type_prop: for(P) Fn(Type, TypeOf(P)) -> Option(P);
+native get_field_prop: for(P) Fn(Type, Int, TypeOf(P)) -> Option(P);
+native get_variant_prop: for(P) Fn(Type, Int, TypeOf(P)) -> Option(P);
+
+export {
+    FieldPropertyCtx,
+    VariantPropertyCtx,
+    get_type_prop,
+    get_field_prop,
+    get_variant_prop,
+};
