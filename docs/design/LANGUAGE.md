@@ -508,8 +508,7 @@ type Status = enum {
 
 每个直接声明拥有由 provider module 与声明位置确定的私有身份。不同声明即使字段或
 variant 完全相同，也不是同一个类型；alias、import 和 reexport 则保留原身份。普通
-TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具仍从同一份权威元数据图工作，
-没有第二套编译器专属类型世界。
+TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具从同一份权威元数据图工作。
 
 Decorator 只适用于没有类型参数的具名 Struct/Enum 声明及其直接字段/variant。
 Property carrier 本身也必须是具名 Struct/Enum，并用内建 capability 标记：
@@ -532,12 +531,12 @@ type Endpoint = struct { host: String, port: Int };
 capability 包括 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant`；
 `Type`/`Member` 分别覆盖两类 type/member owner，多个标记按位合并。系统先封闭
 `Endpoint` 的 TypeId、TypeMetadata 和 canonical member index，再执行 provider，并以
-`Ty(Endpoint, DisplayBy)` 发布结果。provider 接收的是只读 context，返回值只能发布
-为 property；语言没有让 provider 写回 descriptor 的路径。因此目标结构与身份不变是
-执行模型保证的语义，不是 decorator 必须自觉遵守的限制。Field/Variant 使用 owner
+`Ty(Endpoint, DisplayBy)` 发布结果。provider 从只读 context 计算 property value，
+property registry 与目标 descriptor 独立；这个执行模型保持目标结构与身份稳定。
+Field/Variant 使用 owner
 TypeId、按 member name 排序得到的
-零基 canonical index 和 property TypeId 作为键。目标 metadata 与没有 decorator 时
-完全一致；Dict 字段、alias 和参数化 type family template 不接受 decorator。
+零基 canonical index 和 property TypeId 作为键。Decorator 的当前适用范围是具名
+Struct/Enum 及其直接 member。
 
 同 key 的多个 provider 接受 `Option(previous)` 并按词法顺序 fold，provider 可自行
 合并、替换或拒绝前值。字段/variant decorator 全部完成后才运行 type decorator；后者
@@ -561,7 +560,7 @@ descriptor 安全投影。错误 kind、越界和 variant mismatch 是有来源�
 unit variant 的 payload 是 `None`。
 
 后续 interpreter、quote/codegen 或 trait 机制可以读取同一封闭骨架和 property
-registry；任何消费者赋予 property 的行为意义都不会反向改变被装饰类型的结构。
+registry，并基于这两个稳定输入赋予 property 行为意义。
 
 ### 7.2 参数化 TypeMetadata family
 
