@@ -1,10 +1,45 @@
 import "std/value" { Value };
+import "std/regex" { ParseBy };
+import "std/string" { DecodeByParse, EncodeByDisplay };
+import "std/fmt" { DisplayBy };
 
-native decode: for(A) Fn(TypeOf(A), Value) -> Result(A, BlameError);
-native encode: for(A) Fn(TypeOf(Value), A) -> Result(Value, BlameError);
+@property
+type JsonRenameAll = struct { case: Any };
+
+@property
+type JsonUntagged = struct {};
+
+type Properties = struct {
+    parse_by: Type,
+    decode_by_parse: Type,
+    encode_by_display: Type,
+    display_by: Type,
+    json_rename_all: Type,
+    json_untagged: Type,
+};
+def properties: Properties = {
+    parse_by: ParseBy,
+    decode_by_parse: DecodeByParse,
+    encode_by_display: EncodeByDisplay,
+    display_by: DisplayBy,
+    json_rename_all: JsonRenameAll,
+    json_untagged: JsonUntagged,
+};
+native decode_with: for(A) Fn(Properties, TypeOf(A), Value) -> Result(A, BlameError);
+native encode_with: for(A) Fn(Properties, TypeOf(Value), A) -> Result(Value, BlameError);
+def decode: for(A) Fn(TypeOf(A), Value) -> Result(A, BlameError) = fn(target, value) {
+    decode_with(properties, target, value)
+};
+def encode: for(A) Fn(TypeOf(Value), A) -> Result(Value, BlameError) = fn(target, value) {
+    encode_with(properties, target, value)
+};
 def format_error: Fn(BlameError) -> String = fn(error) { error.message };
 export {
     Value,
+    JsonRenameAll,
+    JsonUntagged,
+    Properties,
+    properties,
     decode,
     encode,
     format_error,

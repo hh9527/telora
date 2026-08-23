@@ -269,16 +269,20 @@ polymorphism 的通用替代品。
 不必为不可达结果伪造类型，并抑制连锁错误。用户不能把 `Never` 构造成普通数据；
 best-effort evaluator 内部保存的 Fail 节点也不是 `Never` 的源码可观察实例。
 
-### Decorator 与 Attribute
+### Decorator 与 Typed Property
 
-**Decorator** 是转换 TypeMetadata 的普通函数。**Attribute** 是存储在 metadata
-上、供 interpreter 或 capability 使用的数据。二者出现在类型语法中，并不意味
-其领域政策由编译器拥有。
+**Decorator** 是在 tool stage 为一个已经封闭的具名类型计算 typed property 的函数，
+不转换 TypeMetadata，也不能替换目标类型身份。Property 必须是由 `@property` 标记的
+具体具名类型；系统以 `(TypeId(Target), TypeId(Property))` 为键，把它发布到
+MainWorld。Interpreter 通过 property 的 TypeId 查询数据，不使用字符串属性名。
+
+当前只有无类型参数的具名 Struct/Enum 声明具有 property identity。字段、variant、
+alias 和 type family 不接受 decorator。
 
 ### Interpreter
 
-**Interpreter** 是消费 `TypeDesc` 并实现类型导向操作的普通代码。受控的 typed
-bridge 可以把它连接到 `TypeOf(A)`，但不能允许它任意构造或提取 `A`。
+**Interpreter** 是消费 `TypeDesc` 和 typed property 并实现类型导向操作的普通代码。
+受控的 typed bridge 可以把它连接到 `TypeOf(A)`，但不能允许它任意构造或提取 `A`。
 
 ## Stage 与 Execution
 

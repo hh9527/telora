@@ -11,6 +11,8 @@ impl Heap {
             bootstrap_root: None,
             functions: HashMap::new(),
             declared_types: HashMap::new(),
+            type_properties: HashMap::new(),
+            native_decorator_type: None,
         }
     }
 
@@ -179,6 +181,19 @@ impl Heap {
             .lock()
             .map_err(|_| HeapError("type store poisoned"))?;
         Ok(types.get(type_id).map(|data| data.name.clone()))
+    }
+
+    pub(crate) fn empty_record_with_type(&mut self, type_id: crate::TypeId) -> Val {
+        let shape = self.intern_shape(Vec::new());
+        Val::unknown(DecodedValue::Dict(self.allocate(Object::Dict {
+            shape,
+            values: Box::new([]),
+        })))
+        .with_type_id(type_id)
+    }
+
+    pub(crate) fn native_decorator_type(&self) -> Option<crate::TypeId> {
+        self.native_decorator_type
     }
 
     #[cfg(test)]

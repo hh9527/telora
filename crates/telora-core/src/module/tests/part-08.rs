@@ -144,6 +144,130 @@
     }
 
     #[test]
+    fn typed_properties_are_queried_by_target_and_property_identity() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               import "std/type-property" as type_property;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               type Plain = struct { value: Int };
+               def endpoint_property = type_property.get(fmt.DisplayBy, Endpoint);
+               def has_endpoint = match endpoint_property {
+                   'Some(_) => 'True,
+                   'None => 'False,
+               };
+               def has_plain = match type_property.get(fmt.DisplayBy, Plain) {
+                   'Some(_) => 'True,
+                   'None => 'False,
+               };
+               def property_valid = match endpoint_property {
+                   'Some(property) => validate(fmt.DisplayBy, property),
+                   'None => 'Err("missing"),
+               };
+               export def output = {has_endpoint, has_plain, property_valid, target: Endpoint};"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        let output = named_output(&executed);
+        assert_eq!(output.get("has_endpoint").unwrap().to_string(), "'True");
+        assert_eq!(output.get("has_plain").unwrap().to_string(), "'False");
+        assert!(
+            output
+                .get("property_valid")
+                .unwrap()
+                .to_string()
+                .starts_with("'Ok(")
+        );
+        let target = output
+            .get("target")
+            .unwrap()
+            .declared_body()
+            .expect("Endpoint Type metadata");
+        assert_eq!(target.get("kind").unwrap().to_string(), "'Struct");
+        assert_eq!(
+            target.get("fields").unwrap().dict_fields().unwrap(),
+            vec!["host", "port"]
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn typed_properties_reject_targets_carriers_and_duplicate_identity() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        let cases = [
+            (
+                "@property type Prop = Int; export { Prop };",
+                "concrete nominal",
+            ),
+            (
+                "@property type Prop(T) = struct { value: T }; export { Prop };",
+                "concrete nominal struct or enum declarations",
+            ),
+            (
+                r#"import "std/type-desc" { TypeDesc };
+                   type Prop = struct {};
+                   def deco: Fn(TypeDesc) -> Prop = fn(target) { let value: Prop = {}; value };
+                   @deco type Target = struct {};
+                   export { Prop, Target };"#,
+                "is not marked with @property",
+            ),
+            (
+                r#"import "std/type-desc" { TypeDesc };
+                   def deco: Fn(TypeDesc) -> Int = fn(target) { 1 };
+                   @deco type Target = struct {};
+                   export { Target };"#,
+                "concrete nominal property type",
+            ),
+            (
+                r#"import "std/type-desc" { TypeDesc };
+                   @property type Prop = struct {};
+                   def deco: Fn(TypeDesc) -> Prop = fn(target) { let value: Prop = {}; value };
+                   @deco @deco type Target = struct {};
+                   export { Prop, Target };"#,
+                "duplicate property type on the same target",
+            ),
+        ];
+        for (source, expected) in cases {
+            fs::write(&main, source).unwrap();
+            let error = recovery_engine().load_module(&main, BTreeMap::new()).unwrap_err();
+            assert!(error.message().contains(expected), "{source}\n{error}");
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_property_markers_are_source_order_independent() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/type-desc" { TypeDesc };
+               import "std/type-property" as type_property;
+               def deco: Fn(TypeDesc) -> Prop = fn(target) { let value: Prop = {}; value };
+               @deco type Target = struct {};
+               @property type Prop = struct {};
+               export def output = match type_property.get(Prop, Target) {
+                   'Some(_) => 'True,
+                   'None => 'False,
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        assert_eq!(
+            named_output(&engine.execute(&module).unwrap()).to_string(),
+            "'True"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn container_text_codec_bridge_round_trips_nested_values_and_schema() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
@@ -228,7 +352,7 @@
         assert!(
             error
                 .message()
-                .contains("only supported on a type container")
+                .contains("Struct fields do not have property identity")
         );
         fs::remove_dir_all(directory).unwrap();
     }

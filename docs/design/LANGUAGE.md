@@ -482,11 +482,11 @@ Option(String)
 Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函数元数据的 kind
 观察均返回 `'Func`。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
 
-类型 annotation、decorator 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
+类型 annotation、decorator property 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
 阶段与程序阶段共享函数语义、值模型、fuel 和失败规则；区别在于 Host 调用它们的
 目的和允许发布的结果，而不是存在第二门类型级语言。
 
-### 7.1 Struct、Enum 和 decorator
+### 7.1 Struct、Enum 和 typed property decorator
 
 具名 Struct 和 Enum 使用 `type` 的专用声明初始化器：
 
@@ -511,11 +511,39 @@ variant 完全相同，也不是同一个类型；alias、import 和 reexport �
 TypeMetadata 值、codec、schema、`Dyn`、TypeDesc 和工具仍从同一份权威元数据图工作，
 没有第二套编译器专属类型世界。
 
-Struct 字段和 Enum variant 可以使用普通 decorator 添加 attribute，供 codec、schema、
-文本表示或用户态解释器消费。根 decorator 在结构 draft 上运行，但必须保留声明的
-Struct 或 Enum kind，且不能创建或替换声明身份。
+Decorator 只适用于没有类型参数的具名 Struct/Enum 声明。Property carrier 本身也必须
+是具名 Struct/Enum，并用内建 `@property` 标记：
 
-Decorator 应保持确定和纯粹。失败的 metadata 构造不能发布部分类型图。
+```telora
+@property
+type DisplayBy = struct { template: String };
+
+def display_by: Fn(String) -> Fn(TypeDesc) -> DisplayBy = fn(template) {
+    fn(target) {
+        let property: DisplayBy = {template};
+        property
+    }
+};
+
+@display_by("{host}:{port}")
+type Endpoint = struct { host: String, port: Int };
+```
+
+系统先封闭 `Endpoint` 的 TypeId 和 TypeMetadata，再执行 provider，并以
+`(TypeId(Endpoint), TypeId(DisplayBy))` 发布结果。目标 metadata 与没有 decorator
+时完全一致。字段、Enum variant、Dict 字段、alias 和参数化 type family 没有 property
+identity，不能使用 decorator。同一目标上的同一 property type 只能出现一次。
+
+当前反射接口显式传递两个类型 witness：
+
+```telora
+import "std/type-property" as type_property;
+let property: Option(DisplayBy) = type_property.get(DisplayBy, Endpoint);
+```
+
+查询返回 MainWorld 中 property 的廉价引用。未来 `get_type_property@[DisplayBy](Endpoint)`
+应由通用的隐式 `TypeOf(T)` witness 规则提供，而不是增加 property 专用语法魔法。
+Decorator 应保持确定和纯粹；同一声明的一组 property 全部成功后才原子发布。
 
 ### 7.2 参数化 TypeMetadata family
 

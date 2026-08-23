@@ -1,0 +1,3 @@
+native get: for(P) Fn(TypeOf(P), Type) -> Option(P);
+
+export { get };

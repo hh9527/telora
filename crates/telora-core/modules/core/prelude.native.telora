@@ -1,3 +1,5 @@
 native union: Fn(Any, Any) -> Type;
 native validate: for(A) Fn(TypeOf(A), Any) -> Result(A, BlameError);
-export { union, validate };
+@property
+type NativeDecorator = struct {};
+export { NativeDecorator, union, validate };

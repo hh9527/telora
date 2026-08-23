@@ -1,16 +1,33 @@
 import "std/value" { Value };
+import "std/codec" as codec;
+import "std/codec" { JsonRenameAll as RenameAll, JsonUntagged as Untagged };
+import "std/type-desc" { TypeDesc };
 
 native parse_raw: Fn(Type, String) -> Result(Value, BlameError);
-native decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError);
+native decode_with: for(A) Fn(codec.Properties, TypeOf(A), String) -> Result(A, BlameError);
 native stringify: Fn(Value) -> String;
 native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
-native rename: Fn(String) -> Fn(Any, Any) -> Any;
-native rename_all: Fn(Any) -> Fn(Any, Any) -> Any;
-native flatten: Fn(Any, Any) -> Any;
-native untagged: Fn(Any, Any) -> Any;
-native schema: Fn(Any) -> Any;
-native default: Fn(Any) -> Fn(Any, Any) -> Any;
-native skip_serializing_if: Fn(Any) -> Fn(Any, Any) -> Any;
+native schema_with: Fn(codec.Properties, Type) -> Any;
+def decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, text) {
+    decode_with(codec.properties, target, text)
+};
+def rename_all: Fn(Any) -> Fn(TypeDesc) -> RenameAll = fn(case) {
+    fn(target) {
+        if case == 'CamelCase {
+            let property: RenameAll = {case};
+            property
+        } else {
+            fail!("std/json.rename_all currently expects 'CamelCase")
+        }
+    }
+};
+def untagged: Fn(TypeDesc) -> Untagged = fn(target) {
+    let property: Untagged = {};
+    property
+};
+def schema: Fn(Type) -> Any = fn(target) {
+    schema_with(codec.properties, target)
+};
 def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
     parse_raw(Value, text)
 };
@@ -19,11 +36,9 @@ export {
     decode,
     stringify,
     stringify_pretty,
-    rename,
+    RenameAll,
+    Untagged,
     rename_all,
-    flatten,
     untagged,
     schema,
-    default,
-    skip_serializing_if,
 };

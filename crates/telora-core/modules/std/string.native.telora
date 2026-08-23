@@ -10,8 +10,26 @@ native replace: Fn(String, String, String) -> String;
 native indent: Fn(String, Int) -> String;
 native ensure_trailing_newline: Fn(String) -> String;
 native trim_margin: Fn(String, String) -> String;
-native parse: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError);
-native decode_by_parse: Fn(Any, Any) -> Any;
-native encode_by_display: Fn(Any, Any) -> Any;
+import "std/regex" { ParseBy };
+import "std/type-desc" { TypeDesc };
 
-export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, decode_by_parse, encode_by_display };
+@property
+type DecodeByParse = struct {};
+
+@property
+type EncodeByDisplay = struct {};
+
+native parse_with: for(A) Fn(Type, TypeOf(A), String) -> Result(A, BlameError);
+def parse: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, input) {
+    parse_with(ParseBy, target, input)
+};
+def decode_by_parse: Fn(TypeDesc) -> DecodeByParse = fn(target) {
+    let property: DecodeByParse = {};
+    property
+};
+def encode_by_display: Fn(TypeDesc) -> EncodeByDisplay = fn(target) {
+    let property: EncodeByDisplay = {};
+    property
+};
+
+export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };

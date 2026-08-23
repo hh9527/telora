@@ -92,6 +92,52 @@ impl<'a> ToolEvaluator<'a> {
         decode_type_ref(ValueRef::work(value, &self.work, self.main), path)
     }
 
+    fn declared_type_id(&self, value: Val) -> Result<TypeId, FrontendError> {
+        HeapView {
+            current: &self.work,
+            background: Some(self.main),
+        }
+        .declared_type_id(value)
+        .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
+    }
+
+    fn canonical_type_id(&self, descriptor: &TypeDescriptor) -> Result<TypeId, FrontendError> {
+        self.work
+            .canonical_descriptor_type_id(descriptor)
+            .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
+    }
+
+    fn native_decorator_type(&self) -> Option<TypeId> {
+        self.main.native_decorator_type()
+    }
+
+    fn has_type_property(&self, target: TypeId, property: TypeId) -> bool {
+        HeapView {
+            current: &self.work,
+            background: Some(self.main),
+        }
+        .type_property(target, property)
+        .is_some()
+    }
+
+    fn property_marker(&mut self, property_type: TypeId) -> Val {
+        self.work.empty_record_with_type(property_type)
+    }
+
+    fn publish_type_properties(
+        &mut self,
+        native_decorator_type: Option<TypeId>,
+        properties: &[(TypeId, TypeId, Val)],
+    ) -> Result<(), FrontendError> {
+        publish_type_properties(
+            self.main,
+            &self.work,
+            native_decorator_type,
+            properties,
+        )
+        .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
+    }
+
     fn decode_type_graph(
         &self,
         value: Val,
@@ -939,4 +985,3 @@ fn collect_block_annotation_types(
         annotations,
     )
 }
-

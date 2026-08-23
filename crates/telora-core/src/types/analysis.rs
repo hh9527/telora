@@ -260,7 +260,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     for node in &dependencies.nodes {
         let binding = bindings[&node.definition];
         if binding.value.type_parameters.is_empty()
-            && !binding.value.decorators.is_empty()
+            && binding.value.declared_initializer.is_some()
             && dependency_reaches(&dependencies, node.definition, node.definition)
         {
             let name = binding.value.name.value.clone();
@@ -566,11 +566,12 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                 }
                 continue;
             }
-            let concrete_decorated = component.iter().all(|definition| {
+            let concrete_nominal = component.iter().all(|definition| {
                 let binding = bindings[definition];
-                binding.value.type_parameters.is_empty() && !binding.value.decorators.is_empty()
+                binding.value.type_parameters.is_empty()
+                    && binding.value.declared_initializer.is_some()
             });
-            if concrete_decorated {
+            if concrete_nominal {
                 let mut descriptors = BTreeMap::new();
                 let mut values = BTreeMap::new();
                 let mut failed = false;
@@ -711,4 +712,3 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         types,
     }
 }
-

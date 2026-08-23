@@ -462,11 +462,11 @@ export { private as visible, identity as map };"#,
                 &["missing FatArrow"],
             ),
             (
-                "type Broken = enum { @json.rename(\"bad\") }; export {Broken};",
+                "type Broken = enum { @bad(\"name\") }; export {Broken};",
                 &["missing Atom"],
             ),
             (
-                "type Broken = enum { @json.rename(\"bad\", 'Bad }; export {Broken};",
+                "type Broken = enum { @bad(\"name\", 'Bad }; export {Broken};",
                 &["invalid syntax, expected one of: ',', ')'"],
             ),
             (
@@ -697,22 +697,20 @@ export { private as visible, identity as map };"#,
     }
 
     #[test]
-    fn retains_decorators_and_lowers_their_rhs_calls() {
+    fn retains_type_decorators_without_transforming_the_initializer() {
         let program = parse(
             "decorators.telora",
-            "@outer @factory(1) type T = Int; { @field value: 2 }",
+            "@outer @factory(1) type T = struct {value: Int}; T",
         )
         .unwrap();
         let binding = &program.value.body.value.bindings[0];
         assert_eq!(binding.value.decorators.len(), 2);
         assert!(!binding.value.decorators[0].value.configured);
         assert!(binding.value.decorators[1].value.configured);
-        assert!(matches!(binding.value.value.value, ExprKind::Call { .. }));
-        let ExprKind::Dict(fields) = &program.value.body.value.result.value else {
-            panic!("expected Dict")
+        let ExprKind::Call { callee, .. } = &binding.value.value.value else {
+            panic!("expected intrinsic Struct construction")
         };
-        assert_eq!(fields[0].value.decorators.len(), 1);
-        assert!(matches!(fields[0].value.value.value, ExprKind::Call { .. }));
+        assert!(matches!(&callee.value, ExprKind::Variable(name) if name.value == "\0telora_struct"));
     }
 
     #[test]
@@ -781,38 +779,6 @@ export { private as visible, identity as map };"#,
         }
     }
 
-    #[test]
-    fn declaration_initializers_preserve_root_and_member_decorator_order() {
-        let program = parse(
-            "decorated.telora",
-            "@outer type T = struct {@inner value: Int}; T",
-        )
-        .unwrap();
-        let binding = &program.value.body.value.bindings[0];
-        assert_eq!(binding.value.decorators.len(), 2);
-        let ExprKind::Call {
-            callee: outer,
-            arguments: outer_arguments,
-        } = &binding.value.value.value
-        else {
-            panic!("expected outer decorator call");
-        };
-        assert!(matches!(&outer.value, ExprKind::Variable(name) if name.value == "outer"));
-        let ExprKind::Call {
-            callee: model,
-            arguments: model_arguments,
-        } = &outer_arguments[1].value
-        else {
-            panic!("expected Struct model call");
-        };
-        assert!(
-            matches!(&model.value, ExprKind::Variable(name) if name.value == "\0telora_struct")
-        );
-        let ExprKind::Dict(fields) = &model_arguments[1].value else {
-            panic!("expected Struct fields");
-        };
-        assert!(matches!(fields[0].value.value.value, ExprKind::Call { .. }));
-    }
 
     #[test]
     fn declaration_initializers_are_not_general_expressions_or_variadic_variants() {

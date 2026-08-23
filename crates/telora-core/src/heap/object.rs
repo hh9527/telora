@@ -135,4 +135,6 @@ pub(crate) struct Heap {
     bootstrap_root: Option<PersistentValue>,
     functions: HashMap<crate::FuncId, Option<Val>>,
     declared_types: HashMap<crate::TypeId, Val>,
+    type_properties: HashMap<(crate::TypeId, crate::TypeId), Val>,
+    native_decorator_type: Option<crate::TypeId>,
 }

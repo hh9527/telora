@@ -312,6 +312,34 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, value)
     }
 
+    pub(crate) fn set_type_property_option(
+        &mut self,
+        destination: RegisterId,
+        target: RegisterId,
+        property: RegisterId,
+    ) -> Result<(), NativeError> {
+        let target = self.owned(target)?;
+        let property = self.owned(property)?;
+        let view = HeapView {
+            current: self.current,
+            background: self.background,
+        };
+        let target = view
+            .declared_type_id(target)
+            .map_err(|error| NativeError::new(error.to_string()))?;
+        let property = view
+            .declared_type_id(property)
+            .map_err(|error| NativeError::new(error.to_string()))?;
+        let Some(value) = view.type_property(target, property) else {
+            return self.set_none(destination);
+        };
+        let tag = self.scratch()?;
+        self.set_atom(tag, "Some")?;
+        let payload = self.scratch()?;
+        self.set(payload, value)?;
+        self.make_tagged(destination, tag, payload)
+    }
+
     pub fn copy_field(
         &mut self,
         destination: RegisterId,
@@ -536,4 +564,3 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         result
     }
 }
-

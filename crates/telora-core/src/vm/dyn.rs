@@ -569,7 +569,7 @@ fn dyn_tagged_parts(
                 .dict_get_text(variants, &runtime.0)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("Enum has no variant {:?}", runtime.0))?;
-            let (inner, _) = strip_runtime_attributes(variant, "Dyn.enum.variant", view)?;
+            let inner = strip_runtime_attributes(variant, "Dyn.enum.variant", view)?;
             let unit = view
                 .atom_text(inner)
                 .ok()
@@ -854,7 +854,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
                 .filter_map(|value| {
                     let stripped = strip_runtime_attributes(*value, "Type.variants", view);
                     match stripped {
-                        Ok((inner, _))
+                        Ok(inner)
                             if view
                                 .atom_text(inner)
                                 .ok()
@@ -863,7 +863,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
                         {
                             None
                         }
-                        Ok((inner, _)) => Some(Ok(inner)),
+                        Ok(inner) => Some(Ok(inner)),
                         Err(error) => Some(Err(error)),
                     }
                 })
@@ -920,4 +920,3 @@ fn type_desc_resolve_error(
         return_target,
     })
 }
-

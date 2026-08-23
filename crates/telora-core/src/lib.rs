@@ -15,6 +15,7 @@ pub mod module;
 pub mod module_id;
 pub mod parser;
 mod pattern;
+mod property;
 pub mod query;
 mod regex;
 pub mod semantic;

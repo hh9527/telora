@@ -1,6 +1,6 @@
 # RFC 0258: Metadata-Only Typed Properties
 
-- Status: Accepted
+- Status: Implemented
 - Supersedes: decorator transformation and string-keyed decorator attributes in RFC 0025, RFC 0026, RFC 0030, and RFC 0036
 - Depends on: RFC 0235, RFC 0237, RFC 0248, RFC 0249
 
@@ -114,11 +114,15 @@ decorator source location on failure.
 
 ## Typed query and interpreters
 
-The standard typed query is conceptually:
+The standard typed query passes the property type as its runtime witness:
 
 ```telora
-type_property.get@[P](Target) -> Option(P)
+type_property.get(P, Target) -> Option(P)
 ```
+
+Telora does not currently inject `TypeOf(P)` witnesses for explicit type
+application. The query therefore uses the same explicit-witness convention as
+other generic native functions instead of adding property-specific call sugar.
 
 It obtains the property type from the explicit type argument and looks up the
 canonical target `TypeId`. No public or internal query uses a string key such as
@@ -203,7 +207,8 @@ This RFC does not add:
 - decorator providers receive the sealed target `TypeDesc` and must return a
   marked concrete nominal value with matching static and runtime identity;
 - duplicate `(target, property type)` publication fails at the second decorator;
-- `type_property.get@[P](Target)` returns `Some(P)` or `None` by TypeId identity;
+- `type_property.get(P, Target)` returns `Some(P)` or `None` by TypeId identity; future
+  `get_type_property@[P](Target)` follows a general implicit `TypeOf(P)` witness rule;
 - fmt, regex, string codec hooks, `json.rename_all`, and `json.untagged` work
   without string-keyed decorator attributes;
 - member-level JSON decorators are absent from API, implementation, docs, and

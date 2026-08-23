@@ -209,14 +209,18 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["union", "validate"].into_iter().collect::<BTreeSet<_>>();
+    let expected = ["NativeDecorator", "union", "validate"]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let actual = interface
         .exports
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("core/prelude must export exactly union and validate".into());
+        return Err(
+            "core/prelude must export exactly NativeDecorator, union, and validate".into(),
+        );
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];
@@ -1057,4 +1061,3 @@ fn collect_declared_bodies(
         | TypeDescriptor::Atom(_) => {}
     }
 }
-

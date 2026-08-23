@@ -73,6 +73,84 @@ pub(crate) fn publish_root(
     Ok(PersistentValue(roots[0]))
 }
 
+pub(crate) fn publish_type_properties(
+    target: &mut Heap,
+    current: &Heap,
+    native_decorator_type: Option<crate::TypeId>,
+    properties: &[(crate::TypeId, crate::TypeId, Val)],
+) -> Result<(), HeapError> {
+    if target.storage != Storage::Main || current.storage != Storage::Work {
+        return Err(HeapError(
+            "type property publication requires a Work world and Main world",
+        ));
+    }
+    let mut keys = HashSet::new();
+    let view = HeapView {
+        current,
+        background: Some(target),
+    };
+    for (target_type, property_type, value) in properties {
+        let key = (*target_type, *property_type);
+        if !keys.insert(key) {
+            return Err(HeapError("duplicate typed property for target"));
+        }
+        if value.type_id() != Some(*property_type) {
+            return Err(HeapError(
+                "typed property runtime witness does not match its property TypeId",
+            ));
+        }
+        if view.first_data_failure(*value)?.is_some() {
+            return Err(HeapError(
+                "failed evaluation node cannot be published as a typed property",
+            ));
+        }
+        if let Some(existing) = target.type_properties.get(&key)
+            && !view.values_equal(*value, *existing)?
+        {
+            return Err(HeapError("conflicting typed property for target"));
+        }
+    }
+    if let Some(marker) = native_decorator_type {
+        match target.native_decorator_type {
+            Some(existing) if existing != marker => {
+                return Err(HeapError("NativeDecorator TypeId is already established"));
+            }
+            _ => {}
+        }
+    }
+    let unpublished = properties
+        .iter()
+        .filter(|(target_type, property_type, _)| {
+            !target
+                .type_properties
+                .contains_key(&(*target_type, *property_type))
+        })
+        .collect::<Vec<_>>();
+    let roots = unpublished
+        .iter()
+        .map(|(_, _, value)| *value)
+        .collect::<Vec<_>>();
+    let copied = copy_roots(
+        target,
+        HeapView {
+            current,
+            background: None,
+        },
+        &roots,
+    )?;
+    for ((target_type, property_type, _), value) in
+        unpublished.into_iter().zip(copied.into_iter())
+    {
+        target
+            .type_properties
+            .insert((*target_type, *property_type), value);
+    }
+    if let Some(marker) = native_decorator_type {
+        target.native_decorator_type = Some(marker);
+    }
+    Ok(())
+}
+
 pub(crate) fn publish_module_root(
     target: &mut Heap,
     current: &Heap,

@@ -41,6 +41,7 @@ workspace snapshot 中的 source、定义、引用、类型图和诊断，不从
 | elaboration、LIR、bytecode | `elaboration.rs`、`lir.rs`、`compiler.rs`、`bytecode.rs` |
 | VM、配额、失败 | `vm.rs`、`evaluation.rs` |
 | 值、heap、复制 | `heap.rs`、`value.rs` |
+| typed property registry / 反射 bridge | `property.rs`、`heap/`、`types/dependency.rs` |
 | 模块解析与 Host 生命周期 | `module_id.rs`、`module.rs` |
 | canonical runtime types | `type_store.rs` |
 | CLI Host | `crates/telora/src/main.rs` |
@@ -152,9 +153,17 @@ Int、Float、短 String/Atom、内建 Atom、native type identity 和静态 `Fu
 Declared/Symbolic TypeMetadata 和 opaque value 使用 scoped handle 指向 heap object。
 handle 的 work bit 让复制器无需间接查询即可区分 Main 与 Work 引用。
 
-Heap 是按 storage scope 管理的对象、text、shape、静态函数和类型 witness 集合。
+Heap 是按 storage scope 管理的对象、text、shape、静态函数、类型 witness 和 typed
+property 集合。
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
+
+Main heap 的 property registry 使用 `(TypeId(Target), TypeId(Property))` 作为键，值是
+MainWorld `Val`。Tool stage 先封闭具名 Struct/Enum 目标，再执行 decorator provider；
+provider 的静态结果、运行时 `Val.ty` 和 `@property` marker 必须指向同一个 concrete
+Property TypeId。同一声明的 property batch 在复制前完成失败检查、重复检查和既有值
+冲突检查，然后一次复制并提交。重复安装相同键和相等值是幂等的，不同值则拒绝。
+`std/type-property.get` 只读取 registry，并返回引用同一 Main 值的 `Option(P)`。
 
 运行时相等先服从 [`LANGUAGE.md`](LANGUAGE.md#33-相等性和顺序) 的 typed equality：
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
@@ -163,7 +172,8 @@ String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的�
 ## 6. MainWorld、WorkWorld 与原子晋升
 
 构建期 `MainWorld` 持有本次封闭模块图的 persistent heap、module skeleton、canonical
-`TypeStore`，并在 best-effort 路径持有稳定 failure arena。模块依赖和静态根成功晋升
+`TypeStore`、typed property registry，并在 best-effort 路径持有稳定 failure arena。
+模块依赖和静态根成功晋升
 后，当前严格运行路径把 persistent heap 封装为只读 `FrozenMainWorld`；运行期所需的
 canonical witness 已经在该 heap 内闭合，构建用 `TypeStore` 本身不进入 Frozen API。
 所选根模块的执行结果、Entry transition 和普通调用仍位于 Work heap，并把冻结 Main

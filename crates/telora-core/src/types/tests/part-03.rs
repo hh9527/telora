@@ -1068,21 +1068,6 @@
         assert!(error.message.contains("fuel"));
     }
 
-    #[test]
-    fn type_decorators_share_tool_fuel_and_report_the_decorator_origin() {
-        let source = "let same = fn(ctx, rhs) { rhs }; @same type T = Int; 0";
-        let exhausted = analyze_source_with_fuel("decorator.telora", source, 0).unwrap_err();
-        assert!(exhausted.message.contains("fuel"));
-
-        let invalid = analyze_source(
-            "decorator.telora",
-            "let invalid = fn(ctx, rhs) { 1 }; @invalid type T = Int; 0",
-        )
-        .unwrap_err();
-        assert!(invalid.message.contains("invalid metadata"));
-        let diagnostic = invalid.diagnostic.expect("located decorator diagnostic");
-        assert_eq!(diagnostic.labels[0].location.range(), 34..42);
-    }
 
     #[test]
     fn rejects_invalid_metadata_protocol() {
