@@ -2,4 +2,3 @@
 # path maximum-lines
 crates/telora-core/src/heap.rs 3745
 crates/telora-core/src/parser.rs 3634
-crates/telora-core/src/types.rs 12544
