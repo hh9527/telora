@@ -1,5 +1,5 @@
 use crate::{CallContext, NativeError, NativeType, ValueRef};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -78,7 +78,10 @@ fn fmt_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeError> {
 }
 
 fn fmt_argument(context: &CallContext<'_, '_>, index: usize) -> Result<Fmt, NativeError> {
-    let value = context.value(context.argument(index)?)?;
+    fmt_value(context.value(context.argument(index)?)?).cloned()
+}
+
+fn fmt_value(value: ValueRef<'_>) -> Result<&Fmt, NativeError> {
     let native_type = value
         .opaque_native_type()
         .ok_or_else(|| NativeError::new("expected std/fmt#Fmt"))?;
@@ -87,48 +90,101 @@ fn fmt_argument(context: &CallContext<'_, '_>, index: usize) -> Result<Fmt, Nati
     }
     value
         .as_opaque::<Fmt>(native_type)
-        .cloned()
         .ok_or_else(|| NativeError::new("expected std/fmt#Fmt"))
 }
 
-fn formatted_len(value: impl std::fmt::Display) -> Result<usize, NativeError> {
-    struct Counter(Option<usize>);
-    impl Write for Counter {
-        fn write_str(&mut self, text: &str) -> std::fmt::Result {
-            self.0 = self.0.and_then(|length| length.checked_add(text.len()));
-            self.0.map_or(Err(std::fmt::Error), |_| Ok(()))
-        }
+struct ByteCounter(Option<usize>);
+
+impl Write for ByteCounter {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.0 = self.0.and_then(|length| length.checked_add(text.len()));
+        self.0.map_or(Err(std::fmt::Error), |_| Ok(()))
     }
-    let mut counter = Counter(Some(0));
+}
+
+fn formatted_len(value: impl std::fmt::Display) -> Result<usize, NativeError> {
+    let mut counter = ByteCounter(Some(0));
     let _ = write!(&mut counter, "{value}");
     counter
         .0
         .ok_or_else(|| NativeError::allocation_limit("Fmt rendered size overflowed"))
 }
 
-fn measure_fmt(value: &Fmt, depth: usize) -> Result<usize, NativeError> {
-    if depth >= 128 {
-        return Err(NativeError::new(
-            "std/fmt value exceeds the recursive rendering limit",
-        ));
-    }
-    let add = |left: usize, right: usize| {
+pub(crate) fn string_with_capacity(length: usize) -> Result<String, NativeError> {
+    let mut output = String::new();
+    output
+        .try_reserve_exact(length)
+        .map_err(|_| NativeError::allocation_limit("Fmt String allocation cannot be reserved"))?;
+    Ok(output)
+}
+
+fn copy_string(value: &str) -> Result<String, NativeError> {
+    let mut output = string_with_capacity(value.len())?;
+    output.push_str(value);
+    Ok(output)
+}
+
+#[derive(Clone, Copy)]
+struct FmtMeasurement {
+    bytes: usize,
+    height: usize,
+}
+
+fn measure_fmt(value: &Fmt) -> Result<usize, NativeError> {
+    fn add(left: usize, right: usize) -> Result<usize, NativeError> {
         left.checked_add(right)
             .ok_or_else(|| NativeError::allocation_limit("Fmt rendered size overflowed"))
-    };
-    match value.0.as_ref() {
-        FmtNode::String(value) | FmtNode::Atom(value) => Ok(value.len()),
-        FmtNode::Int(value) => formatted_len(value),
-        FmtNode::Float(value) => formatted_len(f64::from_bits(*value)),
-        FmtNode::Concat { strings, items } => {
-            let mut length = 0;
-            for (index, item) in items.iter().enumerate() {
-                length = add(length, strings[index].len())?;
-                length = add(length, measure_fmt(item, depth + 1)?)?;
-            }
-            add(length, strings[items.len()].len())
-        }
     }
+
+    fn visit(
+        value: &Fmt,
+        memo: &mut HashMap<*const FmtNode, FmtMeasurement>,
+    ) -> Result<FmtMeasurement, NativeError> {
+        let key = Arc::as_ptr(&value.0);
+        if let Some(measurement) = memo.get(&key) {
+            return Ok(*measurement);
+        }
+        let measurement = match value.0.as_ref() {
+            FmtNode::String(value) | FmtNode::Atom(value) => FmtMeasurement {
+                bytes: value.len(),
+                height: 1,
+            },
+            FmtNode::Int(value) => FmtMeasurement {
+                bytes: formatted_len(value)?,
+                height: 1,
+            },
+            FmtNode::Float(value) => FmtMeasurement {
+                bytes: formatted_len(f64::from_bits(*value))?,
+                height: 1,
+            },
+            FmtNode::Concat { strings, items } => {
+                let mut bytes = strings
+                    .iter()
+                    .try_fold(0usize, |total, text| add(total, text.len()))?;
+                let mut child_height = 0;
+                for item in items {
+                    let child = visit(item, memo)?;
+                    bytes = add(bytes, child.bytes)?;
+                    child_height = child_height.max(child.height);
+                }
+                FmtMeasurement {
+                    bytes,
+                    height: child_height.checked_add(1).ok_or_else(|| {
+                        NativeError::new("std/fmt value exceeds the recursive rendering limit")
+                    })?,
+                }
+            }
+        };
+        if measurement.height > 128 {
+            return Err(NativeError::new(
+                "std/fmt value exceeds the recursive rendering limit",
+            ));
+        }
+        memo.insert(key, measurement);
+        Ok(measurement)
+    }
+
+    Ok(visit(value, &mut HashMap::new())?.bytes)
 }
 
 fn write_fmt(value: &Fmt, output: &mut String, depth: usize) -> Result<(), NativeError> {
@@ -179,32 +235,10 @@ pub(crate) fn interpolation_value_len(value: ValueRef<'_>) -> Result<usize, Nati
         value
             .as_opaque::<Fmt>(native_type)
             .ok_or_else(|| NativeError::new("string interpolation expected std/fmt#Fmt"))?,
-        0,
     )
 }
 
-fn fmt_payload_bytes(node: &FmtNode) -> Result<usize, NativeError> {
-    let nested = match node {
-        FmtNode::String(value) | FmtNode::Atom(value) => value.len(),
-        FmtNode::Int(_) | FmtNode::Float(_) => 0,
-        FmtNode::Concat { strings, items } => {
-            let string_slots = strings
-                .len()
-                .checked_mul(size_of::<String>())
-                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
-            let item_slots = items
-                .len()
-                .checked_mul(size_of::<Fmt>())
-                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
-            let slots = string_slots
-                .checked_add(item_slots)
-                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
-            strings
-                .iter()
-                .try_fold(slots, |total, text| total.checked_add(text.len()))
-                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?
-        }
-    };
+fn fmt_payload_bytes(nested: usize) -> Result<usize, NativeError> {
     size_of::<Fmt>()
         .checked_add(4 * size_of::<usize>())
         .and_then(|bytes| bytes.checked_add(size_of::<FmtNode>()))
@@ -212,37 +246,42 @@ fn fmt_payload_bytes(node: &FmtNode) -> Result<usize, NativeError> {
         .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))
 }
 
-fn set_fmt(
+fn fmt_concat_payload_bytes(
+    string_count: usize,
+    item_count: usize,
+    text_bytes: usize,
+) -> Result<usize, NativeError> {
+    let string_slots = string_count
+        .checked_mul(size_of::<String>())
+        .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
+    let item_slots = item_count
+        .checked_mul(size_of::<Fmt>())
+        .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
+    let nested = string_slots
+        .checked_add(item_slots)
+        .and_then(|bytes| bytes.checked_add(text_bytes))
+        .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
+    fmt_payload_bytes(nested)
+}
+
+fn commit_fmt(
     context: &mut CallContext<'_, '_>,
     native_type: NativeType,
     value: Fmt,
+    reservation: crate::vm::OpaqueAllocationReservation,
 ) -> Result<(), NativeError> {
-    let payload_bytes = fmt_payload_bytes(value.0.as_ref())?;
-    context.set_opaque_accounted(context.result(), native_type, value, payload_bytes)
+    context.set_opaque_reserved(context.result(), native_type, value, reservation)
 }
 
-fn template_payload_bytes(template: &DisplayTemplate) -> Result<usize, NativeError> {
-    let slots = template
-        .0
-        .len()
+fn template_payload_bytes(part_count: usize, text_bytes: usize) -> Result<usize, NativeError> {
+    let slots = part_count
         .checked_mul(size_of::<TemplatePart>())
         .ok_or_else(|| NativeError::allocation_limit("DisplayTemplate payload size overflowed"))?;
-    template.0.iter().try_fold(
-        size_of::<DisplayTemplate>()
-            .checked_add(2 * size_of::<usize>())
-            .and_then(|bytes| bytes.checked_add(slots))
-            .ok_or_else(|| {
-                NativeError::allocation_limit("DisplayTemplate payload size overflowed")
-            })?,
-        |total, part| {
-            let text = match part {
-                TemplatePart::Text(text) | TemplatePart::Field(text) => text,
-            };
-            total.checked_add(text.len()).ok_or_else(|| {
-                NativeError::allocation_limit("DisplayTemplate payload size overflowed")
-            })
-        },
-    )
+    size_of::<DisplayTemplate>()
+        .checked_add(2 * size_of::<usize>())
+        .and_then(|bytes| bytes.checked_add(slots))
+        .and_then(|bytes| bytes.checked_add(text_bytes))
+        .ok_or_else(|| NativeError::allocation_limit("DisplayTemplate payload size overflowed"))
 }
 
 pub(crate) fn write_interpolation_value(
@@ -366,23 +405,144 @@ fn attached_template(
         .ok_or_else(|| NativeError::new("invalid fmt DisplayBy template"))
 }
 
-fn parse_template(source: &str) -> Result<DisplayTemplate, NativeError> {
+#[derive(Clone, Copy)]
+struct TemplateMeasurement {
+    part_count: usize,
+    text_bytes: usize,
+}
+
+fn validate_template_field(field: &str) -> Result<(), NativeError> {
+    if field.is_empty()
+        || !field
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        || field.starts_with(|ch: char| ch.is_ascii_digit())
+    {
+        return Err(NativeError::new(format!(
+            "invalid Display template field {field:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn measure_template(source: &str) -> Result<TemplateMeasurement, NativeError> {
+    let mut part_count = 0usize;
+    let mut text_bytes = 0usize;
+    let mut current_text_bytes = 0usize;
+    let mut chars = source.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        match ch {
+            '{' if chars.peek().is_some_and(|(_, next)| *next == '{') => {
+                chars.next();
+                current_text_bytes = current_text_bytes.checked_add(1).ok_or_else(|| {
+                    NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+                })?;
+            }
+            '}' if chars.peek().is_some_and(|(_, next)| *next == '}') => {
+                chars.next();
+                current_text_bytes = current_text_bytes.checked_add(1).ok_or_else(|| {
+                    NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+                })?;
+            }
+            '{' => {
+                if current_text_bytes != 0 {
+                    part_count = part_count.checked_add(1).ok_or_else(|| {
+                        NativeError::allocation_limit("DisplayTemplate part count overflowed")
+                    })?;
+                    text_bytes = text_bytes.checked_add(current_text_bytes).ok_or_else(|| {
+                        NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+                    })?;
+                    current_text_bytes = 0;
+                }
+                let field_start = chars.peek().map_or(source.len(), |(index, _)| *index);
+                let field_end = loop {
+                    match chars.next() {
+                        Some((index, '}')) => break index,
+                        Some((_, '{')) => {
+                            return Err(NativeError::new("nested '{' in Display template field"));
+                        }
+                        Some(_) => {}
+                        None => return Err(NativeError::new("unclosed Display template field")),
+                    }
+                };
+                let field = &source[field_start..field_end];
+                validate_template_field(field)?;
+                part_count = part_count.checked_add(1).ok_or_else(|| {
+                    NativeError::allocation_limit("DisplayTemplate part count overflowed")
+                })?;
+                text_bytes = text_bytes.checked_add(field.len()).ok_or_else(|| {
+                    NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+                })?;
+            }
+            '}' => return Err(NativeError::new("unmatched '}' in Display template")),
+            ch => {
+                current_text_bytes =
+                    current_text_bytes
+                        .checked_add(ch.len_utf8())
+                        .ok_or_else(|| {
+                            NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+                        })?;
+            }
+        }
+    }
+    if current_text_bytes != 0 {
+        part_count = part_count.checked_add(1).ok_or_else(|| {
+            NativeError::allocation_limit("DisplayTemplate part count overflowed")
+        })?;
+        text_bytes = text_bytes.checked_add(current_text_bytes).ok_or_else(|| {
+            NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+        })?;
+    }
+    Ok(TemplateMeasurement {
+        part_count,
+        text_bytes,
+    })
+}
+
+fn push_template_part(
+    parts: &mut Vec<TemplatePart>,
+    part: TemplatePart,
+) -> Result<(), NativeError> {
+    parts.try_reserve(1).map_err(|_| {
+        NativeError::allocation_limit("DisplayTemplate part allocation cannot be reserved")
+    })?;
+    parts.push(part);
+    Ok(())
+}
+
+fn push_template_char(text: &mut String, ch: char) -> Result<(), NativeError> {
+    text.try_reserve(ch.len_utf8()).map_err(|_| {
+        NativeError::allocation_limit("DisplayTemplate text allocation cannot be reserved")
+    })?;
+    text.push(ch);
+    Ok(())
+}
+
+fn parse_template(
+    source: &str,
+    measurement: TemplateMeasurement,
+) -> Result<DisplayTemplate, NativeError> {
     let mut parts = Vec::new();
+    parts
+        .try_reserve_exact(measurement.part_count)
+        .map_err(|_| {
+            NativeError::allocation_limit("DisplayTemplate part allocation cannot be reserved")
+        })?;
     let mut text = String::new();
     let mut chars = source.char_indices().peekable();
     while let Some((_, ch)) = chars.next() {
         match ch {
             '{' if chars.peek().is_some_and(|(_, next)| *next == '{') => {
                 chars.next();
-                text.push('{');
+                push_template_char(&mut text, '{')?;
             }
             '}' if chars.peek().is_some_and(|(_, next)| *next == '}') => {
                 chars.next();
-                text.push('}');
+                push_template_char(&mut text, '}')?;
             }
             '{' => {
                 if !text.is_empty() {
-                    parts.push(TemplatePart::Text(std::mem::take(&mut text)));
+                    push_template_part(&mut parts, TemplatePart::Text(std::mem::take(&mut text)))?;
                 }
                 let mut field = String::new();
                 loop {
@@ -391,29 +551,21 @@ fn parse_template(source: &str) -> Result<DisplayTemplate, NativeError> {
                         Some((_, '{')) => {
                             return Err(NativeError::new("nested '{' in Display template field"));
                         }
-                        Some((_, ch)) => field.push(ch),
+                        Some((_, ch)) => push_template_char(&mut field, ch)?,
                         None => return Err(NativeError::new("unclosed Display template field")),
                     }
                 }
-                if field.is_empty()
-                    || !field
-                        .chars()
-                        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-                    || field.starts_with(|ch: char| ch.is_ascii_digit())
-                {
-                    return Err(NativeError::new(format!(
-                        "invalid Display template field {field:?}"
-                    )));
-                }
-                parts.push(TemplatePart::Field(field));
+                validate_template_field(&field)?;
+                push_template_part(&mut parts, TemplatePart::Field(field))?;
             }
             '}' => return Err(NativeError::new("unmatched '}' in Display template")),
-            ch => text.push(ch),
+            ch => push_template_char(&mut text, ch)?,
         }
     }
     if !text.is_empty() {
-        parts.push(TemplatePart::Text(text));
+        push_template_part(&mut parts, TemplatePart::Text(text))?;
     }
+    debug_assert_eq!(parts.len(), measurement.part_count);
     Ok(DisplayTemplate(parts))
 }
 
@@ -488,7 +640,12 @@ fn display_template_plan(
     Ok(DisplayPlan::Template { template, fields })
 }
 
-fn render(plan: &DisplayPlan, value: ValueRef<'_>, output: &mut String) -> Result<(), NativeError> {
+fn render(
+    plan: &DisplayPlan,
+    value: ValueRef<'_>,
+    output: &mut impl Write,
+) -> Result<(), NativeError> {
+    let write_error = || NativeError::allocation_limit("Display output size overflowed");
     let value = value
         .unwrap_declared()
         .ok_or_else(|| NativeError::new("Display received an invalid declared value"))?;
@@ -497,24 +654,30 @@ fn render(plan: &DisplayPlan, value: ValueRef<'_>, output: &mut String) -> Resul
             let text = value
                 .as_str()
                 .ok_or_else(|| NativeError::new("Display expected String"))?;
-            output.push_str(text.as_str());
+            output.write_str(text.as_str()).map_err(|_| write_error())?;
         }
-        DisplayPlan::Int => output.push_str(
-            &value
+        DisplayPlan::Int => write!(
+            output,
+            "{}",
+            value
                 .as_int()
                 .ok_or_else(|| NativeError::new("Display expected Int"))?
-                .to_string(),
-        ),
-        DisplayPlan::Float => output.push_str(
-            &value
+        )
+        .map_err(|_| write_error())?,
+        DisplayPlan::Float => write!(
+            output,
+            "{}",
+            value
                 .as_float()
                 .ok_or_else(|| NativeError::new("Display expected Float"))?
-                .to_string(),
-        ),
+        )
+        .map_err(|_| write_error())?,
         DisplayPlan::Template { template, fields } => {
             for part in &template.0 {
                 match part {
-                    TemplatePart::Text(text) => output.push_str(text),
+                    TemplatePart::Text(text) => {
+                        output.write_str(text).map_err(|_| write_error())?
+                    }
                     TemplatePart::Field(name) => render(
                         &fields[name],
                         value.dict_get(name).ok_or_else(|| {
@@ -529,13 +692,47 @@ fn render(plan: &DisplayPlan, value: ValueRef<'_>, output: &mut String) -> Resul
     Ok(())
 }
 
+fn measure_display(plan: &DisplayPlan, value: ValueRef<'_>) -> Result<usize, NativeError> {
+    let mut counter = ByteCounter(Some(0));
+    render(plan, value, &mut counter)?;
+    counter
+        .0
+        .ok_or_else(|| NativeError::allocation_limit("Display output size overflowed"))
+}
+
+fn selected_display_plan(
+    metadata: ValueRef<'_>,
+    property_type: Option<crate::TypeId>,
+) -> Result<DisplayPlan, NativeError> {
+    if let Some(property_type) = property_type {
+        return display_plan(metadata, property_type);
+    }
+    let kind = strip(metadata)?
+        .dict_get("kind")
+        .and_then(|kind| kind.as_atom());
+    match kind.as_ref().map(crate::TextRef::as_str) {
+        Some("String") => Ok(DisplayPlan::String),
+        Some("Int") => Ok(DisplayPlan::Int),
+        Some("Float") => Ok(DisplayPlan::Float),
+        _ => Err(NativeError::new("type has no std/fmt.display capability")),
+    }
+}
+
 pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let native_type = template_type(context)?;
+    let source_argument = context.argument(0)?;
     let source = context
-        .value(context.argument(0)?)?
+        .value(source_argument)?
         .as_str()
         .ok_or_else(|| NativeError::new("std/fmt.display_by expects String"))?;
-    let template = parse_template(source.as_str())?;
+    let measurement = measure_template(source.as_str())?;
+    let payload_bytes = template_payload_bytes(measurement.part_count, measurement.text_bytes)?;
+    let reservation = context.reserve_opaque_allocation(payload_bytes)?;
+    let source = context
+        .value(source_argument)?
+        .as_str()
+        .expect("String argument was validated before reservation");
+    let template = parse_template(source.as_str(), measurement)?;
 
     let property_type = context
         .value(context.argument(1)?)?
@@ -544,34 +741,44 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
     let target = context.value(context.argument(2)?)?;
     display_template_plan(target, template.clone(), property_type, 0)?;
 
-    let result = context.result();
-    let payload_bytes = template_payload_bytes(&template)?;
-    context.set_opaque_accounted(result, native_type, template, payload_bytes)
+    context.set_opaque_reserved(context.result(), native_type, template, reservation)
 }
 
 pub(crate) fn native_display_by(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let native_type = fmt_type(context)?;
+    let type_argument = context.argument(1)?;
+    let value_argument = context.argument(2)?;
     let property_type = context
         .value(context.argument(0)?)?
         .declared_type_id()
         .ok_or_else(|| NativeError::new("std/fmt.render_by expects DisplayBy Type metadata"))?;
-    let output = display_value(
-        context.value(context.argument(1)?)?,
-        context.value(context.argument(2)?)?,
-        Some(property_type),
-    )?;
-    set_fmt(context, native_type, Fmt::string(output))
+    let plan = selected_display_plan(context.value(type_argument)?, Some(property_type))?;
+    let length = measure_display(&plan, context.value(value_argument)?)?;
+    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(length)?)?;
+    let mut output = string_with_capacity(length)?;
+    render(&plan, context.value(value_argument)?, &mut output)?;
+    debug_assert_eq!(output.len(), length);
+    commit_fmt(context, native_type, Fmt::string(output), reservation)
 }
 
 pub(crate) fn native_from_string(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let native_type = fmt_type(context)?;
-    let value = context
-        .value(context.argument(0)?)?
+    let argument = context.argument(0)?;
+    let length = context
+        .value(argument)?
         .unwrap_declared()
         .and_then(ValueRef::as_str)
         .ok_or_else(|| NativeError::new("std/fmt.from_string expects String"))?
-        .to_string();
-    set_fmt(context, native_type, Fmt::string(value))
+        .as_str()
+        .len();
+    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(length)?)?;
+    let text = context
+        .value(argument)?
+        .unwrap_declared()
+        .and_then(ValueRef::as_str)
+        .expect("String argument was validated before reservation");
+    let value = copy_string(text.as_str())?;
+    commit_fmt(context, native_type, Fmt::string(value), reservation)
 }
 
 pub(crate) fn native_from_int(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -581,7 +788,8 @@ pub(crate) fn native_from_int(context: &mut CallContext<'_, '_>) -> Result<(), N
         .unwrap_declared()
         .and_then(ValueRef::as_int)
         .ok_or_else(|| NativeError::new("std/fmt.from_int expects Int"))?;
-    set_fmt(context, native_type, Fmt::int(value))
+    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(0)?)?;
+    commit_fmt(context, native_type, Fmt::int(value), reservation)
 }
 
 pub(crate) fn native_from_float(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -591,18 +799,28 @@ pub(crate) fn native_from_float(context: &mut CallContext<'_, '_>) -> Result<(),
         .unwrap_declared()
         .and_then(ValueRef::as_float)
         .ok_or_else(|| NativeError::new("std/fmt.from_float expects Float"))?;
-    set_fmt(context, native_type, Fmt::float(value))
+    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(0)?)?;
+    commit_fmt(context, native_type, Fmt::float(value), reservation)
 }
 
 pub(crate) fn native_from_atom(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let native_type = fmt_type(context)?;
-    let value = context
-        .value(context.argument(0)?)?
+    let argument = context.argument(0)?;
+    let length = context
+        .value(argument)?
         .unwrap_declared()
         .and_then(ValueRef::as_atom)
         .ok_or_else(|| NativeError::new("std/fmt.from_atom expects Atom"))?
-        .to_string();
-    set_fmt(context, native_type, Fmt::atom(value))
+        .as_str()
+        .len();
+    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(length)?)?;
+    let text = context
+        .value(argument)?
+        .unwrap_declared()
+        .and_then(ValueRef::as_atom)
+        .expect("Atom argument was validated before reservation");
+    let value = copy_string(text.as_str())?;
+    commit_fmt(context, native_type, Fmt::atom(value), reservation)
 }
 
 pub(crate) fn native_concat(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -620,36 +838,65 @@ pub(crate) fn native_concat(context: &mut CallContext<'_, '_>) -> Result<(), Nat
             "std/fmt.concat requires strings.len == items.len + 1, got {string_count} and {item_count}"
         )));
     }
-    let strings = (0..string_count)
-        .map(|index| {
-            strings
-                .sequence_get(index)
-                .and_then(ValueRef::as_str)
-                .map(|value| value.to_string())
-                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(String)"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let items = (0..item_count)
-        .map(|index| {
-            let value = items
-                .sequence_get(index)
-                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
-            let fmt_type = value
-                .opaque_native_type()
-                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
-            value
-                .as_opaque::<Fmt>(fmt_type)
-                .filter(|_| fmt_type.qualified_name() == "std/fmt#Fmt")
-                .cloned()
-                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    set_fmt(context, native_type, Fmt::concat(strings, items))
+    let text_bytes = (0..string_count).try_fold(0usize, |total, index| {
+        let length = strings
+            .sequence_get(index)
+            .and_then(ValueRef::as_str)
+            .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(String)"))?
+            .as_str()
+            .len();
+        total
+            .checked_add(length)
+            .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))
+    })?;
+    for index in 0..item_count {
+        let value = items
+            .sequence_get(index)
+            .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
+        fmt_value(value).map_err(|_| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
+    }
+    let payload_bytes = fmt_concat_payload_bytes(string_count, item_count, text_bytes)?;
+    let reservation = context.reserve_opaque_allocation(payload_bytes)?;
+
+    let strings_value = context.value(context.argument(0)?)?;
+    let mut strings = Vec::new();
+    strings
+        .try_reserve_exact(string_count)
+        .map_err(|_| NativeError::allocation_limit("Fmt concat String slots cannot be reserved"))?;
+    for index in 0..string_count {
+        let value = strings_value
+            .sequence_get(index)
+            .and_then(ValueRef::as_str)
+            .expect("String item was validated before reservation");
+        strings.push(copy_string(value.as_str())?);
+    }
+    let items_value = context.value(context.argument(1)?)?;
+    let mut items = Vec::new();
+    items
+        .try_reserve_exact(item_count)
+        .map_err(|_| NativeError::allocation_limit("Fmt concat item slots cannot be reserved"))?;
+    for index in 0..item_count {
+        items.push(
+            fmt_value(
+                items_value
+                    .sequence_get(index)
+                    .expect("Fmt item was validated before reservation"),
+            )
+            .expect("Fmt item was validated before reservation")
+            .clone(),
+        );
+    }
+    commit_fmt(
+        context,
+        native_type,
+        Fmt::concat(strings, items),
+        reservation,
+    )
 }
 
 pub(crate) fn native_render(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let value = fmt_argument(context, 0)?;
-    let length = measure_fmt(&value, 0)?;
+    let length = measure_fmt(&value)?;
     let result = context.result();
     context.set_string_exact(result, length, |output| write_fmt(&value, output, 0))
 }
@@ -659,20 +906,10 @@ pub(crate) fn display_value(
     value: ValueRef<'_>,
     property_type: Option<crate::TypeId>,
 ) -> Result<String, NativeError> {
-    let plan = if let Some(property_type) = property_type {
-        display_plan(metadata, property_type)?
-    } else {
-        let kind = strip(metadata)?
-            .dict_get("kind")
-            .and_then(|kind| kind.as_atom());
-        match kind.as_ref().map(crate::TextRef::as_str) {
-            Some("String") => DisplayPlan::String,
-            Some("Int") => DisplayPlan::Int,
-            Some("Float") => DisplayPlan::Float,
-            _ => return Err(NativeError::new("type has no std/fmt.display capability")),
-        }
-    };
-    let mut output = String::new();
+    let plan = selected_display_plan(metadata, property_type)?;
+    let length = measure_display(&plan, value)?;
+    let mut output = string_with_capacity(length)?;
     render(&plan, value, &mut output)?;
+    debug_assert_eq!(output.len(), length);
     Ok(output)
 }

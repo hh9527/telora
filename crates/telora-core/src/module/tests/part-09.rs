@@ -37,11 +37,12 @@
         fs::write(
             &main,
             r#"import "std/fmt" as fmt;
+               @fmt.display_by("{host}:{port}")
                type Endpoint = struct { host: String, port: Int };
                impl fmt.Display for Endpoint {
                    display: fn(self) {
                        fmt.concat(
-                           ["", ":", ""],
+                           ["explicit(", ":", ")"],
                            [fmt.from_string(self.host), fmt.from_int(self.port)],
                        )
                    },
@@ -54,20 +55,20 @@
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         assert_eq!(
             named_output(&engine.execute(&module).unwrap()).to_string(),
-            "\"endpoint=localhost:8080\""
+            "\"endpoint=explicit(localhost:8080)\""
         );
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn fmt_rendering_accounts_for_reused_fragment_output() {
-        fn source(output: &str) -> String {
+        fn source(output: &str, depth: usize) -> String {
             let mut source = String::from(
                 r#"import "std/fmt" as fmt;
                    def f0 = fmt.from_string("x");
                 "#,
             );
-            for depth in 1..=14 {
+            for depth in 1..=depth {
                 source.push_str(&format!(
                     "def f{depth} = fmt.concat([\"\", \"\", \"\"], [f{}, f{}]);\n",
                     depth - 1,
@@ -75,11 +76,13 @@
                 ));
             }
             if output == "interpolation" {
+                source.push_str("type Rendered = struct { marker: Int };\n");
+                source.push_str(&format!(
+                    "impl fmt.Display for Rendered {{ display: fn(self) {{ f{depth} }} }};\n"
+                ));
                 source.push_str(
-                    r#"type Rendered = struct { marker: Int };
-                       impl fmt.Display for Rendered { display: fn(self) { f14 } };
-                       def rendered: Rendered = { marker: 0 };
-                       export def output = `value=\{rendered}`;"#,
+                    "def rendered: Rendered = { marker: 0 };\n\
+                     export def output = `value=\\{rendered}`;",
                 );
             } else {
                 source.push_str(&format!("export def output = {output};"));
@@ -89,23 +92,40 @@
 
         let directory = fixture_dir();
         let main = directory.join("main.telora");
-        let quota = Quota::new(1_000_000, 10_000, 10_000);
+        let quota = Quota::new(1_000_000, 10_000, 50_000);
 
-        fs::write(&main, source("f14")).unwrap();
+        fs::write(&main, source("f48", 48)).unwrap();
         let module = load_module(&main, BTreeMap::new(), 1_000_000).unwrap();
         module
             .execute_with_quota(quota)
             .expect("the shared Fmt graph itself fits the quota");
 
-        for output in ["fmt.render(f14)", "interpolation"] {
-            fs::write(&main, source(output)).unwrap();
+        for output in ["fmt.render(f48)", "interpolation"] {
+            fs::write(&main, source(output, 48)).unwrap();
             let module = load_module(&main, BTreeMap::new(), 1_000_000).unwrap();
             let error = module.execute_with_quota(quota).unwrap_err();
+            assert_eq!(
+                error.kind,
+                crate::RuntimeErrorKind::AllocationQuotaExceeded
+            );
             let message = error.to_string();
             assert!(
                 message.contains("allocation quota") && message.contains("exceeded"),
-                "{error}"
+                "{message}"
             );
+        }
+
+        let unlimited = Quota::with_fuel(1_000_000);
+        for output in ["fmt.render(f63)", "interpolation"] {
+            fs::write(&main, source(output, 63)).unwrap();
+            let module = load_module(&main, BTreeMap::new(), 1_000_000).unwrap();
+            let error = module.execute_with_quota(unlimited).unwrap_err();
+            assert_eq!(
+                error.kind,
+                crate::RuntimeErrorKind::AllocationQuotaExceeded
+            );
+            let message = error.to_string();
+            assert!(message.contains("cannot be reserved"), "{message}");
         }
         fs::remove_dir_all(directory).unwrap();
     }

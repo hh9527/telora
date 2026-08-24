@@ -690,8 +690,9 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 `fmt.render(fmt.Display.display(endpoint))`。`fmt.concat(strings, items)` 要求
 `strings.len == items.len + 1`，并以延迟 fragment 组合常量文本与展示值。插值在
 整个结果的末端只物化一次。Fmt payload 和最终 UTF-8 输出都计入 allocation quota；
-最终输出在分配前测量，重复引用同一 fragment 仍按每次展开的长度核算。这套机制是
-静态 dictionary elaboration，不会把模板转换成 Telora 源码。
+payload 在复制前预扣，最终输出在分配前按共享节点 memoize 测量。重复引用同一
+fragment 仍按每次展开的长度核算，但拒绝路径不会实际展开指数大小的结果。这套机制
+是静态 dictionary elaboration，不会把模板转换成 Telora 源码。
 
 `dbg!` 的 `repr` 是 Host-only、有界且 cycle-safe 的观察文本，不进入 Telora String；
 codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr 会保留 `3.0` 和

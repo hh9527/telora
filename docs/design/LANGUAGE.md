@@ -111,8 +111,9 @@ String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字�
 `fmt.render(fmt.Display.display(endpoint))` 得到 String。`fmt.concat(strings, items)`
 按 `strings.len == items.len + 1` 组合常量文本和 `Fmt` fragment。插值使用同一
 `Display -> Fmt` 路径，并只在整个字符串末端物化一次。Fmt 节点及其 Host payload
-计入 allocation quota；物化前先递归测量最终 UTF-8 字节数并预扣配额。共享 fragment
-每次出现在结果中都计入最终长度。`dbg!` 的有界 repr 属于
+在复制前预扣 allocation quota；物化前按共享节点 memoize 测量最终 UTF-8 字节数并
+预扣配额。共享 fragment 的长度只计算一次，但每次出现在结果中都计入最终长度，
+因此配额拒绝不会先展开指数大小的树。`dbg!` 的有界 repr 属于
 Host-only 观察；codec/JSON 则是数据交换协议，三者
 都不能作为彼此的隐式替代。
 

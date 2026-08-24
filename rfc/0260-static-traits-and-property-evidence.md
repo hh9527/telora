@@ -150,8 +150,10 @@ must apply.
 
 Blanket candidates use a constructor-level pattern and static bounds. The first
 version rejects overlapping blanket implementations at module sealing, even
-when their current concrete matches happen to be disjoint. An explicit impl
-that overlaps a blanket impl is also rejected; there is no specialization.
+when their current concrete matches happen to be disjoint. A concrete explicit
+impl may coexist with a property-constrained blanket impl and wins for its exact
+target. This fixed exact-over-blanket rule does not add ordering or
+specialization among blanket implementations.
 
 Repeated imports and reexports retain one implementation identity and do not
 create duplicate candidates.
@@ -211,9 +213,12 @@ items)` requires `strings.len == items.len + 1` and builds an immutable delayed
 display tree. `fmt.render` materializes that tree as String. An interpolation
 instruction performs the same concatenation and renders once after all dynamic
 fragments have been selected. Fmt Host payload is charged when nodes are built.
-Rendering first measures the complete UTF-8 output with checked arithmetic,
-charges the allocation quota, and only then allocates the final String. Reused
-fragments are measured at every occurrence in the rendered tree.
+Runtime constructors reserve that payload charge before copying Host data.
+Rendering first measures the complete UTF-8 output with checked arithmetic and
+per-node memoization, charges the allocation quota, and only then allocates the
+final String. Reused fragments contribute at every occurrence while their
+internal length is computed once, so quota rejection does not expand a shared
+DAG exponentially.
 
 A concrete implementation and a property-constrained blanket implementation
 may coexist. Static selection prefers the exact concrete implementation;

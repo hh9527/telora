@@ -11,6 +11,9 @@ pub struct CallContext<'vm, 'stack> {
     call_site: Option<crate::Loc>,
 }
 
+#[must_use = "an opaque allocation reservation must be committed"]
+pub(crate) struct OpaqueAllocationReservation(());
+
 impl<'vm, 'stack> CallContext<'vm, 'stack> {
     fn new(
         current: &'vm mut Heap,
@@ -174,7 +177,10 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         F: FnOnce(&mut String) -> Result<(), NativeError>,
     {
         self.charge_allocation(length)?;
-        let mut value = String::with_capacity(length);
+        let mut value = String::new();
+        value.try_reserve_exact(length).map_err(|_| {
+            NativeError::allocation_limit("native String allocation cannot be reserved")
+        })?;
         write(&mut value)?;
         if value.len() != length {
             return Err(NativeError::new(
@@ -218,6 +224,14 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
     where
         T: std::any::Any + Eq + Send + Sync,
     {
+        let reservation = self.reserve_opaque_allocation(payload_bytes)?;
+        self.set_opaque_reserved(destination, native_type, payload, reservation)
+    }
+
+    pub(crate) fn reserve_opaque_allocation(
+        &mut self,
+        payload_bytes: usize,
+    ) -> Result<OpaqueAllocationReservation, NativeError> {
         let bytes = logical_value_bytes(1)?
             .checked_add(u64::try_from(payload_bytes).map_err(|_| {
                 NativeError::allocation_limit("native opaque payload size overflowed")
@@ -228,6 +242,20 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.account
             .charge_allocation(bytes)
             .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))?;
+        Ok(OpaqueAllocationReservation(()))
+    }
+
+    pub(crate) fn set_opaque_reserved<T>(
+        &mut self,
+        destination: RegisterId,
+        native_type: crate::NativeType,
+        payload: T,
+        reservation: OpaqueAllocationReservation,
+    ) -> Result<(), NativeError>
+    where
+        T: std::any::Any + Eq + Send + Sync,
+    {
+        let OpaqueAllocationReservation(()) = reservation;
         let value = crate::OpaqueValue::new(native_type, payload);
         let handle = self.current.allocate(Object::Opaque(value));
         self.set(destination, DecodedValue::Opaque(handle).into())

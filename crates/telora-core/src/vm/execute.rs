@@ -1001,7 +1001,15 @@ impl Vm {
                                     )
                                     .map_err(|native_error| {
                                         error(
-                                            RuntimeErrorKind::TypeMismatch,
+                                            match native_error.limit() {
+                                                Some(NativeLimit::Stack) => {
+                                                    RuntimeErrorKind::StackLimitExceeded
+                                                }
+                                                Some(NativeLimit::Allocation) => {
+                                                    RuntimeErrorKind::AllocationQuotaExceeded
+                                                }
+                                                None => RuntimeErrorKind::TypeMismatch,
+                                            },
                                             native_error.message,
                                             function,
                                             pc,
@@ -1023,7 +1031,15 @@ impl Vm {
                                     )
                                 })?;
                                 charge_allocation(account, bytes, function, pc)?;
-                                let mut output = String::with_capacity(output_len);
+                                let mut output = crate::fmt::string_with_capacity(output_len)
+                                    .map_err(|native_error| {
+                                        error(
+                                            RuntimeErrorKind::AllocationQuotaExceeded,
+                                            native_error.message,
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
                                 for value in &values {
                                     crate::fmt::write_interpolation_value(
                                         crate::ValueRef {
@@ -1034,7 +1050,15 @@ impl Vm {
                                     )
                                     .map_err(|native_error| {
                                         error(
-                                            RuntimeErrorKind::TypeMismatch,
+                                            match native_error.limit() {
+                                                Some(NativeLimit::Stack) => {
+                                                    RuntimeErrorKind::StackLimitExceeded
+                                                }
+                                                Some(NativeLimit::Allocation) => {
+                                                    RuntimeErrorKind::AllocationQuotaExceeded
+                                                }
+                                                None => RuntimeErrorKind::TypeMismatch,
+                                            },
                                             native_error.message,
                                             function,
                                             pc,
