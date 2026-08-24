@@ -862,7 +862,9 @@ impl<'a> GenericInference<'a> {
                         arguments.len()
                     ));
                 }
+                let pending_start = self.pending_type_constraints.len();
                 self.infer(callee, environment, None)?;
+                self.pending_type_constraints.truncate(pending_start);
                 let type_expected = TypeDescriptor::Type;
                 let mut replacements = HashMap::new();
                 for (parameter, argument) in scheme.parameters.iter().zip(arguments) {
@@ -894,8 +896,17 @@ impl<'a> GenericInference<'a> {
                 }
                 for constraint in &scheme.constraints {
                     if let Some(target) = replacements.get(&constraint.parameter) {
+                        let capability = match &constraint.capability {
+                            TypeCapability::Trait { id, name } => TypeCapability::Trait {
+                                id: *id,
+                                name: name.clone(),
+                            },
+                            TypeCapability::Property(property) => TypeCapability::Property(
+                                substitute_bound_parameters(property, &replacements),
+                            ),
+                        };
                         self.pending_type_constraints.push(PendingTypeConstraint {
-                            capability: constraint.capability.clone(),
+                            capability,
                             target: target.clone(),
                             location: expression.location,
                             lexical_evidence: self.lexical_type_evidence.clone(),

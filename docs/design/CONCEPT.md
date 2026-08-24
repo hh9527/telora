@@ -316,6 +316,13 @@ Interpreter、静态 trait implementation 和未来的 quote/codegen 都可以�
 
 **Interpreter** 是消费 `TypeDesc` 和 typed property 并实现类型导向操作的普通代码。
 受控的 typed bridge 可以把它连接到 `TypeOf(A)`，但不能允许它任意构造或提取 `A`。
+工具阶段的 interpreter 可以产生捕获 canonical member index、静态 evidence 和普通常量
+的普通 closure，并把 closure 作为 typed property payload 发布。运行期消费该 payload
+不需要重新查询 property registry。
+
+`interpreter!` 的 typed lifting 以外层 closure identity 和 canonical `TypeId` witness
+tuple memoize 成功生成的 wrapper。该缓存不执行 operand，也不定义 codegen；跨 World 的
+identity 由普通闭包图随 property root 的原子 publication 保持。
 
 ## Stage 与 Execution
 

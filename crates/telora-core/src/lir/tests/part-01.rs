@@ -2,6 +2,7 @@
     fn resolves_labels_and_compresses_origins() {
         let function = Function {
             name: "test".into(),
+            memoized_interpreter: false,
             parameter_count: 0,
             capture_count: 0,
             register_count: 1,
@@ -38,6 +39,7 @@
     fn rejects_undefined_labels_and_bad_registers() {
         let bad_label = Function {
             name: "test".into(),
+            memoized_interpreter: false,
             parameter_count: 0,
             capture_count: 0,
             register_count: 1,
@@ -55,6 +57,7 @@
         );
         let bad_register = Function {
             name: "test".into(),
+            memoized_interpreter: false,
             parameter_count: 0,
             capture_count: 0,
             register_count: 1,
@@ -73,6 +76,7 @@
 
         let bad_arguments = Function {
             name: "test".into(),
+            memoized_interpreter: false,
             parameter_count: 0,
             capture_count: 0,
             register_count: 1,
@@ -94,6 +98,7 @@
 
         let duplicate_label = Function {
             name: "test".into(),
+            memoized_interpreter: false,
             parameter_count: 0,
             capture_count: 0,
             register_count: 1,

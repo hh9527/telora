@@ -469,6 +469,7 @@ pub enum Opcode {
 #[derive(Clone, Debug)]
 pub struct FuncByteCode {
     name: Arc<str>,
+    memoized_interpreter: bool,
     parameter_count: usize,
     capture_count: usize,
     register_count: usize,
@@ -483,6 +484,10 @@ impl FuncByteCode {
 
     pub(crate) const fn parameter_count(&self) -> usize {
         self.parameter_count
+    }
+
+    pub(crate) const fn is_memoized_interpreter(&self) -> bool {
+        self.memoized_interpreter
     }
 }
 
@@ -582,6 +587,7 @@ impl BytecodeFunction {
         Self {
             code: Arc::new(FuncByteCode {
                 name: name.into(),
+                memoized_interpreter: false,
                 parameter_count,
                 capture_count,
                 register_count,
@@ -594,6 +600,12 @@ impl BytecodeFunction {
 
     pub fn code(&self) -> &Arc<FuncByteCode> {
         &self.code
+    }
+
+    pub(crate) fn mark_memoized_interpreter(&mut self) {
+        Arc::get_mut(&mut self.code)
+            .expect("newly assembled bytecode is not shared")
+            .memoized_interpreter = true;
     }
 
     pub fn links(&self) -> &LinkingTable {

@@ -15,6 +15,7 @@ type VariantPropertyCtx = struct {
 native get_type_prop: for(P) Fn(Type, TypeOf(P)) -> Option(P);
 native get_field_prop: for(P) Fn(Type, Int, TypeOf(P)) -> Option(P);
 native get_variant_prop: for(P) Fn(Type, Int, TypeOf(P)) -> Option(P);
+native evidence: for(P, T: Property(P)) Fn(TypeOf(T), TypeOf(P)) -> P;
 
 export {
     FieldPropertyCtx,
@@ -22,4 +23,5 @@ export {
     get_type_prop,
     get_field_prop,
     get_variant_prop,
+    evidence,
 };

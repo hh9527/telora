@@ -137,6 +137,7 @@ pub(crate) struct Heap {
     declared_types: HashMap<crate::TypeId, Val>,
     properties: BTreeMap<PropertyKey, Val>,
     property_attr_type: Option<crate::TypeId>,
+    memoized_interpreters: HashMap<usize, HashMap<Vec<crate::TypeId>, Val>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

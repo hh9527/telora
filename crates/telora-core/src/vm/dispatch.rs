@@ -325,6 +325,71 @@ fn drive_vm_action(
                             call_pc,
                         ));
                     }
+                    let memo = match runtime_prototype {
+                        crate::heap::RuntimePrototype::Bytecode(prototype) => {
+                            let (code, _, _, _) =
+                                view.bytecode(prototype).map_err(|heap_error| {
+                                    error(
+                                        RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(),
+                                        &call_function,
+                                        call_pc,
+                                    )
+                                })?;
+                            if code.is_memoized_interpreter() {
+                                let identity = view.function_identity(closure_handle).map_err(
+                                    |heap_error| {
+                                        error(
+                                            RuntimeErrorKind::InvalidBytecode,
+                                            heap_error.to_string(),
+                                            &call_function,
+                                            call_pc,
+                                        )
+                                    },
+                                )?;
+                                let arguments = arguments
+                                    .iter()
+                                    .map(|argument| view.canonical_type_value_id(*argument))
+                                    .collect::<Result<Vec<_>, _>>()
+                                    .map_err(|heap_error| {
+                                        error(
+                                            RuntimeErrorKind::TypeMismatch,
+                                            heap_error.to_string(),
+                                            &call_function,
+                                            call_pc,
+                                        )
+                                    })?;
+                                let cached = current.memoized_interpreter(identity, &arguments);
+                                Some((identity, arguments, cached))
+                            } else {
+                                None
+                            }
+                        }
+                        crate::heap::RuntimePrototype::Native(_) => None,
+                    };
+                    if let Some((_, _, Some(value))) = memo {
+                        VmAction::Return {
+                            value,
+                            return_target,
+                        }
+                    } else {
+                        let return_target = if let Some((identity, arguments, None)) = memo {
+                            ReturnTarget::Native(Box::new(InterpreterMemoContinuation {
+                                identity,
+                                arguments,
+                                return_target,
+                                trace_frame: RuntimeFrame {
+                                    function: call_function.name().to_owned(),
+                                    instruction: call_pc,
+                                    origin: call_function.origin_at(call_pc),
+                                },
+                            }))
+                        } else {
+                            return_target
+                        };
+                        let inherited_rule_boundary = rule_boundary
+                            .or_else(|| frames.last().and_then(|frame| frame.rule_boundary))
+                            .or_else(|| instruction_location(&call_function, call_pc));
                     match runtime_prototype {
                         crate::heap::RuntimePrototype::Bytecode(prototype) => {
                             let (code, _, _, _) =
@@ -338,16 +403,13 @@ fn drive_vm_action(
                                 })?;
                             let callee_function =
                                 Arc::new(BytecodeFunction::from_linked_code(Arc::clone(code)));
-                            let rule_boundary = rule_boundary
-                                .or_else(|| frames.last().and_then(|frame| frame.rule_boundary))
-                                .or_else(|| instruction_location(&call_function, call_pc));
                             let next = make_execution_frame(
                                 callee_function,
                                 prototype,
                                 &arguments,
                                 &upvalues,
                                 return_target,
-                                rule_boundary,
+                                    inherited_rule_boundary,
                                 stack,
                                 account.stack_limit(),
                             )
@@ -521,6 +583,7 @@ fn drive_vm_action(
                                 operation,
                                 &arguments,
                                 return_target,
+                                    inherited_rule_boundary,
                                 &call_function,
                                 call_pc,
                                 current,
@@ -579,6 +642,7 @@ fn drive_vm_action(
                         },
                     }
                 }
+            }
             }
         };
     }
@@ -657,6 +721,76 @@ impl NativeContinuation for DictContinuation {
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
         resume_dict_failure(*self, failure, current, background, account)
+    }
+}
+
+impl NativeContinuation for InterpreterMemoContinuation {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.return_target
+    }
+
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.trace_frame
+    }
+
+    fn resume(
+        self: Box<Self>,
+        value: Val,
+        current: &mut Heap,
+        _background: &Heap,
+        _account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        current.memoize_interpreter(self.identity, self.arguments, value);
+        Ok(VmAction::Return {
+            value,
+            return_target: self.return_target,
+        })
+    }
+
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _current: &mut Heap,
+        _background: &Heap,
+        _account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.return_target,
+        })
+    }
+}
+
+impl NativeContinuation for CodecDisplayContinuation {
+    fn return_target(&self) -> &ReturnTarget {
+        &self.return_target
+    }
+
+    fn trace_frame(&self) -> &RuntimeFrame {
+        &self.trace_frame
+    }
+
+    fn resume(
+        self: Box<Self>,
+        value: Val,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        resume_codec_display(*self, value, current, background, account)
+    }
+
+    fn resume_failed(
+        self: Box<Self>,
+        failure: Val,
+        _current: &mut Heap,
+        _background: &Heap,
+        _account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        Ok(VmAction::Return {
+            value: failure,
+            return_target: self.return_target,
+        })
     }
 }
 

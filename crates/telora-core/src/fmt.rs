@@ -1,5 +1,5 @@
 use crate::{CallContext, NativeError, NativeType, ValueRef};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -48,25 +48,6 @@ impl Fmt {
     fn concat(strings: Vec<String>, items: Vec<Self>) -> Self {
         Self(Arc::new(FmtNode::Concat { strings, items }))
     }
-}
-
-#[derive(Clone)]
-enum DisplayPlan {
-    String,
-    Int,
-    Float,
-    Template {
-        template: DisplayTemplate,
-        fields: BTreeMap<String, DisplayPlan>,
-    },
-}
-
-fn template_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeError> {
-    context
-        .value(context.upvalue(0)?)?
-        .as_native_type()
-        .cloned()
-        .ok_or_else(|| NativeError::new("DisplayTemplate native type is not linked"))
 }
 
 fn fmt_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeError> {
@@ -273,17 +254,6 @@ fn commit_fmt(
     context.set_opaque_reserved(context.result(), native_type, value, reservation)
 }
 
-fn template_payload_bytes(part_count: usize, text_bytes: usize) -> Result<usize, NativeError> {
-    let slots = part_count
-        .checked_mul(size_of::<TemplatePart>())
-        .ok_or_else(|| NativeError::allocation_limit("DisplayTemplate payload size overflowed"))?;
-    size_of::<DisplayTemplate>()
-        .checked_add(2 * size_of::<usize>())
-        .and_then(|bytes| bytes.checked_add(slots))
-        .and_then(|bytes| bytes.checked_add(text_bytes))
-        .ok_or_else(|| NativeError::allocation_limit("DisplayTemplate payload size overflowed"))
-}
-
 pub(crate) fn write_interpolation_value(
     value: ValueRef<'_>,
     output: &mut String,
@@ -321,94 +291,9 @@ pub(crate) fn write_interpolation_value(
     )
 }
 
-fn resolve(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
-    for _ in 0..128 {
-        if let Some(body) = metadata.declared_type_body() {
-            metadata = body;
-            continue;
-        }
-        if metadata.is_hidden_type_slot() {
-            metadata = metadata
-                .resolve_hidden_type_slot()
-                .map_err(NativeError::new)?;
-            continue;
-        }
-        return Ok(metadata);
-    }
-    Err(NativeError::new(
-        "std/fmt.display metadata resolution exceeds the recursive type limit",
-    ))
-}
-
-fn strip(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
-    metadata = resolve(metadata)?;
-    while metadata
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-        .is_some_and(|kind| kind == "WithAttributes")
-    {
-        metadata = resolve(
-            metadata
-                .dict_get("inner")
-                .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?,
-        )?;
-    }
-    Ok(metadata)
-}
-
-fn resolve_link(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
-    for _ in 0..128 {
-        if !metadata.is_hidden_type_slot() {
-            return Ok(metadata);
-        }
-        metadata = metadata
-            .resolve_hidden_type_slot()
-            .map_err(NativeError::new)?;
-    }
-    Err(NativeError::new(
-        "std/fmt.display type link exceeds the recursive type limit",
-    ))
-}
-
-fn attached_template(
-    metadata: ValueRef<'_>,
-    property_type: crate::TypeId,
-) -> Result<Option<DisplayTemplate>, NativeError> {
-    let mut metadata = resolve_link(metadata)?;
-    while metadata
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-        .is_some_and(|kind| kind == "WithAttributes")
-    {
-        metadata = resolve_link(
-            metadata
-                .dict_get("inner")
-                .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?,
-        )?;
-    }
-    let Some(property) = metadata.type_property(property_type) else {
-        return Ok(None);
-    };
-    let payload = property
-        .dict_get("template")
-        .ok_or_else(|| NativeError::new("fmt DisplayBy property has no template"))?;
-    let native_type = payload
-        .opaque_native_type()
-        .ok_or_else(|| NativeError::new("invalid fmt DisplayBy template"))?;
-    if native_type.qualified_name() != "std/fmt#DisplayTemplate" {
-        return Err(NativeError::new("invalid fmt DisplayBy template"));
-    }
-    payload
-        .as_opaque::<DisplayTemplate>(native_type)
-        .cloned()
-        .map(Some)
-        .ok_or_else(|| NativeError::new("invalid fmt DisplayBy template"))
-}
-
 #[derive(Clone, Copy)]
 struct TemplateMeasurement {
     part_count: usize,
-    text_bytes: usize,
 }
 
 fn validate_template_field(field: &str) -> Result<(), NativeError> {
@@ -489,14 +374,11 @@ fn measure_template(source: &str) -> Result<TemplateMeasurement, NativeError> {
         part_count = part_count.checked_add(1).ok_or_else(|| {
             NativeError::allocation_limit("DisplayTemplate part count overflowed")
         })?;
-        text_bytes = text_bytes.checked_add(current_text_bytes).ok_or_else(|| {
+        text_bytes.checked_add(current_text_bytes).ok_or_else(|| {
             NativeError::allocation_limit("DisplayTemplate payload size overflowed")
         })?;
     }
-    Ok(TemplateMeasurement {
-        part_count,
-        text_bytes,
-    })
+    Ok(TemplateMeasurement { part_count })
 }
 
 fn push_template_part(
@@ -569,196 +451,69 @@ fn parse_template(
     Ok(DisplayTemplate(parts))
 }
 
-fn display_plan(
-    metadata: ValueRef<'_>,
-    property_type: crate::TypeId,
-) -> Result<DisplayPlan, NativeError> {
-    display_plan_at(metadata, property_type, 0)
-}
-
-fn display_plan_at(
-    metadata: ValueRef<'_>,
-    property_type: crate::TypeId,
-    depth: usize,
-) -> Result<DisplayPlan, NativeError> {
-    if depth >= 128 {
-        return Err(NativeError::new(
-            "std/fmt.display plan exceeds the recursive type limit",
-        ));
-    }
-    if let Some(template) = attached_template(metadata, property_type)? {
-        return display_template_plan(metadata, template, property_type, depth);
-    }
-    let kind = strip(metadata)?
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom());
-    match kind.as_ref().map(crate::TextRef::as_str) {
-        Some("String") => Ok(DisplayPlan::String),
-        Some("Int") => Ok(DisplayPlan::Int),
-        Some("Float") => Ok(DisplayPlan::Float),
-        _ => Err(NativeError::new("type has no std/fmt.display capability")),
-    }
-}
-
-fn display_template_plan(
-    metadata: ValueRef<'_>,
-    template: DisplayTemplate,
-    property_type: crate::TypeId,
-    depth: usize,
-) -> Result<DisplayPlan, NativeError> {
-    let inner = strip(metadata)?;
-    if !inner
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-        .is_some_and(|kind| kind == "Struct")
-    {
-        return Err(NativeError::new("fmt.display_by requires a struct type"));
-    }
-    let members = inner
-        .dict_get("fields")
-        .ok_or_else(|| NativeError::new("struct type metadata has no fields"))?;
-    let mut fields = BTreeMap::new();
-    for part in &template.0 {
-        let TemplatePart::Field(name) = part else {
-            continue;
-        };
-        if fields.contains_key(name) {
-            continue;
-        }
-        let field = members.dict_get(name).ok_or_else(|| {
-            NativeError::new(format!(
-                "Display template references unknown field {name:?}"
-            ))
-        })?;
-        fields.insert(
-            name.clone(),
-            display_plan_at(field, property_type, depth + 1).map_err(|error| {
-                NativeError::new(format!("Display field {name:?}: {}", error.message))
-            })?,
-        );
-    }
-    Ok(DisplayPlan::Template { template, fields })
-}
-
-fn render(
-    plan: &DisplayPlan,
-    value: ValueRef<'_>,
-    output: &mut impl Write,
-) -> Result<(), NativeError> {
-    let write_error = || NativeError::allocation_limit("Display output size overflowed");
-    let value = value
-        .unwrap_declared()
-        .ok_or_else(|| NativeError::new("Display received an invalid declared value"))?;
-    match plan {
-        DisplayPlan::String => {
-            let text = value
-                .as_str()
-                .ok_or_else(|| NativeError::new("Display expected String"))?;
-            output.write_str(text.as_str()).map_err(|_| write_error())?;
-        }
-        DisplayPlan::Int => write!(
-            output,
-            "{}",
-            value
-                .as_int()
-                .ok_or_else(|| NativeError::new("Display expected Int"))?
-        )
-        .map_err(|_| write_error())?,
-        DisplayPlan::Float => write!(
-            output,
-            "{}",
-            value
-                .as_float()
-                .ok_or_else(|| NativeError::new("Display expected Float"))?
-        )
-        .map_err(|_| write_error())?,
-        DisplayPlan::Template { template, fields } => {
-            for part in &template.0 {
-                match part {
-                    TemplatePart::Text(text) => {
-                        output.write_str(text).map_err(|_| write_error())?
-                    }
-                    TemplatePart::Field(name) => render(
-                        &fields[name],
-                        value.dict_get(name).ok_or_else(|| {
-                            NativeError::new(format!("Display value has no field {name:?}"))
-                        })?,
-                        output,
-                    )?,
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn measure_display(plan: &DisplayPlan, value: ValueRef<'_>) -> Result<usize, NativeError> {
-    let mut counter = ByteCounter(Some(0));
-    render(plan, value, &mut counter)?;
-    counter
-        .0
-        .ok_or_else(|| NativeError::allocation_limit("Display output size overflowed"))
-}
-
-fn selected_display_plan(
-    metadata: ValueRef<'_>,
-    property_type: Option<crate::TypeId>,
-) -> Result<DisplayPlan, NativeError> {
-    if let Some(property_type) = property_type {
-        return display_plan(metadata, property_type);
-    }
-    let kind = strip(metadata)?
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom());
-    match kind.as_ref().map(crate::TextRef::as_str) {
-        Some("String") => Ok(DisplayPlan::String),
-        Some("Int") => Ok(DisplayPlan::Int),
-        Some("Float") => Ok(DisplayPlan::Float),
-        _ => Err(NativeError::new("type has no std/fmt.display capability")),
-    }
-}
-
 pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let native_type = template_type(context)?;
     let source_argument = context.argument(0)?;
     let source = context
         .value(source_argument)?
         .as_str()
         .ok_or_else(|| NativeError::new("std/fmt.display_by expects String"))?;
     let measurement = measure_template(source.as_str())?;
-    let payload_bytes = template_payload_bytes(measurement.part_count, measurement.text_bytes)?;
-    let reservation = context.reserve_opaque_allocation(payload_bytes)?;
     let source = context
         .value(source_argument)?
         .as_str()
         .expect("String argument was validated before reservation");
     let template = parse_template(source.as_str(), measurement)?;
 
-    let property_type = context
-        .value(context.argument(1)?)?
-        .declared_type_id()
-        .ok_or_else(|| NativeError::new("std/fmt.prepare expects DisplayBy Type metadata"))?;
-    let target = context.value(context.argument(2)?)?;
-    display_template_plan(target, template.clone(), property_type, 0)?;
-
-    context.set_opaque_reserved(context.result(), native_type, template, reservation)
+    set_template_parts(context, template)
 }
 
-pub(crate) fn native_display_by(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let native_type = fmt_type(context)?;
-    let type_argument = context.argument(1)?;
-    let value_argument = context.argument(2)?;
-    let property_type = context
-        .value(context.argument(0)?)?
-        .declared_type_id()
-        .ok_or_else(|| NativeError::new("std/fmt.render_by expects DisplayBy Type metadata"))?;
-    let plan = selected_display_plan(context.value(type_argument)?, Some(property_type))?;
-    let length = measure_display(&plan, context.value(value_argument)?)?;
-    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(length)?)?;
-    let mut output = string_with_capacity(length)?;
-    render(&plan, context.value(value_argument)?, &mut output)?;
-    debug_assert_eq!(output.len(), length);
-    commit_fmt(context, native_type, Fmt::string(output), reservation)
+fn set_template_parts(
+    context: &mut CallContext<'_, '_>,
+    template: DisplayTemplate,
+) -> Result<(), NativeError> {
+    let mut strings = vec![String::new()];
+    let mut fields = Vec::new();
+    for part in template.0 {
+        match part {
+            TemplatePart::Text(text) => strings
+                .last_mut()
+                .expect("Display template always has a trailing String")
+                .push_str(&text),
+            TemplatePart::Field(field) => {
+                fields.push(field);
+                strings.push(String::new());
+            }
+        }
+    }
+
+    let mut string_registers = Vec::new();
+    string_registers
+        .try_reserve_exact(strings.len())
+        .map_err(|_| {
+            NativeError::allocation_limit("Display template String registers cannot be reserved")
+        })?;
+    for text in strings {
+        let register = context.scratch()?;
+        context.set_string(register, text)?;
+        string_registers.push(register);
+    }
+    let strings = context.scratch()?;
+    context.make_array(strings, &string_registers)?;
+
+    let mut field_registers = Vec::new();
+    field_registers
+        .try_reserve_exact(fields.len())
+        .map_err(|_| {
+            NativeError::allocation_limit("Display template field registers cannot be reserved")
+        })?;
+    for field in fields {
+        let register = context.scratch()?;
+        context.set_string(register, field)?;
+        field_registers.push(register);
+    }
+    let fields = context.scratch()?;
+    context.make_array(fields, &field_registers)?;
+    context.make_tuple(context.result(), &[strings, fields])
 }
 
 pub(crate) fn native_from_string(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -901,15 +656,11 @@ pub(crate) fn native_render(context: &mut CallContext<'_, '_>) -> Result<(), Nat
     context.set_string_exact(result, length, |output| write_fmt(&value, output, 0))
 }
 
-pub(crate) fn display_value(
-    metadata: ValueRef<'_>,
-    value: ValueRef<'_>,
-    property_type: Option<crate::TypeId>,
-) -> Result<String, NativeError> {
-    let plan = selected_display_plan(metadata, property_type)?;
-    let length = measure_display(&plan, value)?;
+pub(crate) fn render_value(value: ValueRef<'_>) -> Result<String, NativeError> {
+    let value = fmt_value(value)?;
+    let length = measure_fmt(value)?;
     let mut output = string_with_capacity(length)?;
-    render(&plan, value, &mut output)?;
+    write_fmt(value, &mut output, 0)?;
     debug_assert_eq!(output.len(), length);
     Ok(output)
 }

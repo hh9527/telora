@@ -35,15 +35,25 @@ fn transform_codec(
                             CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
                         })
                 }
-                CodecDirection::Encode => crate::fmt::display_value(
-                    metadata,
-                    ValueRef { value, view },
-                    Some(properties.display_by),
-                )
-                .map(|text| CodecNode::String(text, value.loc()))
-                .map_err(|error| {
-                    CodecFailure::new(format!("{path}: {}", error.message), value, schema.rule)
-                }),
+                CodecDirection::Encode => {
+                    let function = metadata
+                        .type_property(properties.display_by)
+                        .and_then(|property| property.dict_get("display"))
+                        .map(ValueRef::runtime)
+                        .ok_or_else(|| {
+                            CodecFailure::new(
+                                format!("{path}: DisplayBy property has no prepared display"),
+                                value,
+                                schema.rule,
+                            )
+                        })?;
+                    Ok(CodecNode::PreparedDisplay {
+                        function,
+                        descriptor: owner,
+                        value,
+                        loc: value.loc(),
+                    })
+                }
             };
         }
         let mut structural = schema.clone();

@@ -77,6 +77,14 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                         crate::property::native_get_variant,
                     ),
                 ),
+                (
+                    "evidence",
+                    NativeFunction::new(
+                        "std/type-property.evidence",
+                        3,
+                        crate::property::native_evidence,
+                    ),
+                ),
             ],
         },
         CoreModuleSpec {
@@ -172,6 +180,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 (
                     "resolve",
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Resolve),
+                ),
+                (
+                    "strip_attributes",
+                    NativeFunction::core_type_desc(CoreTypeDescFunction::StripAttributes),
                 ),
                 (
                     "variants",
@@ -549,21 +561,7 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
             functions: vec![
                 (
                     "prepare",
-                    NativeFunction::new_with_native_type(
-                        "std/fmt.prepare",
-                        3,
-                        0,
-                        crate::fmt::native_prepare,
-                    ),
-                ),
-                (
-                    "render_by",
-                    NativeFunction::new_with_native_type(
-                        "std/fmt.render_by",
-                        3,
-                        1,
-                        crate::fmt::native_display_by,
-                    ),
+                    NativeFunction::new("std/fmt.prepare", 1, crate::fmt::native_prepare),
                 ),
                 (
                     "from_string",

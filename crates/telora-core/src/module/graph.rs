@@ -696,11 +696,18 @@ fn install_native_modules_observed(
                 .as_ref()
                 .and_then(function_contract_arity)
                 .expect("native grammar requires a function contract");
-            if declared_arity as usize != implementation.arity() {
+            let hidden_evidence_arity = binding
+                .value
+                .type_parameter_bounds
+                .iter()
+                .map(Vec::len)
+                .sum::<usize>();
+            let runtime_arity = declared_arity as usize + hidden_evidence_arity;
+            if runtime_arity != implementation.arity() {
                 return Err(ModuleError::new(sources.render(
                     &crate::source::Diagnostic::error(
                         format!(
-                            "native symbol {symbol:?} declares arity {declared_arity}, but its implementation has arity {}",
+                            "native symbol {symbol:?} declares runtime arity {runtime_arity}, but its implementation has arity {}",
                             implementation.arity()
                         ),
                         binding.location,

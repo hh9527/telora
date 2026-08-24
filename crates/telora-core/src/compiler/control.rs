@@ -8,12 +8,32 @@ impl<'a> Compiler<'a> {
         self.compile_closure_with_declared_family(parameters, body, location, None)
     }
 
+    fn compile_memoized_interpreter_closure(
+        &mut self,
+        parameters: &[Identifier],
+        body: &Block,
+        location: Location,
+    ) -> Result<RegisterId, FrontendError> {
+        self.compile_closure_with_mode(parameters, body, location, None, true)
+    }
+
     fn compile_closure_with_declared_family(
         &mut self,
         parameters: &[Identifier],
         body: &Block,
         location: Location,
         nominal_constructor: Option<NominalTypeConstructor>,
+    ) -> Result<RegisterId, FrontendError> {
+        self.compile_closure_with_mode(parameters, body, location, nominal_constructor, false)
+    }
+
+    fn compile_closure_with_mode(
+        &mut self,
+        parameters: &[Identifier],
+        body: &Block,
+        location: Location,
+        nominal_constructor: Option<NominalTypeConstructor>,
+        memoized_interpreter: bool,
     ) -> Result<RegisterId, FrontendError> {
         let mut bound = parameters
             .iter()
@@ -153,7 +173,9 @@ impl<'a> Compiler<'a> {
         } else {
             nested.compile_tail_block(body)?;
         }
-        let function = Box::new(nested.finish_lir());
+        let mut function = nested.finish_lir();
+        function.memoized_interpreter = memoized_interpreter;
+        let function = Box::new(function);
 
         let dst = self.allocate();
         self.emit(
@@ -596,4 +618,3 @@ impl<'a> Compiler<'a> {
         self.items.push(Item::Label(label));
     }
 }
-

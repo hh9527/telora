@@ -243,6 +243,7 @@ pub enum Item {
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
+    pub memoized_interpreter: bool,
     pub parameter_count: u32,
     pub capture_count: u32,
     pub register_count: u32,
@@ -264,6 +265,7 @@ impl fmt::Display for AssembleError {
 impl std::error::Error for AssembleError {}
 
 pub fn assemble(function: Function) -> Result<BytecodeFunction, AssembleError> {
+    let memoized_interpreter = function.memoized_interpreter;
     let register_count = usize::try_from(function.register_count)
         .map_err(|_| assembly_error("register count does not fit this platform"))?;
     let parameter_count = usize::try_from(function.parameter_count)
@@ -310,7 +312,7 @@ pub fn assemble(function: Function) -> Result<BytecodeFunction, AssembleError> {
         ));
     }
     let debug_origins = compress_origins(&origins);
-    Ok(BytecodeFunction::assembled_constants(
+    let mut function = BytecodeFunction::assembled_constants(
         function.name,
         parameter_count,
         capture_count,
@@ -318,7 +320,11 @@ pub fn assemble(function: Function) -> Result<BytecodeFunction, AssembleError> {
         function.constants,
         instructions,
         debug_origins,
-    ))
+    );
+    if memoized_interpreter {
+        function.mark_memoized_interpreter();
+    }
+    Ok(function)
 }
 
 fn lower_operation(

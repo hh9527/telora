@@ -126,7 +126,7 @@
         let error = recovery_engine()
             .load_module(&main, BTreeMap::new())
             .unwrap_err();
-        assert!(error.message().contains("unknown field \"missing\""));
+        assert!(error.message().contains("unknown field \"missing\""), "{error}");
 
         fs::write(
             &main,

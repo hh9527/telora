@@ -80,6 +80,25 @@ struct DictContinuation {
     trace_frame: RuntimeFrame,
 }
 
+#[derive(Debug)]
+struct InterpreterMemoContinuation {
+    identity: usize,
+    arguments: Vec<crate::TypeId>,
+    return_target: ReturnTarget,
+    trace_frame: RuntimeFrame,
+}
+
+#[derive(Debug)]
+struct CodecDisplayContinuation {
+    node: CodecNode,
+    diagnostic_input: Val,
+    return_target: ReturnTarget,
+    rule_boundary: Option<crate::Loc>,
+    call_function: Arc<BytecodeFunction>,
+    call_pc: usize,
+    trace_frame: RuntimeFrame,
+}
+
 enum VmAction {
     Call {
         callee: Val,

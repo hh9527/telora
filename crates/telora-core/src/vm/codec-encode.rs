@@ -4,6 +4,7 @@ fn continue_json_encode(
     value_owner: Val,
     diagnostic_input: Val,
     return_target: ReturnTarget,
+    rule_boundary: Option<crate::Loc>,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
     current: &mut Heap,
@@ -34,16 +35,198 @@ fn continue_json_encode(
         )
         .map(|(node, _)| node),
     };
-    let result = result.map(|raw| CodecNode::SemanticValue {
-        owner: value_owner,
-        raw: Box::new(raw),
-    });
-    finish_codec_result(
-        result,
-        diagnostic_input,
-        return_target,
+    match result {
+        Ok(raw) => continue_codec_displays(
+            CodecNode::SemanticValue {
+                owner: value_owner,
+                raw: Box::new(raw),
+            },
+            diagnostic_input,
+            return_target,
+            rule_boundary,
+            call_function,
+            call_pc,
+            current,
+            background,
+            account,
+        ),
+        Err(failure) => finish_codec_result(
+            Err(failure),
+            diagnostic_input,
+            return_target,
+            &call_function,
+            call_pc,
+            current,
+            background,
+            account,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn continue_codec_displays(
+    node: CodecNode,
+    diagnostic_input: Val,
+    return_target: ReturnTarget,
+    rule_boundary: Option<crate::Loc>,
+    call_function: Arc<BytecodeFunction>,
+    call_pc: usize,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    let Some((function, descriptor, value)) = first_prepared_display(&node) else {
+        return finish_codec_result(
+            Ok(node),
+            diagnostic_input,
+            return_target,
+            &call_function,
+            call_pc,
+            current,
+            background,
+            account,
+        );
+    };
+    charge_allocation(
+        account,
+        logical_value_bytes(2).map_err(|native_error| {
+            allocation_error(native_error.message, &call_function, call_pc)
+        })?,
         &call_function,
         call_pc,
+    )?;
+    let argument = value.with_value(DecodedValue::Dyn(current.allocate(Object::Dyn {
+        identity: Arc::new(()),
+        descriptor,
+        value,
+        scheme: None,
+        origin: None,
+    })));
+    let trace_frame = RuntimeFrame {
+        function: call_function.name().to_owned(),
+        instruction: call_pc,
+        origin: call_function.origin_at(call_pc),
+    };
+    Ok(VmAction::Call {
+        callee: function,
+        arguments: vec![argument],
+        return_target: ReturnTarget::Native(Box::new(CodecDisplayContinuation {
+            node,
+            diagnostic_input,
+            return_target,
+            rule_boundary,
+            call_function: Arc::clone(&call_function),
+            call_pc,
+            trace_frame,
+        })),
+        call_function,
+        call_pc,
+        rule_boundary,
+    })
+}
+
+fn first_prepared_display(node: &CodecNode) -> Option<(Val, Val, Val)> {
+    match node {
+        CodecNode::PreparedDisplay {
+            function,
+            descriptor,
+            value,
+            ..
+        } => Some((*function, *descriptor, *value)),
+        CodecNode::SemanticValue { raw, .. } => first_prepared_display(raw),
+        CodecNode::Declared { payload, .. } => first_prepared_display(payload),
+        CodecNode::Array(items, _) | CodecNode::Tuple(items, _) => {
+            items.iter().find_map(first_prepared_display)
+        }
+        CodecNode::Tagged { tag, payload, .. } => {
+            first_prepared_display(tag).or_else(|| first_prepared_display(payload))
+        }
+        CodecNode::Dict(fields, _) => fields
+            .iter()
+            .find_map(|(_, value)| first_prepared_display(value)),
+        CodecNode::Existing(_)
+        | CodecNode::Atom(_, _)
+        | CodecNode::NamedAtom(_, _)
+        | CodecNode::String(_, _) => None,
+    }
+}
+
+fn replace_first_prepared_display(node: &mut CodecNode, text: String) -> bool {
+    match node {
+        CodecNode::PreparedDisplay { loc, .. } => {
+            *node = CodecNode::String(text, *loc);
+            true
+        }
+        CodecNode::SemanticValue { raw, .. } => replace_first_prepared_display(raw, text),
+        CodecNode::Declared { payload, .. } => replace_first_prepared_display(payload, text),
+        CodecNode::Array(items, _) | CodecNode::Tuple(items, _) => {
+            replace_first_in_nodes(items, text)
+        }
+        CodecNode::Tagged { tag, payload, .. } => {
+            if first_prepared_display(tag).is_some() {
+                replace_first_prepared_display(tag, text)
+            } else {
+                replace_first_prepared_display(payload, text)
+            }
+        }
+        CodecNode::Dict(fields, _) => {
+            let Some((_, value)) = fields
+                .iter_mut()
+                .find(|(_, value)| first_prepared_display(value).is_some())
+            else {
+                return false;
+            };
+            replace_first_prepared_display(value, text)
+        }
+        CodecNode::Existing(_)
+        | CodecNode::Atom(_, _)
+        | CodecNode::NamedAtom(_, _)
+        | CodecNode::String(_, _) => false,
+    }
+}
+
+fn replace_first_in_nodes(nodes: &mut [CodecNode], text: String) -> bool {
+    let Some(node) = nodes
+        .iter_mut()
+        .find(|node| first_prepared_display(node).is_some())
+    else {
+        return false;
+    };
+    replace_first_prepared_display(node, text)
+}
+
+fn resume_codec_display(
+    mut continuation: CodecDisplayContinuation,
+    value: Val,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    let text = crate::fmt::render_value(ValueRef::work(value, current, background)).map_err(
+        |native_error| {
+            error(
+                RuntimeErrorKind::TypeMismatch,
+                format!("std/fmt.render: {}", native_error.message),
+                &continuation.call_function,
+                continuation.call_pc,
+            )
+        },
+    )?;
+    if !replace_first_prepared_display(&mut continuation.node, text) {
+        return Err(error(
+            RuntimeErrorKind::InvalidBytecode,
+            "codec Display continuation has no pending prepared display",
+            &continuation.call_function,
+            continuation.call_pc,
+        ));
+    }
+    continue_codec_displays(
+        continuation.node,
+        continuation.diagnostic_input,
+        continuation.return_target,
+        continuation.rule_boundary,
+        continuation.call_function,
+        continuation.call_pc,
         current,
         background,
         account,
@@ -196,12 +379,7 @@ fn transform_dynamic_encode(
                 .map_err(|error| CodecFailure::new(error.to_string(), value, value))?;
             if tag.value() == DecodedValue::BuiltinAtom(BuiltinAtom::Some) {
                 return transform_dynamic_encode(
-                    payload,
-                    properties,
-                    path,
-                    current,
-                    background,
-                    active,
+                    payload, properties, path, current, background, active,
                 )
                 .map(|(node, _)| (node, true));
             }

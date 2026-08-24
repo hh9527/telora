@@ -320,6 +320,70 @@
     }
 
     #[test]
+    fn interpreter_wrappers_are_memoized_by_function_and_canonical_type_arguments() {
+        let directory = fixture_dir();
+        fs::write(
+            directory.join("main.telora"),
+            r#"import "std/dyn" as dyn;
+               def consume: Fn(Dyn) -> Bool = fn(value) {
+                   match dyn.project_with(String, value) {
+                       'Some(_) => 'True,
+                       'None => 'False,
+                   }
+               };
+               def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume);
+               def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume);
+               let first_int = first(Int);
+               let repeated_int = first(Int);
+               let first_string = first(String);
+               let second_int = second(Int);
+               {
+                   same_key: first_int == repeated_int,
+                   int_projection: first_int(1),
+                   string_projection: first_string("text"),
+                   different_interpreter: first_int == second_int,
+               }"#,
+        )
+        .unwrap();
+        let module = load_module(directory.join("main.telora"), BTreeMap::new(), 200_000).unwrap();
+        let world = module.execute(200_000).unwrap();
+        let output = world.value().to_string();
+        assert!(output.contains("same_key: 'True"), "{output}");
+        assert!(output.contains("int_projection: 'False"), "{output}");
+        assert!(output.contains("string_projection: 'True"), "{output}");
+        assert!(output.contains("different_interpreter: 'False"), "{output}");
+        let (_, work) = world.into_parts();
+        assert_eq!(work.heap().memoized_interpreter_count(), 3);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn interpreter_memoization_rejects_non_type_host_arguments() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"def consume: Fn(Dyn) -> String = fn(value) { "ok" };
+               export def prepare: for(A) Fn(TypeOf(A)) -> Fn(A) -> String =
+                   interpreter!(consume);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let prepare = engine.execute(&loaded).unwrap().select("prepare").unwrap();
+        let error = engine
+            .invoke_world(&loaded, prepare, &[crate::DataWorld::int(1)])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("interpreter static argument"),
+            "{error}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn telora_equality_interpreter_matches_native_structural_equality() {
         let directory = fixture_dir();
         fs::write(

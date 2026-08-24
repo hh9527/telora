@@ -104,7 +104,12 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 
 `display_by` 是受控模板 eDSL。它发布 `DisplayBy` typed property；`std/fmt` 中的
 property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence。
-`display_by` 的 property interpreter 在发布阶段验证字段，并直接支持
+`DisplayBy` 保存普通 `DisplayTemplate` 数据和普通 `Fn(Dyn) -> Fmt` closure；模板数据
+由常量 String 与字段名 Array 组成。property interpreter
+在发布阶段解析模板、验证字段、把字段名解析为 canonical index，并捕获字段的 Display
+closure。运行期路径只按固定 index 投影并调用已捕获 closure。codec 的 text bridge 通过
+VM continuation 调用同一个 closure，共用当前 quota account；失败的公开 rule 保持调用者
+位置，data-src 保持 closure 输入的数据来源。它直接支持
 String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字段类型上的任意
 显式 `Display` impl。
 `Display.display` 返回 opaque `Fmt`，`fmt.display` 也返回 `Fmt`；显式调用使用
@@ -520,7 +525,8 @@ TypeDesc   用户态解释器观察的擦除后 descriptor 视图
 
 `TypeDesc` 在这里表示公开观察模型，不是与 `Type` 并列的可构造静态类型。当前
 `std/type-desc` observer 接受 `Type` 值，并通过 kind、children 和 resolve 等操作
-暴露该擦除视图。
+暴露该擦除视图。`strip_attributes` 递归去掉 `WithAttributes` wrapper 并返回同一图中的
+inner descriptor；consumer 不需要依赖 wrapper 的 Dict 编码。
 
 内建元数据构造器也是普通 callable 值：
 
@@ -701,6 +707,17 @@ def show:
 
 该 lifting 的可观察语义等价于构造普通 closure，并使用相应 witness 将直接 A 参数
 安全打包为 Dyn。它不是 macro system、代码生成器、trait derivation 或动态 cast。
+
+同一 WorkWorld 中，`interpreter!` 产生的同一个外层 closure 使用相同 canonical
+`TypeId` witness tuple 调用时，复用同一个成功生成的 inner closure identity。key 是
+`(interpreter closure identity, TypeId tuple)`；不同 interpreter identity 或 TypeId
+不会共享。命中仍计一次函数调用 fuel，但不重复分配 inner closure。非 Type Host 参数
+在运行时边界拒绝，失败结果不进入缓存。跨 World 稳定性来自普通 closure publication：
+发布后的 property/evidence root 被 import、reexport 和重复读取时保持同一函数 identity。
+
+memoization 只缓存 lifting 所构造的 wrapper；它不会提前执行 inner operand。读取类型
+metadata、解析 eDSL 并产生领域 closure 的准备逻辑仍由普通 tool-stage/property 代码
+显式定义，如 `DisplayBy.display`。
 
 ### 7.5 静态约束、checked cast 与 Dyn 投影
 

@@ -21,3 +21,7 @@ pub(crate) fn native_get_variant(context: &mut CallContext<'_, '_>) -> Result<()
         context.argument(2)?,
     )
 }
+
+pub(crate) fn native_evidence(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    context.copy(context.result(), context.argument(0)?)
+}

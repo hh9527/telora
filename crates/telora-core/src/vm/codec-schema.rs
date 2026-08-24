@@ -482,6 +482,9 @@ fn codec_node_bytes(
 ) -> Result<u64, NativeError> {
     match node {
         CodecNode::Existing(_) | CodecNode::Atom(_, _) => Ok(0),
+        CodecNode::PreparedDisplay { .. } => Err(NativeError::new(
+            "codec output contains an unresolved prepared display",
+        )),
         CodecNode::SemanticValue { raw, .. } => codec_node_bytes(raw, current, background)?
             .checked_add(semantic_codec_wrapper_bytes(raw, current, background)?)
             .ok_or_else(|| NativeError::allocation_limit("codec output size overflowed")),
@@ -577,6 +580,7 @@ fn semantic_codec_wrapper_bytes(
         CodecNode::SemanticValue { .. }
         | CodecNode::NamedAtom(_, _)
         | CodecNode::Tuple(_, _)
+        | CodecNode::PreparedDisplay { .. }
         | CodecNode::Atom(_, _) => Err(NativeError::new(
             "raw data graph contains an unsupported semantic Value",
         )),
@@ -608,6 +612,9 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
         CodecNode::Atom(atom, loc) => Val::new(DecodedValue::BuiltinAtom(atom), loc),
         CodecNode::NamedAtom(value, loc) => Val::new(current.atom(Some(background), &value), loc),
         CodecNode::String(value, loc) => Val::new(current.string(Some(background), &value), loc),
+        CodecNode::PreparedDisplay { .. } => {
+            unreachable!("prepared displays are resolved before codec materialization")
+        }
         CodecNode::Array(items, loc) => {
             let items = items
                 .into_iter()

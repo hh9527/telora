@@ -91,7 +91,7 @@
         assert!(
             error
                 .to_string()
-                .contains("type has no std/fmt.display capability"),
+                .contains("Display template field has no Display capability"),
             "{error}"
         );
         fs::remove_dir_all(directory).unwrap();

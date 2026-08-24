@@ -771,8 +771,17 @@ impl GenericInference<'_> {
             if contains_type_variable(&target) {
                 continue;
             }
+            let capability = match &constraint.capability {
+                TypeCapability::Trait { id, name } => TypeCapability::Trait {
+                    id: *id,
+                    name: name.clone(),
+                },
+                TypeCapability::Property(property) => {
+                    TypeCapability::Property(self.resolve(property))
+                }
+            };
             if let Some(evidence) = constraint.lexical_evidence.iter().find(|evidence| {
-                evidence.capability == constraint.capability
+                evidence.capability == capability
                     && self.resolve(&evidence.target) == target
             }) {
                 self.resolved_call_evidence
@@ -781,7 +790,7 @@ impl GenericInference<'_> {
                     .push(ResolvedEvidence::root(evidence.name.clone()));
                 continue;
             }
-            match &constraint.capability {
+            match &capability {
                 TypeCapability::Trait { id, name } => {
                     let (implementation, replacements) = self
                         .trait_candidate(*id, &target)

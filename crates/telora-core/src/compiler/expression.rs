@@ -295,7 +295,26 @@ impl<'a> Compiler<'a> {
                 Ok(base)
             }
             ExprKind::TypeApply { callee, .. } => self.compile_expr(callee),
-            ExprKind::Interpreter { elaboration, .. } => self.compile_expr(elaboration),
+            ExprKind::Interpreter { elaboration, .. } => {
+                let ExprKind::Closure {
+                    parameters, body, ..
+                } = &elaboration.value
+                else {
+                    return Err(self.error_at(
+                        expression.location,
+                        "interpreter elaboration is not a closure",
+                    ));
+                };
+                let parameters = parameters
+                    .iter()
+                    .map(|parameter| parameter.name.clone())
+                    .collect::<Vec<_>>();
+                self.compile_memoized_interpreter_closure(
+                    &parameters,
+                    body,
+                    expression.location,
+                )
+            }
             ExprKind::Closure {
                 parameters, body, ..
             } => {

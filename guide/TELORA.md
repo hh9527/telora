@@ -683,8 +683,10 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 ```
 
 `display_by` 是受控模板 eDSL：它发布 `DisplayBy` typed property，标准 blanket impl
-据此为 `Endpoint` 提供 `Display` evidence。模板字段支持 String、Int、Float 和嵌套
-`DisplayBy` struct；模板解释器不会动态选择字段类型的其他显式 `Display` impl。
+据此为 `Endpoint` 提供 `Display` evidence。模块加载时会准备一个捕获固定字段 index 与
+Display closure 的普通函数；插值路径只投影固定字段并调用这些 closure。
+模板字段支持 String、Int、Float 和嵌套 `DisplayBy` struct；模板解释器不会动态选择
+字段类型的其他显式 `Display` impl。
 `Display.display` 和 `fmt.display`
 返回 opaque `Fmt`；显式物化文本写作
 `fmt.render(fmt.Display.display(endpoint))`。`fmt.concat(strings, items)` 要求

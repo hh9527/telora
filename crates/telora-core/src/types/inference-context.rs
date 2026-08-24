@@ -326,10 +326,19 @@ impl<'a> GenericInference<'a> {
             })
             .collect();
         for constraint in &scheme.constraints {
-            if let Some(variable) = variables.get(&constraint.parameter) {
+            if let Some(variable) = variables.get(&constraint.parameter).copied() {
+                let capability = match &constraint.capability {
+                    TypeCapability::Trait { id, name } => TypeCapability::Trait {
+                        id: *id,
+                        name: name.clone(),
+                    },
+                    TypeCapability::Property(property) => TypeCapability::Property(
+                        self.instantiate_with(property, &mut variables),
+                    ),
+                };
                 self.pending_type_constraints.push(PendingTypeConstraint {
-                    capability: constraint.capability.clone(),
-                    target: TypeDescriptor::Inference(*variable),
+                    capability,
+                    target: TypeDescriptor::Inference(variable),
                     location,
                     lexical_evidence: self.lexical_type_evidence.clone(),
                 });

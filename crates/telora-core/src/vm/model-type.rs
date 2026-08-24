@@ -317,6 +317,12 @@ enum CodecNode {
     },
     Dict(Vec<(String, Self)>, Option<crate::Loc>),
     String(String, Option<crate::Loc>),
+    PreparedDisplay {
+        function: Val,
+        descriptor: Val,
+        value: Val,
+        loc: Option<crate::Loc>,
+    },
 }
 
 #[derive(Clone, Copy)]

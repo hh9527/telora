@@ -13,7 +13,37 @@ impl Heap {
             declared_types: HashMap::new(),
             properties: BTreeMap::new(),
             property_attr_type: None,
+            memoized_interpreters: HashMap::new(),
         }
+    }
+
+    pub(crate) fn memoized_interpreter(
+        &self,
+        identity: usize,
+        arguments: &[crate::TypeId],
+    ) -> Option<Val> {
+        self.memoized_interpreters
+            .get(&identity)?
+            .get(arguments)
+            .copied()
+    }
+
+    pub(crate) fn memoize_interpreter(
+        &mut self,
+        identity: usize,
+        arguments: Vec<crate::TypeId>,
+        value: Val,
+    ) {
+        self.memoized_interpreters
+            .entry(identity)
+            .or_default()
+            .entry(arguments)
+            .or_insert(value);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn memoized_interpreter_count(&self) -> usize {
+        self.memoized_interpreters.values().map(HashMap::len).sum()
     }
 
     #[cfg(test)]

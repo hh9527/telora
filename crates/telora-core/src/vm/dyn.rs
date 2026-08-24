@@ -625,7 +625,11 @@ fn dyn_field_by_index(
         return Err("dyn.get_field_value expects runtime Struct record".into());
     };
     let (value_names, values) = view.dict_parts(values).map_err(|error| error.to_string())?;
-    if field_names != value_names || descriptors.len() != values.len() {
+    let names_match = field_names.len() == value_names.len()
+        && field_names.iter().zip(value_names).all(|(left, right)| {
+            matches!((view.text(*left), view.text(*right)), (Ok(left), Ok(right)) if left == right)
+        });
+    if !names_match || descriptors.len() != values.len() {
         return Err("Struct descriptor and runtime value have different fields".into());
     }
     let index = usize::try_from(index).map_err(|_| "field index exceeds usize".to_owned())?;

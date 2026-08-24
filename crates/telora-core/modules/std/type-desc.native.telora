@@ -13,6 +13,8 @@ native fields: Fn(Type) -> Array(FieldDesc);
 native variants: Fn(Type) -> Array(VariantDesc);
 native opaque_name: Fn(Type) -> Option(String);
 native resolve: Fn(Type) -> Result(Type, BlameError);
+native strip_attributes: Fn(Type) -> Type;
+
 export {
     Type as TypeDesc,
     TypeDescKind,
@@ -24,4 +26,5 @@ export {
     variants,
     opaque_name,
     resolve,
+    strip_attributes,
 };

@@ -490,6 +490,7 @@ pub(crate) enum CoreTypeDescFunction {
     Variants,
     OpaqueName,
     Resolve,
+    StripAttributes,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -557,6 +558,7 @@ impl CoreTypeDescFunction {
             Self::Variants => "std/type-desc.variants",
             Self::OpaqueName => "std/type-desc.opaque_name",
             Self::Resolve => "std/type-desc.resolve",
+            Self::StripAttributes => "std/type-desc.strip_attributes",
         }
     }
 

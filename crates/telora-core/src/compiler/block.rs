@@ -209,6 +209,7 @@ impl<'a> Compiler<'a> {
     fn finish_lir(self) -> lir::Function {
         lir::Function {
             name: self.function_name,
+            memoized_interpreter: false,
             parameter_count: self.parameter_count,
             capture_count: self.capture_count,
             register_count: self.next_register,
