@@ -188,6 +188,15 @@ impl<'a> Lowerer<'a> {
                     | Rule::NativeTypeBinding
                     | Rule::TypeBinding,
                 ) => entries.push(BlockEntry::Binding(self.binding(child)?)),
+                Some(Rule::TraitBinding | Rule::ImplBinding) => {
+                    if allow_destructuring {
+                        return Err(self.error(
+                            child,
+                            "trait and impl declarations are allowed only at module top level",
+                        ));
+                    }
+                    entries.push(BlockEntry::Binding(self.binding(child)?));
+                }
                 Some(Rule::ImportBinding) => entries.extend(
                     self.import_bindings(child)?
                         .into_iter()
@@ -421,15 +430,56 @@ impl<'a> Lowerer<'a> {
         ))
     }
 
+    fn type_parameters(
+        &self,
+        node: NodeRef,
+    ) -> Result<(Vec<Identifier>, Vec<Vec<Expr>>), Diagnostic> {
+        let mut parameters = Vec::new();
+        let mut bounds = Vec::new();
+        for parameter in self
+            .rule_children(node)
+            .filter(|child| self.rule(*child) == Some(Rule::TypeParameter))
+        {
+            let name_node = self.first_token(parameter, Token::Identifier)?;
+            let name = self.identifier(name_node);
+            let parameter_bounds = self
+                .rule_children(parameter)
+                .filter(|child| self.rule(*child) == Some(Rule::TraitBound))
+                .map(|bound| {
+                    let contract = self
+                        .rule_children(bound)
+                        .find(|child| {
+                            matches!(
+                                self.rule(*child),
+                                Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                            )
+                        })
+                        .ok_or_else(|| self.error(bound, "trait bound has no contract"))?;
+                    self.contract_expression(contract)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            parameters.push(name);
+            bounds.push(parameter_bounds);
+        }
+        Ok((parameters, bounds))
+    }
+
     fn binding(&self, node: NodeRef) -> Result<Binding, Diagnostic> {
         let identifiers = self
             .token_children(node, Token::Identifier)
             .collect::<Vec<_>>();
-        let name_node = identifiers
-            .first()
-            .copied()
-            .ok_or_else(|| self.error(node, "binding has no name"))?;
-        let name = self.identifier(name_node);
+        let name = if self.rule(node) == Some(Rule::ImplBinding) {
+            located(
+                format!("\0trait_impl_{}", self.cst.span(node).start),
+                self.location(node),
+            )
+        } else {
+            let name_node = identifiers
+                .first()
+                .copied()
+                .ok_or_else(|| self.error(node, "binding has no name"))?;
+            self.identifier(name_node)
+        };
         match self
             .rule(node)
             .ok_or_else(|| self.error(node, "invalid binding"))?
@@ -466,6 +516,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters: Vec::new(),
+                        type_parameter_bounds: Vec::new(),
                         annotation,
                         value,
                     },
@@ -477,16 +528,11 @@ impl<'a> Lowerer<'a> {
                     .rule_children(node)
                     .find(|child| self.rule(*child) == Some(Rule::TypeScheme))
                     .ok_or_else(|| self.error(node, "declaration has no type scheme"))?;
-                let type_parameters = self
+                let (type_parameters, type_parameter_bounds) = self
                     .rule_children(scheme)
                     .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
-                    .map(|parameters| {
-                        self.token_children(parameters, Token::Identifier)
-                            .map(|parameter| {
-                                located(self.text(parameter).into_owned(), self.location(parameter))
-                            })
-                            .collect()
-                    })
+                    .map(|parameters| self.type_parameters(parameters))
+                    .transpose()?
                     .unwrap_or_default();
                 let contract_node = self
                     .rule_children(scheme)
@@ -506,6 +552,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters,
+                        type_parameter_bounds,
                         annotation: Some(contract.clone()),
                         value: contract,
                     },
@@ -517,16 +564,11 @@ impl<'a> Lowerer<'a> {
                     .rule_children(node)
                     .find(|child| self.rule(*child) == Some(Rule::TypeScheme))
                     .ok_or_else(|| self.error(node, "native declaration has no type scheme"))?;
-                let type_parameters = self
+                let (type_parameters, type_parameter_bounds) = self
                     .rule_children(scheme)
                     .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
-                    .map(|parameters| {
-                        self.token_children(parameters, Token::Identifier)
-                            .map(|parameter| {
-                                located(self.text(parameter).into_owned(), self.location(parameter))
-                            })
-                            .collect()
-                    })
+                    .map(|parameters| self.type_parameters(parameters))
+                    .transpose()?
                     .unwrap_or_default();
                 let contract_node = self
                     .rule_children(scheme)
@@ -546,6 +588,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters,
+                        type_parameter_bounds,
                         annotation: Some(contract.clone()),
                         value: contract,
                     },
@@ -562,6 +605,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters: Vec::new(),
+                        type_parameter_bounds: Vec::new(),
                         annotation: None,
                         value: located(
                             ExprKind::Int(self.text(slot).parse().map_err(|_| {
@@ -578,18 +622,13 @@ impl<'a> Lowerer<'a> {
                 let scheme = self
                     .rule_children(node)
                     .find(|child| self.rule(*child) == Some(Rule::TypeScheme));
-                let type_parameters: Vec<Identifier> = scheme
+                let (type_parameters, type_parameter_bounds) = scheme
                     .and_then(|scheme| {
                         self.rule_children(scheme)
                             .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
                     })
-                    .map(|parameters| {
-                        self.token_children(parameters, Token::Identifier)
-                            .map(|parameter| {
-                                located(self.text(parameter).into_owned(), self.location(parameter))
-                            })
-                            .collect()
-                    })
+                    .map(|parameters| self.type_parameters(parameters))
+                    .transpose()?
                     .unwrap_or_default();
                 let annotation = scheme
                     .map(|scheme| {
@@ -636,6 +675,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters,
+                        type_parameter_bounds,
                         annotation,
                         value,
                     },
@@ -644,16 +684,11 @@ impl<'a> Lowerer<'a> {
             }
             Rule::TypeBinding => {
                 let decorators = self.decorators(node)?;
-                let type_parameters = self
+                let (type_parameters, type_parameter_bounds) = self
                     .rule_children(node)
                     .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
-                    .map(|parameters| {
-                        self.token_children(parameters, Token::Identifier)
-                            .map(|parameter| {
-                                located(self.text(parameter).into_owned(), self.location(parameter))
-                            })
-                            .collect()
-                    })
+                    .map(|parameters| self.type_parameters(parameters))
+                    .transpose()?
                     .unwrap_or_default();
                 let equal = self.first_token(node, Token::Equal)?;
                 let start = self.cst.span(equal).start;
@@ -695,8 +730,153 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters,
+                        type_parameter_bounds,
                         annotation: None,
                         value,
+                    },
+                    self.location(node),
+                ))
+            }
+            Rule::TraitBinding => {
+                let mut fields = Vec::new();
+                let mut names = std::collections::HashSet::new();
+                for member in self
+                    .rule_children(node)
+                    .filter(|child| self.rule(*child) == Some(Rule::TraitMember))
+                {
+                    let name_node = self.first_token(member, Token::Identifier)?;
+                    let member_name = self.identifier(name_node);
+                    if !names.insert(member_name.value.clone()) {
+                        return Err(self.error(
+                            name_node,
+                            format!("duplicate trait member {:?}", member_name.value),
+                        ));
+                    }
+                    let contract = self
+                        .rule_children(member)
+                        .find(|child| {
+                            matches!(
+                                self.rule(*child),
+                                Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                            )
+                        })
+                        .ok_or_else(|| self.error(member, "trait member has no contract"))?;
+                    fields.push(located(
+                        DictFieldKind {
+                            decorators: Vec::new(),
+                            name: Some(member_name),
+                            value: self.contract_expression(contract)?,
+                        },
+                        self.location(member),
+                    ));
+                }
+                let operation_location = self.location(self.first_token(node, Token::Trait)?);
+                let model = located(
+                    DecoratorKind {
+                        callee: located(
+                            ExprKind::Variable(located(
+                                "\0telora_struct".to_owned(),
+                                operation_location,
+                            )),
+                            operation_location,
+                        ),
+                        arguments: Vec::new(),
+                        configured: false,
+                    },
+                    operation_location,
+                );
+                let value = self.apply_decorators(
+                    std::slice::from_ref(&model),
+                    "Type",
+                    &name,
+                    located(ExprKind::Dict(fields), self.location(node)),
+                    self.location(node),
+                );
+                Ok(located(
+                    BindingData {
+                        decorators: Vec::new(),
+                        kind: BindingKind::Trait,
+                        declared_initializer: Some(DeclaredInitializerKind::Struct),
+                        imported_name: None,
+                        name,
+                        type_parameters: vec![located("Self".to_owned(), self.location(node))],
+                        type_parameter_bounds: vec![Vec::new()],
+                        annotation: None,
+                        value,
+                    },
+                    self.location(node),
+                ))
+            }
+            Rule::ImplBinding => {
+                let (type_parameters, type_parameter_bounds) = self
+                    .rule_children(node)
+                    .find(|child| self.rule(*child) == Some(Rule::TypeParameters))
+                    .map(|parameters| self.type_parameters(parameters))
+                    .transpose()?
+                    .unwrap_or_default();
+                let contracts = self
+                    .rule_children(node)
+                    .filter(|child| {
+                        matches!(
+                            self.rule(*child),
+                            Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let [trait_contract, target_contract] = contracts.as_slice() else {
+                    return Err(self.error(node, "impl requires a trait and target type"));
+                };
+                let trait_value = self.contract_expression(*trait_contract)?;
+                let target = self.contract_expression(*target_contract)?;
+                let annotation = located(
+                    ExprKind::Call {
+                        callee: Box::new(trait_value),
+                        arguments: vec![target],
+                    },
+                    self.location(node),
+                );
+                let mut fields = Vec::new();
+                let mut names = std::collections::HashSet::new();
+                for member in self
+                    .rule_children(node)
+                    .filter(|child| self.rule(*child) == Some(Rule::ImplMember))
+                {
+                    let name_node = self.first_token(member, Token::Identifier)?;
+                    let member_name = self.identifier(name_node);
+                    if !names.insert(member_name.value.clone()) {
+                        return Err(self.error(
+                            name_node,
+                            format!("duplicate impl member {:?}", member_name.value),
+                        ));
+                    }
+                    let colon = self.first_token(member, Token::Colon)?;
+                    let value = self
+                        .children(member)
+                        .find(|child| {
+                            self.is_expression(*child)
+                                && self.cst.span(*child).start > self.cst.span(colon).start
+                        })
+                        .ok_or_else(|| self.error(member, "impl member has no value"))?;
+                    fields.push(located(
+                        DictFieldKind {
+                            decorators: Vec::new(),
+                            name: Some(member_name),
+                            value: self.expression(value)?,
+                        },
+                        self.location(member),
+                    ));
+                }
+                Ok(located(
+                    BindingData {
+                        decorators: Vec::new(),
+                        kind: BindingKind::Impl,
+                        declared_initializer: None,
+                        imported_name: None,
+                        name,
+                        type_parameters,
+                        type_parameter_bounds,
+                        annotation: Some(annotation),
+                        value: located(ExprKind::Dict(fields), self.location(node)),
                     },
                     self.location(node),
                 ))
@@ -714,6 +894,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: None,
                         name,
                         type_parameters: Vec::new(),
+                        type_parameter_bounds: Vec::new(),
                         annotation: None,
                         value: located(
                             ExprKind::String(self.plain_string(path, "import path")?),
@@ -754,6 +935,7 @@ impl<'a> Lowerer<'a> {
                     imported_name: None,
                     name: self.identifier(name_node),
                     type_parameters: Vec::new(),
+                    type_parameter_bounds: Vec::new(),
                     annotation: None,
                     value: value.clone(),
                 },
@@ -772,6 +954,7 @@ impl<'a> Lowerer<'a> {
                         self.location(node),
                     ),
                     type_parameters: Vec::new(),
+                    type_parameter_bounds: Vec::new(),
                     annotation: None,
                     value: value.clone(),
                 },
@@ -808,6 +991,7 @@ impl<'a> Lowerer<'a> {
                             imported_name: Some(Box::new(imported_name)),
                             name,
                             type_parameters: Vec::new(),
+                            type_parameter_bounds: Vec::new(),
                             annotation: None,
                             value: value.clone(),
                         },
@@ -823,7 +1007,12 @@ impl<'a> Lowerer<'a> {
         if let Some(binding_node) = self.rule_children(node).find(|child| {
             matches!(
                 self.rule(*child),
-                Some(Rule::LetBinding | Rule::DefBinding | Rule::TypeBinding)
+                Some(
+                    Rule::LetBinding
+                        | Rule::DefBinding
+                        | Rule::TypeBinding
+                        | Rule::TraitBinding
+                )
             )
         }) {
             if self.rule(binding_node) == Some(Rule::LetBinding) {
@@ -839,6 +1028,7 @@ impl<'a> Lowerer<'a> {
                     imported_name: Some(Box::new(local.clone())),
                     name: local.clone(),
                     type_parameters: Vec::new(),
+                    type_parameter_bounds: Vec::new(),
                     annotation: None,
                     value: located(ExprKind::Variable(local), self.location(node)),
                 },
@@ -870,6 +1060,7 @@ impl<'a> Lowerer<'a> {
                         imported_name: Some(Box::new(local.clone())),
                         name: public,
                         type_parameters: Vec::new(),
+                        type_parameter_bounds: Vec::new(),
                         annotation: None,
                         value: located(ExprKind::Variable(local), self.location(item)),
                     },

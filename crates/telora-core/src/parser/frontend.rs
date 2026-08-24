@@ -202,6 +202,8 @@ fn collect_recovery_units(cst: &CstData, node: NodeRef, units: &mut Vec<Recovery
                 | Rule::MatchArm
                 | Rule::Parameter
                 | Rule::StructInitializerField
+                | Rule::TraitMember
+                | Rule::ImplMember
                 | Rule::StructPatternField
         );
         let is_unit = accepts_trailing_diagnostic
@@ -218,6 +220,8 @@ fn collect_recovery_units(cst: &CstData, node: NodeRef, units: &mut Vec<Recovery
                     | Rule::NativeTypeBinding
                     | Rule::OptionBinding
                     | Rule::TypeBinding
+                    | Rule::TraitBinding
+                    | Rule::ImplBinding
             );
         if is_unit {
             let range = cst.span(node);
@@ -448,4 +452,3 @@ fn valid_option_key(key: &str) -> bool {
                 })
         })
 }
-

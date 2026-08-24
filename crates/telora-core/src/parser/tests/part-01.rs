@@ -9,6 +9,41 @@
     }
 
     #[test]
+    fn lowers_static_trait_surface_without_runtime_trait_objects() {
+        let program = parse(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+type Endpoint = struct { host: String };
+impl Display for Endpoint { display: fn(value) { value.host } };
+def render: for(T: Display) Fn(T) -> String = fn(value) { Display.display(value) };
+impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" } };
+export { Display, Endpoint, render };"#,
+        )
+        .unwrap();
+        let bindings = &program.value.body.value.bindings;
+        let trait_binding = &bindings[0];
+        assert_eq!(trait_binding.value.kind, BindingKind::Trait);
+        assert_eq!(trait_binding.value.type_parameters[0].value, "Self");
+        assert!(matches!(trait_binding.value.value.value, ExprKind::Call { .. }));
+
+        let implementation = &bindings[2];
+        assert_eq!(implementation.value.kind, BindingKind::Impl);
+        assert!(matches!(
+            implementation.value.annotation.as_ref().map(|value| &value.value),
+            Some(ExprKind::Call { .. })
+        ));
+
+        let render = &bindings[3];
+        assert_eq!(render.value.type_parameters[0].value, "T");
+        assert_eq!(render.value.type_parameter_bounds[0].len(), 1);
+
+        let blanket = &bindings[4];
+        assert_eq!(blanket.value.kind, BindingKind::Impl);
+        assert_eq!(blanket.value.type_parameters[0].value, "T");
+        assert_eq!(blanket.value.type_parameter_bounds[0].len(), 1);
+    }
+
+    #[test]
     fn lowers_directly_from_cst_with_spans_and_precedence() {
         let mut sources = SourceDatabase::default();
         let id = sources.add("test.telora", "let x = 1; x == 2");

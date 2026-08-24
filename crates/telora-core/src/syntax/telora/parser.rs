@@ -58,6 +58,8 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
                 | Token::Native
                 | Token::Option
                 | Token::Type
+                | Token::Trait
+                | Token::Impl
                 | Token::Import
                 | Token::Export
                 | Token::At
@@ -175,6 +177,12 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
     fn predicate_type_parameters_1(&self) -> bool {
         self.peek(1) != Token::RParen
+    }
+    fn predicate_trait_binding_1(&self) -> bool {
+        self.peek(1) != Token::RBrace
+    }
+    fn predicate_impl_binding_1(&self) -> bool {
+        self.peek(1) != Token::RBrace
     }
     fn predicate_struct_initializer_1(&self) -> bool {
         self.peek(1) != Token::RBrace

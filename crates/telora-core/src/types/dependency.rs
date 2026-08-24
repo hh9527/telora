@@ -89,7 +89,7 @@ fn type_definition_bindings<'a>(
 ) -> BTreeMap<HirDefinitionId, &'a Binding> {
     bindings
         .iter()
-        .filter(|binding| binding.value.kind == BindingKind::Type)
+        .filter(|binding| matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait))
         .filter_map(|binding| {
             hir.definitions()
                 .iter()
@@ -256,7 +256,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut next_type_constructor = crate::FIRST_DYNAMIC_MODULE_LOCAL;
     let mut declared_initializer_slots = HashMap::new();
     for binding in &program.value.body.value.bindings {
-        if binding.value.kind != BindingKind::Type || binding.value.declared_initializer.is_none() {
+        if !matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
+            || binding.value.declared_initializer.is_none()
+        {
             continue;
         }
         declared_initializer_slots.insert(binding.value.name.location, next_type_constructor);
@@ -267,7 +269,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut canonical_nominals = HashMap::<crate::Location, TypeId>::new();
     let mut canonical_nominal_names = HashMap::<String, TypeId>::new();
     for binding in &program.value.body.value.bindings {
-        if binding.value.kind != BindingKind::Type
+        if !matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
             || binding.value.declared_initializer.is_none()
             || !binding.value.type_parameters.is_empty()
         {
@@ -332,7 +334,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     for binding in &program.value.body.value.bindings {
         if matches!(
             binding.value.kind,
-            BindingKind::Type | BindingKind::NativeType
+            BindingKind::Type | BindingKind::Trait | BindingKind::NativeType
         ) {
             tool_values.insert(binding.value.name.value.clone(), any_metadata);
             static_environment.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
@@ -991,7 +993,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     );
                 }
             }
-            BindingKind::Type => {
+            BindingKind::Type | BindingKind::Trait => {
                 if !binding.value.type_parameters.is_empty()
                     || evaluated_concrete_type_names.contains(&binding.value.name.value)
                 {
@@ -1041,7 +1043,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     },
                 );
             }
-            BindingKind::Let => {
+            BindingKind::Let | BindingKind::Impl => {
                 let inferred = inferred_expression;
                 let checked = if let Some(annotation) = &binding.value.annotation {
                     let metadata = evaluate_tool_expression(
@@ -1444,7 +1446,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         {
             continue;
         }
-        let expected = if binding.value.kind == BindingKind::Type {
+        let expected = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             Some(&type_metadata_expected)
         } else {
             definition_contracts
@@ -1485,7 +1487,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ));
         }
         let is_delayed = (expected.is_none() || is_recursive)
-            && matches!(binding.value.kind, BindingKind::Let | BindingKind::Def)
+            && matches!(
+                binding.value.kind,
+                BindingKind::Let | BindingKind::Def | BindingKind::Impl
+            )
             && !definition_contracts.contains_key(&binding.value.name.value);
         let first_owned_variable = recursive_skeletons
             .get(&binding.value.name.value)
@@ -1498,7 +1503,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let mut environment = checked_environment.clone();
             environment.remove(&binding.value.name.value);
             initializer_environment = Some(environment);
-        } else if binding.value.kind == BindingKind::Type
+        } else if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
             && !binding.value.type_parameters.is_empty()
         {
             let mut environment = checked_environment.clone();
@@ -1515,7 +1520,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let environment = initializer_environment
             .as_ref()
             .unwrap_or(&checked_environment);
-        let inferred = if binding.value.kind == BindingKind::Type {
+        let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             inference.infer(&binding.value.value, environment, expected)
         } else {
             inference.infer_authored_boundary(&binding.value.value, environment, expected)
@@ -1541,10 +1546,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
             );
             FrontendError::from_diagnostic(sources, diagnostic)
         })?;
-        if binding.value.kind == BindingKind::Type {
+        if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             continue;
         }
-        if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def) {
+        if matches!(
+            binding.value.kind,
+            BindingKind::Let | BindingKind::Def | BindingKind::Impl
+        ) {
             let inferred_scheme = if binding.value.kind == BindingKind::Let
                 && binding.value.annotation.is_none()
                 && binding.value.type_parameters.is_empty()
@@ -1916,7 +1924,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .bindings
         .iter()
         .filter(|binding| {
-            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+            matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
+                && binding.value.type_parameters.is_empty()
         })
         .map(|binding| binding.value.name.value.clone())
         .collect::<Vec<_>>();

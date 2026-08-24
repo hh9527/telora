@@ -30,6 +30,8 @@ pub enum Token {
     Option,
     For,
     Type,
+    Trait,
+    Impl,
     Fn,
     FunctionType,
     Interpreter,
@@ -116,6 +118,10 @@ enum NormalToken {
     For,
     #[token("type")]
     Type,
+    #[token("trait")]
+    Trait,
+    #[token("impl")]
+    Impl,
     #[token("fn")]
     Fn,
     #[token("Fn")]
@@ -739,6 +745,8 @@ impl From<NormalToken> for Token {
             NormalToken::Option => Self::Option,
             NormalToken::For => Self::For,
             NormalToken::Type => Self::Type,
+            NormalToken::Trait => Self::Trait,
+            NormalToken::Impl => Self::Impl,
             NormalToken::Fn => Self::Fn,
             NormalToken::FunctionType => Self::FunctionType,
             NormalToken::Interpreter => Self::Interpreter,

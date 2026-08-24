@@ -209,7 +209,7 @@ impl<'a> GenericInference<'a> {
             if is_delayed {
                 self.delayed_initializer_depth += 1;
             }
-            let inferred = if binding.value.kind == BindingKind::Type {
+            let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
                 self.infer(&binding.value.value, &environment, binding_expected)
             } else {
                 self.infer_authored_boundary(&binding.value.value, &environment, binding_expected)
@@ -242,7 +242,7 @@ impl<'a> GenericInference<'a> {
             let inferred = inferred?;
             if matches!(
                 binding.value.kind,
-                BindingKind::Let | BindingKind::Def | BindingKind::Import
+                BindingKind::Let | BindingKind::Def | BindingKind::Impl | BindingKind::Import
             ) {
                 let inferred_scheme = if binding.value.kind == BindingKind::Let
                     && binding.value.annotation.is_none()

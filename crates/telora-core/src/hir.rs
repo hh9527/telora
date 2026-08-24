@@ -261,6 +261,8 @@ impl Resolver {
             BindingKind::Let => HirDefinitionKind::Let,
             BindingKind::Decl | BindingKind::Def => HirDefinitionKind::DefinitionSlot,
             BindingKind::Type => HirDefinitionKind::Type,
+            BindingKind::Trait => HirDefinitionKind::Type,
+            BindingKind::Impl => HirDefinitionKind::DefinitionSlot,
             BindingKind::Import => HirDefinitionKind::Import,
             BindingKind::OpenImport => HirDefinitionKind::Import,
             BindingKind::Export => HirDefinitionKind::Import,
@@ -327,6 +329,8 @@ impl Resolver {
                     | BindingKind::Native
                     | BindingKind::NativeType
                     | BindingKind::Type
+                    | BindingKind::Trait
+                    | BindingKind::Impl
             ) || binding.value.kind == BindingKind::Def && binding.value.annotation.is_some()
                 || binding.value.kind == BindingKind::Def
                     && matches!(binding.value.value.value, ExprKind::Closure { .. })
@@ -361,7 +365,7 @@ impl Resolver {
                     );
                     self.hir.definitions[definition.index()].value = Some(value);
                 }
-                BindingKind::Def => {
+                BindingKind::Def | BindingKind::Impl => {
                     let definition =
                         if let Some(id) = resolve_name(scopes, &binding.value.name.value) {
                             if binding.value.annotation.is_none()
@@ -390,7 +394,8 @@ impl Resolver {
                 BindingKind::Decl
                 | BindingKind::Native
                 | BindingKind::NativeType
-                | BindingKind::Type => {
+                | BindingKind::Type
+                | BindingKind::Trait => {
                     let value = self.index_binding_expr(binding, &binding.value.value, scopes);
                     let definition = self
                         .hir

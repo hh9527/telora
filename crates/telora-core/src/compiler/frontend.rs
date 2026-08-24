@@ -144,7 +144,8 @@ pub fn compile_source(source_name: &str, source: &str) -> Result<CompiledSource,
         .bindings
         .iter()
         .filter(|binding| {
-            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+            matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
+                && binding.value.type_parameters.is_empty()
         })
         .map(|binding| binding.value.name.value.clone())
         .collect::<HashSet<_>>();
@@ -225,7 +226,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
     validate_hir(source_file, &analysis.hir)?;
     let mut program = program.clone();
     program.value.body.value.bindings.retain(|binding| {
-        binding.value.kind == BindingKind::Type
+        matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
             || !erased_bindings.contains(&binding.value.name.value)
     });
     crate::elaboration::elaborate_program(
@@ -272,7 +273,8 @@ pub(crate) fn metadata_compilation_plan(program: &Program) -> Option<MetadataCom
         .bindings
         .iter()
         .filter(|binding| {
-            binding.value.kind == BindingKind::Type && binding.value.type_parameters.is_empty()
+            matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
+                && binding.value.type_parameters.is_empty()
         })
         .map(|binding| binding.value.name.value.clone())
         .collect::<Vec<_>>();
@@ -304,7 +306,10 @@ pub(crate) fn metadata_compilation_plan(program: &Program) -> Option<MetadataCom
     collect_runtime_names(&program.value.body.value.result, &mut runtime_needed);
     for binding in &program.value.body.value.bindings {
         if !needed.contains(&binding.value.name.value)
-            && !matches!(binding.value.kind, BindingKind::Type | BindingKind::Decl)
+            && !matches!(
+                binding.value.kind,
+                BindingKind::Type | BindingKind::Trait | BindingKind::Decl
+            )
         {
             collect_runtime_names(&binding.value.value, &mut runtime_needed);
         }
@@ -408,4 +413,3 @@ fn validate_hir(source_file: &SourceFile, hir: &HirProgram) -> Result<(), Fronte
         diagnostic: Some(Box::new(Diagnostic::error(message, reference.location))),
     })
 }
-

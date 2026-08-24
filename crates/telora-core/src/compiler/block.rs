@@ -57,7 +57,7 @@ impl<'a> Compiler<'a> {
         loop {
             let before = retained_names.len();
             for binding in &program.value.body.value.bindings {
-                if binding.value.kind == BindingKind::Type
+                if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
                     && retained_names.contains(&binding.value.name.value)
                 {
                     collect_runtime_names(&binding.value.value, &mut retained_names);
@@ -296,7 +296,9 @@ impl<'a> Compiler<'a> {
                 BindingKind::Import
                 | BindingKind::Native
                 | BindingKind::NativeType
-                | BindingKind::Type => {
+                | BindingKind::Type
+                | BindingKind::Trait
+                | BindingKind::Impl => {
                     visible_function_bindings
                         .entry(name.clone())
                         .or_insert(VisibleFunctionBinding::Other);
@@ -393,7 +395,7 @@ impl<'a> Compiler<'a> {
             }
         }
         for binding in &block.value.bindings {
-            if binding.value.kind != BindingKind::Type
+            if !matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
                 || !self.retained_names.contains(&binding.value.name.value)
                 || self.promoted_types.contains(&binding.value.name.value)
             {
@@ -445,7 +447,7 @@ impl<'a> Compiler<'a> {
             match binding.value.kind {
                 BindingKind::OpenImport | BindingKind::Export => continue,
                 BindingKind::Decl => continue,
-                BindingKind::Type => {
+                BindingKind::Type | BindingKind::Trait => {
                     if self.retained_names.contains(&binding.value.name.value) {
                         let name = binding.value.name.value.clone();
                         if self.promoted_types.contains(&name) {
@@ -523,7 +525,7 @@ impl<'a> Compiler<'a> {
                         .insert(binding.value.name.value.clone(), register);
                     continue;
                 }
-                BindingKind::Let | BindingKind::Def => {}
+                BindingKind::Let | BindingKind::Def | BindingKind::Impl => {}
             }
             if binding.value.kind == BindingKind::Def
                 && !declared.contains_key(&binding.value.name.value)
@@ -576,4 +578,3 @@ impl<'a> Compiler<'a> {
     }
 
 }
-

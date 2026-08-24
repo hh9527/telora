@@ -126,6 +126,8 @@ pub enum Binding<'tree> {
     Native(NativeBinding<'tree>),
     NativeType(NativeTypeBinding<'tree>),
     Type(TypeBinding<'tree>),
+    Trait(TraitBinding<'tree>),
+    Impl(ImplBinding<'tree>),
     Import(ImportBinding<'tree>),
     Option(OptionBinding<'tree>),
     Export(ExportBinding<'tree>),
@@ -143,6 +145,8 @@ impl<'tree> Binding<'tree> {
             Rule::NativeBinding => Some(Self::Native(NativeBinding { syntax })),
             Rule::NativeTypeBinding => Some(Self::NativeType(NativeTypeBinding { syntax })),
             Rule::TypeBinding => Some(Self::Type(TypeBinding { syntax })),
+            Rule::TraitBinding => Some(Self::Trait(TraitBinding { syntax })),
+            Rule::ImplBinding => Some(Self::Impl(ImplBinding { syntax })),
             Rule::ImportBinding => Some(Self::Import(ImportBinding { syntax })),
             Rule::OptionBinding => Some(Self::Option(OptionBinding { syntax })),
             Rule::ExportStatement => Some(Self::Export(ExportBinding { syntax })),
@@ -158,6 +162,8 @@ impl<'tree> Binding<'tree> {
             Self::Native(node) => node.syntax,
             Self::NativeType(node) => node.syntax,
             Self::Type(node) => node.syntax,
+            Self::Trait(node) => node.syntax,
+            Self::Impl(node) => node.syntax,
             Self::Import(node) => node.syntax,
             Self::Option(node) => node.syntax,
             Self::Export(node) => node.syntax,
@@ -172,6 +178,8 @@ impl<'tree> Binding<'tree> {
             Self::Native(node) => node.name(),
             Self::NativeType(node) => node.name(),
             Self::Type(node) => node.name(),
+            Self::Trait(node) => node.name(),
+            Self::Impl(_) => None,
             Self::Import(node) => node.name(),
             Self::Option(_) => None,
             Self::Export(_) => None,
@@ -204,6 +212,8 @@ binding_node!(DefBinding);
 binding_node!(NativeBinding);
 binding_node!(NativeTypeBinding);
 binding_node!(TypeBinding);
+binding_node!(TraitBinding);
+binding_node!(ImplBinding);
 binding_node!(ImportBinding);
 binding_node!(OptionBinding);
 binding_node!(ExportBinding);
@@ -491,7 +501,10 @@ pub fn validate(source: SourceId, tree: &CstData) -> Vec<SyntaxIssue> {
     for binding in body.bindings() {
         if binding.name().is_none()
             && !matches!(binding, Binding::Import(import) if import.has_selector())
-            && !matches!(binding, Binding::Option(_) | Binding::Export(_))
+            && !matches!(
+                binding,
+                Binding::Option(_) | Binding::Export(_) | Binding::Impl(_)
+            )
         {
             issues.push(missing_after_keyword(source, binding));
         }
@@ -619,6 +632,8 @@ fn missing_after_keyword(source: SourceId, binding: Binding<'_>) -> SyntaxIssue 
         Binding::Native(_) => Token::Native,
         Binding::NativeType(_) => Token::Native,
         Binding::Type(_) => Token::Type,
+        Binding::Trait(_) => Token::Trait,
+        Binding::Impl(_) => Token::Impl,
         Binding::Import(_) => Token::Import,
         Binding::Option(_) => Token::Option,
         Binding::Export(_) => Token::Export,

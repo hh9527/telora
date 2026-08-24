@@ -45,6 +45,7 @@ pub struct BindingData {
     pub imported_name: Option<Box<Identifier>>,
     pub name: Identifier,
     pub type_parameters: Vec<Identifier>,
+    pub type_parameter_bounds: Vec<Vec<Expr>>,
     pub annotation: Option<Expr>,
     pub value: Expr,
 }
@@ -70,6 +71,8 @@ pub enum BindingKind {
     Native,
     NativeType,
     Type,
+    Trait,
+    Impl,
     Import,
     OpenImport,
     Export,

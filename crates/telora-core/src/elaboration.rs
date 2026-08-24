@@ -339,6 +339,7 @@ impl Elaborator<'_> {
                         imported_name: None,
                         name: identifier(&subject),
                         type_parameters: Vec::new(),
+                        type_parameter_bounds: Vec::new(),
                         annotation: None,
                         value: operand,
                     },

@@ -476,6 +476,28 @@ option "module.documentation" {stability: "experimental"};"#;
         assert_eq!(reconstructed, source);
     }
 
+    #[test]
+    fn cst_preserves_trait_and_impl_declarations() {
+        let source = r#"trait Display { display: Fn(Self) -> String, };
+impl Display for Endpoint { display: fn(value) { value.name }, };
+impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" }, };"#;
+        let mut sources = crate::source::SourceDatabase::default();
+        let id = sources.add("traits.telora", source);
+        let parsed = parse(id, source);
+        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
+        let bindings = Program::root(&parsed.syntax)
+            .body()
+            .unwrap()
+            .bindings()
+            .collect::<Vec<_>>();
+        assert!(matches!(bindings[0], ast::Binding::Trait(_)));
+        assert!(matches!(bindings[1], ast::Binding::Impl(_)));
+        assert!(matches!(bindings[2], ast::Binding::Impl(_)));
+        let mut reconstructed = String::new();
+        reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
+        assert_eq!(reconstructed, source);
+    }
+
     fn find_rule(cst: &CstData, node: NodeRef, expected: parser::Rule) -> Option<NodeRef> {
         if matches!(cst.get(node), Node::Rule(rule, _) if rule == expected) {
             return Some(node);

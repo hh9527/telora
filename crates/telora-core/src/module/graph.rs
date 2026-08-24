@@ -298,7 +298,9 @@ impl ModuleBlueprint {
                 BindingKind::Import
                 | BindingKind::Native
                 | BindingKind::NativeType
-                | BindingKind::Type => {
+                | BindingKind::Type
+                | BindingKind::Trait
+                | BindingKind::Impl => {
                     if visible
                         .insert(name.clone(), VisibleBinding::Other)
                         .is_some()
@@ -342,7 +344,7 @@ impl ModuleBlueprint {
                         next_func += 1;
                     }
                 }
-                BindingKind::Type
+                BindingKind::Type | BindingKind::Trait
                     if binding.value.declared_initializer.is_some()
                         && type_constructors.insert(binding.value.name.value.clone()) =>
                 {

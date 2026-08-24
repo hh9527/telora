@@ -414,6 +414,39 @@
     }
 
     #[test]
+    fn static_trait_declarations_and_explicit_dictionaries_seal() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"trait Display { display: Fn(Self) -> String };
+               type Endpoint = struct { host: String };
+               impl Display for Endpoint {
+                   display: fn(value) { value.host },
+               };
+               export def output = 42;"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        assert_eq!(named_output(&engine.execute(&module).unwrap()).to_string(), "42");
+
+        fs::write(
+            &main,
+            r#"trait Display { display: Fn(Self) -> String };
+               type Endpoint = struct { host: String };
+               impl Display for Endpoint {};
+               export def output = 42;"#,
+        )
+        .unwrap();
+        let error = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(error.message().contains("display"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn property_capabilities_merge_across_field_and_variant_owners() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
