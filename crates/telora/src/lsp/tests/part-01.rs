@@ -439,8 +439,10 @@
 
     #[tokio::test(flavor = "current_thread")]
     async fn hover_preserves_static_trait_constraints() {
-        let source = r#"trait Display { display: Fn(Self) -> String };
-impl Display for Int { display: fn(value) { `int=\{value}` } };
+        let source = r#"trait Marker { mark: Fn(Self) -> Int };
+trait Display { display: Fn(Self) -> String };
+impl Marker for Int { mark: fn(value) { value } };
+impl(T: Marker) Display for T { display: fn(value) { `int=\{Marker.mark(value)}` } };
 export def render: for(T: Display) Fn(T) -> String = fn(value) {
     Display.display(value)
 };
@@ -454,7 +456,7 @@ export def output = render(1);"#;
                     lsp::request::HoverRequest::METHOD,
                     serde_json::json!({
                         "textDocument": { "uri": uri },
-                        "position": { "line": 5, "character": 20 }
+                        "position": { "line": 7, "character": 20 }
                     }),
                 ),
             )

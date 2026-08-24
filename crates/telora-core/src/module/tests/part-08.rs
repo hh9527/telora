@@ -285,7 +285,7 @@
             &main,
             r#"import "std/fmt" as fmt;
                trait Display { display: Fn(Self) -> String };
-               impl for(T: Property(fmt.DisplayBy)) Display for T {
+               impl(T: Property(fmt.DisplayBy)) Display for T {
                    display: fn(value) { "decorated" },
                };
                @fmt.display_by("{host}:{port}")

@@ -42,7 +42,7 @@ enum_initializer: EnumInitializer '{' [enum_initializer_variant (?1 ',' enum_ini
 enum_initializer_variant: decorator* Atom ['(' expression ')'];
 trait_binding: 'trait' Identifier '{' [trait_member (?1 ',' trait_member)* [',']] '}' ';';
 trait_member: Identifier ':' contract;
-impl_binding: 'impl' ['for' type_parameters] contract 'for' contract '{' [impl_member (?1 ',' impl_member)* [',']] '}' ';';
+impl_binding: 'impl' [type_parameters] contract 'for' contract '{' [impl_member (?1 ',' impl_member)* [',']] '}' ';';
 impl_member: Identifier ':' expression;
 import_binding: 'import' string_literal import_selector ';';
 import_selector: 'as' Identifier [',' ('*' | import_items)] | '*' | import_items;

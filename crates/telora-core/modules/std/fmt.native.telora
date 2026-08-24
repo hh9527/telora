@@ -123,7 +123,7 @@ impl Display for Int { display: from_int };
 impl Display for Float { display: from_float };
 impl Display for Atom { display: from_atom };
 
-impl for(T: Property(DisplayBy)) Display for T {
+impl(T: Property(DisplayBy)) Display for T {
     display: fn(value) { display(T, value) },
 };
 

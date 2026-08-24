@@ -16,7 +16,7 @@
 type Endpoint = struct { host: String };
 impl Display for Endpoint { display: fn(value) { value.host } };
 def render: for(T: Display) Fn(T) -> String = fn(value) { Display.display(value) };
-impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" } };
+impl(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" } };
 export { Display, Endpoint, render };"#,
         )
         .unwrap();

@@ -98,7 +98,7 @@ their owner type.
 ### Property-backed blanket implementation
 
 ```telora
-impl for(T: Property(DisplayBy)) Display for T {
+impl(T: Property(DisplayBy)) Display for T {
     display: fn(value) { fmt.display(T, value) },
 };
 ```

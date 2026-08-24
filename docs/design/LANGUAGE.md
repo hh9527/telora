@@ -488,12 +488,21 @@ impl Display for Endpoint {
     },
 };
 
+impl(T: Property(DisplayBy)) Display for T {
+    display: fn(value) {
+        let property = type_property.evidence(T, DisplayBy);
+        property.display(dyn.pack(T, value))
+    },
+};
+
 def render: for(T: Display) Fn(T) -> String = fn(value) {
     fmt.render(Display.display(value))
 };
 ```
 
-`Self` 只在 trait member contract 中绑定。Impl 是顶层静态声明，必须完整且精确地
+`Self` 只在 trait member contract 中绑定。`impl(T: Bound) Trait for Target` 的参数
+与约束属于该 impl 声明；`for(T) Fn(T) -> T` 中的 `for` 则属于值的多态类型。
+Impl 是顶层静态声明，必须完整且精确地
 实现 member contract；调用使用 `Trait.member(value)`，不进行 receiver method lookup。
 泛型参数可用 `+` 声明多个约束。发布的 rank-1 `TypeScheme` 按 canonical `TraitId`
 保留约束，import、alias、reexport 和 recovery 均复用同一身份。

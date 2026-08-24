@@ -78,7 +78,7 @@
             "traits.telora",
             r#"trait Display { display: Fn(Self) -> String };
                trait Marker { mark: Fn(Self) -> String };
-               impl for(T: Marker) Display for T { display: fn(value) { "generic" } };
+               impl(T: Marker) Display for T { display: fn(value) { "generic" } };
                impl Display for Int { display: fn(value) { "int" } };"#,
         )
         .unwrap_err();

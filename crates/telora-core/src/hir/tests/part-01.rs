@@ -39,7 +39,7 @@
     fn resolves_blanket_impl_type_parameters_in_contracts() {
         let program = parse(
             "hir.telora",
-            "impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { value } };",
+            "impl(T: Property(DisplayBy)) Display for T { display: fn(value) { value } };",
         )
         .unwrap();
         let hir = HirProgram::resolve(

@@ -480,7 +480,7 @@ option "module.documentation" {stability: "experimental"};"#;
     fn cst_preserves_trait_and_impl_declarations() {
         let source = r#"trait Display { display: Fn(Self) -> String, };
 impl Display for Endpoint { display: fn(value) { value.name }, };
-impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" }, };"#;
+impl(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" }, };"#;
         let mut sources = crate::source::SourceDatabase::default();
         let id = sources.add("traits.telora", source);
         let parsed = parse(id, source);
@@ -496,6 +496,10 @@ impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" }, };
         let mut reconstructed = String::new();
         reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
         assert_eq!(reconstructed, source);
+
+        let legacy = "impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { value } };";
+        let id = sources.add("legacy-impl.telora", legacy);
+        assert!(parse(id, legacy).has_errors());
     }
 
     fn find_rule(cst: &CstData, node: NodeRef, expected: parser::Rule) -> Option<NodeRef> {
