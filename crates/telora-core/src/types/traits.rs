@@ -138,6 +138,7 @@ pub struct TraitImplementation {
     pub trait_id: crate::TraitId,
     pub target: TypeDescriptor,
     pub dictionary: String,
+    pub dictionary_scheme: TypeScheme,
     pub parameters: Vec<TypeParameter>,
     pub constraints: Vec<TypeConstraint>,
     pub location: crate::Location,
@@ -160,6 +161,30 @@ struct LexicalTypeEvidence {
 
 fn evidence_parameter_name(binding: &str, index: usize) -> String {
     format!("\0trait_evidence:{binding}:{index}")
+}
+
+fn trait_impl_runtime_name(id: crate::TraitImplId) -> String {
+    format!("\0trait_impl:{}:{}", id.module.raw(), id.local)
+}
+
+fn published_trait_implementation(
+    implementation: &TraitImplementation,
+) -> TraitImplementation {
+    let mut published = implementation.clone();
+    published.dictionary = trait_impl_runtime_name(implementation.id);
+    published
+}
+
+fn trait_implementations_overlap(
+    left: &TraitImplementation,
+    right: &TraitImplementation,
+) -> bool {
+    if left.trait_id != right.trait_id {
+        return false;
+    }
+    matches!(left.target, TypeDescriptor::Bound(_))
+        || matches!(right.target, TypeDescriptor::Bound(_))
+        || TypeExprId::from_descriptor(&left.target) == TypeExprId::from_descriptor(&right.target)
 }
 
 fn outer_nominal_constructor(descriptor: &TypeDescriptor) -> Option<crate::TypeConstructorId> {
@@ -263,14 +288,12 @@ fn collect_trait_implementations(
                     .with_secondary("first implementation", previous.location),
             ));
         }
-        let parameters = schemes
+        let dictionary_scheme = schemes
             .get(&binding.value.name.value)
-            .map(|scheme| scheme.parameters.clone())
-            .unwrap_or_default();
-        let constraints = schemes
-            .get(&binding.value.name.value)
-            .map(|scheme| scheme.constraints.clone())
-            .unwrap_or_default();
+            .cloned()
+            .expect("impl dictionary has a static scheme");
+        let parameters = dictionary_scheme.parameters.clone();
+        let constraints = dictionary_scheme.constraints.clone();
         implementations.push(TraitImplementation {
             id: crate::TraitImplId {
                 module: module_id,
@@ -281,6 +304,7 @@ fn collect_trait_implementations(
             trait_id,
             target: target.clone(),
             dictionary: binding.value.name.value.clone(),
+            dictionary_scheme,
             parameters,
             constraints,
             location: binding.location,
@@ -414,20 +438,18 @@ impl GenericInference<'_> {
                         .ok_or_else(|| "trait has no static dictionary type".to_owned())?;
                     (dictionary, dictionary_type)
                 } else {
-                    let dictionary = self
+                    let implementation = self
                         .trait_candidate(trait_id, &target)?
                         .ok_or_else(|| {
                             format!(
                                 "type {} does not implement {trait_name}",
                                 self.resolve(&target).display_name()
                             )
-                        })?
-                        .dictionary
-                        .clone();
-                    let scheme = self.scheme(&dictionary).ok_or_else(|| {
-                        "selected trait dictionary has no static scheme".to_owned()
-                    })?;
-                    (dictionary, scheme.body)
+                        })?;
+                    (
+                        implementation.dictionary.clone(),
+                        implementation.dictionary_scheme.body.clone(),
+                    )
                 };
             let member_type = self.project_field(&dictionary_type, &member)?;
             let TypeDescriptor::Function { parameters, result } = member_type else {

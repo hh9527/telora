@@ -73,6 +73,16 @@
         )
         .unwrap_err();
         assert!(wrong_member.message.contains("String"), "{wrong_member}");
+
+        let overlap = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               trait Marker { mark: Fn(Self) -> String };
+               impl for(T: Marker) Display for T { display: fn(value) { "generic" } };
+               impl Display for Int { display: fn(value) { "int" } };"#,
+        )
+        .unwrap_err();
+        assert!(overlap.message.contains("overlapping trait implementations"));
     }
 
     #[test]
@@ -217,6 +227,7 @@
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),
                         traits: BTreeMap::new(),
+                        trait_implementations: Vec::new(),
                         type_family_templates: BTreeMap::new(),
                     },
                 )])

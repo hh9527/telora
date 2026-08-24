@@ -103,6 +103,29 @@ enum ModuleState {
 }
 
 impl ModuleLoader {
+    fn install_trait_impl_roots(
+        &self,
+        artifact: &ModuleArtifact,
+        external_roots: &mut HashMap<String, PersistentValue>,
+    ) -> Result<(), ModuleError> {
+        for implementation in &artifact.interface.trait_implementations {
+            let root = artifact
+                .root
+                .export_get(&self.main.heap, &implementation.dictionary)
+                .map_err(|error| ModuleError::new(error.to_string()))?
+                .ok_or_else(|| {
+                    ModuleError::new(format!(
+                        "module is missing trait implementation root {:?}",
+                        implementation.dictionary
+                    ))
+                })?;
+            external_roots
+                .entry(implementation.dictionary.clone())
+                .or_insert(root);
+        }
+        Ok(())
+    }
+
     fn install_injected_modules(
         &mut self,
         context_path: &Path,
@@ -552,6 +575,7 @@ impl ModuleLoader {
                         binding.value.value.location,
                     )))
                 })?;
+                self.install_trait_impl_roots(&module, &mut external_roots)?;
                 semantic_imports.push(SemanticImport {
                     name: if binding.value.kind == BindingKind::OpenImport {
                         "*".into()
@@ -588,6 +612,7 @@ impl ModuleLoader {
             }
             let imported_id = imported.id.clone();
             let artifact = self.load_resolved_value(imported)?;
+            self.install_trait_impl_roots(&artifact, &mut external_roots)?;
             semantic_imports.push(SemanticImport {
                 name: if binding.value.kind == BindingKind::OpenImport {
                     "*".into()
@@ -629,6 +654,7 @@ impl ModuleLoader {
         if module_id.to_string() != PRELUDE_MODULE
             && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
         {
+            self.install_trait_impl_roots(module, &mut external_roots)?;
             let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
             if skeleton.is_some() {
                 let target = self.main.modules.id(&provider).ok_or_else(|| {
@@ -698,7 +724,11 @@ impl ModuleLoader {
                 ModuleInterface {
                     exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
                     concrete_types: candidate.concrete_types,
-                    traits: BTreeMap::new(),
+                    traits: candidate
+                        .trait_id
+                        .map(|id| BTreeMap::from([(name.clone(), id)]))
+                        .unwrap_or_default(),
+                    trait_implementations: candidate.trait_implementations,
                     type_family_templates: candidate
                         .type_family_template
                         .map(|family| BTreeMap::from([(name.clone(), family)]))
@@ -764,6 +794,28 @@ impl ModuleLoader {
         })?;
         install_type_family_roots(&mut external_roots, &analysis);
         let source_file = self.sources.get(source_id);
+        let mut runtime_program = program.clone();
+        if let ExprKind::Dict(fields) = &mut runtime_program.value.body.value.result.value {
+            for published in &analysis.module_interface.trait_implementations {
+                let source = analysis
+                    .trait_implementations
+                    .iter()
+                    .find(|implementation| implementation.id == published.id)
+                    .expect("published trait implementation has an analysis source");
+                let location = runtime_program.value.body.value.result.location;
+                fields.push(located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located(published.dictionary.clone(), location)),
+                        value: located(
+                            ExprKind::Variable(located(source.dictionary.clone(), location)),
+                            location,
+                        ),
+                    },
+                    location,
+                ));
+            }
+        }
         let mut promoted_types = HashSet::new();
         let mut erased_metadata_bindings = HashSet::new();
         if let Some(metadata) = metadata_compilation_plan(&program) {
@@ -774,11 +826,16 @@ impl ModuleLoader {
             self.main.modules.static_funcs(skeleton.id)
         });
         let function = if promoted_types.is_empty() {
-            compile_program_analyzed_in_module(source_file, &program, &analysis, &static_funcs)
+            compile_program_analyzed_in_module(
+                source_file,
+                &runtime_program,
+                &analysis,
+                &static_funcs,
+            )
         } else {
             compile_program_with_promoted_types_and_static_funcs(
                 source_file,
-                &program,
+                &runtime_program,
                 &analysis,
                 &promoted_types,
                 &erased_metadata_bindings,

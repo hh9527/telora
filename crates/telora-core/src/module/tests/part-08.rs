@@ -447,6 +447,64 @@
     }
 
     #[test]
+    fn static_trait_evidence_links_across_module_boundaries() {
+        let directory = fixture_dir();
+        let capability = directory.join("capability.telora");
+        let main = directory.join("main.telora");
+        fs::write(
+            &capability,
+            r#"trait Display { display: Fn(Self) -> String };
+               impl Display for Int { display: fn(value) { `int=\{value}` } };
+               export def render: for(T: Display) Fn(T) -> String = fn(value) {
+                   Display.display(value)
+               };
+               export { Display };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./capability.telora" as cap;
+               export def output = {
+                   direct: cap.Display.display(8),
+                   generic: cap.render(9),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        assert!(output.contains("direct: \"int=8\""), "{output}");
+        assert!(output.contains("generic: \"int=9\""), "{output}");
+
+        let model = directory.join("model.telora");
+        fs::write(
+            &capability,
+            r#"trait Display { display: Fn(Self) -> String };
+               export { Display };"#,
+        )
+        .unwrap();
+        fs::write(
+            &model,
+            r#"type Endpoint = struct { host: String };
+               export { Endpoint };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./capability.telora" as cap;
+               import "./model.telora" as model;
+               impl cap.Display for model.Endpoint { display: fn(value) { value.host } };
+               export def output = 1;"#,
+        )
+        .unwrap();
+        let error = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(error.message().contains("orphan impl"), "{error}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn property_capabilities_merge_across_field_and_variant_owners() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");

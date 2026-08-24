@@ -965,7 +965,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ));
         }
     }
-    let trait_implementations = collect_trait_implementations(
+    let local_trait_implementations = collect_trait_implementations(
         module_id,
         program,
         &trait_ids,
@@ -974,6 +974,29 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &binding_schemes,
         sources,
     )?;
+    let mut trait_implementations = qualified_external_interfaces
+        .values()
+        .flat_map(|interface| interface.trait_implementations.iter().cloned())
+        .chain(local_trait_implementations)
+        .collect::<Vec<_>>();
+    trait_implementations.sort_by_key(|implementation| implementation.id);
+    trait_implementations.dedup_by_key(|implementation| implementation.id);
+    for (index, implementation) in trait_implementations.iter().enumerate() {
+        if let Some(overlap) = trait_implementations
+            .iter()
+            .skip(index + 1)
+            .find(|candidate| trait_implementations_overlap(implementation, candidate))
+        {
+            return Err(FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error(
+                    "overlapping trait implementations",
+                    overlap.location,
+                )
+                .with_secondary("overlapping implementation", implementation.location),
+            ));
+        }
+    }
 
     for binding in &program.value.body.value.bindings {
         if matches!(binding.value.value.value, ExprKind::Interpreter { .. }) {
@@ -1967,6 +1990,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .collect(),
             _ => BTreeMap::new(),
         },
+        trait_implementations: trait_implementations
+            .iter()
+            .map(published_trait_implementation)
+            .collect(),
         type_family_templates: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()

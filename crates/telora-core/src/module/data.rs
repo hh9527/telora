@@ -18,6 +18,8 @@ struct OpenImportCandidate {
     scheme: crate::types::TypeScheme,
     provenance: Option<Provenance>,
     concrete_types: BTreeMap<String, TypeDescriptor>,
+    trait_id: Option<crate::TraitId>,
+    trait_implementations: Vec<TraitImplementation>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
@@ -27,6 +29,8 @@ struct WorkspaceOpenImportCandidate {
     scheme: crate::types::TypeScheme,
     root: PersistentValue,
     concrete_types: BTreeMap<String, TypeDescriptor>,
+    trait_id: Option<crate::TraitId>,
+    trait_implementations: Vec<TraitImplementation>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
@@ -53,6 +57,8 @@ fn workspace_open_import_exports(
                     scheme: scheme.clone(),
                     root: field_root,
                     concrete_types: interface.concrete_types.clone(),
+                    trait_id: interface.traits.get(name).copied(),
+                    trait_implementations: interface.trait_implementations.clone(),
                     type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
             ))
@@ -85,6 +91,8 @@ fn open_import_exports(
                     scheme: scheme.clone(),
                     provenance: provenance.cloned(),
                     concrete_types: interface.concrete_types.clone(),
+                    trait_id: interface.traits.get(name).copied(),
+                    trait_implementations: interface.trait_implementations.clone(),
                     type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
             ))
@@ -160,6 +168,7 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
         )]),
         concrete_types: BTreeMap::from([("Value".into(), descriptor)]),
         traits: BTreeMap::new(),
+        trait_implementations: Vec::new(),
         type_family_templates: BTreeMap::new(),
     }
 }

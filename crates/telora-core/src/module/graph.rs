@@ -882,6 +882,7 @@ fn select_import_root(
                 .copied()
                 .map(|id| BTreeMap::from([(local.to_owned(), id)]))
                 .unwrap_or_default(),
+            trait_implementations: interface.trait_implementations,
             type_family_templates: interface
                 .type_family_templates
                 .get(&exported.value)

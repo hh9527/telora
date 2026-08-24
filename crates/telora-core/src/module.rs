@@ -1,4 +1,6 @@
-use crate::ast::{BindingKind, Expr, ExprKind, Program, StringPartKind, TypeArgumentKind};
+use crate::ast::{
+    BindingKind, DictFieldKind, Expr, ExprKind, Program, StringPartKind, TypeArgumentKind, located,
+};
 use crate::compiler::{
     compile_program_analyzed_in_module, compile_program_with_promoted_types_and_static_funcs,
     function_contract_arity, metadata_compilation_plan, type_family_link_key,
@@ -26,9 +28,9 @@ use crate::source::{Diagnostic, SourceDatabase};
 use crate::toml::validate_toml_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
-    Analysis, ModuleInterface, PartialAnalysisControl, TypeDescriptor, TypeFamilyTemplate,
-    TypeScheme, analyze_partial_types_recovered_with_query, analyze_program_with_bindings_observed,
-    program_references_name, recovered_reference_locations,
+    Analysis, ModuleInterface, PartialAnalysisControl, TraitImplementation, TypeDescriptor,
+    TypeFamilyTemplate, TypeScheme, analyze_partial_types_recovered_with_query,
+    analyze_program_with_bindings_observed, program_references_name, recovered_reference_locations,
 };
 #[cfg(test)]
 use crate::vm::ValueRef;
