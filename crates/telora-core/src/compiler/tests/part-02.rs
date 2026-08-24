@@ -310,3 +310,31 @@
         .unwrap_err();
         assert!(unknown_member.message.contains("missing"));
     }
+
+    #[test]
+    fn bounded_generic_calls_forward_hidden_trait_evidence() {
+        let output = run(
+            r#"trait Display { display: Fn(Self) -> String };
+               impl Display for Int { display: fn(value) { `int=\{value}` } };
+               def render: for(T: Display) Fn(T) -> String = fn(value) {
+                   Display.display(value)
+               };
+               def outer: for(T: Display) Fn(T) -> String = fn(value) {
+                   render(value)
+               };
+               outer(42)"#,
+        )
+        .unwrap();
+        assert_eq!(output.to_string(), "\"int=42\"");
+
+        let explicit = run(
+            r#"trait Display { display: Fn(Self) -> String };
+               impl Display for Int { display: fn(value) { `int=\{value}` } };
+               def render: for(T: Display) Fn(T) -> String = fn(value) {
+                   Display.display(value)
+               };
+               render@[Int](7)"#,
+        )
+        .unwrap();
+        assert_eq!(explicit.to_string(), "\"int=7\"");
+    }

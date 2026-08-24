@@ -891,6 +891,16 @@ impl<'a> GenericInference<'a> {
                     };
                     replacements.insert(parameter.id, descriptor);
                 }
+                for constraint in &scheme.constraints {
+                    if let Some(target) = replacements.get(&constraint.parameter) {
+                        self.pending_type_constraints.push(PendingTypeConstraint {
+                            capability: constraint.capability.clone(),
+                            target: target.clone(),
+                            location: expression.location,
+                            lexical_evidence: self.lexical_type_evidence.clone(),
+                        });
+                    }
+                }
                 substitute_bound_parameters(&scheme.body, &replacements)
             }
             ExprKind::Interpreter { elaboration, .. } => {

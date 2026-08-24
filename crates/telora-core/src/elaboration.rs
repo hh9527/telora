@@ -7,12 +7,16 @@ pub(crate) fn elaborate_program(
     program: &mut Program,
     families: &HashMap<Location, PropagationFamily>,
     not_families: &HashMap<Location, NotFamily>,
-    trait_evidence: &HashMap<Location, String>,
+    trait_member_evidence: &HashMap<Location, String>,
+    generic_call_evidence: &HashMap<Location, Vec<String>>,
+    generic_evidence_parameters: &HashMap<Location, Vec<String>>,
 ) {
     let mut elaborator = Elaborator {
         families,
         not_families,
-        trait_evidence,
+        trait_member_evidence,
+        generic_call_evidence,
+        generic_evidence_parameters,
         next: 0,
     };
     elaborator.block(&mut program.value.body);
@@ -21,7 +25,9 @@ pub(crate) fn elaborate_program(
 struct Elaborator<'a> {
     families: &'a HashMap<Location, PropagationFamily>,
     not_families: &'a HashMap<Location, NotFamily>,
-    trait_evidence: &'a HashMap<Location, String>,
+    trait_member_evidence: &'a HashMap<Location, String>,
+    generic_call_evidence: &'a HashMap<Location, Vec<String>>,
+    generic_evidence_parameters: &'a HashMap<Location, Vec<String>>,
     next: u32,
 }
 
@@ -32,6 +38,19 @@ impl Elaborator<'_> {
                 self.expression(annotation);
             }
             self.expression(&mut binding.value.value);
+            if let Some(evidence) = self
+                .generic_evidence_parameters
+                .get(&binding.value.value.location)
+                && let ExprKind::Closure { parameters, .. } = &mut binding.value.value.value
+            {
+                parameters.splice(
+                    0..0,
+                    evidence.iter().map(|name| ClosureParameter {
+                        name: located(name.clone(), binding.value.value.location),
+                        annotation: None,
+                    }),
+                );
+            }
         }
         self.expression(&mut block.value.result);
     }
@@ -131,7 +150,7 @@ impl Elaborator<'_> {
                 self.expression(value);
             }
             ExprKind::Call { callee, arguments } => {
-                if let Some(dictionary) = self.trait_evidence.get(&callee.location)
+                if let Some(dictionary) = self.trait_member_evidence.get(&callee.location)
                     && let ExprKind::Field { field, .. } = &callee.value
                 {
                     callee.value = ExprKind::Field {
@@ -141,6 +160,17 @@ impl Elaborator<'_> {
                         )),
                         field: field.clone(),
                     };
+                }
+                if let Some(evidence) = self.generic_call_evidence.get(&callee.location) {
+                    arguments.splice(
+                        0..0,
+                        evidence.iter().map(|name| {
+                            located(
+                                ExprKind::Variable(located(name.clone(), callee.location)),
+                                callee.location,
+                            )
+                        }),
+                    );
                 }
                 self.expression(callee);
                 for argument in arguments {

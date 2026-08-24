@@ -148,6 +148,18 @@ struct PendingTypeConstraint {
     capability: TypeCapability,
     target: TypeDescriptor,
     location: crate::Location,
+    lexical_evidence: Vec<LexicalTypeEvidence>,
+}
+
+#[derive(Clone, Debug)]
+struct LexicalTypeEvidence {
+    capability: TypeCapability,
+    target: TypeDescriptor,
+    name: String,
+}
+
+fn evidence_parameter_name(binding: &str, index: usize) -> String {
+    format!("\0trait_evidence:{binding}:{index}")
 }
 
 fn outer_nominal_constructor(descriptor: &TypeDescriptor) -> Option<crate::TypeConstructorId> {
@@ -278,6 +290,74 @@ fn collect_trait_implementations(
 }
 
 impl GenericInference<'_> {
+    fn push_lexical_evidence(&mut self, binding: &str, scheme: &TypeScheme) -> usize {
+        let start = self.lexical_type_evidence.len();
+        self.lexical_type_evidence.extend(
+            scheme
+                .constraints
+                .iter()
+                .enumerate()
+                .map(|(index, constraint)| LexicalTypeEvidence {
+                    capability: constraint.capability.clone(),
+                    target: TypeDescriptor::Bound(constraint.parameter),
+                    name: evidence_parameter_name(binding, index),
+                }),
+        );
+        start
+    }
+
+    fn pop_lexical_evidence(&mut self, start: usize) {
+        self.lexical_type_evidence.truncate(start);
+    }
+
+    fn lexical_trait_evidence(
+        &self,
+        trait_id: crate::TraitId,
+        target: &TypeDescriptor,
+    ) -> Option<String> {
+        let target = self.resolve(target);
+        self.lexical_type_evidence.iter().rev().find_map(|evidence| {
+            matches!(
+                &evidence.capability,
+                TypeCapability::Trait { id, .. } if *id == trait_id
+            )
+            .then(|| (self.resolve(&evidence.target) == target).then(|| evidence.name.clone()))
+            .flatten()
+        })
+    }
+
+    fn trait_dictionary_type(
+        &self,
+        trait_id: crate::TraitId,
+        target: &TypeDescriptor,
+    ) -> Option<TypeDescriptor> {
+        let scheme = self
+            .trait_ids
+            .iter()
+            .find_map(|(name, id)| (*id == trait_id).then(|| self.scheme(name)).flatten())
+            .or_else(|| {
+                self.external_interfaces.values().find_map(|interface| {
+                    interface.traits.iter().find_map(|(name, id)| {
+                        (*id == trait_id)
+                            .then(|| interface.exports.get(name).cloned())
+                            .flatten()
+                    })
+                })
+            })?;
+        let parameter = scheme.parameters.first()?.id;
+        let body = substitute_bound_parameters(
+            &scheme.body,
+            &HashMap::from([(parameter, target.clone())]),
+        );
+        let TypeDescriptor::Function { result, .. } = body else {
+            return None;
+        };
+        let TypeDescriptor::TypeOf(dictionary) = *result else {
+            return None;
+        };
+        Some(*dictionary)
+    }
+
     fn trait_member_reference(
         &self,
         callee: &Expr,
@@ -327,20 +407,29 @@ impl GenericInference<'_> {
                 return Err(format!("{trait_name}.{member} requires a Self argument"));
             };
             let target = self.infer_authored_boundary(first, environment, None)?;
-            let dictionary = self
-                .trait_candidate(trait_id, &target)?
-                .ok_or_else(|| {
-                    format!(
-                        "type {} does not implement {trait_name}",
-                        self.resolve(&target).display_name()
-                    )
-                })?
-                .dictionary
-                .clone();
-            let scheme = self
-                .scheme(&dictionary)
-                .ok_or_else(|| "selected trait dictionary has no static scheme".to_owned())?;
-            let member_type = self.project_field(&scheme.body, &member)?;
+            let (dictionary, dictionary_type) =
+                if let Some(dictionary) = self.lexical_trait_evidence(trait_id, &target) {
+                    let dictionary_type = self
+                        .trait_dictionary_type(trait_id, &target)
+                        .ok_or_else(|| "trait has no static dictionary type".to_owned())?;
+                    (dictionary, dictionary_type)
+                } else {
+                    let dictionary = self
+                        .trait_candidate(trait_id, &target)?
+                        .ok_or_else(|| {
+                            format!(
+                                "type {} does not implement {trait_name}",
+                                self.resolve(&target).display_name()
+                            )
+                        })?
+                        .dictionary
+                        .clone();
+                    let scheme = self.scheme(&dictionary).ok_or_else(|| {
+                        "selected trait dictionary has no static scheme".to_owned()
+                    })?;
+                    (dictionary, scheme.body)
+                };
+            let member_type = self.project_field(&dictionary_type, &member)?;
             let TypeDescriptor::Function { parameters, result } = member_type else {
                 return Err(format!("trait member {trait_name}.{member} is not callable"));
             };
@@ -358,7 +447,7 @@ impl GenericInference<'_> {
             if let Some(expected) = expected {
                 self.check(&result, expected)?;
             }
-            self.resolved_trait_evidence
+            self.resolved_trait_members
                 .insert(callee.location, dictionary);
             Ok(self.resolve(&result))
         })())
@@ -423,13 +512,23 @@ impl GenericInference<'_> {
     fn finish_type_constraints(&mut self) -> Result<(), (crate::Location, String)> {
         let pending = std::mem::take(&mut self.pending_type_constraints);
         for constraint in pending {
-            if contains_type_variable(&self.resolve(&constraint.target)) {
+            let target = self.resolve(&constraint.target);
+            if contains_type_variable(&target) {
+                continue;
+            }
+            if let Some(evidence) = constraint.lexical_evidence.iter().find(|evidence| {
+                evidence.capability == constraint.capability
+                    && self.resolve(&evidence.target) == target
+            }) {
+                self.resolved_call_evidence
+                    .entry(constraint.location)
+                    .or_default()
+                    .push(evidence.name.clone());
                 continue;
             }
             match &constraint.capability {
                 TypeCapability::Trait { id, name } => {
-                    let target = self.resolve(&constraint.target);
-                    let candidate = self
+                    let dictionary = self
                         .trait_candidate(*id, &target)
                         .map_err(|message| (constraint.location, message))?
                         .ok_or_else(|| {
@@ -440,9 +539,13 @@ impl GenericInference<'_> {
                                     target.display_name()
                                 ),
                             )
-                        })?;
-                    self.resolved_trait_evidence
-                        .insert(constraint.location, candidate.dictionary.clone());
+                        })?
+                        .dictionary
+                        .clone();
+                    self.resolved_call_evidence
+                        .entry(constraint.location)
+                        .or_default()
+                        .push(dictionary);
                 }
                 TypeCapability::Property(property) => {
                     return Err((

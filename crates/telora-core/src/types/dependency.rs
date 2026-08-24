@@ -1587,11 +1587,20 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let environment = initializer_environment
             .as_ref()
             .unwrap_or(&checked_environment);
+        let lexical_evidence_start = binding_schemes
+            .get(&binding.value.name.value)
+            .cloned()
+            .map(|scheme| {
+                inference.push_lexical_evidence(&binding.value.name.value, &scheme)
+            });
         let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             inference.infer(&binding.value.value, environment, expected)
         } else {
             inference.infer_authored_boundary(&binding.value.value, environment, expected)
         };
+        if let Some(start) = lexical_evidence_start {
+            inference.pop_lexical_evidence(start);
+        }
         if is_delayed {
             inference.delayed_initializer_depth -= 1;
         }
@@ -1990,7 +1999,29 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let propagation_families = std::mem::take(&mut inference.propagation_families);
     let not_families = std::mem::take(&mut inference.not_families);
-    let trait_evidence = std::mem::take(&mut inference.resolved_trait_evidence);
+    let trait_member_evidence = std::mem::take(&mut inference.resolved_trait_members);
+    let generic_call_evidence = std::mem::take(&mut inference.resolved_call_evidence);
+    let generic_evidence_parameters = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            let scheme = binding_schemes.get(&binding.value.name.value)?;
+            (!scheme.constraints.is_empty()).then(|| {
+                (
+                    binding.value.value.location,
+                    scheme
+                        .constraints
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| evidence_parameter_name(&binding.value.name.value, index))
+                        .collect(),
+                )
+            })
+        })
+        .collect();
     let bootstrap_root = if let Some(root) = cached_bootstrap_root {
         root
     } else {
@@ -2094,7 +2125,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .any(|binding| binding.value.kind == BindingKind::Export),
         propagation_families,
         not_families,
-        trait_evidence,
+        trait_member_evidence,
+        generic_call_evidence,
+        generic_evidence_parameters,
         runtime_roots,
         external_bindings,
         dynamic_bindings: dynamic_bindings.clone(),

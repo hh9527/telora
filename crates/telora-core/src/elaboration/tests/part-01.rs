@@ -8,7 +8,9 @@
         let mut elaborator = Elaborator {
             families: &HashMap::new(),
             not_families: &HashMap::new(),
-            trait_evidence: &HashMap::new(),
+            trait_member_evidence: &HashMap::new(),
+            generic_call_evidence: &HashMap::new(),
+            generic_evidence_parameters: &HashMap::new(),
             next: 0,
         };
         let ExprKind::Block(block) =

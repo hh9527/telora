@@ -32,7 +32,9 @@ impl<'a> GenericInference<'a> {
             pending_type_constraints: Vec::new(),
             trait_implementations,
             trait_ids,
-            resolved_trait_evidence: HashMap::new(),
+            resolved_trait_members: HashMap::new(),
+            resolved_call_evidence: HashMap::new(),
+            lexical_type_evidence: Vec::new(),
             hir,
             external_interfaces,
             named_types,
@@ -322,6 +324,7 @@ impl<'a> GenericInference<'a> {
                     capability: constraint.capability.clone(),
                     target: TypeDescriptor::Inference(*variable),
                     location,
+                    lexical_evidence: self.lexical_type_evidence.clone(),
                 });
             }
         }
