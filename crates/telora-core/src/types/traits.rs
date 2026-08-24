@@ -329,6 +329,70 @@ fn collect_trait_implementations(
 }
 
 impl GenericInference<'_> {
+    fn primitive_interpolation_type(target: &TypeDescriptor) -> bool {
+        matches!(
+            target,
+            TypeDescriptor::Never
+                | TypeDescriptor::Int
+                | TypeDescriptor::Float
+                | TypeDescriptor::String
+                | TypeDescriptor::Atom(_)
+        ) || matches!(target, TypeDescriptor::Enum(variants) if variants.values().all(Option::is_none))
+    }
+
+    fn require_interpolation_evidence(
+        &mut self,
+        target: TypeDescriptor,
+        location: crate::Location,
+    ) -> Result<(), String> {
+        let target = self.resolve(&target);
+        if contains_type_variable(&target) {
+            self.pending_interpolations.push((target, location));
+            return Ok(());
+        }
+        if Self::primitive_interpolation_type(&target) {
+            return Ok(());
+        }
+        let (trait_id, trait_name) = self.display_trait.clone().ok_or_else(|| {
+            format!(
+                "string interpolation of {} requires std/fmt.Display",
+                target.display_name()
+            )
+        })?;
+        let evidence = if let Some(binding) = self.lexical_trait_evidence(trait_id, &target) {
+            ResolvedEvidence::root(binding)
+        } else {
+            let (implementation, replacements) = self
+                .trait_candidate(trait_id, &target)?
+                .ok_or_else(|| {
+                    format!(
+                        "type {} does not implement {trait_name}",
+                        target.display_name()
+                    )
+                })?;
+            let implementation = implementation.clone();
+            self.implementation_evidence(&implementation, &replacements, location)?
+        };
+        self.resolved_interpolation_evidence
+            .insert(location, evidence);
+        Ok(())
+    }
+
+    fn finish_interpolations(&mut self) -> Result<(), (crate::Location, String)> {
+        let pending = std::mem::take(&mut self.pending_interpolations);
+        for (target, location) in pending {
+            self.require_interpolation_evidence(target, location)
+                .map_err(|message| (location, message))?;
+        }
+        if let Some((_, location)) = self.pending_interpolations.first() {
+            return Err((
+                *location,
+                "string interpolation type remains unresolved".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     fn runtime_type_evidence(
         &mut self,
         target: TypeDescriptor,

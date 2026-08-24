@@ -1372,6 +1372,42 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .then(|| binding.value.name.value.clone())
         })
         .collect::<HashSet<_>>();
+    let display_trait = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .find_map(|binding| {
+            (matches!(binding.value.kind, BindingKind::Import | BindingKind::OpenImport)
+                && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/fmt"))
+            .then(|| {
+                qualified_external_interfaces
+                    .get(&binding.value.name.value)
+                    .and_then(|interface| {
+                        interface
+                            .traits
+                            .get("Display")
+                            .or_else(|| interface.traits.get(&binding.value.name.value))
+                            .copied()
+                    })
+                    .map(|id| {
+                        let name = if binding.value.imported_name.is_none() {
+                            format!("{}.Display", binding.value.name.value)
+                        } else {
+                            binding.value.name.value.clone()
+                        };
+                        (id, name)
+                    })
+            })
+            .flatten()
+        })
+        .or_else(|| {
+            qualified_external_interfaces
+                .values()
+                .find_map(|interface| interface.display_trait)
+                .map(|id| (id, "std/fmt.Display".to_owned()))
+        });
     let mut inference = GenericInference::new(
         &binding_schemes,
         &hir,
@@ -1381,6 +1417,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &trait_implementations,
         &type_properties,
         &trait_ids,
+        display_trait,
         &dyn_namespaces,
         !external_roots.contains_key("Tuple"),
         account.query_context(),
@@ -1779,6 +1816,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .map_err(|(location, message)| {
             FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
         })?;
+    inference
+        .finish_interpolations()
+        .map_err(|(location, message)| {
+            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+        })?;
     for (name, location, descriptor, first_owned_variable) in delayed_bindings {
         if let Some(query) = &inference.query {
             query.check().map_err(|error| {
@@ -2029,7 +2071,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .iter()
             .map(published_trait_implementation)
             .collect(),
-        type_properties: type_properties.clone(),
+        type_properties: local_type_properties
+            .iter()
+            .map(|(evidence, _)| evidence.clone())
+            .collect(),
+        display_trait: if source_name == "<std/fmt.native.telora" {
+            trait_ids.get("Display").copied()
+        } else {
+            qualified_external_interfaces
+                .values()
+                .find_map(|interface| interface.display_trait)
+        },
         type_family_templates: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()
@@ -2064,6 +2116,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let not_families = std::mem::take(&mut inference.not_families);
     let trait_member_evidence = std::mem::take(&mut inference.resolved_trait_members);
     let generic_call_evidence = std::mem::take(&mut inference.resolved_call_evidence);
+    let interpolation_evidence =
+        std::mem::take(&mut inference.resolved_interpolation_evidence);
     let runtime_type_evidence = std::mem::take(&mut inference.runtime_type_evidence);
     let generic_evidence_parameters = program
         .value
@@ -2237,6 +2291,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         not_families,
         trait_member_evidence,
         generic_call_evidence,
+        interpolation_evidence,
         generic_evidence_parameters,
         generic_dictionary_factories,
         runtime_roots,

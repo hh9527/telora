@@ -21,6 +21,7 @@ struct OpenImportCandidate {
     trait_id: Option<crate::TraitId>,
     trait_implementations: Vec<TraitImplementation>,
     type_properties: Vec<crate::types::TypePropertyEvidence>,
+    display_trait: Option<crate::TraitId>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
@@ -33,6 +34,7 @@ struct WorkspaceOpenImportCandidate {
     trait_id: Option<crate::TraitId>,
     trait_implementations: Vec<TraitImplementation>,
     type_properties: Vec<crate::types::TypePropertyEvidence>,
+    display_trait: Option<crate::TraitId>,
     type_family_template: Option<TypeFamilyTemplate>,
 }
 
@@ -62,6 +64,7 @@ fn workspace_open_import_exports(
                     trait_id: interface.traits.get(name).copied(),
                     trait_implementations: interface.trait_implementations.clone(),
                     type_properties: interface.type_properties.clone(),
+                    display_trait: interface.display_trait,
                     type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
             ))
@@ -97,6 +100,7 @@ fn open_import_exports(
                     trait_id: interface.traits.get(name).copied(),
                     trait_implementations: interface.trait_implementations.clone(),
                     type_properties: interface.type_properties.clone(),
+                    display_trait: interface.display_trait,
                     type_family_template: interface.type_family_templates.get(name).cloned(),
                 },
             ))
@@ -174,6 +178,7 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
         traits: BTreeMap::new(),
         trait_implementations: Vec::new(),
         type_properties: Vec::new(),
+        display_trait: None,
         type_family_templates: BTreeMap::new(),
     }
 }

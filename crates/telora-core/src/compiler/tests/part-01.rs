@@ -558,17 +558,17 @@
         assert!(
             static_error
                 .to_string()
-                .contains("does not support Array<Int>")
+                .contains("requires std/fmt.Display"),
+            "{static_error}"
         );
 
         let dynamic_error = run(r#"def render = fn(x) { `x=\{x}` }; render([1])"#).unwrap_err();
-        assert!(matches!(
-            dynamic_error,
-            ExecutionError::Runtime(RuntimeError {
-                kind: RuntimeErrorKind::TypeMismatch,
-                ..
-            })
-        ));
+        assert!(
+            dynamic_error
+                .to_string()
+                .contains("interpolation type remains unresolved"),
+            "{dynamic_error}"
+        );
     }
 
     #[test]

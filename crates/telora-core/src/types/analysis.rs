@@ -16,6 +16,7 @@ pub struct Analysis {
     pub(crate) not_families: HashMap<crate::Location, NotFamily>,
     pub(crate) trait_member_evidence: HashMap<crate::Location, ResolvedEvidence>,
     pub(crate) generic_call_evidence: HashMap<crate::Location, Vec<ResolvedEvidence>>,
+    pub(crate) interpolation_evidence: HashMap<crate::Location, ResolvedEvidence>,
     pub(crate) generic_evidence_parameters: HashMap<crate::Location, Vec<String>>,
     pub(crate) generic_dictionary_factories: HashMap<crate::Location, Vec<String>>,
     pub(crate) runtime_roots: BTreeMap<String, PersistentValue>,
@@ -170,6 +171,7 @@ pub(crate) fn analyze_partial_types_recovered(
         &mut tool_heap,
         PartialAnalysisControl {
             unavailable_imports,
+            external_schemes: &BTreeMap::new(),
             query: None,
         },
     )
@@ -177,6 +179,7 @@ pub(crate) fn analyze_partial_types_recovered(
 
 pub(crate) struct PartialAnalysisControl<'a> {
     pub unavailable_imports: &'a HashSet<String>,
+    pub external_schemes: &'a BTreeMap<String, TypeScheme>,
     pub query: Option<&'a crate::query::QueryContext>,
 }
 
@@ -675,6 +678,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         .iter()
         .filter(|definition| definition.top_level && definition.kind == HirDefinitionKind::Import)
     {
+        if let Some(scheme) = control.external_schemes.get(&definition.name) {
+            definition_schemes.insert(definition.id, scheme.clone());
+        }
         if facts.contains_key(&definition.id)
             || control.unavailable_imports.contains(&definition.name)
         {

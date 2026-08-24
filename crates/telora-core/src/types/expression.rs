@@ -292,17 +292,6 @@ fn check_interpolations(
         ExprKind::InterpolatedString(parts) => {
             for part in parts {
                 if let StringPartKind::Expression(part_expression) = &part.value {
-                    let inferred = infer_expr(part_expression, environment);
-                    if !interpolation_type_supported(&inferred) {
-                        let message = format!(
-                            "string interpolation does not support {}",
-                            inferred.display_name()
-                        );
-                        return Err(FrontendError::from_diagnostic(
-                            sources,
-                            Diagnostic::error(message, part_expression.location),
-                        ));
-                    }
                     check_interpolations(part_expression, environment, sources)?;
                 }
             }
@@ -465,34 +454,6 @@ fn check_block_interpolations(
     check_interpolations(&block.value.result, &environment, sources)
 }
 
-fn interpolation_type_supported(descriptor: &TypeDescriptor) -> bool {
-    match descriptor {
-        TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) | TypeDescriptor::Named(_) => false,
-        TypeDescriptor::Declared(declared) => interpolation_type_supported(&declared.body),
-        TypeDescriptor::Any
-        | TypeDescriptor::Never
-        | TypeDescriptor::Int
-        | TypeDescriptor::Float
-        | TypeDescriptor::String
-        | TypeDescriptor::Atom(_) => true,
-        TypeDescriptor::Union(variants) => variants.iter().all(interpolation_type_supported),
-        TypeDescriptor::Enum(variants) => variants.iter().all(|(name, payload)| {
-            interpolation_type_supported(&enum_variant_type(name, payload.as_deref()))
-        }),
-        TypeDescriptor::Type
-        | TypeDescriptor::Dyn
-        | TypeDescriptor::TypeOf(_)
-        | TypeDescriptor::Bytes
-        | TypeDescriptor::Opaque(_)
-        | TypeDescriptor::Array(_)
-        | TypeDescriptor::Dict(_)
-        | TypeDescriptor::Tagged { .. }
-        | TypeDescriptor::Tuple(_)
-        | TypeDescriptor::Struct(_)
-        | TypeDescriptor::Function { .. } => false,
-    }
-}
-
 fn infer_block_with(
     block: &Block,
     environment: &HashMap<String, TypeDescriptor>,
@@ -629,4 +590,3 @@ fn substitute_bound_parameters(
         _ => descriptor.clone(),
     }
 }
-

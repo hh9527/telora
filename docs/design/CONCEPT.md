@@ -241,8 +241,8 @@ Bound，不按 concrete 参数重跑声明 body。这个限制使泛型 contract
 attribute wrapper；application 产生的规则节点保留 authored call-site provenance。
 Partial recovery 对独立有效的 family 同样发布精确 scheme，而不是以 `Any` 代替关系。
 
-Family 不是任意 metadata function、associated type、trait、higher-kinded type
-parameter 或 nominal constructor。它不参与实例搜索，不能作为 type parameter 传递，
+Family 不是任意 metadata function、associated type、trait implementation、
+higher-kinded type parameter 或 nominal constructor。它不参与实例搜索，不能作为 type parameter 传递，
 也不引入新的 runtime kind 或求值语言。
 
 名义 Struct/Enum family 可以在自己的有限符号模板中以完全相同的 Bound 参数建立直接
@@ -288,8 +288,22 @@ TypeId 和 member index 查询，不使用字符串属性名。
 当前 decorator 只适用于无类型参数的具名 Struct/Enum 声明及其直接 member；alias、
 结构类型和 type family template 不接受 decorator。
 
-Interpreter、未来的 quote/codegen 和 trait binding 都可以把封闭类型骨架与独立的
-typed property registry 作为稳定输入。
+Interpreter、静态 trait implementation 和未来的 quote/codegen 都可以把封闭类型
+骨架与独立的 typed property registry 作为稳定输入。
+
+### Trait 与 Static Evidence
+
+**Trait** 是由 canonical `TraitId` 标识的 nominal 静态 capability。Trait member
+给出以 `Self` 表示接收类型的函数 contract；**impl** 为具体类型或带静态约束的类型
+模式提供完整 dictionary。Coherence 和 orphan boundary 使封闭模块图中的候选唯一。
+
+**Static evidence** 是编译器已经证明某个类型满足 trait 或 `Property(P)` 的事实及其
+实现数据。受约束的 rank-1 scheme 保留 canonical identity，dictionary elaboration
+把 evidence 作为隐藏参数传给普通函数。Evidence 不产生 runtime trait object；VM
+执行普通 closure、Dict 和 property payload，也不进行运行期 implementation search。
+
+`Property(P)` 把成功发布的 `Ty(T, P)` property 提升为静态约束。普通反射仍返回
+`Option(P)`；约束只证明 property 存在，不根据 payload 内容选择 implementation。
 
 ### Interpreter
 

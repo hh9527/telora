@@ -1,6 +1,6 @@
 # RFC 0260: Static Traits and Property Evidence
 
-- Status: Proposed
+- Status: Implemented
 - Tracking: #129
 - Depends on: RFC 0258, RFC 0259
 

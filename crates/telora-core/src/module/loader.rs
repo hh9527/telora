@@ -754,6 +754,7 @@ impl ModuleLoader {
                         .unwrap_or_default(),
                     trait_implementations: candidate.trait_implementations,
                     type_properties: candidate.type_properties,
+                    display_trait: candidate.display_trait,
                     type_family_templates: candidate
                         .type_family_template
                         .map(|family| BTreeMap::from([(name.clone(), family)]))

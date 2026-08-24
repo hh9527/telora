@@ -322,6 +322,78 @@
     }
 
     #[test]
+    fn interpolation_uses_static_display_evidence_for_nominal_values() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               def endpoint: Endpoint = { host: "localhost", port: 8080 };
+               def show: for(T: fmt.Display) Fn(T) -> String = fn(value) {
+                   `endpoint = \{value}`
+               };
+               export def output = show(endpoint);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        assert_eq!(
+            named_output(&executed).to_string(),
+            "\"endpoint = localhost:8080\""
+        );
+
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               type Plain = struct { value: Int };
+               def plain: Plain = { value: 1 };
+               export def output = `plain = \{plain}`;"#,
+        )
+        .unwrap();
+        let error = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(
+            error.message().contains("does not implement fmt.Display"),
+            "{error}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn interpolation_inherits_standard_display_identity_from_domain_modules() {
+        let directory = fixture_dir();
+        let model = directory.join("model.telora");
+        let main = directory.join("main.telora");
+        fs::write(
+            &model,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               export { Endpoint };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./model.telora" as model;
+               def endpoint: model.Endpoint = { host: "localhost", port: 8080 };
+               export def output = `endpoint = \{endpoint}`;"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        assert_eq!(
+            named_output(&executed).to_string(),
+            "\"endpoint = localhost:8080\""
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn typed_properties_reject_targets_carriers_and_duplicate_identity() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");
@@ -564,6 +636,7 @@
     fn static_trait_evidence_links_across_module_boundaries() {
         let directory = fixture_dir();
         let capability = directory.join("capability.telora");
+        let facade = directory.join("facade.telora");
         let main = directory.join("main.telora");
         fs::write(
             &capability,
@@ -589,6 +662,50 @@
         let output = named_output(&engine.execute(&module).unwrap()).to_string();
         assert!(output.contains("direct: \"int=8\""), "{output}");
         assert!(output.contains("generic: \"int=9\""), "{output}");
+
+        fs::write(
+            &facade,
+            r#"import "./capability.telora" { render };
+               export { render };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "./facade.telora" as facade;
+               export def output = facade.render(10);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        assert_eq!(
+            named_output(&engine.execute(&module).unwrap()).to_string(),
+            "\"int=10\""
+        );
+
+        fs::write(
+            &facade,
+            r#"import "./capability.telora" { render };
+               let broken = missing;
+               export { render };"#,
+        )
+        .unwrap();
+        let snapshot = recovery_engine().recover_workspace(&facade).unwrap();
+        let facade_module = snapshot
+            .module_by_path(&canonicalize(&facade).unwrap())
+            .unwrap();
+        let render = snapshot
+            .definitions()
+            .iter()
+            .find(|definition| {
+                definition.module == facade_module.id
+                    && definition.name == "render"
+                    && definition.kind == crate::DefinitionKind::Import
+            })
+            .expect("re-exported constrained function");
+        assert_eq!(
+            render.scheme.as_deref(),
+            Some("for(T: Display) Fn(T) -> String")
+        );
 
         let model = directory.join("model.telora");
         fs::write(

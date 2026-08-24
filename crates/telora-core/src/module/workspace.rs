@@ -360,6 +360,7 @@ impl WorkspaceBuilder<'_> {
                             .unwrap_or_default(),
                         trait_implementations: candidate.trait_implementations,
                         type_properties: candidate.type_properties,
+                        display_trait: candidate.display_trait,
                         type_family_templates: candidate
                             .type_family_template
                             .map(|family| BTreeMap::from([(name.clone(), family)]))
@@ -375,6 +376,15 @@ impl WorkspaceBuilder<'_> {
                 return None;
             }
 
+            let external_schemes = external_interfaces
+                .iter()
+                .filter_map(|(name, interface)| {
+                    interface
+                        .exports
+                        .get(name)
+                        .map(|scheme| (name.clone(), scheme.clone()))
+                })
+                .collect::<BTreeMap<_, _>>();
             let partial = analyze_partial_types_recovered_with_query(
                 &self.sources,
                 source_id,
@@ -388,6 +398,7 @@ impl WorkspaceBuilder<'_> {
                 &mut self.main.heap,
                 PartialAnalysisControl {
                     unavailable_imports: &unavailable_imports,
+                    external_schemes: &external_schemes,
                     query: self.query,
                 },
             );

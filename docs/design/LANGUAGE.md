@@ -75,17 +75,17 @@ delimiter，而不是发明新的 escape。
 let greeting = `hello \{name}`;
 ```
 
-插值按运行时 primitive `meta` 支持 String、Int、Float 和 Atom，不读取值的名义
-`ty`，也不隐式调用任意用户 `Display`。静态分析只提前证明表达式的表示必然属于
-这些类别；无法证明时，执行仍按实际 `meta` 检查。声明 wrapper 在分派前被解开，
-因此 Bool 值的插值依靠 Atom 表示工作，而不是因为 Bool 实现了 Display。String
+插值直接支持 String、Int、Float 和 Atom primitive 表示。对其他静态已知类型 `T`，
+插值要求 `T: std/fmt.Display`，并在编译期降低为已选中 dictionary 的 `display`
+成员调用。无法解析的类型、`Any` 和 `Dyn` 必须先显式投影或格式化。声明 wrapper
+在 primitive 分派前被解开，因此 Bool 值的插值依靠 Atom 表示工作。String
 保持原文本，Int 使用十进制表示，Atom 省略前导 `'`。Float
 使用有限 binary64 的文本表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一
 binary64 值的最短十进制文本，不受 locale 影响。该表示保留负零的符号，但不保留
 整数值的小数点，例如 `3.0` 表示为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的
 原始小数或指数拼写。
 
-`std/fmt` 是另一条显式的 TypeMetadata-driven 路径：
+`std/fmt` 定义标准静态展示能力：
 
 ```telora
 import "std/fmt" as fmt;
@@ -94,14 +94,14 @@ import "std/fmt" as fmt;
 type Endpoint = struct { host: String, port: Int };
 
 def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
-    fmt.display(Endpoint, endpoint)
+    `endpoint=\{endpoint}`
 };
 ```
 
-`display_by` 是受控模板 eDSL。它在构造 TypeMetadata 时解析、验证字段并附加
-`std/fmt.display` attribute；`fmt.display` 由调用者显式传入要采用的 TypeMetadata。
-它不是 trait、`ToString` 或代码生成机制，也不改变 `\{...}` 的 primitive-meta
-语义。`dbg!` 的有界 repr 属于 Host-only 观察；codec/JSON 则是数据交换协议，三者
+`display_by` 是受控模板 eDSL。它发布 `DisplayBy` typed property；`std/fmt` 中的
+property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence。
+`fmt.Display.display(endpoint)`、`fmt.display(Endpoint, endpoint)` 和上述插值共享
+同一展示定义。`dbg!` 的有界 repr 属于 Host-only 观察；codec/JSON 则是数据交换协议，三者
 都不能作为彼此的隐式替代。
 
 Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
@@ -219,7 +219,7 @@ String 顺序是其内部 UTF-8 字节序列的字典序：第一个不同字节
 case folding 或自然数排序。
 
 所有六种比较运算符处于同一非结合优先级；连续比较必须用括号明确分组。比较运算
-不执行用户定义的 trait 查找，因为当前语言没有 trait 系统。
+使用固定的内建语义，不执行 trait implementation selection。
 
 ## 4. 表达式和控制流
 
@@ -452,8 +452,40 @@ Generalization 保留尚未解决的 callable 和数值 obligation；递归组�
 普通 alias 不会被无条件泛化。跨模块导出的 scheme 会在每个合法使用点重新实例化，
 且其私有 bound identity 不泄漏到导入方。
 
-当前不存在 higher-rank type、subtyping、trait、interface、associated type、
-higher-kinded type 或通用 constraint resolution。
+### 6.4 静态 Trait 与约束
+
+Trait 声明定义一个由 provider module 和稳定 local slot 标识的 nominal capability：
+
+```telora
+trait Display {
+    display: Fn(Self) -> String,
+};
+
+impl Display for Endpoint {
+    display: fn(value) { value.host },
+};
+
+def render: for(T: Display) Fn(T) -> String = fn(value) {
+    Display.display(value)
+};
+```
+
+`Self` 只在 trait member contract 中绑定。Impl 是顶层静态声明，必须完整且精确地
+实现 member contract；调用使用 `Trait.member(value)`，不进行 receiver method lookup。
+泛型参数可用 `+` 声明多个约束。发布的 rank-1 `TypeScheme` 按 canonical `TraitId`
+保留约束，import、alias、reexport 和 recovery 均复用同一身份。
+
+编译器把 trait 调用 elaboration 为普通 dictionary 函数调用。受约束函数内部接收
+隐藏 evidence 参数，调用方静态选择唯一 impl 并传入 dictionary。VM 不搜索 impl，
+也没有 trait-object value kind。Coherence 拒绝重复或重叠 impl；orphan boundary
+要求 impl module 拥有 trait 或目标最外层 nominal constructor。
+
+`Property(P)` 是内建约束：`T: Property(P)` 证明封闭模块中精确的 `Ty(T, P)` typed
+property 已成功发布。它可以驱动 blanket impl，而普通反射查询仍返回 `Option(P)`。
+Evidence 携带已发布 property payload，implementation selection 不读取 payload 内容。
+
+当前不存在 higher-rank type、subtyping、trait object、interface、associated type、
+default member、specialization、trait inheritance 或 higher-kinded type。
 
 ## 7. 类型元数据
 
@@ -551,16 +583,16 @@ let property: Option(DisplayBy) = type_property.get_type_prop(Endpoint, DisplayB
 
 member 查询分别是 `get_field_prop(Owner, index, P)` 和
 `get_variant_prop(Owner, index, P)`。查询返回 MainWorld 中 property 的廉价引用。
-未来泛型 witness sugar 应由通用的隐式 `TypeOf(T)` 规则提供，而不是增加 property
-专用语法魔法。
+在 `T: Property(P)` 约束范围内，编译器通过隐藏 evidence 传递同一份已发布 payload；
+约束外的显式查询仍保持上述 `Option(P)` API。
 
 `std/type-desc.fields/variants` 使用相同 canonical index 枚举 member；
 `std/dyn.get_field_value/get_variant_index/get_variant_payload` 根据 `Dyn` 携带的权威
 descriptor 安全投影。错误 kind、越界和 variant mismatch 是有来源的运行错误；合法
 unit variant 的 payload 是 `None`。
 
-后续 interpreter、quote/codegen 或 trait 机制可以读取同一封闭骨架和 property
-registry，并基于这两个稳定输入赋予 property 行为意义。
+Interpreter、静态 trait implementation 和后续 quote/codegen 可以读取同一封闭
+骨架和 property registry，并基于这两个稳定输入赋予 property 行为意义。
 
 ### 7.2 参数化 TypeMetadata family
 
@@ -1473,7 +1505,7 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 - ambient IO、文件访问、网络、时钟或环境读取；
 - 通用 effect handler 或语言级 action protocol；
 - runtime code generation、`eval`、动态 import 或通用 macro system；
-- trait、interface、subtyping、associated type、higher-rank/HKT；
+- trait object、interface、subtyping、associated type、higher-rank/HKT；
 - 任意 binding 的无限制 polymorphic generalization；
 - 全局 termination proof；
 - 通用 package registry、获取和版本求解；

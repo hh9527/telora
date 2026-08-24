@@ -1000,6 +1000,7 @@
             &[],
             &[],
             &trait_ids,
+            None,
             &dyn_namespaces,
             true,
             None,
@@ -1055,6 +1056,21 @@
             validate_publishable_scheme(&unbound)
                 .unwrap_err()
                 .contains("unbound parameter T7")
+        );
+
+        let unbound_constraint = TypeScheme {
+            parameters: Vec::new(),
+            constraints: vec![TypeConstraint {
+                parameter: TypeParameterId(7),
+                capability: TypeCapability::Property(TypeDescriptor::Int),
+                location,
+            }],
+            body: TypeDescriptor::Int,
+        };
+        assert!(
+            validate_publishable_scheme(&unbound_constraint)
+                .unwrap_err()
+                .contains("constraint references unbound parameter T7")
         );
     }
 

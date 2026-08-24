@@ -1142,7 +1142,7 @@ export type MainType = Main;
 export type State = String;
 type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
 type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-def object_name = fn(value) {
+def object_name = fn(value) -> String {
     match value {
         'Object(object) => match object.name {
             'String(name) => name,
@@ -1274,4 +1274,3 @@ export def config:
         assert!(String::from_utf8_lossy(&invalid.stderr).contains("cannot read variable"));
     }
 }
-

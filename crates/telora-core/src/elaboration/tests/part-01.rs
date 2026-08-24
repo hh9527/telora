@@ -10,6 +10,7 @@
             not_families: &HashMap::new(),
             trait_member_evidence: &HashMap::new(),
             generic_call_evidence: &HashMap::new(),
+            interpolation_evidence: &HashMap::new(),
             generic_evidence_parameters: &HashMap::new(),
             generic_dictionary_factories: &HashMap::new(),
             next: 0,

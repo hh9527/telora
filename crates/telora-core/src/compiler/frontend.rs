@@ -235,6 +235,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
         &analysis.not_families,
         &analysis.trait_member_evidence,
         &analysis.generic_call_evidence,
+        &analysis.interpolation_evidence,
         &analysis.generic_evidence_parameters,
         &analysis.generic_dictionary_factories,
     );

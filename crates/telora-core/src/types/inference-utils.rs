@@ -343,6 +343,33 @@ fn validate_publishable_scheme(scheme: &TypeScheme) -> Result<(), String> {
         .iter()
         .map(|parameter| parameter.id)
         .collect::<HashSet<_>>();
+    for constraint in &scheme.constraints {
+        if !declared.contains(&constraint.parameter) {
+            return Err(format!(
+                "constraint references unbound parameter T{}",
+                constraint.parameter.index()
+            ));
+        }
+        if let TypeCapability::Property(property) = &constraint.capability {
+            if contains_type_variable(property) {
+                return Err(format!(
+                    "property constraint contains unresolved {}",
+                    property.display_name()
+                ));
+            }
+            let mut property_parameters = Vec::new();
+            collect_bound_parameters(property, &mut property_parameters);
+            if let Some(parameter) = property_parameters
+                .into_iter()
+                .find(|parameter| !declared.contains(parameter))
+            {
+                return Err(format!(
+                    "property constraint references unbound parameter T{}",
+                    parameter.index()
+                ));
+            }
+        }
+    }
     let mut referenced = Vec::new();
     collect_bound_parameters(&scheme.body, &mut referenced);
     if let Some(parameter) = referenced
@@ -1007,4 +1034,3 @@ fn contains_metatype(ty: &TypeDescriptor) -> bool {
         _ => false,
     }
 }
-

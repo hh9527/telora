@@ -951,6 +951,7 @@ fn select_import_root(
                 .unwrap_or_default(),
             trait_implementations: interface.trait_implementations,
             type_properties: interface.type_properties,
+            display_trait: interface.display_trait,
             type_family_templates: interface
                 .type_family_templates
                 .get(&exported.value)

@@ -252,13 +252,18 @@
     }
 
     #[test]
-    fn runtime_field_and_interpolation_errors_render_their_expressions() {
+    fn field_and_interpolation_errors_render_their_expressions() {
         let field = run("let value = {present: 1};\nvalue.missing").unwrap_err();
         assert!(field.to_string().contains("test:2:1"));
 
         let interpolation =
             run("def render = fn(value) {\n  `value=\\{value}`\n};\nrender([1])").unwrap_err();
-        assert!(interpolation.to_string().contains("test:2:3"));
+        assert!(
+            interpolation
+                .to_string()
+                .contains("test:2:12: string interpolation type remains unresolved"),
+            "{interpolation}"
+        );
     }
 
     #[test]

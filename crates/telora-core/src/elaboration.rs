@@ -9,6 +9,7 @@ pub(crate) fn elaborate_program(
     not_families: &HashMap<Location, NotFamily>,
     trait_member_evidence: &HashMap<Location, ResolvedEvidence>,
     generic_call_evidence: &HashMap<Location, Vec<ResolvedEvidence>>,
+    interpolation_evidence: &HashMap<Location, ResolvedEvidence>,
     generic_evidence_parameters: &HashMap<Location, Vec<String>>,
     generic_dictionary_factories: &HashMap<Location, Vec<String>>,
 ) {
@@ -17,6 +18,7 @@ pub(crate) fn elaborate_program(
         not_families,
         trait_member_evidence,
         generic_call_evidence,
+        interpolation_evidence,
         generic_evidence_parameters,
         generic_dictionary_factories,
         next: 0,
@@ -29,6 +31,7 @@ struct Elaborator<'a> {
     not_families: &'a HashMap<Location, NotFamily>,
     trait_member_evidence: &'a HashMap<Location, ResolvedEvidence>,
     generic_call_evidence: &'a HashMap<Location, Vec<ResolvedEvidence>>,
+    interpolation_evidence: &'a HashMap<Location, ResolvedEvidence>,
     generic_evidence_parameters: &'a HashMap<Location, Vec<String>>,
     generic_dictionary_factories: &'a HashMap<Location, Vec<String>>,
     next: u32,
@@ -111,6 +114,27 @@ impl Elaborator<'_> {
                 for part in parts {
                     if let StringPartKind::Expression(expression) = &mut part.value {
                         self.expression(expression);
+                        if let Some(dictionary) =
+                            self.interpolation_evidence.get(&expression.location)
+                        {
+                            let location = expression.location;
+                            let value = expression.clone();
+                            *expression = located(
+                                ExprKind::Call {
+                                    callee: Box::new(located(
+                                        ExprKind::Field {
+                                            receiver: Box::new(Self::evidence_expression(
+                                                dictionary, location,
+                                            )),
+                                            field: located("display".to_owned(), location),
+                                        },
+                                        location,
+                                    )),
+                                    arguments: vec![value],
+                                },
+                                location,
+                            );
+                        }
                     }
                 }
             }
@@ -200,6 +224,10 @@ impl Elaborator<'_> {
                 self.expression(value);
             }
             ExprKind::Call { callee, arguments } => {
+                self.expression(callee);
+                for argument in arguments.iter_mut() {
+                    self.expression(argument);
+                }
                 if let Some(dictionary) = self.trait_member_evidence.get(&callee.location)
                     && let ExprKind::Field { field, .. } = &callee.value
                 {
@@ -215,10 +243,6 @@ impl Elaborator<'_> {
                             .iter()
                             .map(|item| Self::evidence_expression(item, callee.location)),
                     );
-                }
-                self.expression(callee);
-                for argument in arguments {
-                    self.expression(argument);
                 }
             }
             ExprKind::TypeApply { callee, arguments } => {

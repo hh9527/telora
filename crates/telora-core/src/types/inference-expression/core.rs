@@ -200,7 +200,8 @@ impl<'a> GenericInference<'a> {
             ExprKind::InterpolatedString(parts) => {
                 for part in parts {
                     if let StringPartKind::Expression(expression) = &part.value {
-                        self.infer(expression, environment, None)?;
+                        let target = self.infer(expression, environment, None)?;
+                        self.require_interpolation_evidence(target, expression.location)?;
                     }
                 }
                 TypeDescriptor::String
