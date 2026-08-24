@@ -7,10 +7,12 @@ pub(crate) fn elaborate_program(
     program: &mut Program,
     families: &HashMap<Location, PropagationFamily>,
     not_families: &HashMap<Location, NotFamily>,
+    trait_evidence: &HashMap<Location, String>,
 ) {
     let mut elaborator = Elaborator {
         families,
         not_families,
+        trait_evidence,
         next: 0,
     };
     elaborator.block(&mut program.value.body);
@@ -19,6 +21,7 @@ pub(crate) fn elaborate_program(
 struct Elaborator<'a> {
     families: &'a HashMap<Location, PropagationFamily>,
     not_families: &'a HashMap<Location, NotFamily>,
+    trait_evidence: &'a HashMap<Location, String>,
     next: u32,
 }
 
@@ -128,6 +131,17 @@ impl Elaborator<'_> {
                 self.expression(value);
             }
             ExprKind::Call { callee, arguments } => {
+                if let Some(dictionary) = self.trait_evidence.get(&callee.location)
+                    && let ExprKind::Field { field, .. } = &callee.value
+                {
+                    callee.value = ExprKind::Field {
+                        receiver: Box::new(located(
+                            ExprKind::Variable(located(dictionary.clone(), callee.location)),
+                            callee.location,
+                        )),
+                        field: field.clone(),
+                    };
+                }
                 self.expression(callee);
                 for argument in arguments {
                     self.expression(argument);

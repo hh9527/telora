@@ -192,7 +192,7 @@ impl<'a> GenericInference<'a> {
                         .cloned()
                         .unwrap_or(TypeDescriptor::Any)
                 },
-                |scheme| self.instantiate(&scheme),
+                |scheme| self.instantiate(&scheme, expression.location),
             ),
             ExprKind::Int(_) => TypeDescriptor::Int,
             ExprKind::Float(_) => TypeDescriptor::Float,
@@ -618,7 +618,7 @@ impl<'a> GenericInference<'a> {
                         .cloned()
                 {
                     self.infer(receiver, environment, None)?;
-                    self.instantiate(&scheme)
+                    self.instantiate(&scheme, expression.location)
                 } else {
                     let receiver = self.infer(receiver, environment, None)?;
                     self.project_field(&receiver, &field.value)?
@@ -654,6 +654,11 @@ impl<'a> GenericInference<'a> {
                 self.project_tuple(&receiver, index.value)?
             }
             ExprKind::Call { callee, arguments } => {
+                if let Some(result) =
+                    self.infer_trait_call(callee, arguments, environment, expected)
+                {
+                    result?
+                } else {
                 let callee_has_runtime_boundary = self.callee_has_runtime_boundary(callee);
                 if self.is_builtin_tuple(callee)
                     && let [argument] = arguments.as_slice()
@@ -838,6 +843,7 @@ impl<'a> GenericInference<'a> {
                             descriptor.display_name()
                         ));
                     }
+                }
                 }
             }
             ExprKind::TypeApply { callee, arguments } => {
@@ -1281,4 +1287,3 @@ impl<'a> GenericInference<'a> {
     }
 
 }
-

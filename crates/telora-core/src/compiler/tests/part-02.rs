@@ -282,3 +282,31 @@
         assert_eq!(error.kind, RuntimeErrorKind::FuelExhausted);
         assert!(error.to_string().contains("test:2:1"));
     }
+
+    #[test]
+    fn static_trait_calls_execute_selected_dictionary_members() {
+        let output = run(
+            r#"trait Display { display: Fn(Self) -> String };
+               impl Display for Int { display: fn(value) { `int=\{value}` } };
+               Display.display(42)"#,
+        )
+        .unwrap();
+        assert_eq!(output.to_string(), "\"int=42\"");
+
+        let missing = compile_source(
+            "test",
+            r#"trait Display { display: Fn(Self) -> String };
+               Display.display(42)"#,
+        )
+        .unwrap_err();
+        assert!(missing.message.contains("Int does not implement Display"));
+
+        let unknown_member = compile_source(
+            "test",
+            r#"trait Display { display: Fn(Self) -> String };
+               impl Display for Int { display: fn(value) { "int" } };
+               Display.missing(42)"#,
+        )
+        .unwrap_err();
+        assert!(unknown_member.message.contains("missing"));
+    }

@@ -989,6 +989,7 @@
         let annotations = HashMap::new();
         let dyn_namespaces = HashSet::new();
         let named_types = BTreeMap::new();
+        let trait_ids = BTreeMap::new();
         let hir = HirProgram::default();
         let mut inference = GenericInference::new(
             &schemes,
@@ -996,6 +997,8 @@
             &interfaces,
             &named_types,
             &annotations,
+            &[],
+            &trait_ids,
             &dyn_namespaces,
             true,
             None,
@@ -1023,6 +1026,7 @@
                 name: "A".into(),
                 location,
             }],
+            constraints: Vec::new(),
             body: TypeDescriptor::Function {
                 parameters: vec![TypeDescriptor::Bound(TypeParameterId(0))],
                 result: Box::new(TypeDescriptor::Bound(TypeParameterId(0))),
@@ -1032,6 +1036,7 @@
 
         let unresolved = TypeScheme {
             parameters: Vec::new(),
+            constraints: Vec::new(),
             body: TypeDescriptor::Inference(InferenceVariableId(0)),
         };
         assert!(
@@ -1042,6 +1047,7 @@
 
         let unbound = TypeScheme {
             parameters: Vec::new(),
+            constraints: Vec::new(),
             body: TypeDescriptor::Bound(TypeParameterId(7)),
         };
         assert!(
@@ -1203,4 +1209,3 @@
         .unwrap();
         assert_eq!(analysis.display(analysis.result_type), "Int");
     }
-

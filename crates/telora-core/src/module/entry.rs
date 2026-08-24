@@ -597,6 +597,7 @@ fn runtime_dyn(
             value,
             scheme: Some(crate::TypeScheme {
                 parameters: Vec::new(),
+                constraints: Vec::new(),
                 body: descriptor,
             }),
             origin: Some(origin.into()),

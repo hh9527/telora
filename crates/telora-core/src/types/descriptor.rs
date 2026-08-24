@@ -26,6 +26,7 @@ pub struct TypeParameter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypeScheme {
     pub parameters: Vec<TypeParameter>,
+    pub constraints: Vec<TypeConstraint>,
     pub body: TypeDescriptor,
 }
 
@@ -40,11 +41,26 @@ impl TypeScheme {
         if self.parameters.is_empty() {
             body
         } else {
+            let constraints = self
+                .constraints
+                .iter()
+                .fold(BTreeMap::<TypeParameterId, Vec<String>>::new(), |mut result, item| {
+                    result
+                        .entry(item.parameter)
+                        .or_default()
+                        .push(item.capability.display_name());
+                    result
+                });
             format!(
                 "for({}) {body}",
                 self.parameters
                     .iter()
-                    .map(|parameter| parameter.name.as_str())
+                    .map(|parameter| {
+                        constraints.get(&parameter.id).map_or_else(
+                            || parameter.name.clone(),
+                            |items| format!("{}: {}", parameter.name, items.join(" + ")),
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             )
@@ -76,6 +92,7 @@ impl ModuleInterface {
                         name.clone(),
                         TypeScheme {
                             parameters: scheme.parameters.clone(),
+                            constraints: scheme.constraints.clone(),
                             body: rename_named_types(&scheme.body, &names),
                         },
                     )

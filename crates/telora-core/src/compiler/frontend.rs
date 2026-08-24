@@ -233,6 +233,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
         &mut program,
         &analysis.propagation_families,
         &analysis.not_families,
+        &analysis.trait_evidence,
     );
     Compiler::program_in(
         source_file.name.as_ref(),

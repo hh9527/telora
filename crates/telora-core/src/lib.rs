@@ -79,10 +79,10 @@ pub use toml::{TomlParse, parse_toml_registered};
 pub use type_store::TypeId;
 pub use types::{
     Analysis, AnalysisTypeId, DeclaredTypeDescriptor, ModuleInterface, PartialAnalysis,
-    SemanticDependencyGraph, SemanticDependencyNode, TraitImplementation, TypeGraph, TypeNode,
-    TypeParameter, TypeParameterId, TypeScheme, analyze_partial_types,
-    analyze_partial_types_with_bindings, analyze_source, analyze_source_with_fuel,
-    analyze_source_with_quota,
+    SemanticDependencyGraph, SemanticDependencyNode, TraitImplementation, TypeCapability,
+    TypeConstraint, TypeGraph, TypeNode, TypeParameter, TypeParameterId, TypeScheme,
+    analyze_partial_types, analyze_partial_types_with_bindings, analyze_source,
+    analyze_source_with_fuel, analyze_source_with_quota,
 };
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{

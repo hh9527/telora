@@ -529,6 +529,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     name.clone(),
                     TypeScheme {
                         parameters: Vec::new(),
+                        constraints: Vec::new(),
                         body: witness,
                     },
                 );
@@ -564,6 +565,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 let value = evaluator.descriptor(&TypeDescriptor::Bound(parameter_id))?;
                 bindings.insert(parameter.value.clone(), value);
             }
+            let constraints = evaluate_type_constraints(
+                source_name,
+                &parameters,
+                &binding.value.type_parameter_bounds,
+                &bindings,
+                &trait_ids,
+                &qualified_external_interfaces,
+                account,
+                sources,
+                &mut evaluator,
+            )?;
             let value = evaluate_tool_expression(
                 source_name,
                 &binding.value.value,
@@ -642,6 +654,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             };
             let scheme = TypeScheme {
                 parameters,
+                constraints,
                 body: TypeDescriptor::Function {
                     parameters: family
                         .parameters
@@ -810,6 +823,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         name.clone(),
                         TypeScheme {
                             parameters: Vec::new(),
+                            constraints: Vec::new(),
                             body: witness,
                         },
                     );
@@ -892,6 +906,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let value = evaluator.descriptor(&TypeDescriptor::Bound(id))?;
             contract_values.insert(parameter.value.clone(), value);
         }
+        let scheme_constraints = evaluate_type_constraints(
+            source_name,
+            &scheme_parameters,
+            &binding.value.type_parameter_bounds,
+            &contract_values,
+            &trait_ids,
+            &qualified_external_interfaces,
+            account,
+            sources,
+            &mut evaluator,
+        )?;
         let metadata = evaluate_tool_expression(
             source_name,
             contract,
@@ -914,6 +939,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 name.clone(),
                 TypeScheme {
                     parameters: scheme_parameters,
+                    constraints: scheme_constraints,
                     body: descriptor.clone(),
                 },
             );
@@ -1025,6 +1051,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         binding.value.name.value.clone(),
                         TypeScheme {
                             parameters: Vec::new(),
+                            constraints: Vec::new(),
                             body: witness,
                         },
                     );
@@ -1076,6 +1103,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     binding.value.name.value.clone(),
                     TypeScheme {
                         parameters: Vec::new(),
+                        constraints: Vec::new(),
                         body: witness,
                     },
                 );
@@ -1296,6 +1324,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &qualified_external_interfaces,
         &named_types,
         &local_annotations,
+        &trait_implementations,
+        &trait_ids,
         &dyn_namespaces,
         !external_roots.contains_key("Tuple"),
         account.query_context(),
@@ -1677,6 +1707,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
             Diagnostic::error(message, location),
         ));
     }
+    inference
+        .finish_type_constraints()
+        .map_err(|(location, message)| {
+            FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+        })?;
     for (name, location, descriptor, first_owned_variable) in delayed_bindings {
         if let Some(query) = &inference.query {
             query.check().map_err(|error| {
@@ -1741,6 +1776,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .entry(name.clone())
                 .or_insert_with(|| TypeScheme {
                     parameters: Vec::new(),
+                    constraints: Vec::new(),
                     body: inference.resolve(descriptor),
                 });
         }
@@ -1871,6 +1907,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                                 .get(&binding.value)
                                 .map(|body| TypeScheme {
                                     parameters: Vec::new(),
+                                    constraints: Vec::new(),
                                     body: body.clone(),
                                 })
                         })
@@ -1879,6 +1916,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                                 .get(&binding.value)
                                 .map(|body| TypeScheme {
                                     parameters: Vec::new(),
+                                    constraints: Vec::new(),
                                     body: inference.resolve(body),
                                 })
                         })
@@ -1952,6 +1990,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let propagation_families = std::mem::take(&mut inference.propagation_families);
     let not_families = std::mem::take(&mut inference.not_families);
+    let trait_evidence = std::mem::take(&mut inference.resolved_trait_evidence);
     let bootstrap_root = if let Some(root) = cached_bootstrap_root {
         root
     } else {
@@ -2055,6 +2094,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .any(|binding| binding.value.kind == BindingKind::Export),
         propagation_families,
         not_families,
+        trait_evidence,
         runtime_roots,
         external_bindings,
         dynamic_bindings: dynamic_bindings.clone(),

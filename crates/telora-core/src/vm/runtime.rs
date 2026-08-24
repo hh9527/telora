@@ -174,6 +174,7 @@ impl WorkWorld {
                 value: self.root,
                 scheme: Some(crate::TypeScheme {
                     parameters: Vec::new(),
+                    constraints: Vec::new(),
                     body: type_descriptor.clone(),
                 }),
                 origin: Some(origin.into()),
@@ -339,4 +340,3 @@ impl WorkWorld {
         .resolved_function_arity(value)
     }
 }
-

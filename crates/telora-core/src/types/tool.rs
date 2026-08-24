@@ -379,6 +379,7 @@ fn build_recursive_type_family(
     };
     let scheme = TypeScheme {
         parameters,
+        constraints: Vec::new(),
         body: TypeDescriptor::Function {
             parameters: family
                 .parameters

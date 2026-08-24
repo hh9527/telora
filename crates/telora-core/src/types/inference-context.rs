@@ -5,6 +5,8 @@ impl<'a> GenericInference<'a> {
         external_interfaces: &'a BTreeMap<String, ModuleInterface>,
         named_types: &'a BTreeMap<String, TypeDescriptor>,
         local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
+        trait_implementations: &'a [TraitImplementation],
+        trait_ids: &'a BTreeMap<String, crate::TraitId>,
         dyn_namespaces: &'a HashSet<String>,
         builtin_tuple_available: bool,
         query: Option<crate::query::QueryContext>,
@@ -27,6 +29,10 @@ impl<'a> GenericInference<'a> {
             top_level_inferred_schemes: HashMap::new(),
             inferred_schemes: HashMap::new(),
             placeholder_obligations: Vec::new(),
+            pending_type_constraints: Vec::new(),
+            trait_implementations,
+            trait_ids,
+            resolved_trait_evidence: HashMap::new(),
             hir,
             external_interfaces,
             named_types,
@@ -293,7 +299,7 @@ impl<'a> GenericInference<'a> {
         }
     }
 
-    fn instantiate(&mut self, scheme: &TypeScheme) -> TypeDescriptor {
+    fn instantiate(&mut self, scheme: &TypeScheme, location: crate::Location) -> TypeDescriptor {
         let mut implicit_parameters = Vec::new();
         if scheme.parameters.is_empty() {
             collect_bound_parameters(&scheme.body, &mut implicit_parameters);
@@ -303,13 +309,22 @@ impl<'a> GenericInference<'a> {
             .iter()
             .map(|parameter| parameter.id)
             .chain(implicit_parameters);
-        let mut variables = parameters
+        let mut variables: HashMap<TypeParameterId, InferenceVariableId> = parameters
             .map(|parameter| {
                 let variable = InferenceVariableId(self.next_variable);
                 self.next_variable += 1;
                 (parameter, variable)
             })
             .collect();
+        for constraint in &scheme.constraints {
+            if let Some(variable) = variables.get(&constraint.parameter) {
+                self.pending_type_constraints.push(PendingTypeConstraint {
+                    capability: constraint.capability.clone(),
+                    target: TypeDescriptor::Inference(*variable),
+                    location,
+                });
+            }
+        }
         self.instantiate_with(&scheme.body, &mut variables)
     }
 
@@ -586,6 +601,7 @@ impl<'a> GenericInference<'a> {
             .collect();
         Ok(Some(TypeScheme {
             parameters,
+            constraints: Vec::new(),
             body: bind_inference_variables(&descriptor, &replacements),
         }))
     }
@@ -895,4 +911,3 @@ impl<'a> GenericInference<'a> {
         }
     }
 }
-

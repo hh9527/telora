@@ -14,6 +14,7 @@ pub struct Analysis {
     pub explicit_exports: bool,
     pub(crate) propagation_families: HashMap<crate::Location, PropagationFamily>,
     pub(crate) not_families: HashMap<crate::Location, NotFamily>,
+    pub(crate) trait_evidence: HashMap<crate::Location, String>,
     pub(crate) runtime_roots: BTreeMap<String, PersistentValue>,
     pub(crate) external_bindings: HashSet<String>,
     pub(crate) dynamic_bindings: HashSet<String>,
@@ -458,6 +459,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         };
                         let scheme = TypeScheme {
                             parameters,
+                            constraints: Vec::new(),
                             body: TypeDescriptor::Function {
                                 parameters: family
                                     .parameters

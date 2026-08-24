@@ -54,6 +54,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<BytecodeFunction, FrontendError> {
         let mut retained_names = HashSet::new();
         collect_runtime_names_block(&program.value.body, &mut retained_names);
+        retained_names.extend(analysis.trait_evidence.values().cloned());
         loop {
             let before = retained_names.len();
             for binding in &program.value.body.value.bindings {

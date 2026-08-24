@@ -146,6 +146,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
     };
     let scheme = |body| TypeScheme {
         parameters: Vec::new(),
+        constraints: Vec::new(),
         body,
     };
     HashMap::from([

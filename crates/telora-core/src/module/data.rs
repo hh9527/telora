@@ -154,6 +154,7 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
             "data".into(),
             TypeScheme {
                 parameters: Vec::new(),
+                constraints: Vec::new(),
                 body: descriptor.clone(),
             },
         )]),

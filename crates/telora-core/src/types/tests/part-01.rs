@@ -75,6 +75,60 @@
         assert!(wrong_member.message.contains("String"), "{wrong_member}");
     }
 
+    #[test]
+    fn generic_schemes_publish_canonical_trait_constraints() {
+        let analysis = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               def identity: for(T: Display) Fn(T) -> T = fn(value) { value };
+               export { Display, identity };"#,
+        )
+        .unwrap();
+        let scheme = &analysis.module_interface.exports["identity"];
+        assert_eq!(scheme.display_name(), "for(T: Display) Fn(T) -> T");
+        assert!(matches!(
+            &scheme.constraints[0].capability,
+            TypeCapability::Trait { id, .. } if *id == analysis.trait_ids["Display"]
+        ));
+
+        let unknown = analyze_source(
+            "traits.telora",
+            "def identity: for(T: Missing) Fn(T) -> T = fn(value) { value };",
+        )
+        .unwrap_err();
+        assert!(unknown.message.contains("unknown trait or constraint"));
+
+        let duplicate = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               def identity: for(T: Display + Display) Fn(T) -> T = fn(value) { value };"#,
+        )
+        .unwrap_err();
+        assert!(duplicate.message.contains("duplicate type parameter constraint"));
+
+        let missing = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               def identity: for(T: Display) Fn(T) -> T = fn(value) { value };
+               def output = identity(1);"#,
+        )
+        .unwrap_err();
+        assert!(
+            missing.message.contains("Int does not implement Display"),
+            "{missing}"
+        );
+
+        let satisfied = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               impl Display for Int { display: fn(value) { "int" } };
+               def identity: for(T: Display) Fn(T) -> T = fn(value) { value };
+               def output = identity(1);"#,
+        )
+        .unwrap();
+        assert_eq!(satisfied.display(satisfied.binding_types["output"]), "Int");
+    }
+
     fn analyze_with_natives(
         source: &str,
         natives: &[(&'static str, usize)],
@@ -209,6 +263,7 @@
                     name: "Value".into(),
                     location: interface_location,
                 }],
+                constraints: Vec::new(),
                 body: TypeDescriptor::Function {
                     parameters: vec![TypeDescriptor::Bound(parameter)],
                     result: Box::new(TypeDescriptor::Bound(parameter)),

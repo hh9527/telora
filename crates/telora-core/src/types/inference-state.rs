@@ -4,6 +4,10 @@ struct GenericInference<'a> {
     top_level_inferred_schemes: HashMap<String, TypeScheme>,
     inferred_schemes: HashMap<crate::Location, TypeScheme>,
     placeholder_obligations: Vec<(InferenceVariableId, crate::Location, String)>,
+    pending_type_constraints: Vec<PendingTypeConstraint>,
+    trait_implementations: &'a [TraitImplementation],
+    trait_ids: &'a BTreeMap<String, crate::TraitId>,
+    resolved_trait_evidence: HashMap<crate::Location, String>,
     hir: &'a HirProgram,
     external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     named_types: &'a BTreeMap<String, TypeDescriptor>,
@@ -215,4 +219,3 @@ fn definition_component_plan(block: &Block, hir: &HirProgram) -> DefinitionCompo
             .collect(),
     }
 }
-
