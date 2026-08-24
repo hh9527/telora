@@ -158,6 +158,7 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
             },
         )]),
         concrete_types: BTreeMap::from([("Value".into(), descriptor)]),
+        traits: BTreeMap::new(),
         type_family_templates: BTreeMap::new(),
     }
 }

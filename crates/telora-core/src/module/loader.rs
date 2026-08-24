@@ -698,6 +698,7 @@ impl ModuleLoader {
                 ModuleInterface {
                     exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
                     concrete_types: candidate.concrete_types,
+                    traits: BTreeMap::new(),
                     type_family_templates: candidate
                         .type_family_template
                         .map(|family| BTreeMap::from([(name.clone(), family)]))
@@ -1082,4 +1083,3 @@ fn canonicalize(path: &Path) -> Result<PathBuf, ModuleError> {
         ModuleError::new(format!("cannot resolve module {}: {error}", path.display()))
     })
 }
-

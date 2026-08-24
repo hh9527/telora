@@ -266,6 +266,23 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .checked_add(1)
             .expect("type constructor slot exceeds u32");
     }
+    let trait_ids = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter(|binding| binding.value.kind == BindingKind::Trait)
+        .map(|binding| {
+            (
+                binding.value.name.value.clone(),
+                crate::TraitId {
+                    module: module_id,
+                    local: declared_initializer_slots[&binding.value.name.location],
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut canonical_nominals = HashMap::<crate::Location, TypeId>::new();
     let mut canonical_nominal_names = HashMap::<String, TypeId>::new();
     for binding in &program.value.body.value.bindings {
@@ -1861,6 +1878,28 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .filter(|(_, descriptor)| contains_named_type(descriptor))
             .map(|(name, descriptor)| (name.clone(), descriptor.clone()))
             .collect(),
+        traits: match &program.value.body.value.result.value {
+            ExprKind::Dict(fields) => fields
+                .iter()
+                .filter_map(|field| {
+                    let ExprKind::Variable(binding) = &field.value.value.value else {
+                        return None;
+                    };
+                    let id = trait_ids.get(&binding.value).copied().or_else(|| {
+                        qualified_external_interfaces
+                            .get(&binding.value)
+                            .and_then(|interface| interface.traits.get(&binding.value))
+                            .copied()
+                    })?;
+                    field
+                        .value
+                        .name
+                        .as_ref()
+                        .map(|name| (name.value.clone(), id))
+                })
+                .collect(),
+            _ => BTreeMap::new(),
+        },
         type_family_templates: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()
@@ -1979,6 +2018,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         types,
         declared_types,
         binding_types,
+        trait_ids,
         result_type,
         hir,
         definition_types,

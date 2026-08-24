@@ -56,6 +56,7 @@ impl TypeScheme {
 pub struct ModuleInterface {
     pub exports: BTreeMap<String, TypeScheme>,
     pub concrete_types: BTreeMap<String, TypeDescriptor>,
+    pub traits: BTreeMap<String, crate::TraitId>,
     pub(crate) type_family_templates: BTreeMap<String, TypeFamilyTemplate>,
 }
 
@@ -87,6 +88,7 @@ impl ModuleInterface {
                     (names[name].clone(), rename_named_types(descriptor, &names))
                 })
                 .collect(),
+            traits: self.traits.clone(),
             type_family_templates: self
                 .type_family_templates
                 .iter()
@@ -452,4 +454,3 @@ fn display_scheme_descriptor(
         ),
     }
 }
-

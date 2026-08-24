@@ -876,6 +876,12 @@ fn select_import_root(
         ModuleInterface {
             exports: BTreeMap::from([(local.to_owned(), scheme)]),
             concrete_types: interface.concrete_types,
+            traits: interface
+                .traits
+                .get(&exported.value)
+                .copied()
+                .map(|id| BTreeMap::from([(local.to_owned(), id)]))
+                .unwrap_or_default(),
             type_family_templates: interface
                 .type_family_templates
                 .get(&exported.value)

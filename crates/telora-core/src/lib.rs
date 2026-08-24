@@ -59,7 +59,7 @@ pub use module::{
 pub use module_id::{
     FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleAuthority, ModuleCName, ModuleCatalogEntry,
     ModuleCatalogOrigin, ModuleFormat, ModuleId, ModuleResolver, ModuleVisibility,
-    ResolveModuleError, ResolvedModule, TypeConstructorId, resolve_root_module,
+    ResolveModuleError, ResolvedModule, TraitId, TypeConstructorId, resolve_root_module,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use semantic::{

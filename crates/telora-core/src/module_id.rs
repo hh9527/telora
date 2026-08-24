@@ -158,6 +158,34 @@ pub struct TypeConstructorId {
     pub local: u32,
 }
 
+/// Stable identity of a static trait declaration.
+///
+/// A trait dictionary is a nominal type family, so its trait and constructor
+/// identities deliberately share the same module-local slot.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TraitId {
+    pub module: ModuleId,
+    pub local: u32,
+}
+
+impl From<TypeConstructorId> for TraitId {
+    fn from(value: TypeConstructorId) -> Self {
+        Self {
+            module: value.module,
+            local: value.local,
+        }
+    }
+}
+
+impl From<TraitId> for TypeConstructorId {
+    fn from(value: TraitId) -> Self {
+        Self {
+            module: value.module,
+            local: value.local,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ModuleCName {
     Source(PathBuf),

@@ -6,6 +6,27 @@
         }
     }
 
+    #[test]
+    fn exported_traits_keep_stable_constructor_identity() {
+        let analysis = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               export { Display };"#,
+        )
+        .unwrap();
+        let trait_id = analysis.trait_ids["Display"];
+        assert_eq!(trait_id.module, crate::ModuleId::ANONYMOUS);
+        assert_eq!(trait_id.local, crate::FIRST_DYNAMIC_MODULE_LOCAL);
+        assert_eq!(analysis.module_interface.traits["Display"], trait_id);
+        assert_eq!(
+            analysis.module_interface.type_family_templates["Display"]
+                .constructor()
+                .unwrap()
+                .id,
+            crate::TypeConstructorId::from(trait_id)
+        );
+    }
+
     fn analyze_with_natives(
         source: &str,
         natives: &[(&'static str, usize)],
@@ -93,6 +114,7 @@
                     ModuleInterface {
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),
+                        traits: BTreeMap::new(),
                         type_family_templates: BTreeMap::new(),
                     },
                 )])
@@ -1210,4 +1232,3 @@
         .unwrap();
         assert_eq!(executed.display(executed.result_type), "String");
     }
-

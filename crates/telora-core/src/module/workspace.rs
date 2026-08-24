@@ -354,6 +354,7 @@ impl WorkspaceBuilder<'_> {
                     ModuleInterface {
                         exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
                         concrete_types: candidate.concrete_types,
+                        traits: BTreeMap::new(),
                         type_family_templates: candidate
                             .type_family_template
                             .map(|family| BTreeMap::from([(name.clone(), family)]))
