@@ -500,4 +500,3 @@ impl<'a> Compiler<'a> {
     }
 
 }
-

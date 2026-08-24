@@ -43,7 +43,7 @@
                    outcome,
                    dyn_kind: dyn.kind(packed),
                    decoded,
-                   display: fmt.display(Node, root),
+                   display: fmt.render(fmt.display(Node, root)),
                    schema: json.schema(Node),
                };"#,
         )

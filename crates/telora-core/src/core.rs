@@ -27,6 +27,7 @@ pub(crate) const DYN_MODULE: &str = "std/dyn";
 pub(crate) const EQ_MODULE: &str = "std/eq";
 pub(crate) const REGEX_MODULE: &str = "std/regex";
 pub(crate) const FMT_MODULE: &str = "std/fmt";
+pub(crate) const FMT_CAPABILITY_BINDING: &str = "\0std:fmt";
 pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/rt.priv.telora";
 pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/entry/default";
 
@@ -556,13 +557,62 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                     ),
                 ),
                 (
-                    "render",
+                    "render_by",
                     NativeFunction::new_with_native_type(
-                        "std/fmt.render",
+                        "std/fmt.render_by",
                         3,
-                        0,
-                        crate::fmt::native_display,
+                        1,
+                        crate::fmt::native_display_by,
                     ),
+                ),
+                (
+                    "from_string",
+                    NativeFunction::new_with_native_type(
+                        "std/fmt.from_string",
+                        1,
+                        1,
+                        crate::fmt::native_from_string,
+                    ),
+                ),
+                (
+                    "from_int",
+                    NativeFunction::new_with_native_type(
+                        "std/fmt.from_int",
+                        1,
+                        1,
+                        crate::fmt::native_from_int,
+                    ),
+                ),
+                (
+                    "from_float",
+                    NativeFunction::new_with_native_type(
+                        "std/fmt.from_float",
+                        1,
+                        1,
+                        crate::fmt::native_from_float,
+                    ),
+                ),
+                (
+                    "from_atom",
+                    NativeFunction::new_with_native_type(
+                        "std/fmt.from_atom",
+                        1,
+                        1,
+                        crate::fmt::native_from_atom,
+                    ),
+                ),
+                (
+                    "concat",
+                    NativeFunction::new_with_native_type(
+                        "std/fmt.concat",
+                        2,
+                        1,
+                        crate::fmt::native_concat,
+                    ),
+                ),
+                (
+                    "render",
+                    NativeFunction::new("std/fmt.render", 1, crate::fmt::native_render),
                 ),
             ],
         },

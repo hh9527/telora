@@ -92,6 +92,7 @@ impl WorkspaceBuilder<'_> {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
+            let imports_fmt = imports.iter().any(|(_, _, _, _, target)| target == FMT_MODULE);
 
             self.visiting.push(module_id.clone());
             let mut semantic_imports = Vec::new();
@@ -314,6 +315,33 @@ impl WorkspaceBuilder<'_> {
                         open_candidates.entry(name).or_default().push(candidate);
                     }
                 }
+            }
+            if !matches!(module_id, ModuleCName::Builtin(_))
+                && !imports_fmt
+                && let Some(module) = self.core_modules.get(FMT_MODULE)
+            {
+                for implementation in &module.interface.trait_implementations {
+                    match module
+                        .root
+                        .export_get(&self.main.heap, &implementation.dictionary)
+                    {
+                        Ok(Some(root)) => {
+                            external_roots
+                                .entry(implementation.dictionary.clone())
+                                .or_insert(root);
+                        }
+                        Ok(None) => diagnostics.push(Diagnostic::error(
+                            "std/fmt is missing a trait implementation root",
+                            parsed.recovered.location,
+                        )),
+                        Err(error) => diagnostics.push(Diagnostic::error(
+                            error.to_string(),
+                            parsed.recovered.location,
+                        )),
+                    }
+                }
+                external_interfaces
+                    .insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
             }
             let explicit_names = parsed
                 .recovered

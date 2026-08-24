@@ -118,7 +118,7 @@ def hash_dyn: Fn(Dyn, HashState) -> HashResult = fn(value, state) {
         'Atom => hash_tagged(value, state, "Atom"),
         'Tagged => hash_tagged(value, state, "Tagged"),
         'Enum => hash_tagged(value, state, "Enum"),
-        kind => reject(value, `unsupported my_hash descriptor: \{kind}`),
+        kind => reject(value, "unsupported my_hash descriptor"),
     }
 };
 

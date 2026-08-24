@@ -129,7 +129,7 @@ def show_dyn: Fn(Dyn) -> ShowResult = fn(value) {
         'Atom => show_tagged(value),
         'Tagged => show_tagged(value),
         'Enum => show_tagged(value),
-        kind => reject(value, `unsupported my_show descriptor: \{kind}`),
+        kind => reject(value, "unsupported my_show descriptor"),
     }
 };
 

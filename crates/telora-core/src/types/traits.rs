@@ -197,6 +197,28 @@ fn trait_implementations_overlap(
     if left.trait_id != right.trait_id {
         return false;
     }
+    let property_blanket_and_non_property_target =
+        |blanket: &TraitImplementation, concrete: &TraitImplementation| {
+            matches!(blanket.target, TypeDescriptor::Bound(_))
+                && !blanket.constraints.is_empty()
+                && blanket
+                    .constraints
+                    .iter()
+                    .all(|constraint| matches!(constraint.capability, TypeCapability::Property(_)))
+                && (matches!(
+                    concrete.target,
+                    TypeDescriptor::Int | TypeDescriptor::Float | TypeDescriptor::String
+                ) || matches!(
+                    concrete.target,
+                    TypeDescriptor::Declared(DeclaredTypeDescriptor { ref name, .. })
+                        if name.ends_with("__DisplayAtom")
+                ))
+        };
+    if property_blanket_and_non_property_target(left, right)
+        || property_blanket_and_non_property_target(right, left)
+    {
+        return false;
+    }
     matches!(left.target, TypeDescriptor::Bound(_))
         || matches!(right.target, TypeDescriptor::Bound(_))
         || TypeExprId::from_descriptor(&left.target) == TypeExprId::from_descriptor(&right.target)
@@ -329,7 +351,7 @@ fn collect_trait_implementations(
 }
 
 impl GenericInference<'_> {
-    fn primitive_interpolation_type(target: &TypeDescriptor) -> bool {
+    fn standalone_interpolation_type(target: &TypeDescriptor) -> bool {
         matches!(
             target,
             TypeDescriptor::Never
@@ -350,7 +372,10 @@ impl GenericInference<'_> {
             self.pending_interpolations.push((target, location));
             return Ok(());
         }
-        if Self::primitive_interpolation_type(&target) {
+        if matches!(target, TypeDescriptor::Never) {
+            return Ok(());
+        }
+        if self.display_trait.is_none() && Self::standalone_interpolation_type(&target) {
             return Ok(());
         }
         let (trait_id, trait_name) = self.display_trait.clone().ok_or_else(|| {
@@ -631,10 +656,22 @@ impl GenericInference<'_> {
                             )
                         })?;
                     let implementation = implementation.clone();
-                    let dictionary_type = substitute_bound_parameters(
-                        &implementation.dictionary_scheme.body,
-                        &replacements,
-                    );
+                    let dictionary_type = if self
+                        .display_trait
+                        .as_ref()
+                        .is_some_and(|(id, _)| *id == trait_id)
+                        && matches!(self.resolve(&target), TypeDescriptor::Atom(_))
+                        && implementation.id.module == trait_id.module
+                        && matches!(implementation.target, TypeDescriptor::Declared(_))
+                    {
+                        self.trait_dictionary_type(trait_id, &target)
+                            .ok_or_else(|| "trait has no static dictionary type".to_owned())?
+                    } else {
+                        substitute_bound_parameters(
+                            &implementation.dictionary_scheme.body,
+                            &replacements,
+                        )
+                    };
                     let evidence = self.implementation_evidence(
                         &implementation,
                         &replacements,
@@ -693,7 +730,16 @@ impl GenericInference<'_> {
                     replacements.insert(*parameter, target.clone());
                     true
                 }
-                pattern => self.resolve(pattern) == target,
+                pattern => {
+                    self.resolve(pattern) == target
+                        || (self
+                            .display_trait
+                            .as_ref()
+                            .is_some_and(|(id, _)| *id == trait_id)
+                            && implementation.id.module == trait_id.module
+                            && matches!(pattern, TypeDescriptor::Declared(_))
+                            && matches!(target, TypeDescriptor::Atom(_)))
+                }
             };
             if !matches {
                 continue;

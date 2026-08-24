@@ -699,6 +699,27 @@ impl ModuleLoader {
                 open_candidates.entry(name).or_default().push(candidate);
             }
         }
+        let imports_fmt = program.value.body.value.bindings.iter().any(|binding| {
+            matches!(binding.value.kind, BindingKind::Import | BindingKind::OpenImport)
+                && matches!(&binding.value.value.value, ExprKind::String(path) if path == FMT_MODULE)
+        });
+        if !matches!(module_id, ModuleCName::Builtin(_))
+            && !imports_fmt
+            && let Some(module) = self.core_modules.get(FMT_MODULE)
+        {
+            self.install_trait_impl_roots(module, &mut external_roots)?;
+            let provider = ModuleCName::Builtin(FMT_MODULE.into());
+            if skeleton.is_some() {
+                let target = self.main.modules.id(&provider).ok_or_else(|| {
+                    ModuleError::new("std/fmt was not present during module graph discovery")
+                })?;
+                graph_imports.push(ImportEdge {
+                    local: Some(FMT_CAPABILITY_BINDING.into()),
+                    target,
+                });
+            }
+            external_interfaces.insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
+        }
         if let Some(skeleton) = &skeleton
             && skeleton.imports != graph_imports
         {

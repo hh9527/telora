@@ -75,11 +75,11 @@ delimiter，而不是发明新的 escape。
 let greeting = `hello \{name}`;
 ```
 
-插值直接支持 String、Int、Float 和 Atom primitive 表示。对其他静态已知类型 `T`，
-插值要求 `T: std/fmt.Display`，并在编译期降低为已选中 dictionary 的 `display`
-成员调用。无法解析的类型、`Any` 和 `Dyn` 必须先显式投影或格式化。声明 wrapper
-在 primitive 分派前被解开，因此 Bool 值的插值依靠 Atom 表示工作。String
-保持原文本，Int 使用十进制表示，Atom 省略前导 `'`。Float
+插值中的每个表达式都要求 `T: std/fmt.Display`，并在编译期降低为已选中
+dictionary 的 `display` 成员调用。String、Int、Float 和 Atom 由标准能力提供
+显式实现；无法解析的类型、`Any` 和 `Dyn` 必须先显式投影或格式化。具名 enum
+不会因运行时使用 Atom 表示而自动获得 `Display`。String 保持原文本，Int 使用
+十进制表示，Atom 省略前导 `'`。Float
 使用有限 binary64 的文本表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一
 binary64 值的最短十进制文本，不受 locale 影响。该表示保留负零的符号，但不保留
 整数值的小数点，例如 `3.0` 表示为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的
@@ -100,8 +100,11 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 
 `display_by` 是受控模板 eDSL。它发布 `DisplayBy` typed property；`std/fmt` 中的
 property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence。
-`fmt.Display.display(endpoint)`、`fmt.display(Endpoint, endpoint)` 和上述插值共享
-同一展示定义。`dbg!` 的有界 repr 属于 Host-only 观察；codec/JSON 则是数据交换协议，三者
+`Display.display` 返回 opaque `Fmt`，`fmt.display` 也返回 `Fmt`；显式调用使用
+`fmt.render(fmt.Display.display(endpoint))` 得到 String。`fmt.concat(strings, items)`
+按 `strings.len == items.len + 1` 组合常量文本和 `Fmt` fragment。插值使用同一
+`Display -> Fmt` 路径，并只在整个字符串末端物化一次。`dbg!` 的有界 repr 属于
+Host-only 观察；codec/JSON 则是数据交换协议，三者
 都不能作为彼此的隐式替代。
 
 Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
@@ -458,7 +461,7 @@ Trait 声明定义一个由 provider module 和稳定 local slot 标识的 nomin
 
 ```telora
 trait Display {
-    display: Fn(Self) -> String,
+    display: Fn(Self) -> Fmt,
 };
 
 impl Display for Endpoint {
@@ -466,7 +469,7 @@ impl Display for Endpoint {
 };
 
 def render: for(T: Display) Fn(T) -> String = fn(value) {
-    Display.display(value)
+    fmt.render(Display.display(value))
 };
 ```
 

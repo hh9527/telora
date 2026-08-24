@@ -175,7 +175,7 @@ def equal_dyn: Fn(Dyn, Dyn) -> EqualityResult = fn(left, right) {
             'Atom => equal_tagged(left, right),
             'Tagged => equal_tagged(left, right),
             'Enum => equal_tagged(left, right),
-            kind => reject(left, `unsupported equality descriptor: \{kind}`),
+            kind => reject(left, "unsupported equality descriptor"),
         }
     } else {
         'Ok('False)

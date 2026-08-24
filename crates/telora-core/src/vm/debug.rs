@@ -237,14 +237,3 @@ impl<'a> DebugValueFormatter<'a> {
         }
     }
 }
-
-fn decimal_length(value: i64) -> usize {
-    let magnitude = value.unsigned_abs();
-    let digits = if magnitude == 0 {
-        1
-    } else {
-        magnitude.ilog10() as usize + 1
-    };
-    digits + usize::from(value.is_negative())
-}
-

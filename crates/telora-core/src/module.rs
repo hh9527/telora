@@ -7,8 +7,8 @@ use crate::compiler::{
     type_family_template_link_key,
 };
 use crate::core::{
-    DEFAULT_ENTRY_MODULE, EDGE_RUNTIME_MODULE, PRELUDE_MODULE, default_entry_source,
-    edge_runtime_source, module_specs,
+    DEFAULT_ENTRY_MODULE, EDGE_RUNTIME_MODULE, FMT_CAPABILITY_BINDING, FMT_MODULE, PRELUDE_MODULE,
+    default_entry_source, edge_runtime_source, module_specs,
 };
 use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_type_id};
 use crate::json::{

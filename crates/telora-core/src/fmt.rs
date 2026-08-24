@@ -1,5 +1,6 @@
 use crate::{CallContext, NativeError, NativeType, ValueRef};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TemplatePart {
@@ -9,6 +10,43 @@ enum TemplatePart {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DisplayTemplate(Vec<TemplatePart>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Fmt(Arc<FmtNode>);
+
+#[derive(Debug, Eq, PartialEq)]
+enum FmtNode {
+    String(String),
+    Int(i64),
+    Float(u64),
+    Atom(String),
+    Concat {
+        strings: Vec<String>,
+        items: Vec<Fmt>,
+    },
+}
+
+impl Fmt {
+    fn string(value: String) -> Self {
+        Self(Arc::new(FmtNode::String(value)))
+    }
+
+    fn int(value: i64) -> Self {
+        Self(Arc::new(FmtNode::Int(value)))
+    }
+
+    fn float(value: f64) -> Self {
+        Self(Arc::new(FmtNode::Float(value.to_bits())))
+    }
+
+    fn atom(value: String) -> Self {
+        Self(Arc::new(FmtNode::Atom(value)))
+    }
+
+    fn concat(strings: Vec<String>, items: Vec<Self>) -> Self {
+        Self(Arc::new(FmtNode::Concat { strings, items }))
+    }
+}
 
 #[derive(Clone)]
 enum DisplayPlan {
@@ -27,6 +65,76 @@ fn template_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeErro
         .as_native_type()
         .cloned()
         .ok_or_else(|| NativeError::new("DisplayTemplate native type is not linked"))
+}
+
+fn fmt_type(context: &CallContext<'_, '_>) -> Result<NativeType, NativeError> {
+    context
+        .value(context.upvalue(0)?)?
+        .as_native_type()
+        .cloned()
+        .ok_or_else(|| NativeError::new("Fmt native type is not linked"))
+}
+
+fn fmt_argument(context: &CallContext<'_, '_>, index: usize) -> Result<Fmt, NativeError> {
+    let value = context.value(context.argument(index)?)?;
+    let native_type = value
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("expected std/fmt#Fmt"))?;
+    if native_type.qualified_name() != "std/fmt#Fmt" {
+        return Err(NativeError::new("expected std/fmt#Fmt"));
+    }
+    value
+        .as_opaque::<Fmt>(native_type)
+        .cloned()
+        .ok_or_else(|| NativeError::new("expected std/fmt#Fmt"))
+}
+
+fn write_fmt(value: &Fmt, output: &mut String, depth: usize) -> Result<(), NativeError> {
+    if depth >= 128 {
+        return Err(NativeError::new(
+            "std/fmt value exceeds the recursive rendering limit",
+        ));
+    }
+    match value.0.as_ref() {
+        FmtNode::String(value) | FmtNode::Atom(value) => output.push_str(value),
+        FmtNode::Int(value) => output.push_str(&value.to_string()),
+        FmtNode::Float(value) => output.push_str(&f64::from_bits(*value).to_string()),
+        FmtNode::Concat { strings, items } => {
+            for (index, item) in items.iter().enumerate() {
+                output.push_str(&strings[index]);
+                write_fmt(item, output, depth + 1)?;
+            }
+            output.push_str(&strings[items.len()]);
+        }
+    }
+    Ok(())
+}
+
+fn rendered(value: &Fmt) -> Result<String, NativeError> {
+    let mut output = String::new();
+    write_fmt(value, &mut output, 0)?;
+    Ok(output)
+}
+
+pub(crate) fn write_interpolation_value(
+    value: ValueRef<'_>,
+    output: &mut String,
+) -> Result<(), NativeError> {
+    let native_type = value
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("string interpolation expected std/fmt#Fmt"))?;
+    if native_type.qualified_name() != "std/fmt#Fmt" {
+        return Err(NativeError::new(
+            "string interpolation expected std/fmt#Fmt",
+        ));
+    }
+    write_fmt(
+        value
+            .as_opaque::<Fmt>(native_type)
+            .ok_or_else(|| NativeError::new("string interpolation expected std/fmt#Fmt"))?,
+        output,
+        0,
+    )
 }
 
 fn resolve(mut metadata: ValueRef<'_>) -> Result<ValueRef<'_>, NativeError> {
@@ -295,16 +403,107 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
     context.set_opaque(result, native_type, template)
 }
 
-pub(crate) fn native_display(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+pub(crate) fn native_display_by(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = fmt_type(context)?;
     let property_type = context
         .value(context.argument(0)?)?
         .declared_type_id()
-        .ok_or_else(|| NativeError::new("std/fmt.render expects DisplayBy Type metadata"))?;
+        .ok_or_else(|| NativeError::new("std/fmt.render_by expects DisplayBy Type metadata"))?;
     let output = display_value(
         context.value(context.argument(1)?)?,
         context.value(context.argument(2)?)?,
         Some(property_type),
     )?;
+    context.set_opaque(context.result(), native_type, Fmt::string(output))
+}
+
+pub(crate) fn native_from_string(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = fmt_type(context)?;
+    let value = context
+        .value(context.argument(0)?)?
+        .unwrap_declared()
+        .and_then(ValueRef::as_str)
+        .ok_or_else(|| NativeError::new("std/fmt.from_string expects String"))?
+        .to_string();
+    context.set_opaque(context.result(), native_type, Fmt::string(value))
+}
+
+pub(crate) fn native_from_int(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = fmt_type(context)?;
+    let value = context
+        .value(context.argument(0)?)?
+        .unwrap_declared()
+        .and_then(ValueRef::as_int)
+        .ok_or_else(|| NativeError::new("std/fmt.from_int expects Int"))?;
+    context.set_opaque(context.result(), native_type, Fmt::int(value))
+}
+
+pub(crate) fn native_from_float(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = fmt_type(context)?;
+    let value = context
+        .value(context.argument(0)?)?
+        .unwrap_declared()
+        .and_then(ValueRef::as_float)
+        .ok_or_else(|| NativeError::new("std/fmt.from_float expects Float"))?;
+    context.set_opaque(context.result(), native_type, Fmt::float(value))
+}
+
+pub(crate) fn native_from_atom(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = fmt_type(context)?;
+    let value = context
+        .value(context.argument(0)?)?
+        .unwrap_declared()
+        .and_then(ValueRef::as_atom)
+        .ok_or_else(|| NativeError::new("std/fmt.from_atom expects Atom"))?
+        .to_string();
+    context.set_opaque(context.result(), native_type, Fmt::atom(value))
+}
+
+pub(crate) fn native_concat(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let native_type = fmt_type(context)?;
+    let strings = context.value(context.argument(0)?)?;
+    let items = context.value(context.argument(1)?)?;
+    let string_count = strings
+        .sequence_len()
+        .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(String)"))?;
+    let item_count = items
+        .sequence_len()
+        .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
+    if string_count != item_count.saturating_add(1) {
+        return Err(NativeError::new(format!(
+            "std/fmt.concat requires strings.len == items.len + 1, got {string_count} and {item_count}"
+        )));
+    }
+    let strings = (0..string_count)
+        .map(|index| {
+            strings
+                .sequence_get(index)
+                .and_then(ValueRef::as_str)
+                .map(|value| value.to_string())
+                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(String)"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let items = (0..item_count)
+        .map(|index| {
+            let value = items
+                .sequence_get(index)
+                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
+            let fmt_type = value
+                .opaque_native_type()
+                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))?;
+            value
+                .as_opaque::<Fmt>(fmt_type)
+                .filter(|_| fmt_type.qualified_name() == "std/fmt#Fmt")
+                .cloned()
+                .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    context.set_opaque(context.result(), native_type, Fmt::concat(strings, items))
+}
+
+pub(crate) fn native_render(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let value = fmt_argument(context, 0)?;
+    let output = rendered(&value)?;
     context.set_string(context.result(), output)
 }
 

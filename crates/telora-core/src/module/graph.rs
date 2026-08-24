@@ -215,6 +215,17 @@ impl ModuleGraph {
                 blueprint.imports.push((None, prelude.clone()));
                 pending.push(prelude);
             }
+            let imports_fmt = bindings.iter().any(|binding| {
+                matches!(binding.value.kind, BindingKind::Import | BindingKind::OpenImport)
+                    && matches!(&binding.value.value.value, ExprKind::String(path) if path == FMT_MODULE)
+            });
+            if !matches!(cname, ModuleCName::Builtin(_)) && !imports_fmt {
+                let fmt = ModuleCName::builtin(FMT_MODULE);
+                blueprint
+                    .imports
+                    .push((Some(FMT_CAPABILITY_BINDING.into()), fmt.clone()));
+                pending.push(fmt);
+            }
             let _ = context_path;
             blueprints.insert(cname, blueprint);
         }

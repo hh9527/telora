@@ -992,13 +992,9 @@ impl Vm {
                                         })
                                     })
                                     .collect::<Result<Vec<_>, _>>()?;
-                                let mut length = 0usize;
+                                let mut output = String::new();
                                 for value in &values {
-                                    length += if let DecodedValue::Int(value) = value.value() {
-                                        decimal_length(value)
-                                    } else if let DecodedValue::Float(value) = value.value() {
-                                        value.to_string().len()
-                                    } else if let Some(value) =
+                                    if let Some(value) =
                                         view.string_text(*value).map_err(|heap_error| {
                                             error(
                                                 RuntimeErrorKind::InvalidBytecode,
@@ -1008,7 +1004,11 @@ impl Vm {
                                             )
                                         })?
                                     {
-                                        value.len()
+                                        output.push_str(value.as_str());
+                                    } else if let DecodedValue::Int(value) = value.value() {
+                                        output.push_str(&value.to_string());
+                                    } else if let DecodedValue::Float(value) = value.value() {
+                                        output.push_str(&value.to_string());
                                     } else if let Some(value) =
                                         view.atom_text(*value).map_err(|heap_error| {
                                             error(
@@ -1019,17 +1019,26 @@ impl Vm {
                                             )
                                         })?
                                     {
-                                        value.len()
+                                        output.push_str(value.as_str());
                                     } else {
-                                        return Err(runtime_shallow_type_error(
-                                            "String, Int, Float, or Atom interpolation value",
-                                            *value,
-                                            function,
-                                            pc,
-                                        ));
-                                    };
+                                        crate::fmt::write_interpolation_value(
+                                            crate::ValueRef {
+                                                value: *value,
+                                                view,
+                                            },
+                                            &mut output,
+                                        )
+                                        .map_err(|native_error| {
+                                            error(
+                                                RuntimeErrorKind::TypeMismatch,
+                                                native_error.message,
+                                                function,
+                                                pc,
+                                            )
+                                        })?;
+                                    }
                                 }
-                                let bytes = u64::try_from(length).map_err(|_| {
+                                let bytes = u64::try_from(output.len()).map_err(|_| {
                                     allocation_error(
                                         "String allocation size overflowed",
                                         function,
@@ -1037,40 +1046,6 @@ impl Vm {
                                     )
                                 })?;
                                 charge_allocation(account, bytes, function, pc)?;
-                                let mut output = String::with_capacity(length);
-                                for value in &values {
-                                    if let DecodedValue::Int(value) = value.value() {
-                                        write!(output, "{value}")
-                                            .expect("writing to String cannot fail");
-                                    } else if let DecodedValue::Float(value) = value.value() {
-                                        write!(output, "{value}")
-                                            .expect("writing to String cannot fail");
-                                    } else if let Some(value) =
-                                        view.string_text(*value).map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?
-                                    {
-                                        output.push_str(value.as_str());
-                                    } else if let Some(value) =
-                                        view.atom_text(*value).map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?
-                                    {
-                                        output.push_str(value.as_str());
-                                    } else {
-                                        unreachable!("interpolation values were validated");
-                                    }
-                                }
                                 let value = Val::new(
                                     current.string(Some(background), &output),
                                     instruction_location(function, pc),

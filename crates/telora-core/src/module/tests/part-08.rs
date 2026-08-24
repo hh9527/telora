@@ -101,11 +101,11 @@
                type Endpoint = struct { host: String, port: Int };
                @fmt.display_by("{name}@{endpoint} {{ready}} {ratio} {name}")
                type Service = struct { name: String, endpoint: Endpoint, ratio: Float };
-               export def output = fmt.display(Service, {
+               export def output = fmt.render(fmt.display(Service, {
                    name: "api",
                    endpoint: { host: "localhost", port: 8080 },
                    ratio: -0.0,
-               });"#,
+               }));"#,
         )
         .unwrap();
         let engine = recovery_engine();
@@ -311,13 +311,92 @@
                @fmt.display_by("{host}:{port}")
                type Endpoint = struct { host: String, port: Int };
                def endpoint: Endpoint = { host: "localhost", port: 8080 };
-               export def output = fmt.Display.display(endpoint);"#,
+               export def output = fmt.render(fmt.Display.display(endpoint));"#,
         )
         .unwrap();
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         let executed = engine.execute(&module).unwrap();
         assert_eq!(named_output(&executed).to_string(), "\"localhost:8080\"");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn fmt_fragments_render_primitives_and_structured_concatenation() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               export def output = {
+                   string: fmt.render(fmt.Display.display("host")),
+                   int: fmt.render(fmt.Display.display(8080)),
+                   float: fmt.render(fmt.Display.display(1.25)),
+                   atom: fmt.render(fmt.Display.display('Ready)),
+                   joined: fmt.render(fmt.concat(
+                       ["[", "]:", ""],
+                       [fmt.from_string("api"), fmt.from_int(3)],
+                   )),
+               };"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let output = named_output(&engine.execute(&module).unwrap()).to_string();
+        for expected in [
+            "string: \"host\"",
+            "int: \"8080\"",
+            "float: \"1.25\"",
+            "atom: \"Ready\"",
+            "joined: \"[api]:3\"",
+        ] {
+            assert!(output.contains(expected), "{output}");
+        }
+
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               export def output = fmt.concat(["missing tail"], [fmt.from_int(1)]);"#,
+        )
+        .unwrap();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let error = engine.execute(&module).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("strings.len == items.len + 1"),
+            "{error}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn standard_interpolation_uses_display_without_atom_representation_leaks() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"export def output = `value=\{1}/\{'Ready}`;"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        assert_eq!(
+            named_output(&engine.execute(&module).unwrap()).to_string(),
+            "\"value=1/Ready\""
+        );
+
+        fs::write(
+            &main,
+            r#"type Flag = enum { 'On, 'Off };
+               def flag: Flag = 'On;
+               export def output = `flag=\{flag}`;"#,
+        )
+        .unwrap();
+        let error = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(error.message().contains("does not implement"), "{error}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -641,7 +720,7 @@
         fs::write(
             &capability,
             r#"trait Display { display: Fn(Self) -> String };
-               impl Display for Int { display: fn(value) { `int=\{value}` } };
+               impl Display for Int { display: fn(value) { "int" } };
                export def render: for(T: Display) Fn(T) -> String = fn(value) {
                    Display.display(value)
                };
@@ -660,8 +739,8 @@
         let engine = recovery_engine();
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         let output = named_output(&engine.execute(&module).unwrap()).to_string();
-        assert!(output.contains("direct: \"int=8\""), "{output}");
-        assert!(output.contains("generic: \"int=9\""), "{output}");
+        assert!(output.contains("direct: \"int\""), "{output}");
+        assert!(output.contains("generic: \"int\""), "{output}");
 
         fs::write(
             &facade,
@@ -679,7 +758,7 @@
         let module = engine.load_module(&main, BTreeMap::new()).unwrap();
         assert_eq!(
             named_output(&engine.execute(&module).unwrap()).to_string(),
-            "\"int=10\""
+            "\"int\""
         );
 
         fs::write(
@@ -960,7 +1039,7 @@
         assert_eq!(tag.as_atom().as_deref(), Some("Err"));
         assert_eq!(
             payload.to_string(),
-            "\"unsupported my_show descriptor: Func\""
+            "\"unsupported my_show descriptor\""
         );
         fs::remove_dir_all(directory).unwrap();
     }

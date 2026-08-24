@@ -14,8 +14,8 @@ used by a trait implementation.
 
 The first standard capability is `fmt.Display`. A successfully published
 `fmt.DisplayBy` property supplies `Display` evidence through one standard
-blanket implementation. Interpolating a value requires primitive display or a
-statically resolved `Display` implementation.
+blanket implementation. Every interpolated value requires a statically
+resolved `Display` implementation and produces an opaque `Fmt` fragment.
 
 ## Surface syntax
 
@@ -23,7 +23,7 @@ statically resolved `Display` implementation.
 
 ```telora
 trait Display {
-    display: Fn(Self) -> String,
+    display: Fn(Self) -> Fmt,
 };
 ```
 
@@ -51,7 +51,7 @@ Every required member appears once and an implementation cannot add members.
 
 ```telora
 def render: for(T: Display) Fn(T) -> String = fn(value) {
-    Display.display(value)
+    fmt.render(Display.display(value))
 };
 ```
 
@@ -84,7 +84,7 @@ type diagnostic at the trait-member expression.
 `Property(P)` is a built-in parameterized constraint:
 
 ```telora
-for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T), T) -> String
+for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T), T) -> Fmt
 ```
 
 For a successfully sealed module, `T: Property(P)` proves that
@@ -118,7 +118,8 @@ def text = `endpoint = \{endpoint}`;
 ```
 
 `Endpoint` publishes `DisplayBy`, the standard blanket implementation supplies
-`Endpoint: Display`, and interpolation lowers to `Display.display(endpoint)`.
+`Endpoint: Display`, and interpolation lowers through
+`Display.display(endpoint)` to a `Fmt` fragment.
 
 ## Identity and module visibility
 
@@ -160,13 +161,13 @@ using its rigid type parameters and bound dictionaries.
 A surface scheme:
 
 ```telora
-for(T: Display) Fn(T) -> String
+for(T: Display) Fn(T) -> Fmt
 ```
 
 has the internal callable ABI:
 
 ```text
-for(T) Fn(DisplayEvidence(T), T) -> String
+for(T) Fn(DisplayEvidence(T), T) -> Fmt
 ```
 
 The hidden evidence argument is inserted at bounded generic call sites and is
@@ -193,10 +194,17 @@ The payload is implementation data consumed after static evidence selection.
 
 ## Interpolation
 
-Primitive interpolation remains defined directly for String, Int, Float and
-Atom runtime categories. For every other statically known type `T`, interpolation
-requires `T: fmt.Display` and lowers to the trait member call. Unknown, Any and
-Dyn values require an explicit projection or explicit formatting operation.
+Every interpolated expression of type `T` requires `T: fmt.Display` and lowers
+to the selected trait member call. The standard module supplies implementations
+for String, Int, Float and every Atom singleton. Named enums do not inherit
+Display from their runtime Atom representation. Unknown, Any and Dyn values
+require an explicit projection or explicit formatting operation.
+
+`Display.display` returns the opaque native type `Fmt`. `fmt.concat(strings,
+items)` requires `strings.len == items.len + 1` and builds an immutable delayed
+display tree. `fmt.render` materializes that tree as String. An interpolation
+instruction performs the same concatenation and renders once after all dynamic
+fragments have been selected.
 
 Failure to resolve `Display` is a type diagnostic at the interpolated
 expression. A selected implementation may still produce an ordinary sourced
@@ -244,8 +252,7 @@ The following are outside this RFC:
 - `Property(P)` is proved only by a successfully published type property;
 - `DisplayBy` supplies `Display` through the standard blanket implementation;
 - nested Display values work through `fmt.display`;
-- interpolation of a Display value succeeds without changing primitive
-  interpolation behavior;
+- primitive and nominal interpolation use the same `Display -> Fmt` path;
 - tree-sitter parses and highlights trait declarations, implementations and
   bounded parameters without recovery nodes;
 - LSP hover preserves and renders canonical trait constraints; and

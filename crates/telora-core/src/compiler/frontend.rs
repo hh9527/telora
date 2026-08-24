@@ -223,7 +223,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
     erased_bindings: &HashSet<String>,
     static_funcs: &HashMap<String, crate::FuncId>,
 ) -> Result<BytecodeFunction, FrontendError> {
-    validate_hir(source_file, &analysis.hir)?;
+    validate_hir(source_file, &analysis.hir, &analysis.external_bindings)?;
     let mut program = program.clone();
     program.value.body.value.bindings.retain(|binding| {
         matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
@@ -368,7 +368,7 @@ pub(crate) fn compile_expression_with_external_bindings(
 ) -> Result<BytecodeFunction, FrontendError> {
     let bindings = bindings.into_iter().collect::<Vec<_>>();
     let hir = HirProgram::resolve_runtime_expression(expression, bindings.iter().cloned());
-    validate_hir(source_file, &hir)?;
+    validate_hir(source_file, &hir, &HashSet::new())?;
     let mut compiler = Compiler {
         source_name,
         function_name: function_name.to_owned(),
@@ -401,8 +401,15 @@ pub(crate) fn compile_expression_with_external_bindings(
     compiler.finish()
 }
 
-fn validate_hir(source_file: &SourceFile, hir: &HirProgram) -> Result<(), FrontendError> {
-    let Some(reference) = hir.unresolved().next() else {
+fn validate_hir(
+    source_file: &SourceFile,
+    hir: &HirProgram,
+    external_bindings: &HashSet<String>,
+) -> Result<(), FrontendError> {
+    let Some(reference) = hir
+        .unresolved()
+        .find(|reference| !external_bindings.contains(&reference.name))
+    else {
         return Ok(());
     };
     let position = source_file.position(reference.location.start);

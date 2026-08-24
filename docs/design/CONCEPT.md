@@ -95,6 +95,10 @@ module semantics、source/provenance 行为、diagnostic 与有界求值机制�
 **Generic standard library（通用标准库）**包含契约具有广泛意义的确定操作。它
 建立在语言机制之上，并且不依赖任何应用实验就能解释和使用。
 
+`std/fmt` 的 `Fmt` 是标准库拥有的 opaque、不可变延迟展示树。`Display` evidence
+把一个静态类型的值转换成 `Fmt`，`concat` 组合 fragment，`render` 才产生最终
+String。它不是通用动态值、codec 表示或 Host debug repr。
+
 ### Domain Library 与 Method Library
 
 **Domain library（领域库）**引入领域 vocabulary；**method library（方法库）**

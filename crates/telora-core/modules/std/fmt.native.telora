@@ -1,12 +1,19 @@
 import "std/type-desc" { TypeDesc };
 
 native type DisplayTemplate @0;
+native type Fmt @1;
 
 @property('Type)
 type DisplayBy = struct { template: DisplayTemplate };
 
 native prepare: Fn(String, Type, TypeDesc) -> DisplayTemplate;
-native render: for(A) Fn(Type, TypeOf(A), A) -> String;
+native render_by: for(A) Fn(Type, TypeOf(A), A) -> Fmt;
+native from_string: Fn(String) -> Fmt;
+native from_int: Fn(Int) -> Fmt;
+native from_float: Fn(Float) -> Fmt;
+native from_atom: for(A) Fn(A) -> Fmt;
+native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
+native render: Fn(Fmt) -> String;
 
 def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(template) {
     fn(target, previous) {
@@ -15,16 +22,35 @@ def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(
     }
 };
 
-def display: for(A) Fn(TypeOf(A), A) -> String = fn(target, value) {
-    render(DisplayBy, target, value)
+def display: for(A) Fn(TypeOf(A), A) -> Fmt = fn(target, value) {
+    render_by(DisplayBy, target, value)
 };
 
 trait Display {
-    display: Fn(Self) -> String,
+    display: Fn(Self) -> Fmt,
 };
+
+type __DisplayAtom = enum { '__DisplayAtom };
+
+impl Display for String { display: from_string };
+impl Display for Int { display: from_int };
+impl Display for Float { display: from_float };
+impl Display for __DisplayAtom { display: from_atom };
 
 impl for(T: Property(DisplayBy)) Display for T {
     display: fn(value) { display(T, value) },
 };
 
-export { Display, DisplayBy, display, display_by };
+export {
+    Display,
+    DisplayBy,
+    Fmt,
+    concat,
+    display,
+    display_by,
+    from_atom,
+    from_float,
+    from_int,
+    from_string,
+    render,
+};

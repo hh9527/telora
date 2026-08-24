@@ -2000,6 +2000,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .map_err(|message| frontend_error(source_name, message))?;
         }
     }
+    let module_display_trait = if source_name == "<std/fmt.native.telora" {
+        trait_ids.get("Display").copied()
+    } else {
+        qualified_external_interfaces
+            .values()
+            .find_map(|interface| interface.display_trait)
+    };
     let module_interface = ModuleInterface {
         exports: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
@@ -2069,19 +2076,20 @@ pub(crate) fn analyze_program_with_bindings_observed(
         },
         trait_implementations: trait_implementations
             .iter()
+            .filter(|implementation| {
+                source_name == "<std/fmt.native.telora"
+                    || !module_display_trait.is_some_and(|display| {
+                        implementation.trait_id == display
+                            && implementation.id.module == display.module
+                    })
+            })
             .map(published_trait_implementation)
             .collect(),
         type_properties: local_type_properties
             .iter()
             .map(|(evidence, _)| evidence.clone())
             .collect(),
-        display_trait: if source_name == "<std/fmt.native.telora" {
-            trait_ids.get("Display").copied()
-        } else {
-            qualified_external_interfaces
-                .values()
-                .find_map(|interface| interface.display_trait)
-        },
+        display_trait: module_display_trait,
         type_family_templates: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()

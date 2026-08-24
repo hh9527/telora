@@ -654,10 +654,11 @@ Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符�
 代替 `\"`，并额外用 `\{...}` 表达插值。raw String 不处理 escape 或插值；正则、
 SQL 模板等包含大量反斜杠的文本优先使用 raw String，并按需增加 `#` delimiter。
 
-插值直接支持 String、Int、Float 和 Atom primitive 表示。其他静态已知类型必须
-实现 `std/fmt.Display`；编译器静态选择 implementation，并把插值降低为普通
-dictionary member 调用。`Any`、`Dyn` 或无法解析的类型必须先显式投影或格式化。
-`Bool` 值可直接插值，因为其表示为 Atom。Float 使用有限 binary64 的稳定文本表示：最短、可往返、不受
+每个插值表达式都必须实现 `std/fmt.Display`；String、Int、Float 和 Atom 的实现
+由标准能力提供。编译器静态选择 implementation，并把插值降低为普通 dictionary
+member 调用。`Any`、`Dyn` 或无法解析的类型必须先显式投影或格式化。Bool 和其他
+具名 enum 不会因运行时使用 Atom 表示而自动获得 `Display`。Float 使用有限
+binary64 的稳定文本表示：最短、可往返、不受
 locale 影响；`3.0` 显示为 `3`，`-0.0` 显示为 `-0`，原始小数或指数拼写不会保留。
 
 没有 `Display` implementation 的 Tagged、Struct、Array、Dict、Tuple、Dyn 或用户值
@@ -679,13 +680,16 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 ```
 
 `display_by` 是受控模板 eDSL：它发布 `DisplayBy` typed property，标准 blanket impl
-据此为 `Endpoint` 提供 `Display` evidence。也可以显式调用
-`fmt.Display.display(endpoint)` 或 `fmt.display(Endpoint, endpoint)`。这套机制是
-静态 dictionary elaboration，不会把模板转换成 Telora 源码。
+据此为 `Endpoint` 提供 `Display` evidence。`Display.display` 和 `fmt.display`
+返回 opaque `Fmt`；显式物化文本写作
+`fmt.render(fmt.Display.display(endpoint))`。`fmt.concat(strings, items)` 要求
+`strings.len == items.len + 1`，并以延迟 fragment 组合常量文本与展示值。插值在
+整个结果的末端只物化一次。这套机制是静态 dictionary elaboration，不会把模板
+转换成 Telora 源码。
 
 `dbg!` 的 `repr` 是 Host-only、有界且 cycle-safe 的观察文本，不进入 Telora String；
 codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr 会保留 `3.0` 和
-`-0.0`，有意不同于插值及 `fmt.display` 的 `3` 和 `-0`。
+`-0.0`，有意不同于插值及 `fmt.render` 的 `3` 和 `-0`。
 
 ```telora
 def check_capability: Fn(Subject) -> Result(Capability, String) = fn(subject) {
