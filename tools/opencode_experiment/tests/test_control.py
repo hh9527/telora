@@ -52,6 +52,7 @@ from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull,
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
+    _resume,
     _status,
     _test_connect,
     _update,
@@ -165,7 +166,47 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_control_surface_includes_connection_preflight(self):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
-                         {"test-connect", "start", "stat", "status", "update", "publish"})
+                         {"test-connect", "start", "stat", "status", "update", "publish", "resume"})
+
+    def test_resume_targets_an_existing_inactive_role(self):
+        client = mock.Mock()
+        client.children.return_value = [{"id": "ses_a5", "agent": "a5"}]
+        client.statuses.return_value = {"ses_a5": {"type": "unknown"}}
+        context = mock.Mock()
+        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]}}
+        context.manifest.prompts = {"continue": "continue"}
+        context.client.return_value = client
+
+        self.assertEqual(_resume(context, "a5")["session_id"], "ses_a5")
+        client.prompt_session.assert_called_once_with("ses_a5", "continue", agent="a5")
+
+    def test_resume_rejects_a_busy_role(self):
+        client = mock.Mock()
+        client.children.return_value = [{"id": "ses_a5", "agent": "a5"}]
+        client.statuses.return_value = {"ses_a5": {"type": "busy"}}
+        context = mock.Mock()
+        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]}}
+        context.manifest.prompts = {"continue": "continue"}
+        context.client.return_value = client
+
+        with self.assertRaisesRegex(ControlError, "already busy"):
+            _resume(context, "a5")
+
+    def test_resume_rejects_unknown_role_or_ambiguous_session(self):
+        context = mock.Mock()
+        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]}}
+
+        with self.assertRaisesRegex(ControlError, "unknown workflow role"):
+            _resume(context, "a4")
+
+        client = mock.Mock()
+        client.children.return_value = [
+            {"id": "ses_a5_old", "agent": "a5"},
+            {"id": "ses_a5_new", "agent": "a5"},
+        ]
+        context.client.return_value = client
+        with self.assertRaisesRegex(ControlError, "expected one existing a5 session, found 2"):
+            _resume(context, "a5")
 
     def test_start_requires_test_and_plan_identity(self):
         args = control_parser().parse_args(["start", "ontology-3-009", "ontology-3"])

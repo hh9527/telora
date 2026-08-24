@@ -54,6 +54,7 @@ oc-ctl stat <test-id>
 oc-ctl status <test-id>
 oc-ctl update <test-id> <dest-file>=<src-file>...
 oc-ctl publish <test-id> <artifact>[=!]...
+oc-ctl resume <test-id> <role>
 ```
 
 `update` atomically copies any Host-readable file. Relative source paths are resolved from the
@@ -65,6 +66,12 @@ and `next_host_actions`; `status --verbose` additionally includes the complete a
 runtime state. `stat` reports each role/task duration and tokens, longest thinking interval, and
 Telora command count. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.
+
+`resume` prompts the role's one existing inactive child session with the plan's configured continue
+prompt. It is reserved for a role that ended a response while waiting for Host clarification; it
+never creates a child, replaces session context, or resumes a busy role. `status --verbose` includes
+the five most recent assistant text responses so the Host can identify that clarification boundary
+without inspecting private transport data.
 
 `start --from` creates a fresh workspace and OpenCode session while inheriting trusted progress from
 an earlier execution of the same plan. An artifact is inherited only when it is current and its

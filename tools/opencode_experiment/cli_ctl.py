@@ -18,6 +18,7 @@ from .lifecycle import (
     verify_prepared,
 )
 from .metrics import collect_metrics
+from .observe import assistant_messages, text_parts
 from .state import (
     atomic_write,
     create_run_config,
@@ -61,6 +62,9 @@ def parser() -> argparse.ArgumentParser:
     publish = commands.add_parser("publish")
     publish.add_argument("test_id")
     publish.add_argument("artifacts", nargs="+")
+    resume = commands.add_parser("resume")
+    resume.add_argument("test_id")
+    resume.add_argument("role")
     return root
 
 
@@ -156,6 +160,34 @@ def _publish(context: Context, values: list[str]) -> list[dict[str, Any]]:
     return results
 
 
+def _resume(context: Context, role: str) -> dict[str, Any]:
+    workflow = context.state.get("workflow")
+    if not workflow or role not in workflow.get("roles", []):
+        raise ControlError(f"unknown workflow role: {role}", 64)
+    client = context.client()
+    children = [child for child in client.children() if child.get("agent") == role]
+    if len(children) != 1:
+        raise ControlError(
+            f"expected one existing {role} session, found {len(children)}", 75
+        )
+    session_id = children[0].get("id")
+    if not isinstance(session_id, str):
+        raise ControlError(f"existing {role} session has no id", 75)
+    runtime = client.statuses().get(session_id, {"type": "unknown"})
+    if runtime.get("type") == "busy":
+        raise ControlError(f"role is already busy: {role}", 75)
+    prompt = context.manifest.prompts["continue"]
+    client.prompt_session(session_id, prompt, agent=role)
+    return {
+        "schema": "telora.opencode-role-resume/v1",
+        "test_id": context.state["exec_name"],
+        "role": role,
+        "session_id": session_id,
+        "previous_runtime_state": runtime,
+        "prompt": prompt,
+    }
+
+
 def _live_children(context: Context) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], dict[str, Any]]:
     client = context.client()
     children = client.children()
@@ -192,6 +224,16 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
             "state": workflow_state,
             "runtime_state": runtime_state,
             "latest_task": role_metrics.get("latest_task"),
+            "recent_responses": [
+                {
+                    "finish": message.get("info", {}).get("finish"),
+                    "completed": message.get("info", {}).get("time", {}).get("completed"),
+                    "text": "\n".join(text_parts(message)),
+                }
+                for message in assistant_messages(
+                    messages.get(child.get("id"), []) if child else []
+                )[-5:]
+            ],
         })
     return metrics, {"agents": agents, "records": records}
 
@@ -236,6 +278,7 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
     else:
         for agent in result["agents"]:
             agent.pop("runtime_state", None)
+            agent.pop("recent_responses", None)
     return result
 
 
@@ -295,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
             emit(_update(context, args.files))
         elif args.command == "publish":
             emit(_publish(context, args.artifacts))
+        elif args.command == "resume":
+            emit(_resume(context, args.role))
         return 0
     except (ControlError, TaskError) as exc:
         print(f"oc-ctl: {exc}", file=sys.stderr)
