@@ -438,6 +438,38 @@
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn hover_preserves_static_trait_constraints() {
+        let source = r#"trait Display { display: Fn(Self) -> String };
+impl Display for Int { display: fn(value) { `int=\{value}` } };
+export def render: for(T: Display) Fn(T) -> String = fn(value) {
+    Display.display(value)
+};
+export def output = render(1);"#;
+        let (_, state, uri) = semantic_fixture(source).await;
+        let hover: Option<lsp::Hover> = serde_json::from_value(
+            dispatch_request(
+                state,
+                request(
+                    55,
+                    lsp::request::HoverRequest::METHOD,
+                    serde_json::json!({
+                        "textDocument": { "uri": uri },
+                        "position": { "line": 5, "character": 20 }
+                    }),
+                ),
+            )
+            .await
+            .expect("hover response"),
+        )
+        .expect("hover result");
+        assert!(matches!(
+            hover.expect("bounded scheme hover").contents,
+            lsp::HoverContents::Scalar(lsp::MarkedString::String(ref text))
+                if text == "render: for(T: Display) Fn(T) -> String"
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn protocol_encodings_map_unicode_and_crlf_to_the_same_bytes() {
         let (_, state, uri) = semantic_fixture("\"😀\";\r\n1").await;
         let snapshot = state

@@ -245,5 +245,8 @@ The following are outside this RFC:
 - `DisplayBy` supplies `Display` through the standard blanket implementation;
 - nested Display values work through `fmt.display`;
 - interpolation of a Display value succeeds without changing primitive
-  interpolation behavior; and
+  interpolation behavior;
+- tree-sitter parses and highlights trait declarations, implementations and
+  bounded parameters without recovery nodes;
+- LSP hover preserves and renders canonical trait constraints; and
 - strict and best-effort checking agree on success or failure.
