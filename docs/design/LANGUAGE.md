@@ -65,6 +65,10 @@ r#"a "quoted" value"#      # 带 delimiter 的 raw String
 'Ready                     # Atom
 ```
 
+`Atom` 是覆盖所有无 payload 符号的内建宽类型，并具有稳定的内建 TypeId；每个
+Atom 字面量同时具有自己的 singleton 静态类型。singleton Atom 可赋给 `Atom`，反向
+收窄则需要显式检查。具名 enum 保留自己的 nominal TypeId，不等同于 `Atom`。
+
 普通字符串支持 `\0`、`\n`、`\r`、`\t`、`\"`、`\\`、两位 ASCII `\xNN`、
 Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符串使用同一组
 标量转义，但以 `` \` `` 代替 `\"`，并作为结构化连接表达式使用 `\{...}` 嵌入
@@ -100,10 +104,15 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 
 `display_by` 是受控模板 eDSL。它发布 `DisplayBy` typed property；`std/fmt` 中的
 property-constrained blanket impl 由此为 `Endpoint` 提供 `Display` evidence。
+`display_by` 的 property interpreter 在发布阶段验证字段，并直接支持
+String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字段类型上的任意
+显式 `Display` impl。
 `Display.display` 返回 opaque `Fmt`，`fmt.display` 也返回 `Fmt`；显式调用使用
 `fmt.render(fmt.Display.display(endpoint))` 得到 String。`fmt.concat(strings, items)`
 按 `strings.len == items.len + 1` 组合常量文本和 `Fmt` fragment。插值使用同一
-`Display -> Fmt` 路径，并只在整个字符串末端物化一次。`dbg!` 的有界 repr 属于
+`Display -> Fmt` 路径，并只在整个字符串末端物化一次。Fmt 节点及其 Host payload
+计入 allocation quota；物化前先递归测量最终 UTF-8 字节数并预扣配额。共享 fragment
+每次出现在结果中都计入最终长度。`dbg!` 的有界 repr 属于
 Host-only 观察；codec/JSON 则是数据交换协议，三者
 都不能作为彼此的隐式替代。
 
@@ -465,7 +474,12 @@ trait Display {
 };
 
 impl Display for Endpoint {
-    display: fn(value) { value.host },
+    display: fn(value) {
+        fmt.concat(
+            ["", ":", ""],
+            [fmt.from_string(value.host), fmt.from_int(value.port)],
+        )
+    },
 };
 
 def render: for(T: Display) Fn(T) -> String = fn(value) {
@@ -480,15 +494,17 @@ def render: for(T: Display) Fn(T) -> String = fn(value) {
 
 编译器把 trait 调用 elaboration 为普通 dictionary 函数调用。受约束函数内部接收
 隐藏 evidence 参数，调用方静态选择唯一 impl 并传入 dictionary。VM 不搜索 impl，
-也没有 trait-object value kind。Coherence 拒绝重复或重叠 impl；orphan boundary
+也没有 trait-object value kind。Coherence 拒绝重复的精确 impl 和无优先级的重叠
+blanket impl；精确 impl 优先于满足约束的 property blanket impl。orphan boundary
 要求 impl module 拥有 trait 或目标最外层 nominal constructor。
 
 `Property(P)` 是内建约束：`T: Property(P)` 证明封闭模块中精确的 `Ty(T, P)` typed
 property 已成功发布。它可以驱动 blanket impl，而普通反射查询仍返回 `Option(P)`。
 Evidence 携带已发布 property payload，implementation selection 不读取 payload 内容。
 
-当前不存在 higher-rank type、subtyping、trait object、interface、associated type、
-default member、specialization、trait inheritance 或 higher-kinded type。
+当前不存在 higher-rank type、用户定义或通用 subtyping、trait object、interface、
+associated type、default member、specialization、trait inheritance 或 higher-kinded
+type。singleton Atom 到内建宽类型 `Atom` 是固定的内建 widening 关系。
 
 ## 7. 类型元数据
 

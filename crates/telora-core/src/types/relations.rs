@@ -59,6 +59,7 @@ pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => false,
     }
@@ -94,6 +95,7 @@ pub(crate) fn type_identity_is_symbolic(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => false,
     }
@@ -267,6 +269,7 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
         (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
             assignable(actual, expected)
         }
+        (TypeDescriptor::Atom(_), TypeDescriptor::AtomValue) => true,
         (TypeDescriptor::Declared(actual), TypeDescriptor::Declared(expected)) => {
             actual.id == expected.id
         }
@@ -569,4 +572,3 @@ fn frontend_error(source_name: &str, message: impl Into<String>) -> FrontendErro
         message,
     )
 }
-

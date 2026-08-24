@@ -84,6 +84,22 @@
     }
 
     #[test]
+    fn broad_atom_has_a_stable_builtin_identity() {
+        let mut store = TypeStore::default();
+        assert_eq!(TypeId::ATOM.raw(), 9);
+        assert_eq!(
+            store.intern_descriptor(&TypeDescriptor::AtomValue).unwrap(),
+            TypeId::ATOM
+        );
+        assert_ne!(
+            store
+                .intern_descriptor(&TypeDescriptor::Atom(crate::value::Atom::named("Ready")))
+                .unwrap(),
+            TypeId::ATOM
+        );
+    }
+
+    #[test]
     fn failed_nominal_definition_removes_the_pending_memo_entry() {
         let mut store = TypeStore::default();
         let constructor = constructor(1024);

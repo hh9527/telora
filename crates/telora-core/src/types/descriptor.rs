@@ -183,6 +183,7 @@ pub enum TypeDescriptor {
     Float,
     String,
     Bytes,
+    AtomValue,
     Opaque(crate::NativeType),
     Atom(Atom),
     Array(Box<TypeDescriptor>),
@@ -225,6 +226,7 @@ pub(crate) enum TypeExprId {
     Float,
     String,
     Bytes,
+    AtomValue,
     Opaque(crate::value::NativeTypeId),
     Atom(String),
     Array(Box<TypeExprId>),
@@ -267,6 +269,7 @@ impl TypeExprId {
             TypeDescriptor::Float => Self::Float,
             TypeDescriptor::String => Self::String,
             TypeDescriptor::Bytes => Self::Bytes,
+            TypeDescriptor::AtomValue => Self::AtomValue,
             TypeDescriptor::Opaque(native) => Self::Opaque(native.id()),
             TypeDescriptor::Atom(atom) => Self::Atom(atom.name().to_owned()),
             TypeDescriptor::Array(item) => Self::Array(Box::new(Self::from_descriptor(item))),
@@ -343,6 +346,7 @@ impl TypeDescriptor {
             Self::Float => "Float".into(),
             Self::String => "String".into(),
             Self::Bytes => "Bytes".into(),
+            Self::AtomValue => "Atom".into(),
             Self::Opaque(native_type) => format!("opaque({})", native_type.qualified_name()),
             Self::Atom(atom) => format!("'{}", atom.name()),
             Self::Array(item) => format!("Array<{}>", item.display_name()),
@@ -417,6 +421,7 @@ fn display_scheme_descriptor(
         TypeDescriptor::Float => "Float".into(),
         TypeDescriptor::String => "String".into(),
         TypeDescriptor::Bytes => "Bytes".into(),
+        TypeDescriptor::AtomValue => "Atom".into(),
         TypeDescriptor::Opaque(native_type) => {
             format!("opaque({})", native_type.qualified_name())
         }

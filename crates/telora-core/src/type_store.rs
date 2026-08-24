@@ -58,6 +58,7 @@ impl TypeId {
     pub(crate) const FLOAT: Self = Self::builtin(6);
     pub(crate) const STRING: Self = Self::builtin(7);
     pub(crate) const BYTES: Self = Self::builtin(8);
+    pub(crate) const ATOM: Self = Self::builtin(9);
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -212,6 +213,7 @@ impl TypeStore {
             TypeDescriptor::Float => Ok(TypeId::FLOAT),
             TypeDescriptor::String => Ok(TypeId::STRING),
             TypeDescriptor::Bytes => Ok(TypeId::BYTES),
+            TypeDescriptor::AtomValue => Ok(TypeId::ATOM),
             TypeDescriptor::Bound(_) => Err("cannot canonicalize an unbound type parameter".into()),
             TypeDescriptor::Named(name) => names
                 .get(name)

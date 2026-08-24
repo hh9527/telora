@@ -1,5 +1,7 @@
 use crate::{CallContext, NativeError, NativeType, ValueRef};
 use std::collections::BTreeMap;
+use std::fmt::Write;
+use std::mem::size_of;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,6 +91,46 @@ fn fmt_argument(context: &CallContext<'_, '_>, index: usize) -> Result<Fmt, Nati
         .ok_or_else(|| NativeError::new("expected std/fmt#Fmt"))
 }
 
+fn formatted_len(value: impl std::fmt::Display) -> Result<usize, NativeError> {
+    struct Counter(Option<usize>);
+    impl Write for Counter {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.0 = self.0.and_then(|length| length.checked_add(text.len()));
+            self.0.map_or(Err(std::fmt::Error), |_| Ok(()))
+        }
+    }
+    let mut counter = Counter(Some(0));
+    let _ = write!(&mut counter, "{value}");
+    counter
+        .0
+        .ok_or_else(|| NativeError::allocation_limit("Fmt rendered size overflowed"))
+}
+
+fn measure_fmt(value: &Fmt, depth: usize) -> Result<usize, NativeError> {
+    if depth >= 128 {
+        return Err(NativeError::new(
+            "std/fmt value exceeds the recursive rendering limit",
+        ));
+    }
+    let add = |left: usize, right: usize| {
+        left.checked_add(right)
+            .ok_or_else(|| NativeError::allocation_limit("Fmt rendered size overflowed"))
+    };
+    match value.0.as_ref() {
+        FmtNode::String(value) | FmtNode::Atom(value) => Ok(value.len()),
+        FmtNode::Int(value) => formatted_len(value),
+        FmtNode::Float(value) => formatted_len(f64::from_bits(*value)),
+        FmtNode::Concat { strings, items } => {
+            let mut length = 0;
+            for (index, item) in items.iter().enumerate() {
+                length = add(length, strings[index].len())?;
+                length = add(length, measure_fmt(item, depth + 1)?)?;
+            }
+            add(length, strings[items.len()].len())
+        }
+    }
+}
+
 fn write_fmt(value: &Fmt, output: &mut String, depth: usize) -> Result<(), NativeError> {
     if depth >= 128 {
         return Err(NativeError::new(
@@ -97,8 +139,10 @@ fn write_fmt(value: &Fmt, output: &mut String, depth: usize) -> Result<(), Nativ
     }
     match value.0.as_ref() {
         FmtNode::String(value) | FmtNode::Atom(value) => output.push_str(value),
-        FmtNode::Int(value) => output.push_str(&value.to_string()),
-        FmtNode::Float(value) => output.push_str(&f64::from_bits(*value).to_string()),
+        FmtNode::Int(value) => write!(output, "{value}").expect("writing to String cannot fail"),
+        FmtNode::Float(value) => {
+            write!(output, "{}", f64::from_bits(*value)).expect("writing to String cannot fail")
+        }
         FmtNode::Concat { strings, items } => {
             for (index, item) in items.iter().enumerate() {
                 output.push_str(&strings[index]);
@@ -110,16 +154,117 @@ fn write_fmt(value: &Fmt, output: &mut String, depth: usize) -> Result<(), Nativ
     Ok(())
 }
 
-fn rendered(value: &Fmt) -> Result<String, NativeError> {
-    let mut output = String::new();
-    write_fmt(value, &mut output, 0)?;
-    Ok(output)
+pub(crate) fn interpolation_value_len(value: ValueRef<'_>) -> Result<usize, NativeError> {
+    if let Some(value) = value.as_str() {
+        return Ok(value.as_str().len());
+    }
+    if let Some(value) = value.as_int() {
+        return formatted_len(value);
+    }
+    if let Some(value) = value.as_float() {
+        return formatted_len(value);
+    }
+    if let Some(value) = value.as_atom() {
+        return Ok(value.as_str().len());
+    }
+    let native_type = value
+        .opaque_native_type()
+        .ok_or_else(|| NativeError::new("string interpolation expected std/fmt#Fmt"))?;
+    if native_type.qualified_name() != "std/fmt#Fmt" {
+        return Err(NativeError::new(
+            "string interpolation expected std/fmt#Fmt",
+        ));
+    }
+    measure_fmt(
+        value
+            .as_opaque::<Fmt>(native_type)
+            .ok_or_else(|| NativeError::new("string interpolation expected std/fmt#Fmt"))?,
+        0,
+    )
+}
+
+fn fmt_payload_bytes(node: &FmtNode) -> Result<usize, NativeError> {
+    let nested = match node {
+        FmtNode::String(value) | FmtNode::Atom(value) => value.len(),
+        FmtNode::Int(_) | FmtNode::Float(_) => 0,
+        FmtNode::Concat { strings, items } => {
+            let string_slots = strings
+                .len()
+                .checked_mul(size_of::<String>())
+                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
+            let item_slots = items
+                .len()
+                .checked_mul(size_of::<Fmt>())
+                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
+            let slots = string_slots
+                .checked_add(item_slots)
+                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?;
+            strings
+                .iter()
+                .try_fold(slots, |total, text| total.checked_add(text.len()))
+                .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))?
+        }
+    };
+    size_of::<Fmt>()
+        .checked_add(4 * size_of::<usize>())
+        .and_then(|bytes| bytes.checked_add(size_of::<FmtNode>()))
+        .and_then(|bytes| bytes.checked_add(nested))
+        .ok_or_else(|| NativeError::allocation_limit("Fmt payload size overflowed"))
+}
+
+fn set_fmt(
+    context: &mut CallContext<'_, '_>,
+    native_type: NativeType,
+    value: Fmt,
+) -> Result<(), NativeError> {
+    let payload_bytes = fmt_payload_bytes(value.0.as_ref())?;
+    context.set_opaque_accounted(context.result(), native_type, value, payload_bytes)
+}
+
+fn template_payload_bytes(template: &DisplayTemplate) -> Result<usize, NativeError> {
+    let slots = template
+        .0
+        .len()
+        .checked_mul(size_of::<TemplatePart>())
+        .ok_or_else(|| NativeError::allocation_limit("DisplayTemplate payload size overflowed"))?;
+    template.0.iter().try_fold(
+        size_of::<DisplayTemplate>()
+            .checked_add(2 * size_of::<usize>())
+            .and_then(|bytes| bytes.checked_add(slots))
+            .ok_or_else(|| {
+                NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+            })?,
+        |total, part| {
+            let text = match part {
+                TemplatePart::Text(text) | TemplatePart::Field(text) => text,
+            };
+            total.checked_add(text.len()).ok_or_else(|| {
+                NativeError::allocation_limit("DisplayTemplate payload size overflowed")
+            })
+        },
+    )
 }
 
 pub(crate) fn write_interpolation_value(
     value: ValueRef<'_>,
     output: &mut String,
 ) -> Result<(), NativeError> {
+    if let Some(value) = value.as_str() {
+        output.push_str(value.as_str());
+        return Ok(());
+    }
+    if let Some(value) = value.as_int() {
+        write!(output, "{value}").expect("writing to String cannot fail");
+        return Ok(());
+    }
+    if let Some(value) = value.as_float() {
+        write!(output, "{value}").expect("writing to String cannot fail");
+        return Ok(());
+    }
+    if let Some(value) = value.as_atom() {
+        output.push_str(value.as_str());
+        return Ok(());
+    }
     let native_type = value
         .opaque_native_type()
         .ok_or_else(|| NativeError::new("string interpolation expected std/fmt#Fmt"))?;
@@ -400,7 +545,8 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
     display_template_plan(target, template.clone(), property_type, 0)?;
 
     let result = context.result();
-    context.set_opaque(result, native_type, template)
+    let payload_bytes = template_payload_bytes(&template)?;
+    context.set_opaque_accounted(result, native_type, template, payload_bytes)
 }
 
 pub(crate) fn native_display_by(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -414,7 +560,7 @@ pub(crate) fn native_display_by(context: &mut CallContext<'_, '_>) -> Result<(),
         context.value(context.argument(2)?)?,
         Some(property_type),
     )?;
-    context.set_opaque(context.result(), native_type, Fmt::string(output))
+    set_fmt(context, native_type, Fmt::string(output))
 }
 
 pub(crate) fn native_from_string(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -425,7 +571,7 @@ pub(crate) fn native_from_string(context: &mut CallContext<'_, '_>) -> Result<()
         .and_then(ValueRef::as_str)
         .ok_or_else(|| NativeError::new("std/fmt.from_string expects String"))?
         .to_string();
-    context.set_opaque(context.result(), native_type, Fmt::string(value))
+    set_fmt(context, native_type, Fmt::string(value))
 }
 
 pub(crate) fn native_from_int(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -435,7 +581,7 @@ pub(crate) fn native_from_int(context: &mut CallContext<'_, '_>) -> Result<(), N
         .unwrap_declared()
         .and_then(ValueRef::as_int)
         .ok_or_else(|| NativeError::new("std/fmt.from_int expects Int"))?;
-    context.set_opaque(context.result(), native_type, Fmt::int(value))
+    set_fmt(context, native_type, Fmt::int(value))
 }
 
 pub(crate) fn native_from_float(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -445,7 +591,7 @@ pub(crate) fn native_from_float(context: &mut CallContext<'_, '_>) -> Result<(),
         .unwrap_declared()
         .and_then(ValueRef::as_float)
         .ok_or_else(|| NativeError::new("std/fmt.from_float expects Float"))?;
-    context.set_opaque(context.result(), native_type, Fmt::float(value))
+    set_fmt(context, native_type, Fmt::float(value))
 }
 
 pub(crate) fn native_from_atom(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -456,7 +602,7 @@ pub(crate) fn native_from_atom(context: &mut CallContext<'_, '_>) -> Result<(), 
         .and_then(ValueRef::as_atom)
         .ok_or_else(|| NativeError::new("std/fmt.from_atom expects Atom"))?
         .to_string();
-    context.set_opaque(context.result(), native_type, Fmt::atom(value))
+    set_fmt(context, native_type, Fmt::atom(value))
 }
 
 pub(crate) fn native_concat(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -498,13 +644,14 @@ pub(crate) fn native_concat(context: &mut CallContext<'_, '_>) -> Result<(), Nat
                 .ok_or_else(|| NativeError::new("std/fmt.concat expects an Array(Fmt)"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    context.set_opaque(context.result(), native_type, Fmt::concat(strings, items))
+    set_fmt(context, native_type, Fmt::concat(strings, items))
 }
 
 pub(crate) fn native_render(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let value = fmt_argument(context, 0)?;
-    let output = rendered(&value)?;
-    context.set_string(context.result(), output)
+    let length = measure_fmt(&value, 0)?;
+    let result = context.result();
+    context.set_string_exact(result, length, |output| write_fmt(&value, output, 0))
 }
 
 pub(crate) fn display_value(

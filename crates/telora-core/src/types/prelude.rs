@@ -36,15 +36,12 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("Float", TypeDescriptor::Float),
         ("String", TypeDescriptor::String),
         ("Bytes", TypeDescriptor::Bytes),
+        ("Atom", TypeDescriptor::AtomValue),
         ("Bool", normalized_bool_descriptor()),
         ("BlameError", blame_error_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
     }
-    prelude.insert(
-        "Atom".into(),
-        function(vec![TypeDescriptor::Any], metadata.clone()),
-    );
     prelude.insert(
         "Array".into(),
         function(vec![metadata.clone()], metadata.clone()),
@@ -289,15 +286,6 @@ fn normalized_bool_descriptor() -> TypeDescriptor {
         ("False".into(), None),
         ("True".into(), None),
     ]))
-}
-
-fn native_atom_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let argument = context.argument(0)?;
-    let Some(atom) = context.value(argument)?.as_atom() else {
-        return Err(NativeError::new("Atom expects an Atom value"));
-    };
-    let _ = atom_from_name(atom.as_str());
-    write_native_type_record(context, "Atom", &[("tag", argument)])
 }
 
 fn native_array_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -623,6 +611,9 @@ fn decode_type_ref_with_visiting(
             TypeDescriptor::Bytes
         }
         "Atom" => {
+            if fields.iter().copied().eq(["kind"]) {
+                return Ok(TypeDescriptor::AtomValue);
+            }
             require(&["kind", "tag"])?;
             let tag = value
                 .dict_get("tag")
@@ -865,6 +856,7 @@ fn validate_value_ref(
         TypeDescriptor::Float if value.kind() == ValueKind::Float => Ok(()),
         TypeDescriptor::String if value.kind() == ValueKind::String => Ok(()),
         TypeDescriptor::Bytes if value.kind() == ValueKind::Bytes => Ok(()),
+        TypeDescriptor::AtomValue if value.kind() == ValueKind::Atom => Ok(()),
         TypeDescriptor::Opaque(expected) if value.kind() == ValueKind::Opaque => {
             let actual = value.opaque_native_type().expect("ValueKind checked");
             if actual == expected {
@@ -1069,6 +1061,7 @@ fn collect_declared_bodies(
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => {}
     }

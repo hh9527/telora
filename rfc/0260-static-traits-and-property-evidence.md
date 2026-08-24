@@ -121,6 +121,11 @@ def text = `endpoint = \{endpoint}`;
 `Endpoint: Display`, and interpolation lowers through
 `Display.display(endpoint)` to a `Fmt` fragment.
 
+The `DisplayBy` property interpreter validates and renders String, Int, Float,
+and nested `DisplayBy` struct fields. It does not dynamically select arbitrary
+field-level `Display` implementations; explicit implementations compose Fmt
+fragments directly when that flexibility is required.
+
 ## Identity and module visibility
 
 `TraitId` consists of the provider `ModuleId` and deterministic local slot.
@@ -196,15 +201,24 @@ The payload is implementation data consumed after static evidence selection.
 
 Every interpolated expression of type `T` requires `T: fmt.Display` and lowers
 to the selected trait member call. The standard module supplies implementations
-for String, Int, Float and every Atom singleton. Named enums do not inherit
-Display from their runtime Atom representation. Unknown, Any and Dyn values
-require an explicit projection or explicit formatting operation.
+for String, Int, Float and the built-in broad Atom type. Every Atom singleton
+widens to Atom and therefore uses that implementation. Named enums do not
+inherit Display from their runtime Atom representation. Unknown, Any and Dyn
+values require an explicit projection or explicit formatting operation.
 
 `Display.display` returns the opaque native type `Fmt`. `fmt.concat(strings,
 items)` requires `strings.len == items.len + 1` and builds an immutable delayed
 display tree. `fmt.render` materializes that tree as String. An interpolation
 instruction performs the same concatenation and renders once after all dynamic
-fragments have been selected.
+fragments have been selected. Fmt Host payload is charged when nodes are built.
+Rendering first measures the complete UTF-8 output with checked arithmetic,
+charges the allocation quota, and only then allocates the final String. Reused
+fragments are measured at every occurrence in the rendered tree.
+
+A concrete implementation and a property-constrained blanket implementation
+may coexist. Static selection prefers the exact concrete implementation;
+duplicate exact implementations and ambiguous blanket candidates remain
+coherence errors.
 
 Failure to resolve `Display` is a type diagnostic at the interpolated
 expression. A selected implementation may still produce an ordinary sourced

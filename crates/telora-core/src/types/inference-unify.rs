@@ -676,6 +676,7 @@ impl<'a> GenericInference<'a> {
             }
         }
         match (&actual, &expected) {
+            (TypeDescriptor::Atom(_), TypeDescriptor::AtomValue) => return Ok(()),
             (TypeDescriptor::Union(variants), TypeDescriptor::Enum(_)) => {
                 for variant in variants {
                     self.check(variant, &expected)?;
@@ -1000,4 +1001,3 @@ impl<'a> GenericInference<'a> {
         })
     }
 }
-

@@ -11,7 +11,7 @@ native render_by: for(A) Fn(Type, TypeOf(A), A) -> Fmt;
 native from_string: Fn(String) -> Fmt;
 native from_int: Fn(Int) -> Fmt;
 native from_float: Fn(Float) -> Fmt;
-native from_atom: for(A) Fn(A) -> Fmt;
+native from_atom: Fn(Atom) -> Fmt;
 native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
 native render: Fn(Fmt) -> String;
 
@@ -30,12 +30,11 @@ trait Display {
     display: Fn(Self) -> Fmt,
 };
 
-type __DisplayAtom = enum { '__DisplayAtom };
 
 impl Display for String { display: from_string };
 impl Display for Int { display: from_int };
 impl Display for Float { display: from_float };
-impl Display for __DisplayAtom { display: from_atom };
+impl Display for Atom { display: from_atom };
 
 impl for(T: Property(DisplayBy)) Display for T {
     display: fn(value) { display(T, value) },

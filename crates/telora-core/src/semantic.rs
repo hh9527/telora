@@ -261,6 +261,7 @@ pub enum WorkspaceTypeNode {
     Float,
     String,
     Bytes,
+    AtomValue,
     Opaque(String),
     Atom(String),
     Array(WorkspaceTypeId),
@@ -355,6 +356,7 @@ impl WorkspaceTypeGraph {
             WorkspaceTypeNode::Float => "Float".into(),
             WorkspaceTypeNode::String => "String".into(),
             WorkspaceTypeNode::Bytes => "Bytes".into(),
+            WorkspaceTypeNode::AtomValue => "Atom".into(),
             WorkspaceTypeNode::Opaque(name) => format!("opaque({name})"),
             WorkspaceTypeNode::Atom(atom) => format!("'{atom}"),
             WorkspaceTypeNode::Array(item) => {
@@ -1401,6 +1403,7 @@ fn merge_type_node(
         TypeNode::Float => WorkspaceTypeNode::Float,
         TypeNode::String => WorkspaceTypeNode::String,
         TypeNode::Bytes => WorkspaceTypeNode::Bytes,
+        TypeNode::AtomValue => WorkspaceTypeNode::AtomValue,
         TypeNode::Opaque(native_type) => {
             WorkspaceTypeNode::Opaque(native_type.qualified_name().into())
         }

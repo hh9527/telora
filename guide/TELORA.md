@@ -661,6 +661,9 @@ member 调用。`Any`、`Dyn` 或无法解析的类型必须先显式投影或�
 binary64 的稳定文本表示：最短、可往返、不受
 locale 影响；`3.0` 显示为 `3`，`-0.0` 显示为 `-0`，原始小数或指数拼写不会保留。
 
+`Atom` 是所有无 payload 符号的内建宽类型；`'Ready` 等字面量具有 singleton 类型，
+并可直接赋给 `Atom`。这条 widening 不会把 Bool 或用户具名 enum 擦除成 `Atom`。
+
 没有 `Display` implementation 的 Tagged、Struct、Array、Dict、Tuple、Dyn 或用户值
 不能插值。声明 enum 和 Tagged payload 可以先通过 `match` 得到明确文本；Array/Dict
 也可以显式 `array.map` 后使用 `string.join`。不要为了展示而把 Query binding 插入
@@ -680,12 +683,15 @@ def endpoint_text: Fn(Endpoint) -> String = fn(endpoint) {
 ```
 
 `display_by` 是受控模板 eDSL：它发布 `DisplayBy` typed property，标准 blanket impl
-据此为 `Endpoint` 提供 `Display` evidence。`Display.display` 和 `fmt.display`
+据此为 `Endpoint` 提供 `Display` evidence。模板字段支持 String、Int、Float 和嵌套
+`DisplayBy` struct；模板解释器不会动态选择字段类型的其他显式 `Display` impl。
+`Display.display` 和 `fmt.display`
 返回 opaque `Fmt`；显式物化文本写作
 `fmt.render(fmt.Display.display(endpoint))`。`fmt.concat(strings, items)` 要求
 `strings.len == items.len + 1`，并以延迟 fragment 组合常量文本与展示值。插值在
-整个结果的末端只物化一次。这套机制是静态 dictionary elaboration，不会把模板
-转换成 Telora 源码。
+整个结果的末端只物化一次。Fmt payload 和最终 UTF-8 输出都计入 allocation quota；
+最终输出在分配前测量，重复引用同一 fragment 仍按每次展开的长度核算。这套机制是
+静态 dictionary elaboration，不会把模板转换成 Telora 源码。
 
 `dbg!` 的 `repr` 是 Host-only、有界且 cycle-safe 的观察文本，不进入 Telora String；
 codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr 会保留 `3.0` 和

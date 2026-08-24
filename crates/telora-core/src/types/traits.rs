@@ -197,7 +197,7 @@ fn trait_implementations_overlap(
     if left.trait_id != right.trait_id {
         return false;
     }
-    let property_blanket_and_non_property_target =
+    let property_blanket_and_concrete_target =
         |blanket: &TraitImplementation, concrete: &TraitImplementation| {
             matches!(blanket.target, TypeDescriptor::Bound(_))
                 && !blanket.constraints.is_empty()
@@ -205,17 +205,10 @@ fn trait_implementations_overlap(
                     .constraints
                     .iter()
                     .all(|constraint| matches!(constraint.capability, TypeCapability::Property(_)))
-                && (matches!(
-                    concrete.target,
-                    TypeDescriptor::Int | TypeDescriptor::Float | TypeDescriptor::String
-                ) || matches!(
-                    concrete.target,
-                    TypeDescriptor::Declared(DeclaredTypeDescriptor { ref name, .. })
-                        if name.ends_with("__DisplayAtom")
-                ))
+                && !matches!(concrete.target, TypeDescriptor::Bound(_))
         };
-    if property_blanket_and_non_property_target(left, right)
-        || property_blanket_and_non_property_target(right, left)
+    if property_blanket_and_concrete_target(left, right)
+        || property_blanket_and_concrete_target(right, left)
     {
         return false;
     }
@@ -656,22 +649,10 @@ impl GenericInference<'_> {
                             )
                         })?;
                     let implementation = implementation.clone();
-                    let dictionary_type = if self
-                        .display_trait
-                        .as_ref()
-                        .is_some_and(|(id, _)| *id == trait_id)
-                        && matches!(self.resolve(&target), TypeDescriptor::Atom(_))
-                        && implementation.id.module == trait_id.module
-                        && matches!(implementation.target, TypeDescriptor::Declared(_))
-                    {
-                        self.trait_dictionary_type(trait_id, &target)
-                            .ok_or_else(|| "trait has no static dictionary type".to_owned())?
-                    } else {
-                        substitute_bound_parameters(
-                            &implementation.dictionary_scheme.body,
-                            &replacements,
-                        )
-                    };
+                    let dictionary_type = substitute_bound_parameters(
+                        &implementation.dictionary_scheme.body,
+                        &replacements,
+                    );
                     let evidence = self.implementation_evidence(
                         &implementation,
                         &replacements,
@@ -732,12 +713,7 @@ impl GenericInference<'_> {
                 }
                 pattern => {
                     self.resolve(pattern) == target
-                        || (self
-                            .display_trait
-                            .as_ref()
-                            .is_some_and(|(id, _)| *id == trait_id)
-                            && implementation.id.module == trait_id.module
-                            && matches!(pattern, TypeDescriptor::Declared(_))
+                        || (matches!(self.resolve(pattern), TypeDescriptor::AtomValue)
                             && matches!(target, TypeDescriptor::Atom(_)))
                 }
             };
@@ -762,6 +738,20 @@ impl GenericInference<'_> {
             });
             if satisfied {
                 candidates.push((implementation, replacements));
+            }
+        }
+        let exact = candidates
+            .iter()
+            .filter(|(implementation, _)| !matches!(implementation.target, TypeDescriptor::Bound(_)))
+            .collect::<Vec<_>>();
+        match exact.as_slice() {
+            [candidate] => return Ok(Some((candidate.0, candidate.1.clone()))),
+            [] => {}
+            _ => {
+                return Err(format!(
+                    "ambiguous trait implementation for {}",
+                    target.display_name()
+                ));
             }
         }
         match candidates.as_slice() {

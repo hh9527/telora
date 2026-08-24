@@ -518,19 +518,20 @@
     }
 
     #[test]
-    fn ordinary_closure_computes_type_metadata() {
+    fn type_constructor_computes_enum_metadata() {
         let analysis = analyze_source(
             "test",
-            "def Optional = fn(item) { union('None, [Atom('None), Tagged('Some, item)]) };\
+            "type Optional(T) = enum { 'None, 'Some(T) };\
              type MaybeInt = Optional(Int);\
              let value: MaybeInt = 'Some(42);\
              value",
         )
         .unwrap();
         let maybe = analysis.declared_types.get("MaybeInt").unwrap();
-        assert!(
-            matches!(analysis.types.node(*maybe), TypeNode::Union(variants) if variants.len() == 2)
-        );
+        let TypeNode::Declared { body, .. } = analysis.types.node(*maybe) else {
+            panic!("MaybeInt must retain nominal identity");
+        };
+        assert!(matches!(analysis.types.node(*body), TypeNode::Enum(variants) if variants.len() == 2));
     }
 
     #[test]

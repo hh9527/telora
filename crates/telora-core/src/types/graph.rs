@@ -31,6 +31,7 @@ pub enum TypeNode {
     Float,
     String,
     Bytes,
+    AtomValue,
     Opaque(crate::NativeType),
     Atom(Atom),
     Array(AnalysisTypeId),
@@ -198,6 +199,7 @@ impl TypeGraph {
                 TypeNode::Float => Ok(TypeId::FLOAT),
                 TypeNode::String => Ok(TypeId::STRING),
                 TypeNode::Bytes => Ok(TypeId::BYTES),
+                TypeNode::AtomValue => Ok(TypeId::ATOM),
                 TypeNode::TypeOf(inner) => visit(graph, *inner, store, canonical, visiting)
                     .map(|inner| store.intern_structural(TypeShape::TypeOf(inner))),
                 TypeNode::Opaque(native) => {
@@ -385,6 +387,7 @@ impl TypeGraph {
             TypeDescriptor::Float => TypeNode::Float,
             TypeDescriptor::String => TypeNode::String,
             TypeDescriptor::Bytes => TypeNode::Bytes,
+            TypeDescriptor::AtomValue => TypeNode::AtomValue,
             TypeDescriptor::Opaque(native_type) => TypeNode::Opaque(native_type.clone()),
             TypeDescriptor::Atom(atom) => TypeNode::Atom(atom.clone()),
             TypeDescriptor::Array(item) => TypeNode::Array(self.intern_descriptor(item)),
@@ -479,6 +482,7 @@ impl TypeGraph {
                 TypeNode::Float => TypeDescriptor::Float,
                 TypeNode::String => TypeDescriptor::String,
                 TypeNode::Bytes => TypeDescriptor::Bytes,
+                TypeNode::AtomValue => TypeDescriptor::AtomValue,
                 TypeNode::Opaque(native) => TypeDescriptor::Opaque(native.clone()),
                 TypeNode::Atom(atom) => TypeDescriptor::Atom(atom.clone()),
                 TypeNode::Array(item) => {
@@ -722,6 +726,9 @@ impl TypeGraph {
                 TypeNode::Bytes
             }
             "Atom" => {
+                if fields.iter().copied().eq(["kind"]) {
+                    return Ok(TypeNode::AtomValue);
+                }
                 require(&["kind", "tag"])?;
                 let tag = value
                     .dict_get("tag")
@@ -885,6 +892,7 @@ impl TypeGraph {
             TypeNode::Float => "Float".into(),
             TypeNode::String => "String".into(),
             TypeNode::Bytes => "Bytes".into(),
+            TypeNode::AtomValue => "Atom".into(),
             TypeNode::Opaque(native_type) => {
                 format!("opaque({})", native_type.qualified_name())
             }
@@ -961,6 +969,7 @@ impl TypeGraph {
             (TypeNode::Any, _) | (_, TypeNode::Any) => true,
             (TypeNode::TypeOf(_), TypeNode::Type) => true,
             (TypeNode::TypeOf(a), TypeNode::TypeOf(e)) => self.assignable_with(*a, *e, visited),
+            (TypeNode::Atom(_), TypeNode::AtomValue) => true,
             (TypeNode::Array(a), TypeNode::Array(e)) => self.assignable_with(*a, *e, visited),
             (TypeNode::Dict(a), TypeNode::Dict(e)) => self.assignable_with(*a, *e, visited),
             (TypeNode::Struct(fields), TypeNode::Dict(expected)) => fields
@@ -1024,4 +1033,3 @@ impl TypeGraph {
         }
     }
 }
-

@@ -97,7 +97,9 @@ module semantics、source/provenance 行为、diagnostic 与有界求值机制�
 
 `std/fmt` 的 `Fmt` 是标准库拥有的 opaque、不可变延迟展示树。`Display` evidence
 把一个静态类型的值转换成 `Fmt`，`concat` 组合 fragment，`render` 才产生最终
-String。它不是通用动态值、codec 表示或 Host debug repr。
+String。Fmt 的 Host payload 和最终物化结果都受 allocation quota 约束；最终结果在
+分配前测量，复用 fragment 不会绕过展开后的字节核算。它不是通用动态值、codec
+表示或 Host debug repr。
 
 ### Domain Library 与 Method Library
 

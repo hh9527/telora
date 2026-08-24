@@ -164,6 +164,27 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, value)
     }
 
+    pub(crate) fn set_string_exact<F>(
+        &mut self,
+        destination: RegisterId,
+        length: usize,
+        write: F,
+    ) -> Result<(), NativeError>
+    where
+        F: FnOnce(&mut String) -> Result<(), NativeError>,
+    {
+        self.charge_allocation(length)?;
+        let mut value = String::with_capacity(length);
+        write(&mut value)?;
+        if value.len() != length {
+            return Err(NativeError::new(
+                "native exact String builder produced an unexpected length",
+            ));
+        }
+        let value = self.current.string(self.background, &value).into();
+        self.set(destination, value)
+    }
+
     pub fn set_bytes(
         &mut self,
         destination: RegisterId,
@@ -184,7 +205,29 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
     where
         T: std::any::Any + Eq + Send + Sync,
     {
-        self.charge_sequence(1)?;
+        self.set_opaque_accounted(destination, native_type, payload, 0)
+    }
+
+    pub(crate) fn set_opaque_accounted<T>(
+        &mut self,
+        destination: RegisterId,
+        native_type: crate::NativeType,
+        payload: T,
+        payload_bytes: usize,
+    ) -> Result<(), NativeError>
+    where
+        T: std::any::Any + Eq + Send + Sync,
+    {
+        let bytes = logical_value_bytes(1)?
+            .checked_add(u64::try_from(payload_bytes).map_err(|_| {
+                NativeError::allocation_limit("native opaque payload size overflowed")
+            })?)
+            .ok_or_else(|| {
+                NativeError::allocation_limit("native opaque allocation size overflowed")
+            })?;
+        self.account
+            .charge_allocation(bytes)
+            .map_err(|()| NativeError::allocation_limit("native allocation quota exceeded"))?;
         let value = crate::OpaqueValue::new(native_type, payload);
         let handle = self.current.allocate(Object::Opaque(value));
         self.set(destination, DecodedValue::Opaque(handle).into())

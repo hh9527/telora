@@ -133,6 +133,7 @@ impl Heap {
                 T::Float => kind(heap, "Float"),
                 T::String => kind(heap, "String"),
                 T::Bytes => kind(heap, "Bytes"),
+                T::AtomValue => kind(heap, "Atom"),
                 T::TypeOf(instance) => {
                     let instance = build(heap, background, instance, declared)?;
                     let kind = atom(heap, "TypeOf");

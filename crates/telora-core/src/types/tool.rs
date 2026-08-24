@@ -33,6 +33,7 @@ impl<'a> ToolEvaluator<'a> {
             ("Float", TypeDescriptor::Float),
             ("String", TypeDescriptor::String),
             ("Bytes", TypeDescriptor::Bytes),
+            ("Atom", TypeDescriptor::AtomValue),
             ("BlameError", blame_error_descriptor()),
         ] {
             values.insert(name.into(), self.descriptor(&descriptor)?);
@@ -50,7 +51,6 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Option),
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Result),
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::FoldControl),
-            NativeFunction::new("Atom", 1, native_atom_type),
             NativeFunction::new("Array", 1, native_array_type),
             NativeFunction::new("Dict", 1, native_dict_type),
             NativeFunction::new("TypeOf", 1, native_type_of_type),

@@ -992,53 +992,30 @@ impl Vm {
                                         })
                                     })
                                     .collect::<Result<Vec<_>, _>>()?;
-                                let mut output = String::new();
-                                for value in &values {
-                                    if let Some(value) =
-                                        view.string_text(*value).map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?
-                                    {
-                                        output.push_str(value.as_str());
-                                    } else if let DecodedValue::Int(value) = value.value() {
-                                        output.push_str(&value.to_string());
-                                    } else if let DecodedValue::Float(value) = value.value() {
-                                        output.push_str(&value.to_string());
-                                    } else if let Some(value) =
-                                        view.atom_text(*value).map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?
-                                    {
-                                        output.push_str(value.as_str());
-                                    } else {
-                                        crate::fmt::write_interpolation_value(
-                                            crate::ValueRef {
-                                                value: *value,
-                                                view,
-                                            },
-                                            &mut output,
+                                let output_len = values.iter().try_fold(0usize, |length, value| {
+                                    let part = crate::fmt::interpolation_value_len(
+                                        crate::ValueRef {
+                                            value: *value,
+                                            view,
+                                        },
+                                    )
+                                    .map_err(|native_error| {
+                                        error(
+                                            RuntimeErrorKind::TypeMismatch,
+                                            native_error.message,
+                                            function,
+                                            pc,
                                         )
-                                        .map_err(|native_error| {
-                                            error(
-                                                RuntimeErrorKind::TypeMismatch,
-                                                native_error.message,
-                                                function,
-                                                pc,
-                                            )
-                                        })?;
-                                    }
-                                }
-                                let bytes = u64::try_from(output.len()).map_err(|_| {
+                                    })?;
+                                    length.checked_add(part).ok_or_else(|| {
+                                        allocation_error(
+                                            "String allocation size overflowed",
+                                            function,
+                                            pc,
+                                        )
+                                    })
+                                })?;
+                                let bytes = u64::try_from(output_len).map_err(|_| {
                                     allocation_error(
                                         "String allocation size overflowed",
                                         function,
@@ -1046,6 +1023,25 @@ impl Vm {
                                     )
                                 })?;
                                 charge_allocation(account, bytes, function, pc)?;
+                                let mut output = String::with_capacity(output_len);
+                                for value in &values {
+                                    crate::fmt::write_interpolation_value(
+                                        crate::ValueRef {
+                                            value: *value,
+                                            view,
+                                        },
+                                        &mut output,
+                                    )
+                                    .map_err(|native_error| {
+                                        error(
+                                            RuntimeErrorKind::TypeMismatch,
+                                            native_error.message,
+                                            function,
+                                            pc,
+                                        )
+                                    })?;
+                                }
+                                debug_assert_eq!(output.len(), output_len);
                                 let value = Val::new(
                                     current.string(Some(background), &output),
                                     instruction_location(function, pc),

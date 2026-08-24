@@ -51,6 +51,7 @@ fn collect_inference_variables(
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => {}
     }
@@ -144,6 +145,7 @@ fn replace_inference_variables(
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => descriptor.clone(),
     }
@@ -326,6 +328,7 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_) => {}
     }
@@ -592,6 +595,7 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_)
         | TypeDescriptor::Enum(_)
@@ -630,6 +634,7 @@ fn contains_any_descriptor(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Float
         | TypeDescriptor::String
         | TypeDescriptor::Bytes
+        | TypeDescriptor::AtomValue
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_)
         | TypeDescriptor::Bound(_)
