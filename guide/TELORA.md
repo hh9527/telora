@@ -422,6 +422,92 @@ property TypeId 查询同一份 MainWorld 数据。字段和 variant property �
 canonical member index 和 property TypeId 安全存取。当前 JSON API 在类型层提供
 `rename_all` 和 `untagged`；member 表示定制在领域模型或显式 codec 层表达。
 
+### 自定义 typed property 与静态能力
+
+Property carrier 必须是无类型参数的具名 Struct/Enum，并用 `@property` 声明允许的
+owner。`Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant` 可以组合；
+provider 接收 owner context 与同 key 的前一个值。多个同类型 decorator 按源码顺序
+fold，因此一个 property 可以由多个局部标注逐步构成：
+
+```telora
+import "std/array" as array;
+import "std/string" as string;
+import "std/type-desc" { TypeDesc };
+import "std/type-property" as property;
+import "std/type-property" { FieldPropertyCtx };
+
+@property('Field)
+type Labels = struct { values: Array(String) };
+
+@property('Type)
+type Summary = struct { first_field_labels: Array(String) };
+
+def label: Fn(String) -> Fn(FieldPropertyCtx, Option(Labels)) -> Labels = fn(value) {
+    fn(ctx, previous) {
+        let values = match previous {
+            'Some(labels) => array.push(labels.values, value),
+            'None => [value],
+        };
+        let result: Labels = { values };
+        result
+    }
+};
+
+def summarize: Fn(TypeDesc, Option(Summary)) -> Summary = fn(target, previous) {
+    let values = match property.get_field_prop(target, 0, Labels) {
+        'Some(labels) => labels.values,
+        'None => [],
+    };
+    let result: Summary = { first_field_labels: values };
+    result
+};
+
+@summarize
+type User = struct {
+    @label("identity")
+    @label("public")
+    id: Int,
+    name: String,
+};
+```
+
+Field/Variant provider 分别接收 `FieldPropertyCtx` / `VariantPropertyCtx`，其中包含
+owner Type、canonical member index、name 和 member type/payload。所有 member
+property 完成后才执行 type provider，所以 `summarize` 可以读取封闭的 member
+snapshot。发布是原子的；任一 provider 失败都不会留下部分 property。
+
+显式反射使用 `get_type_prop`、`get_field_prop` 和 `get_variant_prop`，返回
+`Option(P)`。当 API 要求 imported property 必须存在时，使用静态 `Property(P)`
+bound；编译器传递同一份已发布 payload，不在 VM 中搜索 registry：
+
+```telora
+import "std/fmt" as fmt;
+
+trait Describe {
+    describe: Fn(Self) -> String,
+};
+
+impl(T: Property(fmt.DisplayBy)) Describe for T {
+    describe: fn(value) {
+        fmt.render(fmt.display(T, value))
+    },
+};
+
+def describe: for(T: Describe) Fn(T) -> String = fn(value) {
+    Describe.describe(value)
+};
+```
+
+`impl(T: Bound) Trait for Target` 中的参数属于 impl 声明；函数值的多态类型仍写作
+`for(T) Fn(T) -> ...`。Trait 是静态 dictionary capability，不产生 trait object，也
+不做运行期 method lookup。精确 impl 优先于满足约束的 property blanket impl；重复或
+无优先级的重叠 impl 会被 coherence 检查拒绝。
+
+Property payload 是普通有类型值，也可以包含普通 closure。closure 随 property root
+从 WorkWorld 原子发布到 MainWorld，保留函数 identity、bytecode/native prototype 和
+完整捕获图。适合把 TypeDesc/member property 的一次性解释结果准备为运行期 closure；
+不要在每次业务调用中重新枚举 metadata 或 property registry。
+
 JSON/TOML/YAML 文件也可以作为静态数据模块 import。它们在封闭模块图建立时由
 Host 加载，不是运行时文件 IO，并且只导出 `data: Value`：
 
