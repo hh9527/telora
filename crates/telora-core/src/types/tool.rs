@@ -177,6 +177,14 @@ impl<'a> ToolEvaluator<'a> {
         .map_err(|error| frontend_error("<tool-stage>", error.to_string()))
     }
 
+    fn persistent_type_property(
+        &self,
+        target: TypeId,
+        property: TypeId,
+    ) -> Option<PersistentValue> {
+        self.main.persistent_type_property(target, property)
+    }
+
     fn decode_type_graph(
         &self,
         value: Val,

@@ -228,6 +228,7 @@
                         concrete_types: BTreeMap::new(),
                         traits: BTreeMap::new(),
                         trait_implementations: Vec::new(),
+                        type_properties: Vec::new(),
                         type_family_templates: BTreeMap::new(),
                     },
                 )])

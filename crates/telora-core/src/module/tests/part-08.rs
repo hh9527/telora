@@ -208,6 +208,120 @@
     }
 
     #[test]
+    fn published_type_properties_satisfy_generic_constraints() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               def accept: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> String = fn(target) {
+                   "accepted"
+               };
+               export def output = accept(Endpoint);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        assert_eq!(named_output(&executed).to_string(), "\"accepted\"");
+
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               type Plain = struct { value: Int };
+               def accept: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> String = fn(target) {
+                   "accepted"
+               };
+               export def output = accept(Plain);"#,
+        )
+        .unwrap();
+        let error = recovery_engine()
+            .load_module(&main, BTreeMap::new())
+            .unwrap_err();
+        assert!(
+            error.message().contains("has no published Property(DisplayBy) evidence"),
+            "{error}"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn type_property_evidence_links_across_module_boundaries() {
+        let directory = fixture_dir();
+        let model = directory.join("model.telora");
+        let main = directory.join("main.telora");
+        fs::write(
+            &model,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               export { Endpoint };"#,
+        )
+        .unwrap();
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               import "./model.telora" as model;
+               def accept: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> String = fn(target) {
+                   "accepted"
+               };
+               export def output = accept(model.Endpoint);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        assert_eq!(named_output(&executed).to_string(), "\"accepted\"");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn property_constrained_blanket_impl_dispatches_for_decorated_types() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               trait Display { display: Fn(Self) -> String };
+               impl for(T: Property(fmt.DisplayBy)) Display for T {
+                   display: fn(value) { "decorated" },
+               };
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               def endpoint: Endpoint = { host: "localhost", port: 80 };
+               export def output = Display.display(endpoint);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        assert_eq!(named_output(&executed).to_string(), "\"decorated\"");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn fmt_display_uses_the_display_by_blanket_implementation() {
+        let directory = fixture_dir();
+        let main = directory.join("main.telora");
+        fs::write(
+            &main,
+            r#"import "std/fmt" as fmt;
+               @fmt.display_by("{host}:{port}")
+               type Endpoint = struct { host: String, port: Int };
+               def endpoint: Endpoint = { host: "localhost", port: 8080 };
+               export def output = fmt.Display.display(endpoint);"#,
+        )
+        .unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
+        let executed = engine.execute(&module).unwrap();
+        assert_eq!(named_output(&executed).to_string(), "\"localhost:8080\"");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn typed_properties_reject_targets_carriers_and_duplicate_identity() {
         let directory = fixture_dir();
         let main = directory.join("main.telora");

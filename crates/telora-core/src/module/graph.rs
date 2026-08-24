@@ -615,6 +615,36 @@ fn install_native_modules_observed(
                     binding.value.value.location,
                 )))
             })?;
+            for implementation in &module.interface.trait_implementations {
+                let evidence = module
+                    .root
+                    .export_get(&main.heap, &implementation.dictionary)
+                    .map_err(|error| ModuleError::new(error.to_string()))?
+                    .ok_or_else(|| {
+                        ModuleError::new(format!(
+                            "built-in module {request:?} is missing trait implementation root {:?}",
+                            implementation.dictionary
+                        ))
+                    })?;
+                external_roots
+                    .entry(implementation.dictionary.clone())
+                    .or_insert(evidence);
+            }
+            for property in &module.interface.type_properties {
+                let evidence = module
+                    .root
+                    .export_get(&main.heap, &property.root)
+                    .map_err(|error| ModuleError::new(error.to_string()))?
+                    .ok_or_else(|| {
+                        ModuleError::new(format!(
+                            "built-in module {request:?} is missing type property root {:?}",
+                            property.root
+                        ))
+                    })?;
+                external_roots
+                    .entry(property.root.clone())
+                    .or_insert(evidence);
+            }
             let (root, interface) = select_import_root(
                 module.root,
                 module.interface.clone(),
@@ -729,6 +759,43 @@ fn install_native_modules_observed(
         })?;
         install_type_family_roots(&mut external_roots, &analysis);
         let static_funcs = main.modules.static_funcs(module_id);
+        let mut runtime_program = program.clone();
+        if let ExprKind::Dict(fields) = &mut runtime_program.value.body.value.result.value {
+            let location = runtime_program.value.body.value.result.location;
+            for published in &analysis.module_interface.trait_implementations {
+                let source = analysis
+                    .trait_implementations
+                    .iter()
+                    .find(|implementation| implementation.id == published.id)
+                    .map_or(published.dictionary.as_str(), |implementation| {
+                        implementation.dictionary.as_str()
+                    });
+                fields.push(located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located(published.dictionary.clone(), location)),
+                        value: located(
+                            ExprKind::Variable(located(source.to_owned(), location)),
+                            location,
+                        ),
+                    },
+                    location,
+                ));
+            }
+            for property in &analysis.module_interface.type_properties {
+                fields.push(located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located(property.root.clone(), location)),
+                        value: located(
+                            ExprKind::Variable(located(property.root.clone(), location)),
+                            location,
+                        ),
+                    },
+                    location,
+                ));
+            }
+        }
         let metadata = metadata_compilation_plan(&program);
         let promoted_types = metadata
             .as_ref()
@@ -739,7 +806,7 @@ fn install_native_modules_observed(
             .unwrap_or_default();
         let function = compile_program_with_promoted_types_and_static_funcs(
             sources.get(source_id),
-            &program,
+            &runtime_program,
             &analysis,
             &promoted_types,
             &erased_bindings,
@@ -883,6 +950,7 @@ fn select_import_root(
                 .map(|id| BTreeMap::from([(local.to_owned(), id)]))
                 .unwrap_or_default(),
             trait_implementations: interface.trait_implementations,
+            type_properties: interface.type_properties,
             type_family_templates: interface
                 .type_family_templates
                 .get(&exported.value)

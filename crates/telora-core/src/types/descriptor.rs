@@ -74,6 +74,7 @@ pub struct ModuleInterface {
     pub concrete_types: BTreeMap<String, TypeDescriptor>,
     pub traits: BTreeMap<String, crate::TraitId>,
     pub trait_implementations: Vec<TraitImplementation>,
+    pub type_properties: Vec<TypePropertyEvidence>,
     pub(crate) type_family_templates: BTreeMap<String, TypeFamilyTemplate>,
 }
 
@@ -108,6 +109,7 @@ impl ModuleInterface {
                 .collect(),
             traits: self.traits.clone(),
             trait_implementations: self.trait_implementations.clone(),
+            type_properties: self.type_properties.clone(),
             type_family_templates: self
                 .type_family_templates
                 .iter()

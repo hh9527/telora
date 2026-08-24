@@ -36,6 +36,24 @@
     }
 
     #[test]
+    fn resolves_blanket_impl_type_parameters_in_contracts() {
+        let program = parse(
+            "hir.telora",
+            "impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { value } };",
+        )
+        .unwrap();
+        let hir = HirProgram::resolve(
+            &program,
+            ["Property".into(), "DisplayBy".into(), "Display".into()],
+        );
+        let unresolved = hir
+            .unresolved()
+            .map(|reference| reference.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(unresolved.is_empty(), "{unresolved:?}");
+    }
+
+    #[test]
     fn retains_type_argument_placeholders_without_references() {
         let source = "native pair: for(A, B) Fn(A, B) -> Tuple([A, B]); pair@[Int, _](1, \"x\")";
         let program = parse("hir.telora", source).unwrap();

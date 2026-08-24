@@ -1133,7 +1133,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
             }
             BindingKind::Let | BindingKind::Impl => {
                 let inferred = inferred_expression;
-                let checked = if let Some(annotation) = &binding.value.annotation {
+                let checked = if binding.value.kind == BindingKind::Impl {
+                    definition_contracts
+                        .get(&binding.value.name.value)
+                        .cloned()
+                        .expect("impl contract was evaluated with its type parameter scope")
+                } else if let Some(annotation) = &binding.value.annotation {
                     let metadata = evaluate_tool_expression(
                         source_name,
                         annotation,
@@ -1267,7 +1272,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
 
-    evaluate_declared_properties(
+    let local_type_properties = evaluate_declared_properties(
         source_name,
         program,
         &tool_values,
@@ -1276,6 +1281,32 @@ pub(crate) fn analyze_program_with_bindings_observed(
         sources,
         &mut evaluator,
     )?;
+    let local_type_property_roots = local_type_properties
+        .iter()
+        .map(|(evidence, root)| (evidence.root.clone(), *root))
+        .collect::<BTreeMap<_, _>>();
+    let mut type_properties = qualified_external_interfaces
+        .values()
+        .flat_map(|interface| interface.type_properties.iter().cloned())
+        .chain(
+            local_type_properties
+                .iter()
+                .map(|(evidence, _)| evidence.clone()),
+        )
+        .collect::<Vec<_>>();
+    type_properties.sort_by(|left, right| {
+        TypeExprId::from_descriptor(&left.target)
+            .cmp(&TypeExprId::from_descriptor(&right.target))
+            .then_with(|| {
+                TypeExprId::from_descriptor(&left.property)
+                    .cmp(&TypeExprId::from_descriptor(&right.property))
+            })
+    });
+    type_properties.dedup_by(|left, right| {
+        TypeExprId::from_descriptor(&left.target) == TypeExprId::from_descriptor(&right.target)
+            && TypeExprId::from_descriptor(&left.property)
+                == TypeExprId::from_descriptor(&right.property)
+    });
 
     for (name, location) in &declaration_locations {
         if definition_counts.get(name).copied().unwrap_or(0) == 0 {
@@ -1348,6 +1379,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         &named_types,
         &local_annotations,
         &trait_implementations,
+        &type_properties,
         &trait_ids,
         &dyn_namespaces,
         !external_roots.contains_key("Tuple"),
@@ -1593,7 +1625,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let mut environment = checked_environment.clone();
             environment.remove(&binding.value.name.value);
             initializer_environment = Some(environment);
-        } else if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
+        } else if matches!(
+            binding.value.kind,
+            BindingKind::Type | BindingKind::Trait | BindingKind::Impl
+        )
             && !binding.value.type_parameters.is_empty()
         {
             let mut environment = checked_environment.clone();
@@ -1994,6 +2029,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .iter()
             .map(published_trait_implementation)
             .collect(),
+        type_properties: type_properties.clone(),
         type_family_templates: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()
@@ -2028,6 +2064,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let not_families = std::mem::take(&mut inference.not_families);
     let trait_member_evidence = std::mem::take(&mut inference.resolved_trait_members);
     let generic_call_evidence = std::mem::take(&mut inference.resolved_call_evidence);
+    let runtime_type_evidence = std::mem::take(&mut inference.runtime_type_evidence);
     let generic_evidence_parameters = program
         .value
         .body
@@ -2046,6 +2083,36 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         .map(|(index, _)| evidence_parameter_name(&binding.value.name.value, index))
                         .collect(),
                 )
+            })
+        })
+        .collect();
+    let generic_dictionary_factories = program
+        .value
+        .body
+        .value
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            (binding.value.kind == BindingKind::Impl
+                && !binding.value.type_parameters.is_empty())
+            .then(|| {
+                let scheme = binding_schemes
+                    .get(&binding.value.name.value)
+                    .expect("blanket impl has a static scheme");
+                let mut parameters = binding
+                    .value
+                    .type_parameters
+                    .iter()
+                    .map(|parameter| parameter.value.clone())
+                    .collect::<Vec<_>>();
+                parameters.extend(
+                    scheme
+                        .constraints
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| evidence_parameter_name(&binding.value.name.value, index)),
+                );
+                (binding.value.value.location, parameters)
             })
         })
         .collect();
@@ -2073,6 +2140,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
             (name.clone(), root)
         })
         .collect::<BTreeMap<_, _>>();
+    runtime_roots.extend(local_type_property_roots);
+    if !runtime_type_evidence.is_empty() {
+        let names = runtime_type_evidence.keys().cloned().collect::<Vec<_>>();
+        let mut values = Vec::new();
+        for (name, descriptor) in runtime_type_evidence {
+            values.push((name, evaluator.descriptor(&descriptor)?));
+        }
+        let root = evaluator.persist_table(values)?;
+        for name in names {
+            let value = root
+                .export_get(evaluator.main, &name)
+                .expect("runtime type evidence table is a Module")
+                .expect("runtime type evidence is present");
+            runtime_roots.insert(name, value);
+        }
+    }
     let concrete_type_names = program
         .value
         .body
@@ -2155,6 +2238,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         trait_member_evidence,
         generic_call_evidence,
         generic_evidence_parameters,
+        generic_dictionary_factories,
         runtime_roots,
         external_bindings,
         dynamic_bindings: dynamic_bindings.clone(),

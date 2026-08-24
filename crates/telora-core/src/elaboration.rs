@@ -1,15 +1,16 @@
 use crate::Location;
 use crate::ast::*;
-use crate::types::{NotFamily, PropagationFamily};
+use crate::types::{NotFamily, PropagationFamily, ResolvedEvidence};
 use std::collections::HashMap;
 
 pub(crate) fn elaborate_program(
     program: &mut Program,
     families: &HashMap<Location, PropagationFamily>,
     not_families: &HashMap<Location, NotFamily>,
-    trait_member_evidence: &HashMap<Location, String>,
-    generic_call_evidence: &HashMap<Location, Vec<String>>,
+    trait_member_evidence: &HashMap<Location, ResolvedEvidence>,
+    generic_call_evidence: &HashMap<Location, Vec<ResolvedEvidence>>,
     generic_evidence_parameters: &HashMap<Location, Vec<String>>,
+    generic_dictionary_factories: &HashMap<Location, Vec<String>>,
 ) {
     let mut elaborator = Elaborator {
         families,
@@ -17,6 +18,7 @@ pub(crate) fn elaborate_program(
         trait_member_evidence,
         generic_call_evidence,
         generic_evidence_parameters,
+        generic_dictionary_factories,
         next: 0,
     };
     elaborator.block(&mut program.value.body);
@@ -25,13 +27,36 @@ pub(crate) fn elaborate_program(
 struct Elaborator<'a> {
     families: &'a HashMap<Location, PropagationFamily>,
     not_families: &'a HashMap<Location, NotFamily>,
-    trait_member_evidence: &'a HashMap<Location, String>,
-    generic_call_evidence: &'a HashMap<Location, Vec<String>>,
+    trait_member_evidence: &'a HashMap<Location, ResolvedEvidence>,
+    generic_call_evidence: &'a HashMap<Location, Vec<ResolvedEvidence>>,
     generic_evidence_parameters: &'a HashMap<Location, Vec<String>>,
+    generic_dictionary_factories: &'a HashMap<Location, Vec<String>>,
     next: u32,
 }
 
 impl Elaborator<'_> {
+    fn evidence_expression(evidence: &ResolvedEvidence, location: Location) -> Expr {
+        let binding = located(
+            ExprKind::Variable(located(evidence.binding.clone(), location)),
+            location,
+        );
+        if evidence.arguments.is_empty() {
+            binding
+        } else {
+            located(
+                ExprKind::Call {
+                    callee: Box::new(binding),
+                    arguments: evidence
+                        .arguments
+                        .iter()
+                        .map(|argument| Self::evidence_expression(argument, location))
+                        .collect(),
+                },
+                location,
+            )
+        }
+    }
+
     fn block(&mut self, block: &mut Block) {
         for binding in &mut block.value.bindings {
             if let Some(annotation) = &mut binding.value.annotation {
@@ -50,6 +75,31 @@ impl Elaborator<'_> {
                         annotation: None,
                     }),
                 );
+            }
+            if let Some(parameters) = self
+                .generic_dictionary_factories
+                .get(&binding.value.value.location)
+                && matches!(binding.value.value.value, ExprKind::Dict(_))
+            {
+                let location = binding.value.value.location;
+                let result = binding.value.value.clone();
+                binding.value.value.value = ExprKind::Closure {
+                    parameters: parameters
+                        .iter()
+                        .map(|name| ClosureParameter {
+                            name: located(name.clone(), location),
+                            annotation: None,
+                        })
+                        .collect(),
+                    result_annotation: None,
+                    body: located(
+                        BlockKind {
+                            bindings: Vec::new(),
+                            result: Box::new(result),
+                        },
+                        location,
+                    ),
+                };
             }
         }
         self.expression(&mut block.value.result);
@@ -154,22 +204,16 @@ impl Elaborator<'_> {
                     && let ExprKind::Field { field, .. } = &callee.value
                 {
                     callee.value = ExprKind::Field {
-                        receiver: Box::new(located(
-                            ExprKind::Variable(located(dictionary.clone(), callee.location)),
-                            callee.location,
-                        )),
+                        receiver: Box::new(Self::evidence_expression(dictionary, callee.location)),
                         field: field.clone(),
                     };
                 }
                 if let Some(evidence) = self.generic_call_evidence.get(&callee.location) {
                     arguments.splice(
                         0..0,
-                        evidence.iter().map(|name| {
-                            located(
-                                ExprKind::Variable(located(name.clone(), callee.location)),
-                                callee.location,
-                            )
-                        }),
+                        evidence
+                            .iter()
+                            .map(|item| Self::evidence_expression(item, callee.location)),
                     );
                 }
                 self.expression(callee);

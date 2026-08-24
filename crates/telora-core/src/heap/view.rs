@@ -644,3 +644,17 @@ impl<'a> HeapView<'a> {
         Ok(true)
     }
 }
+
+impl Heap {
+    pub(crate) fn persistent_type_property(
+        &self,
+        target: crate::TypeId,
+        property: crate::TypeId,
+    ) -> Option<PersistentValue> {
+        (self.storage == Storage::Main)
+            .then(|| self.properties.get(&PropertyKey::Ty { ty: target, property_ty: property }))
+            .flatten()
+            .copied()
+            .map(PersistentValue)
+    }
+}

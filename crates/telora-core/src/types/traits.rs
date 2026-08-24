@@ -159,6 +159,21 @@ struct LexicalTypeEvidence {
     name: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedEvidence {
+    pub binding: String,
+    pub arguments: Vec<ResolvedEvidence>,
+}
+
+impl ResolvedEvidence {
+    fn root(binding: String) -> Self {
+        Self {
+            binding,
+            arguments: Vec::new(),
+        }
+    }
+}
+
 fn evidence_parameter_name(binding: &str, index: usize) -> String {
     format!("\0trait_evidence:{binding}:{index}")
 }
@@ -314,6 +329,22 @@ fn collect_trait_implementations(
 }
 
 impl GenericInference<'_> {
+    fn runtime_type_evidence(
+        &mut self,
+        target: TypeDescriptor,
+        location: crate::Location,
+        index: usize,
+    ) -> ResolvedEvidence {
+        let binding = format!(
+            "\0trait_target:{}:{}:{}",
+            location.start, location.end, index
+        );
+        self.runtime_type_evidence
+            .entry(binding.clone())
+            .or_insert(target);
+        ResolvedEvidence::root(binding)
+    }
+
     fn push_lexical_evidence(&mut self, binding: &str, scheme: &TypeScheme) -> usize {
         let start = self.lexical_type_evidence.len();
         self.lexical_type_evidence.extend(
@@ -347,6 +378,95 @@ impl GenericInference<'_> {
             )
             .then(|| (self.resolve(&evidence.target) == target).then(|| evidence.name.clone()))
             .flatten()
+        })
+    }
+
+    fn lexical_property_evidence(
+        &self,
+        property: &TypeDescriptor,
+        target: &TypeDescriptor,
+    ) -> Option<String> {
+        let target = self.resolve(target);
+        self.lexical_type_evidence.iter().rev().find_map(|evidence| {
+            matches!(
+                &evidence.capability,
+                TypeCapability::Property(candidate) if candidate == property
+            )
+            .then(|| (self.resolve(&evidence.target) == target).then(|| evidence.name.clone()))
+            .flatten()
+        })
+    }
+
+    fn published_property_evidence(
+        &self,
+        property: &TypeDescriptor,
+        target: &TypeDescriptor,
+    ) -> Option<String> {
+        let target = self.resolve(target);
+        self.type_properties.iter().find_map(|evidence| {
+            (self.resolve(&evidence.target) == target && evidence.property == *property)
+                .then(|| evidence.root.clone())
+        })
+    }
+
+    fn implementation_evidence(
+        &mut self,
+        implementation: &TraitImplementation,
+        replacements: &HashMap<TypeParameterId, TypeDescriptor>,
+        location: crate::Location,
+    ) -> Result<ResolvedEvidence, String> {
+        if implementation.parameters.is_empty() {
+            return Ok(ResolvedEvidence::root(implementation.dictionary.clone()));
+        }
+        let mut arguments = Vec::new();
+        for (index, parameter) in implementation.parameters.iter().enumerate() {
+            let target = replacements.get(&parameter.id).ok_or_else(|| {
+                format!("blanket impl parameter {} is not determined", parameter.name)
+            })?;
+            arguments.push(self.runtime_type_evidence(
+                self.resolve(target),
+                location,
+                index,
+            ));
+        }
+        for constraint in &implementation.constraints {
+            let target = replacements
+                .get(&constraint.parameter)
+                .map(|target| self.resolve(target))
+                .ok_or_else(|| "blanket impl constraint target is not determined".to_owned())?;
+            let evidence = match &constraint.capability {
+                TypeCapability::Trait { id, name } => {
+                    if let Some(binding) = self.lexical_trait_evidence(*id, &target) {
+                        ResolvedEvidence::root(binding)
+                    } else {
+                        let (candidate, nested) = self
+                            .trait_candidate(*id, &target)?
+                            .ok_or_else(|| {
+                                format!("type {} does not implement {name}", target.display_name())
+                            })?;
+                        let candidate = candidate.clone();
+                        self.implementation_evidence(&candidate, &nested, location)?
+                    }
+                }
+                TypeCapability::Property(property) => {
+                    let binding = self
+                        .lexical_property_evidence(property, &target)
+                        .or_else(|| self.published_property_evidence(property, &target))
+                        .ok_or_else(|| {
+                            format!(
+                                "type {} has no published Property({}) evidence",
+                                target.display_name(),
+                                property.display_name()
+                            )
+                        })?;
+                    ResolvedEvidence::root(binding)
+                }
+            };
+            arguments.push(evidence);
+        }
+        Ok(ResolvedEvidence {
+            binding: implementation.dictionary.clone(),
+            arguments,
         })
     }
 
@@ -436,9 +556,9 @@ impl GenericInference<'_> {
                     let dictionary_type = self
                         .trait_dictionary_type(trait_id, &target)
                         .ok_or_else(|| "trait has no static dictionary type".to_owned())?;
-                    (dictionary, dictionary_type)
+                    (ResolvedEvidence::root(dictionary), dictionary_type)
                 } else {
-                    let implementation = self
+                    let (implementation, replacements) = self
                         .trait_candidate(trait_id, &target)?
                         .ok_or_else(|| {
                             format!(
@@ -446,10 +566,17 @@ impl GenericInference<'_> {
                                 self.resolve(&target).display_name()
                             )
                         })?;
-                    (
-                        implementation.dictionary.clone(),
-                        implementation.dictionary_scheme.body.clone(),
-                    )
+                    let implementation = implementation.clone();
+                    let dictionary_type = substitute_bound_parameters(
+                        &implementation.dictionary_scheme.body,
+                        &replacements,
+                    );
+                    let evidence = self.implementation_evidence(
+                        &implementation,
+                        &replacements,
+                        callee.location,
+                    )?;
+                    (evidence, dictionary_type)
                 };
             let member_type = self.project_field(&dictionary_type, &member)?;
             let TypeDescriptor::Function { parameters, result } = member_type else {
@@ -479,7 +606,10 @@ impl GenericInference<'_> {
         &'a self,
         trait_id: crate::TraitId,
         target: &TypeDescriptor,
-    ) -> Result<Option<&'a TraitImplementation>, String> {
+    ) -> Result<
+        Option<(&'a TraitImplementation, HashMap<TypeParameterId, TypeDescriptor>)>,
+        String,
+    > {
         let target = self.resolve(target);
         if contains_type_variable(&target) {
             return Err(format!(
@@ -514,16 +644,19 @@ impl GenericInference<'_> {
                         .ok()
                         .flatten()
                         .is_some(),
-                    TypeCapability::Property(_) => false,
+                    TypeCapability::Property(property) => self
+                        .lexical_property_evidence(property, argument)
+                        .or_else(|| self.published_property_evidence(property, argument))
+                        .is_some(),
                 }
             });
             if satisfied {
-                candidates.push(implementation);
+                candidates.push((implementation, replacements));
             }
         }
         match candidates.as_slice() {
             [] => Ok(None),
-            [candidate] => Ok(Some(*candidate)),
+            [candidate] => Ok(Some(candidate.clone())),
             _ => Err(format!(
                 "ambiguous trait implementation for {}",
                 target.display_name()
@@ -545,12 +678,12 @@ impl GenericInference<'_> {
                 self.resolved_call_evidence
                     .entry(constraint.location)
                     .or_default()
-                    .push(evidence.name.clone());
+                    .push(ResolvedEvidence::root(evidence.name.clone()));
                 continue;
             }
             match &constraint.capability {
                 TypeCapability::Trait { id, name } => {
-                    let dictionary = self
+                    let (implementation, replacements) = self
                         .trait_candidate(*id, &target)
                         .map_err(|message| (constraint.location, message))?
                         .ok_or_else(|| {
@@ -561,23 +694,38 @@ impl GenericInference<'_> {
                                     target.display_name()
                                 ),
                             )
-                        })?
-                        .dictionary
-                        .clone();
+                        })?;
+                    let implementation = implementation.clone();
+                    let dictionary = self
+                        .implementation_evidence(
+                            &implementation,
+                            &replacements,
+                            constraint.location,
+                        )
+                        .map_err(|message| (constraint.location, message))?;
                     self.resolved_call_evidence
                         .entry(constraint.location)
                         .or_default()
                         .push(dictionary);
                 }
                 TypeCapability::Property(property) => {
-                    return Err((
-                        constraint.location,
-                        format!(
-                            "type {} has no published Property({}) evidence",
-                            self.resolve(&constraint.target).display_name(),
-                            property.display_name()
-                        ),
-                    ));
+                    let evidence = self
+                        .lexical_property_evidence(property, &target)
+                        .or_else(|| self.published_property_evidence(property, &target))
+                        .ok_or_else(|| {
+                            (
+                                constraint.location,
+                                format!(
+                                    "type {} has no published Property({}) evidence",
+                                    self.resolve(&constraint.target).display_name(),
+                                    property.display_name()
+                                ),
+                            )
+                        })?;
+                    self.resolved_call_evidence
+                        .entry(constraint.location)
+                        .or_default()
+                        .push(ResolvedEvidence::root(evidence));
                 }
             }
         }

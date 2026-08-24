@@ -998,6 +998,7 @@
             &named_types,
             &annotations,
             &[],
+            &[],
             &trait_ids,
             &dyn_namespaces,
             true,

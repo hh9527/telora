@@ -236,6 +236,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
         &analysis.trait_member_evidence,
         &analysis.generic_call_evidence,
         &analysis.generic_evidence_parameters,
+        &analysis.generic_dictionary_factories,
     );
     Compiler::program_in(
         source_file.name.as_ref(),

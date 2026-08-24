@@ -126,6 +126,27 @@ impl ModuleLoader {
         Ok(())
     }
 
+    fn install_type_property_roots(
+        &self,
+        artifact: &ModuleArtifact,
+        external_roots: &mut HashMap<String, PersistentValue>,
+    ) -> Result<(), ModuleError> {
+        for evidence in &artifact.interface.type_properties {
+            let root = artifact
+                .root
+                .export_get(&self.main.heap, &evidence.root)
+                .map_err(|error| ModuleError::new(error.to_string()))?
+                .ok_or_else(|| {
+                    ModuleError::new(format!(
+                        "module is missing type property root {:?}",
+                        evidence.root
+                    ))
+                })?;
+            external_roots.entry(evidence.root.clone()).or_insert(root);
+        }
+        Ok(())
+    }
+
     fn install_injected_modules(
         &mut self,
         context_path: &Path,
@@ -576,6 +597,7 @@ impl ModuleLoader {
                     )))
                 })?;
                 self.install_trait_impl_roots(&module, &mut external_roots)?;
+                self.install_type_property_roots(&module, &mut external_roots)?;
                 semantic_imports.push(SemanticImport {
                     name: if binding.value.kind == BindingKind::OpenImport {
                         "*".into()
@@ -613,6 +635,7 @@ impl ModuleLoader {
             let imported_id = imported.id.clone();
             let artifact = self.load_resolved_value(imported)?;
             self.install_trait_impl_roots(&artifact, &mut external_roots)?;
+            self.install_type_property_roots(&artifact, &mut external_roots)?;
             semantic_imports.push(SemanticImport {
                 name: if binding.value.kind == BindingKind::OpenImport {
                     "*".into()
@@ -655,6 +678,7 @@ impl ModuleLoader {
             && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
         {
             self.install_trait_impl_roots(module, &mut external_roots)?;
+            self.install_type_property_roots(module, &mut external_roots)?;
             let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
             if skeleton.is_some() {
                 let target = self.main.modules.id(&provider).ok_or_else(|| {
@@ -729,6 +753,7 @@ impl ModuleLoader {
                         .map(|id| BTreeMap::from([(name.clone(), id)]))
                         .unwrap_or_default(),
                     trait_implementations: candidate.trait_implementations,
+                    type_properties: candidate.type_properties,
                     type_family_templates: candidate
                         .type_family_template
                         .map(|family| BTreeMap::from([(name.clone(), family)]))
@@ -809,6 +834,20 @@ impl ModuleLoader {
                         name: Some(located(published.dictionary.clone(), location)),
                         value: located(
                             ExprKind::Variable(located(source.dictionary.clone(), location)),
+                            location,
+                        ),
+                    },
+                    location,
+                ));
+            }
+            for evidence in &analysis.module_interface.type_properties {
+                let location = runtime_program.value.body.value.result.location;
+                fields.push(located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located(evidence.root.clone(), location)),
+                        value: located(
+                            ExprKind::Variable(located(evidence.root.clone(), location)),
                             location,
                         ),
                     },

@@ -5,6 +5,24 @@ enum PropertyOwnerKind {
     Variant,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypePropertyEvidence {
+    pub target: TypeDescriptor,
+    pub property: TypeDescriptor,
+    pub root: String,
+}
+
+fn type_property_runtime_name(target: TypeId, property: TypeId) -> String {
+    format!("\0type_property:{}:{}", target.raw(), property.raw())
+}
+
+fn type_value_descriptor(descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
+    let TypeDescriptor::TypeOf(target) = descriptor else {
+        return None;
+    };
+    Some((**target).clone())
+}
+
 const PROPERTY_CAP_TYPE: u32 = 1 << 0;
 const PROPERTY_CAP_STRUCT_TYPE: u32 = 1 << 1;
 const PROPERTY_CAP_ENUM_TYPE: u32 = 1 << 2;
@@ -455,11 +473,20 @@ fn validate_decorated_binding(
 fn establish_property_markers(
     program: &Program,
     tool_values: &BTreeMap<String, Val>,
+    static_environment: &HashMap<String, TypeDescriptor>,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
-) -> Result<(Option<TypeId>, Vec<(PropertyKey, Val)>), FrontendError> {
+) -> Result<
+    (
+        Option<TypeId>,
+        Vec<(PropertyKey, Val)>,
+        BTreeMap<PropertyKey, (TypeDescriptor, TypeDescriptor)>,
+    ),
+    FrontendError,
+> {
     let mut bootstrap_type = None;
     let mut properties = Vec::new();
+    let mut descriptors = BTreeMap::new();
     for binding in &program.value.body.value.bindings {
         let markers = binding
             .value
@@ -473,6 +500,10 @@ fn establish_property_markers(
         validate_decorated_binding(binding, sources)?;
         let target = tool_values[&binding.value.name.value];
         let target_type = evaluator.declared_type_id(target)?;
+        let target_descriptor = static_environment
+            .get(&binding.value.name.value)
+            .and_then(type_value_descriptor)
+            .expect("property carrier has a concrete Type descriptor");
         let mut capabilities = 0;
         for decorator in &markers {
             capabilities |= property_capability(decorator, sources)?;
@@ -492,6 +523,14 @@ fn establish_property_markers(
                 )
             })?
         };
+        let marker_descriptor = if bootstrap {
+            target_descriptor.clone()
+        } else {
+            static_environment
+                .get("PropertyAttr")
+                .and_then(type_value_descriptor)
+                .expect("PropertyAttr has a concrete Type descriptor")
+        };
         let key = PropertyKey::Ty {
             ty: target_type,
             property_ty: marker_type,
@@ -503,8 +542,9 @@ fn establish_property_markers(
         }
         evaluator.stage_property(key, value)?;
         properties.push((key, value));
+        descriptors.insert(key, (target_descriptor, marker_descriptor));
     }
-    Ok((bootstrap_type, properties))
+    Ok((bootstrap_type, properties, descriptors))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -516,9 +556,14 @@ fn evaluate_declared_properties(
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
-) -> Result<(), FrontendError> {
-    let (bootstrap_type, mut publication) =
-        establish_property_markers(program, tool_values, sources, evaluator)?;
+) -> Result<Vec<(TypePropertyEvidence, PersistentValue)>, FrontendError> {
+    let (bootstrap_type, mut publication, mut evidence_descriptors) = establish_property_markers(
+        program,
+        tool_values,
+        static_environment,
+        sources,
+        evaluator,
+    )?;
     for binding in &program.value.body.value.bindings {
         let type_decorators = binding
             .value
@@ -546,6 +591,10 @@ fn evaluate_declared_properties(
                 )
             })?;
         let target_type = evaluator.declared_type_id(target)?;
+        let target_descriptor = static_environment
+            .get(&binding.value.name.value)
+            .and_then(type_value_descriptor)
+            .expect("decorated type has a concrete Type descriptor");
         let owner_kind = match binding.value.declared_initializer {
             Some(crate::ast::DeclaredInitializerKind::Struct) => PropertyOwnerKind::Field,
             Some(crate::ast::DeclaredInitializerKind::Enum) => PropertyOwnerKind::Variant,
@@ -643,6 +692,10 @@ fn evaluate_declared_properties(
                 ty: target_type,
                 property_ty: property_type,
             };
+            evidence_descriptors.insert(
+                key,
+                (target_descriptor.clone(), property_descriptor.clone()),
+            );
             let previous = effective.get(&key).copied();
             let (actual_type, value) = evaluate_property_decorator(
                 source_name,
@@ -676,5 +729,25 @@ fn evaluate_declared_properties(
                 sources,
                 Diagnostic::error(error.to_string(), program.location),
             )
+        })?;
+    evidence_descriptors
+        .into_iter()
+        .map(|(key, (target, property))| {
+            let PropertyKey::Ty { ty, property_ty } = key else {
+                unreachable!("only type properties publish trait evidence");
+            };
+            let root = type_property_runtime_name(ty, property_ty);
+            let value = evaluator
+                .persistent_type_property(ty, property_ty)
+                .expect("published type property is present in Main world");
+            Ok((
+                TypePropertyEvidence {
+                    target,
+                    property,
+                    root,
+                },
+                value,
+            ))
         })
+        .collect()
 }

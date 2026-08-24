@@ -19,4 +19,12 @@ def display: for(A) Fn(TypeOf(A), A) -> String = fn(target, value) {
     render(DisplayBy, target, value)
 };
 
-export { DisplayBy, display, display_by };
+trait Display {
+    display: Fn(Self) -> String,
+};
+
+impl for(T: Property(DisplayBy)) Display for T {
+    display: fn(value) { display(T, value) },
+};
+
+export { Display, DisplayBy, display, display_by };
