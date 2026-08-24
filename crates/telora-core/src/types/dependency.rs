@@ -405,7 +405,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .bindings
         .iter()
         .filter(|binding| {
-            matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native)
+            matches!(
+                binding.value.kind,
+                BindingKind::Decl | BindingKind::Native | BindingKind::Impl
+            )
                 || binding.value.kind == BindingKind::Def && binding.value.annotation.is_some()
         })
         .filter_map(|binding| binding.value.annotation.as_ref())
@@ -848,7 +851,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
         if binding.value.kind == BindingKind::Def {
             *definition_counts.entry(name.clone()).or_default() += 1;
         }
-        if !matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native)
+        if !matches!(
+            binding.value.kind,
+            BindingKind::Decl | BindingKind::Native | BindingKind::Impl
+        )
             && !(binding.value.kind == BindingKind::Def && binding.value.annotation.is_some())
         {
             continue;
@@ -915,9 +921,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let erased = erase_type_variables(&descriptor);
         static_environment.insert(name.clone(), erased.clone());
         binding_types.insert(name.clone(), erased);
-        if matches!(binding.value.kind, BindingKind::Decl | BindingKind::Def) {
+        if matches!(
+            binding.value.kind,
+            BindingKind::Decl | BindingKind::Def | BindingKind::Impl
+        ) {
             definition_contracts.insert(name.clone(), descriptor);
-            declaration_locations.insert(name.clone(), binding.location);
+            if binding.value.kind != BindingKind::Impl {
+                declaration_locations.insert(name.clone(), binding.location);
+            }
         }
     }
     for (name, count) in &definition_counts {
@@ -928,6 +939,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ));
         }
     }
+    let trait_implementations = collect_trait_implementations(
+        module_id,
+        program,
+        &trait_ids,
+        &qualified_external_interfaces,
+        &definition_contracts,
+        &binding_schemes,
+        sources,
+    )?;
 
     for binding in &program.value.body.value.bindings {
         if matches!(binding.value.value.value, ExprKind::Interpreter { .. }) {
@@ -2019,6 +2039,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         declared_types,
         binding_types,
         trait_ids,
+        trait_implementations,
         result_type,
         hir,
         definition_types,

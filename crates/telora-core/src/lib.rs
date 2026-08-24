@@ -59,7 +59,8 @@ pub use module::{
 pub use module_id::{
     FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleAuthority, ModuleCName, ModuleCatalogEntry,
     ModuleCatalogOrigin, ModuleFormat, ModuleId, ModuleResolver, ModuleVisibility,
-    ResolveModuleError, ResolvedModule, TraitId, TypeConstructorId, resolve_root_module,
+    ResolveModuleError, ResolvedModule, TraitId, TraitImplId, TypeConstructorId,
+    resolve_root_module,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use semantic::{
@@ -78,9 +79,10 @@ pub use toml::{TomlParse, parse_toml_registered};
 pub use type_store::TypeId;
 pub use types::{
     Analysis, AnalysisTypeId, DeclaredTypeDescriptor, ModuleInterface, PartialAnalysis,
-    SemanticDependencyGraph, SemanticDependencyNode, TypeGraph, TypeNode, TypeParameter,
-    TypeParameterId, TypeScheme, analyze_partial_types, analyze_partial_types_with_bindings,
-    analyze_source, analyze_source_with_fuel, analyze_source_with_quota,
+    SemanticDependencyGraph, SemanticDependencyNode, TraitImplementation, TypeGraph, TypeNode,
+    TypeParameter, TypeParameterId, TypeScheme, analyze_partial_types,
+    analyze_partial_types_with_bindings, analyze_source, analyze_source_with_fuel,
+    analyze_source_with_quota,
 };
 pub use value::{Atom, BuiltinAtom, NativeError, NativeFunction, NativeType, OpaqueValue};
 pub use vm::{

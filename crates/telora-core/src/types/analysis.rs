@@ -4,6 +4,7 @@ pub struct Analysis {
     pub declared_types: BTreeMap<String, AnalysisTypeId>,
     pub binding_types: BTreeMap<String, AnalysisTypeId>,
     pub trait_ids: BTreeMap<String, crate::TraitId>,
+    pub trait_implementations: Vec<TraitImplementation>,
     pub result_type: AnalysisTypeId,
     pub hir: HirProgram,
     pub definition_types: BTreeMap<HirDefinitionId, AnalysisTypeId>,

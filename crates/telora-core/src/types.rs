@@ -35,6 +35,7 @@ const DEFAULT_TOOL_FUEL: usize = 100_000;
 
 include!("types/graph.rs");
 include!("types/descriptor.rs");
+include!("types/traits.rs");
 include!("types/analysis.rs");
 include!("types/dependency.rs");
 include!("types/metadata.rs");

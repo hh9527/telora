@@ -168,6 +168,12 @@ pub struct TraitId {
     pub local: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TraitImplId {
+    pub module: ModuleId,
+    pub local: u32,
+}
+
 impl From<TypeConstructorId> for TraitId {
     fn from(value: TypeConstructorId) -> Self {
         Self {

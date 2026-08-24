@@ -27,6 +27,54 @@
         );
     }
 
+    #[test]
+    fn trait_registry_uses_ids_and_rejects_duplicate_or_fake_traits() {
+        let analysis = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               type Endpoint = struct { host: String };
+               impl Display for Endpoint { display: fn(value) { value.host } };
+               export { Display, Endpoint };"#,
+        )
+        .unwrap();
+        let implementation = &analysis.trait_implementations[0];
+        assert_eq!(implementation.trait_id, analysis.trait_ids["Display"]);
+        assert_eq!(implementation.id.module, crate::ModuleId::ANONYMOUS);
+        assert_eq!(implementation.id.local, crate::FIRST_DYNAMIC_MODULE_LOCAL);
+        assert!(
+            matches!(implementation.target, TypeDescriptor::Declared(_)),
+            "{:?}",
+            implementation.target
+        );
+
+        let duplicate = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               type Endpoint = struct { host: String };
+               impl Display for Endpoint { display: fn(value) { value.host } };
+               impl Display for Endpoint { display: fn(value) { value.host } };"#,
+        )
+        .unwrap_err();
+        assert!(duplicate.message.contains("duplicate trait implementation"));
+
+        let fake = analyze_source(
+            "traits.telora",
+            r#"type Capability(T) = struct { apply: Fn(T) -> String };
+               impl Capability for Int { apply: fn(value) { "ok" } };"#,
+        )
+        .unwrap_err();
+        assert!(fake.message.contains("not a visible trait"));
+
+        let wrong_member = analyze_source(
+            "traits.telora",
+            r#"trait Display { display: Fn(Self) -> String };
+               type Endpoint = struct { host: String };
+               impl Display for Endpoint { display: fn(value) { 42 } };"#,
+        )
+        .unwrap_err();
+        assert!(wrong_member.message.contains("String"), "{wrong_member}");
+    }
+
     fn analyze_with_natives(
         source: &str,
         natives: &[(&'static str, usize)],
