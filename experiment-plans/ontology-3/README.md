@@ -6,8 +6,8 @@
 A1 QueryBuilder: Plan -> SQLite Query
 A2 ontology eDSL: type/member metadata -> prepared Request -> Plan
 A3 ent-1 model: domain facts -> nominal types + typed properties
-A4 intent-1: private text intent -> typed Request -> public lower -> Query
-A5 query-1: JSON intent -> fixed query command -> production answer
+A4 intent-1: private text intent -> JSON -> fixed query command -> acceptance result
+A5 query-1: numbered problem -> numbered JSON answer -> fixed query command -> production answer
 ```
 
 `Plan` 使用标准算子且方言中立；本轮 QueryBuilder 只具体化 SQLite，`Query` 形状为
@@ -19,8 +19,10 @@ A5 query-1: JSON intent -> fixed query command -> production answer
 - A1 只实现 `query-builder/`。
 - A2 只实现 `ontology/`，只看 A1 的公共教程和契约。
 - A3 只实现 `ent-1/`，只看 A1/A2 的公共教程和契约；公共查询面不得泄漏物理 mapping。
-- A4 只实现 `intent-1/`，只看 A3 的公共查询教程/契约和自己的私有文字意图。
-- A5 只修改 `query-1/src/intent.json`，只执行 `just make-query`，看不到
+- A4 只修改 `intent-1/intent.json`、`intent-1/invalid/*.json` 和验收记录，只执行
+  `just a4 ...`，只看 A3 的公共查询教程/契约、JSON 接口文档和自己的私有文字意图。
+- A5 只修改 `query-1/answers/<problem-id>.json`，只执行
+  `just a5 make-query <problem-id>`，看不到
   Telora、私有模型和物理 mapping。
 - coordinator 只启动五个长期角色，之后不解释或调度工作。
 
@@ -63,8 +65,8 @@ ent-1-query-surface.a3 -> ent-1-query-surface-feedback.a4
 Host 整合审查 -> ent-1-query-surface-feedback? -> ent-1-query-surface.a3 修订
 ent-1-query-surface.a3 + ent-1-query-surface-feedback.a4 -> Host 发布 ent-1-query-surface
 
-lang + intent-req -> lang-learn.a4
-ent-1-query-surface + lang-learn.a4 -> intent-1.a4
+intent-req + ent-1-query-surface.a3 -> ent-1-query-surface-feedback.a4
+intent-req + ent-1-query-surface -> intent-1.a4
 intent-1.a4 -> Host 发布 intent-1
 
 Host 发布 query-engine + query-doc + homework -> homework.a5
@@ -106,11 +108,14 @@ A5 上岗通过后，十道真题由 Host 从 `host/a5-cases/` 逐题投递。�
 ./oc-ctl publish t001 problem
 ```
 
+每份题面首行包含四位题号。A5 以相同题号创建 `query-1/answers/<problem-id>.json`；信息
+不足、意图不合法或歧义尚未消除时不创建该题答案文件。上岗考试固定使用题号 `0000`。
+
 `host/` 不属于 manifest 的 `workspace`，不会在启动或 A1-A4 阶段复制到 Agent 可见目录；
 `A5-HARD-QUERIES.md` 中的 Host 预期也永远不投递。
 
 发布反馈 artifact 前，Host 先把筛选后的正文写入其 checks 指定的反馈文件。语言机制问题
-单独跟踪，不要求角色绕行。A4 首轮后最多追加一次语言能力范围内的公共查询面迭代。
+单独跟踪，不要求角色绕行。A4 首轮后最多追加一次当前公共接口范围内的查询面迭代。
 
 ## 运行
 

@@ -20,6 +20,7 @@ prepared EnterpriseKnowledge + Request -> Plan -> Query
 - `ent-1/GOAL.md`
 - `ent-1/DOMAIN.md`
 - `ent-1/telora-deps.json`
+- `query-1/QUERY-DOC.md`：固定的公共 JSON 查询契约，不包含题面或预期答案；
 - `ent-1/FEEDBACK.md`：Host 所有的私有模型反馈；仅在
   `ent-1-model-feedback` 发布后作为输入读取，A3 不得修改；
 - A3 自己已经产生的 `ent-1/src/**` 与 `ent-1/tests/**`
@@ -54,7 +55,7 @@ prepared EnterpriseKnowledge + Request -> Plan -> Query
 ## 公共查询面交付物（`ent-1-query-surface.a3`）
 
 - `ent-1/src/query.telora`：从同一份私有 ontology root/property 形成的公共 facade，只导出业务
-  vocabulary、typed Request 与 `lower(Request) -> Query`；
+  vocabulary、typed Request、`lower(Request) -> Query` 与下述 `lower_value(Value)`；
 - `ent-1/src/bin/query-surface.telora` 与 `ent-1/tests/query-surface.telora`：使用不针对
   隐藏意图的通用 typed Request，实际验证 facade 可加载、lowering 确定且结果可编码；
 - `ent-1/QUERY-DESIGNER-TUTORIAL.md`：不懂物理模型的查询设计者可独立使用的教程；
@@ -69,6 +70,23 @@ prepared EnterpriseKnowledge + Request -> Plan -> Query
 `OriginRegion`、`ProductCategory` 有类型筛选，以及只引用已请求投影的排序和正整数
 Top N。公共 JSON/codec 形状必须可由下游直接使用；不能要求下游提交 TypeId、物理
 表达式或 QueryBuilder 节点。
+
+公共 facade 还必须提供稳定的动态边界：
+
+```text
+type ValueQuery = struct { intent: Value, query: Value };
+lower_value: Fn(Value) -> ValueQuery;
+```
+
+`lower_value` 严格按 `query-1/QUERY-DOC.md` 的固定 JSON 形状解码输入。A3 在 facade 内把它转换成自己的
+typed Request，调用同一个 `lower`，再用 codec 把规范化 Request 与 Query 分别编码为
+`ValueQuery.intent` 和 `ValueQuery.query`。不得在动态入口复制 lowering、Plan 或 SQL
+逻辑，也不得让调用者提交 Subject、TypeId、物理表达式或 provider input。
+
+JSON 解码、公共词汇、筛选值、排序和 limit 的问题必须通过带外诊断失败，不返回部分
+`ValueQuery`；输入 Value 的 source provenance 必须保留，使诊断可归因到对应 JSON 字段。
+公共 facade 的测试必须同时覆盖 `lower` 和 `lower_value`，并证明二者对同一意图产生相同
+Query。
 
 公共查询面必须从私有 ontology root 的已发布 property 捕获 prepared lowering，不能
 手工维护第二份领域知识。公共

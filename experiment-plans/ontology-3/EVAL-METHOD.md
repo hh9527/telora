@@ -6,8 +6,8 @@
 
 ```text
 EnterpriseKnowledge + Request -> Plan -> SQLite Query
-private text intent -> typed Request -> public lower -> SQLite Query
-natural-language problem -> JSON intent -> fixed query command -> answer
+private text intent -> JSON -> fixed query command -> SQLite Query/diagnostics
+numbered natural-language problem -> numbered JSON answer -> fixed query command -> answer
 ```
 
 ## 受控输入
@@ -33,12 +33,12 @@ runtime 更新前后的结果属于同一 execution 中两个不同 epoch。
 
 - A1 只读自身设计与源码，不读 ontology 和企业领域。
 - A2 只读 A1 的公共教程/契约，不读 A1 源码、私有设计、tests 或 notes。
-- A3 只读 A1/A2 公共教程/契约，不读上游源码、私有设计、tests 或 notes，也永远不读
-  A4 私有 `INTENT.md`。
-- A4 只读语言/CLI、A3 公共查询教程/契约和自己的 GOAL/INTENT/FEEDBACK，不读 DOMAIN、
-  A3 私有源码或 A1/A2 文件。依赖清单中的传递 package 不构成可见输入。
+- A3 只读 A1/A2 公共教程/契约和固定 JSON 查询契约，不读上游源码、私有设计、tests 或
+  notes，也永远不读 A4 私有 `INTENT.md` 或 A5 题面。
+- A4 只读 A3 公共查询教程/契约、JSON 查询接口说明和自己的 GOAL/INTENT/FEEDBACK，不读
+  语言/CLI、DOMAIN、A3 私有源码或 A1/A2 文件。依赖清单中的传递 package 不构成可见输入。
 - A5 只读 `query-1` 的公开查询文档、当前题面、intent 和结果，只修改 intent/结果，且
-  只能运行固定的 `just make-query`；不得读取 Telora 或 A1-A3 私有实现。
+  只能运行固定的 `just a5 make-query <problem-id>`；不得读取 Telora 或 A1-A3 私有实现。
 - coordinator 只启动 A1-A5 各一个原生 child session，不补写任务定义或观察交付状态。
 - `ent-1/FEEDBACK.md` 初始必须为零字节；角色只在 `oc-task` 返回对应任务后读取动态输入。
 - 核对 `control/artifacts/**` 与实际交付顺序一致；coordinator 不直接创建 artifact。
@@ -53,7 +53,7 @@ runtime 更新前后的结果属于同一 execution 中两个不同 epoch。
   `publish` 或投递 feedback；“不干预 working Agent”不能被解释成继续等待 Host 门禁。
 - `ent-1-model` 必须早于公共 facade 首次写入；`ent-1-query-surface` 必须
   早于 A4 首次 Request 写入。A3 公共面不得包含物理名词或隐藏 intent 答案。
-- A4 首轮若仍有无需语言变化的明确改进空间，Host 可筛选并发布至多一次
+- A4 首轮若仍有无需语言变化的明确公共接口改进空间，Host 可筛选并发布至多一次
   `edsl-feedback` 或 `ent-1-query-surface-feedback`；确认它只使对应旧交付
   及其下游失效，并由原角色修订重验。
 
@@ -100,17 +100,17 @@ entity/attribute/relation 事实目录。合法 Request 必须产生覆盖完整
 
 ## A4 评估
 
-Host 同时读取私有 DOMAIN 与 INTENT，检查 A4 的 typed Request 是否忠实表达合法和非法
-文字意图、是否只使用公共词汇且只调用公共 `lower`。合法 Request 的 Query 必须与私有
+Host 同时读取私有 DOMAIN 与 INTENT，检查 A4 的 JSON 是否忠实表达合法和非法文字意图、
+是否只使用公共词汇且只通过 `just a4` 调用固定查询接口。合法 Request 的 Query 必须与私有
 物理模型语义一致并逐字节确定；非法 Request 可以在编译、check 或 lowering 阶段拒绝，
-但不得发布部分 Query。A4 不得重写 Plan/Query/SQL 或诊断容器。单独统计语言学习、公共
-查询面学习、意图建模的时间、token 与代码/文档产出。
+但不得发布部分 Query。A4 不得重写 Plan/Query/SQL 或诊断容器。单独统计公共查询面学习、
+JSON 接口验收的时间、token 与 JSON/文档产出；A4 不再包含 Telora 语言学习。
 合法意图的验收必须看到非空 bindings，并逐项对应月份范围、等级、地区和 limit；仅生成
 全量分组 SQL 不通过。
 
 ## A5 评估
 
-上岗考试只验证 A5 能否依靠公开 JSON intent 文档和固定命令取得 Query、理解诊断并修正。
+上岗考试只验证 A5 能否依靠公开 JSON intent 文档和角色专属固定命令取得 Query、理解诊断并修正。
 Host 验收 `homework.a5` 后才发布 `lic`。真题由 Host 后续投递并发布 `problem`；A5 成功时
 必须交付命令实际返回的规范化 intent、SQL 与 bindings，失败时必须依据最终 Telora 诊断
 解释需求不合法或信息不足。不得把读取实现、手写 SQL 或猜测物理 mapping 计为成功。
@@ -119,7 +119,8 @@ Host 不得批准 A5 根据措辞倾向自行消歧义后产生的 Query；候�
 澄清反馈必须使用业务语言描述候选的计数单位、状态和行为差异，让用户选择语义；不得向用户暴露 SQL、bindings、物理表列、join 或内部 intent 标识符。
 上岗考试本身包含筛选、稳定排序和 Top N；Host 必须检查成功输出的 bindings 非空且逐项
 覆盖题面参数，不能只检查命令退出码。
-歧义未消除时，A5 不应修改 `intent.json` 或运行候选 Query；Host 只验收澄清请求，不发布最终 `answer`。
+歧义未消除时，A5 不应创建该题的 `answers/<problem-id>.json` 或运行候选 Query；Host 只
+验收澄清请求，不发布最终 `answer`。
 对 A5 准备提供给用户选择的每个候选业务口径，也要先依据公开文档标明其在当前分组与
 筛选约束下是否可执行。不可执行的口径可以用于解释歧义空间，但不能与可执行口径并列为
 无差别的可选答案；应同时说明阻断它的业务原因。

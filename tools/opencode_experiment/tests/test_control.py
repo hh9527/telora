@@ -643,14 +643,28 @@ class ConfigStateTest(unittest.TestCase):
             self.assertEqual(a4_permissions["read"]["*"], "deny")
             self.assertNotIn("ent-1/**", a4_permissions["read"])
             self.assertEqual(a4_permissions["edit"]["*"], "deny")
-            self.assertEqual(a4_permissions["edit"]["intent-1/src/**"], "allow")
-            self.assertEqual(a4_permissions["edit"]["**/intent-1/src/**"], "allow")
+            self.assertEqual(a4_permissions["edit"]["intent-1/intent.json"], "allow")
+            self.assertEqual(a4_permissions["edit"]["**/intent-1/invalid/**"], "allow")
+            self.assertNotIn("intent-1/src/**", a4_permissions["edit"])
             self.assertEqual(a4_permissions["read"]["**/experiment.json"], "deny")
-            self.assertEqual(a4_permissions["read"]["**/docs/**"], "allow")
+            self.assertNotIn("docs/**", a4_permissions["read"])
             self.assertEqual(
-                a4_permissions["bash"]["./bin/telora query exports @bin/main -C intent-1"],
+                a4_permissions["bash"]["just a4 *"],
                 "allow",
             )
+            self.assertFalse(any(command.startswith("./bin/telora")
+                                 for command in a4_permissions["bash"]))
+            a5 = (workspace / ".opencode/agents/a5.md").read_text(encoding="utf-8")
+            a5_permission_line = next(
+                line.removeprefix("permission: ")
+                for line in a5.splitlines()
+                if line.startswith("permission: ")
+            )
+            a5_permissions = json.loads(a5_permission_line)
+            self.assertEqual(a5_permissions["edit"]["query-1/answers/*.json"], "allow")
+            self.assertEqual(a5_permissions["bash"]["just a5 *"], "allow")
+            self.assertFalse(any(command.startswith("./bin/telora")
+                                 for command in a5_permissions["bash"]))
         self.assertEqual(
             [phase["name"] for phase in manifest.metrics["roles"]["a3"]["work_phases"]],
             ["modeling", "query_surface_design"],
@@ -701,6 +715,8 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
         self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
         self.assertIn("./bin/oc-task submit a4 *", manifest.permission_preflight["a4"])
+        self.assertIn("just a4 expect-invalid *", manifest.permission_preflight["a4"])
+        self.assertIn("just a5 make-query *", manifest.permission_preflight["a5"])
         for role in ("a1", "a2", "a3", "a4"):
             text = (plan / "roles" / f"{role}.md").read_text(encoding="utf-8")
             self.assertNotIn("stopped: true", text)
@@ -713,6 +729,25 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("Top N", ontology_goal)
         self.assertIn("bindings", ontology_goal)
         self.assertIn("bindings", intent_goal)
+
+        query_task = plan / "query-1" / "query_task.py"
+        listed = subprocess.run(
+            ["python3", str(query_task), "a5", "", ""],
+            cwd=plan,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(listed.returncode, 0)
+        self.assertIn("make-query <problem-id>", listed.stdout)
+        rejected = subprocess.run(
+            ["python3", str(query_task), "a5", "make-query", "../0001"],
+            cwd=plan,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(rejected.returncode, 64)
         self.assertTrue((plan / "host/A5-HARD-QUERIES.md").is_file())
         self.assertEqual(len(list((plan / "host/a5-cases").glob("*.problem.md"))), 10)
         self.assertNotIn("host", manifest.workspace)
