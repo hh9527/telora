@@ -83,10 +83,12 @@ otherwise waits at most 60 seconds. At exit, its `events` contain every visible 
 Timeout is only a waiting bound, never an event upper bound. `next_since` is the greatest returned
 `at`, or remains `since` when there are no events. Stable IDs let callers deduplicate the inclusive
 boundary on the next pull.
-`requests` is only the ordered list of Host-owned, non-current artifacts whose artifact inputs are
-ready. Requests are a current snapshot and are never filtered by `since`; file checks remain
-publication-time validation. The first snapshot and later request-set changes wake `pull`
-immediately; an unchanged request set remains in the response but does not cause a busy loop.
+`requests` is the ordered list of ready, non-current Host artifacts used by mandatory inputs (and
+the finish artifact). `opt_requests` contains the remaining ready Host artifacts, including inputs
+used only through `artifact?`. Both are current snapshots and are never filtered by `since`; file
+checks remain publication-time validation. The first mandatory request snapshot and later
+`requests` changes wake `pull` immediately. `opt_requests` never wakes it, while both unchanged
+snapshots remain visible in the response without causing a busy loop.
 Pass `next_since` into the next call, and use `event` with
 an event ID for sanitized detail. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.

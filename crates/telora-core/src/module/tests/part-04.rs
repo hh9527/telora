@@ -116,7 +116,7 @@
         let data_location = failure.data_location().expect("codec data location");
         assert_eq!(
             module.sources.get(data_location.source).name.as_ref(),
-            data.display().to_string()
+            "@src/data.json"
         );
         let rule_location = failure.rule_location().expect("codec rule location");
         assert_eq!(

@@ -30,6 +30,13 @@ SourceDatabase 中的 revisioned source
 workspace snapshot 中的 source、定义、引用、类型图和诊断，不从 CLI 文本输出反向解析
 语义。
 
+`SourceDatabase.name` 保存 canonical source path，而不是物理文件名。workspace module
+同时在 Host 私有结构中保留 resolver path，LSP 由 source id 反查该结构后生成 file URI。
+运行上下文 source 以 `@run-ctx/<percent-encoded-key>` 注册；CLI Host 另存从这个公开名字
+到文件或 stdin locator 的私有映射。该 source 不进入 module graph，不分配 `ModuleId`，
+也不参与 import resolution。文件读取错误、provenance 和普通诊断只公开 canonical
+source path。
+
 主要实现入口是：
 
 | 层次 | 当前实现 |
@@ -99,6 +106,11 @@ Import edge 指向已发现的模块身份。一个依赖模块只初始化一�
 root 保存在 MainWorld；菱形依赖中的后续 import 复用同一个持久 root，再向使用方建立
 binding。当前拒绝模块初始化 cycle，模块内函数和 TypeMetadata 的递归由专用 slot
 机制闭合。
+
+普通 Telora module 与 static data module 的 canonical source path 等于 canonical module
+name，例如 `@src/model.telora`、`@bin/main.telora` 或 `@standalone/main.telora`。嵌入式
+native ABI source 使用编译器 synthetic name，注册给 resolver 的 module identity 仍是
+`std/...`。`@run-ctx/config` 等非模块 Source 不能转换为 module name。
 
 ## 4. 分析期类型与运行时类型
 
@@ -273,8 +285,9 @@ Main 不直接读取 open world。Entry 也只声明 capabilities、接收 resou
 data；实际文件、环境、stdin 和子进程操作由 CLI `RunHost` 执行。当前没有为了 Entry
 而延迟发现或动态修改 Main module graph。
 
-CLI 的公开命令只有 `run`、`run-with`、`check`、`query`（别名 `q`）和 `lsp`。
-`run` 等价于选择 `std/entry/default` 的 `run-with`。`check`、`query` 和 `lsp` 当前是
+CLI 的公开命令只有 `run`、`serve`、`run-with`、`check`、`query`（别名 `q`）和 `lsp`。
+`run` 等价于选择 `std/entry/default` 的 `run-with`；`serve --bind stdio://` 选择
+`std/entry/serve`。`check`、`query` 和 `lsp` 当前是
 Host 固定工具路径，不通过用户 Entry ABI。
 
 ## 10. 维护不变量与验证入口

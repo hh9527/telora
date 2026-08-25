@@ -107,6 +107,8 @@ pub struct SystemDataSource {
     pub has_default: bool,
 }
 
+pub type EntryDataSources = BTreeMap<String, SystemDataSource>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemTextSource {
     pub src: String,

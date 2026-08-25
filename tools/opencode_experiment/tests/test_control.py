@@ -1258,6 +1258,37 @@ class StatusSummaryTest(unittest.TestCase):
                               if event["at"] == result["next_since"]])
             self.assertEqual(repeated["requests"], ["accepted"])
 
+    def test_host_pull_reports_optional_requests_without_waking(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            workflow = validate_workflow({
+                "schema": "telora.artifact-workflow/v1",
+                "roles": ["a1"],
+                "start_artifacts": ["lang"],
+                "finish_artifact": "accepted",
+                "artifacts": {
+                    "lang": {"desc": "language"},
+                    "feedback": {"desc": "optional Host feedback"},
+                    "draft.a1": {"desc": "draft", "input": ["lang", "feedback?"],
+                                 "instruction": "build"},
+                    "accepted": {"desc": "accepted", "input": ["draft.a1"]},
+                },
+            })
+            publish_artifact(workspace, workflow, "lang")
+            context = mock.Mock(state={
+                "exec_name": "demo", "phase": "active", "workspace": str(workspace),
+                "workflow": workflow,
+            })
+            context.root = workspace / "execution"
+            context.client.return_value.children.return_value = []
+
+            result = _host_pull(context, None, timeout=.02)
+
+            self.assertEqual(result["reason"], "timeout")
+            self.assertGreaterEqual(result["waited_ms"], 10)
+            self.assertEqual(result["requests"], [])
+            self.assertEqual(result["opt_requests"], ["feedback"])
+
     def test_host_pull_rejects_waits_longer_than_one_minute(self):
         context = mock.Mock(state={"workflow": {"roles": []}})
         with self.assertRaisesRegex(ControlError, "between 0 and 60"):

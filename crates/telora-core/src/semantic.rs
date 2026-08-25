@@ -759,6 +759,12 @@ impl WorkspaceSnapshot {
             .find(|module| module.path.as_deref() == Some(path))
     }
 
+    pub fn module_by_source(&self, source: SourceId) -> Option<&WorkspaceModule> {
+        self.modules
+            .iter()
+            .find(|module| module.source == Some(source))
+    }
+
     pub fn definitions(&self) -> &[Definition] {
         &self.definitions
     }

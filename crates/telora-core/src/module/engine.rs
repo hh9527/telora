@@ -234,7 +234,7 @@ impl Engine {
             .path()
             .ok_or_else(|| ModuleError::new("main module has no physical path"))?;
         let mut sources = SourceDatabase::default();
-        let source_id = sources.add(physical.display().to_string(), read(physical)?);
+        let source_id = sources.add(root.id.to_string(), read(physical, &root.id.to_string())?);
         let parsed = parse_registered(&sources, source_id);
         if parsed.program.is_none() {
             return Err(ModuleError::new(
@@ -357,8 +357,32 @@ impl Engine {
         entry_args: &[String],
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
+        self.run_pending_with_sources_and_host(
+            pending,
+            entry_selector,
+            entry_args,
+            &EntryDataSources::new(),
+            host,
+        )
+        .await
+    }
+
+    pub async fn run_pending_with_sources_and_host(
+        &self,
+        pending: PendingModule,
+        entry_selector: &str,
+        entry_args: &[String],
+        entry_sources: &EntryDataSources,
+        host: &mut dyn RunHost,
+    ) -> Result<RunOutcome, ModuleError> {
         let result = self
-            .run_pending_with_host_inner(pending, entry_selector, entry_args, host)
+            .run_pending_with_host_inner(
+                pending,
+                entry_selector,
+                entry_args,
+                entry_sources,
+                host,
+            )
             .await;
         let finished = host
             .finish()
@@ -376,6 +400,7 @@ impl Engine {
         pending: PendingModule,
         entry_selector: &str,
         entry_args: &[String],
+        entry_sources: &EntryDataSources,
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
         let resolver = pending.inner.resolver.clone();
@@ -384,6 +409,11 @@ impl Engine {
                 ModuleCName::builtin("std/entry/default.entry.telora"),
                 default_entry_source().to_owned(),
             )
+        } else if entry_selector == SERVE_ENTRY_MODULE {
+            (
+                ModuleCName::builtin("std/entry/serve.entry.telora"),
+                serve_entry_source().to_owned(),
+            )
         } else {
             let entry = resolver
                 .resolve_entry(entry_selector)
@@ -391,7 +421,8 @@ impl Engine {
             let path = entry.path().map(Path::to_owned).ok_or_else(|| {
                 ModuleError::new(format!("Entry {entry_selector:?} has no physical source"))
             })?;
-            (entry.id, read(&path)?)
+            let source_name = entry.id.to_string();
+            (entry.id, read(&path, &source_name)?)
         };
         let SelectedEntryLoader {
             mut loader,
@@ -465,7 +496,12 @@ impl Engine {
             &loader.main.heap,
             &pending.inner.options,
         )?;
-        let env = make_entry_env(entry_world.heap_mut(), &loader.main.heap, entry_args);
+        let env = make_entry_env(
+            entry_world.heap_mut(),
+            &loader.main.heap,
+            entry_args,
+            entry_sources,
+        );
         let configured = invoke_world_member_in(
             &loader.main.heap,
             &entry_compiled.externals,
@@ -500,6 +536,7 @@ impl Engine {
         })?;
         let bindings = pending.begin_initialization()?;
 
+        let main_source_name = main_module.id.to_string();
         let (compiled_main_path, main_compiled) = match loader.compile_root(main_module, bindings) {
             Ok(compiled) => compiled,
             Err(error) => {
@@ -562,7 +599,7 @@ impl Engine {
                 .wrap_root_dyn(
                     &shared_main.heap,
                     &actual_main_type,
-                    main.path.display().to_string(),
+                    main_source_name,
                 )
                 .map_err(|error| ModuleError::new(error.to_string()))?;
         }
@@ -992,4 +1029,3 @@ impl Engine {
         ))
     }
 }
-

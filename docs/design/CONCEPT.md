@@ -184,6 +184,11 @@ Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect�
 **Source（源码）**是具有稳定身份和位置的 Telora、JSON、TOML 或 YAML 文档，参与
 解析、依赖分析、provenance 和 diagnostic。
 
+**Canonical source path（规范来源路径）**是 Source 对语言值和诊断公开的稳定名字。
+它与 Host 用于读取数据的物理 locator 分离，也不必是 module identity。运行上下文中的
+具名 source 使用 `@run-ctx/<key>`；这个名字只标识来源，不创建模块、不能被 import，
+也不会出现在模块查询中。
+
 ### Static Data Module
 
 **Static data module（静态数据模块）**是作为不可变、带位置的值导入的非 Telora
@@ -203,6 +208,10 @@ Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect�
 
 **Module identity（模块身份）**是 dependency、interface、cache 和 diagnostic 使用
 的规范语义身份。完成解析后，它不能依赖偶然的物理路径拼写。
+
+只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
+的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入
+只有 canonical source path。
 
 ## 类型概念
 

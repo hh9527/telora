@@ -15,6 +15,7 @@ type Platform = struct {
 type Env = struct {
     args: Array(String),
     platform: Platform,
+    sources: Dict(DataSrc),
 };
 
 type DataFormat = enum {

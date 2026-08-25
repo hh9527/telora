@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
@@ -539,13 +541,13 @@ async fn publish_diagnostics(state: &Rc<RefCell<State>>, snapshot: &WorkspaceSna
         )
     };
     for (path, version) in documents {
-        let Some(file) = snapshot
-            .sources()
-            .files()
-            .find(|file| Path::new(file.name.as_ref()) == path)
+        let Some(source) = snapshot
+            .module_by_path(&path)
+            .and_then(|module| module.source)
         else {
             continue;
         };
+        let file = snapshot.sources().get(source);
         let Ok(uri) = lsp::Url::from_file_path(&path) else {
             continue;
         };
@@ -634,9 +636,12 @@ fn to_location(
     location: Location,
     encoding: PositionEncoding,
 ) -> Option<lsp::Location> {
-    let file = snapshot.sources().get(location.source);
+    let path = snapshot
+        .module_by_source(location.source)?
+        .path
+        .as_deref()?;
     Some(lsp::Location::new(
-        lsp::Url::from_file_path(Path::new(file.name.as_ref())).ok()?,
+        lsp::Url::from_file_path(path).ok()?,
         to_lsp_range(snapshot, location, encoding)?,
     ))
 }

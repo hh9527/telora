@@ -60,9 +60,7 @@ impl WorkspaceBuilder<'_> {
                     }
                 },
             };
-            let source_id = self
-                .sources
-                .add_document(path.display().to_string(), source);
+            let source_id = self.sources.add_document(key.clone(), source);
             let parsed = parse_registered(&self.sources, source_id);
             let invalid_scoped_options = parsed
                 .options
@@ -222,10 +220,6 @@ impl WorkspaceBuilder<'_> {
                     }
                     continue;
                 }
-                let target_path = target_module
-                    .path()
-                    .expect("local import resolves to a local source")
-                    .to_owned();
                 semantic_imports.push(SemanticImport {
                     name: if open { "*".into() } else { name.clone() },
                     location,
@@ -288,14 +282,14 @@ impl WorkspaceBuilder<'_> {
                     if self.cycle_members.contains(&target_module.id) {
                         if !self.cycle_reported {
                             diagnostics.push(Diagnostic::error(
-                                format!("module cycle reaches {}", target_path.display()),
+                                format!("module cycle reaches {}", target_module.id),
                                 location,
                             ));
                             self.cycle_reported = true;
                         }
                     } else {
                         diagnostics.push(Diagnostic::error(
-                            format!("module {} is unavailable", target_path.display()),
+                            format!("module {} is unavailable", target_module.id),
                             location,
                         ));
                     }
@@ -514,7 +508,11 @@ impl WorkspaceBuilder<'_> {
                     .insert(key.clone(), unavailable_input(key, path.clone(), kind));
                 return None;
             }
-            None => match read_data_file(&path, self.engine.config.data_limits.file_size) {
+            None => match read_data_file(
+                &path,
+                self.engine.config.data_limits.file_size,
+                &key,
+            ) {
                 Ok(source) => crate::document::DocumentText::new(source),
                 Err(_) => {
                     let kind = static_data_kind(module.format)?;
@@ -524,9 +522,7 @@ impl WorkspaceBuilder<'_> {
                 }
             },
         };
-        let source_id = self
-            .sources
-            .add_document(path.display().to_string(), source);
+        let source_id = self.sources.add_document(key.clone(), source);
         let (_, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
             .expect("std/value provides the static data interface");
         let parsed = parse_static_data_registered(module.format, &self.sources, source_id)?;

@@ -182,7 +182,8 @@ fn run_context_selects_the_manifest_discovery_start() {
     let other = fixture();
     fs::write(
         other.join("src/bin/tool.telora"),
-        "export def output = \"9\";",
+        r#"import "std/value" {Value};
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(9) };"#,
     )
     .unwrap();
     let run = telora(&cwd)
@@ -244,11 +245,11 @@ fn standalone_run_uses_only_embedded_dependency_options() {
     fs::create_dir_all(dependency.join("src")).unwrap();
     fs::write(
         dependency.join("src/value.telora"),
-        "export def value = \"12\";",
+        "export def value = 12;",
     )
     .unwrap();
     let standalone = cwd.join("standalone.telora");
-    fs::write(&standalone, r#"option "crate.dependency" {name: "dep", source: 'Path({path: "dep"})}; import "dep/value.telora" {value}; export {value as output};"#).unwrap();
+    fs::write(&standalone, r#"option "crate.dependency" {name: "dep", source: 'Path({path: "dep"})}; import "dep/value.telora" {value}; import "std/value" {Value}; export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(value) };"#).unwrap();
     let run = telora(&cwd)
         .args(["run", "-S", standalone.to_str().unwrap()])
         .output()
@@ -327,7 +328,8 @@ fn run_is_run_with_the_default_entry_and_rejects_the_old_entry_flag() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "export def output = \"default\";",
+        r#"import "std/value" {Value};
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String("default") };"#,
     )
     .unwrap();
     let implicit = telora(&cwd).args(["run", "main"]).output().unwrap();
@@ -335,9 +337,18 @@ fn run_is_run_with_the_default_entry_and_rejects_the_old_entry_flag() {
         .args(["run-with", "std/entry/default", "main"])
         .output()
         .unwrap();
-    assert!(implicit.status.success());
-    assert!(explicit.status.success());
+    assert!(
+        implicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&implicit.stderr)
+    );
+    assert!(
+        explicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
     assert_eq!(implicit.stdout, explicit.stdout);
+    assert_eq!(implicit.stdout, br#""default""#);
 
     let old = telora(&cwd)
         .args(["run", "main", "--entry", "anything.entry.telora"])
@@ -345,6 +356,151 @@ fn run_is_run_with_the_default_entry_and_rejects_the_old_entry_flag() {
         .unwrap();
     assert!(!old.status.success());
     assert!(String::from_utf8_lossy(&old.stderr).contains("unexpected argument '--entry'"));
+}
+
+#[test]
+fn run_injects_declared_file_and_stdin_value_sources() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/value" {Value};
+import "std/dict" as dict;
+option "run-ctx.sources" ["request"];
+export def main: Fn(Dict(Value)) -> Value = fn(sources) {
+    match dict.get(sources, "request") {
+        'Some(value) => value,
+        'None => fail!("missing request"),
+    }
+};"#,
+    )
+    .unwrap();
+    let source = cwd.join("request.json");
+    fs::write(&source, r#"{"kind":"file","value":3}"#).unwrap();
+    let file = telora(&cwd)
+        .args([
+            "run",
+            "main",
+            "--source",
+            &format!("request={}", source.display()),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        file.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file.stderr)
+    );
+    assert_eq!(file.stdout, br#"{"kind":"file","value":3}"#);
+
+    let mut child = telora(&cwd)
+        .args(["run", "main", "--source", "request=stdin+json://"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"kind":"stdin","value":5}"#)
+        .unwrap();
+    let stdin = child.wait_with_output().unwrap();
+    assert!(
+        stdin.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stdin.stderr)
+    );
+    assert_eq!(stdin.stdout, br#"{"kind":"stdin","value":5}"#);
+}
+
+#[test]
+fn run_context_provenance_uses_the_public_key_not_the_source_locator() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/value" {Value};
+option "run-ctx.sources" ["request"];
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
+    )
+    .unwrap();
+    let source = cwd.join("private-input.json");
+    fs::write(&source, r#"{"broken": }"#).unwrap();
+    let run = telora(&cwd)
+        .args([
+            "run",
+            "main",
+            "--source",
+            &format!("request={}", source.display()),
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!run.status.success());
+    assert!(stderr.contains("@run-ctx/request"), "{stderr}");
+    assert!(!stderr.contains(source.to_string_lossy().as_ref()), "{stderr}");
+}
+
+#[test]
+fn run_rejects_sources_that_do_not_match_run_context_declaration() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/value" {Value};
+option "run-ctx.sources" ["request"];
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
+    )
+    .unwrap();
+    let missing = telora(&cwd).args(["run", "main"]).output().unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("was not provided"));
+
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/value" {Value};
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
+    )
+    .unwrap();
+    let extra = telora(&cwd)
+        .args(["run", "main", "--source", "request=stdin+json://"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!extra.status.success());
+    assert!(String::from_utf8_lossy(&extra.stderr).contains("undeclared source"));
+}
+
+#[test]
+fn serve_stdio_processes_jsonl_with_one_initialized_handler() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/value" {Value};
+export def serve: Fn(Dict(Value)) -> Fn(Value) -> Value = fn(sources) {
+    fn(request) { request }
+};"#,
+    )
+    .unwrap();
+    let mut child = telora(&cwd)
+        .args(["serve", "main", "--bind", "stdio://"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"{\"request\":1}\n[2,3]\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"{\"request\":1}\n[2,3]\n");
 }
 
 #[test]

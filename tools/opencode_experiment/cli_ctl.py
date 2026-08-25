@@ -11,7 +11,7 @@ from typing import Any
 
 from .config import ControlError, load_manifest, repository_root, sha256
 from .context import Context, resolve
-from .events import event_detail, pending_requests, project_events
+from .events import event_detail, pending_request_sets, project_events
 from .lifecycle import (
     probe_opencode_connection,
     publish_workflow_artifact,
@@ -511,7 +511,7 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
     while True:
         artifacts = workflow_status(_workspace(context), workflow)
         at_ms = int(time.time() * 1000)
-        requests = pending_requests(workflow, artifacts)
+        requests, _opt_requests = pending_request_sets(workflow, artifacts)
         if requests != previous_requests:
             reason = "requests_changed"
             break
@@ -525,7 +525,7 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
     ended_ms = int(time.time() * 1000)
     events = project_events(context, since)
     artifacts = workflow_status(_workspace(context), workflow)
-    requests = pending_requests(workflow, artifacts)
+    requests, opt_requests = pending_request_sets(workflow, artifacts)
     if requests != previous_requests:
         reason = "requests_changed"
     elif artifacts["complete"]:
@@ -535,7 +535,7 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
     _save_request_snapshot(context, requests)
     next_since = max([since, *(event["at"] for event in events)])
     return {
-        "schema": "telora.oc-host-pull/v2",
+        "schema": "telora.oc-host-pull/v3",
         "test_id": context.state["exec_name"],
         "clock": "unix_ms",
         "since": since,
@@ -545,6 +545,7 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
         "reason": reason,
         "events": events,
         "requests": requests,
+        "opt_requests": opt_requests,
     }
 
 

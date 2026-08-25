@@ -42,7 +42,11 @@ hello/
 `hello/src/bin/main.telora`：
 
 ```telora
-export def output: String = "hello, telora";
+import "std/value" {Value};
+
+export def main: Fn(Dict(Value)) -> Value = fn(sources) {
+    'String("hello, telora")
+};
 ```
 
 运行：
@@ -53,7 +57,7 @@ target/release/telora run main -C hello
 target/release/telora query exports @bin/main.telora -C hello
 ```
 
-内置 `run` Entry 会把入口模块显式导出的 String `output` 转换为输出效果。
+内置 `run` Entry 调用 `main` 一次，并把返回的 `Value` 编码为 JSON。
 
 ## 语言模型
 
@@ -195,10 +199,11 @@ Telora 程序本身没有外部权限。`run` 选择一个纯 Entry；Entry 约�
 
 ## 命令行
 
-当前稳定命令面只有五项：
+当前稳定命令面有六项：
 
 ```text
-telora run [binary]        通过 Entry 调度 @bin/<binary>.telora
+telora run [binary]        调用 @bin/<binary>.telora 的单次 main
+telora serve [binary]      通过 stdio JSONL 持续调用 serve handler
 telora run-with <entry> [binary]
                            通过指定的 .entry.telora 模块调度 binary
 telora check <module-id>   以 best-effort 策略检查并求值模块导出

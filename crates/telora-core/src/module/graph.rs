@@ -109,7 +109,7 @@ impl ModuleGraph {
                             .and_then(|overlays| overlays.get(path))
                             .map(ToString::to_string)
                             .map(Ok)
-                            .unwrap_or_else(|| read(path))?,
+                            .unwrap_or_else(|| read(path, &cname.to_string()))?,
                     )),
                     _ => None,
                 }

@@ -1,12 +1,70 @@
 import "@src/intent.json" { data as raw_intent };
 import "ent-1/query.telora" as enterprise;
+import "ontology/ontology.telora" as onto;
+import "std/array" as array;
 import "std/codec" as codec;
 import "std/json" as json;
 import "std/result" as result;
 import "std/value" { Value };
 
-def intent: enterprise.Request = codec.decode(enterprise.Request, raw_intent)
+type InputValue = enum {
+    'String(String),
+    'Number(Float),
+};
+
+type Filter = struct {
+    dimension: enterprise.DimensionId,
+    op: onto.FilterOp,
+    value: InputValue,
+};
+
+type OrderTarget = enum {
+    'Measure(enterprise.MeasureId),
+    'Dimension(enterprise.DimensionId),
+};
+
+type Ordering = struct {
+    target: OrderTarget,
+    direction: onto.Direction,
+};
+
+type Intent = struct {
+    measures: Array(enterprise.MeasureId),
+    dimensions: Array(enterprise.DimensionId),
+    filters: Array(Filter),
+    ordering: Array(Ordering),
+    limit: Option(Int),
+};
+
+def to_request: Fn(Intent) -> enterprise.Request = fn(input) {
+    {
+        measures: array.map(input.measures, fn(id) {
+            {id, subject: 'Analyst, input: {window_days: 'None}}
+        }),
+        dimensions: array.map(input.dimensions, fn(id) {
+            {id, subject: 'Analyst, input: {note: "query designer input"}}
+        }),
+        filters: array.map(input.filters, fn(filter) {
+            let value: enterprise.FilterInput = match filter.value {
+                'String(text) => 'Text(text),
+                'Number(number) => 'Number(number),
+            };
+            {id: filter.dimension, subject: 'Analyst, op: filter.op, input: value}
+        }),
+        ordering: array.map(input.ordering, fn(order) {
+            let target: onto.OrderTarget(enterprise.MeasureId, enterprise.DimensionId) = match order.target {
+                'Measure(id) => 'Measure(id),
+                'Dimension(id) => 'Dimension(id),
+            };
+            {target, direction: order.direction}
+        }),
+        limit: input.limit,
+    }
+};
+
+def decoded: Intent = codec.decode(Intent, raw_intent)
     |> result.unwrap;
+def intent: enterprise.Request = to_request(decoded);
 def query = enterprise.lower(intent);
 def intent_value: Value = codec.encode(Value, intent) |> result.unwrap;
 def query_value: Value = codec.encode(Value, query) |> result.unwrap;

@@ -64,7 +64,10 @@ Telora 诊断。不要删除必要条件来换取成功。
 
 - `OrderMonth`：例如 `{"String":"2026-07"}`。
 - `CustomerTier`：例如 `{"String":"Gold"}`。
-- `OriginRegion`：例如 `{"String":"East China"}`（华东）。
+- `OriginRegion`：地区值使用查询能力定义的规范文本。目前题面使用的规范值包括
+  `{"String":"East China"}`（华东）、`{"String":"South China"}`（华南）和
+  `{"String":"North China"}`（华北）。如果用户给出的地区没有对应规范值，先询问，
+  不要自行翻译或类推。
 - `ProductCategory`：例如 `{"String":"电子产品"}`。
 
 操作符为 `Eq`、`Ge`、`Le`。多个筛选按数组顺序以 AND 组合；一个维度可同时用

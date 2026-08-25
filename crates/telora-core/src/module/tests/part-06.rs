@@ -867,11 +867,10 @@ export { CallExpr, Expr };"#,
         );
         assert!(main.imports.iter().any(|import| import.target == model.id));
         assert_ne!(main.source, model.source);
-        let model_path = model.path.as_ref().unwrap();
         assert_eq!(model.name, "@src/model.telora");
         assert_eq!(
             snapshot.sources().get(model.source.unwrap()).name.as_ref(),
-            model_path.to_string_lossy()
+            "@src/model.telora"
         );
         fs::remove_dir_all(directory).unwrap();
     }

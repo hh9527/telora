@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -20,6 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufRead
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
+mod source_arg;
+use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
 
 const EVALUATION_FUEL: usize = 1_000_000;
 const STACK_SLOTS: usize = 65_536;
@@ -82,6 +84,7 @@ enum ReaderEvent {
 }
 
 struct ProcessRunHost {
+    source_locators: BTreeMap<String, String>,
     children: HashMap<String, Option<mpsc::UnboundedSender<Option<String>>>>,
     sender: mpsc::UnboundedSender<ReaderEvent>,
     receiver: mpsc::UnboundedReceiver<ReaderEvent>,
@@ -91,10 +94,11 @@ struct ProcessRunHost {
 }
 
 impl ProcessRunHost {
-    fn new() -> Self {
+    fn new(source_locators: BTreeMap<String, String>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (cancel, _) = watch::channel(false);
         Self {
+            source_locators,
             children: HashMap::new(),
             sender,
             receiver,
@@ -102,6 +106,12 @@ impl ProcessRunHost {
             tasks: JoinSet::new(),
             finished: false,
         }
+    }
+
+    fn source_locator<'a>(&'a self, source: &'a SystemDataSource) -> &'a str {
+        self.source_locators
+            .get(&source.src)
+            .map_or(source.src.as_str(), String::as_str)
     }
 
     fn command(options: &ChildOptions) -> ProcessCommand {
@@ -547,6 +557,16 @@ impl RunHost for ProcessRunHost {
 
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async move {
+            if caps.stdin != SystemStdin::Null
+                && caps
+                    .data_sources
+                    .values()
+                    .any(|source| is_stdin_source(self.source_locator(source)))
+            {
+                return Err(
+                    "standard input cannot be both an event stream and a data source".into(),
+                );
+            }
             if caps.stdin == SystemStdin::Lined {
                 let sender = self.sender.clone();
                 let mut cancel = self.cancel.subscribe();
@@ -592,21 +612,34 @@ impl RunHost for ProcessRunHost {
         max_bytes: usize,
     ) -> RunHostFuture<'_, Result<Option<String>, String>> {
         let src = source.src.clone();
+        let locator = self.source_locator(source).to_owned();
         Box::pin(async move {
-            let file = match fs::File::open(&src) {
-                Ok(file) => file,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => {
-                    return Err(format!("cannot read data source {src:?}: {error}"));
-                }
-            };
             let max_read = u64::try_from(max_bytes)
                 .unwrap_or(u64::MAX)
                 .saturating_add(1);
             let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
-            file.take(max_read)
-                .read_to_end(&mut bytes)
-                .map_err(|error| format!("cannot read data source {src:?}: {error}"))?;
+            if is_stdin_source(&locator) {
+                tokio::io::stdin()
+                    .take(max_read)
+                    .read_to_end(&mut bytes)
+                    .await
+                    .map_err(|error| format!("cannot read data source {src:?}: {error}"))?;
+            } else {
+                let path = match locator.split_once("://") {
+                    Some((scheme, path)) if scheme.starts_with("file+") => path,
+                    _ => locator.as_str(),
+                };
+                let file = match fs::File::open(path) {
+                    Ok(file) => file,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => {
+                        return Err(format!("cannot read data source {src:?}: {error}"));
+                    }
+                };
+                file.take(max_read)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| format!("cannot read data source {src:?}: {error}"))?;
+            }
             if bytes.len() > max_bytes {
                 return Err(format!(
                     "data source exceeds file_size limit ({} > {max_bytes})",
@@ -757,7 +790,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Invoke main(Dict(Value)) once and write its JSON result.
     Run(RunArgs),
+    /// Initialize serve(Dict(Value)) and process requests continuously.
+    Serve(ServeArgs),
+    /// Run a module through an explicitly selected .entry.telora adapter.
     RunWith(RunWithArgs),
     Check(CheckArgs),
     /// Query module and semantic facts as JSONL.
@@ -768,6 +805,12 @@ enum Command {
 
 #[derive(Args)]
 struct RunArgs {
+    #[command(flatten)]
+    application: ApplicationArgs,
+}
+
+#[derive(Args)]
+struct ApplicationArgs {
     #[arg(required_unless_present = "standalone", conflicts_with = "standalone", value_parser = binary_name)]
     binary: Option<String>,
     #[arg(short = 'C', value_name = "CONTEXT", conflicts_with = "standalone")]
@@ -776,8 +819,18 @@ struct RunArgs {
     standalone: Option<PathBuf>,
     #[arg(long)]
     best_effort: bool,
-    #[arg(last = true, value_name = "ENTRY_ARG")]
-    entry_args: Vec<String>,
+    /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
+    #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
+    sources: Vec<NamedSource>,
+}
+
+#[derive(Args)]
+struct ServeArgs {
+    #[command(flatten)]
+    application: ApplicationArgs,
+    /// Request/response transport. The first version supports stdio:// JSONL.
+    #[arg(long, value_name = "URI")]
+    bind: String,
 }
 
 #[derive(Args)]
@@ -786,7 +839,9 @@ struct RunWithArgs {
     #[arg(value_name = "ENTRY_MODULE")]
     entry: String,
     #[command(flatten)]
-    run: RunArgs,
+    application: ApplicationArgs,
+    #[arg(last = true, value_name = "ENTRY_ARG")]
+    entry_args: Vec<String>,
 }
 
 #[derive(Args)]
@@ -944,12 +999,29 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .enable_all()
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command("std/entry/default", arguments)),
+            .block_on(run_command("std/entry/default", arguments.application, &[])),
+        Command::Serve(arguments) => {
+            if arguments.bind != "stdio://" {
+                return Err(format!(
+                    "unsupported serve binding {:?}; the first version supports stdio://",
+                    arguments.bind
+                ));
+            }
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("cannot start the serve Host: {error}"))?
+                .block_on(run_command("std/entry/serve", arguments.application, &[]))
+        }
         Command::RunWith(arguments) => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command(&arguments.entry, arguments.run)),
+            .block_on(run_command(
+                &arguments.entry,
+                arguments.application,
+                &arguments.entry_args,
+            )),
         Command::Check(arguments) => check_command(arguments),
         Command::Query(arguments) => query_command(arguments),
         Command::Lsp => lsp_command().map(|()| 0),
@@ -962,7 +1034,20 @@ fn lsp_command() -> Result<(), String> {
     telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
 }
 
-async fn run_command(entry: &str, arguments: RunArgs) -> Result<i32, String> {
+async fn run_command(
+    entry: &str,
+    arguments: ApplicationArgs,
+    entry_args: &[String],
+) -> Result<i32, String> {
+    let entry_sources = collect_entry_sources(arguments.sources.clone())?;
+    if entry == "std/entry/serve"
+        && entry_sources
+            .locators
+            .values()
+            .any(|locator| is_stdin_source(locator))
+    {
+        return Err("serve --bind stdio:// reserves standard input for JSONL requests".into());
+    }
     let context = command_context(arguments.context.clone())?;
     let module_id = arguments
         .binary
@@ -1007,9 +1092,15 @@ async fn run_command(entry: &str, arguments: RunArgs) -> Result<i32, String> {
         engine.prepare_module_id(context, module_id.as_deref().expect("required by clap"))
     }
     .map_err(|error| error.to_string())?;
-    let mut host = ProcessRunHost::new();
+    let mut host = ProcessRunHost::new(entry_sources.locators);
     let outcome = engine
-        .run_pending_with_host(pending, entry, &arguments.entry_args, &mut host)
+        .run_pending_with_sources_and_host(
+            pending,
+            entry,
+            entry_args,
+            &entry_sources.entry,
+            &mut host,
+        )
         .await
         .map_err(|error| error.to_string())?;
     io::stdout()

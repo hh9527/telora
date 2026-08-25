@@ -1229,7 +1229,7 @@ type Independent = String;
             .expect("codec failure must retain the invalid JSON value location");
         assert_eq!(
             module.sources.get(data_location.source).name.as_ref(),
-            directory.join("abc.json").display().to_string()
+            "@src/abc.json"
         );
         assert_eq!(
             module

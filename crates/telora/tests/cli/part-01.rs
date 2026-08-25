@@ -30,7 +30,9 @@ fn run_and_check_select_logical_roots_from_cwd() {
     fs::write(cwd.join("src/lib.telora"), "export def output = \"42\";").unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "import \"@src/lib.telora\" {output}; export {output};",
+        r#"import "@src/lib.telora" {output};
+import "std/value" {Value};
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String(output) };"#,
     )
     .unwrap();
     let nested = cwd.join("src/bin");
@@ -40,7 +42,7 @@ fn run_and_check_select_logical_roots_from_cwd() {
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "\"42\"");
     let check = telora(&nested)
         .args(["check", "@src/lib.telora"])
         .output()
@@ -283,7 +285,10 @@ fn run_writes_contextual_debug_as_stderr_jsonl() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        "def var = 3; def observed = var.dbg!(\"observed\"); export def output = \"3\";",
+        r#"import "std/value" {Value};
+def var = 3;
+def observed = var.dbg!("observed");
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(observed) };"#,
     )
     .unwrap();
     let run = telora(&cwd).args(["run", "main"]).output().unwrap();
@@ -299,7 +304,7 @@ fn run_writes_contextual_debug_as_stderr_jsonl() {
         assert_eq!(record["name"], "var");
         assert_eq!(record["repr"], "3");
         assert_eq!(record["module"], "@bin/main.telora");
-        assert_eq!(record["line"], 1);
+        assert_eq!(record["line"], 3);
         assert_eq!(record["message"], "observed");
     }
 }
@@ -407,8 +412,9 @@ export {lower};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/facade.telora" as facade;
+import "std/value" {Value};
 def rejected = facade.lower(7);
-export def output: String = "value={rejected}";"#,
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String("value={rejected}") };"#,
     )
     .unwrap();
 
@@ -474,7 +480,9 @@ export {lower};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/facade.telora" as facade;
-export def output: String = facade.lower(7);"#,
+import "std/value" {Value};
+def rejected = facade.lower(7);
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String(rejected) };"#,
     )
     .unwrap();
 
@@ -696,7 +704,8 @@ export {Node, root, total};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/tree.telora" as tree;
-export def output = `\{tree.total(tree.root)}`;"#,
+import "std/value" {Value};
+export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(tree.total(tree.root)) };"#,
     )
     .unwrap();
 

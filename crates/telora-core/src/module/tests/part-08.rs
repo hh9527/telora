@@ -1205,7 +1205,7 @@ inspect(User)(checked)"#;
         let data = error.data_location().expect("blame data location");
         assert_eq!(
             module.sources.get(data.source).name.as_ref(),
-            directory.join("user.json").display().to_string()
+            "@src/user.json"
         );
         assert_eq!(
             module.sources.get(data.source).slice(data).as_deref(),

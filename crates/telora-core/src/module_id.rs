@@ -333,9 +333,9 @@ impl ModuleResolver {
             .parent()
             .ok_or_else(|| ResolveModuleError::Io("standalone module has no parent".into()))?
             .to_owned();
-        let name = root_path
-            .file_name()
-            .ok_or_else(|| ResolveModuleError::InvalidImport(root_path.display().to_string()))?;
+        let name = root_path.file_name().ok_or_else(|| {
+            ResolveModuleError::InvalidImport("standalone root has no module file name".to_owned())
+        })?;
         let mut resolver = Self {
             workspace_root: workspace_root.clone(),
             source_root: workspace_root,
@@ -351,7 +351,7 @@ impl ModuleResolver {
             ResolveModuleError::Io(format!("cannot read {}: {error}", root_path.display()))
         })?;
         let mut sources = crate::SourceDatabase::default();
-        let source_id = sources.add(root_path.display().to_string(), source);
+        let source_id = sources.add(resolver.root_id.to_string(), source);
         let parsed = crate::parser::parse_registered(&sources, source_id);
         for option in parsed
             .options
@@ -595,9 +595,11 @@ impl ModuleResolver {
         let path = resolve_physical(path)?;
         if path != self.root_path {
             if matches!(self.root_id, ModuleCName::Standalone(_)) {
-                let name = path
-                    .file_name()
-                    .ok_or_else(|| ResolveModuleError::InvalidImport(path.display().to_string()))?;
+                let name = path.file_name().ok_or_else(|| {
+                    ResolveModuleError::InvalidImport(
+                        "standalone module has no file name".to_owned(),
+                    )
+                })?;
                 let id = ModuleCName::Standalone(PathBuf::from(name));
                 return Ok(ResolvedModule {
                     format: self.format_for(&id, &path)?,

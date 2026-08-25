@@ -22,7 +22,11 @@ hello/
 
 ```telora
 # src/bin/main.telora；# 引入行注释
-export def output: String = "hello, telora";
+import "std/value" {Value};
+
+export def main: Fn(Dict(Value)) -> Value = fn(sources) {
+    'String("hello, telora")
+};
 ```
 
 在 crate 目录运行：
@@ -926,13 +930,14 @@ plan-lib/types.telora   -> <plan-lib>/src/types.telora
 Host 从当前目录向上查找最近的 `telora-deps.json`，因此可以在 crate 根目录或其任意
 子目录运行命令。`run main` 选择 `@bin/main.telora`；binary name 是不含路径分隔符和
 `.telora` 后缀的单个 stem。`@main` 不是模块 ID。`run main` 完全等价于
-`run-with std/entry/default main`；默认 Entry 把 Main 的显式 String `output` export
-转换为 `Output(String)` effect。自定义 Entry 使用 `.entry.telora` 后缀，并通过
+`run-with std/entry/default main`；默认 Entry 调用 Main 的
+`main: Fn(Dict(Value)) -> Value`，并把结果编码为 JSON。自定义 Entry 使用 `.entry.telora` 后缀，并通过
 `run-with` 显式选择；普通模块不能导入它。环境与输入由 Entry 显式传给 Main，不形成
 ambient binding。完整示例：
 
 ```text
 telora run main -C examples/my-crate
+telora serve main -C examples/my-crate --bind stdio://
 telora run-with @src/tool.entry.telora main -C examples/my-crate -- argument
 telora check @test/compiler.telora -C examples/my-crate
 ```

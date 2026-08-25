@@ -385,13 +385,6 @@ fn validate_entry_interface(
         ("arch".into(), TypeDescriptor::String),
         ("os".into(), TypeDescriptor::String),
     ]));
-    let env_type = TypeDescriptor::Struct(BTreeMap::from([
-        (
-            "args".into(),
-            TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
-        ),
-        ("platform".into(), platform_type),
-    ]));
     let data_format = unit_enum(&["Json", "Toml", "Yaml"]);
     let data_source = TypeDescriptor::Struct(BTreeMap::from([
         (
@@ -403,6 +396,17 @@ fn validate_entry_interface(
         ),
         ("fmt".into(), data_format),
         ("src".into(), TypeDescriptor::String),
+    ]));
+    let env_type = TypeDescriptor::Struct(BTreeMap::from([
+        (
+            "args".into(),
+            TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
+        ),
+        ("platform".into(), platform_type),
+        (
+            "sources".into(),
+            TypeDescriptor::Dict(Box::new(data_source.clone())),
+        ),
     ]));
     let text_source = TypeDescriptor::Struct(BTreeMap::from([
         ("default".into(), option_string.clone()),
@@ -625,7 +629,12 @@ fn make_system_options(
     Ok(runtime_array(heap, options))
 }
 
-fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String]) -> Val {
+fn make_entry_env(
+    heap: &mut Heap,
+    main: &Heap,
+    arguments: &[String],
+    sources: &EntryDataSources,
+) -> Val {
     let arguments = arguments
         .iter()
         .map(|argument| runtime_string(heap, main, argument))
@@ -634,7 +643,32 @@ fn make_entry_env(heap: &mut Heap, main: &Heap, arguments: &[String]) -> Val {
     let arch = runtime_string(heap, main, std::env::consts::ARCH);
     let os = runtime_string(heap, main, std::env::consts::OS);
     let platform = runtime_record(heap, vec![("arch", arch), ("os", os)]);
-    runtime_record(heap, vec![("args", arguments), ("platform", platform)])
+    let sources = sources
+        .iter()
+        .map(|(key, source)| {
+            let default = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None));
+            let format = runtime_atom(
+                heap,
+                main,
+                match source.format {
+                    SystemDataFormat::Json => "Json",
+                    SystemDataFormat::Yaml => "Yaml",
+                    SystemDataFormat::Toml => "Toml",
+                },
+            );
+            let src = runtime_string(heap, main, &source.src);
+            let source = runtime_record(
+                heap,
+                vec![("default", default), ("fmt", format), ("src", src)],
+            );
+            (key.clone(), source)
+        })
+        .collect::<Vec<_>>();
+    let sources = allocate_record(heap, sources);
+    runtime_record(
+        heap,
+        vec![("args", arguments), ("platform", platform), ("sources", sources)],
+    )
 }
 
 fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleError> {

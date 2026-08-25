@@ -213,11 +213,19 @@ def project_events(context: Context, since_ms: int) -> list[dict[str, Any]]:
     return result
 
 
-def pending_requests(workflow: dict[str, Any], artifacts: dict[str, Any]) -> list[str]:
-    return [name for name in workflow["artifacts"]
-            if artifacts["artifacts"][name]["owner"] is None
-            and not artifacts["artifacts"][name]["current"]
-            and not artifacts["artifacts"][name]["blocked_by"]]
+def pending_request_sets(
+    workflow: dict[str, Any], artifacts: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    mandatory = {workflow["finish_artifact"]}
+    for artifact in workflow["artifacts"].values():
+        mandatory.update(reference["id"] for reference in artifact["input"]
+                         if not reference["optional"])
+    pending = [name for name in workflow["artifacts"]
+               if artifacts["artifacts"][name]["owner"] is None
+               and not artifacts["artifacts"][name]["current"]
+               and not artifacts["artifacts"][name]["blocked_by"]]
+    return ([name for name in pending if name in mandatory],
+            [name for name in pending if name not in mandatory])
 
 
 def _find_message(context: Context, session: str, message_id: str) -> dict[str, Any]:

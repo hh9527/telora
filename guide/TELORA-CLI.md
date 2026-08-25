@@ -9,6 +9,8 @@ Telora 从当前目录向上查找最近的 `telora-deps.json`，因此命令可
 
 ```text
 telora run main -C examples/my-crate
+telora run main -C examples/my-crate --source request=stdin+json://
+telora serve main -C examples/my-crate --bind stdio://
 telora run verify -C examples/my-crate
 telora check @test/compiler.telora -C examples/my-crate
 telora query modules -C examples/my-crate
@@ -36,9 +38,21 @@ export def lowering_case = do {
 
 多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
 
-- `run name` 完全等价于 `run-with std/entry/default name`。默认 Entry 要求 Main 的
-  export record 含 String `output`，并把它作为 `Output(String)` effect 发给 Host。
-  `name` 是不含路径分隔符和 `.telora` 后缀的单个 stem。
+- `run name` 完全等价于 `run-with std/entry/default name`。默认 Entry 要求 Main 导出
+  `main: Fn(Dict(Value)) -> Value`，调用一次并把返回值编码为 JSON。`name` 是不含路径
+  分隔符和 `.telora` 后缀的单个 stem。
+- `serve name --bind stdio://` 选择标准持续服务 Entry。Main 导出
+  `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次后，每行 JSON 请求产生一行
+  JSON 响应。诊断写入 stderr，不进入响应值。
+- Main 用 `option "run-ctx.sources" ["config", "request"]` 声明 `run` 和 `serve`
+  共用的初始化 source。声明的名称必须全部提供，CLI 也不能提供未声明或重复的名称。
+  `--source name=path.json` 按 `.json/.yaml/.yml/.toml` 推断格式；
+  `file+json://path`、`file+yaml://path`、`file+toml://path` 显式指定 transport 与格式；
+  `stdin+json://`、`stdin+yaml://`、`stdin+toml://` 从标准输入读取一次。
+  单次命令最多声明一个 stdin source。`serve --bind stdio://` 已把 stdin 用作 JSONL
+  请求通道，因此不能再用 stdin 初始化 source。
+  Main 收到的 Dict key 就是 `name`。值的诊断来源固定为 `@run-ctx/name`，不会暴露文件
+  路径；该来源名不是模块，不能 import，也不会由 `query modules` 列出。
 - `run name -C context` 从 `context` 开始向上发现 manifest。
 - `run ... --best-effort` 只在遇到问题时用于扩大诊断覆盖。它在启动 Entry 前对 Main 做
   best-effort 诊断求值；只要出现任何 error，stderr 输出 `telora.run/v1` JSONL 诊断与
@@ -49,7 +63,8 @@ export def lowering_case = do {
   `MainType` 和输出编码由它自己规定，可以通过 stdio-child effects 编排进程。Entry
   使用稳定模块 selector，例如 `@src/tool.entry.telora`；文件名必须以
   `.entry.telora` 结尾。它不能作为普通模块根，也不能被普通模块 import。
-- `run-with` 中 `--` 后的参数按顺序进入 `Env.args`。Main 顶层的 `option` action 按
+- `run-with` 中 `--` 后的参数按顺序进入 `Env.args`；`--source` 提供的描述进入
+  `Env.sources`。Main 顶层的 `option` action 按
   源码顺序进入 `SystemOptions`。Entry 的 `config(options, env)` 返回 capability 诉求
   和 initializer；Host 提供的私有 native 在 Entry WorkWorld 内按诉求构造
   `SystemResources`，并由 runtime 直接传给 initializer，再由 initializer 把环境数据显式

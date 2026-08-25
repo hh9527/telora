@@ -1244,10 +1244,11 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--best-effort] [-- <entry-args>...]
-telora run -S <file> [--best-effort] [-- <entry-args>...]
-telora run-with <entry-module> <binary-name> [-C <context>] [--best-effort] [-- <entry-args>...]
-telora run-with <entry-module> -S <file> [--best-effort] [-- <entry-args>...]
+telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]...
+telora run -S <file> [--best-effort] [--source <name>=<source>]...
+telora serve <binary-name> [-C <context>] [--source <name>=<source>]... --bind stdio://
+telora run-with <entry-module> <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]... [-- <entry-args>...]
+telora run-with <entry-module> -S <file> [--best-effort] [--source <name>=<source>]... [-- <entry-args>...]
 telora query|q modules [-C <context>] [-p <substring>]
 telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
@@ -1316,12 +1317,29 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
 `run` 选择一个 Main application，并且完全等价于用内置 Entry 执行
-`run-with std/entry/default`。默认 Entry 要求 Main 的完整显式 export record 含 String
-`output`。`run-with <entry-module>` 是 Host 的显式授权动作；selector 必须指向
+`run-with std/entry/default`。默认 Entry 要求 Main 导出
+`main: Fn(Dict(Value)) -> Value`，调用一次后把结果编码为 JSON。`serve --bind stdio://`
+选择 `std/entry/serve`，要求 Main 导出
+`serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次 handler 后，以 stdin/stdout
+上的 JSONL 逐项收发请求和响应。`run-with <entry-module>` 是 Host 的显式授权动作；selector 必须指向
 `.entry.telora` 模块，例如 `@src/tool.entry.telora`。该源码获得保留的 Entry 身份，
 可以访问依赖图内任意 `.priv.*`、`.native.telora` 和已注册 native module。特权仅属于
 这个 requester，不传递给它导入的普通模块。`.entry.telora` 不能作为普通模块根，也
 不能被普通模块 import。
+
+标准 Entry 从 Main 的 `option "run-ctx.sources" [name, ...]` 读取初始化 source 契约；
+`run` 与 `serve` 共享这个 option。声明名必须唯一，且 CLI 提供的 source 名与声明集合
+完全相等。没有该 option 时集合为空。`--source name=path.json` 按文件扩展名选择
+JSON/YAML/TOML；`file+json://path` 等形式显式选择文件 transport 和格式；
+`stdin+json://` 等形式从 stdin 读取一次。一次运行最多有一个 stdin source。
+`serve --bind stdio://` 使用 stdin 作为 JSONL 请求通道，因此拒绝 stdin 初始化 source。
+外层 `Dict(Value)` 的 key 是 CLI 中的 `name`，value 是对应 source 解析出的数据。
+数据的 canonical source path 是由 key 确定的 `@run-ctx/<name>`；保留字符按 UTF-8 byte
+百分号编码。文件路径或 stdin URI 只是 Host 私有 locator，不进入 provenance 和普通
+诊断。`@run-ctx/<name>` 不是 module ID：它不进入模块图、不能被 import，也不出现在
+`query modules` 中。
+所有 source 先经过统一 CST admission，再作为带 provenance 的 `Value` 直接物化到
+Entry WorkWorld；标准 Entry 只把 `SrcItem.data` 投影为传给 Main 的 `Dict(Value)`。
 
 Entry 在纯 Telora 中实现以下 ABI：
 
@@ -1338,15 +1356,15 @@ export def config:
 ```
 
 `SystemOptions` 是 Main 顶层 `option` action 的有序序列。`Env` 包含 `--` 后的 Entry
-参数以及 OS/arch 平台事实。准备 WorkWorld 中的 `config` 返回经 Host
+参数、OS/arch 平台事实和 CLI 提供的具名 data sources。准备 WorkWorld 中的 `config` 返回经 Host
 校验的 `SystemCaps` 和 initializer；Host 根据 caps 配置事件源并提供私有 native，随后初始化
 Main、按 `MainType` 校验完整 export record。runtime 在同一个 Entry WorkWorld 中调用
 native 生成 `SystemResources`，并把结果直接传给 initializer；该值不返回 Rust Host，也不
 在 Host 侧解码或重建。所有环境上下文必须由
-initializer 显式传给 Main；CLI 不提供 `--input`，参数由 Entry 从 `Env.args` 解析。当前不进行分阶段或
+initializer 显式传给 Main；CLI 不提供 `--input`。当前不进行分阶段或
 动态 Main 加载。运行阶段使用一系列 WorkWorld；
-`MainType` 没有系统约定的形状，它完全由所选 Entry 定义。内置 Entry 使用 `Dyn`
-边界只是该 Entry 自己的适配策略。
+`MainType` 没有系统统一形状，由所选 Entry 定义。两个标准 Entry 使用明确的
+`Dict(Value)` 与 `Value` 边界。
 `State` 对 Host 不透明，也不会物化为 Host-owned Value。每轮结束时，runtime 只把
 `SystemEffect` 导出给 Host；它从下一 State root 开始 trace，保留 MainWorld edge，借助
 同一个 forwarding table 把可达 Work object 直接复制到新的 WorkWorld，再释放旧
@@ -1361,6 +1379,7 @@ Entry reducer 接受单个
 ```text
 DataFormat = Json | Yaml | Toml
 DataSrc = { default: Option(Value), fmt: DataFormat, src: String }
+Env = { args: Array(String), platform: Platform, sources: Dict(DataSrc) }
 TextSrc = { default: Option(String), src: String }
 SystemStdin = Text | Lined | Null
 SystemCaps = {

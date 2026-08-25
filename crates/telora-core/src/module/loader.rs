@@ -303,8 +303,12 @@ impl ModuleLoader {
         self.dependencies.insert(path.clone());
         let result: Result<ModuleArtifact, ModuleError> = match format {
             ModuleFormat::Json | ModuleFormat::Toml | ModuleFormat::Yaml => (|| {
-                let source = read_data_file(&path, self.data_limits.file_size)?;
-                let source_id = self.sources.add(path.display().to_string(), source);
+                let source = read_data_file(
+                    &path,
+                    self.data_limits.file_size,
+                    &module_id.to_string(),
+                )?;
+                let source_id = self.sources.add(module_id.to_string(), source);
                 let StaticDataParse {
                     plan,
                     diagnostics,
@@ -407,10 +411,12 @@ impl ModuleLoader {
     ) -> Result<CompiledTeloraModule, ModuleError> {
         let path = module_source.context_path();
         let synthetic = matches!(module_source, TeloraModuleSource::Synthetic { .. });
-        let (source_name, source) = match module_source {
-            TeloraModuleSource::File(path) => (module_id.to_string(), read(path)?),
+        let source_name = module_id.to_string();
+        let source = match module_source {
+            TeloraModuleSource::File(path) => read(path, &source_name)?,
             TeloraModuleSource::Synthetic { name, source, .. } => {
-                (name.to_owned(), source.to_owned())
+                debug_assert_eq!(name, source_name);
+                source.to_owned()
             }
         };
         let source_id = self.sources.add(source_name.clone(), source);
@@ -1154,20 +1160,20 @@ fn expression_has_import(expression: &Expr) -> bool {
     }
 }
 
-fn read(path: &Path) -> Result<String, ModuleError> {
-    fs::read_to_string(path).map_err(|error| {
-        ModuleError::new(format!("cannot read module {}: {error}", path.display()))
-    })
+fn read(path: &Path, source_name: &str) -> Result<String, ModuleError> {
+    fs::read_to_string(path)
+        .map_err(|error| ModuleError::new(format!("cannot read module {source_name}: {error}")))
 }
 
-fn read_data_file(path: &Path, max_bytes: usize) -> Result<String, ModuleError> {
+fn read_data_file(
+    path: &Path,
+    max_bytes: usize,
+    source_name: &str,
+) -> Result<String, ModuleError> {
     use std::io::Read;
 
     let file = fs::File::open(path).map_err(|error| {
-        ModuleError::new(format!(
-            "cannot read data module {}: {error}",
-            path.display()
-        ))
+        ModuleError::new(format!("cannot read data module {source_name}: {error}"))
     })?;
     let max_read = u64::try_from(max_bytes)
         .unwrap_or(u64::MAX)
@@ -1176,10 +1182,7 @@ fn read_data_file(path: &Path, max_bytes: usize) -> Result<String, ModuleError> 
     file.take(max_read)
         .read_to_end(&mut bytes)
         .map_err(|error| {
-            ModuleError::new(format!(
-                "cannot read data module {}: {error}",
-                path.display()
-            ))
+            ModuleError::new(format!("cannot read data module {source_name}: {error}"))
         })?;
     if bytes.len() > max_bytes {
         return Err(ModuleError::new(format!(
@@ -1188,10 +1191,7 @@ fn read_data_file(path: &Path, max_bytes: usize) -> Result<String, ModuleError> 
         )));
     }
     String::from_utf8(bytes).map_err(|error| {
-        ModuleError::new(format!(
-            "cannot read data module {}: {error}",
-            path.display()
-        ))
+        ModuleError::new(format!("cannot read data module {source_name}: {error}"))
     })
 }
 
