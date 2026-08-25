@@ -76,6 +76,8 @@ def parser() -> argparse.ArgumentParser:
     resume.add_argument("role")
     resume.add_argument("--timeout", type=float, default=15.0,
                         help="seconds to wait until the role loop is observed")
+    resume.add_argument("--force", action="store_true",
+                        help="abort the current role turn before re-entering its loop")
     return root
 
 
@@ -253,7 +255,8 @@ def _loop_state(context: Context, client: Any, role: str, session_id: str) -> st
     return None
 
 
-def _resume(context: Context, role: str, timeout: float = 15.0) -> dict[str, Any]:
+def _resume(context: Context, role: str, timeout: float = 15.0,
+            *, force: bool = False) -> dict[str, Any]:
     workflow = context.state.get("workflow")
     if not workflow or role not in workflow.get("roles", []):
         raise ControlError(f"unknown workflow role: {role}", 64)
@@ -261,11 +264,18 @@ def _resume(context: Context, role: str, timeout: float = 15.0) -> dict[str, Any
     deadline = time.monotonic() + max(timeout, 0)
     children = [child for child in client.children() if child.get("agent") == role]
     statuses = client.statuses()
+    if force:
+        for child in children:
+            session_id = child.get("id")
+            if (isinstance(session_id, str)
+                    and statuses.get(session_id, {}).get("type") == "busy"):
+                client.abort_session(session_id)
+        statuses = client.statuses()
     running = [(child, _loop_state(context, client, role, child["id"]))
                for child in children if isinstance(child.get("id"), str)
                and statuses.get(child["id"], {}).get("type") == "busy"]
     running = [(child, state) for child, state in running if state is not None]
-    if running:
+    if running and not force:
         child, loop_state = running[-1]
         session_id = child["id"]
         return {
@@ -278,7 +288,7 @@ def _resume(context: Context, role: str, timeout: float = 15.0) -> dict[str, Any
     previous_ids = {child.get("id") for child in children if isinstance(child.get("id"), str)}
     action = "resumed_existing"
     previous_runtime: dict[str, Any] = {"type": "missing"}
-    if children and isinstance(children[-1].get("id"), str):
+    if children and not force and isinstance(children[-1].get("id"), str):
         session_id = children[-1]["id"]
         previous_runtime = statuses.get(session_id, {"type": "unknown"})
         client.prompt_session(session_id, resume_prompt(role), agent=role)
@@ -293,7 +303,8 @@ def _resume(context: Context, role: str, timeout: float = 15.0) -> dict[str, Any
         current_children = [child for child in client.children() if child.get("agent") == role]
         loop_state = (_loop_state(context, client, role, session_id)
                       if isinstance(session_id, str) else None)
-        if (action == "resumed_existing" and statuses.get(session_id, {}).get("type") == "busy"
+        if (action == "resumed_existing"
+                and statuses.get(session_id, {}).get("type") == "busy"
                 and loop_state is not None):
             current_runtime = statuses[session_id]
             break
@@ -499,7 +510,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "publish":
             emit(_publish(context, args.artifacts, force=args.force))
         elif args.command == "resume":
-            emit(_resume(context, args.role, args.timeout))
+            emit(_resume(context, args.role, args.timeout, force=args.force))
         return 0
     except (ControlError, TaskError) as exc:
         print(f"oc-ctl: {exc}", file=sys.stderr)

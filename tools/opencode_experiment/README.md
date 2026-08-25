@@ -59,6 +59,7 @@ oc-ctl update <test-id> <dest-file>=<src-file>... --force
 oc-ctl publish <test-id> <artifact>[=!]...
 oc-ctl publish <test-id> <artifact>[=!]... --force
 oc-ctl resume <test-id> <role>
+oc-ctl resume <test-id> <role> --force
 ```
 
 `update` atomically copies any Host-readable file. Relative source paths are resolved from the
@@ -80,7 +81,10 @@ is already busy, first resumes the newest inactive session, and asks the coordin
 replacement when that session cannot return or is missing. It succeeds only after observing the role
 busy in its loop; otherwise it times out. Historical and replacement sessions are aggregated as one
 role in metrics while their session ids remain visible. `status --verbose` includes recent assistant
-text responses so the Host can identify clarification boundaries.
+text responses so the Host can identify clarification boundaries. `resume --force` aborts the
+role's current turn and asks the coordinator to fork a clean replacement session. Use it when a
+role is stuck or must reload a corrected runtime adapter; the active artifact task remains in the
+DAG and is reclaimed by the replacement role.
 
 `start --from` creates a fresh workspace and OpenCode session while inheriting trusted progress from
 an earlier execution of the same plan. An artifact is inherited only when it is current and its

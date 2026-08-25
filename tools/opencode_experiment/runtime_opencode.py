@@ -43,14 +43,22 @@ def _rules(patterns: list[str], *, deny_manifest: bool = False) -> dict[str, str
     return values
 
 
+def _path_rules(patterns: list[str], *, deny_manifest: bool = False) -> dict[str, str]:
+    values = _rules(patterns, deny_manifest=deny_manifest)
+    if deny_manifest:
+        values["**/experiment.json"] = "deny"
+    values.update({f"**/{pattern}": "allow" for pattern in patterns})
+    return values
+
+
 def _role_permission(role: dict[str, Any]) -> dict[str, Any]:
     read = role["read"]
     return {
-        "read": _rules(read, deny_manifest=True),
-        "glob": _rules(read, deny_manifest=True),
-        "grep": _rules(read, deny_manifest=True),
-        "list": _rules(_browse_paths(read)),
-        "edit": _rules(role["write"], deny_manifest=True),
+        "read": _path_rules(read, deny_manifest=True),
+        "glob": _path_rules(read, deny_manifest=True),
+        "grep": _path_rules(read, deny_manifest=True),
+        "list": _path_rules(_browse_paths(read)),
+        "edit": _path_rules(role["write"], deny_manifest=True),
         "bash": _rules(role["commands"]),
         "task": "deny",
         "webfetch": "deny",

@@ -189,6 +189,8 @@ class ConfigStateTest(unittest.TestCase):
             ["update", "run", "output.txt=input.txt", "--force"]
         )
         self.assertTrue(forced_update.force)
+        forced_resume = control_parser().parse_args(["resume", "run", "a1", "--force"])
+        self.assertTrue(forced_resume.force)
 
     def test_stat_command_is_available(self):
         args = control_parser().parse_args(["stat", "run"])
@@ -227,6 +229,31 @@ class ConfigStateTest(unittest.TestCase):
 
         self.assertEqual(_resume(context, "a5")["action"], "already_running")
         client.prompt_session.assert_not_called()
+
+    def test_force_resume_aborts_and_restarts_a_busy_role(self):
+        client = mock.Mock()
+        old = {"id": "ses_a5_old", "agent": "a5"}
+        new = {"id": "ses_a5_new", "agent": "a5"}
+        client.children.side_effect = [[old], [old, new]]
+        client.statuses.side_effect = [
+            {"ses_a5_old": {"type": "busy"}},
+            {"ses_a5_old": {"type": "idle"}},
+            {"ses_a5_old": {"type": "idle"}, "ses_a5_new": {"type": "busy"}},
+        ]
+        client.session_messages.return_value = self.PULL_MESSAGE
+        context = mock.Mock()
+        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]},
+                         "session_id": "ses_coordinator"}
+        context.client.return_value = client
+
+        result = _resume(context, "a5", .01, force=True)
+
+        self.assertEqual((result["action"], result["session_id"]),
+                         ("recreated", "ses_a5_new"))
+        client.abort_session.assert_called_once_with("ses_a5_old")
+        client.prompt_session.assert_called_once_with(
+            "ses_coordinator", mock.ANY, agent="coordinator"
+        )
 
     def test_resume_rejects_unknown_role_and_recreates_missing_session(self):
         context = mock.Mock()
@@ -598,6 +625,11 @@ class ConfigStateTest(unittest.TestCase):
             a4_permissions = json.loads(a4_permission_line)
             self.assertEqual(a4_permissions["read"]["*"], "deny")
             self.assertNotIn("ent-1/**", a4_permissions["read"])
+            self.assertEqual(a4_permissions["edit"]["*"], "deny")
+            self.assertEqual(a4_permissions["edit"]["intent-1/src/**"], "allow")
+            self.assertEqual(a4_permissions["edit"]["**/intent-1/src/**"], "allow")
+            self.assertEqual(a4_permissions["read"]["**/experiment.json"], "deny")
+            self.assertEqual(a4_permissions["read"]["**/docs/**"], "allow")
             self.assertEqual(
                 a4_permissions["bash"]["./bin/telora query exports @bin/main.telora -C intent-1"],
                 "allow",

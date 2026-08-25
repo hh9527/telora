@@ -197,6 +197,15 @@ Host 需要修复、预制或替换角色状态时，使用显式强制干预：
 ./oc-ctl resume ontology-3-009 a5
 ```
 
+普通 `resume` 对仍在长期循环中的角色是幂等的。角色卡住、上下文已经偏离任务，或需要
+重新加载修正后的 runtime adapter 时，Host 可以显式丢弃当前 turn 并 fork 干净会话：
+
+```bash
+./oc-ctl resume ontology-3-009 a5 --force
+```
+
+角色当前领取的 artifact 任务记录仍然保留，新会话会重新 `pull` 并继续同一 DAG 工作。
+
 已经在工作或等待 pull 时该命令幂等成功；否则先恢复原会话，必要时由 coordinator 建立
 替代会话。只有观察到角色重新进入长期 pull loop 后命令才成功。
 
