@@ -216,14 +216,14 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("core/prelude must export exactly PropertyAttr, union, and validate".into());
+        return Err("std/prelude must export exactly PropertyAttr, union, and validate".into());
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];
     let declared_validate = &interface.exports["validate"];
     if declared_validate.body != expected_validate.body {
         return Err(format!(
-            "core/prelude validate scheme {} differs from bootstrap {}",
+            "std/prelude validate scheme {} differs from bootstrap {}",
             declared_validate.display_name(),
             expected_validate.display_name()
         ));

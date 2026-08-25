@@ -157,8 +157,8 @@ Host 是权限边界，不只是 foreign-function interface。
 
 ### Main
 
-**Main** 是一次 Host 调用所选择的普通封闭 module graph。除非 Host 在冻结前把
-信息显式准备成值或 virtual module，否则 Main 不能观察 Host facility。
+**Main** 是一次 Host 调用所选择的普通封闭 module graph。除非 Host 在冻结前把信息
+显式准备成输入值或静态数据模块，否则 Main 不能观察 Host facility。
 
 ### Entry
 
@@ -166,6 +166,11 @@ Host 是权限边界，不只是 foreign-function interface。
 WorkWorld 中声明环境诉求与 Main 类型，再由 Host 初始化、校验并冻结 MainWorld；
 随后在新的 WorkWorld 中以 opaque State、SystemEvent 和 SystemEffect 驱动运行。
 Main 不能 import Entry 的私有协议面，Entry 描述 effect 但不执行 effect。
+
+Entry 位于 crate 的 `src/entry/<name>.telora`，并由 Host 以 `@src/entry/<name>`
+显式选择。文件 stem 以 `_` 开头的模块是 private，只能由同 crate 模块或被选中的
+Entry 访问；该规则只由 module resolver 执行。Entry 可以 resolve 当前依赖图中的全部
+模块，但它的权限不传递给被导入模块。只有内置 `std` crate 可以声明 native symbol。
 
 `run` 可以选择内置或用户 Entry；`check`、`query` 和 LSP 使用 Host 固定的 tooling
 Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect。
@@ -208,6 +213,10 @@ Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect�
 
 **Module identity（模块身份）**是 dependency、interface、cache 和 diagnostic 使用
 的规范语义身份。完成解析后，它不能依赖偶然的物理路径拼写。
+
+**Crate vendor（crate 来源）**在模块图发现前把 crate name 映射到不可变 source。
+resolver 按 vendor 顺序注册 crate，并以 crate 为颗粒采用 first-win；builtin vendor
+先提供 `std`，当前 crate 先于 dependencies。后序同名来源不能补充或覆盖该 crate。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入
@@ -402,12 +411,17 @@ expression。其状态至少区分：
 | `must_ok!`、`unwrap!`、`fail!` | 当前结果不能产生；保留结构化原因和 subject 来源 | VM 与 Host |
 | `panic!` | 实现不变量破坏，不是普通领域拒绝 | VM 与 Host |
 | `dbg!` | 不影响值与资源核算的 Host-only observation | Host observer |
+| `rt.with_diagnostics` | Entry 对一次调用建立可恢复诊断作用域 | Entry orchestration |
 
 结构化 failure diagnostic 的核心是 `rule + data_sources`。rule 包含拒绝消息与规则
 应用位置；data sources 是显式 subjects 的有序来源位置。函数边界内触发的 contextual
 failure 把 rule 归因到最外层 authored caller，内部 `fail!` 位置只保留为实现 trace。
 Host 如何把这些位置显示为 primary/secondary 属于呈现策略。Fail 在 best-effort 图中
 传播时继续引用原 root diagnostic，不增加新的根因。
+
+`rt.with_diagnostics` 把一次调用的成功值与 Warning 作为 `Ok((value, diagnostics))`
+返回，把可恢复 failure 作为 `Err(diagnostics)` 返回并消费这些诊断。资源耗尽、取消与
+其他终止性 runtime failure 仍向外传播。
 
 Best-effort continuation 是 evaluator 对已经证明独立的计算单元所采用的策略，不是
 源码中的“报告后继续” intrinsic。它可以帮助 Host 一次观察更多根因，但任何 Error

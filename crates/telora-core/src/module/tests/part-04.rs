@@ -10,7 +10,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./api.telora" as api;
+            r#"import "./api" as api;
                let build = fn(value) {
                    if value > 0 { 'Some("ok") } else { 'None }
                };
@@ -71,15 +71,15 @@
         .unwrap();
         fs::write(
             directory.join("imported.telora"),
-            "import \"./base.telora\" {Status};\
+            "import \"./base\" {Status};\
              type Box(A) = struct {status: Status, value: A};\
              {Box: Box}",
         )
         .unwrap();
         fs::write(
             directory.join("compare.telora"),
-            "import \"./local.telora\" as local;\
-             import \"./imported.telora\" as imported;\
+            "import \"./local\" as local;\
+             import \"./imported\" as imported;\
              (local.Box(Int), imported.Box(Int))",
         )
         .unwrap();
@@ -116,12 +116,12 @@
         let data_location = failure.data_location().expect("codec data location");
         assert_eq!(
             module.sources.get(data_location.source).name.as_ref(),
-            "@src/data.json"
+            "fixture/data.json"
         );
         let rule_location = failure.rule_location().expect("codec rule location");
         assert_eq!(
             module.sources.get(rule_location.source).name.as_ref(),
-            "@standalone/main.telora"
+            "fixture/main"
         );
         assert!(
             module
@@ -169,12 +169,12 @@
         .unwrap();
         fs::write(
             directory.join("facade.telora"),
-            r#"import "./types.telora" {Expr}; export {Expr};"#,
+            r#"import "./types" {Expr}; export {Expr};"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" as types;
+            r#"import "./facade" as types;
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
@@ -353,7 +353,7 @@
             "callback.telora",
             "arrays.map([1], fn(value) { value / 0 })",
         );
-        assert!(callback.to_string().contains("callback.telora:1:"));
+        assert!(callback.to_string().contains("fixture/callback:1:"));
         assert!(
             callback
                 .trace
@@ -388,7 +388,7 @@
             load_module(unknown_path, BTreeMap::new(), 100_000)
                 .unwrap_err()
                 .to_string()
-                .contains("unknown dependency")
+                .contains("module \"std/unknown\" not found")
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -435,7 +435,7 @@
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(appended.contains("main.telora:6:"), "{appended}");
+        assert!(appended.contains("fixture/main:6:"), "{appended}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -689,7 +689,7 @@
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(failure.contains("main.telora:6:"), "{failure}");
+        assert!(failure.contains("fixture/main:6:"), "{failure}");
         fs::remove_dir_all(directory).unwrap();
     }
 

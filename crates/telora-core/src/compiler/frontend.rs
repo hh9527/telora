@@ -11,7 +11,10 @@ use crate::lexer::{FrontendError, SourceLocation};
 use crate::lir::{self, ConstantId, Item, LabelId, Operation, RegisterId};
 use crate::parser::parse_registered;
 use crate::source::{Diagnostic, Location, Origin, SourceDatabase, SourceFile, WithOrigin};
-use crate::types::{Analysis, NominalTypeConstructor, analyze_program_with_bindings_observed};
+use crate::types::{
+    Analysis, ModuleAnalysisContext, NominalTypeConstructor,
+    analyze_program_with_bindings_observed,
+};
 use crate::value::{Atom, BuiltinAtom, NativeFunction};
 use crate::{DiscardDebugSink, ExecutionWorld, Quota, QuotaAccount, RuntimeError, Vm};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -126,6 +129,7 @@ pub fn compile_source(source_name: &str, source: &str) -> Result<CompiledSource,
     let analysis = analyze_program_with_bindings_observed(
         source_name,
         crate::ModuleId::ANONYMOUS,
+        ModuleAnalysisContext::Ordinary,
         &program,
         &mut account,
         &BTreeMap::new(),

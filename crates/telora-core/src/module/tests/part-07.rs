@@ -273,7 +273,7 @@ export def output = "unreachable";"#,
         fs::rename(&main, &dependency).unwrap();
         fs::write(
             &main,
-            "import \"./dependency.telora\" as dependency; export def output = \"root\";",
+            "import \"./dependency\" as dependency; export def output = \"root\";",
         )
         .unwrap();
         let dependent = recovery_engine().recover_workspace(&main).unwrap();
@@ -306,13 +306,13 @@ export def healthy = 41;"#,
         .unwrap();
         fs::write(
             &healthy,
-            r#"import "./dependency.telora" as dependency;
+            r#"import "./dependency" as dependency;
 export def output = dependency.healthy + 1;"#,
         )
         .unwrap();
         fs::write(
             &blocked,
-            r#"import "./dependency.telora" as dependency;
+            r#"import "./dependency" as dependency;
 export def output = dependency.failed + 1;"#,
         )
         .unwrap();
@@ -360,8 +360,8 @@ export def output = dependency.failed + 1;"#,
         fs::write(&second, r#"export def failed = fail!("second failed", 2);"#).unwrap();
         fs::write(
             &main,
-            r#"import "./first.telora" as first;
-import "./second.telora" as second;
+            r#"import "./first" as first;
+import "./second" as second;
 export def output = second.failed + 1;"#,
         )
         .unwrap();
@@ -624,7 +624,7 @@ export { Plan, ensure_plan, ensure_int };"#,
         .unwrap();
         fs::write(
             &main,
-            r#"import "./dependency.telora" as dependency;
+            r#"import "./dependency" as dependency;
 def local_poly: for(Item) Fn(Item, Item) -> Item = fn(left, right) {
     fail!("local polymorphic", left)
 };
@@ -751,7 +751,7 @@ export def output = (compared, selected);"#,
         fs::write(
             &main,
             "import \"./data.json\" { data };\
-             import \"./model.telora\" as model;\
+             import \"./model\" as model;\
              import \"std/attributes\" as attributes;\
              type FromTelora = model.Shared;\
              type FromCore = attributes.strip(String);\
@@ -820,15 +820,15 @@ export def output = (compared, selected);"#,
         let main = directory.join("main.telora");
         let a = directory.join("a.telora");
         let b = directory.join("b.telora");
-        fs::write(&main, "import \"./a.telora\" as a; export { a as output };").unwrap();
+        fs::write(&main, "import \"./a\" as a; export { a as output };").unwrap();
         fs::write(
             &a,
-            "import \"./b.telora\" as b; type A = String; export { A };",
+            "import \"./b\" as b; type A = String; export { A };",
         )
         .unwrap();
         fs::write(
             &b,
-            "import \"./a.telora\" as a; type B = String; export { B };",
+            "import \"./a\" as a; type B = String; export { B };",
         )
         .unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();

@@ -1,5 +1,14 @@
 import "std/value" {Value};
 
+native call_with_diagnostics:
+    for(A, R) Fn(Fn(A) -> R, A)
+        -> Result(Tuple([R, Array(BlameError)]), Array(BlameError));
+
+def with_diagnostics:
+    for(A, R) Fn(Fn(A) -> R)
+        -> Fn(A) -> Result(Tuple([R, Array(BlameError)]), Array(BlameError)) =
+    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument) } };
+
 type OptionAction = struct {
     key: String,
     value: Dyn,
@@ -126,6 +135,7 @@ type SystemEffect = enum {
 };
 
 export {
+    with_diagnostics,
     OptionAction,
     SystemOptions,
     Platform,

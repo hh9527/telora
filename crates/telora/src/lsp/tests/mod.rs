@@ -19,6 +19,8 @@ fn fixture_loop() -> (PathBuf, Rc<RefCell<State>>, async_lsp::MainLoop<Server>) 
         .as_nanos();
     let root = std::env::temp_dir().join(format!("telora-lsp-test-{unique}"));
     std::fs::create_dir_all(&root).expect("create fixture root");
+    std::fs::write(root.join("telora-deps.json"), r#"{"name":"fixture"}"#)
+        .expect("write fixture manifest");
     let captured = Rc::new(RefCell::new(None));
     let (main_loop, _) = async_lsp::MainLoop::new_server({
         let root = root.clone();

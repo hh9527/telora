@@ -148,6 +148,24 @@ impl ModuleGraph {
                 Some(program) => {
                     reject_nested_imports(program, &cname.to_string())?;
                     if !recover
+                        && let Some(binding) = program.value.body.value.bindings.iter().find(
+                            |binding| {
+                                matches!(
+                                    binding.value.kind,
+                                    BindingKind::Native | BindingKind::NativeType
+                                )
+                            },
+                        )
+                    {
+                        return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
+                            format!(
+                                "native symbol {:?} is only allowed in built-in std modules",
+                                binding.value.name.value
+                            ),
+                            binding.location,
+                        ))));
+                    }
+                    if !recover
                         && let Some(diagnostic) =
                             module_binding_diagnostics(program).into_iter().next()
                     {
@@ -520,14 +538,12 @@ struct TrustedNativeModule {
     name: String,
     source: String,
     functions: Vec<(String, crate::NativeFunction)>,
-    core: bool,
 }
 
-fn builtin_list(host_modules: &[RegisteredNativeModule]) -> Vec<(String, u32)> {
+fn builtin_list() -> Vec<(String, u32)> {
     module_specs()
         .into_iter()
         .map(|spec| (spec.name.to_owned(), spec.native_id))
-        .chain(host_modules.iter().map(|spec| (spec.name.clone(), spec.id)))
         .collect()
 }
 
@@ -535,16 +551,14 @@ fn install_native_modules(
     main: &mut MainWorld,
     sources: &mut SourceDatabase,
     debug_sink: &Arc<dyn DebugSink>,
-    host_modules: &[RegisteredNativeModule],
 ) -> Result<HashMap<String, ModuleArtifact>, ModuleError> {
-    install_native_modules_observed(main, sources, debug_sink, host_modules, None)
+    install_native_modules_observed(main, sources, debug_sink, None)
 }
 
 fn install_native_modules_observed(
     main: &mut MainWorld,
     sources: &mut SourceDatabase,
     debug_sink: &Arc<dyn DebugSink>,
-    host_modules: &[RegisteredNativeModule],
     mut semantic_inputs: Option<&mut BTreeMap<String, SemanticModuleInput>>,
 ) -> Result<HashMap<String, ModuleArtifact>, ModuleError> {
     let mut modules: HashMap<String, ModuleArtifact> = HashMap::new();
@@ -559,30 +573,15 @@ fn install_native_modules_observed(
                 .into_iter()
                 .map(|(name, function)| (name.to_owned(), function))
                 .collect(),
-            core: true,
         })
         .collect::<Vec<_>>();
-    specs.extend(host_modules.iter().map(|spec| TrustedNativeModule {
-        id: spec.id,
-        name: spec.name.clone(),
-        source: spec.source.clone(),
-        functions: spec.functions.clone(),
-        core: false,
-    }));
     specs.sort_by_key(|spec| u8::from(spec.name != PRELUDE_MODULE));
     let mut native_module_ids = HashMap::new();
     for spec in &specs {
-        let valid_id = if spec.core {
-            spec.id > 0 && spec.id <= crate::value::RESERVED_NATIVE_MODULE_MAX
-        } else {
-            spec.id > crate::value::RESERVED_NATIVE_MODULE_MAX
-        };
-        if !valid_id {
+        if spec.id == 0 || spec.id > crate::value::RESERVED_NATIVE_MODULE_MAX {
             return Err(ModuleError::new(format!(
-                "native module {} has invalid {} module ID {}",
-                spec.name,
-                if spec.core { "reserved" } else { "Host" },
-                spec.id
+                "built-in std module {} has invalid reserved module ID {}",
+                spec.name, spec.id
             )));
         }
         if let Some(previous) = native_module_ids.insert(spec.id, spec.name.clone()) {
@@ -594,7 +593,7 @@ fn install_native_modules_observed(
     }
     let mut default_prelude: Option<BTreeMap<String, PersistentValue>> = None;
     for spec in specs {
-        let source_name = format!("<{}.native.telora", spec.name);
+        let source_name = spec.name.clone();
         let source_id = sources.add(source_name.clone(), &spec.source);
         let parsed = parse_registered(sources, source_id);
         let program = parsed.program.ok_or_else(|| {
@@ -755,6 +754,9 @@ fn install_native_modules_observed(
         let analysis = analyze_program_with_bindings_observed(
             &source_name,
             module_id,
+            ModuleAnalysisContext::Builtin {
+                defines_display_trait: spec.name == FMT_MODULE,
+            },
             &program,
             &mut account,
             &external_roots
@@ -927,7 +929,7 @@ fn default_prelude_exports(
                 // Prelude bindings are semantic constants. Their use site, not
                 // the prelude implementation, supplies the root provenance.
                 .map(|value| (name.clone(), value.without_location()))
-                .ok_or_else(|| ModuleError::new(format!("core/prelude has no export {name:?}")))
+                .ok_or_else(|| ModuleError::new(format!("std/prelude has no export {name:?}")))
         })
         .collect()
 }

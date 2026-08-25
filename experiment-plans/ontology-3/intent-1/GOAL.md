@@ -51,8 +51,8 @@ SQL renderer 或诊断容器。A4 不负责解析任意自然语言，只处理�
 ./bin/telora run verify -C intent-1
 ./bin/telora run invalid -C intent-1
 ./bin/telora run invalid -C intent-1 --best-effort
-./bin/telora check @test/intent.telora -C intent-1
-./bin/telora query exports @bin/main.telora -C intent-1
+./bin/telora check @test/intent -C intent-1
+./bin/telora query exports @bin/main -C intent-1
 ```
 
 非法入口的两个 `run` 应失败；普通模式应给出最直接的原因，`--best-effort` 可用于获取

@@ -123,7 +123,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types.telora" as types;
+            r#"import "./types" as types;
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
@@ -167,7 +167,7 @@
         .unwrap();
         fs::write(
             directory.join("creator.telora"),
-            r#"import "./types.telora" as types;
+            r#"import "./types" as types;
                import "std/array" as array;
                def normalize_expr: Fn(types.Expr) -> types.Expr = fn(expr) {
                    match expr {
@@ -185,8 +185,8 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types.telora" as types;
-               import "./creator.telora" as creator;
+            r#"import "./types" as types;
+               import "./creator" as creator;
                import "std/codec" as codec;
                import "std/result" as result;
                import "std/value" {Value};
@@ -235,7 +235,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types.telora" as types;
+            r#"import "./types" as types;
                import "std/json" as json;
                import "std/result" as result;
                let rejection: types.Rejection = {
@@ -260,7 +260,7 @@
 
         fs::write(
             directory.join("invalid.telora"),
-            r#"import "./types.telora" as types;
+            r#"import "./types" as types;
                types.encode_rejection({
                    a: "wrong",
                    b: "two",
@@ -322,7 +322,7 @@ export { CallExpr, Expr };"#,
 
         fs::write(
             directory.join("whole.telora"),
-            r#"import "./expr.telora" as expr;
+            r#"import "./expr" as expr;
                import "std/array" as array;
                import "std/type-desc" as desc;
                def has_ref = fn(ty, fuel) {
@@ -354,9 +354,9 @@ export { CallExpr, Expr };"#,
         for (name, import) in [
             (
                 "selective.telora",
-                r#"import "./expr.telora" {Expr, lit, add, depth};"#,
+                r#"import "./expr" {Expr, lit, add, depth};"#,
             ),
-            ("open.telora", r#"import "./expr.telora" *;"#),
+            ("open.telora", r#"import "./expr" *;"#),
         ] {
             fs::write(
                 directory.join(name),
@@ -373,7 +373,7 @@ export { CallExpr, Expr };"#,
 
         fs::write(
             directory.join("invalid.telora"),
-            r#"import "./expr.telora" {Expr, depth};
+            r#"import "./expr" {Expr, depth};
                export def output = depth("bad");"#,
         )
         .unwrap();
@@ -630,13 +630,19 @@ export { CallExpr, Expr };"#,
         let c = directory.join("c.telora");
         let a = directory.join("a.telora");
         let b = directory.join("b.telora");
+        let main = directory.join("main.telora");
         fs::write(&c, r#"{value: [1, 2, 3]}"#).unwrap();
-        fs::write(&a, r#"import "./c.telora" as c; c"#).unwrap();
-        fs::write(&b, r#"import "./c.telora" as c; c"#).unwrap();
+        fs::write(&a, r#"import "./c" as c; c"#).unwrap();
+        fs::write(&b, r#"import "./c" as c; c"#).unwrap();
+        fs::write(
+            &main,
+            r#"import "./a" as a; import "./b" as b; [a, b]"#,
+        )
+        .unwrap();
         let mut loader = ModuleLoader {
-            resolver: ModuleResolver::for_root(&a).unwrap(),
+            resolver: ModuleResolver::for_root(&main).unwrap(),
             cache: HashMap::new(),
-            core_modules: HashMap::new(),
+            builtin_modules: HashMap::new(),
             main: MainWorld::building(),
             visiting: Vec::new(),
             dependencies: BTreeSet::new(),
@@ -648,14 +654,13 @@ export { CallExpr, Expr };"#,
             source_policy: ModuleSourcePolicy::ExpressionHarness,
         };
 
-        loader.load_value(&a).unwrap();
-        let counts_after_a = loader.main.heap.counts();
-        loader.load_value(&b).unwrap();
-        let a_id = loader.resolver.resolve_root(&a).unwrap().id;
-        let b_id = loader.resolver.resolve_root(&b).unwrap().id;
+        loader.load_value(&main).unwrap();
+        let main_id = loader.resolver.resolve_root(&main).unwrap().id;
+        let a_id = loader.resolver.resolve_import(&main_id, "./a").unwrap().id;
+        let b_id = loader.resolver.resolve_import(&main_id, "./b").unwrap().id;
         let c_id = loader
             .resolver
-            .resolve_import(&a_id, "./c.telora")
+            .resolve_import(&a_id, "./c")
             .unwrap()
             .id;
         let root = |id: &ModuleCName| match loader.cache.get(id).unwrap() {
@@ -664,7 +669,6 @@ export { CallExpr, Expr };"#,
 
         assert_eq!(root(&a_id), root(&c_id));
         assert_eq!(root(&b_id), root(&c_id));
-        assert_eq!(counts_after_a, loader.main.heap.counts());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -675,7 +679,7 @@ export { CallExpr, Expr };"#,
         let main = directory.join("main.telora");
         fs::write(
             &library,
-            r#"import "std/rt-types/exec.telora" as exec_types;
+            r#"import "std/rt-types/exec" as exec_types;
                import "std/hash" as hash;
                type ExecSettings = exec_types.ExecSettings;
                type ExecRequest = exec_types.ExecRequest;
@@ -724,7 +728,7 @@ export { CallExpr, Expr };"#,
         .unwrap();
         fs::write(
             &main,
-            r#"import "./library.telora" as library;
+            r#"import "./library" as library;
                export def output = (
                    library.direct(40),
                    library.factory({platform: {os: "linux", arch: "x86_64"}, offset: 2})(39),
@@ -758,7 +762,7 @@ export { CallExpr, Expr };"#,
             &main,
             r#"option "test.action" 1;
                option "test.action" 2;
-               import "./missing.telora" as missing;
+               import "./missing" as missing;
                export { missing as output };"#,
         )
         .unwrap();
@@ -768,7 +772,7 @@ export { CallExpr, Expr };"#,
         let first = pending.initialize().unwrap_err().to_string();
         let second = pending.initialize().unwrap_err().to_string();
         assert_eq!(first, second);
-        assert!(first.contains("missing.telora"), "{first}");
+        assert!(first.contains("fixture/missing"), "{first}");
 
         fs::write(&main, "export def output = 42;").unwrap();
         let pending = engine.prepare_module(&main).unwrap();
@@ -824,7 +828,7 @@ export { CallExpr, Expr };"#,
         .unwrap();
         fs::write(
             &main,
-            "import \"./model.telora\" as model;\
+            "import \"./model\" as model;\
              type Local = String;\
              type Uses = model.Good;\
              type Down = Array(Uses);\
@@ -867,10 +871,10 @@ export { CallExpr, Expr };"#,
         );
         assert!(main.imports.iter().any(|import| import.target == model.id));
         assert_ne!(main.source, model.source);
-        assert_eq!(model.name, "@src/model.telora");
+        assert_eq!(model.name, "fixture/model");
         assert_eq!(
             snapshot.sources().get(model.source.unwrap()).name.as_ref(),
-            "@src/model.telora"
+            "fixture/model"
         );
         fs::remove_dir_all(directory).unwrap();
     }

@@ -201,7 +201,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         prelude
             .schemes
             .keys()
-            .filter(|name| source_name.ends_with(".native.telora") || name.as_str() != "BlameError")
+            .filter(|name| name.as_str() != "BlameError")
             .filter(|name| !external_roots.contains_key(*name))
             .chain(external_roots.keys())
             .cloned()

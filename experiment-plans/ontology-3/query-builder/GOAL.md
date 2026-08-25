@@ -44,8 +44,8 @@ ontology 概念或企业领域事实。本轮只实现 SQLite，不扩展其他 
 ./bin/telora run main -C query-builder
 ./bin/telora run verify -C query-builder
 ./bin/telora run invalid -C query-builder --best-effort
-./bin/telora check @test/query-builder.telora -C query-builder
-./bin/telora query exports @bin/main.telora -C query-builder
+./bin/telora check @test/query-builder -C query-builder
+./bin/telora query exports @bin/main -C query-builder
 ```
 
 完成时报告真实交付、验证结果与剩余限制，不要求 Git commit。

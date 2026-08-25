@@ -890,7 +890,7 @@ export { private as visible, identity as map };"#,
     fn selective_imports_are_in_scope_for_exported_definition_contracts() {
         let program = parse(
             "selective-type.telora",
-            r#"import "std/rt-types/exec.telora" { ExecFn };
+            r#"import "std/rt-types/exec" { ExecFn };
                export def exec: ExecFn = fn(settings, request) { request };"#,
         )
         .unwrap();

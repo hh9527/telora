@@ -69,7 +69,7 @@
             "native type Item @7;",
         ] {
             let source =
-                format!("import \"./provider.telora\" {{ Item }}; {binding} export {{Item}};");
+                format!("import \"./provider\" {{ Item }}; {binding} export {{Item}};");
             let mut sources = SourceDatabase::default();
             let source_id = sources.add("@test/conflict.telora", source);
             let parsed = parse_registered(&sources, source_id);
@@ -92,18 +92,6 @@
     }
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn fixture_native_callback(
-        _: &mut crate::CallContext<'_, '_>,
-    ) -> Result<(), crate::NativeError> {
-        Ok(())
-    }
-
-    fn fixture_answer_callback(
-        context: &mut crate::CallContext<'_, '_>,
-    ) -> Result<(), crate::NativeError> {
-        context.set_int(context.result(), 42)
-    }
-
     fn fixture_dir() -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -111,6 +99,7 @@
             .as_nanos();
         let path = std::env::temp_dir().join(format!("telora-module-test-{unique}"));
         fs::create_dir(&path).unwrap();
+        fs::write(path.join("telora-deps.json"), r#"{"name":"fixture"}"#).unwrap();
         path
     }
 
@@ -165,8 +154,8 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "core/prelude" as prelude;
-import "core/prelude" { validate as check };
+            r#"import "std/prelude" as prelude;
+import "std/prelude" { validate as check };
 import "std/result" as result;
 type User = struct {name: String};
 let user: User = {name: result.unwrap(check(String, "telora"))};
@@ -181,7 +170,7 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
         );
         fs::write(
             directory.join("missing.telora"),
-            "import \"core/prelude\" { missing }; missing",
+            "import \"std/prelude\" { missing }; missing",
         )
         .unwrap();
         let missing =
@@ -190,7 +179,7 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
 
         fs::write(
             directory.join("duplicate.telora"),
-            "import \"core/prelude\" { union as item, validate as item }; item",
+            "import \"std/prelude\" { union as item, validate as item }; item",
         )
         .unwrap();
         let duplicate =
@@ -203,7 +192,7 @@ let user: User = {name: result.unwrap(check(String, "telora"))};
 
         fs::write(
             directory.join("local.telora"),
-            r#"import "core/prelude" { validate as builtin_validate };
+            r#"import "std/prelude" { validate as builtin_validate };
 import "std/result" as result;
 type Plan = struct {revision: Int};
 type Profile = struct {enabled: Bool};
@@ -229,7 +218,7 @@ export def output: Int = checked.revision + builtin_checked;"#,
         fs::write(
             directory.join("main.telora"),
             r#"import "std/result" as result, *;
-import "core/prelude" as prelude, { validate as check };
+import "std/prelude" as prelude, { validate as check };
 type User = struct {name: String};
 let user = {name: unwrap('Ok("telora"))};
 (user, result.unwrap == unwrap, prelude.validate == check)"#,
@@ -253,7 +242,7 @@ let user = {name: unwrap('Ok("telora"))};
         .unwrap();
         fs::write(
             directory.join("unused.telora"),
-            "import \"./left.telora\" *; import \"./right.telora\" *; 0",
+            "import \"./left\" *; import \"./right\" *; 0",
         )
         .unwrap();
         let unused =
@@ -262,7 +251,7 @@ let user = {name: unwrap('Ok("telora"))};
 
         fs::write(
             directory.join("shadowed.telora"),
-            "import \"./left.telora\" *; import \"./right.telora\" *; let shared = 3; shared",
+            "import \"./left\" *; import \"./right\" *; let shared = 3; shared",
         )
         .unwrap();
         let shadowed =
@@ -271,7 +260,7 @@ let user = {name: unwrap('Ok("telora"))};
 
         fs::write(
             directory.join("ambiguous.telora"),
-            "import \"./left.telora\" *; import \"./right.telora\" *; export { shared as output };",
+            "import \"./left\" *; import \"./right\" *; export { shared as output };",
         )
         .unwrap();
         let ambiguous =
@@ -281,8 +270,8 @@ let user = {name: unwrap('Ok("telora"))};
             message.contains("open import name \"shared\" is ambiguous"),
             "{message}"
         );
-        assert!(message.contains("left.telora"));
-        assert!(message.contains("right.telora"));
+        assert!(message.contains("fixture/left"));
+        assert!(message.contains("fixture/right"));
         let recovered = recovery_engine()
             .recover_workspace(directory.join("ambiguous.telora"))
             .unwrap();
@@ -307,8 +296,8 @@ export { identity as map };"#,
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./library.telora" as library, { identity as id, answer };
-import "./library.telora" *;
+            r#"import "./library" as library, { identity as id, answer };
+import "./library" *;
 (id(1), id("telora"), answer, map == library.map, library.identity == library.map)"#,
         )
         .unwrap();
@@ -335,7 +324,7 @@ import "./library.telora" *;
 
         fs::write(
             directory.join("private.telora"),
-            "import \"./library.telora\" { private }; private",
+            "import \"./library\" { private }; private",
         )
         .unwrap();
         let private =
@@ -438,7 +427,7 @@ import "./library.telora" *;
         fs::write(&provider, "export type Capability(T) = enum { 'Value(T) };").unwrap();
         fs::write(
             &main,
-            r#"import "./provider.telora" { Capability };
+            r#"import "./provider" { Capability };
 type Capability = enum { 'Local };
 export {Capability};"#,
         )
@@ -664,282 +653,17 @@ export def output: Expr = 'Compare({left: 1, right: "wrong"});"#;
     }
 
     #[test]
-    fn engine_builder_allocates_and_freezes_host_native_modules() {
-        fn spec(name: &str) -> NativeModuleSpec {
-            NativeModuleSpec::new(
-                name,
-                "native type Token @7; native make: Fn() -> Token; {Token: Token, make: make}",
-                vec![(
-                    "make",
-                    crate::NativeFunction::new_with_native_type(
-                        "host.make",
-                        0,
-                        7,
-                        fixture_native_callback,
-                    ),
-                )],
-            )
-        }
-
-        let mut builder = Engine::builder(EngineConfig {
-            module_quota: Quota::with_fuel(100_000),
-            session_quota: Quota::with_fuel(100_000),
-            data_limits: DataLimits::default(),
-        });
-        assert_eq!(
-            builder
-                .register_native_module(Some(2_000), spec("acme/stable"))
-                .unwrap(),
-            2_000
-        );
-        assert_eq!(
-            builder
-                .register_native_module(None, spec("acme/automatic"))
-                .unwrap(),
-            1_024
-        );
-        assert!(
-            builder
-                .register_native_module(Some(2_000), spec("acme/collision"))
-                .unwrap_err()
-                .to_string()
-                .contains("already registered")
-        );
-        assert!(
-            builder
-                .register_native_module(Some(2_001), spec("acme/stable"))
-                .unwrap_err()
-                .to_string()
-                .contains("name")
-        );
-        assert!(
-            builder
-                .register_native_module(Some(1_023), spec("acme/reserved"))
-                .unwrap_err()
-                .to_string()
-                .contains("reserved range")
-        );
-        assert!(
-            builder
-                .register_native_module(None, spec("invalid"))
-                .unwrap_err()
-                .to_string()
-                .contains("absolute module path")
-        );
-        assert!(
-            builder
-                .register_native_module(None, spec("std/hash"))
-                .unwrap_err()
-                .to_string()
-                .contains("already registered by Telora")
-        );
-        assert_eq!(
-            builder
-                .register_native_module(None, spec("core/future"))
-                .unwrap(),
-            1_025
-        );
-        assert_eq!(
-            builder
-                .register_native_module(None, spec("acme/after-errors"))
-                .unwrap(),
-            1_026
-        );
-
-        let engine = builder.build();
-        assert_eq!(
-            engine
-                .native_modules
-                .iter()
-                .map(|module| module.id)
-                .collect::<Vec<_>>(),
-            [1_024, 1_025, 1_026, 2_000]
-        );
-        let directory = fixture_dir();
-        fs::write(directory.join("main.telora"), "export def output = 1;").unwrap();
-        let module = engine
-            .load_module(directory.join("main.telora"), BTreeMap::new())
+    fn builtin_workspace_sources_use_canonical_module_names() {
+        let snapshot = recovery_engine()
+            .recover_builtin_workspace("std/string")
             .unwrap();
-        assert_eq!(
-            named_output(&engine.execute(&module).unwrap()).to_string(),
-            "1"
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn registered_host_modules_flow_through_execution_and_workspace_recovery() {
-        let config = EngineConfig {
-            module_quota: Quota::with_fuel(500_000),
-            session_quota: Quota::with_fuel(500_000),
-            data_limits: DataLimits::default(),
-        };
-        let mut builder = Engine::builder(config);
-        builder
-            .register_native_module(
-                Some(1_500),
-                NativeModuleSpec::new(
-                    "acme/runtime",
-                    "native type Token @9; native answer: Fn() -> Int; export { Token, answer };",
-                    vec![(
-                        "answer",
-                        crate::NativeFunction::new(
-                            "acme/runtime.answer",
-                            0,
-                            fixture_answer_callback,
-                        ),
-                    )],
-                ),
-            )
-            .unwrap();
-        let engine = builder.build();
-        let directory = fixture_dir();
-        let main = directory.join("main.telora");
-        fs::write(
-            &main,
-            r#"import "acme/runtime" as host;
-import "std/type-desc" as desc;
-export def output = {answer: host.answer(), name: desc.opaque_name(host.Token)};"#,
-        )
-        .unwrap();
-
-        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        let output_world = engine.execute(&module).unwrap();
-        let output = named_output(&output_world);
-        assert_eq!(output.dict_get("answer").unwrap().to_string(), "42");
-        assert_eq!(
-            output.dict_get("name").unwrap().to_string(),
-            "'Some(\"acme/runtime#Token\")"
-        );
-        let host = module
-            .workspace
-            .modules()
-            .iter()
-            .find(|module| module.name == "acme/runtime")
-            .unwrap();
-        assert_eq!(host.kind, WorkspaceModuleKind::Core);
-        assert_eq!(host.state, WorkspaceModuleState::Available);
-
-        let snapshot = engine.recover_workspace(&main).unwrap();
-        assert!(snapshot.diagnostics().is_empty());
-        assert!(snapshot.modules().iter().any(|module| {
-            module.name == "acme/runtime"
-                && module.kind == WorkspaceModuleKind::Core
-                && module.state == WorkspaceModuleState::Available
-        }));
-        let clock = crate::RevisionClock::default();
-        let context = crate::QueryContext::current(clock);
-        let source = snapshot
-            .module_by_path(&fs::canonicalize(&main).unwrap())
-            .unwrap()
-            .source
-            .unwrap();
-        let source_text = snapshot.sources().get(source).text().to_string();
-        let needle = "host.answer";
-        let offset = source_text.find(needle).unwrap() + needle.len();
-        let completion = block_on_recovery(snapshot.query_completion_at(
-            &context,
-            crate::Location::new(source, crate::TextRange::at(offset as u32)),
-        ))
-        .unwrap()
-        .unwrap();
-        assert_eq!(completion.candidates.len(), 1);
-        assert_eq!(completion.candidates[0].label, "answer");
-        assert_eq!(
-            completion.candidates[0].kind,
-            crate::CompletionKind::ModuleExport
-        );
-        let async_snapshot =
-            block_on_recovery(engine.recover_workspace_async(&main, &BTreeMap::new(), &context))
-                .unwrap();
-        assert!(async_snapshot.diagnostics().is_empty());
-
-        let isolated = Engine::new(config)
-            .load_module(&main, BTreeMap::new())
-            .unwrap_err();
-        assert!(isolated.to_string().contains("unknown dependency"));
-        assert!(isolated.to_string().contains("main.telora:1:8"));
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn selected_entry_runs_graph_visible_registered_native_modules() {
-        let config = EngineConfig {
-            module_quota: Quota::with_fuel(500_000),
-            session_quota: Quota::with_fuel(500_000),
-            data_limits: DataLimits::default(),
-        };
-        let native_source = "native answer: Fn() -> Int; export { answer };";
-        let mut builder = Engine::builder(config);
-        builder
-            .register_native_module(
-                Some(1_500),
-                NativeModuleSpec::new(
-                    "dep/service.native.telora",
-                    native_source,
-                    vec![(
-                        "answer",
-                        crate::NativeFunction::new(
-                            "dep/service.answer",
-                            0,
-                            fixture_answer_callback,
-                        ),
-                    )],
-                ),
-            )
-            .unwrap();
-        let engine = builder.build();
-        let directory = fixture_dir();
-        fs::create_dir_all(directory.join("src/bin")).unwrap();
-        fs::create_dir_all(directory.join("dependency/src")).unwrap();
-        fs::write(
-            directory.join("telora-deps.json"),
-            r#"{"dependencies":{"dep":{"path":"dependency"}}}"#,
-        )
-        .unwrap();
-        fs::write(
-            directory.join("dependency/src/service.native.telora"),
-            native_source,
-        )
-        .unwrap();
-        fs::write(
-            directory.join("src/bin/main.telora"),
-            "export def marker = 0;",
-        )
-        .unwrap();
-        let entry = directory.join("src/host.entry.telora");
-        fs::write(
-            &entry,
-            r#"import "std/rt.priv.telora" as rt;
-import "dep/service.native.telora" as service;
-type Main = struct {marker: Int};
-export type MainType = Main;
-export type State = Int;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
-    = fn(options, env) {
-    ({data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null}, fn(resources: rt.SystemResources, main: MainType) {
-        let reduce: Reducer = fn(state, event) {
-            match event {
-                'Initialize => (state, ['Output("42"), 'Exit(0)]),
-                _ => fail!("unexpected event", event),
-            }
-        };
-        (service.answer(), reduce)
-    })
-};"#,
-        )
-        .unwrap();
-        let pending = engine
-            .prepare_module_id(&directory, "@bin/main.telora")
-            .unwrap();
-        let outcome =
-            block_on_recovery(engine.run_pending(pending, "@src/host.entry.telora", &[])).unwrap();
-        assert_eq!(outcome.output, "42");
-        assert_eq!(outcome.termination, RunTermination::Exit(0));
-        fs::remove_dir_all(directory).unwrap();
+        let names = snapshot
+            .sources()
+            .files()
+            .map(|source| source.name.as_ref())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"std/string"));
+        assert!(names.iter().all(|name| !name.starts_with('<')));
     }
 
     #[test]
@@ -1003,7 +727,7 @@ type Independent = String;
         assert_eq!(events.len(), 5);
         assert_eq!(events[0].message.as_deref(), Some("loaded\nvalue"));
         assert_eq!(events[0].name, "data");
-        assert!(events[0].module.ends_with("main.telora"));
+        assert_eq!(events[0].module, "fixture/main");
         assert_eq!(events[0].line, 3);
         assert_eq!(
             events[0].repr,
@@ -1196,7 +920,7 @@ type Independent = String;
         fs::write(
             directory.join("main.telora"),
             r#"import "./abc.json" { data };
-               import "./User.telora" as User;
+               import "./User" as User;
                import "std/result" as result;
                import "std/json" as json;
                let user = data |> User.decode |> result.unwrap;
@@ -1229,7 +953,7 @@ type Independent = String;
             .expect("codec failure must retain the invalid JSON value location");
         assert_eq!(
             module.sources.get(data_location.source).name.as_ref(),
-            "@src/abc.json"
+            "fixture/abc.json"
         );
         assert_eq!(
             module
@@ -1253,7 +977,7 @@ type Independent = String;
                 .sources
                 .get(rule_location.source)
                 .name
-                .ends_with("User.telora")
+                .ends_with("fixture/User")
         );
         assert_eq!(
             module
@@ -1267,7 +991,7 @@ type Independent = String;
         fs::write(
             directory.join("inspect.telora"),
             r#"import "./abc.json" { data };
-               import "./User.telora" as User;
+               import "./User" as User;
                data |> User.decode"#,
         )
         .unwrap();

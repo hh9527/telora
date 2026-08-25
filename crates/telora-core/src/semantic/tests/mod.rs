@@ -12,6 +12,7 @@ fn fixture_dir() -> PathBuf {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("telora-semantic-test-{unique}"));
     fs::create_dir(&path).unwrap();
+    fs::write(path.join("telora-deps.json"), r#"{"name":"fixture"}"#).unwrap();
     path
 }
 

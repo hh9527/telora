@@ -52,7 +52,7 @@
         fs::write(&model, "export def alpha = 1; export def beta = \"x\";").unwrap();
         fs::write(
             &main,
-            "import \"./model.telora\" as model; let selected = model.alpha; export { selected as output };",
+            "import \"./model\" as model; let selected = model.alpha; export { selected as output };",
         )
         .unwrap();
         let snapshot = engine().recover_workspace(&main).unwrap();
@@ -93,7 +93,7 @@
         fs::write(&data, "{\"value\":1}").unwrap();
         fs::write(
             &main,
-            "import \"./model.telora\" as model;\n\
+            "import \"./model\" as model;\n\
              import \"./data.json\" as data;\n\
              def f = fn(x) { let y = x; y };\n\
              def count = 1 + 2;\n\

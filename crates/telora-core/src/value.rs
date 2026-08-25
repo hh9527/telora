@@ -436,6 +436,21 @@ pub(crate) enum CoreDiagnosticFunction {
     Warn,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoreRuntimeFunction {
+    CallWithDiagnostics,
+}
+
+impl CoreRuntimeFunction {
+    pub(crate) const fn name(self) -> &'static str {
+        "std/_rt.call_with_diagnostics"
+    }
+
+    pub(crate) const fn arity(self) -> usize {
+        2
+    }
+}
+
 impl CoreDiagnosticFunction {
     pub(crate) const fn name(self) -> &'static str {
         "\0telora_warn"
@@ -745,6 +760,7 @@ pub(crate) enum NativeKind {
     CoreString(CoreStringFunction),
     CorePath(CorePathFunction),
     CoreDiagnostic(CoreDiagnosticFunction),
+    CoreRuntime(CoreRuntimeFunction),
     CoreHash(CoreHashFunction),
     CoreCodec(CoreCodecFunction),
     CoreTypeDesc(CoreTypeDescFunction),
@@ -865,6 +881,16 @@ impl NativeFunction {
             arity: function.arity(),
             callback: unavailable_core_callback,
             kind: NativeKind::CoreDiagnostic(function),
+            native_type_local: None,
+        }
+    }
+
+    pub(crate) const fn core_runtime(function: CoreRuntimeFunction) -> Self {
+        Self {
+            name: function.name(),
+            arity: function.arity(),
+            callback: unavailable_core_callback,
+            kind: NativeKind::CoreRuntime(function),
             native_type_local: None,
         }
     }

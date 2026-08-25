@@ -393,7 +393,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./reference-equality.telora" as equality;
+            r#"import "./reference-equality" as equality;
                import "std/eq" as eq;
                type Node = struct {value: Int, children: Array(Node)};
                type Choice = enum {'None, 'Some(String)};
@@ -610,7 +610,7 @@
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         let error = module.execute(100_000).unwrap_err();
-        assert!(error.to_string().contains("main.telora:3:"));
+        assert!(error.to_string().contains("fixture/main:3:"));
         assert!(
             error
                 .trace
@@ -1068,7 +1068,7 @@
 
         fs::write(
             directory.join("main.telora"),
-            r#"import "./Types.telora" as Types;
+            r#"import "./Types" as Types;
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
@@ -1110,7 +1110,7 @@
         fs::write(
             directory.join("bad.telora"),
             r#"import "./bad.json" { data };
-               import "./Types.telora" as Types;
+               import "./Types" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
                codec.decode(Types.Node, data) |> result.unwrap"#,
@@ -1124,7 +1124,7 @@
 
         fs::write(
             directory.join("leak.telora"),
-            r#"import "./Types.telora" as Types;
+            r#"import "./Types" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
                codec.encode(codec.Value, Types.Node) |> result.unwrap"#,

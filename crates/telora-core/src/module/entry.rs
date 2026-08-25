@@ -25,25 +25,23 @@ impl<'a> TeloraModuleSource<'a> {
     }
 }
 
-fn load_module_with_native_modules(
+fn load_module_with_policy(
     path: impl AsRef<Path>,
     external_bindings: BTreeMap<String, crate::DataWorld>,
     module_quota: Quota,
     data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
-    native_modules: &[RegisteredNativeModule],
     source_policy: ModuleSourcePolicy,
 ) -> Result<LoadedModule, ModuleError> {
     let resolver = ModuleResolver::for_root(path.as_ref())
         .map_err(|error| ModuleError::new(error.to_string()))?
-        .with_builtins(builtin_list(native_modules));
+        .with_builtins(builtin_list());
     load_module_with_resolver(
         resolver,
         external_bindings,
         module_quota,
         data_limits,
         debug_sink,
-        native_modules,
         source_policy,
     )
 }
@@ -54,7 +52,6 @@ fn load_module_with_resolver(
     module_quota: Quota,
     data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
-    native_modules: &[RegisteredNativeModule],
     source_policy: ModuleSourcePolicy,
 ) -> Result<LoadedModule, ModuleError> {
     let root_module = resolver
@@ -65,7 +62,7 @@ fn load_module_with_resolver(
             "root module must have a .telora extension",
         ));
     }
-    let opaque_modules = builtin_list(native_modules)
+    let opaque_modules = builtin_list()
         .into_iter()
         .map(|(name, _)| ModuleCName::builtin(name));
     let graph = ModuleGraph::discover(
@@ -78,12 +75,11 @@ fn load_module_with_resolver(
     )?;
     let mut main = MainWorld::with_modules(graph);
     let mut sources = SourceDatabase::default();
-    let core_modules =
-        install_native_modules(&mut main, &mut sources, &debug_sink, native_modules)?;
+    let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink)?;
     let mut loader = ModuleLoader {
         resolver,
         cache: HashMap::new(),
-        core_modules,
+        builtin_modules,
         main,
         visiting: Vec::new(),
         dependencies: BTreeSet::new(),

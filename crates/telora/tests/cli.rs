@@ -12,8 +12,9 @@ fn fixture() -> PathBuf {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("telora-cli-{unique}"));
     fs::create_dir_all(path.join("src/bin")).unwrap();
+    fs::create_dir_all(path.join("src/entry")).unwrap();
     fs::create_dir_all(path.join("tests")).unwrap();
-    fs::write(path.join("telora-deps.json"), "{}").unwrap();
+    fs::write(path.join("telora-deps.json"), r#"{"name":"fixture"}"#).unwrap();
     path
 }
 
@@ -60,7 +61,7 @@ export def config:
     )
 }};"#
     );
-    fs::write(cwd.join("src/test.entry.telora"), source)
+    fs::write(cwd.join("src/entry/test.telora"), source)
 }
 
 fn jsonl(bytes: &[u8]) -> Vec<Value> {

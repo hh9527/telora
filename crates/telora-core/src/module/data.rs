@@ -141,10 +141,10 @@ fn parse_static_data_registered(
 }
 
 fn semantic_value_contract(
-    core_modules: &HashMap<String, ModuleArtifact>,
+    builtin_modules: &HashMap<String, ModuleArtifact>,
     heap: &Heap,
 ) -> Result<(PersistentValue, TypeDescriptor), ModuleError> {
-    let module = core_modules
+    let module = builtin_modules
         .get(crate::core::VALUE_MODULE)
         .ok_or_else(|| ModuleError::new("std/value is not installed"))?;
     let owner = module
@@ -185,12 +185,12 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
 
 fn publish_static_data_module(
     plan: &ValidatedDataPlan,
-    core_modules: &HashMap<String, ModuleArtifact>,
+    builtin_modules: &HashMap<String, ModuleArtifact>,
     heap: &mut Heap,
     source_bytes: usize,
     data_limits: DataLimits,
 ) -> Result<(PersistentValue, ModuleInterface, Provenance), ModuleError> {
-    let (owner, descriptor) = semantic_value_contract(core_modules, heap)?;
+    let (owner, descriptor) = semantic_value_contract(builtin_modules, heap)?;
     plan.enforce_limits(data_limits, source_bytes)
         .map_err(|error| ModuleError::new(error.to_string()))?;
     let type_id = semantic_value_type_id(heap, None, owner.runtime())

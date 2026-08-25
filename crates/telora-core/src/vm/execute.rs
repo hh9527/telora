@@ -1885,6 +1885,75 @@ impl Vm {
                 })();
                 match attempt {
                     Err(mut runtime_error)
+                        if runtime_error.failure_class()
+                            == crate::evaluation::FailureClass::Recoverable
+                            && frames.iter().any(|frame| {
+                                matches!(
+                                    &frame.return_target,
+                                    ReturnTarget::Native(continuation)
+                                        if continuation.catches_recoverable()
+                                )
+                            }) =>
+                    {
+                        let raised = frames.last().and_then(|frame| {
+                            (frame.function.name() == runtime_error.function)
+                                .then(|| {
+                                    let Opcode::Raise { error } = frame
+                                        .function
+                                        .instructions()
+                                        .get(runtime_error.instruction)?
+                                    else {
+                                        return None;
+                                    };
+                                    let end = frame.base + frame.function.register_count();
+                                    read_register(
+                                        &stack[frame.base..end],
+                                        *error,
+                                        &frame.function,
+                                        runtime_error.instruction,
+                                    )
+                                    .ok()
+                                    .copied()
+                                })
+                                .flatten()
+                        });
+                        append_runtime_trace(&mut runtime_error, &frames);
+                        let frame_index = frames
+                            .iter()
+                            .rposition(|frame| {
+                                matches!(
+                                    &frame.return_target,
+                                    ReturnTarget::Native(continuation)
+                                        if continuation.catches_recoverable()
+                                )
+                            })
+                            .expect("recoverable diagnostic scope exists");
+                        let stack_base = frames[frame_index].base;
+                        let completed = frames.drain(frame_index..).next().expect("caught frame");
+                        stack.truncate(stack_base);
+                        let ReturnTarget::Native(continuation) = completed.return_target else {
+                            unreachable!("diagnostic scope is a native continuation")
+                        };
+                        let action = continuation.catch_recoverable(
+                            runtime_error,
+                            raised,
+                            &mut current,
+                            background,
+                            account,
+                        )?;
+                        match drive_vm_action(
+                            action,
+                            &mut frames,
+                            &mut stack,
+                            &mut current,
+                            background,
+                            account,
+                        )? {
+                            DriveOutcome::Pending => continue,
+                            DriveOutcome::Root(root) => break Ok(root),
+                        }
+                    }
+                    Err(mut runtime_error)
                         if best_effort
                             && runtime_error.failure_class()
                                 == crate::evaluation::FailureClass::Recoverable =>

@@ -13,21 +13,21 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent
 REPOSITORY = Path(__file__).resolve().parents[6]
 CASES = {
-    "flat-functions": ("check", "@src/flat-functions.telora"),
-    "recursive-functions": ("check", "@src/recursive-functions.telora"),
-    "nested-functions": ("check", "@src/nested-functions.telora"),
+    "flat-functions": ("check", "@src/flat-functions"),
+    "recursive-functions": ("check", "@src/recursive-functions"),
+    "nested-functions": ("check", "@src/nested-functions"),
     "recursive-values-shallow": (
         "check",
-        "@src/recursive-values-shallow.telora",
+        "@src/recursive-values-shallow",
     ),
     "recursive-values-growing": (
         "check",
-        "@src/recursive-values-growing.telora",
+        "@src/recursive-values-growing",
     ),
-    "query-builder-check": ("check", "@src/query-builder.telora"),
+    "query-builder-check": ("check", "@src/query-builder"),
     "query-builder-show": (
         "show",
-        "@src/query-builder.telora",
+        "@src/query-builder",
         "-p",
         "definitely_missing_name",
     ),

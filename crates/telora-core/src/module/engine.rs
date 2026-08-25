@@ -1,115 +1,21 @@
 pub struct Engine {
     config: EngineConfig,
     debug_sink: Arc<dyn DebugSink>,
-    native_modules: Arc<[RegisteredNativeModule]>,
-}
-
-pub struct NativeModuleSpec {
-    name: String,
-    source: String,
-    functions: Vec<(String, crate::NativeFunction)>,
-}
-
-impl NativeModuleSpec {
-    pub fn new(
-        name: impl Into<String>,
-        source: impl Into<String>,
-        functions: Vec<(&'static str, crate::NativeFunction)>,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            source: source.into(),
-            functions: functions
-                .into_iter()
-                .map(|(name, function)| (name.to_owned(), function))
-                .collect(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct RegisteredNativeModule {
-    id: u32,
-    name: String,
-    source: String,
-    functions: Vec<(String, crate::NativeFunction)>,
 }
 
 pub struct EngineBuilder {
     config: EngineConfig,
-    modules: BTreeMap<u32, RegisteredNativeModule>,
-    names: HashSet<String>,
 }
 
 impl EngineBuilder {
     fn new(config: EngineConfig) -> Self {
-        Self {
-            config,
-            modules: BTreeMap::new(),
-            names: HashSet::new(),
-        }
-    }
-
-    pub fn register_native_module(
-        &mut self,
-        id: Option<u32>,
-        spec: NativeModuleSpec,
-    ) -> Result<u32, ModuleError> {
-        let valid_name = spec.name.split('/').count() >= 2
-            && spec
-                .name
-                .split('/')
-                .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
-            && !spec.name.starts_with(['.', '@', '/']);
-        if !valid_name {
-            return Err(ModuleError::new(
-                "Host native module name must be an absolute module path such as acme/runtime",
-            ));
-        }
-        if module_specs().iter().any(|core| core.name == spec.name) {
-            return Err(ModuleError::new(format!(
-                "built-in module name {:?} is already registered by Telora",
-                spec.name
-            )));
-        }
-        if self.names.contains(&spec.name) {
-            return Err(ModuleError::new(format!(
-                "Host native module name {:?} is already registered",
-                spec.name
-            )));
-        }
-        let id = match id {
-            Some(id) if id <= crate::value::RESERVED_NATIVE_MODULE_MAX => {
-                return Err(ModuleError::new(format!(
-                    "Host native module ID {id} is in Telora's reserved range"
-                )));
-            }
-            Some(id) => id,
-            None => (crate::value::RESERVED_NATIVE_MODULE_MAX + 1..=u32::MAX)
-                .find(|candidate| !self.modules.contains_key(candidate))
-                .ok_or_else(|| ModuleError::new("Host native module ID space is exhausted"))?,
-        };
-        if self.modules.contains_key(&id) {
-            return Err(ModuleError::new(format!(
-                "Host native module ID {id} is already registered"
-            )));
-        }
-        let module = RegisteredNativeModule {
-            id,
-            name: spec.name.clone(),
-            source: spec.source,
-            functions: spec.functions,
-        };
-        self.names.insert(spec.name);
-        self.modules.insert(id, module);
-        Ok(id)
+        Self { config }
     }
 
     pub fn build(self) -> Engine {
         Engine {
             config: self.config,
             debug_sink: Arc::new(DiscardDebugSink),
-            native_modules: self.modules.into_values().collect(),
         }
     }
 }
@@ -146,13 +52,12 @@ impl Engine {
         path: impl AsRef<Path>,
         external_bindings: BTreeMap<String, crate::DataWorld>,
     ) -> Result<LoadedModule, ModuleError> {
-        load_module_with_native_modules(
+        load_module_with_policy(
             path,
             external_bindings,
             self.config.module_quota,
             self.config.data_limits,
             Arc::clone(&self.debug_sink),
-            &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         )
     }
@@ -165,14 +70,13 @@ impl Engine {
     ) -> Result<LoadedModule, ModuleError> {
         let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
             .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list(&self.native_modules));
+            .with_builtins(builtin_list());
         load_module_with_resolver(
             resolver,
             external_bindings,
             self.config.module_quota,
             self.config.data_limits,
             Arc::clone(&self.debug_sink),
-            &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         )
     }
@@ -184,14 +88,13 @@ impl Engine {
     ) -> Result<LoadedModule, ModuleError> {
         let resolver = ModuleResolver::standalone(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list(&self.native_modules));
+            .with_builtins(builtin_list());
         load_module_with_resolver(
             resolver,
             external_bindings,
             self.config.module_quota,
             self.config.data_limits,
             Arc::clone(&self.debug_sink),
-            &self.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         )
     }
@@ -269,7 +172,6 @@ impl Engine {
                 options,
                 config: self.config,
                 debug_sink: Arc::clone(&self.debug_sink),
-                native_modules: Arc::clone(&self.native_modules),
                 state: Mutex::new(PendingModuleState::Pending {
                     bindings: BTreeMap::new(),
                 }),
@@ -406,12 +308,12 @@ impl Engine {
         let resolver = pending.inner.resolver.clone();
         let (entry_id, entry_source) = if entry_selector == DEFAULT_ENTRY_MODULE {
             (
-                ModuleCName::builtin("std/entry/default.entry.telora"),
+                ModuleCName::builtin("std/entry/default"),
                 default_entry_source().to_owned(),
             )
         } else if entry_selector == SERVE_ENTRY_MODULE {
             (
-                ModuleCName::builtin("std/entry/serve.entry.telora"),
+                ModuleCName::builtin("std/entry/serve"),
                 serve_entry_source().to_owned(),
             )
         } else {
@@ -436,7 +338,6 @@ impl Engine {
             self.config.module_quota,
             self.config.data_limits,
             Arc::clone(&self.debug_sink),
-            &self.native_modules,
         )?;
         let mut account = QuotaAccount::new(self.config.session_quota);
         let entry_world = Vm::new()
@@ -476,7 +377,7 @@ impl Engine {
         let state_type = crate::types::decode_type_ref(exports["State"], "Entry.State")
             .map_err(ModuleError::new)?;
         let (value_owner, value_type) =
-            semantic_value_contract(&loader.core_modules, &loader.main.heap)?;
+            semantic_value_contract(&loader.builtin_modules, &loader.main.heap)?;
         validate_entry_interface(
             &entry_compiled.analysis.module_interface,
             &main_type,
@@ -809,11 +710,11 @@ impl Engine {
     ) -> Result<WorkspaceSnapshot, ModuleError> {
         let resolver = ModuleResolver::for_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list(&self.native_modules));
+            .with_builtins(builtin_list());
         let root_module = resolver
             .resolve_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let opaque_modules = builtin_list(&self.native_modules)
+        let opaque_modules = builtin_list()
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
         let graph = ModuleGraph::discover(
@@ -826,12 +727,7 @@ impl Engine {
         )?;
         let mut main = MainWorld::with_modules(graph);
         let mut sources = SourceDatabase::default();
-        let core_modules = install_native_modules(
-            &mut main,
-            &mut sources,
-            &self.debug_sink,
-            &self.native_modules,
-        )?;
+        let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
             resolver,
@@ -839,7 +735,7 @@ impl Engine {
             query: None,
             sources,
             main,
-            core_modules,
+            builtin_modules,
             inputs: BTreeMap::new(),
             provenances: HashMap::new(),
             roots: HashMap::new(),
@@ -862,7 +758,7 @@ impl Engine {
     ) -> Result<WorkspaceSnapshot, ModuleError> {
         let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
             .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list(&self.native_modules));
+            .with_builtins(builtin_list());
         self.recover_with_resolver(resolver)
     }
 
@@ -870,7 +766,7 @@ impl Engine {
         &self,
         cwd: impl AsRef<Path>,
     ) -> Result<Vec<ModuleCatalogEntry>, ModuleError> {
-        ModuleResolver::catalog_from_cwd(cwd.as_ref(), builtin_list(&self.native_modules))
+        ModuleResolver::catalog_from_cwd(cwd.as_ref(), builtin_list())
             .map_err(|error| ModuleError::new(error.to_string()))
     }
 
@@ -878,7 +774,8 @@ impl Engine {
         &self,
         module_id: &str,
     ) -> Result<WorkspaceSnapshot, ModuleError> {
-        if !builtin_list(&self.native_modules)
+        if !is_public_builtin_name(module_id)
+            || !builtin_list()
             .iter()
             .any(|(name, _)| name == module_id)
         {
@@ -893,7 +790,6 @@ impl Engine {
             &mut main,
             &mut sources,
             &self.debug_sink,
-            &self.native_modules,
             Some(&mut inputs),
         )?;
         Ok(WorkspaceSnapshot::build(
@@ -908,7 +804,7 @@ impl Engine {
     ) -> Result<WorkspaceSnapshot, ModuleError> {
         let resolver = ModuleResolver::standalone(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list(&self.native_modules));
+            .with_builtins(builtin_list());
         self.recover_with_resolver(resolver)
     }
 
@@ -919,7 +815,7 @@ impl Engine {
         let root_module = resolver
             .selected_root()
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let opaque_modules = builtin_list(&self.native_modules)
+        let opaque_modules = builtin_list()
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
         let graph = ModuleGraph::discover(
@@ -932,12 +828,7 @@ impl Engine {
         )?;
         let mut main = MainWorld::with_modules(graph);
         let mut sources = SourceDatabase::default();
-        let core_modules = install_native_modules(
-            &mut main,
-            &mut sources,
-            &self.debug_sink,
-            &self.native_modules,
-        )?;
+        let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
             resolver,
@@ -945,7 +836,7 @@ impl Engine {
             query: None,
             sources,
             main,
-            core_modules,
+            builtin_modules,
             inputs: BTreeMap::new(),
             provenances: HashMap::new(),
             roots: HashMap::new(),
@@ -979,11 +870,11 @@ impl Engine {
                 |source| ModuleResolver::for_root_with_source(root_path, source),
             )
             .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list(&self.native_modules));
+            .with_builtins(builtin_list());
         let root_module = resolver
             .resolve_root(path.as_ref())
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let opaque_modules = builtin_list(&self.native_modules)
+        let opaque_modules = builtin_list()
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
         let graph = ModuleGraph::discover(
@@ -996,12 +887,7 @@ impl Engine {
         )?;
         let mut main = MainWorld::with_modules(graph);
         let mut sources = SourceDatabase::default();
-        let core_modules = install_native_modules(
-            &mut main,
-            &mut sources,
-            &self.debug_sink,
-            &self.native_modules,
-        )?;
+        let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
             resolver,
@@ -1009,7 +895,7 @@ impl Engine {
             query: Some(context),
             sources,
             main,
-            core_modules,
+            builtin_modules,
             inputs: BTreeMap::new(),
             provenances: HashMap::new(),
             roots: HashMap::new(),

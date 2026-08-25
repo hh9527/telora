@@ -7,9 +7,8 @@ use crate::compiler::{
     type_family_template_link_key,
 };
 use crate::core::{
-    DEFAULT_ENTRY_MODULE, EDGE_RUNTIME_MODULE, FMT_CAPABILITY_BINDING, FMT_MODULE, PRELUDE_MODULE,
-    SERVE_ENTRY_MODULE, default_entry_source, edge_runtime_source, module_specs,
-    serve_entry_source,
+    DEFAULT_ENTRY_MODULE, FMT_CAPABILITY_BINDING, FMT_MODULE, PRELUDE_MODULE, SERVE_ENTRY_MODULE,
+    default_entry_source, module_specs, serve_entry_source,
 };
 use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_type_id};
 use crate::json::{
@@ -17,8 +16,8 @@ use crate::json::{
     validate_json_registered,
 };
 use crate::module_id::{
-    ModuleAuthority, ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver,
-    ResolvedModule, immediate_value,
+    ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver, ModuleVendor,
+    ResolvedModule, immediate_value, is_public_builtin_name,
 };
 use crate::parser::parse_registered;
 use crate::semantic::{
@@ -29,8 +28,8 @@ use crate::source::{Diagnostic, SourceDatabase};
 use crate::toml::validate_toml_registered;
 use crate::type_store::TypeStore;
 use crate::types::{
-    Analysis, ModuleInterface, PartialAnalysisControl, TraitImplementation, TypeDescriptor,
-    TypeFamilyTemplate, TypeScheme, analyze_partial_types_recovered_with_query,
+    Analysis, ModuleAnalysisContext, ModuleInterface, PartialAnalysisControl, TraitImplementation,
+    TypeDescriptor, TypeFamilyTemplate, TypeScheme, analyze_partial_types_recovered_with_query,
     analyze_program_with_bindings_observed, program_references_name, recovered_reference_locations,
 };
 #[cfg(test)]

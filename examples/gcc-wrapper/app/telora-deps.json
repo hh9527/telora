@@ -1,4 +1,5 @@
 {
+  "name": "gcc-wrapper-app",
   "dependencies": {
     "domain-method": {"path": "../../domain-method"},
     "gcc-toolchain-define": {"path": "../gcc-toolchain-define"},

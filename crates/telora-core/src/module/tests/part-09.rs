@@ -97,14 +97,14 @@
         .unwrap();
         fs::write(
             &facade,
-            r#"import "./model.telora" { Prepared, Target };
+            r#"import "./model" { Prepared, Target };
                    export { Prepared, Target };"#,
         )
         .unwrap();
         fs::write(
                 &main,
-                r#"import "./model.telora" as direct;
-                   import "./facade.telora" as facade;
+                r#"import "./model" as direct;
+                   import "./facade" as facade;
                    import "std/dyn" as dyn;
                    import "std/type-property" as type_property;
 

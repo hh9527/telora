@@ -263,7 +263,7 @@
         fs::write(
             &main,
             r#"import "std/fmt" as fmt;
-               import "./model.telora" as model;
+               import "./model" as model;
                def accept: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> String = fn(target) {
                    "accepted"
                };
@@ -457,7 +457,7 @@
         .unwrap();
         fs::write(
             &main,
-            r#"import "./model.telora" as model;
+            r#"import "./model" as model;
                def endpoint: model.Endpoint = { host: "localhost", port: 8080 };
                export def output = `endpoint = \{endpoint}`;"#,
         )
@@ -729,7 +729,7 @@
         .unwrap();
         fs::write(
             &main,
-            r#"import "./capability.telora" as cap;
+            r#"import "./capability" as cap;
                export def output = {
                    direct: cap.Display.display(8),
                    generic: cap.render(9),
@@ -744,13 +744,13 @@
 
         fs::write(
             &facade,
-            r#"import "./capability.telora" { render };
+            r#"import "./capability" { render };
                export { render };"#,
         )
         .unwrap();
         fs::write(
             &main,
-            r#"import "./facade.telora" as facade;
+            r#"import "./facade" as facade;
                export def output = facade.render(10);"#,
         )
         .unwrap();
@@ -763,7 +763,7 @@
 
         fs::write(
             &facade,
-            r#"import "./capability.telora" { render };
+            r#"import "./capability" { render };
                let broken = missing;
                export { render };"#,
         )
@@ -801,8 +801,8 @@
         .unwrap();
         fs::write(
             &main,
-            r#"import "./capability.telora" as cap;
-               import "./model.telora" as model;
+            r#"import "./capability" as cap;
+               import "./model" as model;
                impl cap.Display for model.Endpoint { display: fn(value) { value.host } };
                export def output = 1;"#,
         )
@@ -945,19 +945,19 @@
         fs::create_dir(&models).unwrap();
         fs::write(
             directory.join("telora-deps.json"),
-            r#"{"dependencies":{"models":{"path":"models"}}}"#,
+            r#"{"name":"app","dependencies":{"models":{"path":"models"}}}"#,
         )
         .unwrap();
         fs::write(models.join("base.telora"), "export def answer = 42;").unwrap();
         fs::write(
             models.join("user.telora"),
-            "import \"./base.telora\" as base; export { base as base };",
+            "import \"./base\" as base; export { base as base };",
         )
         .unwrap();
         let main = app.join("main.telora");
         fs::write(
             &main,
-            "import \"models/user.telora\" as user; export def output = user.base.answer;",
+            "import \"models/user\" as user; export def output = user.base.answer;",
         )
         .unwrap();
 
@@ -973,8 +973,8 @@
             .iter()
             .map(|module| module.name.as_str())
             .collect::<HashSet<_>>();
-        assert!(names.contains("models/user.telora"));
-        assert!(names.contains("models/base.telora"));
+        assert!(names.contains("models/user"));
+        assert!(names.contains("models/base"));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -988,7 +988,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./reference-show.telora" as show;
+            r#"import "./reference-show" as show;
                type User = struct {name: String, scores: Array(Int)};
                type Node = struct {value: Int, children: Array(Node)};
                type Choice = enum {'None, 'Some(String)};
@@ -1054,7 +1054,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./reference-hash.telora" as reference;
+            r#"import "./reference-hash" as reference;
                import "std/hash" as hash;
                type User = struct {name: String, scores: Array(Int)};
                type Renamed = struct {label: String, scores: Array(Int)};
@@ -1136,7 +1136,7 @@
         .unwrap();
         fs::write(
             &main,
-            r#"import "./explicit-diagnostics.telora" as validation;
+            r#"import "./explicit-diagnostics" as validation;
 import "std/array" as arrays;
 import "std/result" as result;
 import "./project.json" { data as project };
@@ -1205,7 +1205,7 @@ inspect(User)(checked)"#;
         let data = error.data_location().expect("blame data location");
         assert_eq!(
             module.sources.get(data.source).name.as_ref(),
-            "@src/user.json"
+            "fixture/user.json"
         );
         assert_eq!(
             module.sources.get(data.source).slice(data).as_deref(),
@@ -1228,9 +1228,9 @@ inspect(User)(checked)"#;
             Some("fail!(\"age rejected\", age)")
         );
         let rendered = error.to_string();
-        assert!(rendered.contains("main.telora:14:1"), "{rendered}");
+        assert!(rendered.contains("fixture/main:14:1"), "{rendered}");
         assert!(rendered.contains("user.json:1:8"), "{rendered}");
-        assert!(rendered.contains("main.telora:8:21"), "{rendered}");
+        assert!(rendered.contains("fixture/main:8:21"), "{rendered}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1245,13 +1245,13 @@ export { reject };"#,
         .unwrap();
         fs::write(
             directory.join("facade.telora"),
-            r#"import "./provider.telora" as provider;
+            r#"import "./provider" as provider;
 export def inspect: Fn(Int) -> Int = fn(value) { provider.reject(value) };"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" as facade;
+            r#"import "./facade" as facade;
 facade.inspect(7)"#,
         )
         .unwrap();

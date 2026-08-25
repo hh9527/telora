@@ -9,7 +9,8 @@ use crate::value::{
     BuiltinAtom, CoreArrayFunction, CoreAttributesFunction, CoreBuiltinTypeFunction,
     CoreCodecFunction, CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
     CoreHashFunction, CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction,
-    CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind, NativeLimit,
+    CoreRuntimeFunction, CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind,
+    NativeLimit,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -21,6 +22,7 @@ include!("vm/public.rs");
 include!("vm/call-context.rs");
 include!("vm/error.rs");
 include!("vm/runtime.rs");
+include!("vm/diagnostic-scope.rs");
 include!("vm/execute.rs");
 include!("vm/dispatch.rs");
 include!("vm/array.rs");

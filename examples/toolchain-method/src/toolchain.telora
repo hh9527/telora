@@ -1,7 +1,7 @@
 import "std/dict" as dict;
 import "std/hash" as hash;
-import "std/rt-types/exec.telora" as exec_types;
-import "domain-method/method.telora" as method;
+import "std/rt-types/exec" as exec_types;
+import "domain-method/method" as method;
 
 type ExecSettings = exec_types.ExecSettings;
 type UnpackType = exec_types.UnpackType;

@@ -533,7 +533,7 @@ export def output = render(1);"#;
             .expect("snapshot")
             .sources()
             .files()
-            .find(|file| file.name.ends_with("main.telora"))
+            .find(|file| file.name.as_ref() == "fixture/main")
             .expect("main source")
             .text()
             .clone();
@@ -571,7 +571,7 @@ export def output = render(1);"#;
         let main = root.join("main.telora");
         std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
             .expect("write model");
-        let source = "import \"./model.telora\" as model; model.alpha";
+        let source = "import \"./model\" as model; model.alpha";
         std::fs::write(&main, format!("{source}; export {{ model as output }};"))
             .expect("write main");
         initialize_state(&root, &state);
@@ -596,7 +596,7 @@ export def output = render(1);"#;
         let main = root.join("main.telora");
         std::fs::write(&model, "export def alpha = 1; export def beta = \"x\";")
             .expect("write model");
-        let source = "import \"./model.telora\" as model; model.";
+        let source = "import \"./model\" as model; model.";
         std::fs::write(&main, format!("{source}\nexport {{ model as output }};"))
             .expect("write main");
         initialize_state(&root, &state);

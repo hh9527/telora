@@ -88,8 +88,8 @@ query = query_builder.transform(plan)
 ./bin/telora run main -C ent-1
 ./bin/telora run verify -C ent-1
 ./bin/telora run invalid -C ent-1 --best-effort
-./bin/telora check @test/logistics.telora -C ent-1
-./bin/telora query exports @bin/main.telora -C ent-1
+./bin/telora check @test/logistics -C ent-1
+./bin/telora query exports @bin/main -C ent-1
 ```
 
 完成时报告真实结果与具体反馈，不要求 Git commit。
@@ -105,7 +105,7 @@ Host 审核私有模型并发布 `ent-1-model` 后，`oc-task` 才会返回
 
 ```text
 ./bin/telora run query-surface -C ent-1
-./bin/telora check @test/query-surface.telora -C ent-1
+./bin/telora check @test/query-surface -C ent-1
 ```
 
 ## 上游更新复验

@@ -4,12 +4,12 @@ use crate::value::{
     CorePathFunction, CoreResultFunction, CoreStringFunction, CoreTypeDescFunction, NativeFunction,
 };
 
-pub(crate) const PRELUDE_MODULE: &str = "core/prelude";
+pub(crate) const PRELUDE_MODULE: &str = "std/prelude";
 pub(crate) const ARRAY_MODULE: &str = "std/array";
 pub(crate) const ATTRIBUTES_MODULE: &str = "std/attributes";
 pub(crate) const DICT_MODULE: &str = "std/dict";
 pub(crate) const BUILD_MODULE: &str = "std/build";
-pub(crate) const EXEC_MODULE: &str = "std/rt-types/exec.telora";
+pub(crate) const EXEC_MODULE: &str = "std/rt-types/exec";
 pub(crate) const ARGV_MODULE: &str = "std/argv";
 pub(crate) const CODEC_MODULE: &str = "std/codec";
 pub(crate) const OPTION_MODULE: &str = "std/option";
@@ -28,35 +28,42 @@ pub(crate) const EQ_MODULE: &str = "std/eq";
 pub(crate) const REGEX_MODULE: &str = "std/regex";
 pub(crate) const FMT_MODULE: &str = "std/fmt";
 pub(crate) const FMT_CAPABILITY_BINDING: &str = "\0std:fmt";
-pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/rt.priv.telora";
+pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/_rt";
 pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/entry/default";
 pub(crate) const SERVE_ENTRY_MODULE: &str = "std/entry/serve";
 
 pub(crate) fn default_entry_source() -> &'static str {
-    include_str!("../modules/std/entry/default.entry.telora")
+    include_str!("../modules/std/entry/default.telora")
 }
 
 pub(crate) fn serve_entry_source() -> &'static str {
-    include_str!("../modules/std/entry/serve.entry.telora")
+    include_str!("../modules/std/entry/serve.telora")
 }
 
-pub(crate) fn edge_runtime_source() -> &'static str {
-    include_str!("../modules/std/rt.priv.telora")
-}
-
-pub(crate) struct CoreModuleSpec {
+pub(crate) struct BuiltinModuleSpec {
     pub(crate) native_id: u32,
     pub(crate) name: &'static str,
     pub(crate) source: &'static str,
     pub(crate) functions: Vec<(&'static str, NativeFunction)>,
 }
 
-pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
+pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
     let mut specs = vec![
-        CoreModuleSpec {
+        BuiltinModuleSpec {
+            native_id: 26,
+            name: EDGE_RUNTIME_MODULE,
+            source: include_str!("../modules/std/_rt.telora"),
+            functions: vec![(
+                "call_with_diagnostics",
+                NativeFunction::core_runtime(
+                    crate::value::CoreRuntimeFunction::CallWithDiagnostics,
+                ),
+            )],
+        },
+        BuiltinModuleSpec {
             native_id: 25,
             name: TYPE_PROPERTY_MODULE,
-            source: include_str!("../modules/std/type-property.native.telora"),
+            source: include_str!("../modules/std/type-property.telora"),
             functions: vec![
                 (
                     "get_type_prop",
@@ -92,22 +99,22 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 23,
             name: VALUE_MODULE,
             source: include_str!("../modules/std/value.telora"),
             functions: vec![],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 1,
             name: EQ_MODULE,
-            source: include_str!("../modules/std/eq.native.telora"),
+            source: include_str!("../modules/std/eq.telora"),
             functions: vec![("equal", NativeFunction::core_eq(CoreEqFunction::Equal))],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 2,
             name: DYN_MODULE,
-            source: include_str!("../modules/std/dyn.native.telora"),
+            source: include_str!("../modules/std/dyn.telora"),
             functions: vec![
                 ("pack", NativeFunction::core_dyn(CoreDynFunction::Pack)),
                 (
@@ -161,10 +168,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 3,
             name: TYPE_DESC_MODULE,
-            source: include_str!("../modules/std/type-desc.native.telora"),
+            source: include_str!("../modules/std/type-desc.telora"),
             functions: vec![
                 (
                     "children",
@@ -196,10 +203,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 4,
             name: ATTRIBUTES_MODULE,
-            source: include_str!("../modules/std/attributes.native.telora"),
+            source: include_str!("../modules/std/attributes.telora"),
             functions: vec![
                 (
                     "add",
@@ -227,10 +234,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 5,
             name: ARRAY_MODULE,
-            source: include_str!("../modules/std/array.native.telora"),
+            source: include_str!("../modules/std/array.telora"),
             functions: vec![
                 ("all", NativeFunction::core_array(CoreArrayFunction::All)),
                 ("any", NativeFunction::core_array(CoreArrayFunction::Any)),
@@ -266,10 +273,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ("map", NativeFunction::core_array(CoreArrayFunction::Map)),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 6,
             name: DICT_MODULE,
-            source: include_str!("../modules/std/dict.native.telora"),
+            source: include_str!("../modules/std/dict.telora"),
             functions: vec![
                 (
                     "filter",
@@ -294,10 +301,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 7,
             name: STRING_MODULE,
-            source: include_str!("../modules/std/string.native.telora"),
+            source: include_str!("../modules/std/string.telora"),
             functions: vec![
                 (
                     "contains",
@@ -353,10 +360,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 8,
             name: PATH_MODULE,
-            source: include_str!("../modules/std/path.native.telora"),
+            source: include_str!("../modules/std/path.telora"),
             functions: vec![
                 (
                     "file_name",
@@ -373,7 +380,7 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 9,
             name: TOML_MODULE,
             source: include_str!("../modules/std/toml.telora"),
@@ -382,25 +389,25 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 NativeFunction::core_json(CoreJsonFunction::ParseToml),
             )],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 24,
             name: YAML_MODULE,
-            source: include_str!("../modules/std/yaml.native.telora"),
+            source: include_str!("../modules/std/yaml.telora"),
             functions: vec![(
                 "parse_raw",
                 NativeFunction::core_json(CoreJsonFunction::ParseYaml),
             )],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 11,
             name: BUILD_MODULE,
             source: include_str!("../modules/std/build.telora"),
             functions: vec![],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 13,
             name: CODEC_MODULE,
-            source: include_str!("../modules/std/codec.native.telora"),
+            source: include_str!("../modules/std/codec.telora"),
             functions: vec![
                 (
                     "decode_with",
@@ -412,25 +419,25 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 14,
             name: OPTION_MODULE,
             source: include_str!("../modules/std/option.telora"),
             functions: vec![],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 15,
             name: RESULT_MODULE,
-            source: include_str!("../modules/std/result.native.telora"),
+            source: include_str!("../modules/std/result.telora"),
             functions: vec![(
                 "unwrap",
                 NativeFunction::core_result(CoreResultFunction::Unwrap),
             )],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 16,
             name: HASH_MODULE,
-            source: include_str!("../modules/std/hash.native.telora"),
+            source: include_str!("../modules/std/hash.telora"),
             functions: vec![
                 (
                     "sha256",
@@ -483,10 +490,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 17,
             name: JSON_MODULE,
-            source: include_str!("../modules/std/json.native.telora"),
+            source: include_str!("../modules/std/json.telora"),
             functions: vec![
                 (
                     "parse_raw",
@@ -510,10 +517,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 18,
             name: PRELUDE_MODULE,
-            source: include_str!("../modules/core/prelude.native.telora"),
+            source: include_str!("../modules/std/prelude.telora"),
             functions: vec![
                 (
                     "union",
@@ -525,10 +532,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 19,
             name: REGEX_MODULE,
-            source: include_str!("../modules/std/regex.native.telora"),
+            source: include_str!("../modules/std/regex.telora"),
             functions: vec![
                 (
                     "compile",
@@ -559,10 +566,10 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 20,
             name: FMT_MODULE,
-            source: include_str!("../modules/std/fmt.native.telora"),
+            source: include_str!("../modules/std/fmt.telora"),
             functions: vec![
                 (
                     "prepare",
@@ -619,13 +626,13 @@ pub(crate) fn module_specs() -> Vec<CoreModuleSpec> {
                 ),
             ],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 21,
             name: EXEC_MODULE,
             source: include_str!("../modules/std/rt-types/exec.telora"),
             functions: vec![],
         },
-        CoreModuleSpec {
+        BuiltinModuleSpec {
             native_id: 22,
             name: ARGV_MODULE,
             source: include_str!("../modules/std/argv.telora"),

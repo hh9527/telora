@@ -62,8 +62,8 @@ ordering/limit。非法筛选值、未授权或缺失筛选能力、未请求排
 ./bin/telora run main -C ontology
 ./bin/telora run verify -C ontology
 ./bin/telora run invalid -C ontology --best-effort
-./bin/telora check @test/ontology.telora -C ontology
-./bin/telora query exports @bin/main.telora -C ontology
+./bin/telora check @test/ontology -C ontology
+./bin/telora query exports @bin/main -C ontology
 ```
 
 完成时报告真实交付、验证结果与剩余限制，不要求 Git commit。

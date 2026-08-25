@@ -1,1 +1,1 @@
-{"dependencies":{"ent-1":{"path":"../ent-1"},"ontology":{"path":"../ontology"},"query-builder":{"path":"../query-builder"}}}
+{"name":"query-1","dependencies":{"ent-1":{"path":"../ent-1"},"ontology":{"path":"../ontology"},"query-builder":{"path":"../query-builder"}}}

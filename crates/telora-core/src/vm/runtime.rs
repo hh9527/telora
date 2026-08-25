@@ -48,6 +48,31 @@ trait NativeContinuation: fmt::Debug {
         background: &Heap,
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError>;
+
+    fn catches_recoverable(&self) -> bool {
+        false
+    }
+
+    fn catch_recoverable(
+        self: Box<Self>,
+        error: RuntimeError,
+        raised: Option<Val>,
+        current: &mut Heap,
+        background: &Heap,
+        account: &mut QuotaAccount,
+    ) -> Result<VmAction, RuntimeError> {
+        let _ = (raised, current, background, account);
+        Err(error)
+    }
+}
+
+#[derive(Debug)]
+struct DiagnosticContinuation {
+    diagnostic_start: usize,
+    return_target: ReturnTarget,
+    call_function: Arc<BytecodeFunction>,
+    call_pc: usize,
+    trace_frame: RuntimeFrame,
 }
 
 #[derive(Debug)]

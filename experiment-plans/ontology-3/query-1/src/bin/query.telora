@@ -1,6 +1,6 @@
 import "@src/intent.json" { data as raw_intent };
-import "ent-1/query.telora" as enterprise;
-import "ontology/ontology.telora" as onto;
+import "ent-1/query" as enterprise;
+import "ontology/ontology" as onto;
 import "std/array" as array;
 import "std/codec" as codec;
 import "std/json" as json;

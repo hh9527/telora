@@ -319,6 +319,7 @@ impl TypeStore {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn seal_descriptor(
         &mut self,
         id: TypeId,

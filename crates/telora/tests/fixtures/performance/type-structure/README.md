@@ -26,7 +26,7 @@ For an exploratory single sample, run:
 
 ```sh
 /usr/bin/time -f 'elapsed=%e user=%U sys=%S' \
-  target/release/telora check @src/nested-functions.telora \
+  target/release/telora check @src/nested-functions \
   -C crates/telora/tests/fixtures/performance/type-structure
 ```
 
@@ -47,7 +47,7 @@ Use `query` to isolate workspace recovery from output rendering:
 
 ```sh
 /usr/bin/time -f 'elapsed=%e user=%U sys=%S' \
-  target/release/telora query at @src/query-builder.telora \
+  target/release/telora query at @src/query-builder \
   -C crates/telora/tests/fixtures/performance/type-structure \
   -p definitely_missing_name
 ```

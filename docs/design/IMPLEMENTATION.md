@@ -84,19 +84,25 @@ annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中�
 
 ## 3. 模块图、骨架和静态身份
 
+`ModuleResolver` 在图发现前完成 crate source 清单。`builtin_list()` 先登记 builtin
+vendor 的 crate，resolver 随后登记当前 crate 和 manifest/standalone dependencies；
+同名登记使用 first-win，已选 source 不再改变。import 先按 selector 首段选择 crate，
+再只在该 crate 中解析 module，因此 configured `std` 不能补充 builtin `std`。
+
 模块加载不是逐条执行 `import`。Host 先解析根及其全部静态依赖，完成 canonical module
 name 解析和图发现，再建立模块骨架：
 
 1. 扫描 Telora module 的 import、显式 export、顶层 `decl` / `def` 和具名 Struct/Enum
-   type constructor；JSON、TOML、YAML 与 Host opaque module 也占据图中节点。
+   type constructor；JSON、TOML、YAML 与 builtin opaque module 也占据图中节点。
 2. 默认 prelude 作为每个非 prelude module 的 open-import edge 加入图。
 3. 按 canonical module name 的 UTF-8 bytes 排序，为完整图分配 `ModuleId`。
 4. 为顶层递归函数和名义 type constructor 分配确定的模块内 slot。
 5. 校验实际加载时看到的 import graph 和 skeleton 没有在扫描后变化。
 
 动态 `ModuleId` 从 16 开始；模块内动态 `FuncId` 和 `TypeConstructorId` slot 从 1024
-开始。较低范围保留给匿名/内建身份。具体数字是 Host 与 native contract 当前使用的
-稳定实现边界，但用户代码应通过名字而不是数字引用普通模块定义。
+开始。较低范围保留给匿名或稳定 Host contract 身份；builtin module 与其他图节点一起
+按 cname 排序并从 16 分配。具体数字是 Host 与 native contract 当前使用的稳定实现
+边界，但用户代码应通过名字而不是数字引用普通模块定义。
 
 `FuncId` 和 `TypeConstructorId` 都是 `(ModuleId, local slot)`。`decl f: ...; def f = ...;`
 在骨架阶段建立一个函数 slot，编译后的 `FuncRef` 只携带这个静态身份；定义求值时再
@@ -108,9 +114,9 @@ binding。当前拒绝模块初始化 cycle，模块内函数和 TypeMetadata �
 机制闭合。
 
 普通 Telora module 与 static data module 的 canonical source path 等于 canonical module
-name，例如 `@src/model.telora`、`@bin/main.telora` 或 `@standalone/main.telora`。嵌入式
-native ABI source 使用编译器 synthetic name，注册给 resolver 的 module identity 仍是
-`std/...`。`@run-ctx/config` 等非模块 Source 不能转换为 module name。
+name，例如 `my-crate/model`、`my-crate/bin/main` 或 `standalone/bin/main`。嵌入式
+builtin ABI source 同样使用 `std/...` canonical name，不通过 synthetic source name
+取得额外权限。`@run-ctx/config` 等非模块 Source 不能转换为 module name。
 
 ## 4. 分析期类型与运行时类型
 
@@ -241,6 +247,12 @@ authored rule boundary；普通调用继承该边界，第一次调用建立边�
 `BlameError` carrier 后一次建立 root diagnostic。failure arena 的传播节点只保存 root
 failure id，因此 strict 与 best-effort 不会产生两套归因路径。
 
+Entry runtime 的 `with_diagnostics` 使用 native continuation 在同一 WorkWorld 中调用
+目标 closure。continuation 记录 `QuotaAccount.diagnostics` 的起点；成功或可恢复失败
+时只取出并消费该区间。可恢复 `Raise` 尽量沿用原 `BlameError` carrier，其他可恢复
+runtime error 按相同的 `rule + data_sources` 结构重建。terminal failure 不进入该
+continuation 的 catch 路径。
+
 Best-effort 不是另一套成功语义。没有 error 时，它与严格执行同属成功并产生相同
 可观察值；存在任意 root error 时，即使某个最终表达式可算出，也没有可发布结果。
 `check` 使用这条恢复管线；`run --best-effort` 在 Entry 启动前做诊断求值。
@@ -260,7 +272,8 @@ VM 计算并按 VM allocation 核算。
 
 ## 9. Entry 与 CLI Host 生命周期
 
-`.entry.telora` 只能由 Host 通过 `run-with` 选择，普通模块不能 import。Entry 必须只
+`src/entry/<name>.telora` 只能由 Host 通过 `run-with @src/entry/<name>` 选择，普通模块
+不能 import。Entry 必须只
 导出 `MainType`、`State` 和 `config`：
 
 ```text
@@ -268,6 +281,10 @@ config: Fn(SystemOptions, Env) -> Tuple([SystemCaps, Initializer])
 Initializer: Fn(SystemResources, MainType) -> Tuple([State, Reducer])
 Reducer: Fn(State, SystemEvent) -> Tuple([State, Array(SystemEffect)])
 ```
+
+文件 stem 以 `_` 开头的模块由 resolver 统一控制：同 crate 模块与被选中的 Entry 可以
+访问，其他 importer 不能访问。Entry 可以 resolve 整个依赖图，权限不沿 import 传递。
+只有内置 `std` crate 的模块编译时具有 native authority。
 
 当前 Host 顺序是：
 

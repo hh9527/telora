@@ -5,7 +5,7 @@ struct WorkspaceBuilder<'a> {
     query: Option<&'a crate::query::QueryContext>,
     sources: SourceDatabase,
     main: MainWorld,
-    core_modules: HashMap<String, ModuleArtifact>,
+    builtin_modules: HashMap<String, ModuleArtifact>,
     inputs: BTreeMap<String, SemanticModuleInput>,
     provenances: HashMap<ModuleCName, Provenance>,
     roots: HashMap<ModuleCName, PersistentValue>,
@@ -27,7 +27,7 @@ impl WorkspaceBuilder<'_> {
                 return None;
             }
             let path = module.path()?.to_owned();
-            let authority = module.authority;
+            let vendor = module.vendor;
             let module_id = module.id;
             if let Some(root) = self.roots.get(&module_id) {
                 return Some(*root);
@@ -109,7 +109,7 @@ impl WorkspaceBuilder<'_> {
                     option.location,
                 ));
             }
-            if authority == ModuleAuthority::Ordinary
+            if vendor == ModuleVendor::Configured
                 && let Some(binding) = program.as_ref().and_then(|program| {
                     program.value.body.value.bindings.iter().find(|binding| {
                         matches!(
@@ -121,7 +121,7 @@ impl WorkspaceBuilder<'_> {
             {
                 diagnostics.push(Diagnostic::error(
                     format!(
-                        "native symbol {:?} is only allowed in built-in or *.native.telora modules",
+                        "native symbol {:?} is only allowed in built-in std modules",
                         binding.value.name.value
                     ),
                     binding.location,
@@ -169,14 +169,14 @@ impl WorkspaceBuilder<'_> {
                         continue;
                     }
                 };
-                if target_module.authority == ModuleAuthority::RuntimeSystem {
+                if target_module.vendor == ModuleVendor::Builtin {
                     semantic_imports.push(SemanticImport {
                         name: if open { "*".into() } else { name.clone() },
                         location,
                         target: target_module.id.clone(),
                         namespace: !open && imported_name.is_none(),
                     });
-                    if let Some(module) = self.core_modules.get(&target) {
+                    if let Some(module) = self.builtin_modules.get(&target) {
                         if open {
                             match workspace_open_import_exports(
                                 &target_module.id,
@@ -296,7 +296,7 @@ impl WorkspaceBuilder<'_> {
                 }
             }
             if module_id.to_string() != PRELUDE_MODULE
-                && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
+                && let Some(module) = self.builtin_modules.get(PRELUDE_MODULE)
             {
                 let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
                 if let Ok(exports) = workspace_open_import_exports(
@@ -312,7 +312,7 @@ impl WorkspaceBuilder<'_> {
             }
             if !matches!(module_id, ModuleCName::Builtin(_))
                 && !imports_fmt
-                && let Some(module) = self.core_modules.get(FMT_MODULE)
+                && let Some(module) = self.builtin_modules.get(FMT_MODULE)
             {
                 for implementation in &module.interface.trait_implementations {
                     match module
@@ -523,7 +523,7 @@ impl WorkspaceBuilder<'_> {
             },
         };
         let source_id = self.sources.add_document(key.clone(), source);
-        let (_, descriptor) = semantic_value_contract(&self.core_modules, &self.main.heap)
+        let (_, descriptor) = semantic_value_contract(&self.builtin_modules, &self.main.heap)
             .expect("std/value provides the static data interface");
         let parsed = parse_static_data_registered(module.format, &self.sources, source_id)?;
         let plan = parsed.plan;
@@ -548,7 +548,7 @@ impl WorkspaceBuilder<'_> {
             let source_len = self.sources.get(source_id).text().byte_len();
             let (root, interface, provenance) = match publish_static_data_module(
                 &plan,
-                &self.core_modules,
+                &self.builtin_modules,
                 &mut self.main.heap,
                 source_len,
                 self.engine.config.data_limits,
@@ -589,6 +589,7 @@ impl WorkspaceBuilder<'_> {
         let analysis = match analyze_program_with_bindings_observed(
             &source.name,
             module_id,
+            ModuleAnalysisContext::Ordinary,
             program,
             &mut account,
             &external_roots
@@ -859,13 +860,12 @@ pub fn evaluate_expression_module_with_quota_and_debug_sink(
     module_quota: Quota,
     debug_sink: Arc<dyn DebugSink>,
 ) -> Result<LoadedModule, ModuleError> {
-    load_module_with_native_modules(
+    load_module_with_policy(
         path,
         external_bindings,
         module_quota,
         DataLimits::default(),
         debug_sink,
-        &[],
         ModuleSourcePolicy::ExpressionHarness,
     )
 }

@@ -136,7 +136,7 @@
         fs::write(
             directory.join("main.telora"),
             "import \"./user.json\" { data as user };\
-             import \"./answer.telora\" as answer;\
+             import \"./answer\" as answer;\
              import \"std/codec\" as codec;\
              import \"std/result\" as result;\
              type User = struct {name: String, age: Int};\
@@ -232,7 +232,7 @@ name = "rustc"
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("user.toml:2:7"), "{message}");
-        assert!(message.contains("main.telora:4:"), "{message}");
+        assert!(message.contains("fixture/main:4:"), "{message}");
 
         fs::write(
             directory.join("main.telora"),
@@ -247,7 +247,7 @@ name = "rustc"
         let error = module.execute(100_000).unwrap_err();
         let rendered = error.with_sources(&module.sources).to_string();
         assert!(rendered.contains("user.toml:2:7:"), "{rendered}");
-        assert!(rendered.contains("main.telora:4:"), "{rendered}");
+        assert!(rendered.contains("fixture/main:4:"), "{rendered}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -334,11 +334,11 @@ name = "rustc"
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            "import \"./a.telora\" as a; a",
+            "import \"./a\" as a; a",
         )
         .unwrap();
-        fs::write(directory.join("a.telora"), "import \"./b.telora\" as b; b").unwrap();
-        fs::write(directory.join("b.telora"), "import \"./a.telora\" as a; a").unwrap();
+        fs::write(directory.join("a.telora"), "import \"./b\" as b; b").unwrap();
+        fs::write(directory.join("b.telora"), "import \"./a\" as a; a").unwrap();
         let error =
             load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap_err();
         assert!(error.message().contains("cycle"));
@@ -346,70 +346,51 @@ name = "rustc"
     }
 
     #[test]
-    fn rejects_unregistered_and_nested_native_declarations_with_locations() {
+    fn rejects_non_std_and_nested_native_declarations_with_locations() {
         let directory = fixture_dir();
         fs::write(
-            directory.join("missing-native.telora"),
+            directory.join("native-value.telora"),
             "native missing: Fn(Int) -> Int; missing(1)",
         )
         .unwrap();
         let missing = load_module(
-            directory.join("missing-native.telora"),
+            directory.join("native-value.telora"),
             BTreeMap::new(),
             100_000,
         )
         .unwrap_err();
-        assert!(missing.message().contains("only allowed"));
-        assert!(missing.to_string().contains("missing-native.telora:1:1"));
+        assert!(missing.message().contains("only allowed in built-in std modules"));
+        assert!(missing.to_string().contains("fixture/native-value:1:1"));
         let recovered = recovery_engine()
-            .recover_workspace(directory.join("missing-native.telora"))
+            .recover_workspace(directory.join("native-value.telora"))
             .unwrap();
         assert!(recovered.diagnostics().iter().any(|diagnostic| {
             diagnostic
                 .message
-                .contains("only allowed in built-in or *.native.telora modules")
+                .contains("only allowed in built-in std modules")
         }));
 
         fs::write(
-            directory.join("missing-native-type.telora"),
+            directory.join("native-type.telora"),
             "native type State @1; State",
         )
         .unwrap();
         let missing_type = load_module(
-            directory.join("missing-native-type.telora"),
+            directory.join("native-type.telora"),
             BTreeMap::new(),
             100_000,
         )
         .unwrap_err();
-        assert!(missing_type.message().contains("only allowed"));
+        assert!(
+            missing_type
+                .message()
+                .contains("only allowed in built-in std modules")
+        );
         assert!(
             missing_type
                 .to_string()
-                .contains("missing-native-type.telora:1:1")
+                .contains("fixture/native-type:1:1")
         );
-
-        fs::write(
-            directory.join("system.native.telora"),
-            "native missing: Fn(Int) -> Int; missing(1)",
-        )
-        .unwrap();
-        fs::write(
-            directory.join("system-user.telora"),
-            "import \"./system.native.telora\" as system; system",
-        )
-        .unwrap();
-        let system = load_module(
-            directory.join("system-user.telora"),
-            BTreeMap::new(),
-            100_000,
-        )
-        .unwrap_err();
-        assert!(
-            system
-                .message()
-                .contains("not registered for this system module")
-        );
-        assert!(!system.message().contains("only allowed"));
 
         fs::write(
             directory.join("nested-native.telora"),
@@ -440,7 +421,7 @@ name = "rustc"
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            "import \"./countdown.telora\" as countdown; countdown(4)",
+            "import \"./countdown\" as countdown; countdown(4)",
         )
         .unwrap();
 
@@ -455,12 +436,12 @@ name = "rustc"
         fs::write(directory.join("base.telora"), "2").unwrap();
         fs::write(
             directory.join("countdown.telora"),
-            "import \"./base.telora\" as base; def countdown: Fn(Int) -> Int = fn(n) { if n < 1 { base } else { countdown(n - 1) } }; countdown",
+            "import \"./base\" as base; def countdown: Fn(Int) -> Int = fn(n) { if n < 1 { base } else { countdown(n - 1) } }; countdown",
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            "import \"./countdown.telora\" as countdown; countdown(4)",
+            "import \"./countdown\" as countdown; countdown(4)",
         )
         .unwrap();
 
@@ -509,7 +490,7 @@ name = "rustc"
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("user.json:1:21"), "{message}");
-        assert!(message.contains("main.telora:4:"), "{message}");
+        assert!(message.contains("fixture/main:4:"), "{message}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -579,12 +560,11 @@ name = "rustc"
         let mut main = MainWorld::building();
         let mut sources = SourceDatabase::default();
         let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
-        let core_modules =
-            install_native_modules(&mut main, &mut sources, &debug_sink, &[]).unwrap();
+        let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink).unwrap();
         let mut loader = ModuleLoader {
             resolver: ModuleResolver::for_root(&data).unwrap(),
             cache: HashMap::new(),
-            core_modules,
+            builtin_modules,
             main,
             visiting: Vec::new(),
             dependencies: BTreeSet::new(),
@@ -623,7 +603,10 @@ name = "rustc"
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
         let main_counts = module.runtime.main.heap.counts();
-        assert!(main_counts.0 > 0, "core modules must be installed in Main");
+        assert!(
+            main_counts.0 > 0,
+            "builtin modules must be installed in Main"
+        );
 
         assert_eq!(module.execute(100_000).unwrap().to_string(), "[2, 3]");
         assert_eq!(module.execute(100_000).unwrap().to_string(), "[2, 3]");
@@ -815,7 +798,7 @@ name = "rustc"
         fs::write(
             directory.join("records.telora"),
             r#"import "std/array" as array;
-               import "./types.telora" { Kind };
+               import "./types" { Kind };
                type Rejection(Subject) = struct {kind: Kind, subject: Subject};
                def reject_all: for(Subject)
                    Fn(Array(Int), Subject) -> Array(Rejection(Subject)) =
@@ -942,7 +925,7 @@ name = "rustc"
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types.telora" as types;
+            r#"import "./types" as types;
                def consume:
                    Fn(types.Input, Array(types.Item)) -> types.Output =
                    fn(input, items) { {count: input.value} };

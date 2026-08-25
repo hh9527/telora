@@ -18,7 +18,7 @@
       "read": ["docs/**", "query-builder/**"],
       "write": ["query-builder/src/**", "query-builder/tests/**", "query-builder/QUERY-BUILDER-TUTORIAL.md", "query-builder/PUBLIC-CONTRACT.md", "query-builder/NOTES.md"],
       "commands": ["./bin/oc-task pull a1", "./bin/oc-task submit a1 *", "./bin/telora run * -C query-builder", "./bin/telora run * -C query-builder *", "./bin/telora check * -C query-builder", "./bin/telora query * -C query-builder", "./bin/telora query * -C query-builder *", "rm query-builder/src/*", "rm query-builder/src/bin/*", "rm query-builder/tests/*"],
-      "preflight": ["./bin/oc-task pull a1", "./bin/oc-task submit a1 *", "./bin/telora run main -C query-builder", "./bin/telora run verify -C query-builder", "./bin/telora run invalid -C query-builder --best-effort", "./bin/telora check @test/query-builder.telora -C query-builder", "./bin/telora query exports @bin/main.telora -C query-builder"]
+      "preflight": ["./bin/oc-task pull a1", "./bin/oc-task submit a1 *", "./bin/telora run main -C query-builder", "./bin/telora run verify -C query-builder", "./bin/telora run invalid -C query-builder --best-effort", "./bin/telora check @test/query-builder -C query-builder", "./bin/telora query exports @bin/main -C query-builder"]
     },
     "a2": {
       "description": "通过 artifact DAG 学习、检视并完成 EnterpriseKnowledge eDSL。",
@@ -26,7 +26,7 @@
       "read": ["docs/**", "query-builder/QUERY-BUILDER-TUTORIAL.md", "query-builder/PUBLIC-CONTRACT.md", "ontology/**"],
       "write": ["ontology/src/**", "ontology/tests/**", "ontology/QUERY-BUILDER-FEEDBACK.md", "ontology/DSL-TUTORIAL.md", "ontology/PUBLIC-CONTRACT.md", "ontology/NOTES.md"],
       "commands": ["./bin/oc-task pull a2", "./bin/oc-task submit a2 *", "./bin/telora run * -C ontology", "./bin/telora run * -C ontology *", "./bin/telora check * -C ontology", "./bin/telora query * -C ontology", "./bin/telora query * -C ontology *", "rm ontology/src/*", "rm ontology/src/bin/*", "rm ontology/tests/*"],
-      "preflight": ["./bin/oc-task pull a2", "./bin/oc-task submit a2 *", "./bin/telora run main -C ontology", "./bin/telora run verify -C ontology", "./bin/telora run invalid -C ontology --best-effort", "./bin/telora check @test/ontology.telora -C ontology", "./bin/telora query exports @bin/main.telora -C ontology"]
+      "preflight": ["./bin/oc-task pull a2", "./bin/oc-task submit a2 *", "./bin/telora run main -C ontology", "./bin/telora run verify -C ontology", "./bin/telora run invalid -C ontology --best-effort", "./bin/telora check @test/ontology -C ontology", "./bin/telora query exports @bin/main -C ontology"]
     },
     "a3": {
       "description": "通过 artifact DAG 学习、检视并完成 Ent-1 建模。",
@@ -34,15 +34,15 @@
       "read": ["docs/**", "query-builder/QUERY-BUILDER-TUTORIAL.md", "query-builder/PUBLIC-CONTRACT.md", "ontology/DSL-TUTORIAL.md", "ontology/PUBLIC-CONTRACT.md", "ent-1/**"],
       "write": ["ent-1/src/**", "ent-1/tests/**", "ent-1/QUERY-BUILDER-FEEDBACK.md", "ent-1/EDSL-FEEDBACK.md", "ent-1/UPSTREAM-FEEDBACK.md", "ent-1/NOTES.md", "ent-1/QUERY-DESIGNER-TUTORIAL.md", "ent-1/PUBLIC-QUERY-CONTRACT.md"],
       "commands": ["./bin/oc-task pull a3", "./bin/oc-task submit a3 *", "./bin/telora run * -C ent-1", "./bin/telora run * -C ent-1 *", "./bin/telora check * -C ent-1", "./bin/telora query * -C ent-1", "./bin/telora query * -C ent-1 *", "rm ent-1/src/*", "rm ent-1/src/bin/*", "rm ent-1/tests/*"],
-      "preflight": ["./bin/oc-task pull a3", "./bin/oc-task submit a3 *", "./bin/telora run main -C ent-1", "./bin/telora run verify -C ent-1", "./bin/telora run query-surface -C ent-1", "./bin/telora run invalid -C ent-1 --best-effort", "./bin/telora check @test/logistics.telora -C ent-1", "./bin/telora check @test/query-surface.telora -C ent-1", "./bin/telora query exports @bin/main.telora -C ent-1"]
+      "preflight": ["./bin/oc-task pull a3", "./bin/oc-task submit a3 *", "./bin/telora run main -C ent-1", "./bin/telora run verify -C ent-1", "./bin/telora run query-surface -C ent-1", "./bin/telora run invalid -C ent-1 --best-effort", "./bin/telora check @test/logistics -C ent-1", "./bin/telora check @test/query-surface -C ent-1", "./bin/telora query exports @bin/main -C ent-1"]
     },
     "a4": {
       "description": "通过 artifact DAG 从公共查询面构造 typed Request。",
       "instructions": "roles/a4.md",
       "read": ["docs/**", "ent-1/QUERY-DESIGNER-TUTORIAL.md", "ent-1/PUBLIC-QUERY-CONTRACT.md", "intent-1/**"],
       "write": ["intent-1/src/**", "intent-1/tests/**", "intent-1/FEEDBACK.md", "intent-1/NOTES.md"],
-      "commands": ["./bin/oc-task pull a4", "./bin/oc-task submit a4 *", "./bin/telora run main -C intent-1", "./bin/telora run verify -C intent-1", "./bin/telora run invalid -C intent-1", "./bin/telora run invalid -C intent-1 --best-effort", "./bin/telora check @test/intent.telora -C intent-1", "./bin/telora query exports @bin/main.telora -C intent-1", "rm intent-1/src/*", "rm intent-1/src/bin/*", "rm intent-1/tests/*"],
-      "preflight": ["./bin/oc-task pull a4", "./bin/oc-task submit a4 *", "./bin/telora run main -C intent-1", "./bin/telora run verify -C intent-1", "./bin/telora run invalid -C intent-1", "./bin/telora run invalid -C intent-1 --best-effort", "./bin/telora check @test/intent.telora -C intent-1", "./bin/telora query exports @bin/main.telora -C intent-1"]
+      "commands": ["./bin/oc-task pull a4", "./bin/oc-task submit a4 *", "./bin/telora run main -C intent-1", "./bin/telora run verify -C intent-1", "./bin/telora run invalid -C intent-1", "./bin/telora run invalid -C intent-1 --best-effort", "./bin/telora check @test/intent -C intent-1", "./bin/telora query exports @bin/main -C intent-1", "rm intent-1/src/*", "rm intent-1/src/bin/*", "rm intent-1/tests/*"],
+      "preflight": ["./bin/oc-task pull a4", "./bin/oc-task submit a4 *", "./bin/telora run main -C intent-1", "./bin/telora run verify -C intent-1", "./bin/telora run invalid -C intent-1", "./bin/telora run invalid -C intent-1 --best-effort", "./bin/telora check @test/intent -C intent-1", "./bin/telora query exports @bin/main -C intent-1"]
     },
     "a5": {
       "description": "只通过固定 JSON 查询接口完成上岗考试和生产问题。",

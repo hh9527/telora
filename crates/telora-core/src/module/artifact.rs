@@ -52,7 +52,6 @@ struct PendingModuleInner {
     options: Vec<LoadedOptionAction>,
     config: EngineConfig,
     debug_sink: Arc<dyn DebugSink>,
-    native_modules: Arc<[RegisteredNativeModule]>,
     state: Mutex<PendingModuleState>,
 }
 
@@ -139,14 +138,13 @@ impl PendingModule {
             .inner
             .resolver
             .clone()
-            .with_builtins(builtin_list(&self.inner.native_modules));
+            .with_builtins(builtin_list());
         let result = load_module_with_resolver(
             resolver,
             bindings,
             self.inner.config.module_quota,
             self.inner.config.data_limits,
             Arc::clone(&self.inner.debug_sink),
-            &self.inner.native_modules,
             ModuleSourcePolicy::ExplicitExports,
         )
         .and_then(|module| {

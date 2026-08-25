@@ -36,7 +36,7 @@ hello/
 `hello/telora-deps.json`：
 
 ```json
-{"dependencies":{}}
+{"name":"hello","dependencies":{}}
 ```
 
 `hello/src/bin/main.telora`：
@@ -52,9 +52,9 @@ export def main: Fn(Dict(Value)) -> Value = fn(sources) {
 运行：
 
 ```bash
-target/release/telora check @bin/main.telora -C hello
+target/release/telora check @bin/main -C hello
 target/release/telora run main -C hello
-target/release/telora query exports @bin/main.telora -C hello
+target/release/telora query exports @bin/main -C hello
 ```
 
 内置 `run` Entry 调用 `main` 一次，并把返回的 `Value` 编码为 JSON。
@@ -120,11 +120,14 @@ constructor 使用相同类型实参时得到相同的 canonical 类型。
 模块依赖在执行前封闭，不支持动态 import 或 `eval`。稳定模块 ID 与 crate 布局对应：
 
 ```text
-@src/model.telora       -> <crate>/src/model.telora
-@bin/main.telora        -> <crate>/src/bin/main.telora
-@test/model.telora      -> <crate>/tests/model.telora
-dep/types.telora        -> <dependency>/src/types.telora
+@src/model       -> <crate>/src/model.telora
+@bin/main        -> <crate>/src/bin/main.telora
+@test/model      -> <crate>/tests/model.telora
+dep/types               -> <dependency>/src/types.telora
 ```
+
+resolver 在发现模块图前按 crate 粒度冻结 first-win 来源清单：builtin crates 在先，
+当前 crate 和 manifest dependencies 随后；后序同名来源不能补充或改写既有 crate。
 
 JSON、YAML 和 TOML 文件也是静态模块，并统一导出 `std/value.Value`：
 
@@ -192,20 +195,23 @@ Telora 程序本身没有外部权限。`run` 选择一个纯 Entry；Entry 约�
 输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
 子进程以及最终发布。
 
-普通 `run main` 等价于 `run-with std/entry/default main`。自定义 Entry 使用
-`telora run-with @src/name.entry.telora main` 选择；`.entry.telora` 文件不能作为普通
-模块根或被普通模块 import。只有被 Host 选中的 Entry 可以访问依赖图中对普通模块
-隐藏的 private/native 模块。
+普通 `run main` 等价于 `run-with std/entry/default main`。自定义 Entry 位于
+`src/entry/name.telora`，使用 `telora run-with @src/entry/name main` 选择；Entry 不能
+作为普通模块根或被普通模块 import。只有被 Host 选中的 Entry 可以访问其他 crate 的
+private 模块和 `std/_...` 内部模块。
+
+`serve --bind stdio://` 对每行请求返回包含 `ok`、`error` 和 `diagnostics` 的 JSON。
+可恢复的请求失败不会结束服务；初始化、协议和资源类终止失败仍带外报告并退出。
 
 ## 命令行
 
 当前稳定命令面有六项：
 
 ```text
-telora run [binary]        调用 @bin/<binary>.telora 的单次 main
+telora run [binary]        调用 @bin/<binary> 的单次 main
 telora serve [binary]      通过 stdio JSONL 持续调用 serve handler
 telora run-with <entry> [binary]
-                           通过指定的 .entry.telora 模块调度 binary
+                           通过指定的 Entry 模块调度 binary
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器

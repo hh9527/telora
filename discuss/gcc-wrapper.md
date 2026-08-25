@@ -58,9 +58,9 @@ option "crate.dependency" {
 };
 option "exec.capture-envs" ["TARGET"];
 
-import "std/rt-types/exec.telora" { ExecFn };
+import "std/rt-types/exec" { ExecFn };
 import "gcc-toolchain-define/source.json" as source;
-import "gcc-wrapper/toolchain.telora" { wrap_gcc };
+import "gcc-wrapper/toolchain" { wrap_gcc };
 
 export def exec: ExecFn = wrap_gcc(source);
 ```
@@ -99,7 +99,7 @@ resolver 与发布体验的路线。
 import "std/array" as arrays;
 import "std/argv" as argv;
 import "std/dict" as dicts;
-import "std/rt-types/exec.telora" as exec_types;
+import "std/rt-types/exec" as exec_types;
 import "std/hash" as hash;
 
 type ExecSettings = exec_types.ExecSettings;
@@ -246,7 +246,7 @@ export def command:
 # bin-src/gcc.telora
 #!/usr/bin/env -S telora exec --dry-run
 
-import "@src/toolchain.telora" as toolchain;
+import "@src/toolchain" as toolchain;
 
 export def exec = toolchain.command("gcc");
 ```
@@ -255,7 +255,7 @@ export def exec = toolchain.command("gcc");
 # bin-src/g++.telora
 #!/usr/bin/env -S telora exec --dry-run
 
-import "@src/toolchain.telora" as toolchain;
+import "@src/toolchain" as toolchain;
 
 export def exec = toolchain.command("g++");
 ```
@@ -264,7 +264,7 @@ export def exec = toolchain.command("g++");
 # bin-src/ar.telora
 #!/usr/bin/env -S telora exec --dry-run
 
-import "@src/toolchain.telora" as toolchain;
+import "@src/toolchain" as toolchain;
 
 export def exec = toolchain.command("ar");
 ```

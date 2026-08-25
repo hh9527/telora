@@ -12,9 +12,9 @@ use telora_core::lir::RegisterId;
 use telora_core::{
     CallContext, ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode,
     ChildText, DataLimits, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState,
-    Location, NativeError, NativeFunction, PositionEncoding, Quota, RunHost, RunHostFuture,
-    RunTermination, SpawnStdioChild, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
-    TextPosition, WorkspaceSnapshot,
+    Location, ModuleResolver, NativeError, NativeFunction, PositionEncoding, Quota, RunHost,
+    RunHostFuture, RunTermination, SpawnStdioChild, SystemCaps, SystemDataSource, SystemEvent,
+    SystemStdin, TextPosition, WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
@@ -794,7 +794,7 @@ enum Command {
     Run(RunArgs),
     /// Initialize serve(Dict(Value)) and process requests continuously.
     Serve(ServeArgs),
-    /// Run a module through an explicitly selected .entry.telora adapter.
+    /// Run a module through an explicitly selected Entry adapter.
     RunWith(RunWithArgs),
     Check(CheckArgs),
     /// Query module and semantic facts as JSONL.
@@ -835,7 +835,7 @@ struct ServeArgs {
 
 #[derive(Args)]
 struct RunWithArgs {
-    /// Canonical Entry module selector, such as std/entry/default or @src/serve.entry.telora.
+    /// Entry module selector, such as std/entry/default or @src/entry/serve.
     #[arg(value_name = "ENTRY_MODULE")]
     entry: String,
     #[command(flatten)]
@@ -853,7 +853,7 @@ struct CheckArgs {
 
 #[derive(Args)]
 #[command(
-    after_help = "Examples:\n  telora query modules\n  telora q modules -p std/\n  telora query exports @src/lib.telora\n  telora query at @src/lib.telora -k type,def -p Query\n  telora query at @src/lib.telora:13:0"
+    after_help = "Examples:\n  telora query modules\n  telora q modules -p std/\n  telora query exports @src/lib\n  telora query at @src/lib -k type,def -p Query\n  telora query at @src/lib:13:0"
 )]
 struct QueryArgs {
     /// Find telora-deps.json upward from this path (default: current directory).
@@ -865,7 +865,7 @@ struct QueryArgs {
 
 #[derive(Subcommand)]
 enum QueryCommand {
-    /// List this crate's public/private/native modules and external public modules.
+    /// List this crate's public/private modules, built-ins, and external public modules.
     Modules(QueryModulesArgs),
     /// Query a module's public interface.
     Exports(QueryExportsArgs),
@@ -882,7 +882,7 @@ struct QueryModulesArgs {
 
 #[derive(Args)]
 struct QueryExportsArgs {
-    /// Canonical module ID, such as @src/lib.telora or std/string.
+    /// Module selector, such as @src/lib or std/string.
     #[arg(value_name = "MODULE_ID")]
     module_id: String,
     /// Filter public export names by a literal substring.
@@ -1052,7 +1052,7 @@ async fn run_command(
     let module_id = arguments
         .binary
         .as_ref()
-        .map(|binary| format!("@bin/{binary}.telora"));
+        .map(|binary| format!("@bin/{binary}"));
     if arguments.best_effort {
         let recovery_engine = Engine::new(engine_config());
         let workspace = if let Some(path) = arguments.standalone.as_deref() {
@@ -1137,6 +1137,10 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn check_command(arguments: CheckArgs) -> Result<i32, String> {
     let context = command_context(arguments.context)?;
+    let module_name = ModuleResolver::from_cwd(&context, &arguments.module_id)
+        .and_then(|resolver| resolver.selected_root())
+        .map(|module| module.id.to_string())
+        .map_err(|error| error.to_string())?;
     let workspace = engine()
         .recover_workspace_id(context, &arguments.module_id)
         .map_err(|error| error.to_string())?;
@@ -1165,7 +1169,7 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
             .collect::<Vec<_>>();
         emit(json!({
             "schema": "telora.check/v1",
-            "module": arguments.module_id,
+            "module": module_name,
             "record": "diagnostic",
             "severity": severity,
             "message": diagnostic.message,
@@ -1176,7 +1180,7 @@ fn check_command(arguments: CheckArgs) -> Result<i32, String> {
     let failed = has_error_diagnostic;
     emit(json!({
         "schema": "telora.check/v1",
-        "module": arguments.module_id,
+        "module": module_name,
         "record": "summary",
         "status": if failed { "error" } else { "ok" },
         "dependencies": workspace.modules().len().saturating_sub(1),
@@ -1257,6 +1261,14 @@ fn query_command(arguments: QueryArgs) -> Result<i32, String> {
         }
         QueryCommand::Modules(_) => unreachable!("handled above"),
     };
+    let canonical_module_id = if module_id.starts_with("std/") {
+        module_id.clone()
+    } else {
+        ModuleResolver::from_cwd(&context, &module_id)
+            .and_then(|resolver| resolver.selected_root())
+            .map(|module| module.id.to_string())
+            .unwrap_or_else(|_| module_id.clone())
+    };
     let workspace = if module_id.starts_with("std/") {
         engine().recover_builtin_workspace(&module_id)
     } else {
@@ -1279,26 +1291,29 @@ fn query_command(arguments: QueryArgs) -> Result<i32, String> {
     let root = workspace
         .modules()
         .iter()
-        .find(|module| module.name == module_id)
+        .find(|module| module.name == canonical_module_id)
         .ok_or_else(|| {
             format!(
                 "selected module {:?} is absent from the workspace",
-                module_id
+                canonical_module_id
             )
         })?;
     match query {
-        ModuleQuery::Exports { pattern } => {
-            query_exports(&workspace, root.id, &module_id, pattern.as_deref())
-        }
+        ModuleQuery::Exports { pattern } => query_exports(
+            &workspace,
+            root.id,
+            &canonical_module_id,
+            pattern.as_deref(),
+        ),
         ModuleQuery::Definitions { pattern, kinds } => query_definitions(
             &workspace,
             root.id,
-            &module_id,
+            &canonical_module_id,
             pattern.as_deref(),
             kinds.as_ref().map(|set| set.0.as_slice()),
         ),
         ModuleQuery::Position(position) => {
-            query_position(&workspace, root.id, &module_id, position)
+            query_position(&workspace, root.id, &canonical_module_id, position)
         }
     }?;
     Ok(0)

@@ -952,10 +952,10 @@ impl WorkspaceSnapshot {
             .flat_map(|input| input.imports.iter())
             .filter_map(|import| match &import.target {
                 ModuleCName::Builtin(name) => Some(name.clone()),
-                ModuleCName::Source(_)
-                | ModuleCName::Binary(_)
-                | ModuleCName::Test(_)
-                | ModuleCName::Standalone(_)
+                ModuleCName::Source { .. }
+                | ModuleCName::Binary { .. }
+                | ModuleCName::Entry { .. }
+                | ModuleCName::Test { .. }
                 | ModuleCName::Dependency { .. } => None,
             })
             .collect::<HashSet<_>>();

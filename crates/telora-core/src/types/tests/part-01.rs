@@ -171,6 +171,7 @@
         analyze_program_with_bindings_observed(
             "generic-native.telora",
             crate::ModuleId::ANONYMOUS,
+            ModuleAnalysisContext::Ordinary,
             &program,
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &external_roots,
@@ -240,6 +241,7 @@
         analyze_program_with_bindings_observed(
             "host-binding.telora",
             crate::ModuleId::ANONYMOUS,
+            ModuleAnalysisContext::Ordinary,
             &program,
             &mut QuotaAccount::new(Quota::with_fuel(100_000)),
             &external_roots,

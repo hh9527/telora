@@ -1,17 +1,18 @@
-import "std/rt.priv.telora" as rt;
+import "std/_rt" as rt;
 import "std/array" as array;
 import "std/dict" as dict;
 import "std/dyn" as dyn;
 import "std/json" as json;
+import "std/result" as result;
+import "std/string" as string;
 import "std/value" {Value};
 
 export type MainType = struct {
-    main: Fn(Dict(Value)) -> Value,
+    serve: Fn(Dict(Value)) -> Fn(Value) -> Value,
 };
 
 type State = struct {
-    output: String,
-    completed: Bool,
+    handler: Fn(Value) -> Value,
 };
 
 type Transition = Tuple([State, Array(rt.SystemEffect)]);
@@ -37,10 +38,9 @@ def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc
     fn(options, sources) {
         let declared = declared_sources(options);
         let provided = dict.keys(sources);
-        let declarations_are_unique = array.all(declared, fn(name) {
+        if array.all(declared, fn(name) {
             array.length(array.filter(declared, fn(other) { other == name })) == 1
-        });
-        if declarations_are_unique == 'False {
+        }) == 'False {
             fail!("option run-ctx.sources must contain unique names")
         } else if array.all(declared, fn(name) {
             array.any(provided, fn(other) { other == name })
@@ -65,21 +65,37 @@ export def config:
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
-                stdin: 'Null,
+                stdin: 'Lined,
             },
             fn(resources, main) {
                 let values = dict.map_values(resources.data, fn(item) { item.data });
-                let output = main.main(values) |> json.stringify;
-                let state: State = {output, completed: 'False};
+                let state: State = {handler: main.serve(values)};
                 let reduce: Reducer = fn(state, event) {
-                    if state.completed {
-                        fail!("default Entry received an event after completion", event)
-                    } else match event {
-                        'Initialize => (
-                            {output: state.output, completed: 'True},
-                            ['Output(state.output), 'Exit(0)],
-                        ),
-                        _ => fail!("default Entry received an unsupported event", event),
+                    match event {
+                        'Initialize => (state, []),
+                        'StdinLine('Some(line)) => do {
+                            let request = json.parse(line) |> result.unwrap;
+                            let response: Value = match rt.with_diagnostics(state.handler)(request) {
+                                'Ok(observed) => 'Object({
+                                    ok: observed.0,
+                                    error: 'False,
+                                    diagnostics: 'Array(array.map(observed.1, fn(diagnostic) {
+                                        'Object({message: 'String(diagnostic.message)})
+                                    })),
+                                }),
+                                'Err(diagnostics) => 'Object({
+                                    ok: 'None,
+                                    error: 'True,
+                                    diagnostics: 'Array(array.map(diagnostics, fn(diagnostic) {
+                                        'Object({message: 'String(diagnostic.message)})
+                                    })),
+                                }),
+                            };
+                            let response = json.stringify(response);
+                            (state, ['Output(string.join([response, ""], "\n"))])
+                        },
+                        'StdinLine('None) => (state, ['Exit(0)]),
+                        _ => fail!("serve Entry received an unsupported event", event),
                     }
                 };
                 (state, reduce)

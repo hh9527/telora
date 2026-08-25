@@ -569,6 +569,16 @@ fn drive_vm_action(
                                     account,
                                 )?
                             }
+                            NativeKind::CoreRuntime(operation) => run_core_runtime(
+                                operation,
+                                &arguments,
+                                return_target,
+                                &call_function,
+                                call_pc,
+                                current,
+                                background,
+                                account,
+                            )?,
                             NativeKind::CoreHash(function) => run_core_hash(
                                 function,
                                 &arguments,

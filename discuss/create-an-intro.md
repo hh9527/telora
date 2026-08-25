@@ -219,9 +219,9 @@ option "crate.dependency" {
     }),
 };
 
-import "std/rt-types/exec.telora" { ExecFn };
+import "std/rt-types/exec" { ExecFn };
 import "gcc-toolchain-define/source.json" as source;
-import "gcc-wrapper/toolchain.telora" { wrap_gcc };
+import "gcc-wrapper/toolchain" { wrap_gcc };
 
 export def exec: ExecFn = wrap_gcc(source);
 ```

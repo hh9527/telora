@@ -1,7 +1,8 @@
 # Telora CLI 指南
 
-每个 Telora crate 的可复用模块位于 `src/`，应用入口位于 `src/bin/`，测试入口位于
-`tests/`。`telora-deps.json` 声明该 crate 的依赖边界。
+每个 Telora crate 的可复用模块位于 `src/`，应用位于 `src/bin/`，Entry 位于
+`src/entry/`，测试位于 `tests/`。`telora-deps.json` 声明 canonical crate name 和依赖
+边界。
 
 Telora 从当前目录向上查找最近的 `telora-deps.json`，因此命令可以从目标 crate 根
 目录或其任意子目录执行。`-C` 可以显式改变查找的起始目录，该目录不必是 crate 根。
@@ -12,16 +13,16 @@ telora run main -C examples/my-crate
 telora run main -C examples/my-crate --source request=stdin+json://
 telora serve main -C examples/my-crate --bind stdio://
 telora run verify -C examples/my-crate
-telora check @test/compiler.telora -C examples/my-crate
+telora check @test/compiler -C examples/my-crate
 telora query modules -C examples/my-crate
-telora query at @bin/main.telora -C examples/my-crate
-telora query at @src/compiler.telora -C examples/my-crate -k type,let,def,import
-telora query exports @src/compiler.telora -C examples/my-crate
-telora query at @src/compiler.telora:12:3 -C examples/my-crate
+telora query at @bin/main -C examples/my-crate
+telora query at @src/compiler -C examples/my-crate -k type,let,def,import
+telora query exports @src/compiler -C examples/my-crate
+telora query at @src/compiler:12:3 -C examples/my-crate
 telora query exports std/string -C examples/my-crate
 telora query at std/array -C examples/my-crate -p flat_map
 telora run -S path/to/file.telora
-telora run-with @src/tool.entry.telora main -C examples/my-crate -- argument
+telora run-with @src/entry/tool main -C examples/my-crate -- argument
 telora run invalid -C examples/my-crate --best-effort
 ```
 
@@ -43,7 +44,10 @@ export def lowering_case = do {
   分隔符和 `.telora` 后缀的单个 stem。
 - `serve name --bind stdio://` 选择标准持续服务 Entry。Main 导出
   `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次后，每行 JSON 请求产生一行
-  JSON 响应。诊断写入 stderr，不进入响应值。
+  JSON 响应。成功响应是 `{"ok": value, "error": false, "diagnostics": [...]}`；请求
+  触发可恢复 failure 时是 `{"ok": null, "error": true, "diagnostics": [...]}`，服务
+  继续处理下一行。当前诊断 JSON 只稳定公开 `message`。资源耗尽、取消等终止性失败，
+  以及初始化和 Entry 协议错误仍带外报告并终止进程。
 - Main 用 `option "run-ctx.sources" ["config", "request"]` 声明 `run` 和 `serve`
   共用的初始化 source。声明的名称必须全部提供，CLI 也不能提供未声明或重复的名称。
   `--source name=path.json` 按 `.json/.yaml/.yml/.toml` 推断格式；
@@ -61,8 +65,8 @@ export def lowering_case = do {
   `run`。本参数用于调查问题时扩大诊断覆盖。
 - `run-with <entry-module> ...` 由 Host 显式选择纯 Edge Entry。自定义 Entry 的
   `MainType` 和输出编码由它自己规定，可以通过 stdio-child effects 编排进程。Entry
-  使用稳定模块 selector，例如 `@src/tool.entry.telora`；文件名必须以
-  `.entry.telora` 结尾。它不能作为普通模块根，也不能被普通模块 import。
+  位于 `src/entry/<name>.telora`，使用 `@src/entry/<name>` selector。它不能作为普通
+  模块根，也不能被普通模块 import。
 - `run-with` 中 `--` 后的参数按顺序进入 `Env.args`；`--source` 提供的描述进入
   `Env.sources`。Main 顶层的 `option` action 按
   源码顺序进入 `SystemOptions`。Entry 的 `config(options, env)` 返回 capability 诉求
@@ -82,8 +86,9 @@ export def lowering_case = do {
   `stdin: 'Text` 注入完整文本；`'Lined` 在 `Initialize` 后逐行产生 `StdinLine`，并以
   单个 `None` 表示 EOF。`spawn_child` 必须为真才能发出 `SpawnStdioChild` 或
   `PostStdin`。
-- `run -S file` 进入 standalone 模式，不发现 manifest，只使用根文件内的
-  `crate.dependency` / `crate.format` options；这些 options 相对文件父目录解析。
+- `run -S file` 进入 standalone 模式，不发现 manifest。canonical owner 默认为
+  `standalone`；根文件可用 `option "crate.name" "..."` 显式覆盖，并可声明相对文件
+  父目录解析的 `crate.dependency`。
   `-S` 与 binary name、`-C` 互斥。
 - `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 manifest；
   `check` 和 `query` 接受完整稳定模块 ID，`check @test/...` 检查测试入口，`run` 只
@@ -100,10 +105,13 @@ export def lowering_case = do {
   查询与源码行或位置相交的事实。它查询 recoverable CST 和部分语义/求值证据图，因此
   在模块损坏时仍可返回不受影响的事实；命令成功只表示查询完成，不表示模块能够通过
   `check` 或 `run`。
-- 本 crate 的 Entry 会以 `visibility: "entry"` 出现在 `query modules`；它仍只能由
-  `run-with` 选择，不能交给 `check`、`query exports` 或普通 import。
-- `query at std/...` 和 `query exports std/...` 直接查询 Host 注册的公开标准库逻辑模块，与源码 `import "std/..."`
-  使用同一模块身份；不需要也不能把 `std` 声明成 workspace dependency。
+- `query modules` 只列出本 crate 的普通 public/private source、dependency 的 public
+  source 和 public built-in；未选择的 Main、Entry、test 与 private built-in 不进入
+  catalog。Entry 只能由 `run-with` 选择，不能交给 `check`、`query exports` 或普通
+  import。
+- `query at std/...` 和 `query exports std/...` 直接查询内置标准库模块，与源码
+  `import "std/..."` 使用同一模块身份。resolver 在图发现前按 crate 粒度建立 first-win
+  清单，builtin `std` 先于 workspace 配置；后序同名 dependency 不能补充或改写它。
 - `-p` 按名称的大小写敏感字面子串过滤，不是 glob 或正则。
 - `query at <module> -k` 接受逗号分隔的 `type,let,def,import`；公共接口使用独立的
   `query exports` 子命令查询。
@@ -118,8 +126,8 @@ export def lowering_case = do {
 `output`。每个事件是一行紧凑 JSON：
 
 ```json
-{"name":"var","repr":"3","module":"@bin/main.telora","line":12}
-{"name":"plan","repr":"{...}","module":"@bin/main.telora","line":13,"message":"generated"}
+{"name":"var","repr":"3","module":"@bin/main","line":12}
+{"name":"plan","repr":"{...}","module":"@bin/main","line":13,"message":"generated"}
 ```
 
 固定字段为 `name`、`repr`、`module`、`line`；只有显式 message 时才有 `message`。

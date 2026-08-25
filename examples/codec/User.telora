@@ -1,5 +1,5 @@
-import "core:codec" as codec;
-import "core:result" as result;
+import "std/codec" as codec;
+import "std/result" as result;
 
 type Type = struct {v: Option(String)};
 

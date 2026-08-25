@@ -153,7 +153,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./identity.telora" as generic;
+            r#"import "./identity" as generic;
                (generic.identity(1), generic.identity("x"), generic.identity@[_](2))"#,
         )
         .unwrap();
@@ -194,20 +194,20 @@
         for (name, import, relay) in [
             (
                 "namespace.telora",
-                r#"import "./pipeline.telora" as pipeline;"#,
+                r#"import "./pipeline" as pipeline;"#,
                 "pipeline.relay",
             ),
             (
                 "selective.telora",
-                r#"import "./pipeline.telora" {relay};"#,
+                r#"import "./pipeline" {relay};"#,
                 "relay",
             ),
             (
                 "aliased.telora",
-                r#"import "./pipeline.telora" {relay as forward};"#,
+                r#"import "./pipeline" {relay as forward};"#,
                 "forward",
             ),
-            ("open.telora", r#"import "./pipeline.telora" *;"#, "relay"),
+            ("open.telora", r#"import "./pipeline" *;"#, "relay"),
         ] {
             fs::write(
                 directory.join(name),
@@ -291,7 +291,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./identity.telora" as generic;
+            r#"import "./identity" as generic;
                (generic.identity(1), generic.identity("x"), generic.identity@[_](2))"#,
         )
         .unwrap();
@@ -318,7 +318,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./identity.telora" as generic;
+            r#"import "./identity" as generic;
                (generic.identity(1), generic.identity("x"))"#,
         )
         .unwrap();
@@ -342,7 +342,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./constructors.telora" as constructors;
+            r#"import "./constructors" as constructors;
                type MaybeInt = constructors.Maybe(Int);
                let value: MaybeInt = 'None;
                value"#,
@@ -371,18 +371,18 @@
         for (name, import, family) in [
             (
                 "whole.telora",
-                r#"import "./families.telora" as families;"#,
+                r#"import "./families" as families;"#,
                 "families.Box",
             ),
             (
                 "selective.telora",
-                r#"import "./families.telora" {Box};"#,
+                r#"import "./families" {Box};"#,
                 "Box",
             ),
-            ("open.telora", r#"import "./families.telora" *;"#, "Box"),
+            ("open.telora", r#"import "./families" *;"#, "Box"),
             (
                 "aliased.telora",
-                r#"import "./families.telora" {Box as Container};"#,
+                r#"import "./families" {Box as Container};"#,
                 "Container",
             ),
         ] {
@@ -558,7 +558,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types.telora" {Wrapper, Status, Point};
+            r#"import "./types" {Wrapper, Status, Point};
                let wrapper: Wrapper = 'Box("x");
                let expected: Wrapper = 'Box("x");
                let status: Status = 'Ready;
@@ -614,7 +614,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./provider.telora" {accepts}; accepts({statuses: ['Ready]})"#,
+            r#"import "./provider" {accepts}; accepts({statuses: ['Ready]})"#,
         )
         .unwrap();
 
@@ -636,7 +636,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./families.telora" as families;
+            r#"import "./families" as families;
                families.make([("ready", 1)]).value"#,
         )
         .unwrap();
@@ -694,7 +694,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./families.telora" {Box};
+            r#"import "./families" {Box};
                type Branch = struct {children: Array(Tree)};
                type Tree = enum {'Leaf(Int), 'Branch(Branch)};
                type TreeBox = Box(Tree);
@@ -729,16 +729,16 @@
         ];
         let imports = [
             (
-                r#"import "./types.telora" {Expr, Definition};"#,
+                r#"import "./types" {Expr, Definition};"#,
                 "Expr",
                 "Definition",
             ),
             (
-                r#"import "./types.telora" as types;"#,
+                r#"import "./types" as types;"#,
                 "types.Expr",
                 "types.Definition",
             ),
-            (r#"import "./types.telora" *;"#, "Expr", "Definition"),
+            (r#"import "./types" *;"#, "Expr", "Definition"),
         ];
 
         for recursive_types in recursive_orders {
@@ -810,12 +810,12 @@
         .unwrap();
         fs::write(
             directory.join("facade.telora"),
-            r#"import "./types.telora" {Expr, Family}; export {Expr, Family};"#,
+            r#"import "./types" {Expr, Family}; export {Expr, Family};"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" {Family};
+            r#"import "./facade" {Family};
                type Concrete = Family(String);
                let value: Concrete = {expr: 'Literal(1), value: "ready"};
                export {value};"#,
@@ -853,7 +853,7 @@
         .unwrap();
         fs::write(
             directory.join("plan.telora"),
-            r#"import "./expr.telora" {Expr};
+            r#"import "./expr" {Expr};
                type Plan(A) = struct {value: A, expr: Expr};
                type Output = struct {text: String};
                def render: Fn(Expr) -> String = fn(expr) {
@@ -870,13 +870,13 @@
         .unwrap();
         fs::write(
             directory.join("facade.telora"),
-            r#"import "./plan.telora" {Plan, Output, transform};
+            r#"import "./plan" {Plan, Output, transform};
                export {Plan, Output, transform};"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" as api;
+            r#"import "./facade" as api;
                type Item = struct {id: Int};
                type ItemPlan = api.Plan(Item);
                type OutputAlias = api.Output;
@@ -939,7 +939,7 @@
         .unwrap();
         fs::write(
             directory.join("alias.telora"),
-            r#"import "./provider.telora" {Box};
+            r#"import "./provider" {Box};
                type Local = enum {'A};
                type LocalBox = Box(Local);
                export {LocalBox, Local};"#,
@@ -947,8 +947,8 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./provider.telora" {Box};
-               import "./alias.telora" {LocalBox, Local};
+            r#"import "./provider" {Box};
+               import "./alias" {LocalBox, Local};
                def identity: Fn(LocalBox) -> LocalBox = fn(value) { value };
                let via_alias: LocalBox = identity({value: 'A});
                let direct: Box(Local) = {value: 'A};
@@ -1007,7 +1007,7 @@
         .unwrap();
         fs::write(
             directory.join("domain.telora"),
-            r#"import "./factory.telora" {Model, make_creator, make_composed_creator};
+            r#"import "./factory" {Model, make_creator, make_composed_creator};
                type Subject = enum {'Order};
                type CallExpr = struct {name: String, args: Array(Expr)};
                type Expr = enum {'Subject(Subject), 'Call(CallExpr)};
@@ -1021,7 +1021,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./domain.telora" {creator, composed_creator};
+            r#"import "./domain" {creator, composed_creator};
                (creator('Order), composed_creator('Order))"#,
         )
         .unwrap();
@@ -1051,13 +1051,13 @@
         .unwrap();
         fs::write(
             directory.join("facade.telora"),
-            r#"import "./origin.telora" {Box as Container, Tree, identity};
+            r#"import "./origin" {Box as Container, Tree, identity};
                export {Container as Box, Tree, identity};"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" {Box, Tree, identity};
+            r#"import "./facade" {Box, Tree, identity};
                type TreeBox = Box(Tree);
                export def output: TreeBox = identity({value: 'Leaf(1)});"#,
         )
@@ -1102,12 +1102,12 @@
         .unwrap();
         fs::write(
             directory.join("facade.telora"),
-            r#"import "./origin.telora" as model; export {model};"#,
+            r#"import "./origin" as model; export {model};"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" {model};
+            r#"import "./facade" {model};
                type IntBox = model.Box(Int);
                export def output: IntBox = model.identity({value: 1});
                export def polymorphic = (model.identity(1), model.identity("x"));"#,
@@ -1133,20 +1133,20 @@
         .unwrap();
         fs::write(
             directory.join("first.telora"),
-            r#"import "./origin.telora" *;
+            r#"import "./origin" *;
                export {value as answer, identity};"#,
         )
         .unwrap();
         fs::write(
             directory.join("second.telora"),
-            r#"import "./first.telora" {answer, identity as relay};
+            r#"import "./first" {answer, identity as relay};
                export {answer, relay as identity};"#,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./origin.telora" {identity as direct};
-               import "./second.telora" {answer, identity};
+            r#"import "./origin" {identity as direct};
+               import "./second" {answer, identity};
                export def output = {
                    answer,
                    same: direct == identity,
@@ -1173,7 +1173,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./facade.telora" {State};
+            r#"import "./facade" {State};
                import "std/type-desc" as desc;
                export def output = {
                    kind: desc.kind(State),
@@ -1202,7 +1202,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./api.telora" as api;
+            r#"import "./api" as api;
                type Node = enum {'A, 'B};
                type Requirement = struct {target: Node};
                def target_of: Fn(Requirement) -> Node = fn(req) { req.target };

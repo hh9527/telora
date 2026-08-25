@@ -119,6 +119,29 @@ fn classify_partial_error(message: &str) -> FactState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ModuleAnalysisContext {
+    #[default]
+    Ordinary,
+    Builtin { defines_display_trait: bool },
+}
+
+impl ModuleAnalysisContext {
+    const fn native_abi(self) -> bool {
+        matches!(self, Self::Builtin { .. })
+    }
+
+    const fn defines_display_trait(self) -> bool {
+        matches!(
+            self,
+            Self::Builtin {
+                defines_display_trait: true
+            }
+        )
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn analyze_program_registered(
     source_name: &str,
     sources: &SourceDatabase,
@@ -161,6 +184,7 @@ pub(crate) fn analyze_program_with_bindings(
     analyze_program_with_bindings_observed(
         source_name,
         crate::ModuleId::ANONYMOUS,
+        ModuleAnalysisContext::Ordinary,
         program,
         account,
         &external_roots,
@@ -178,6 +202,7 @@ pub(crate) fn analyze_program_with_bindings(
 pub(crate) fn analyze_program_with_bindings_observed(
     source_name: &str,
     module_id: crate::ModuleId,
+    module_context: ModuleAnalysisContext,
     program: &Program,
     account: &mut QuotaAccount,
     external_roots: &BTreeMap<String, PersistentValue>,
@@ -209,7 +234,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         prelude
             .types
             .keys()
-            .filter(|name| source_name.ends_with(".native.telora") || name.as_str() != "BlameError")
+            .filter(|name| module_context.native_abi() || name.as_str() != "BlameError")
             .filter(|name| !external_roots.contains_key(*name))
             .chain(external_roots.keys())
             .cloned()
@@ -222,7 +247,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .filter(|name| !authored_names.contains(name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let native_abi = source_name.ends_with(".native.telora");
+    let native_abi = module_context.native_abi();
     let prelude_names = prelude
         .types
         .keys()
@@ -2000,7 +2025,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .map_err(|message| frontend_error(source_name, message))?;
         }
     }
-    let module_display_trait = if source_name == "<std/fmt.native.telora" {
+    let module_display_trait = if module_context.defines_display_trait() {
         trait_ids.get("Display").copied()
     } else {
         qualified_external_interfaces
@@ -2077,7 +2102,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         trait_implementations: trait_implementations
             .iter()
             .filter(|implementation| {
-                source_name == "<std/fmt.native.telora"
+                module_context.defines_display_trait()
                     || !module_display_trait.is_some_and(|display| {
                         implementation.trait_id == display
                             && implementation.id.module == display.module

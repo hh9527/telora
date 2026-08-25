@@ -1,9 +1,9 @@
 import "std/argv" as argv;
 import "std/dict" as dict;
 import "std/hash" as hash;
-import "std/rt-types/exec.telora" as exec_types;
-import "domain-method/method.telora" as method;
-import "toolchain-method/toolchain.telora" as toolchain;
+import "std/rt-types/exec" as exec_types;
+import "domain-method/method" as method;
+import "toolchain-method/toolchain" as toolchain;
 
 type Package = toolchain.Package;
 type ExecFn = exec_types.ExecFn;

@@ -365,7 +365,7 @@ def parse_pair: Fn(String, String) -> Result(Tuple([Int, Int]), String) =
 ## 5. 绑定、函数和递归
 
 `let` 定义词法局部值；`def` 定义具名模块 binding；`decl` 可以先声明契约；`native`
-只允许在受信 native module 中声明 Host 实现：
+只允许在 builtin `std` module 中声明 Host 实现：
 
 ```telora
 let local = 1;
@@ -768,10 +768,10 @@ assignability。`project@[T]` 只对解析到 `std/dyn` namespace 的 `project` 
 
 ```telora
 import "std/array" as array;
-import "@src/model.telora" { User, make_user };
-import "./validation.telora" { validate };
-import "package/path.telora";
-import "package/path.telora" as model, { User };
+import "@src/model" { User, make_user };
+import "./validation" { validate };
+import "package/path";
+import "package/path" as model, { User };
 ```
 
 支持 namespace、选择性、alias 和 open import。所有形式必须观察同一个 export
@@ -783,7 +783,7 @@ fallback binding，不是保留名称集合，也不形成不可遮蔽的词法�
 prelude 项，应显式使用 namespace 或 selective alias import，例如：
 
 ```telora
-import "core/prelude" { validate as builtin_validate };
+import "std/prelude" { validate as builtin_validate };
 ```
 
 `import` 永远只在当前模块建立 local binding；它本身不改变当前 Module 的公共接口，
@@ -791,7 +791,7 @@ import "core/prelude" { validate as builtin_validate };
 映射到 Module interface：
 
 ```telora
-import "@src/types.telora" {Plan as LocalPlan};
+import "@src/types" {Plan as LocalPlan};
 export {LocalPlan as Plan};
 ```
 
@@ -823,32 +823,35 @@ TypeScheme、concrete/recursive TypeMetadata graph、type-family template、opaq
 identity 和 provenance；不包装、重求值或重建 binding。Namespace binding 的导出仍是
 语义 Module，必须保留其 nested Module interface，不能退化为普通 Dict。
 
-Telora crate 使用 `src/`、`src/bin/` 和 `tests/`。Host 从当前工作目录向上查找最近的
-`telora-deps.json`，再通过稳定逻辑 ID 选择根：普通 source 是 `@src/<path>`，应用
-入口是 `@bin/<path>`，测试入口是 `@test/<path>`。例如：
+Telora crate 使用 `src/`、`src/bin/`、`src/entry/` 和 `tests/`。`src/bin`、
+`src/entry`、`tests` 只允许直接包含文件。Host 从当前工作目录向上查找最近的
+`telora-deps.json`，其 `name` 字段给出稳定 crate 身份。Host 通过 selector 选择根：
+普通 source 是 `@src/<path>`，应用是 `@bin/<name>`，Entry 是
+`@src/entry/<name>`，测试是 `@test/<name>`。例如：
 
 ```telora
-# src/bin/report.telora，逻辑 ID 为 @bin/report.telora
-import "@src/model/report.telora" { compile };
+# src/bin/report.telora，selector 为 @bin/report，canonical cname 为 my-crate/bin/report
+import "@src/model/report" { compile };
 ```
 
 逻辑 ID 到 crate 内物理位置的映射为：
 
 ```text
-@src/x.telora       -> <crate>/src/x.telora
-@bin/x.telora       -> <crate>/src/bin/x.telora
-@test/x.telora      -> <crate>/tests/x.telora
-dependency/x.telora -> <dependency-crate>/src/x.telora
+@src/x          -> <crate>/src/x.telora          -> my-crate/x
+@bin/x          -> <crate>/src/bin/x.telora      -> my-crate/bin/x
+@src/entry/x    -> <crate>/src/entry/x.telora    -> my-crate/entry/x
+@test/x         -> <crate>/tests/x.telora        -> my-crate/tests/x
+dependency/x    -> <dependency-crate>/src/x.telora -> dependency/x
 ```
 
-`@bin` 和 `@test` 只能由 Host 选择，任何 Telora import 都不能引用它们。Binary 和
-test 根也不能使用 `./` 或 `../`；它们必须以 `@src/` 导入本 crate 的可复用源码。
-依赖仅公开其 `src/`，不公开 `src/bin/` 或 `tests/`。不存在 `@main` 身份。
+Main、Entry 和 test 只有被 Host 选中时才进入清单。只有被选中的 Entry 能 resolve
+Main；普通模块不能 import Entry 或 test。Main 和 test 根不能使用 `./` 或 `../`，
+必须以 `@src/` 导入本 crate 的可复用源码。依赖仅公开其普通 `src/` 模块。
 
 `@src/` 以 importing module 所属 crate 为准，因此依赖模块中的 `@src/` 仍指向该依赖
 自己的 source root。`./` 和 `../` 只表示 source module 或 dependency module 内部、
 相对于 importing module 逻辑目录的导入。Package import 的首段选择固定依赖，
-`std/...` 等 builtin identity 由 Host 注册。上述解析均在模块初始化前完成。
+`std/...` identity 来自 Telora 内置 crate。上述解析均在模块初始化前完成。
 
 模块 import graph 不允许初始化 cycle。递归函数和递归 TypeMetadata 在单个模块及
 已建立的模块接口内由各自机制处理，不把 module cycle 当作递归定义机制。
@@ -866,22 +869,31 @@ export record 定义，Host 再按所选协议校验或选择其中的值。
 
 ### 8.1 模块身份和依赖
 
-模块的语义身份由 authority、crate 和逻辑路径决定，不等于偶然的物理绝对路径。
+模块的语义身份由 crate 和逻辑路径组成的 canonical cname 决定，不等于偶然的物理绝对路径。
 相同模块经不同相对边解析时应复用同一身份；resolver 拒绝词法或 symlink 越界。
 
-Path crate 的依赖由根目录 `telora-deps.json` 固定。依赖名是 package import 的首段。
+Path crate 的依赖由根目录 `telora-deps.json` 固定。dependency map key 声明被依赖
+crate 的 canonical name，也是 package import 的首段；crate 名与逻辑路径共同形成
+canonical cname。
+resolver 按顺序查询 vendor：builtin vendor 在先，当前发布 `std/*`；manifest 或
+standalone option 建立的 configured vendor 在后。vendor 以 crate 为选择颗粒；一旦
+builtin vendor 提供 `std`，全部 `std/*` selector 都只在该 crate 内解析，后序同名 crate
+整体被遮蔽，不能补充或覆盖 module。crate 清单在模块图发现前完成；注册采用 first-win，
+当前 crate 先于 dependencies，已登记的 crate name 及其 source 指向此后不可改变。
 当前没有通用 registry 获取、版本求解或运行时 package acquisition。
 
 普通 crate 模式的 resolver 配置只来自向上发现的最近一个 `telora-deps.json`；模块中
-不得声明 `crate.dependency` 或 `crate.format` resolver options。`run -S` 的 standalone
-模式不查找 manifest，其 resolver 配置只来自根文件内的 `crate.dependency` 和
-`crate.format` options，并相对该文件的父目录解析；被导入的文件不能继续声明这些
-options。其他静态 `option` 可声明模块或 Host 协议配置，必须位于 import 解析之前的
-有效位置，嵌套依赖不能借此修改根 Host 的策略。
+不得声明 `crate.dependency` resolver option。`run -S` 的 standalone 模式不查找
+manifest；其 canonical owner 默认为 `standalone`，根文件可用
+`option "crate.name" "..."` 显式指定，并可用 `crate.dependency` 补充依赖图。依赖路径
+相对根文件的父目录解析，被导入的文件不能继续声明 resolver options。其他静态
+`option` 可声明模块或 Host 协议配置，必须位于 import 解析之前的有效位置，嵌套依赖
+不能借此修改根 Host 的策略。
 
-普通 `.telora` 模块可以公开导入；`.priv.telora` 受 crate 可见性限制；
-`.native.telora` 只承载由 Host 注册、slot 明确的 native 声明。源文件声明 native
-函数并不赋予自己实现外部能力的权限。
+Telora selector 不写且不能写 `.telora`；resolver 在物理查找时补上后缀。静态数据
+selector 必须保留 `.json`、`.yaml`、`.yml` 或 `.toml`。除这一项已知后缀外，文件名
+不能含 `.`。文件 stem 以 `_` 开头表示 private；只有同 crate 模块和被选中的 Entry
+可以访问。只有内置 `std` crate 可以声明 native symbol。
 
 ### 8.2 静态数据模块
 
@@ -952,7 +964,7 @@ wrapper 不增加 provenance path segment；数组索引、对象 key 和原始 
 ### 8.3 初始化和发布
 
 模块求值区分 persistent main world 与每次操作的 temporary/work world。Import export、
-closure capture、递归 metadata root 和 Host virtual module 只有在完整初始化后才能被
+closure capture、递归 metadata root 和 static data root 只有在完整初始化后才能被
 promotion 到持久世界。
 
 Promotion 保留共享结构、递归引用和来源，并保证目标 heap 自包含。失败、取消、配额
@@ -1042,8 +1054,8 @@ receiver.ident!(arguments...) == ident!(receiver, arguments...)
 它不执行 method lookup，也不开放用户定义宏。未知 intrinsic 在前置和后置形式下
 都被拒绝。
 
-`BlameError` 是求值器与 Host 之间的 opaque native carrier。只有 `.native.telora`
-中的 native ABI 声明可以引用它；普通 `.telora` 不能命名、构造、导入或导出该类型。
+`BlameError` 是求值器与 Host 之间的 opaque native carrier。只有内置 `std` crate
+中的 native ABI 声明可以引用它；应用与依赖模块不能命名、构造、导入或导出该类型。
 普通代码可以匹配 native 调用返回的推断错误值并读取 ABI 字段，例如：
 
 ```telora
@@ -1054,6 +1066,20 @@ match validate(User, raw) {
 ```
 
 native module 不得 re-export `BlameError` 类型绑定。
+
+被选中的 Entry 可以通过 `std/_rt` 将一次普通函数调用放入独立诊断
+作用域：
+
+```telora
+rt.with_diagnostics:
+    for(A, R) Fn(Fn(A) -> R)
+        -> Fn(A) -> Result(Tuple([R, Array(BlameError)]), Array(BlameError))
+```
+
+调用成功时返回值和该作用域内产生的 Warning；可恢复 failure 时返回该 failure 以及
+此前产生的 Warning。返回的诊断从 evaluation account 中消费，不再由外层 Host 重复
+输出。fuel、stack、allocation 和 cancellation 等终止性失败不被捕获。
+作用域只改变诊断的观察边界，不把值导出到 Host，也不建立 Host-owned value。
 
 ### 9.3 Host debug observation
 
@@ -1079,8 +1105,8 @@ Float 的 debug 表示与 Rust `f64` 的 `{:?}` 一致且不受 locale 影响；
 CLI 把每个事件作为一行紧凑 JSON 写入 stderr：
 
 ```json
-{"name":"value","repr":"3","module":"@src/query.telora","line":42}
-{"name":"plan","repr":"{...}","module":"@src/query.telora","line":43,"message":"generated"}
+{"name":"value","repr":"3","module":"@src/query","line":42}
+{"name":"plan","repr":"{...}","module":"@src/query","line":43,"message":"generated"}
 ```
 
 `name` 是首个参数的 authored expression text，`repr` 是有界 debug 表示。stderr 事件
@@ -1256,27 +1282,28 @@ telora lsp
 ```
 
 `run abc` 的 binary name 是一个不含路径分隔符和 `.telora` 后缀的 stem；Host 从 CWD
-向上发现最近的 manifest，并固定选择 `@bin/abc.telora`。调用者写 `run abc`，不写
-`run @bin/abc.telora`。`run`、`check` 和 `query` 的 `-C` 都指定 manifest discovery
+向上发现最近的 manifest，并固定选择 `@bin/abc`。调用者写 `run abc`，不写
+`run @bin/abc`。`run`、`check` 和 `query` 的 `-C` 都指定 manifest discovery
 的起始目录，该目录不必就是 crate root。`run -S file` 是独立 standalone 模式：
-即使文件的祖先目录存在 manifest 也不
-查找，只使用根文件内的 `crate.dependency` / `crate.format` options，且 options 相对
-文件所在目录解析。只有 standalone 根文件可以声明这些 resolver options。`-S` 与
-binary name、`-C` 互斥。
+即使文件的祖先目录存在 manifest 也不查找。canonical owner 默认为 `standalone`；
+根文件可声明 `option "crate.name" "..."` 覆盖该名字，并可声明相对文件所在目录解析的
+`crate.dependency`。只有 standalone 根文件可以声明 resolver options。`-S` 与 binary
+name、`-C` 互斥。
 
 其他命令的 `<module>` 是 `@src/...`、`@bin/...`、`@test/...`、依赖模块 ID，或
-Host 注册的公开 `std/...` 模块 ID，不是物理文件名。`query exports std/string` 与
+公开 `std/...` 模块 ID，不是物理文件名。`query exports std/string` 与
 源码中的 `import "std/string"` 选择同一个内置模块身份；不存在的 `std/...` 得到
 明确的 built-in module-not-found 错误，不按 workspace dependency 解析。`query`（可见
 alias `q`）以稳定 `telora.query/v1` JSONL 输出语义事实。`query at <module>` 查询选中
 模块的顶层 local definitions；追加 `:<line>` 或 `:<line>:<column>` 后改查整行或精确点
 相交的 definition、reference 和 expression facts。`query modules` 不加载、解析或求值
 模块，而是列出 `-C` 所确定
-crate 的模块视图：本 crate 的 `@src/...`、`@bin/...`、`@test/...` 包含 public、priv、
-native 和 entry 模块；dependency 只包含公开 source module；Host 只包含公开注册模块。
-每条 module record 携带规范 module ID、`crate` / `dependency` / `host` origin、
-`public` / `private` / `native` / `entry` visibility 和 resolver format，并按 module ID
-稳定排序。
+crate 的模块视图：输出 canonical cname，包含本 crate 的普通 public/private source、
+dependency 的 public source，以及公开的内置 `std` 模块。未选中的 Main、Entry 和 test
+不进入 catalog。
+每条 module record 携带规范 module ID、`crate` / `dependency` / `builtin` origin、
+`public` / `private` visibility 和 resolver format，并按 module ID 稳定排序。Main、Entry、
+test 和 private built-in 都不属于未选择状态下的 catalog 视图。
 `query exports` 独立查询公开 Module interface。`-p` 执行大小写敏感的字面子串匹配，
 不解释 glob 或正则表达式：在 `modules` 下匹配规范 module ID，在 `exports` 下匹配公开
 名称，在无坐标的 `at` 下匹配本地符号名。`-k` 接受由逗号分隔的 `type`、`let`、
@@ -1321,11 +1348,11 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 `main: Fn(Dict(Value)) -> Value`，调用一次后把结果编码为 JSON。`serve --bind stdio://`
 选择 `std/entry/serve`，要求 Main 导出
 `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次 handler 后，以 stdin/stdout
-上的 JSONL 逐项收发请求和响应。`run-with <entry-module>` 是 Host 的显式授权动作；selector 必须指向
-`.entry.telora` 模块，例如 `@src/tool.entry.telora`。该源码获得保留的 Entry 身份，
-可以访问依赖图内任意 `.priv.*`、`.native.telora` 和已注册 native module。特权仅属于
-这个 requester，不传递给它导入的普通模块。`.entry.telora` 不能作为普通模块根，也
-不能被普通模块 import。
+上的 JSONL 逐项收发请求和响应。`run-with <entry-module>` 是 Host 的显式授权动作；
+selector 必须指向 `src/entry` 中的模块，例如 `@src/entry/tool`。该源码获得保留的
+Entry 身份，可以访问图内所有模块，包括其他 crate 的 private 模块和 `std/_...`
+内部模块。特权仅属于这个 requester，不传递给它导入的普通模块。Entry 不能作为
+普通模块根或被普通模块 import。
 
 标准 Entry 从 Main 的 `option "run-ctx.sources" [name, ...]` 读取初始化 source 契约；
 `run` 与 `serve` 共享这个 option。声明名必须唯一，且 CLI 提供的 source 名与声明集合
@@ -1344,7 +1371,7 @@ Entry WorkWorld；标准 Entry 只把 `SrcItem.data` 投影为传给 Main 的 `D
 Entry 在纯 Telora 中实现以下 ABI：
 
 ```telora
-import "std/rt.priv.telora" as rt;
+import "std/_rt" as rt;
 
 export type MainType = ...;
 export type State = ...;
@@ -1533,17 +1560,18 @@ CLI `query` 和 LSP 可以展示 recovery fact；`check`、`run` 和 Host entry 
 
 ## 13. 标准库和 native 边界
 
-标准库由普通 Telora module 与受信 native module 共同组成。普通模块实现 Option、
-Result、argv 等组合政策；native 模块提供需要高效 heap 观察或受控 runtime identity
-的确定操作。
+标准库的 builtin `std` modules 同时承载普通 Telora definitions 与受信 native
+declarations。普通 definitions 实现 Option、Result、argv 等组合政策；native
+declarations 提供需要高效 heap 观察或受控 runtime identity 的确定操作。
 
 当前通用能力包括 Array/Dict 组合、String、lexical path、SHA-256、regex、JSON codec
 与 schema、TypeMetadata attribute、Dyn observer、文本 parse/display 等。
 这些 API 不授予环境或文件系统访问权限。例如 path 操作是词法操作，hash 操作只
 处理显式输入。
 
-Native 声明的可用性由 Host 注册表和精确 module identity 决定。未知 native module
-不可用；用户不能仅通过书写 `.native.telora` 获得 native implementation。
+Native 声明的可用性由精确 module identity 决定。只有 Telora 内置的 `std` crate
+拥有 native authority；configured application 和 dependency crates 都不能声明 native
+symbol。内部 runtime 接口使用 `_` stem，并继续由 resolver 执行可见性检查。
 
 语言核心、标准库、领域库和应用应保持以下依赖方向：
 

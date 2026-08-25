@@ -78,7 +78,7 @@
     #[test]
     fn valid_overlay_dependencies_supply_real_import_capabilities() {
         let (directory, root) = fixture(
-            "import \"./model.telora\" as model; type FromOverlay = model.Shared; export { FromOverlay as output };",
+            "import \"./model\" as model; type FromOverlay = model.Shared; export { FromOverlay as output };",
         );
         let model = directory.join("model.telora");
         std::fs::write(&model, "type Shared = missing; 0").unwrap();

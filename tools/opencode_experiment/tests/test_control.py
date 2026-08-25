@@ -177,12 +177,12 @@ class ConfigStateTest(unittest.TestCase):
                 load_manifest(repo, "demo")
 
             manifest["roles"]["a1"]["preflight"] = [
-                "./bin/telora query exports @bin/main.telora -C query-builder",
+                "./bin/telora query exports @bin/main -C query-builder",
             ]
             path.write_text(json.dumps(manifest), encoding="utf-8")
             self.assertEqual(
                 load_manifest(repo, "demo").permission_preflight["a1"],
-                ("./bin/telora query exports @bin/main.telora -C query-builder",),
+                ("./bin/telora query exports @bin/main -C query-builder",),
             )
 
     def test_artifact_publication_command_is_available(self):
@@ -648,7 +648,7 @@ class ConfigStateTest(unittest.TestCase):
             self.assertEqual(a4_permissions["read"]["**/experiment.json"], "deny")
             self.assertEqual(a4_permissions["read"]["**/docs/**"], "allow")
             self.assertEqual(
-                a4_permissions["bash"]["./bin/telora query exports @bin/main.telora -C intent-1"],
+                a4_permissions["bash"]["./bin/telora query exports @bin/main -C intent-1"],
                 "allow",
             )
         self.assertEqual(
@@ -1174,7 +1174,7 @@ class PermissionPreflightTest(unittest.TestCase):
                 "./bin/telora types *": "allow",
             }})
             manifest = self.manifest(
-                root, ("./bin/telora query exports @bin/main.telora -C demo",)
+                root, ("./bin/telora query exports @bin/main -C demo",)
             )
             with self.assertRaisesRegex(ControlError, "unexercised worker command family"):
                 preflight_permissions(manifest, workspace)

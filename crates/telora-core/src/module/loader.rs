@@ -12,15 +12,10 @@ fn prepare_selected_entry(
     module_quota: Quota,
     data_limits: DataLimits,
     debug_sink: Arc<dyn DebugSink>,
-    native_modules: &[RegisteredNativeModule],
 ) -> Result<SelectedEntryLoader, ModuleError> {
-    let injected_modules = BTreeMap::from([(
-        EDGE_RUNTIME_MODULE.to_owned(),
-        edge_runtime_source().to_owned(),
-    )]);
     let resolver = resolver
-        .with_builtins(builtin_list(native_modules))
-        .with_entry_context(entry_id.clone(), injected_modules.keys().cloned());
+        .with_builtins(builtin_list())
+        .with_entry_context(entry_id.clone());
     let main_module = resolver
         .selected_root()
         .map_err(|error| ModuleError::new(error.to_string()))?;
@@ -33,17 +28,9 @@ fn prepare_selected_entry(
         .path()
         .ok_or_else(|| ModuleError::new("main module has no physical path"))?
         .to_owned();
-    let mut synthetic = injected_modules
-        .iter()
-        .map(|(name, source)| {
-            (
-                ModuleCName::builtin(name),
-                (main_path.clone(), source.clone()),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut synthetic = BTreeMap::new();
     synthetic.insert(entry_id.clone(), (main_path.clone(), source.to_owned()));
-    let opaque_modules = builtin_list(native_modules)
+    let opaque_modules = builtin_list()
         .into_iter()
         .map(|(name, _)| ModuleCName::builtin(name));
     let graph = ModuleGraph::discover(
@@ -56,12 +43,11 @@ fn prepare_selected_entry(
     )?;
     let mut main = MainWorld::with_modules(graph);
     let mut sources = SourceDatabase::default();
-    let core_modules =
-        install_native_modules(&mut main, &mut sources, &debug_sink, native_modules)?;
+    let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink)?;
     let mut loader = ModuleLoader {
         resolver,
         cache: HashMap::new(),
-        core_modules,
+        builtin_modules,
         main,
         visiting: Vec::new(),
         dependencies: BTreeSet::new(),
@@ -72,7 +58,6 @@ fn prepare_selected_entry(
         semantic_inputs: BTreeMap::new(),
         source_policy: ModuleSourcePolicy::ExplicitExports,
     };
-    loader.install_injected_modules(&main_path, injected_modules)?;
     let entry = loader.compile_entry(&main_path, entry_id, source, BTreeMap::new())?;
     Ok(SelectedEntryLoader {
         loader,
@@ -85,7 +70,7 @@ fn prepare_selected_entry(
 struct ModuleLoader {
     resolver: ModuleResolver,
     cache: HashMap<ModuleCName, ModuleState>,
-    core_modules: HashMap<String, ModuleArtifact>,
+    builtin_modules: HashMap<String, ModuleArtifact>,
     main: MainWorld,
     visiting: Vec<ModuleCName>,
     dependencies: BTreeSet<PathBuf>,
@@ -147,51 +132,6 @@ impl ModuleLoader {
         Ok(())
     }
 
-    fn install_injected_modules(
-        &mut self,
-        context_path: &Path,
-        modules: BTreeMap<String, String>,
-    ) -> Result<(), ModuleError> {
-        for (name, source) in modules {
-            let module_id = ModuleCName::builtin(&name);
-            let mut account = QuotaAccount::new(self.module_quota);
-            let compiled = self.compile_telora(
-                &module_id,
-                ModuleAuthority::RuntimeSystem,
-                TeloraModuleSource::Synthetic {
-                    name: &name,
-                    context_path,
-                    source: &source,
-                },
-                BTreeMap::new(),
-                false,
-                &mut account,
-            )?;
-            let arena = Vm::new()
-                .with_debug_sink(Arc::clone(&self.debug_sink))
-                .execute_in_work(
-                    &self.main.heap,
-                    &compiled.externals,
-                    &compiled.function,
-                    &[],
-                    &mut account,
-                )
-                .map_err(|error| ModuleError::new(error.with_sources(&self.sources).to_string()))?;
-            let root = arena
-                .publish_module(&mut self.main.heap)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            self.core_modules.insert(
-                name,
-                ModuleArtifact {
-                    root,
-                    interface: compiled.analysis.module_interface,
-                    provenance: None,
-                },
-            );
-        }
-        Ok(())
-    }
-
     fn compile_entry(
         &mut self,
         main_path: &Path,
@@ -204,7 +144,6 @@ impl ModuleLoader {
         let source_name = module_id.to_string();
         let result = self.compile_telora(
             &module_id,
-            ModuleAuthority::RuntimeSystem,
             TeloraModuleSource::Synthetic {
                 name: &source_name,
                 context_path: main_path,
@@ -259,14 +198,12 @@ impl ModuleLoader {
             .path()
             .expect("root module has a physical path")
             .to_owned();
-        let authority = module.authority;
         let module_id = module.id;
         self.dependencies.insert(path.clone());
         self.enter(&module_id)?;
         let mut account = QuotaAccount::new(self.module_quota);
         let result = self.compile_telora(
             &module_id,
-            authority,
             TeloraModuleSource::File(&path),
             external_bindings,
             true,
@@ -290,7 +227,6 @@ impl ModuleLoader {
         module: ResolvedModule,
     ) -> Result<ModuleArtifact, ModuleError> {
         let format = module.format;
-        let authority = module.authority;
         let path = module
             .path()
             .expect("source module has a physical path")
@@ -327,7 +263,7 @@ impl ModuleLoader {
                 .and_then(|plan| {
                     let (root, interface, provenance) = publish_static_data_module(
                         &plan,
-                        &self.core_modules,
+                        &self.builtin_modules,
                         &mut self.main.heap,
                         self.sources.get(source_id).text().byte_len(),
                         self.data_limits,
@@ -360,7 +296,6 @@ impl ModuleLoader {
                 let mut account = QuotaAccount::new(self.module_quota);
                 self.compile_telora(
                     &module_id,
-                    authority,
                     TeloraModuleSource::File(&path),
                     BTreeMap::new(),
                     false,
@@ -403,7 +338,6 @@ impl ModuleLoader {
     fn compile_telora(
         &mut self,
         module_id: &ModuleCName,
-        authority: ModuleAuthority,
         module_source: TeloraModuleSource<'_>,
         external_bindings: BTreeMap<String, crate::DataWorld>,
         is_root: bool,
@@ -595,7 +529,7 @@ impl ModuleLoader {
                     target: imported_module_id,
                 });
             }
-            if imported.authority == ModuleAuthority::RuntimeSystem {
+            if imported.vendor == ModuleVendor::Builtin {
                 let module = self.load_native_module(relative).map_err(|error| {
                     ModuleError::new(self.sources.render(&Diagnostic::error(
                         error.to_string(),
@@ -681,7 +615,7 @@ impl ModuleLoader {
             }
         }
         if module_id.to_string() != PRELUDE_MODULE
-            && let Some(module) = self.core_modules.get(PRELUDE_MODULE)
+            && let Some(module) = self.builtin_modules.get(PRELUDE_MODULE)
         {
             self.install_trait_impl_roots(module, &mut external_roots)?;
             self.install_type_property_roots(module, &mut external_roots)?;
@@ -711,7 +645,7 @@ impl ModuleLoader {
         });
         if !matches!(module_id, ModuleCName::Builtin(_))
             && !imports_fmt
-            && let Some(module) = self.core_modules.get(FMT_MODULE)
+            && let Some(module) = self.builtin_modules.get(FMT_MODULE)
         {
             self.install_trait_impl_roots(module, &mut external_roots)?;
             let provider = ModuleCName::Builtin(FMT_MODULE.into());
@@ -800,17 +734,10 @@ impl ModuleLoader {
                 BindingKind::Native | BindingKind::NativeType
             )
         }) {
-            let message = if authority == ModuleAuthority::Ordinary {
-                format!(
-                    "native symbol {:?} is only allowed in built-in or *.native.telora modules",
-                    binding.value.name.value
-                )
-            } else {
-                format!(
-                    "native symbol {:?} is not registered for this system module",
-                    binding.value.name.value
-                )
-            };
+            let message = format!(
+                "native symbol {:?} is only allowed in built-in std modules",
+                binding.value.name.value
+            );
             return Err(ModuleError::new(self.sources.render(
                 &crate::source::Diagnostic::error(message, binding.location),
             )));
@@ -825,6 +752,7 @@ impl ModuleLoader {
             skeleton
                 .as_ref()
                 .map_or(ModuleId::ANONYMOUS, |skeleton| skeleton.id),
+            ModuleAnalysisContext::Ordinary,
             &program,
             account,
             &external_roots
@@ -936,7 +864,7 @@ impl ModuleLoader {
     }
 
     fn load_native_module(&mut self, name: &str) -> Result<ModuleArtifact, ModuleError> {
-        self.core_modules
+        self.builtin_modules
             .get(name)
             .cloned()
             .ok_or_else(|| ModuleError::new(format!("unknown built-in module {name:?}")))
