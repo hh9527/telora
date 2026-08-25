@@ -28,7 +28,7 @@ from tools.opencode_experiment.task_cli import (
 
 def artifact_workflow() -> dict:
     return validate_workflow({
-        "schema": "telora.opencode-artifact-workflow/v1",
+        "schema": "telora.artifact-workflow/v1",
         "roles": ["a1", "a2"],
         "start_artifacts": ["lang"],
         "finish_artifact": "qb",
@@ -134,7 +134,7 @@ class ArtifactWorkflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             value = validate_workflow({
-                "schema": "telora.opencode-artifact-workflow/v1",
+                "schema": "telora.artifact-workflow/v1",
                 "roles": ["a1"],
                 "start_artifacts": ["lang"],
                 "finish_artifact": "finish",
@@ -182,6 +182,24 @@ class ArtifactWorkflowTest(unittest.TestCase):
             self.assertFalse(evaluate(root, value)["artifacts"]["lang"]["current"])
             with self.assertRaisesRegex(TaskError, "role-owned"):
                 remove_artifact(root, value, "qb.a1")
+            forced = remove_artifact(root, value, "qb.a1", force=True)
+            self.assertTrue(forced["host_forced"])
+
+    def test_host_can_force_publish_role_artifact_without_bypassing_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            publish_artifact(root, value, "lang")
+            pull(root, value, "a1", False, None)
+            with self.assertRaisesRegex(TaskError, "checks are incomplete"):
+                publish_artifact(root, value, "qb.a1", force=True)
+            (root / "output.txt").write_text("Host supplied", encoding="utf-8")
+            result = publish_artifact(root, value, "qb.a1", force=True)
+            self.assertTrue(result["host_forced"])
+            self.assertTrue(evaluate(root, value)["artifacts"]["qb.a1"]["current"])
+            records = task_records(root)
+            self.assertEqual(records["active"], [])
+            self.assertEqual(records["history"][0]["status"], "stale")
 
     def test_host_publish_does_not_touch_artifact_when_checks_fail(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -228,7 +246,7 @@ class ArtifactWorkflowTest(unittest.TestCase):
 
     def test_validation_rejects_unknown_optional_input_and_cycle(self):
         raw = {
-            "schema": "telora.opencode-artifact-workflow/v1",
+            "schema": "telora.artifact-workflow/v1",
             "roles": ["a1"],
             "start_artifacts": ["start"],
             "finish_artifact": "finish",

@@ -6,18 +6,20 @@ operator selects the port but never selects a plan. Early in a long-running task
 `oc-ctl test-connect <test-id>` to exercise that exact daemon and record
 `target/exp/<test-id>/connect-test.json`. This neither chooses a plan nor writes `config.json`, so it
 does not release `oc-run` or freeze experiment inputs. After prerequisite fixes are complete, the
-Host runs `oc-ctl start <test-id> <plan-id>` from the repository root; `plan-id` names a directory
-under `experiments/`. `start` requires the successful receipt and external runner, adopts its port,
+Host runs `oc-ctl start <test-id> <plan-id>` from the repository root; `plan-id` names a tracked
+directory under `experiment-plans/`. `start` requires the successful receipt and external runner, adopts its port,
 and atomically writes
 `target/exp/<test-id>/config.json`. The runner then prepares the isolated experiment workspace,
 creates the formal session on the existing daemon, and attaches the TUI. When the TUI exits,
 `oc-run` terminates the daemon.
-`oc-ctl` controls and observes the execution. A plan may define an artifact DAG in
-`experiment.json.workflow`; `task_cli.py` is copied into the workspace as `bin/oc-task`.
+`oc-ctl` controls and observes the execution. The tracked plan is runtime-neutral: it declares
+workspace inputs, role capabilities and the artifact DAG. `oc-ctl` deterministically generates
+`opencode.json`, `.opencode/agents/*.md` and the runtime `experiment.json`; Host-only assets are not
+copied unless explicitly delivered. `task_cli.py` is copied as `bin/oc-task`.
 
 ## Artifact workflow
 
-The schema is `telora.opencode-artifact-workflow/v1`. An artifact named `name.<role>` is owned by
+The schema is `telora.artifact-workflow/v1`. An artifact named `name.<role>` is owned by
 that role. An artifact without a role suffix is Host-owned. Roles receive only two workflow
 permissions:
 
@@ -53,25 +55,32 @@ oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
 oc-ctl update <test-id> <dest-file>=<src-file>...
+oc-ctl update <test-id> <dest-file>=<src-file>... --force
 oc-ctl publish <test-id> <artifact>[=!]...
+oc-ctl publish <test-id> <artifact>[=!]... --force
 oc-ctl resume <test-id> <role>
 ```
 
 `update` atomically copies any Host-readable file. Relative source paths are resolved from the
 Host's current directory; absolute paths, including files under `/tmp`, are accepted. Destination
 paths remain relative to the experiment workspace. A source of `!` deletes the destination.
-`publish` touches a Host-owned artifact, or removes it when suffixed with `=!`. `status` returns a
+`publish` touches a Host-owned artifact, or removes it when suffixed with `=!`. Ordinary `update`
+rejects replacement of a file checked by a role-owned artifact. `--force` explicitly crosses that
+ownership boundary while preserving safe paths, known artifact identities, DAG inputs and checks.
+It marks affected active tasks stale and records an auditable Host intervention in execution state
+and the archived workspace. `status` returns a
 compact scheduling view with `complete`, `quiescent`, normalized Agent state, publishable artifacts,
 and `next_host_actions`; `status --verbose` additionally includes the complete artifact graph and raw
 runtime state. `stat` reports each role/task duration and tokens, longest thinking interval, and
 Telora command count. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.
 
-`resume` prompts the role's one existing inactive child session with the plan's configured continue
-prompt. It is reserved for a role that ended a response while waiting for Host clarification; it
-never creates a child, replaces session context, or resumes a busy role. `status --verbose` includes
-the five most recent assistant text responses so the Host can identify that clarification boundary
-without inspecting private transport data.
+`resume` restores the permanent `pull -> work -> submit -> pull` loop. It is idempotent when a role
+is already busy, first resumes the newest inactive session, and asks the coordinator to create a
+replacement when that session cannot return or is missing. It succeeds only after observing the role
+busy in its loop; otherwise it times out. Historical and replacement sessions are aggregated as one
+role in metrics while their session ids remain visible. `status --verbose` includes recent assistant
+text responses so the Host can identify clarification boundaries.
 
 `start --from` creates a fresh workspace and OpenCode session while inheriting trusted progress from
 an earlier execution of the same plan. An artifact is inherited only when it is current and its

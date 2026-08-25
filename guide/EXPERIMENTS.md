@@ -8,19 +8,24 @@
 
 一次实验包含三个彼此分离的对象：
 
-- **plan**：`experiments/<plan-id>/` 下独立、干净且已提交的 Git worktree；
+- **plan**：`experiment-plans/<plan-id>/` 下由 Telora 仓直接跟踪的平台无关方案；
 - **execution**：由唯一 `<test-id>` 标识的一次运行，控制状态保存在
   `target/exp/<test-id>/`；
-- **workspace**：从 plan 的固定 revision 克隆到 `/tmp/oc-exp-<test-id>-*/ws` 的实际
+- **workspace**：从 plan 的声明资产复制到 `/tmp/oc-exp-<test-id>-*/ws` 的实际
   工作目录，角色只在这里工作。
 
-plan 不作为主仓库的 submodule。主仓库忽略整个 `experiments/`，因此可以在该目录中
-放置不同实验计划，而不会把实验源码或历史结果混入语言仓库：
+实验方案是 Telora 研发资产，和语言代码一起评审、提交。独立实验仓只保存某次运行的
+输入快照、Agent 产出、诊断、指标和最终状态，不作为 `oc-ctl start` 的输入：
 
-```bash
-git clone git@github.com:hh9527/telora-experiment-ontology-3.git \
-  experiments/ontology-3
+```text
+experiment-plans/ontology-3  平台无关方案 SSOT
+/tmp/oc-exp-<test-id>-*/ws  隔离运行环境
+独立实验结果仓              一次执行的结果快照
 ```
+
+方案定义角色目标、可见性、允许命令和 artifact DAG，但不提交 `opencode.json`、
+`.opencode/agents` 或 OpenCode prompts。控制面在准备 workspace 时确定性生成这些 adapter；
+因此未来可以增加其他 Agent runtime，而不修改实验问题和 DAG。
 
 基础设施的所有权边界是：
 
@@ -51,8 +56,8 @@ python3 -m unittest tools.opencode_experiment.tests.test_control \
 
 开始前阅读实验计划并确认：
 
-1. plan 是独立 Git worktree，工作区干净，所有输入已经提交；
-2. `experiment.json` 和 `opencode.json` 使用预期模型、参数和 artifact；
+1. `experiment-plans/<plan-id>` 的所有输入已经提交，目录没有未提交修改；
+2. `experiment.json` 使用平台无关 schema，角色、workspace 资产和 artifact 正确；
 3. plan 的 `EVAL-METHOD.md` 明确研究问题、隔离边界、人工验收点和归因方法；
 4. release Telora 可以构建，计划引用的教程和 CLI 文档是当前版本；
 5. `<test-id>` 尚未被其他 execution 使用。
@@ -110,9 +115,10 @@ Host 在长程任务开头从主仓库运行连接测试：
 ```
 
 `start` 首先要求该 test-id 已有成功的连接测试凭据和正在等待的外部 runner，然后从当前
-仓库的 `experiments/<plan-id>` 加载并校验计划，采用 runner 已保留的端口，并原子写入
-`target/exp/<test-id>/config.json`。随后 `oc-run` 才会克隆 plan、构建或复制声明的
-artifact、执行权限预检，在同一个 daemon 上为正式 workspace 创建 session，并启动 TUI
+仓库的 `experiment-plans/<plan-id>` 加载并校验计划，采用 runner 已保留的端口，并原子写入
+`target/exp/<test-id>/config.json`。随后 `oc-run` 才会复制声明的 workspace 资产、生成
+OpenCode adapter、构建或复制声明的 artifact、执行权限预检，在同一个 daemon 上为正式
+workspace 创建 session，并启动 TUI
 attach。TUI 退出时 `oc-run` 终止 daemon。`start` 还会发布 `start_artifacts`，并只提示
 coordinator 一次。
 
@@ -134,7 +140,7 @@ DAG 中定义未变的同名 artifact 才会被继承；唯一例外是 Host pro
 A1-A3 等昂贵的已验收输出，同时从新增的 A5 或其他后续节点开始工作。
 
 所有 Host 控制命令都从主仓库根目录以 `./oc-ctl` 运行，避免因相对路径变化产生额外的
-命令授权。`plan-id` 是 `experiments/` 下的目录名，不是任意文件系统路径。
+命令授权。`plan-id` 是 `experiment-plans/` 下的目录名，不是任意文件系统路径。
 
 ## 观察和调度
 
@@ -170,8 +176,29 @@ artifact 的关键字段为：
 ./oc-ctl publish ontology-3-009 qb
 ```
 
-`publish` 不能发布角色拥有的 `.<role>` artifact，也不能绕过缺失输入或文件 checks。
+普通 `publish` 不能发布角色拥有的 `.<role>` artifact，也不能绕过缺失输入或文件 checks。
 自动 checks 成功不等于人工验收成功。
+
+Host 需要修复、预制或替换角色状态时，使用显式强制干预：
+
+```bash
+./oc-ctl update ontology-3-009 role/output.telora=host/replacement.telora --force
+./oc-ctl publish ontology-3-009 candidate.a3 --force
+./oc-ctl publish ontology-3-009 candidate.a3=! --force
+```
+
+`--force` 只越过角色所有权，不绕过安全路径、未知 artifact、DAG 输入或 checks。受到影响的
+进行中任务会归档为 stale。干预事件写入 execution 和 workspace 的
+`control/host-interventions/`，并在 `status/stat` 中显示。
+
+角色意外退出循环时执行：
+
+```bash
+./oc-ctl resume ontology-3-009 a5
+```
+
+已经在工作或等待 pull 时该命令幂等成功；否则先恢复原会话，必要时由 coordinator 建立
+替代会话。只有观察到角色重新进入长期 pull loop 后命令才成功。
 
 需要反馈时，先在 Host 当前目录准备正文，再投递到 workspace，最后发布反馈 artifact：
 
@@ -233,17 +260,19 @@ cargo build --release -p telora
 
 ## 新增实验计划
 
-新计划应是 `experiments/<plan-id>/` 下的独立 Git 仓库，至少包含：
+新计划位于 `experiment-plans/<plan-id>/`，至少包含：
 
 ```text
-experiment.json      Host 配置、输入 artifact、权限预检、metrics 和 workflow
-opencode.json        固定 Agent、模型和参数
+experiment.json      workspace、通用角色能力、输入 artifact、metrics 和 workflow
 README.md            角色、DAG、运行和交付说明
 EVAL-METHOD.md        隔离、验收、观察、迭代和归因方法
 <role-area>/GOAL.md  各角色只在任务就绪后读取的目标
+roles/<role>.md       不含 runtime frontmatter 的角色工作协议
+host/                 不复制到初始 workspace 的 Host-only 验收资产
 ```
 
-`experiment.json.workflow` 使用 `telora.opencode-artifact-workflow/v1`：
+顶层 schema 使用 `telora.experiment-plan/v1`，`experiment.json.workflow` 使用
+`telora.artifact-workflow/v1`：
 
 - `name.<role>` 由对应角色通过 `oc-task submit` 发布；
 - 无角色后缀的 `name` 只能由 Host 通过 `oc-ctl publish` 发布；
@@ -274,8 +303,8 @@ loop {
 - `oc-run` 立即报告端口冲突：换用明确的空闲端口重新启动；此时尚未冻结或启动实验。
 - `start` 报告缺少 connection test：回到主仓库运行同 test-id 的
   `./oc-ctl test-connect`；它不会启动实验，完成后再从 plan 目录执行 `start`。
-- `start` 拒绝 plan：确认 plan 是独立 Git worktree、干净且已有 commit，并且命令位于
-  `experiments/<plan-id>/` 内。
+- `start` 拒绝 plan：确认 `experiment-plans/<plan-id>` 已提交且没有未提交修改，并从
+  Telora 仓根目录执行命令。
 - `mark-done` 是 invalid choice：当前协议只有 `oc-task pull` 和 `oc-task submit`；旧命令
   不应再出现在角色提示中。
 - artifact 文件已经存在但任务仍 runnable：文件不驱动 DAG；检查输入与输出 artifact

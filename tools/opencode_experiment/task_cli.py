@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 
-SCHEMA = "telora.opencode-artifact-workflow/v1"
+SCHEMA = "telora.artifact-workflow/v1"
 TASK_SCHEMA = "telora.oc-task-attempt/v1"
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 
@@ -327,6 +327,15 @@ def _archive_active(root: Path, path: Path, task: dict[str, Any], status: str,
     return archived
 
 
+def supersede_role_task(root: Path, role: str, reason: str) -> dict[str, Any] | None:
+    with _locked(root):
+        path = _active_task_path(root, role)
+        task = _read_json(path)
+        if task is None:
+            return None
+        return _archive_active(root, path, task, "stale", reason)
+
+
 def evaluate(root: Path, workflow: dict[str, Any]) -> dict[str, Any]:
     artifacts = workflow["artifacts"]
     values: dict[str, dict[str, Any]] = {}
@@ -374,11 +383,11 @@ def workflow_status(root: Path, workflow: dict[str, Any]) -> dict[str, Any]:
         return evaluate(root, workflow)
 
 
-def publish_artifact(root: Path, workflow: dict[str, Any], name: str) -> dict[str, Any]:
+def publish_artifact(root: Path, workflow: dict[str, Any], name: str, *, force: bool = False) -> dict[str, Any]:
     artifact = workflow["artifacts"].get(name)
     if artifact is None:
         raise TaskError(f"unknown artifact: {name}", 64)
-    if artifact["owner"] is not None:
+    if artifact["owner"] is not None and not force:
         raise TaskError(f"role-owned artifact cannot be published by Host: {name}", 64)
     with _locked(root):
         value = evaluate(root, workflow)["artifacts"][name]
@@ -387,21 +396,34 @@ def publish_artifact(root: Path, workflow: dict[str, Any], name: str) -> dict[st
         if not value["checks"]["ready"]:
             raise TaskError(f"artifact checks are incomplete: {name}", 75)
         stamp = _atomic_write(_artifact_path(root, name), b"", value["input_mtime_ns"])
-    return {"schema": "telora.oc-artifact/v1", "artifact": name, "mtime_ns": stamp}
+        if force and artifact["owner"] is not None:
+            active_path = _active_task_path(root, artifact["owner"])
+            active = _read_json(active_path)
+            if active is not None:
+                _archive_active(root, active_path, active, "stale",
+                                f"Host force-published {name}")
+    return {"schema": "telora.oc-artifact/v1", "artifact": name, "mtime_ns": stamp,
+            "host_forced": force}
 
 
-def remove_artifact(root: Path, workflow: dict[str, Any], name: str) -> dict[str, Any]:
+def remove_artifact(root: Path, workflow: dict[str, Any], name: str, *, force: bool = False) -> dict[str, Any]:
     artifact = workflow["artifacts"].get(name)
     if artifact is None:
         raise TaskError(f"unknown artifact: {name}", 64)
-    if artifact["owner"] is not None:
+    if artifact["owner"] is not None and not force:
         raise TaskError(f"role-owned artifact cannot be removed by Host: {name}", 64)
     with _locked(root):
         path = _artifact_path(root, name)
         existed = path.is_file()
         path.unlink(missing_ok=True)
+        if force and artifact["owner"] is not None:
+            active_path = _active_task_path(root, artifact["owner"])
+            active = _read_json(active_path)
+            if active is not None:
+                _archive_active(root, active_path, active, "stale",
+                                f"Host force-removed {name}")
     return {"schema": "telora.oc-artifact/v1", "artifact": name,
-            "removed": True, "existed": existed}
+            "removed": True, "existed": existed, "host_forced": force}
 
 
 def restore_artifacts(root: Path, workflow: dict[str, Any], names: list[str]) -> list[dict[str, Any]]:

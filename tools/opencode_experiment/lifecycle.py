@@ -18,6 +18,7 @@ from .context import Context
 from .external import resolve_cli, resolve_command
 from .observe import latest_assistant, normalized, text_parts
 from .permissions import preflight_permissions
+from .runtime_opencode import ENVIRONMENT, generate as generate_opencode_adapter
 from .state import (
     SCHEMA, atomic_json, atomic_write, bind_plan, execution_root, load_state, locked, now, save_state,
 )
@@ -26,8 +27,7 @@ from .task_cli import TaskError, evaluate, publish_artifact, restore_artifacts
 
 def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
     environment = os.environ.copy()
-    environment.update(state.get("opencode_environment", {}))
-    environment["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = "128000"
+    environment.update(ENVIRONMENT)
     return environment
 
 
@@ -61,20 +61,41 @@ def _copy_file(source: Path, destination: Path, mode: int) -> None:
     shutil.copyfile(source, destination); destination.chmod(mode)
 
 
-def plan_git_metadata(manifest: Manifest) -> tuple[str, str]:
+def plan_git_metadata(repo: Path, manifest: Manifest) -> tuple[str, str]:
     git = resolve_cli("git")
-    top = subprocess.run([*git, "rev-parse", "--show-toplevel"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if top.returncode or Path(top.stdout.strip()).resolve() != manifest.root.resolve():
-        raise ControlError(f"experiment plan must be an independent Git worktree: {manifest.root}", 66)
-    dirty = subprocess.run([*git, "status", "--porcelain"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    relative = manifest.root.relative_to(repo)
+    tracked = subprocess.run(
+        [*git, "ls-files", "--error-unmatch", str(relative / manifest.manifest_name)],
+        cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if tracked.returncode:
+        raise ControlError(f"experiment plan is not tracked by the Telora repository: {relative}", 66)
+    dirty = subprocess.run(
+        [*git, "status", "--porcelain", "--", str(relative)], cwd=repo, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
     if dirty.returncode or dirty.stdout:
-        raise ControlError("experiment plan worktree must be clean and committed", 65)
-    revision = subprocess.run([*git, "rev-parse", "HEAD"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        raise ControlError("experiment plan must be clean and committed in the Telora repository", 65)
+    revision = subprocess.run([*git, "rev-parse", "HEAD"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if revision.returncode:
         raise ControlError("experiment plan has no committed revision", 66)
-    remote = subprocess.run([*git, "remote", "get-url", "origin"], cwd=manifest.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    source = remote.stdout.strip() if not remote.returncode else str(manifest.root.resolve())
+    remote = subprocess.run([*git, "remote", "get-url", "origin"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    source = remote.stdout.strip() if not remote.returncode else str(repo.resolve())
     return revision.stdout.strip(), source
+
+
+def _copy_plan_workspace(manifest: Manifest, workspace: Path) -> None:
+    workspace.mkdir(parents=True, exist_ok=False)
+    for relative in manifest.workspace:
+        source = manifest.root / relative
+        destination = workspace / relative
+        if source.is_dir():
+            for child in source.rglob("*"):
+                if child.is_symlink():
+                    raise ControlError(f"unsafe symlink in workspace input: {child}", 66)
+            shutil.copytree(source, destination, symlinks=False)
+        else:
+            _copy_file(source, destination, source.stat().st_mode & 0o7777)
 
 
 def _port_free(port: int) -> bool:
@@ -161,18 +182,14 @@ def start_requested(root: Path) -> bool:
 
 def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
     workspace = Path(state["workspace"])
-    if state.get("opencode_environment", {}) != manifest.environment:
-        raise ControlError("opencode environment changed since preparation")
     if state.get("workflow") != manifest.workflow:
         raise ControlError("workflow changed since preparation")
     if sha256(manifest.root / manifest.manifest_name) != state["input_hashes"].get(manifest.manifest_name):
         raise ControlError(f"{manifest.manifest_name} changed since preparation")
-    if sha256(manifest.root / "opencode.json") != state["input_hashes"].get("opencode.json"):
-        raise ControlError("opencode.json changed since preparation")
-    git = resolve_cli("git")
-    revision = subprocess.run([*git, "rev-parse", "HEAD"], cwd=workspace, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if revision.returncode or revision.stdout.strip() != state.get("plan_revision"):
-        raise ControlError("workspace plan revision changed after preparation")
+    for relative, expected in state.get("adapter_hashes", {}).items():
+        path = workspace / relative
+        if not path.is_file() or sha256(path) != expected:
+            raise ControlError(f"generated runtime adapter changed after preparation: {relative}")
     for item in manifest.artifacts:
         name = str(item["name"]); destination = workspace / str(item["to"])
         if not destination.is_file() or destination.is_symlink() or sha256(destination) != state["binary_hashes"].get(name):
@@ -204,13 +221,13 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             port = int(state["server_url"].rsplit(":", 1)[1])
             reserved_state = state
         port = port or 4096
-        revision, dirty = git_metadata(repo); plan_revision, plan_source = plan_git_metadata(manifest)
+        revision, dirty = git_metadata(repo); plan_revision, plan_source = plan_git_metadata(repo, manifest)
         run_root = Path(tempfile.mkdtemp(prefix=f"oc-exp-{exec_name}-", dir="/tmp")).resolve(); workspace = run_root / "ws"
         state: dict[str, Any] = {"schema": SCHEMA, "plan_id": plan_id, "exec_name": exec_name, "run_id": uuid.uuid4().hex,
             "phase": "preparing", "workspace": str(workspace), "run_root": str(run_root), "session_id": None,
             "server_url": f"http://127.0.0.1:{port}", "repository_revision": revision, "repository_dirty": dirty,
             "plan_revision": plan_revision, "plan_source": plan_source,
-            "opencode_environment": manifest.environment,
+            "opencode_environment": ENVIRONMENT,
             "workflow": manifest.workflow,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
             "artifact_overrides": dict(artifacts or {}),
@@ -220,11 +237,8 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             "started_at": None, "finished_at": None}
         save_state(root, state)
         try:
-            git = resolve_cli("git")
-            result = subprocess.run([*git, "clone", "--quiet", "--no-local", str(manifest.root), str(workspace)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if result.returncode: raise ControlError(f"failed to clone experiment plan: {result.stderr.decode(errors='replace')}", 70)
-            result = subprocess.run([*git, "checkout", "--quiet", plan_revision], cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if result.returncode: raise ControlError(f"failed to checkout experiment plan revision: {result.stderr.decode(errors='replace')}", 70)
+            _copy_plan_workspace(manifest, workspace)
+            state["adapter_hashes"] = generate_opencode_adapter(manifest, workspace)
             for item in manifest.artifacts:
                 name = str(item["name"]); source = Path((artifacts or {}).get(name, str(item["source"])))
                 if not source.is_absolute(): source = repo / source
@@ -236,7 +250,6 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             state["reporting"] = manifest.reporting
             state["metrics"] = manifest.metrics
             state["input_hashes"][manifest.manifest_name] = sha256(manifest.root / manifest.manifest_name)
-            state["input_hashes"]["opencode.json"] = sha256(manifest.root / "opencode.json")
             if from_test_id is not None:
                 state["inheritance"] = _inherit_execution(repo, from_test_id, plan_id, workspace,
                                                             manifest.workflow)
@@ -353,7 +366,7 @@ def _inheritance_compatible(old: Any, new: dict[str, Any], old_status: dict[str,
     )
 
 def publish_workflow_artifact(context: Context, artifact: str, reason: str, *,
-                              once: str | None = None) -> dict[str, Any]:
+                              once: str | None = None, force: bool = False) -> dict[str, Any]:
     workflow = context.state.get("workflow")
     if not workflow:
         raise ControlError("execution plan has no workflow", 64)
@@ -362,7 +375,7 @@ def publish_workflow_artifact(context: Context, artifact: str, reason: str, *,
         if once and state.get(once):
             return dict(state[once])
         try:
-            result = publish_artifact(Path(state["workspace"]), workflow, artifact)
+            result = publish_artifact(Path(state["workspace"]), workflow, artifact, force=force)
         except TaskError as exc:
             raise ControlError(str(exc), exc.code) from None
         number = int(state.get("next_artifact_event", 0))
@@ -492,7 +505,11 @@ def copy_archive(context: Context, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
     try:
-        for relative in context.manifest.archive:
+        # Provider adapters are runtime evidence, not part of the portable plan's archive list.
+        adapter_archive = ((".opencode", "opencode.json", "experiment.json")
+                           if context.state.get("adapter_hashes") else ())
+        archive = (*context.manifest.archive, *adapter_archive)
+        for relative in archive:
             source = workspace / relative
             if source.is_symlink() or not source.resolve().is_relative_to(workspace): raise ControlError(f"unsafe archive path: {relative}")
             target = staging / relative

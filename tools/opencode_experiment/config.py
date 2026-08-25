@@ -17,9 +17,6 @@ class ControlError(Exception):
 
 
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
-OPENCODE_ENVIRONMENT = {
-    "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": lambda value: value.isascii() and value.isdigit() and int(value) > 0,
-}
 TELORA_SUBCOMMANDS = frozenset({"check", "lsp", "query", "run"})
 
 
@@ -65,17 +62,20 @@ def _keys(value: dict[str, Any], allowed: set[str], where: str) -> None:
 class Manifest:
     plan_id: str
     root: Path
-    prompts: dict[str, str]
+    workspace: tuple[str, ...]
+    roles: dict[str, dict[str, Any]]
     validation: tuple[dict[str, Any], ...]
     archive: tuple[str, ...]
     observe: tuple[str, ...]
     artifacts: tuple[dict[str, Any], ...]
-    environment: dict[str, str]
-    permission_preflight: dict[str, tuple[str, ...]] = field(default_factory=dict)
     reporting: dict[str, Any] = field(default_factory=lambda: {"sinks": []})
     manifest_name: str = "experiment.json"
     metrics: dict[str, Any] = field(default_factory=lambda: {"roles": {}})
     workflow: dict[str, Any] | None = None
+
+    @property
+    def permission_preflight(self) -> dict[str, tuple[str, ...]]:
+        return {name: tuple(role["preflight"]) for name, role in self.roles.items()}
 
 def _string_array(value: Any, where: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
@@ -103,7 +103,7 @@ def _validate_permission_preflight_command(command: str, where: str) -> None:
 
 def load_manifest(repo: Path, plan_id: str) -> Manifest:
     validate_identifier(plan_id, "plan-id")
-    root = repo / "experiments" / plan_id
+    root = repo / "experiment-plans" / plan_id
     path = root / "experiment.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -113,17 +113,47 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         raise ControlError(f"invalid experiment plan manifest: {exc}") from None
     if not isinstance(data, dict):
         raise ControlError("experiment manifest must be an object")
-    _keys(data, {"schema", "prompts", "validation", "archive", "observe", "artifacts", "environment", "permission_preflight", "reporting", "metrics", "workflow"}, "manifest")
-    if data.get("schema") != "telora.opencode-cloned-plan/v1":
+    _keys(data, {"schema", "workspace", "roles", "validation", "archive", "observe", "artifacts", "reporting", "metrics", "workflow"}, "manifest")
+    if data.get("schema") != "telora.experiment-plan/v1":
         raise ControlError("unsupported experiment manifest schema")
 
-    prompts = data.get("prompts")
-    if not isinstance(prompts, dict) or set(prompts) != {"start", "continue"} or not all(isinstance(x, str) and x.strip() for x in prompts.values()):
-        raise ControlError("prompts must contain nonempty start and continue strings")
+    workspace = _string_array(data.get("workspace", []), "workspace")
+    for item in workspace:
+        safe_relative(item, "workspace path")
+        source = root / item
+        if not source.exists() or source.is_symlink():
+            raise ControlError(f"missing or unsafe workspace input: {item}", 66)
+    roles = data.get("roles")
+    if not isinstance(roles, dict) or not roles:
+        raise ControlError("roles must be a non-empty object")
+    normalized_roles: dict[str, dict[str, Any]] = {}
+    for name, role in roles.items():
+        validate_identifier(name, "role")
+        if not isinstance(role, dict):
+            raise ControlError(f"roles.{name} must be an object")
+        _keys(role, {"description", "instructions", "read", "write", "commands", "preflight"}, f"roles.{name}")
+        description = role.get("description")
+        instructions = role.get("instructions")
+        if not isinstance(description, str) or not description.strip():
+            raise ControlError(f"roles.{name}.description must be nonempty")
+        if not isinstance(instructions, str):
+            raise ControlError(f"roles.{name}.instructions must be a path")
+        safe_relative(instructions, f"roles.{name}.instructions")
+        if not (root / instructions).is_file():
+            raise ControlError(f"missing role instructions: {instructions}", 66)
+        normalized_role = {"description": description, "instructions": instructions}
+        for key in ("read", "write", "commands", "preflight"):
+            values = _string_array(role.get(key, []), f"roles.{name}.{key}")
+            if key in ("read", "write"):
+                for value in values:
+                    safe_relative(value.removesuffix("/**").removesuffix("/*"), f"roles.{name}.{key}")
+            if key == "preflight":
+                for index, command in enumerate(values):
+                    _validate_permission_preflight_command(command, f"roles.{name}.preflight[{index}]")
+            normalized_role[key] = values
+        normalized_roles[name] = normalized_role
     validation = data.get("validation", [])
     artifacts = data.get("artifacts", [])
-    environment = data.get("environment", {})
-    permission_preflight = data.get("permission_preflight", {})
     reporting = data.get("reporting", {"sinks": []})
     metrics = data.get("metrics", {"roles": {}})
     workflow = data.get("workflow")
@@ -131,18 +161,6 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
     observe = _string_array(data.get("observe", []), "observe")
     if not isinstance(validation, list) or not isinstance(artifacts, list):
         raise ControlError("validation and artifacts must be arrays")
-    if not isinstance(environment, dict):
-        raise ControlError("environment must be an object")
-    if not isinstance(permission_preflight, dict):
-        raise ControlError("permission_preflight must be an object")
-    normalized_preflight = {}
-    for role, commands in permission_preflight.items():
-        validate_identifier(role, "permission preflight role")
-        where = f"permission_preflight.{role}"
-        normalized_commands = _string_array(commands, where)
-        for index, command in enumerate(normalized_commands):
-            _validate_permission_preflight_command(command, f"{where}[{index}]")
-        normalized_preflight[role] = tuple(normalized_commands)
     if not isinstance(reporting, dict):
         raise ControlError("reporting must be an object")
     _keys(reporting, {"sinks"}, "reporting")
@@ -239,12 +257,6 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
             normalized_definition["work_phase"] = work_phase
             normalized_definition["work_files"] = work_files
         normalized_metric_roles[role] = normalized_definition
-    for name, value in environment.items():
-        validator = OPENCODE_ENVIRONMENT.get(name)
-        if validator is None:
-            raise ControlError(f"unsupported opencode environment variable: {name}")
-        if not isinstance(value, str) or not validator(value):
-            raise ControlError(f"invalid value for opencode environment variable: {name}")
     for item in validation:
         if not isinstance(item, dict):
             raise ControlError("validation entry must be an object")
@@ -273,7 +285,12 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
             workflow = validate_workflow(workflow)
         except TaskError as exc:
             raise ControlError(str(exc), exc.code) from None
-    return Manifest(plan_id, root, dict(prompts), tuple(validation), tuple(archive),
-                    tuple(observe), tuple(artifacts), dict(environment), normalized_preflight,
+        if list(normalized_roles) != workflow["roles"]:
+            raise ControlError("manifest roles must match workflow roles in declaration order")
+    unknown_metric_roles = set(normalized_metric_roles) - set(normalized_roles)
+    if unknown_metric_roles:
+        raise ControlError(f"metrics reference unknown role(s): {', '.join(sorted(unknown_metric_roles))}")
+    return Manifest(plan_id, root, tuple(workspace), normalized_roles, tuple(validation),
+                    tuple(archive), tuple(observe), tuple(artifacts),
                     {"sinks": normalized_sinks}, metrics={"roles": normalized_metric_roles},
                     workflow=workflow)

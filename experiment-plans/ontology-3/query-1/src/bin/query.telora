@@ -1,0 +1,20 @@
+import "@src/intent.json" { data as raw_intent };
+import "ent-1/query.telora" as enterprise;
+import "std/codec" as codec;
+import "std/json" as json;
+import "std/result" as result;
+import "std/value" { Value };
+
+def intent: enterprise.QueryRequest = codec.decode(enterprise.QueryRequest, raw_intent)
+    |> result.unwrap;
+def query = enterprise.lower(intent);
+def intent_value: Value = codec.encode(Value, intent) |> result.unwrap;
+def query_value: Value = codec.encode(Value, query) |> result.unwrap;
+
+def response: Value = 'Object({
+    "status": 'String("ok"),
+    "intent": intent_value,
+    "query": query_value,
+});
+
+export def output: String = json.stringify(response);

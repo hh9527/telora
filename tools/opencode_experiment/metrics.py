@@ -298,13 +298,17 @@ def collect_metrics(
     configured = config.get("roles", {})
     roles = []
     messages_by_role: dict[str, list[dict[str, Any]]] = {}
+    children_by_role: dict[str, list[dict[str, Any]]] = {}
     for child in children:
         agent = child.get("agent")
         session_id = child.get("id") or child.get("session_id")
         if not isinstance(agent, str) or not isinstance(session_id, str):
             continue
-        messages = load_messages(session_id)
-        messages_by_role.setdefault(agent, []).extend(messages)
+        children_by_role.setdefault(agent, []).append(child)
+        messages_by_role.setdefault(agent, []).extend(load_messages(session_id))
+    for agent, role_children in children_by_role.items():
+        messages = messages_by_role[agent]
+        messages.sort(key=lambda message: message.get("info", {}).get("time", {}).get("created", 0))
         definition = configured.get(agent)
         phases = []
         for name, kind, phase_messages in _phase_messages(messages, workspace, definition):
@@ -314,14 +318,16 @@ def collect_metrics(
         time = _time(assistant)
         elapsed = time["span_ms"]
         time["waiting_ms"] = max(0, elapsed - time["active_ms"]) if elapsed is not None else None
-        model = child.get("model", {})
+        latest_child = role_children[-1]
+        model = latest_child.get("model", {})
         artifacts, metric_warnings = _artifact_metrics(workspace, definition or {})
         work_fresh = sum(phase["tokens"]["fresh"] for phase in phases if phase["kind"] == "work")
         code_lines = artifacts.get("code", {}).get("total", {}).get("lines", 0)
         roles.append({
             "agent": agent,
-            "session_id": session_id,
-            "title": child.get("title"),
+            "session_id": latest_child.get("id") or latest_child.get("session_id"),
+            "session_ids": [child.get("id") or child.get("session_id") for child in role_children],
+            "title": latest_child.get("title"),
             "model": {"provider": model.get("providerID"), "id": model.get("id"), "variant": model.get("variant")},
             "classification": {
                 "configured": definition is not None,

@@ -44,6 +44,7 @@ from tools.opencode_experiment.lifecycle import (
     run_validation,
     start_requested,
 )
+from tools.opencode_experiment.runtime_opencode import ENVIRONMENT, MODEL, generate
 from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
 from tools.opencode_experiment.permissions import preflight_permissions
@@ -52,7 +53,9 @@ from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull,
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
+    _publish,
     _resume,
+    _role_output_owners,
     _status,
     _test_connect,
     _update,
@@ -110,17 +113,40 @@ class ServerTest(unittest.TestCase):
 
 
 class ConfigStateTest(unittest.TestCase):
+    PULL_MESSAGE = [{
+        "info": {"role": "assistant"},
+        "parts": [{"type": "tool", "tool": "bash", "state": {
+            "status": "running", "input": {"command": "./bin/oc-task pull a5"},
+        }}],
+    }]
+
     @staticmethod
-    def write_plan(plan: Path, *, environment: dict[str, str] | None = None) -> None:
+    def write_plan(plan: Path) -> None:
         plan.mkdir(parents=True)
+        (plan / "roles").mkdir()
+        (plan / "host").mkdir()
+        (plan / "roles" / "a1.md").write_text("Keep pulling work.\n", encoding="utf-8")
+        (plan / "host" / "secret.md").write_text("hidden\n", encoding="utf-8")
+        (plan / "seed.txt").write_text("seed\n", encoding="utf-8")
         (plan / "experiment.json").write_text(json.dumps({
-            "schema": "telora.opencode-cloned-plan/v1",
-            "prompts": {"start": "start", "continue": "continue"},
+            "schema": "telora.experiment-plan/v1",
+            "workspace": ["seed.txt"],
+            "roles": {"a1": {
+                "description": "worker", "instructions": "roles/a1.md",
+                "read": ["seed.txt"], "write": ["output.txt"],
+                "commands": ["./bin/oc-task pull a1", "./bin/oc-task submit a1 *"],
+                "preflight": ["./bin/oc-task pull a1", "./bin/oc-task submit a1 *"],
+            }},
             "artifacts": [{"name": "tool", "source": "tool", "to": "bin/tool", "mode": "0555"}],
             "validation": [], "observe": ["bin"], "archive": ["bin", "opencode.json", "experiment.json"],
-            "environment": environment or {},
         }))
-        (plan / "opencode.json").write_text(json.dumps({"default_agent": "main", "permission": "deny"}))
+
+    @staticmethod
+    def commit_repo(repo: Path) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                        "commit", "--quiet", "-m", "plan"], cwd=repo, check=True)
 
     def test_identifiers_and_paths(self):
         self.assertEqual(validate_identifier("a2-001", "exec"), "a2-001")
@@ -132,13 +158,11 @@ class ConfigStateTest(unittest.TestCase):
     def test_manifest_rejects_unknown_telora_preflight_subcommand(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
-            plan = repo / "experiments" / "demo"
+            plan = repo / "experiment-plans" / "demo"
             self.write_plan(plan)
             path = plan / "experiment.json"
             manifest = json.loads(path.read_text(encoding="utf-8"))
-            manifest["permission_preflight"] = {
-                "a1": ["./bin/telora types --limit 20"],
-            }
+            manifest["roles"]["a1"]["preflight"] = ["./bin/telora types --limit 20"]
             path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(
                 ControlError,
@@ -146,7 +170,7 @@ class ConfigStateTest(unittest.TestCase):
             ):
                 load_manifest(repo, "demo")
 
-            manifest["permission_preflight"]["a1"] = [
+            manifest["roles"]["a1"]["preflight"] = [
                 "./bin/telora query exports @bin/main.telora -C query-builder",
             ]
             path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -159,6 +183,12 @@ class ConfigStateTest(unittest.TestCase):
         args = control_parser().parse_args(["publish", "run", "draft", "result"])
         self.assertEqual((args.command, args.test_id, args.artifacts),
                          ("publish", "run", ["draft", "result"]))
+        forced = control_parser().parse_args(["publish", "run", "draft", "--force"])
+        self.assertTrue(forced.force)
+        forced_update = control_parser().parse_args(
+            ["update", "run", "output.txt=input.txt", "--force"]
+        )
+        self.assertTrue(forced_update.force)
 
     def test_stat_command_is_available(self):
         args = control_parser().parse_args(["stat", "run"])
@@ -171,42 +201,73 @@ class ConfigStateTest(unittest.TestCase):
     def test_resume_targets_an_existing_inactive_role(self):
         client = mock.Mock()
         client.children.return_value = [{"id": "ses_a5", "agent": "a5"}]
-        client.statuses.return_value = {"ses_a5": {"type": "unknown"}}
+        client.statuses.side_effect = [
+            {"ses_a5": {"type": "idle"}},
+            {"ses_a5": {"type": "busy"}},
+        ]
+        client.session_messages.return_value = self.PULL_MESSAGE
         context = mock.Mock()
-        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]}}
-        context.manifest.prompts = {"continue": "continue"}
+        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]},
+                         "session_id": "ses_coordinator"}
         context.client.return_value = client
 
-        self.assertEqual(_resume(context, "a5")["session_id"], "ses_a5")
-        client.prompt_session.assert_called_once_with("ses_a5", "continue", agent="a5")
+        result = _resume(context, "a5", .01)
+        self.assertEqual(result["session_id"], "ses_a5")
+        self.assertTrue(result["loop_observed"])
+        client.prompt_session.assert_called_once()
 
-    def test_resume_rejects_a_busy_role(self):
+    def test_resume_is_idempotent_for_a_busy_role(self):
         client = mock.Mock()
         client.children.return_value = [{"id": "ses_a5", "agent": "a5"}]
         client.statuses.return_value = {"ses_a5": {"type": "busy"}}
+        client.session_messages.return_value = self.PULL_MESSAGE
         context = mock.Mock()
         context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]}}
-        context.manifest.prompts = {"continue": "continue"}
         context.client.return_value = client
 
-        with self.assertRaisesRegex(ControlError, "already busy"):
-            _resume(context, "a5")
+        self.assertEqual(_resume(context, "a5")["action"], "already_running")
+        client.prompt_session.assert_not_called()
 
-    def test_resume_rejects_unknown_role_or_ambiguous_session(self):
+    def test_resume_rejects_unknown_role_and_recreates_missing_session(self):
         context = mock.Mock()
         context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]}}
 
         with self.assertRaisesRegex(ControlError, "unknown workflow role"):
             _resume(context, "a4")
 
+        context.state["session_id"] = "ses_coordinator"
         client = mock.Mock()
-        client.children.return_value = [
-            {"id": "ses_a5_old", "agent": "a5"},
-            {"id": "ses_a5_new", "agent": "a5"},
-        ]
+        client.children.side_effect = [[], [{"id": "ses_a5_new", "agent": "a5"}]]
+        client.statuses.side_effect = [{}, {"ses_a5_new": {"type": "busy"}}]
+        client.session_messages.return_value = self.PULL_MESSAGE
         context.client.return_value = client
-        with self.assertRaisesRegex(ControlError, "expected one existing a5 session, found 2"):
-            _resume(context, "a5")
+        result = _resume(context, "a5", .01)
+        self.assertEqual((result["action"], result["session_id"]), ("recreated", "ses_a5_new"))
+        client.prompt_session.assert_called_once_with(
+            "ses_coordinator", mock.ANY, agent="coordinator"
+        )
+
+    def test_resume_replaces_an_existing_session_that_does_not_reenter_loop(self):
+        client = mock.Mock()
+        old = {"id": "ses_a5_old", "agent": "a5"}
+        new = {"id": "ses_a5_new", "agent": "a5"}
+        client.children.side_effect = [[old], [old], [old, new]]
+        client.statuses.side_effect = [
+            {"ses_a5_old": {"type": "idle"}},
+            {"ses_a5_old": {"type": "idle"}},
+            {"ses_a5_old": {"type": "idle"}, "ses_a5_new": {"type": "busy"}},
+        ]
+        client.session_messages.return_value = self.PULL_MESSAGE
+        context = mock.Mock()
+        context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]},
+                         "session_id": "ses_coordinator"}
+        context.client.return_value = client
+        with mock.patch("tools.opencode_experiment.cli_ctl.time.monotonic",
+                        side_effect=[0, 1, 1, 1]):
+            result = _resume(context, "a5", .5)
+        self.assertEqual((result["action"], result["session_id"]), ("recreated", "ses_a5_new"))
+        self.assertEqual(client.prompt_session.call_args_list[0].args[0], "ses_a5_old")
+        self.assertEqual(client.prompt_session.call_args_list[1].args[0], "ses_coordinator")
 
     def test_start_requires_test_and_plan_identity(self):
         args = control_parser().parse_args(["start", "ontology-3-009", "ontology-3"])
@@ -239,7 +300,7 @@ class ConfigStateTest(unittest.TestCase):
     def test_host_configures_the_explicit_plan_and_runner_port(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
-            plan = repo / "experiments" / "demo"
+            plan = repo / "experiment-plans" / "demo"
             self.write_plan(plan)
             record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
             create_runner_config(repo, "run-001", 43123)
@@ -261,10 +322,10 @@ class ConfigStateTest(unittest.TestCase):
     def test_inheritance_copies_only_current_unchanged_artifact_outputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
-            plan = repo / "experiments" / "demo"
+            plan = repo / "experiment-plans" / "demo"
             plan.mkdir(parents=True)
             workflow = validate_workflow({
-                "schema": "telora.opencode-artifact-workflow/v1",
+                "schema": "telora.artifact-workflow/v1",
                 "roles": ["a1", "a5"],
                 "start_artifacts": ["lang"],
                 "finish_artifact": "answer",
@@ -339,7 +400,7 @@ class ConfigStateTest(unittest.TestCase):
     def test_start_requires_a_connection_test_before_freezing_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
-            plan = repo / "experiments" / "demo"
+            plan = repo / "experiment-plans" / "demo"
             self.write_plan(plan)
             create_runner_config(repo, "run-001", 43123)
             with self.assertRaisesRegex(ControlError, "test-connect"):
@@ -349,7 +410,7 @@ class ConfigStateTest(unittest.TestCase):
     def test_start_requires_the_external_runner_after_connection_preflight(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
-            plan = repo / "experiments" / "demo"
+            plan = repo / "experiment-plans" / "demo"
             self.write_plan(plan)
             record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
             with self.assertRaisesRegex(ControlError, "oc-run run-001 <port>"):
@@ -362,7 +423,7 @@ class ConfigStateTest(unittest.TestCase):
             record_connect_test(repo, "run-001", {"health": True, "session_id": "ses_probe"})
             create_runner_config(repo, "run-001", 4199)
             create_run_config(repo, "run-001", "demo", 4200)
-            plan = repo / "experiments" / "demo"
+            plan = repo / "experiment-plans" / "demo"
             self.write_plan(plan)
             with self.assertRaisesRegex(ControlError, "does not match"):
                 _configure_start(repo, "run-001", "demo")
@@ -459,6 +520,53 @@ class ConfigStateTest(unittest.TestCase):
                 _update(context, [f"../escaped.md={source}"])
             self.assertFalse((root / "escaped.md").exists())
 
+    def test_role_output_check_matches_direct_and_nested_glob_paths(self):
+        workflow = {
+            "artifacts": {
+                "ontology.a3": {
+                    "owner": "a3",
+                    "checks": ["ontology/src/**/*.telora"],
+                },
+            },
+        }
+        self.assertEqual(_role_output_owners(workflow, "ontology/src/ontology.telora"), ["a3"])
+        self.assertEqual(_role_output_owners(workflow, "ontology/src/bin/main.telora"), ["a3"])
+
+    def test_force_update_and_publish_cross_role_ownership_and_record_events(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            source = root / "replacement.txt"
+            source.write_text("replacement", encoding="utf-8")
+            workflow = validate_workflow({
+                "schema": "telora.artifact-workflow/v1",
+                "roles": ["a1"],
+                "start_artifacts": ["lang"],
+                "finish_artifact": "accepted",
+                "artifacts": {
+                    "lang": {"desc": "input"},
+                    "draft.a1": {"desc": "draft", "input": ["lang"],
+                                 "checks": ["output.txt"], "instruction": "build"},
+                    "accepted": {"desc": "accepted", "input": ["draft.a1"]},
+                },
+            })
+            context = mock.Mock()
+            context.root = root / "execution"
+            context.state = {"exec_name": "run", "phase": "idle",
+                             "workspace": str(workspace), "workflow": workflow}
+            with self.assertRaisesRegex(ControlError, "requires --force"):
+                _update(context, [f"output.txt={source}"])
+            updated = _update(context, [f"output.txt={source}"], force=True)
+            self.assertTrue(updated[0]["host_forced"])
+            removed = _publish(context, ["draft.a1=!"], force=True)
+            self.assertTrue(removed[0]["host_forced"])
+            events = list((context.root / "host-interventions").glob("*.json"))
+            self.assertEqual(len(events), 2)
+            self.assertEqual(
+                len(list((workspace / "control/host-interventions").glob("*.json"))), 2
+            )
+
     def test_atomic_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); (root / "plan").write_text("plan\n")
@@ -467,22 +575,39 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_ontology_3_pins_model_and_uses_file_driven_workflow(self):
         repo = Path(__file__).resolve().parents[3]
-        plan = repo / "experiments" / "ontology-3"
-        model = "deepseek/deepseek-v4-flash"
-        self.assertEqual(json.loads((plan / "opencode.json").read_text())["model"], model)
-        for role in ("coordinator", "a1", "a2", "a3", "a4", "a5"):
-            text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
-            self.assertIn(f'model: "{model}"', text)
-        coordinator = (plan / ".opencode" / "agents" / "coordinator.md").read_text(encoding="utf-8")
-        self.assertIn("同时启动 A1、A2、A3、A4、A5 各一次", coordinator)
-        self.assertNotIn("touch", coordinator)
+        plan = repo / "experiment-plans" / "ontology-3"
+        self.assertFalse((plan / "opencode.json").exists())
+        self.assertFalse((plan / ".opencode").exists())
         manifest = load_manifest(repo, "ontology-3")
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            first = generate(manifest, workspace)
+            first_content = {path: (workspace / path).read_bytes() for path in first}
+            second = generate(manifest, workspace)
+            self.assertEqual(first, second)
+            self.assertEqual(first_content, {path: (workspace / path).read_bytes() for path in second})
+            self.assertEqual(json.loads((workspace / "opencode.json").read_text())["model"], MODEL)
+            coordinator = (workspace / ".opencode/agents/coordinator.md").read_text()
+            self.assertIn("同时启动 A1、A2、A3、A4、A5 各一次", coordinator)
+            a4 = (workspace / ".opencode/agents/a4.md").read_text(encoding="utf-8")
+            a4_permission_line = next(
+                line.removeprefix("permission: ")
+                for line in a4.splitlines()
+                if line.startswith("permission: ")
+            )
+            a4_permissions = json.loads(a4_permission_line)
+            self.assertEqual(a4_permissions["read"]["*"], "deny")
+            self.assertNotIn("ent-1/**", a4_permissions["read"])
+            self.assertEqual(
+                a4_permissions["bash"]["./bin/telora query exports @bin/main.telora -C intent-1"],
+                "allow",
+            )
         self.assertEqual(
             [phase["name"] for phase in manifest.metrics["roles"]["a3"]["work_phases"]],
             ["modeling", "query_surface_design"],
         )
         workflow = manifest.workflow
-        self.assertEqual(workflow["schema"], "telora.opencode-artifact-workflow/v1")
+        self.assertEqual(workflow["schema"], "telora.artifact-workflow/v1")
         self.assertEqual(workflow["start_artifacts"],
                          ["lang", "qb-req", "edsl-req", "domain-ent-1", "intent-req", "homework"])
         self.assertEqual(workflow["finish_artifact"], "answer")
@@ -527,60 +652,38 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("./bin/oc-task pull a1", manifest.permission_preflight["a1"])
         self.assertIn("./bin/oc-task submit a2 *", manifest.permission_preflight["a2"])
         self.assertIn("./bin/oc-task submit a4 *", manifest.permission_preflight["a4"])
-        a4 = (plan / ".opencode" / "agents" / "a4.md").read_text(encoding="utf-8")
-        a4_permission_line = next(
-            line.removeprefix("permission: ")
-            for line in a4.splitlines()
-            if line.startswith("permission: ")
-        )
-        a4_permissions = json.loads(a4_permission_line)
-        self.assertEqual(a4_permissions["read"]["*"], "deny")
-        self.assertNotIn("ent-1/**", a4_permissions["read"])
-        self.assertNotIn("./bin/telora query at * -C intent-1", a4_permissions["bash"])
-        self.assertEqual(
-            a4_permissions["bash"]["./bin/telora query exports @bin/main.telora -C intent-1"],
-            "allow",
-        )
-        self.assertFalse(any("telora types" in command for command in a4_permissions["bash"]))
         for role in ("a1", "a2", "a3", "a4"):
-            text = (plan / ".opencode" / "agents" / f"{role}.md").read_text(encoding="utf-8")
+            text = (plan / "roles" / f"{role}.md").read_text(encoding="utf-8")
             self.assertNotIn("stopped: true", text)
             self.assertNotIn("telora types", text)
         self.assertNotIn("stop_path", workflow)
         self.assertFalse(any("mark-blocked" in command for commands in manifest.permission_preflight.values()
                              for command in commands))
-        self.assertEqual((plan / "ontology" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
-        self.assertEqual((plan / "ent-1" / "QUERY-BUILDER-FEEDBACK.md").stat().st_size, 0)
-        self.assertEqual((plan / "intent-1" / "FEEDBACK.md").stat().st_size, 0)
-        domain = (plan / "ent-1" / "DOMAIN.md").read_text(encoding="utf-8")
         ontology_goal = (plan / "ontology" / "GOAL.md").read_text(encoding="utf-8")
-        self.assertNotIn("一次结果必须同时保留", domain)
-        self.assertNotIn("多个非法意图产生诊断", ontology_goal)
+        intent_goal = (plan / "intent-1" / "GOAL.md").read_text(encoding="utf-8")
+        self.assertIn("Top N", ontology_goal)
+        self.assertIn("bindings", ontology_goal)
+        self.assertIn("bindings", intent_goal)
+        self.assertTrue((plan / "host/A5-HARD-QUERIES.md").is_file())
+        self.assertEqual(len(list((plan / "host/a5-cases").glob("*.problem.md"))), 10)
+        self.assertNotIn("host", manifest.workspace)
 
-    def test_manifest_validates_opencode_environment(self):
+    def test_opencode_environment_is_adapter_owned(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); plan = repo / "experiments" / "demo"
-            self.write_plan(plan, environment={"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"})
+            repo = Path(temporary); plan = repo / "experiment-plans" / "demo"
+            self.write_plan(plan)
             manifest = load_manifest(repo, "demo")
-            self.assertEqual(manifest.environment, {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"})
-            self.assertEqual(opencode_environment({"opencode_environment": manifest.environment})["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"], "128000")
-            self.assertEqual(opencode_environment({})["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"], "128000")
-
-        for environment in ({"PATH": "/tmp"}, {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "0"},
-                            {"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "lots"}):
-            with tempfile.TemporaryDirectory() as temporary:
-                repo = Path(temporary); plan = repo / "experiments" / "demo"
-                self.write_plan(plan, environment=environment)
-                with self.assertRaises(ControlError):
-                    load_manifest(repo, "demo")
+            self.assertNotIn("environment", json.loads((plan / "experiment.json").read_text()))
+            self.assertEqual(opencode_environment({})["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"],
+                             ENVIRONMENT["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"])
 
     def test_manifest_validates_metrics(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); plan = repo / "experiments" / "demo"
+            repo = Path(temporary); plan = repo / "experiment-plans" / "demo"
             self.write_plan(plan)
             path = plan / "experiment.json"
             data = json.loads(path.read_text())
-            data["metrics"] = {"roles": {"worker": {
+            data["metrics"] = {"roles": {"a1": {
                 "learning_phases": ["language_learning"],
                 "work_phase": "implementation",
                 "work_files": ["output/src/main.telora"],
@@ -591,16 +694,14 @@ class ConfigStateTest(unittest.TestCase):
             }}}
             path.write_text(json.dumps(data))
             metrics = load_manifest(repo, "demo").metrics
-            self.assertEqual(metrics["roles"]["worker"]["work_phase"], "implementation")
-            self.assertEqual(metrics["roles"]["worker"]["artifacts"]["code"]["core"], ["output/src/*.telora"])
+            self.assertEqual(metrics["roles"]["a1"]["work_phase"], "implementation")
+            self.assertEqual(metrics["roles"]["a1"]["artifacts"]["code"]["core"], ["output/src/*.telora"])
 
-    def test_prepare_clones_committed_plan_revision(self):
+    def test_prepare_copies_tracked_plan_and_generates_runtime_adapter(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
+            repo = Path(temporary); plan = repo / "experiment-plans" / "demo"; self.write_plan(plan)
             artifact = repo / "tool"; artifact.write_text("tool")
-            subprocess.run(["git", "init", "--quiet"], cwd=plan, check=True)
-            subprocess.run(["git", "add", "."], cwd=plan, check=True)
-            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "plan"], cwd=plan, check=True)
+            self.commit_repo(repo)
             git = ("git",)
             with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo), \
                  mock.patch("tools.opencode_experiment.lifecycle.git_metadata", return_value=("rev", False)), \
@@ -608,22 +709,22 @@ class ConfigStateTest(unittest.TestCase):
                  mock.patch("tools.opencode_experiment.lifecycle.subprocess.run", wraps=subprocess.run):
                 _root, state, created = prepare("demo", "run", 4567)
             self.assertTrue(created)
-            result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=state["workspace"], text=True, stdout=subprocess.PIPE)
-            self.assertEqual(result.stdout.strip(), state["plan_revision"])
-            self.assertTrue((Path(state["workspace"]) / "experiment.json").is_file())
-            self.assertEqual((Path(state["workspace"]) / "bin/tool").read_text(), "tool")
-            self.assertEqual(state["opencode_environment"], {})
-            self.assertEqual(state["permission_preflight"], {})
+            workspace = Path(state["workspace"])
+            self.assertTrue((workspace / "experiment.json").is_file())
+            self.assertTrue((workspace / ".opencode/agents/a1.md").is_file())
+            self.assertEqual((workspace / "bin/tool").read_text(), "tool")
+            self.assertEqual((workspace / "seed.txt").read_text(), "seed\n")
+            self.assertFalse((workspace / "host/secret.md").exists())
+            self.assertEqual(state["opencode_environment"], ENVIRONMENT)
+            self.assertEqual(set(state["permission_preflight"]), {"a1"})
             self.assertEqual(state["reporting"], {"sinks": []})
             self.assertEqual(state["metrics"], {"roles": {}})
 
     def test_reserve_waits_for_start_request_before_preparing(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
+            repo = Path(temporary); plan = repo / "experiment-plans" / "demo"; self.write_plan(plan)
             artifact = repo / "tool"; artifact.write_text("tool")
-            subprocess.run(["git", "init", "--quiet"], cwd=plan, check=True)
-            subprocess.run(["git", "add", "."], cwd=plan, check=True)
-            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "plan"], cwd=plan, check=True)
+            self.commit_repo(repo)
             with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo):
                 root, state = reserve("demo", "run", 4567)
                 self.assertEqual(state["phase"], "waiting")
@@ -643,11 +744,9 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_prepare_rejects_dirty_plan(self):
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary); plan = repo / "experiments" / "demo"; self.write_plan(plan)
+            repo = Path(temporary); plan = repo / "experiment-plans" / "demo"; self.write_plan(plan)
             artifact = repo / "tool"; artifact.write_text("tool")
-            subprocess.run(["git", "init", "--quiet"], cwd=plan, check=True)
-            subprocess.run(["git", "add", "."], cwd=plan, check=True)
-            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "plan"], cwd=plan, check=True)
+            self.commit_repo(repo)
             (plan / "dirty").write_text("dirty")
             with mock.patch("tools.opencode_experiment.lifecycle.repository_root", return_value=repo), \
                  mock.patch("tools.opencode_experiment.lifecycle.git_metadata", return_value=("rev", False)):
@@ -698,9 +797,9 @@ class ObserveQueryTest(unittest.TestCase):
             executable.write_text("#!/bin/sh\necho validated\n")
             executable.chmod(0o755)
             manifest = Manifest(
-                "demo", root, {},
+                "demo", root, (), {},
                 ({"name": "crate", "cwd": "crate", "command": ["../bin/tool"], "required": True},),
-                (), (), (), {},
+                (), (), (),
             )
             context = Context(root, root / "execution", {"workspace": str(workspace)}, manifest)
 
@@ -897,13 +996,31 @@ class MetricsTest(unittest.TestCase):
             self.assertEqual(document["roles"][0]["tokens"]["fresh"], 7)
 
 
+    def test_replacement_sessions_are_aggregated_as_one_role(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            messages = {
+                "old": [{"info": {"role": "assistant", "time": {"created": 1, "completed": 2},
+                                    "tokens": {"input": 3}}, "parts": []}],
+                "new": [{"info": {"role": "assistant", "time": {"created": 3, "completed": 4},
+                                    "tokens": {"input": 5}}, "parts": []}],
+            }
+            result = collect_metrics(
+                "run", "idle", workspace,
+                [{"id": "old", "agent": "a5"}, {"id": "new", "agent": "a5"}],
+                messages.__getitem__, {"roles": {}},
+            )
+            self.assertEqual(len(result["roles"]), 1)
+            self.assertEqual(result["roles"][0]["session_ids"], ["old", "new"])
+            self.assertEqual(result["roles"][0]["tokens"]["fresh"], 8)
+
+
 class ArchiveExportTest(unittest.TestCase):
     def test_archive_is_repeatable_allows_internal_file_links_and_rejects_escape(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary); root = repo / "role"; workspace = repo / "workspace"
             (workspace / "output").mkdir(parents=True); (workspace / "output" / "x").write_text("x")
-            manifest = Manifest("demo", repo, {"start": "s", "continue": "c"}, (),
-                                ("output",), ("output",), (), {})
+            manifest = Manifest("demo", repo, (), {}, (), ("output",), ("output",), ())
             context = Context(repo, root, {"workspace": str(workspace)}, manifest); destination = root / "result" / "workspace"
             copy_archive(context, destination); self.assertTrue((destination / "output/x").is_file())
             copy_archive(context, destination); self.assertTrue((destination / "output/x").is_file())
@@ -940,8 +1057,8 @@ class ArchiveExportTest(unittest.TestCase):
 
 class PermissionPreflightTest(unittest.TestCase):
     def manifest(self, root: Path, commands: tuple[str, ...]) -> Manifest:
-        return Manifest("demo", root, {"start": "s", "continue": "c"}, (), (), (), (), {},
-                        {"worker": commands})
+        return Manifest("demo", root, (), {"worker": {"preflight": list(commands)}},
+                        (), (), (), ())
 
     def workspace(self, root: Path, permission: object) -> Path:
         workspace = root / "ws"; agents = workspace / ".opencode" / "agents"
@@ -992,7 +1109,7 @@ class StatusSummaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
             workflow = validate_workflow({
-                "schema": "telora.opencode-artifact-workflow/v1",
+                "schema": "telora.artifact-workflow/v1",
                 "roles": ["a1"],
                 "start_artifacts": ["lang"],
                 "finish_artifact": "accepted",
@@ -1011,6 +1128,7 @@ class StatusSummaryTest(unittest.TestCase):
                 "exec_name": "demo", "phase": "active", "workspace": str(workspace),
                 "workflow": workflow,
             })
+            context.root = workspace / "execution"
             metrics = {"aggregate": {"tokens": {"fresh": 10}}}
             detail = {"agents": [{"role": "a1", "state": "waiting_on_pull"}],
                       "records": {"active": [], "history": []}}
@@ -1063,7 +1181,7 @@ class WatchTest(unittest.TestCase):
             save_state(root, {"schema": SCHEMA, "plan_id": "demo", "exec_name": "run",
                                "phase": "finished", "workspace": "/tmp/ws",
                                "server_url": "http://127.0.0.1:1", "session_id": "ses"})
-            manifest = Manifest("demo", root, {"start": "s", "continue": "c"}, (), (), (), (), {})
+            manifest = Manifest("demo", root, (), {}, (), (), (), ())
             context = Context(root, root, load_state(root), manifest)
             client = mock.Mock()
             client.messages.return_value = [{"info": {"id": "msg", "role": "assistant"}, "parts": [
@@ -1082,7 +1200,7 @@ class WatchTest(unittest.TestCase):
 
 class ReportingTest(unittest.TestCase):
     def context(self, root: Path, sinks: list[dict]) -> Context:
-        manifest = Manifest("demo", root, {"start": "s", "continue": "c"}, (), (), (), (), {})
+        manifest = Manifest("demo", root, (), {}, (), (), (), ())
         state = {"exec_name": "run", "reporting": {"sinks": sinks}}
         return Context(root, root / "execution", state, manifest)
 
