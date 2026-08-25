@@ -85,7 +85,7 @@ Issue 汇报只是观察的旁路输出，失败或延迟不能阻塞 `status`�
 
 ## 启动一次 execution
 
-启动需要两个终端。外部操作员只负责打开 TUI；Host 负责连接门禁、选择 plan 和开始
+启动需要两个终端。外部操作员只负责维护无头实验室；Host 负责连接门禁、选择 plan 和开始
 实验。外部 `oc-run` 可以在长程 bug fix 开始时预先运行：
 
 外部操作员在终端一、主仓库根目录运行：
@@ -97,7 +97,8 @@ Issue 汇报只是观察的旁路输出，失败或延迟不能阻塞 `status`�
 `oc-run` 不需要 plan-id，但必须由外部操作员指定端口。它立即在空的 runner workspace
 启动无头 OpenCode daemon，由 daemon 持续占有端口；冲突因此在长程任务开始时暴露，而
 不会延迟到正式实验启动。runner 固定使用
-`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000`，随后等待 Host 生成配置。不要关闭这个终端。
+`OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000`。它不读取 plan、不准备 workspace、
+不创建正式 session，也不启动 TUI；不要关闭这个终端。
 
 Host 在长程任务开头从主仓库运行连接测试：
 
@@ -116,11 +117,10 @@ Host 在长程任务开头从主仓库运行连接测试：
 
 `start` 首先要求该 test-id 已有成功的连接测试凭据和正在等待的外部 runner，然后从当前
 仓库的 `experiment-plans/<plan-id>` 加载并校验计划，采用 runner 已保留的端口，并原子写入
-`target/exp/<test-id>/config.json`。随后 `oc-run` 才会复制声明的 workspace 资产、生成
-OpenCode adapter、构建或复制声明的 artifact、执行权限预检，在同一个 daemon 上为正式
-workspace 创建 session，并启动 TUI
-attach。TUI 退出时 `oc-run` 终止 daemon。`start` 还会发布 `start_artifacts`，并只提示
-coordinator 一次。
+`target/exp/<test-id>/config.json`。随后 `oc-ctl start` 复制声明的 workspace 资产、生成
+OpenCode adapter、构建或复制声明的 artifact、执行权限预检，并在同一个 daemon 上为正式
+workspace 创建 session。`start` 还会发布 `start_artifacts`，并只提示 coordinator 一次。
+准备或启动失败只返回给 Host，不会终止 `oc-run` 的 daemon；修复输入后仍可复用同一实验室。
 
 需要在新版 DAG 中复用旧执行已经验收的长耗时阶段时，先为新 test-id 启动并测试一个新
 实验室，然后显式指定来源：
@@ -176,7 +176,7 @@ artifact 的关键字段为：
 Host 处理 requests 后，以上一次的 `next_since` 继续 pull；需要详情时运行
 `./oc-ctl event <test-id> <event-id>`。这样等待期间一旦出现待审核/发布项，Host 可以立即响应。
 
-实验期间由 Host 直接观察 TUI/ACP 流，并按约定频率汇报可验证进展。文件读取、写入、
+实验期间由 Host 通过 `oc-ctl pull/status/event` 观察 ACP 流，并按约定频率汇报可验证进展。文件读取、写入、
 命令调用、任务启动和获得结果属于进展；不可见的思考不算。角色 busy 时不要为了汇报而
 干预它。单独的机械观察者不是调度前置条件。
 
@@ -280,8 +280,8 @@ cargo build --release -p telora
 语言缺口。一次 intent 自然产生多少诊断属于 Host 的观察指标，不应暴露为角色考核目标。
 
 当 plan 的 `finish_artifact` 已经 `current`，再次核对 `status`、`stat`、最终输出和评估
-记录，再由外部操作员退出 TUI。当前公开控制面没有 `stop` 子命令；退出 TUI 后 execution
-可能保持 resumable，不能把“关闭窗口”等同于 artifact 已验收。结果保存和历史分支命名
+记录，再通知外部操作员终止无头实验室。当前公开控制面没有 `stop` 子命令；终止 daemon
+不会替代 artifact 验收，也不会自动清理 execution。结果保存和历史分支命名
 遵循具体 plan 的归档规则，artifact marker、临时 binary 和控制文件不应作为产品输出提交。
 
 ## 新增实验计划
@@ -336,10 +336,10 @@ loop {
 - artifact 文件已经存在但任务仍 runnable：文件不驱动 DAG；检查输入与输出 artifact
   的时间戳以及 `changed` 字段。
 - feedback 没有触发重跑：确认先 `update` 正文，再 `publish` 对应 Host feedback artifact。
-- TUI 看不到调度信息：coordinator 只负责启动。使用 `oc-ctl status` 查看 DAG 和角色状态，
+- 无头窗口不显示调度信息：coordinator 只负责启动。使用 `oc-ctl status` 查看 DAG 和角色状态，
   不要依赖 coordinator 持续输出。
-- 无法联系 execution：先确认外部 TUI/daemon 仍在运行，再检查
-  `target/exp/<test-id>/config.json`、`state.json` 和 `handshake.log`；不要用新的临时授权
+- 无法联系 execution：先确认外部 daemon 仍在运行，再检查
+  `target/exp/<test-id>/config.json`、`state.json` 和 `runner.log`；不要用新的临时授权
   请求替代诊断。
 
 基础设施协议和实现细节另见

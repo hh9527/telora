@@ -13,9 +13,12 @@ from .config import ControlError, load_manifest, repository_root, sha256
 from .context import Context, resolve
 from .events import event_detail, pending_request_sets, project_events
 from .lifecycle import (
+    create_execution_session,
+    prepare,
     probe_opencode_connection,
     publish_workflow_artifact,
     request_start,
+    reserve,
     send_round,
     verify_prepared,
 )
@@ -586,13 +589,21 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "start":
             repo = _controller_repo()
-            _configure_start(repo, args.test_id, args.plan_id, args.from_test_id)
-            deadline = time.monotonic() + 30
-            state_path = run_config_path(repo, args.test_id).parent / "state.json"
-            while not state_path.is_file():
-                if time.monotonic() >= deadline:
-                    raise ControlError("timed out waiting for oc-run to consume its configuration", 75)
-                time.sleep(.1)
+            configured = _configure_start(repo, args.test_id, args.plan_id, args.from_test_id)
+            root, _ = reserve(
+                args.plan_id,
+                args.test_id,
+                configured["port"],
+                from_test_id=args.from_test_id,
+            )
+            request_start(root)
+            root, state, _ = prepare(
+                args.plan_id,
+                args.test_id,
+                configured["port"],
+                from_test_id=args.from_test_id,
+            )
+            create_execution_session(root, state, f"{args.plan_id} / {args.test_id} (ready)")
             context = resolve(args.test_id, repo)
             emit(_start(context))
             return 0

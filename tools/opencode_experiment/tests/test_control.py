@@ -341,6 +341,75 @@ class ConfigStateTest(unittest.TestCase):
         self.assertEqual(result, 69)
         self.assertIn(f"cannot reserve runner port {port}", stderr.getvalue())
 
+    def test_run_only_hosts_the_headless_daemon(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            server = mock.Mock()
+            server.poll.side_effect = [None, 0]
+            server.wait.return_value = 0
+            client = mock.Mock()
+            client.health.return_value = {"healthy": True}
+            reservation = mock.MagicMock()
+            stdout = StringIO()
+            with mock.patch(
+                "tools.opencode_experiment.cli_run.repository_root",
+                return_value=Path(temporary),
+            ), mock.patch(
+                "tools.opencode_experiment.cli_run.resolve_cli", return_value=("opencode",)
+            ), mock.patch(
+                "tools.opencode_experiment.cli_run.socket.socket", return_value=reservation
+            ), mock.patch(
+                "tools.opencode_experiment.cli_run.subprocess.Popen", return_value=server
+            ) as popen, mock.patch(
+                "tools.opencode_experiment.cli_run.subprocess.run"
+            ) as run, mock.patch(
+                "tools.opencode_experiment.cli_run.Client", return_value=client
+            ), redirect_stdout(stdout):
+                result = run_main(["run-001", "4199"])
+        self.assertEqual(result, 0)
+        self.assertEqual(popen.call_count, 1)
+        self.assertIn("serve", popen.call_args.args[0])
+        run.assert_not_called()
+        self.assertIn("Keep this process running", stdout.getvalue())
+
+    def test_control_start_prepares_and_creates_the_session(self):
+        repo = Path("/repo")
+        root = Path("/repo/target/exp/run-001")
+        waiting = {"phase": "waiting"}
+        prepared = {"phase": "preparing"}
+        context = mock.Mock()
+        with mock.patch(
+            "tools.opencode_experiment.cli_ctl._controller_repo", return_value=repo
+        ), mock.patch(
+            "tools.opencode_experiment.cli_ctl._configure_start",
+            return_value={"port": 4199},
+        ), mock.patch(
+            "tools.opencode_experiment.cli_ctl.reserve", return_value=(root, waiting)
+        ) as reserve_call, mock.patch(
+            "tools.opencode_experiment.cli_ctl.request_start"
+        ) as request, mock.patch(
+            "tools.opencode_experiment.cli_ctl.prepare",
+            return_value=(root, prepared, True),
+        ) as prepare_call, mock.patch(
+            "tools.opencode_experiment.cli_ctl.create_execution_session",
+            return_value={"phase": "ready"},
+        ) as create_session, mock.patch(
+            "tools.opencode_experiment.cli_ctl.resolve", return_value=context
+        ), mock.patch(
+            "tools.opencode_experiment.cli_ctl._start", return_value={"kind": "initial"}
+        ), redirect_stdout(StringIO()):
+            result = control_main(["start", "run-001", "ontology-3"])
+        self.assertEqual(result, 0)
+        reserve_call.assert_called_once_with(
+            "ontology-3", "run-001", 4199, from_test_id=None
+        )
+        request.assert_called_once_with(root)
+        prepare_call.assert_called_once_with(
+            "ontology-3", "run-001", 4199, from_test_id=None
+        )
+        create_session.assert_called_once_with(
+            root, prepared, "ontology-3 / run-001 (ready)"
+        )
+
     def test_host_configures_the_explicit_plan_and_runner_port(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)

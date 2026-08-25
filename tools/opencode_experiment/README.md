@@ -8,10 +8,10 @@ operator selects the port but never selects a plan. Early in a long-running task
 does not release `oc-run` or freeze experiment inputs. After prerequisite fixes are complete, the
 Host runs `oc-ctl start <test-id> <plan-id>` from the repository root; `plan-id` names a tracked
 directory under `experiment-plans/`. `start` requires the successful receipt and external runner, adopts its port,
-and atomically writes
-`target/exp/<test-id>/config.json`. The runner then prepares the isolated experiment workspace,
-creates the formal session on the existing daemon, and attaches the TUI. When the TUI exits,
-`oc-run` terminates the daemon.
+and atomically writes `target/exp/<test-id>/config.json`. `oc-ctl start` then prepares the isolated
+experiment workspace and creates the formal session on the existing daemon. `oc-run` never prepares
+an execution or attaches a TUI; it keeps the headless daemon alive until the external operator
+explicitly terminates the process. A failed Host preparation therefore cannot tear down the lab.
 `oc-ctl` controls and observes the execution. The tracked plan is runtime-neutral: it declares
 workspace inputs, role capabilities and the artifact DAG. `oc-ctl` deterministically generates
 `opencode.json`, `.opencode/agents/*.md` and the runtime `experiment.json`; Host-only assets are not
@@ -130,13 +130,13 @@ starts every role once and exits; it never dispatches, retries, observes, or int
 
 ## Host scheduling contract
 
-`oc-run` is an external-operator command. It owns the external TUI lifecycle and is never part of
+`oc-run` is an external-operator command. It owns only the headless daemon lifecycle and is never part of
 the Host permission preflight or Host scheduling command set. The Host runs `test-connect` while
 authorization can still be attended and persistently approves the whole `oc-ctl` command prefix,
 not only the probe's exact argv.
 
 Before `oc-ctl start`, the Host must obtain every permission needed for the complete experiment.
-From `start` until the external TUI ends, the Host must never request temporary authorization: an
+From `start` until the experiment is fully accepted, the Host must never request temporary authorization: an
 approval prompt must not suspend observation, artifact publication, file delivery, or any other
 scheduling responsibility. If a capability was omitted, the Host continues the experiment using
 already-authorized observation and records the infrastructure defect for correction afterward.
