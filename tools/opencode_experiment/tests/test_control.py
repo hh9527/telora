@@ -67,6 +67,7 @@ from tools.opencode_experiment.cli_run import main as run_main, parser as run_pa
 
 class Handler(BaseHTTPRequestHandler):
     messages: list[dict] = []
+    last_payload: dict = {}
 
     def log_message(self, *_args): pass
 
@@ -82,6 +83,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0)); payload = json.loads(self.rfile.read(length) or b"{}")
+        self.__class__.last_payload = payload
         if self.path.startswith("/session?"): self.response({"id": "ses_test"})
         elif "/prompt_async?" in self.path:
             text = payload["parts"][0]["text"]
@@ -102,6 +104,8 @@ class ServerTest(unittest.TestCase):
     def test_contract(self):
         self.assertTrue(self.client.health()["healthy"]); self.assertEqual(self.client.status()["type"], "idle")
         self.assertEqual(Client(self.client.url, "/tmp/ws").create_session("test")["id"], "ses_test")
+        Client(self.client.url, "/tmp/ws").create_session("child", "ses_parent")
+        self.assertEqual(Handler.last_payload, {"title": "child", "parentID": "ses_parent"})
         self.client.prompt("hello"); self.assertEqual(self.client.messages()[-1]["parts"][0]["text"], "hello")
         self.client.prompt_session("ses_test", "continue"); self.assertEqual(self.client.messages()[-1]["parts"][0]["text"], "continue")
 
@@ -207,6 +211,7 @@ class ConfigStateTest(unittest.TestCase):
             {"ses_a5": {"type": "idle"}},
             {"ses_a5": {"type": "busy"}},
         ]
+        client.create_session.return_value = {"id": "ses_a5_new"}
         client.session_messages.return_value = self.PULL_MESSAGE
         context = mock.Mock()
         context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]},
@@ -241,6 +246,7 @@ class ConfigStateTest(unittest.TestCase):
             {"ses_a5_old": {"type": "idle"}, "ses_a5_new": {"type": "busy"}},
         ]
         client.session_messages.return_value = self.PULL_MESSAGE
+        client.create_session.return_value = {"id": "ses_a5_new"}
         context = mock.Mock()
         context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]},
                          "session_id": "ses_coordinator"}
@@ -252,7 +258,10 @@ class ConfigStateTest(unittest.TestCase):
                          ("recreated", "ses_a5_new"))
         client.abort_session.assert_called_once_with("ses_a5_old")
         client.prompt_session.assert_called_once_with(
-            "ses_coordinator", mock.ANY, agent="coordinator"
+            "ses_a5_new", mock.ANY, agent="a5"
+        )
+        client.create_session.assert_called_once_with(
+            "恢复 A5 角色循环", parent_id="ses_coordinator"
         )
 
     def test_resume_rejects_unknown_role_and_recreates_missing_session(self):
@@ -267,11 +276,12 @@ class ConfigStateTest(unittest.TestCase):
         client.children.side_effect = [[], [{"id": "ses_a5_new", "agent": "a5"}]]
         client.statuses.side_effect = [{}, {"ses_a5_new": {"type": "busy"}}]
         client.session_messages.return_value = self.PULL_MESSAGE
+        client.create_session.return_value = {"id": "ses_a5_new"}
         context.client.return_value = client
         result = _resume(context, "a5", .01)
         self.assertEqual((result["action"], result["session_id"]), ("recreated", "ses_a5_new"))
         client.prompt_session.assert_called_once_with(
-            "ses_coordinator", mock.ANY, agent="coordinator"
+            "ses_a5_new", mock.ANY, agent="a5"
         )
 
     def test_resume_replaces_an_existing_session_that_does_not_reenter_loop(self):
@@ -285,6 +295,7 @@ class ConfigStateTest(unittest.TestCase):
             {"ses_a5_old": {"type": "idle"}, "ses_a5_new": {"type": "busy"}},
         ]
         client.session_messages.return_value = self.PULL_MESSAGE
+        client.create_session.return_value = {"id": "ses_a5_new"}
         context = mock.Mock()
         context.state = {"exec_name": "run-001", "workflow": {"roles": ["a5"]},
                          "session_id": "ses_coordinator"}
@@ -294,7 +305,7 @@ class ConfigStateTest(unittest.TestCase):
             result = _resume(context, "a5", .5)
         self.assertEqual((result["action"], result["session_id"]), ("recreated", "ses_a5_new"))
         self.assertEqual(client.prompt_session.call_args_list[0].args[0], "ses_a5_old")
-        self.assertEqual(client.prompt_session.call_args_list[1].args[0], "ses_coordinator")
+        self.assertEqual(client.prompt_session.call_args_list[1].args[0], "ses_a5_new")
 
     def test_start_requires_test_and_plan_identity(self):
         args = control_parser().parse_args(["start", "ontology-3-009", "ontology-3"])

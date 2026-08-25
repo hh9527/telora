@@ -77,12 +77,12 @@ Telora command count. Metric patterns that match no files and missing configured
 reported as warnings instead of silently producing authoritative-looking zeroes.
 
 `resume` restores the permanent `pull -> work -> submit -> pull` loop. It is idempotent when a role
-is already busy, first resumes the newest inactive session, and asks the coordinator to create a
-replacement when that session cannot return or is missing. It succeeds only after observing the role
+is already busy, first resumes the newest inactive session, and directly creates a child replacement
+session when that session cannot return or is missing. It succeeds only after observing the role
 busy in its loop; otherwise it times out. Historical and replacement sessions are aggregated as one
 role in metrics while their session ids remain visible. `status --verbose` includes recent assistant
 text responses so the Host can identify clarification boundaries. `resume --force` aborts the
-role's current turn and asks the coordinator to fork a clean replacement session. Use it when a
+role's current turn and creates a clean replacement child session. Use it when a
 role is stuck or must reload a corrected runtime adapter; the active artifact task remains in the
 DAG and is reclaimed by the replacement role.
 

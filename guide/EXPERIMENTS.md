@@ -206,8 +206,8 @@ Host 需要修复、预制或替换角色状态时，使用显式强制干预：
 
 角色当前领取的 artifact 任务记录仍然保留，新会话会重新 `pull` 并继续同一 DAG 工作。
 
-已经在工作或等待 pull 时该命令幂等成功；否则先恢复原会话，必要时由 coordinator 建立
-替代会话。只有观察到角色重新进入长期 pull loop 后命令才成功。
+已经在工作或等待 pull 时该命令幂等成功；否则先恢复原会话，必要时由控制面直接建立
+coordinator 的替代 child session。只有观察到角色重新进入长期 pull loop 后命令才成功。
 
 需要反馈时，先在 Host 当前目录准备正文，再投递到 workspace，最后发布反馈 artifact：
 

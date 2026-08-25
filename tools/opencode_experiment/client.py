@@ -47,7 +47,10 @@ class Client:
         return self._request(f"/session/{session_id or self.session_id}/children")
     def session_messages(self, session_id: str) -> list[dict[str, Any]]:
         return self._request(f"/session/{session_id}/message")
-    def create_session(self, title: str) -> dict[str, Any]: return self._request("/session", "POST", {"title": title})
+    def create_session(self, title: str, parent_id: str | None = None) -> dict[str, Any]:
+        payload = {"title": title}
+        if parent_id is not None: payload["parentID"] = parent_id
+        return self._request("/session", "POST", payload)
     def prompt(self, text: str) -> Any:
         return self._request(f"/session/{self.session_id}/prompt_async", "POST", {"parts": [{"type": "text", "text": text}]})
     def prompt_session(self, session_id: str, text: str, agent: str | None = None) -> Any:

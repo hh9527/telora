@@ -21,10 +21,6 @@ def resume_prompt(role: str) -> str:
     )
 
 
-def coordinator_resume_prompt(role: str) -> str:
-    return f"恢复角色 {role}：只重新启动一次 {role}，让它按照角色协议进入永久 oc-task 循环。"
-
-
 def _browse_paths(patterns: list[str]) -> list[str]:
     values: list[str] = []
     for pattern in patterns:

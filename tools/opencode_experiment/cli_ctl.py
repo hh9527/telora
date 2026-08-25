@@ -20,7 +20,7 @@ from .lifecycle import (
 )
 from .metrics import collect_metrics
 from .observe import assistant_messages, text_parts
-from .runtime_opencode import START_PROMPT, coordinator_resume_prompt, resume_prompt
+from .runtime_opencode import START_PROMPT, resume_prompt
 from .state import (
     atomic_write,
     atomic_json,
@@ -293,10 +293,14 @@ def _resume(context: Context, role: str, timeout: float = 15.0,
         previous_runtime = statuses.get(session_id, {"type": "unknown"})
         client.prompt_session(session_id, resume_prompt(role), agent=role)
     else:
-        session_id = None
         action = "recreated"
-        client.prompt_session(context.state["session_id"], coordinator_resume_prompt(role),
-                              agent="coordinator")
+        response = client.create_session(
+            f"恢复 {role.upper()} 角色循环", parent_id=context.state["session_id"]
+        )
+        session_id = response.get("id") if isinstance(response, dict) else None
+        if not isinstance(session_id, str):
+            raise ControlError(f"opencode did not create replacement session for {role}", 69)
+        client.prompt_session(session_id, resume_prompt(role), agent=role)
 
     while True:
         statuses = client.statuses()
@@ -321,8 +325,13 @@ def _resume(context: Context, role: str, timeout: float = 15.0,
         if time.monotonic() >= deadline:
             if action == "resumed_existing":
                 action = "recreated"
-                client.prompt_session(context.state["session_id"], coordinator_resume_prompt(role),
-                                      agent="coordinator")
+                response = client.create_session(
+                    f"恢复 {role.upper()} 角色循环", parent_id=context.state["session_id"]
+                )
+                session_id = response.get("id") if isinstance(response, dict) else None
+                if not isinstance(session_id, str):
+                    raise ControlError(f"opencode did not create replacement session for {role}", 69)
+                client.prompt_session(session_id, resume_prompt(role), agent=role)
                 previous_ids.update(child.get("id") for child in current_children)
                 deadline = time.monotonic() + max(timeout, 0)
                 continue
