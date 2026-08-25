@@ -8,32 +8,18 @@ Telora 诊断。不要删除必要条件来换取成功。
 
 ```json
 {
-  "measures": [
-    {
-      "id": "DeliveredPackages",
-      "subject": {"tenant": "logistics", "role": "network-ops@example.com"},
-      "input": "None"
-    }
-  ],
-  "dimensions": [
-    {
-      "id": "CarrierName",
-      "subject": {"tenant": "logistics", "role": "network-ops@example.com"},
-      "input": "None"
-    }
-  ],
+  "measures": ["DeliveredPackages"],
+  "dimensions": ["CarrierName"],
   "filters": [
     {
-      "id": "OrderMonth",
-      "subject": {"tenant": "logistics", "role": "network-ops@example.com"},
+      "dimension": "OrderMonth",
       "op": "Eq",
-      "input": {"String": "2026-07"}
+      "value": {"String": "2026-07"}
     },
     {
-      "id": "OriginRegion",
-      "subject": {"tenant": "logistics", "role": "network-ops@example.com"},
+      "dimension": "OriginRegion",
       "op": "Eq",
-      "input": {"String": "华东"}
+      "value": {"String": "East China"}
     }
   ],
   "ordering": [
@@ -44,13 +30,10 @@ Telora 诊断。不要删除必要条件来换取成功。
 }
 ```
 
-请求必须至少包含一个指标。每个指标、维度和筛选都要携带同一个查询发起者：
-`subject.tenant` 固定写 `"logistics"`，`subject.role` 写题面给出的发起者。发起者只用于
-授权和诊断，不会自动成为筛选条件，也不会进入 bindings。
-
-指标和分组维度的 `input` 固定写 `"None"`。筛选值写作
+请求必须至少包含一个指标。指标和分组维度直接写公共业务名称；筛选值写作
 `{"String":"具体值"}`。没有筛选或排序时写空数组；没有条数限制时 `limit` 写
-`null`，否则必须写正整数。
+`null`，否则必须写正整数。查询发起者不属于当前 Request 契约，不要把题面给出的
+发起者写入 JSON，也不要把它臆造为业务筛选。
 
 ## 可查询指标
 
@@ -81,7 +64,7 @@ Telora 诊断。不要删除必要条件来换取成功。
 
 - `OrderMonth`：例如 `{"String":"2026-07"}`。
 - `CustomerTier`：例如 `{"String":"Gold"}`。
-- `OriginRegion`：例如 `{"String":"华东"}`。
+- `OriginRegion`：例如 `{"String":"East China"}`（华东）。
 - `ProductCategory`：例如 `{"String":"电子产品"}`。
 
 操作符为 `Eq`、`Ge`、`Le`。多个筛选按数组顺序以 AND 组合；一个维度可同时用

@@ -5,7 +5,7 @@ import "std/json" as json;
 import "std/result" as result;
 import "std/value" { Value };
 
-def intent: enterprise.QueryRequest = codec.decode(enterprise.QueryRequest, raw_intent)
+def intent: enterprise.Request = codec.decode(enterprise.Request, raw_intent)
     |> result.unwrap;
 def query = enterprise.lower(intent);
 def intent_value: Value = codec.encode(Value, intent) |> result.unwrap;
