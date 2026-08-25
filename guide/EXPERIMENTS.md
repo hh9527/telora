@@ -163,12 +163,17 @@ artifact 的关键字段为：
 
 ```bash
 ./oc-ctl pull ontology-3-009
-./oc-ctl pull ontology-3-009 <上次返回的-next_since_ns>
+./oc-ctl pull ontology-3-009 <上次返回的-next_since>
 ```
 
-已有 Host 门禁时它立即返回；否则最多等待 60 秒，并汇总窗口内的 task、artifact 与 Host
-干预事件以及当前状态。Host 处理返回的 `next_host_actions` 后，以上一次的
-`next_since_ns` 继续 pull。这样等待期间一旦出现待审核/发布项，Host 可以立即响应。
+已有 Host 门禁时它立即返回；否则最多等待 60 秒。退出前最后一次采集会返回所有
+`at >= since` 的简短 events；timeout 只限制等待时间，不是事件上界。`next_since` 是返回事件
+最大的 `at`，没有事件时保持原值。下一轮可依据稳定 id 去重包含的游标边界。
+`requests` 只是前置 artifact 已就绪、
+尚未 current 且只能由 Host 发布的 artifact 名称列表。requests 是当前快照，完全不受
+`since` 过滤；checks 仍在实际 publish 时验证。
+Host 处理 requests 后，以上一次的 `next_since` 继续 pull；需要详情时运行
+`./oc-ctl event <test-id> <event-id>`。这样等待期间一旦出现待审核/发布项，Host 可以立即响应。
 
 实验期间由 Host 直接观察 TUI/ACP 流，并按约定频率汇报可验证进展。文件读取、写入、
 命令调用、任务启动和获得结果属于进展；不可见的思考不算。角色 busy 时不要为了汇报而

@@ -47,9 +47,10 @@ from tools.opencode_experiment.lifecycle import (
 from tools.opencode_experiment.runtime_opencode import ENVIRONMENT, MODEL, generate
 from tools.opencode_experiment.metrics import collect_metrics
 from tools.opencode_experiment.context import Context
+from tools.opencode_experiment.events import event_detail, project_events
 from tools.opencode_experiment.permissions import preflight_permissions
 from tools.opencode_experiment.reporting import submit_report
-from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull, submit, validate_workflow
+from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull, submit, validate_workflow, workflow_status
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
@@ -203,9 +204,11 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_control_surface_includes_connection_preflight(self):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
-                         {"test-connect", "start", "stat", "status", "pull", "update", "publish", "resume"})
+                         {"test-connect", "start", "stat", "status", "pull", "event", "update", "publish", "resume"})
         args = control_parser().parse_args(["pull", "run", "123", "--timeout", "5"])
         self.assertEqual((args.test_id, args.since, args.timeout), ("run", 123, 5.0))
+        event = control_parser().parse_args(["event", "run", "task:a1-1"])
+        self.assertEqual((event.test_id, event.event_id), ("run", "task:a1-1"))
 
     def test_resume_targets_an_existing_inactive_role(self):
         client = mock.Mock()
@@ -1229,7 +1232,8 @@ class StatusSummaryTest(unittest.TestCase):
                 "artifacts": {
                     "lang": {"desc": "language"},
                     "draft.a1": {"desc": "draft", "input": ["lang"], "instruction": "build"},
-                    "accepted": {"desc": "accepted", "input": ["draft.a1"]},
+                    "accepted": {"desc": "accepted", "input": ["draft.a1"],
+                                 "checks": ["approval.txt"]},
                 },
             })
             publish_artifact(workspace, workflow, "lang")
@@ -1240,18 +1244,59 @@ class StatusSummaryTest(unittest.TestCase):
                 "workflow": workflow,
             })
             context.root = workspace / "execution"
-            status = {"complete": False, "next_host_actions": [{"artifact": "accepted"}]}
-            with mock.patch("tools.opencode_experiment.cli_ctl._status", return_value=status):
-                result = _host_pull(context, pulled["started_at_ns"] - 1, timeout=60)
-            self.assertEqual(result["reason"], "host_decision")
+            context.client.return_value.children.return_value = []
+            result = _host_pull(context, pulled["started_at_ns"] // 1_000_000 - 1, timeout=60)
+            self.assertEqual(result["reason"], "requests")
             self.assertLess(result["waited_ms"], 1000)
-            self.assertEqual(result["summary"]["task_events"][0]["status"], "submitted")
-            self.assertEqual(result["status"], status)
+            self.assertEqual(result["requests"], ["accepted"])
+            self.assertFalse(workflow_status(workspace, workflow)["artifacts"]["accepted"]["publishable"])
+            self.assertEqual([event["status"] for event in result["events"]
+                              if event["type"] == "task"], ["submitted"])
+            repeated = _host_pull(context, result["next_since"], timeout=0)
+            self.assertEqual([event["id"] for event in repeated["events"]],
+                             [event["id"] for event in result["events"]
+                              if event["at"] == result["next_since"]])
+            self.assertEqual(repeated["requests"], ["accepted"])
 
     def test_host_pull_rejects_waits_longer_than_one_minute(self):
         context = mock.Mock(state={"workflow": {"roles": []}})
         with self.assertRaisesRegex(ControlError, "between 0 and 60"):
             _host_pull(context, None, timeout=61)
+
+
+class EventProjectionTest(unittest.TestCase):
+    def test_projects_compact_lifecycle_events_and_reads_sanitized_detail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            context = mock.Mock(state={"workspace": str(workspace)})
+            context.root = workspace / "execution"
+            message = {
+                "info": {"id": "msg_1", "role": "assistant", "finish": "stop",
+                         "time": {"created": 1000, "completed": 3600},
+                         "tokens": {"input": 2, "output": 3, "reasoning": 5}},
+                "parts": [
+                    {"type": "reasoning", "text": "private reasoning"},
+                    {"id": "part_1", "type": "tool", "tool": "bash", "state": {
+                        "status": "completed", "input": {"command": "just make-query"},
+                        "output": "ok", "metadata": {"exit": 0},
+                        "time": {"start": 2200, "end": 2400},
+                    }},
+                    {"type": "text", "text": "Query completed."},
+                ],
+            }
+            client = context.client.return_value
+            client.children.return_value = [{"id": "ses_1", "agent": "a5"}]
+            client.session_messages.return_value = [message]
+            events = project_events(context, 999)
+            self.assertEqual([event["type"] for event in events],
+                             ["thinking", "action", "thinking", "reply"])
+            self.assertEqual(events[1]["summary"], "just make-query")
+            thinking = event_detail(context, "thinking:ses_1:msg_1:0")
+            self.assertNotIn("parts", thinking["detail"])
+            self.assertNotIn("private reasoning", json.dumps(thinking))
+            self.assertEqual(thinking["detail"]["event"]["end_at"], 2200)
+            action = event_detail(context, "action:ses_1:msg_1:part_1")
+            self.assertEqual(action["detail"]["state"]["output"], "ok")
 
 
 class WatchTest(unittest.TestCase):

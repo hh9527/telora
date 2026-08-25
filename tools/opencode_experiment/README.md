@@ -54,7 +54,8 @@ oc-ctl start <test-id> <plan-id>
 oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
-oc-ctl pull <test-id> [<since-ns>] [--timeout 60]
+oc-ctl pull <test-id> [<since>] [--timeout 60]
+oc-ctl event <test-id> <event-id>
 oc-ctl update <test-id> <dest-file>=<src-file>...
 oc-ctl update <test-id> <dest-file>=<src-file>... --force
 oc-ctl publish <test-id> <artifact>[=!]...
@@ -75,9 +76,17 @@ compact scheduling view with `complete`, `quiescent`, normalized Agent state, pu
 and `next_host_actions`; `status --verbose` additionally includes the complete artifact graph and raw
 runtime state. `stat` reports each role/task duration and tokens, longest thinking interval, and
 the count and elapsed time of command categories declared by the plan under
-`metrics.roles.<role>.commands`. `pull` returns immediately when a Host-owned artifact is publishable,
-otherwise waits at most 60 seconds and summarizes task, artifact and intervention events newer than
-`since-ns`; pass its `next_since_ns` into the next call. Metric patterns that match no files and missing configured work boundaries are
+`metrics.roles.<role>.commands`. `pull` returns immediately when a non-current Host-owned artifact's
+artifact inputs are ready,
+otherwise waits at most 60 seconds. At exit, its `events` contain every visible compact `thinking`,
+`action`, `reply`, `task`, `artifact`, and `host_action` record whose Unix-millisecond `at >= since`.
+Timeout is only a waiting bound, never an event upper bound. `next_since` is the greatest returned
+`at`, or remains `since` when there are no events. Stable IDs let callers deduplicate the inclusive
+boundary on the next pull.
+`requests` is only the ordered list of Host-owned, non-current artifacts whose artifact inputs are
+ready. Requests are a current snapshot and are never filtered by `since`; file checks remain
+publication-time validation. Pass `next_since` into the next call, and use `event` with
+an event ID for sanitized detail. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.
 
 `resume` restores the permanent `pull -> work -> submit -> pull` loop. It is idempotent when a role
