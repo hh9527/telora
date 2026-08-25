@@ -263,7 +263,7 @@ class ArtifactWorkflowTest(unittest.TestCase):
             validate_workflow(raw)
 
     def test_cli_is_only_pull_submit_and_status(self):
-        self.assertIsNone(parser().parse_args(["pull", "a1"]).timeout)
+        self.assertEqual(parser().parse_args(["pull", "a1"]).timeout, 60.0)
         self.assertEqual(parser().parse_args(["pull", "a1", "--timeout", "60"]).timeout, 60.0)
         self.assertEqual(parser().parse_args(["submit", "a1", "qb.a1"]).artifacts, ["qb.a1"])
         self.assertEqual(parser().parse_args(["status"]).command, "status")
@@ -276,6 +276,13 @@ class ArtifactWorkflowTest(unittest.TestCase):
             self.prepare(root)
             with redirect_stdout(StringIO()):
                 self.assertEqual(main(["--root", str(root), "pull", "a2", "--timeout", "0"]), 0)
+
+    def test_pull_timeout_cannot_exceed_heartbeat_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            value = self.prepare(root)
+            with self.assertRaisesRegex(TaskError, "between 0 and 60"):
+                pull(root, value, "a2", True, 61)
 
 
 if __name__ == "__main__":

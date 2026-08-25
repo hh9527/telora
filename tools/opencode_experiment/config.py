@@ -192,7 +192,7 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         validate_identifier(role, "metrics role")
         if not isinstance(definition, dict):
             raise ControlError(f"metrics.roles.{role} must be an object")
-        _keys(definition, {"learning_phases", "work_phase", "work_files", "work_phases", "artifacts"}, f"metrics.roles.{role}")
+        _keys(definition, {"learning_phases", "work_phase", "work_files", "work_phases", "artifacts", "commands"}, f"metrics.roles.{role}")
         learning_phases = _string_array(definition.get("learning_phases", []), f"metrics.roles.{role}.learning_phases")
         for phase in learning_phases:
             validate_identifier(phase, "metrics learning phase")
@@ -247,9 +247,20 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
                     safe_relative(pattern, "metrics artifact pattern")
                 normalized_categories[category] = values
             normalized_artifacts[kind] = normalized_categories
+        command_kinds = definition.get("commands", {})
+        if not isinstance(command_kinds, dict):
+            raise ControlError(f"metrics.roles.{role}.commands must be an object")
+        normalized_commands: dict[str, list[str]] = {}
+        for name, patterns in command_kinds.items():
+            validate_identifier(name, "metrics command")
+            values = _string_array(patterns, f"metrics.roles.{role}.commands.{name}")
+            if not values:
+                raise ControlError(f"metrics.roles.{role}.commands.{name} must not be empty")
+            normalized_commands[name] = values
         normalized_definition = {
             "learning_phases": learning_phases,
             "artifacts": normalized_artifacts,
+            "commands": normalized_commands,
         }
         if normalized_work_phases:
             normalized_definition["work_phases"] = normalized_work_phases

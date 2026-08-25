@@ -16,6 +16,7 @@ from typing import Any, Iterator
 
 SCHEMA = "telora.artifact-workflow/v1"
 TASK_SCHEMA = "telora.oc-task-attempt/v1"
+DEFAULT_PULL_TIMEOUT = 60.0
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 
 
@@ -463,7 +464,10 @@ def pull(root: Path, workflow: dict[str, Any], role: str,
          wait: bool, timeout: float | None) -> dict[str, Any]:
     if role not in workflow["roles"]:
         raise TaskError(f"unknown workflow role: {role}", 64)
-    deadline = None if timeout is None else time.monotonic() + timeout
+    timeout = DEFAULT_PULL_TIMEOUT if timeout is None else timeout
+    if timeout < 0 or timeout > DEFAULT_PULL_TIMEOUT:
+        raise TaskError(f"pull timeout must be between 0 and {DEFAULT_PULL_TIMEOUT:g} seconds", 64)
+    deadline = time.monotonic() + timeout
     while True:
         with _locked(root):
             status = evaluate(root, workflow)
@@ -492,7 +496,7 @@ def pull(root: Path, workflow: dict[str, Any], role: str,
                 }
                 _write_json(active_path, task)
                 return _task_response(workflow, status, task)
-        if not wait or (deadline is not None and time.monotonic() >= deadline):
+        if not wait or time.monotonic() >= deadline:
             status = workflow_status(root, workflow)
             waiting_for = [{
                 "artifact": artifact["id"],
@@ -562,8 +566,8 @@ def parser() -> argparse.ArgumentParser:
     pull_command.add_argument("role")
     pull_command.add_argument("--no-wait", action="store_true")
     pull_command.add_argument(
-        "--timeout", type=float, default=None,
-        help="return a wait record after this many seconds; by default pull blocks indefinitely",
+        "--timeout", type=float, default=DEFAULT_PULL_TIMEOUT,
+        help="return a wait record after this many seconds; range 0..60 (default: 60)",
     )
     submit_command = commands.add_parser("submit")
     submit_command.add_argument("role")

@@ -32,8 +32,8 @@ A5 query-1: JSON intent -> fixed query command -> production answer
 ```
 
 角色只能提交以自己的角色名结尾的 artifact，例如 A3 只能提交 `.a3`。具体所有权、依赖、
-检查项和 freshness 均由 DAG 引擎检查。每个角色永远循环 pull；无工作时默认阻塞在
-`pull` 内，不周期性唤醒模型。一次 pull 只按声明顺序返回第一个 runnable artifact；角色只完成并提交这个
+检查项和 freshness 均由 DAG 引擎检查。每个角色永远循环 pull；无工作时 `pull` 最多等待
+60 秒并返回 waiting，角色必须立即再次 pull。一次 pull 只按声明顺序返回第一个 runnable artifact；角色只完成并提交这个
 artifact，然后再次 pull。任务不合并。
 
 `pull` 对每个输出分别列出 `output_mtime_ns`，并为每个直接输入列出 `mtime_ns` 和

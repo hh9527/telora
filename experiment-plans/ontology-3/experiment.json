@@ -59,6 +59,7 @@
         "learning_phases": ["language_learning"],
         "work_phase": "implementation",
         "work_files": ["query-builder/src/*.telora"],
+        "commands": {"telora": ["./bin/telora *"]},
         "artifacts": {
           "code": {
             "core": ["query-builder/src/*.telora"],
@@ -78,6 +79,7 @@
         "learning_phases": ["language_learning", "query_builder_draft_review"],
         "work_phase": "implementation",
         "work_files": ["ontology/src/*.telora"],
+        "commands": {"telora": ["./bin/telora *"]},
         "artifacts": {
           "code": {
             "core": ["ontology/src/*.telora"],
@@ -99,6 +101,7 @@
           {"name": "modeling", "files": ["ent-1/src/model.telora", "ent-1/src/bin/main.telora"]},
           {"name": "query_surface_design", "files": ["ent-1/src/query.telora", "ent-1/QUERY-DESIGNER-TUTORIAL.md", "ent-1/PUBLIC-QUERY-CONTRACT.md"]}
         ],
+        "commands": {"telora": ["./bin/telora *"]},
         "artifacts": {
           "code": {
             "private_model": ["ent-1/src/model.telora"],
@@ -116,6 +119,7 @@
         "learning_phases": ["language_learning", "public_query_surface_learning"],
         "work_phase": "intent_modeling",
         "work_files": ["intent-1/src/request.telora", "intent-1/src/bin/main.telora"],
+        "commands": {"telora": ["./bin/telora *"]},
         "artifacts": {
           "code": {
             "request": ["intent-1/src/request.telora"],
@@ -131,6 +135,7 @@
         "learning_phases": ["qualification"],
         "work_phase": "production_query",
         "work_files": ["query-1/src/intent.json"],
+        "commands": {"query": ["just make-query"]},
         "artifacts": {
           "documents": {"intent": ["query-1/src/intent.json"]}
         }

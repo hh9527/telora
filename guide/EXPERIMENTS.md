@@ -159,6 +159,17 @@ artifact 的关键字段为：
 - `blocked_by`：尚未 current 的直接依赖；
 - `stamp_mtime_ns` / `input_mtime_ns`：输出和最新输入的时间戳边界。
 
+长程调度不要使用不可感知的 `sleep 60`。使用有界 Host pull：
+
+```bash
+./oc-ctl pull ontology-3-009
+./oc-ctl pull ontology-3-009 <上次返回的-next_since_ns>
+```
+
+已有 Host 门禁时它立即返回；否则最多等待 60 秒，并汇总窗口内的 task、artifact 与 Host
+干预事件以及当前状态。Host 处理返回的 `next_host_actions` 后，以上一次的
+`next_since_ns` 继续 pull。这样等待期间一旦出现待审核/发布项，Host 可以立即响应。
+
 实验期间由 Host 直接观察 TUI/ACP 流，并按约定频率汇报可验证进展。文件读取、写入、
 命令调用、任务启动和获得结果属于进展；不可见的思考不算。角色 busy 时不要为了汇报而
 干预它。单独的机械观察者不是调度前置条件。
@@ -251,8 +262,8 @@ cargo build --release -p telora
 ./oc-ctl stat ontology-3-009
 ```
 
-`stat` 按角色和任务报告耗时、token、最长 thinking 间隔、Telora 命令次数，以及 plan
-声明的代码和文档产出。实验总结至少应区分：
+`stat` 按角色和任务报告耗时、token、最长 thinking 间隔、plan 在
+`metrics.roles.<role>.commands` 中声明的命令类别次数/耗时，以及代码和文档产出。实验总结至少应区分：
 
 - 语言学习、上游学习、实现、review 和反馈修订；
 - 语言/类型系统/标准库/诊断问题与普通 API、算法或实验基础设施问题；
@@ -297,7 +308,7 @@ host/                 不复制到初始 workspace 的 Host-only 验收资产
 loop {
     match oc-task pull <role> {
         stop => break,
-        timeout => continue,
+        waiting after at most 60s => continue immediately,
         task => { 完成唯一任务；oc-task submit <role> <artifact>; }
     }
 }

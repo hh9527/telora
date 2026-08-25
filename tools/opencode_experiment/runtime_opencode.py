@@ -17,7 +17,7 @@ def resume_prompt(role: str) -> str:
     return (
         f"Host 正在恢复 {role} 的长期任务循环。立即执行 ./bin/oc-task pull {role}；"
         "领取任务后完成唯一 artifact、submit，然后继续 pull。没有工作时保持阻塞等待，"
-        "不得结束循环或返回最终答复。"
+        "每次 pull 最多等待 60 秒；收到 waiting 结果时立即再次 pull。不得结束循环或返回最终答复。"
     )
 
 

@@ -53,6 +53,7 @@ from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull,
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
     _configure_start,
+    _host_pull,
     _publish,
     _resume,
     _role_output_owners,
@@ -202,7 +203,9 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_control_surface_includes_connection_preflight(self):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
-                         {"test-connect", "start", "stat", "status", "update", "publish", "resume"})
+                         {"test-connect", "start", "stat", "status", "pull", "update", "publish", "resume"})
+        args = control_parser().parse_args(["pull", "run", "123", "--timeout", "5"])
+        self.assertEqual((args.test_id, args.since, args.timeout), ("run", 123, 5.0))
 
     def test_resume_targets_an_existing_inactive_role(self):
         client = mock.Mock()
@@ -948,7 +951,7 @@ class MetricsTest(unittest.TestCase):
             ["artifact_pattern_no_match", "work_boundary_not_observed"],
         )
 
-    def test_task_metrics_cover_tokens_thinking_and_telora_commands(self):
+    def test_task_metrics_cover_tokens_thinking_and_declared_commands(self):
         messages = [{
             "info": {"role": "assistant", "time": {"created": 1000, "completed": 2000},
                      "tokens": {"input": 10, "output": 3}},
@@ -964,13 +967,40 @@ class MetricsTest(unittest.TestCase):
         }]}
         result = collect_metrics(
             "run", "idle", Path("/tmp"), [{"id": "ses_a1", "agent": "a1"}],
-            lambda _session: messages, {"roles": {}}, records, now_ms=3000,
+            lambda _session: messages, {"roles": {"a1": {
+                "commands": {"telora": ["./bin/telora *"]},
+            }}}, records, now_ms=3000,
         )
         task = result["tasks"][0]
         self.assertEqual(task["tokens"]["fresh"], 13)
         self.assertEqual(task["elapsed_ms"], 1200)
         self.assertEqual(task["longest_thinking_ms"], 600)
-        self.assertEqual(task["telora_commands"], 1)
+        self.assertEqual(task["commands"], {"telora": {"count": 1, "elapsed_ms": 100}})
+        self.assertEqual(task["command_count"], 1)
+        self.assertEqual(task["command_elapsed_ms"], 100)
+
+    def test_declared_wrapper_command_is_counted_without_tool_special_case(self):
+        messages = [{
+            "info": {"role": "assistant", "time": {"created": 1000, "completed": 2000}},
+            "parts": [{"type": "tool", "tool": "bash", "state": {
+                "input": {"command": "just make-query"},
+                "time": {"start": 1200, "end": 1500},
+            }}],
+        }]
+        records = {"active": [], "history": [{
+            "task_id": "a5-1", "role": "a5", "artifacts": ["answer.a5"],
+            "status": "submitted", "started_at_ns": 900_000_000,
+            "submitted_at_ns": 2_100_000_000,
+        }]}
+        result = collect_metrics(
+            "run", "idle", Path("/tmp"), [{"id": "ses_a5", "agent": "a5"}],
+            lambda _session: messages, {"roles": {"a5": {
+                "commands": {"query": ["just make-query"]},
+            }}}, records, now_ms=3000,
+        )
+        self.assertEqual(result["tasks"][0]["commands"], {
+            "query": {"count": 1, "elapsed_ms": 300},
+        })
 
     def test_collects_multiple_work_phases_at_first_matching_writes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1187,6 +1217,41 @@ class StatusSummaryTest(unittest.TestCase):
                 "command": "oc-ctl publish demo accepted",
             }])
             self.assertIn("artifacts", verbose)
+
+    def test_host_pull_returns_immediately_for_publishable_gate_and_summarizes_window(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            workflow = validate_workflow({
+                "schema": "telora.artifact-workflow/v1",
+                "roles": ["a1"],
+                "start_artifacts": ["lang"],
+                "finish_artifact": "accepted",
+                "artifacts": {
+                    "lang": {"desc": "language"},
+                    "draft.a1": {"desc": "draft", "input": ["lang"], "instruction": "build"},
+                    "accepted": {"desc": "accepted", "input": ["draft.a1"]},
+                },
+            })
+            publish_artifact(workspace, workflow, "lang")
+            pulled = pull(workspace, workflow, "a1", False, None)
+            submit(workspace, workflow, "a1", ["draft.a1"])
+            context = mock.Mock(state={
+                "exec_name": "demo", "phase": "active", "workspace": str(workspace),
+                "workflow": workflow,
+            })
+            context.root = workspace / "execution"
+            status = {"complete": False, "next_host_actions": [{"artifact": "accepted"}]}
+            with mock.patch("tools.opencode_experiment.cli_ctl._status", return_value=status):
+                result = _host_pull(context, pulled["started_at_ns"] - 1, timeout=60)
+            self.assertEqual(result["reason"], "host_decision")
+            self.assertLess(result["waited_ms"], 1000)
+            self.assertEqual(result["summary"]["task_events"][0]["status"], "submitted")
+            self.assertEqual(result["status"], status)
+
+    def test_host_pull_rejects_waits_longer_than_one_minute(self):
+        context = mock.Mock(state={"workflow": {"roles": []}})
+        with self.assertRaisesRegex(ControlError, "between 0 and 60"):
+            _host_pull(context, None, timeout=61)
 
 
 class WatchTest(unittest.TestCase):

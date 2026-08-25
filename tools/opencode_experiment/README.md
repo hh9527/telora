@@ -30,10 +30,10 @@ bin/oc-task submit <role> <artifact...>
 
 `pull` returns only the first runnable artifact owned by the role, using artifact declaration order.
 A task starts when this pull succeeds and ends when that one artifact is submitted. The role pulls
-again to claim its next runnable artifact. With no runnable work the default command blocks until an
-artifact becomes runnable, so waiting does not periodically wake the model. `--timeout <seconds>` is
-available only for explicit diagnostics. Every role runs this loop for the whole external TUI
-lifetime; roles never stop themselves and tasks are deliberately not merged.
+again to claim its next runnable artifact. With no runnable work it returns a wait record after at
+most 60 seconds; the role must immediately pull again. `--timeout <seconds>` can only shorten
+that heartbeat. Every role runs this loop for the whole external TUI lifetime; roles never stop
+themselves and tasks are deliberately not merged.
 
 Each returned output artifact includes `output_mtime_ns`. Every direct input includes its current
 `mtime_ns`, `available`, and `changed`, where `changed` is computed without stored history:
@@ -54,6 +54,7 @@ oc-ctl start <test-id> <plan-id>
 oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
+oc-ctl pull <test-id> [<since-ns>] [--timeout 60]
 oc-ctl update <test-id> <dest-file>=<src-file>...
 oc-ctl update <test-id> <dest-file>=<src-file>... --force
 oc-ctl publish <test-id> <artifact>[=!]...
@@ -73,7 +74,10 @@ and the archived workspace. `status` returns a
 compact scheduling view with `complete`, `quiescent`, normalized Agent state, publishable artifacts,
 and `next_host_actions`; `status --verbose` additionally includes the complete artifact graph and raw
 runtime state. `stat` reports each role/task duration and tokens, longest thinking interval, and
-Telora command count. Metric patterns that match no files and missing configured work boundaries are
+the count and elapsed time of command categories declared by the plan under
+`metrics.roles.<role>.commands`. `pull` returns immediately when a Host-owned artifact is publishable,
+otherwise waits at most 60 seconds and summarizes task, artifact and intervention events newer than
+`since-ns`; pass its `next_since_ns` into the next call. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.
 
 `resume` restores the permanent `pull -> work -> submit -> pull` loop. It is idempotent when a role

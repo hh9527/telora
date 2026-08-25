@@ -54,6 +54,12 @@ def parser() -> argparse.ArgumentParser:
         "--verbose", action="store_true",
         help="include the complete artifact graph and raw runtime states",
     )
+    pull = commands.add_parser("pull")
+    pull.add_argument("test_id")
+    pull.add_argument("since", nargs="?", type=int,
+                      help="previous response's next_since_ns; defaults to the start of this call")
+    pull.add_argument("--timeout", type=float, default=60.0,
+                      help="seconds to wait for a Host decision; range 0..60 (default: 60)")
     start = commands.add_parser("start")
     start.add_argument("test_id")
     start.add_argument("plan_id")
@@ -462,6 +468,74 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
     return result
 
 
+def _host_pull(context: Context, since_ns: int | None, timeout: float = 60.0) -> dict[str, Any]:
+    workflow = context.state.get("workflow")
+    if not workflow:
+        raise ControlError("execution workflow is not prepared", 75)
+    if since_ns is not None and since_ns < 0:
+        raise ControlError("since must be a non-negative nanosecond timestamp", 64)
+    if timeout < 0 or timeout > 60:
+        raise ControlError("timeout must be between 0 and 60 seconds", 64)
+    started_ns = time.time_ns()
+    since = started_ns if since_ns is None else since_ns
+    deadline = time.monotonic() + timeout
+    reason = "timeout"
+    while True:
+        artifacts = workflow_status(_workspace(context), workflow)
+        publishable = [name for name, value in artifacts["artifacts"].items()
+                       if value["publishable"]]
+        if publishable:
+            reason = "host_decision"
+            break
+        if artifacts["complete"]:
+            reason = "experiment_complete"
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(min(.2, max(0.0, deadline - time.monotonic())))
+
+    ended_ns = time.time_ns()
+    records = task_records(_workspace(context))
+    task_events = []
+    for record in (*records["history"], *records["active"]):
+        event_ns = (record.get("submitted_at_ns") or record.get("ended_at_ns")
+                    or record.get("started_at_ns"))
+        if isinstance(event_ns, int) and since < event_ns <= ended_ns:
+            task_events.append({
+                "task_id": record.get("task_id"),
+                "role": record.get("role"),
+                "artifacts": record.get("artifacts", []),
+                "status": record.get("status"),
+                "event_at_ns": event_ns,
+            })
+    task_events.sort(key=lambda value: (value["event_at_ns"], value["task_id"] or ""))
+    artifact_events = [{"artifact": name, "mtime_ns": value["stamp_mtime_ns"]}
+                       for name, value in artifacts["artifacts"].items()
+                       if since < value["stamp_mtime_ns"] <= ended_ns]
+    interventions = []
+    directory = context.root / "host-interventions"
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            value = json.loads(path.read_text(encoding="utf-8"))
+            recorded = value.get("recorded_at_ns")
+            if isinstance(recorded, int) and since < recorded <= ended_ns:
+                interventions.append(value)
+    return {
+        "schema": "telora.oc-host-pull/v1",
+        "test_id": context.state["exec_name"],
+        "since_ns": since,
+        "next_since_ns": ended_ns,
+        "waited_ms": (ended_ns - started_ns) // 1_000_000,
+        "reason": reason,
+        "summary": {
+            "task_events": task_events,
+            "artifact_events": artifact_events,
+            "host_interventions": interventions,
+        },
+        "status": _status(context),
+    }
+
+
 def _start(context: Context) -> dict[str, Any]:
     request_start(context.root)
     deadline = time.monotonic() + 600
@@ -512,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
         context = resolve(args.test_id, _controller_repo())
         if args.command == "status":
             emit(_status(context, args.verbose))
+        elif args.command == "pull":
+            emit(_host_pull(context, args.since, args.timeout))
         elif args.command == "stat":
             emit(_metrics(context)[0])
         elif args.command == "update":

@@ -59,21 +59,33 @@ def _longest_thinking_ms(message: dict[str, Any], window: tuple[int, int], now_m
     return max(longest, max(0, end - cursor))
 
 
-def _telora_commands(messages: list[dict[str, Any]]) -> int:
-    result = 0
+def _command_metrics(
+    messages: list[dict[str, Any]], definitions: dict[str, list[str]]
+) -> dict[str, dict[str, int]]:
+    result = {name: {"count": 0, "elapsed_ms": 0} for name in definitions}
     for message in messages:
         for part in message.get("parts", []):
             if part.get("type") != "tool" or part.get("tool") != "bash":
                 continue
-            command = part.get("state", {}).get("input", {}).get("command")
-            if isinstance(command, str) and re.search(r"(?:^|[\s/])telora(?:\s|$)", command):
-                result += 1
+            state = part.get("state", {})
+            command = state.get("input", {}).get("command")
+            if not isinstance(command, str):
+                continue
+            timing = state.get("time", {})
+            start, end = timing.get("start"), timing.get("end")
+            elapsed = (max(0, int(end) - int(start))
+                       if isinstance(start, (int, float)) and isinstance(end, (int, float)) else 0)
+            for name, patterns in definitions.items():
+                if any(fnmatch.fnmatchcase(command.strip(), pattern) for pattern in patterns):
+                    result[name]["count"] += 1
+                    result[name]["elapsed_ms"] += elapsed
     return result
 
 
 def collect_task_metrics(
     records: dict[str, list[dict[str, Any]]],
     messages_by_role: dict[str, list[dict[str, Any]]],
+    command_definitions: dict[str, dict[str, list[str]]] | None = None,
     now_ms: int | None = None,
 ) -> list[dict[str, Any]]:
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
@@ -108,6 +120,9 @@ def collect_task_metrics(
     for item in normalized:
         task = item["record"]
         messages = item["messages"]
+        commands = _command_metrics(
+            messages, (command_definitions or {}).get(str(task.get("role")), {})
+        )
         result.append({
             "task_id": task.get("task_id"),
             "role": task.get("role"),
@@ -121,7 +136,9 @@ def collect_task_metrics(
                 (_longest_thinking_ms(message, item["window"], now_ms) for message in messages),
                 default=0,
             ),
-            "telora_commands": _telora_commands(messages),
+            "commands": commands,
+            "command_count": sum(value["count"] for value in commands.values()),
+            "command_elapsed_ms": sum(value["elapsed_ms"] for value in commands.values()),
             "assistant_messages": len(messages),
         })
     result.sort(key=lambda item: (item["started_at_ns"] or 0, item["task_id"] or ""))
@@ -344,8 +361,10 @@ def collect_metrics(
         })
     roles.sort(key=lambda item: item["agent"])
 
-    tasks = collect_task_metrics(task_records or {"active": [], "history": []},
-                                 messages_by_role, now_ms)
+    tasks = collect_task_metrics(
+        task_records or {"active": [], "history": []}, messages_by_role,
+        {role: definition.get("commands", {}) for role, definition in configured.items()}, now_ms,
+    )
     for role in roles:
         role_tasks = [task for task in tasks if task["role"] == role["agent"]]
         role["tasks"] = role_tasks
