@@ -171,7 +171,8 @@ artifact 的关键字段为：
 最大的 `at`，没有事件时保持原值。下一轮可依据稳定 id 去重包含的游标边界。
 `requests` 只是前置 artifact 已就绪、
 尚未 current 且只能由 Host 发布的 artifact 名称列表。requests 是当前快照，完全不受
-`since` 过滤；checks 仍在实际 publish 时验证。
+`since` 过滤；首次出现及集合变化会立即唤醒 pull，未变化的 requests 仍会返回但不造成
+忙循环。checks 仍在实际 publish 时验证。
 Host 处理 requests 后，以上一次的 `next_since` 继续 pull；需要详情时运行
 `./oc-ctl event <test-id> <event-id>`。这样等待期间一旦出现待审核/发布项，Host 可以立即响应。
 

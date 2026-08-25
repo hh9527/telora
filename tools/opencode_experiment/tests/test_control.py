@@ -1246,7 +1246,7 @@ class StatusSummaryTest(unittest.TestCase):
             context.root = workspace / "execution"
             context.client.return_value.children.return_value = []
             result = _host_pull(context, pulled["started_at_ns"] // 1_000_000 - 1, timeout=60)
-            self.assertEqual(result["reason"], "requests")
+            self.assertEqual(result["reason"], "requests_changed")
             self.assertLess(result["waited_ms"], 1000)
             self.assertEqual(result["requests"], ["accepted"])
             self.assertFalse(workflow_status(workspace, workflow)["artifacts"]["accepted"]["publishable"])

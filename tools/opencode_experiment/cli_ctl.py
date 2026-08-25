@@ -472,6 +472,28 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
     return result
 
 
+def _request_snapshot(context: Context) -> list[str]:
+    path = context.root / "observer" / "host-pull.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, json.JSONDecodeError):
+        raise ControlError(f"invalid Host pull state: {path}") from None
+    requests = value.get("requests") if isinstance(value, dict) else None
+    if not isinstance(requests, list) or not all(isinstance(name, str) for name in requests):
+        raise ControlError(f"invalid Host pull state: {path}")
+    return requests
+
+
+def _save_request_snapshot(context: Context, requests: list[str]) -> None:
+    atomic_json(context.root / "observer" / "host-pull.json", {
+        "schema": "telora.oc-host-pull-state/v1",
+        "requests": requests,
+        "updated_at": time.time_ns(),
+    })
+
+
 def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) -> dict[str, Any]:
     workflow = context.state.get("workflow")
     if not workflow:
@@ -485,12 +507,13 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
     deadline = time.monotonic() + timeout
     reason = "timeout"
     requests = []
+    previous_requests = _request_snapshot(context)
     while True:
         artifacts = workflow_status(_workspace(context), workflow)
         at_ms = int(time.time() * 1000)
         requests = pending_requests(workflow, artifacts)
-        if requests:
-            reason = "requests"
+        if requests != previous_requests:
+            reason = "requests_changed"
             break
         if artifacts["complete"]:
             reason = "experiment_complete"
@@ -503,12 +526,13 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
     events = project_events(context, since)
     artifacts = workflow_status(_workspace(context), workflow)
     requests = pending_requests(workflow, artifacts)
-    if requests:
-        reason = "requests"
+    if requests != previous_requests:
+        reason = "requests_changed"
     elif artifacts["complete"]:
         reason = "experiment_complete"
-    elif reason == "requests":
+    elif reason == "requests_changed":
         reason = "state_changed"
+    _save_request_snapshot(context, requests)
     next_since = max([since, *(event["at"] for event in events)])
     return {
         "schema": "telora.oc-host-pull/v2",

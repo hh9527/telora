@@ -85,7 +85,9 @@ Timeout is only a waiting bound, never an event upper bound. `next_since` is the
 boundary on the next pull.
 `requests` is only the ordered list of Host-owned, non-current artifacts whose artifact inputs are
 ready. Requests are a current snapshot and are never filtered by `since`; file checks remain
-publication-time validation. Pass `next_since` into the next call, and use `event` with
+publication-time validation. The first snapshot and later request-set changes wake `pull`
+immediately; an unchanged request set remains in the response but does not cause a busy loop.
+Pass `next_since` into the next call, and use `event` with
 an event ID for sanitized detail. Metric patterns that match no files and missing configured work boundaries are
 reported as warnings instead of silently producing authoritative-looking zeroes.
 
