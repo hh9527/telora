@@ -799,6 +799,11 @@ class ConfigStateTest(unittest.TestCase):
         self.assertIn("bindings", ontology_goal)
         self.assertIn("bindings", intent_goal)
 
+        query_dependencies = json.loads(
+            (plan / "query-1" / "telora-deps.json").read_text(encoding="utf-8")
+        )["dependencies"]
+        self.assertEqual(set(query_dependencies), {"ent-1", "ontology", "query-builder"})
+
         query_task = plan / "query-1" / "query_task.py"
         listed = subprocess.run(
             ["python3", str(query_task), "a5", "", ""],
