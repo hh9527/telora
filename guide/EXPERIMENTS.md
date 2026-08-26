@@ -63,8 +63,7 @@ Host 在长程任务开始时验证连接：
 外部操作员可观察实验室：
 
 ```bash
-./labflow lab ls lab-1
-./labflow lab attach lab-1 ontology-3/1
+./labflow attach lab-1
 ```
 
 ## 方案结构
@@ -237,9 +236,9 @@ Host 不参与逐题调度。
 每题的 Q 必须原样进入对话管道，Questioner 不得转述或改写。每题必须由 Questioner 写出非空
 `ch/out/report.md`。Answerer 可以写 `ok-*` 成功证据或 `err-*` 失败证据，也可以两者都不写；
 两类证据不能并存。Labflow 不解释证据文件的格式和内容。
-Questioner 对每题先执行 `labflow problem start <id>`；Labflow 将原始 Q/K 复制到 `ch/`，并
+Questioner 对每题先执行 `labflow agent start-problem <id>`；Labflow 将原始 Q/K 复制到 `ch/`，并
 生成包含 `id`、`maxTurns` 的 `ch/metadata.json`。结束时执行
-`labflow problem end ok|error|cancel`，Labflow 根据 metadata 归档到 `result/<id>/`：`ok`
+`labflow agent end-problem ok|error|cancel`，Labflow 根据 metadata 归档到 `result/<id>/`：`ok`
 只保留 `ok-*`，`error` 只保留 `err-*`，`cancel` 不保留两类证据；三种状态都要求报告存在。
 随后清理通道并建立下一题的统计边界。整批结束后 `result/stats.jsonl` 每题一行。
 Questioner 不判断正确性，最终判断由 Host 完成。

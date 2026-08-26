@@ -5,8 +5,8 @@
     "q": {
       "description": "依据题面与隐藏业务事实回答必要澄清，不判断答案。",
       "instructions": "roles/q.md",
-      "commands": ["labflow problem start *", "labflow problem end *"],
-      "preflight": ["labflow problem start sample", "labflow problem end cancel"]
+      "commands": ["labflow agent start-problem *", "labflow agent end-problem *"],
+      "preflight": ["labflow agent start-problem sample", "labflow agent end-problem cancel"]
     },
     "a": {
       "description": "把每道业务需求转换为可执行查询，或给出业务层面的失败归因。",
