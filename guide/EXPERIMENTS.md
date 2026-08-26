@@ -79,6 +79,17 @@ python3 -m unittest tools.opencode_experiment.tests.test_control \
 workspace，也不会释放等待中的 `oc-run`。授权时必须持久批准整个 `./oc-ctl` 命令前缀，
 只批准 `test-connect` 的具体 argv 不能覆盖后续 `start/status/update/publish`。
 
+仍在运行的 `oc-run` 实验室可以承载后续的独立 execution。为新 execution 复用并验证已有
+实验室，然后正常启动：
+
+```bash
+./oc-ctl test-connect query-service-001 --lab ontology-3-017
+./oc-ctl start query-service-001 query-service-1 \
+  --bundle target/exp-outputs/08-26
+```
+
+这只共享无头 daemon 和端口，不共享 workspace、session、artifact 或 execution state。
+
 需要向 GitHub Issue 汇报时，还要提前确认 `gh issue comment --body-file ...` 权限。
 Issue 汇报只是观察的旁路输出，失败或延迟不能阻塞 `status`、`update`、`publish` 或
 角色工作。

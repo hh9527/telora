@@ -29,6 +29,7 @@ from tools.opencode_experiment.state import (
     load_runner_config,
     load_state,
     record_connect_test,
+    runner_workspace_path,
     save_state,
 )
 from tools.opencode_experiment.lifecycle import (
@@ -230,6 +231,25 @@ class ConfigStateTest(unittest.TestCase):
         self.assertEqual((event.test_id, event.event_id), ("run", "task:a1-1"))
         abort = control_parser().parse_args(["abort-sessions", "run"])
         self.assertEqual((abort.command, abort.test_id), ("abort-sessions", "run"))
+        reused = control_parser().parse_args(
+            ["test-connect", "new-run", "--lab", "old-lab"]
+        )
+        self.assertEqual((reused.test_id, reused.lab), ("new-run", "old-lab"))
+
+    def test_connection_preflight_can_reuse_an_existing_lab(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            create_runner_config(repo, "old-lab", 4205)
+            with mock.patch(
+                "tools.opencode_experiment.cli_ctl.probe_opencode_connection",
+                return_value={"health": True, "session_id": "ses_probe"},
+            ) as probe:
+                result = _test_connect(repo, "new-run", "old-lab")
+            self.assertEqual(result["lab_id"], "old-lab")
+            self.assertEqual(load_runner_config(repo, "new-run")["port"], 4205)
+            probe.assert_called_once_with(
+                "new-run", 4205, runner_workspace_path(repo, "new-run")
+            )
 
     def test_resume_targets_an_existing_inactive_role(self):
         client = mock.Mock()

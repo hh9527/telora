@@ -28,6 +28,7 @@ from .runtime_opencode import START_PROMPT, resume_prompt
 from .state import (
     atomic_write,
     atomic_json,
+    create_runner_config,
     create_run_config,
     load_connect_test,
     load_run_config,
@@ -57,9 +58,11 @@ def emit(value: object) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named experiment execution.")
     commands = root.add_subparsers(dest="command", required=True)
-    for name in ("test-connect", "stat"):
-        item = commands.add_parser(name)
-        item.add_argument("test_id")
+    connect = commands.add_parser("test-connect")
+    connect.add_argument("test_id")
+    connect.add_argument("--lab", help="reuse an existing oc-run laboratory")
+    stat_command = commands.add_parser("stat")
+    stat_command.add_argument("test_id")
     status = commands.add_parser("status")
     status.add_argument("test_id")
     status.add_argument(
@@ -173,15 +176,19 @@ def _configure_start(repo: Path, test_id: str, plan_id: str,
     return create_run_config(repo, test_id, plan_id, runner["port"], from_test_id, bundle)
 
 
-def _test_connect(repo: Path, test_id: str) -> dict[str, Any]:
+def _test_connect(repo: Path, test_id: str, lab_id: str | None = None) -> dict[str, Any]:
     if run_config_path(repo, test_id).exists():
         raise ControlError(
             f"execution {test_id} is already configured; connection tests must run before start",
             64,
         )
-    runner = load_runner_config(repo, test_id)
+    runner = load_runner_config(repo, lab_id or test_id)
     result = probe_opencode_connection(test_id, runner["port"], runner_workspace_path(repo, test_id))
-    return record_connect_test(repo, test_id, result)
+    receipt = record_connect_test(repo, test_id, result)
+    if lab_id is not None:
+        create_runner_config(repo, test_id, runner["port"])
+        receipt["lab_id"] = lab_id
+    return receipt
 
 
 def _role_output_owners(workflow: dict[str, Any] | None, destination: str) -> list[str]:
@@ -761,7 +768,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "test-connect":
-            emit(_test_connect(_controller_repo(), args.test_id))
+            emit(_test_connect(_controller_repo(), args.test_id, args.lab))
             return 0
         if args.command == "start":
             repo = _controller_repo()

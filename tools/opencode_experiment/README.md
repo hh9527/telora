@@ -50,6 +50,7 @@ The Host control surface is deliberately limited to:
 
 ```text
 oc-ctl test-connect <test-id>
+oc-ctl test-connect <new-test-id> --lab <existing-lab-id>
 oc-ctl start <test-id> <plan-id>
 oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
 oc-ctl start <test-id> <thread-service-plan> --bundle <bundle-directory>
