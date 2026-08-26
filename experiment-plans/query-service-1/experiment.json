@@ -1,0 +1,49 @@
+{
+  "schema": "telora.experiment-plan/v1",
+  "workspace": ["README.md", "query-1"],
+  "roles": {
+    "a5": {
+      "description": "在隔离的生产问题会话中把业务需求转换为可执行查询。",
+      "instructions": "roles/a5.md",
+      "read": ["query-1/GOAL.md", "query-1/QUERY-DOC.md", "query-1/HOMEWORK.md", "thread-inputs/a5/**"],
+      "write": ["query-1/answers/*.json"],
+      "commands": ["just a5", "just a5 *"],
+      "preflight": ["just a5", "just a5 make-query *"]
+    }
+  },
+  "execution": {
+    "kind": "thread-service",
+    "role": "a5",
+    "start": "qualification.md",
+    "baseline": {
+      "checks": ["query-1/answers/0000.json"],
+      "command": ["just", "a5", "make-query", "0000"]
+    },
+    "bundle": {
+      "paths": ["query-builder", "ontology", "ent-1", "query-1/GOAL.md", "query-1/HOMEWORK.md", "query-1/QUERY-DOC.md", "query-1/query_task.py", "query-1/telora-deps.json", "justfile"]
+    }
+  },
+  "metrics": {
+    "roles": {
+      "a5": {
+        "learning_phases": ["qualification"],
+        "work_phase": "production_query",
+        "work_files": ["query-1/answers/*.json"],
+        "commands": {"query": ["just a5 *"]},
+        "artifacts": {"documents": {"intent": ["query-1/answers/*.json"]}}
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "name": "telora",
+      "source": "target/release/telora",
+      "to": "bin/telora",
+      "build": ["cargo", "build", "--release", "-p", "telora"],
+      "mode": "0555"
+    }
+  ],
+  "validation": [],
+  "observe": ["query-1/answers"],
+  "archive": ["query-1/answers"]
+}

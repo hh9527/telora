@@ -226,6 +226,51 @@ Host 需要修复、预制或替换角色状态时，使用显式强制干预：
 已经在工作或等待 pull 时该命令幂等成功；否则先恢复原会话，必要时由控制面直接建立
 coordinator 的替代 child session。只有观察到角色重新进入长期 pull loop 后命令才成功。
 
+实验已经完成或不再需要旧会话继续轮询时，可以只中止该 execution 的 session tree：
+
+```bash
+./oc-ctl abort-sessions ontology-3-009
+```
+
+该命令递归发现 coordinator 和 child sessions，只 abort 仍在运行的 turn；它不删除会话历史、
+实验 workspace 或 artifact，也不停止 `oc-run` 的无头 daemon。重复执行是幂等的，因此同一个
+实验室仍可继续承载后续 execution 或供 Host 查看历史。
+
+## 独立生产问题会话
+
+需要验证持续服务角色时，使用 `execution.kind = thread-service` 的方案。该模式不建立
+coordinator，也不运行 artifact pull loop；声明的角色就是 root Agent。研发交付可以作为
+Host bundle 注入，从而复用已经验收的 A1-A4 资产而不重复研发过程：
+
+```bash
+./oc-ctl start query-service-001 query-service-1 \
+  --bundle target/exp-outputs/08-26
+```
+
+控制器只复制方案 `execution.bundle.paths` 明确声明的普通文件，拒绝符号链接和特殊文件，
+并记录逐文件 hash 与整体 digest。A5 完成上岗题并结束答复后，由 Host 检查结果并显式冻结
+baseline：
+
+```bash
+./oc-ctl approve-baseline query-service-001 a5
+```
+
+审批会检查上岗产物、执行方案声明的验证命令，并固定 root session 的最后一条完整答复和
+bundle digest。审批后不得继续向 root session 发消息。每道生产题从相同 baseline fork，题间
+上下文隔离；同题澄清则进入原 session：
+
+```bash
+./oc-ctl open-thread query-service-001 a5 0001 problems/0001.md
+./oc-ctl comment-thread query-service-001 a5 0001 comments/0001-clarify.md
+./oc-ctl close-thread query-service-001 a5
+```
+
+每个角色同时只能有一个 active thread。`open-thread` 和 `comment-thread` 只投递 UTF-8
+文件；`close-thread` 要求最后一轮已经完整结束并由 Host 主动调用。`status/stat/event` 从独立
+registry 观察 detached sessions，统计时剔除 fork 所复制的 baseline 历史，因而每题成本不会
+重复包含上岗成本。`abort-sessions` 同样覆盖 registry 中的 detached sessions，但始终保留
+实验室 daemon、历史和 workspace。
+
 需要反馈时，先在 Host 当前目录准备正文，再投递到 workspace，最后发布反馈 artifact：
 
 ```bash

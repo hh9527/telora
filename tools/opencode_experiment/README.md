@@ -52,6 +52,7 @@ The Host control surface is deliberately limited to:
 oc-ctl test-connect <test-id>
 oc-ctl start <test-id> <plan-id>
 oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
+oc-ctl start <test-id> <thread-service-plan> --bundle <bundle-directory>
 oc-ctl stat <test-id>
 oc-ctl status <test-id>
 oc-ctl pull <test-id> [<since>] [--timeout 60]
@@ -62,6 +63,11 @@ oc-ctl publish <test-id> <artifact>[=!]...
 oc-ctl publish <test-id> <artifact>[=!]... --force
 oc-ctl resume <test-id> <role>
 oc-ctl resume <test-id> <role> --force
+oc-ctl abort-sessions <test-id>
+oc-ctl approve-baseline <test-id> <role>
+oc-ctl open-thread <test-id> <role> <thread-name> <problem-file>
+oc-ctl comment-thread <test-id> <role> <thread-name> <comment-file>
+oc-ctl close-thread <test-id> <role>
 ```
 
 `update` atomically copies any Host-readable file. Relative source paths are resolved from the
@@ -102,6 +108,22 @@ text responses so the Host can identify clarification boundaries. `resume --forc
 role's current turn and creates a clean replacement child session. Use it when a
 role is stuck or must reload a corrected runtime adapter; the active artifact task remains in the
 DAG and is reclaimed by the replacement role.
+
+`abort-sessions` retires an execution's live session tree without stopping the external lab. It
+recursively finds the coordinator and child sessions, aborts only active turns, and preserves all
+session history, workspace files, artifacts, and the `oc-run` daemon. Repeating it after the tree is
+idle is a no-op.
+
+A plan with `execution.kind = thread-service` runs its declared role as the root Agent and has no
+coordinator or artifact pull loop. `start --bundle` installs only the paths declared by the plan,
+rejects links and special files, and records a deterministic content digest. After the qualification
+turn finishes, `approve-baseline` checks the declared outputs, runs the declared validation command,
+and freezes the root session plus bundle digest. `open-thread` forks that baseline into a detached
+session and delivers one UTF-8 problem file. `comment-thread` delivers clarification to that same
+session. `close-thread` archives the completed session and releases the role for another problem.
+Only one thread per role can be active, and a changed baseline session or bundle invalidates future
+forks. `status`, `stat`, `event`, and `abort-sessions` include detached sessions from the controller's
+thread registry; forked baseline history is excluded from per-thread metrics.
 
 `start --from` creates a fresh workspace and OpenCode session while inheriting trusted progress from
 an earlier execution of the same plan. An artifact is inherited only when it is current and its

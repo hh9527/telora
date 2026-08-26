@@ -53,6 +53,7 @@ from tools.opencode_experiment.reporting import submit_report
 from tools.opencode_experiment.task_cli import evaluate, publish_artifact, pull, submit, validate_workflow, workflow_status
 from tools.opencode_experiment.watch import WatchWindow, acp_events, message_events, watch_progress
 from tools.opencode_experiment.cli_ctl import (
+    _abort_sessions,
     _configure_start,
     _host_pull,
     _publish,
@@ -87,11 +88,21 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0)); payload = json.loads(self.rfile.read(length) or b"{}")
         self.__class__.last_payload = payload
         if self.path.startswith("/session?"): self.response({"id": "ses_test"})
+        elif "/fork?" in self.path: self.response({"id": "ses_fork"})
         elif "/prompt_async?" in self.path:
             text = payload["parts"][0]["text"]
             self.messages.append({"info": {"id": f"usr_{len(self.messages)}", "role": "user", "time": {"created": 1}}, "parts": [{"type": "text", "text": text}]})
             self.response(None)
         else: self.response({}, 404)
+
+    def do_PATCH(self):
+        length = int(self.headers.get("Content-Length", 0))
+        payload = json.loads(self.rfile.read(length) or b"{}")
+        self.__class__.last_payload = payload
+        if self.path.startswith("/session/"):
+            self.response({"id": "ses_test", **payload})
+        else:
+            self.response({}, 404)
 
 
 class ServerTest(unittest.TestCase):
@@ -110,6 +121,11 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(Handler.last_payload, {"title": "child", "parentID": "ses_parent"})
         self.client.prompt("hello"); self.assertEqual(self.client.messages()[-1]["parts"][0]["text"], "hello")
         self.client.prompt_session("ses_test", "continue"); self.assertEqual(self.client.messages()[-1]["parts"][0]["text"], "continue")
+        self.assertEqual(self.client.fork_session("ses_test")["id"], "ses_fork")
+        self.client.prompt_session("ses_test", "role", agent="a5")
+        self.assertEqual(Handler.last_payload["agent"], "a5")
+        self.client.update_session("ses_test", {"time": {"archived": 123}})
+        self.assertEqual(Handler.last_payload, {"time": {"archived": 123}})
 
     def test_loopback_only(self):
         with self.assertRaises(ControlError): Client("http://example.com:12", "/tmp/ws")
@@ -204,11 +220,16 @@ class ConfigStateTest(unittest.TestCase):
 
     def test_control_surface_includes_connection_preflight(self):
         self.assertEqual(set(control_parser()._subparsers._group_actions[0].choices),
-                         {"test-connect", "start", "stat", "status", "pull", "event", "update", "publish", "resume"})
+                         {"test-connect", "start", "stat", "status", "pull", "event",
+                          "update", "publish", "resume", "abort-sessions",
+                          "approve-baseline", "open-thread", "comment-thread",
+                          "close-thread"})
         args = control_parser().parse_args(["pull", "run", "123", "--timeout", "5"])
         self.assertEqual((args.test_id, args.since, args.timeout), ("run", 123, 5.0))
         event = control_parser().parse_args(["event", "run", "task:a1-1"])
         self.assertEqual((event.test_id, event.event_id), ("run", "task:a1-1"))
+        abort = control_parser().parse_args(["abort-sessions", "run"])
+        self.assertEqual((abort.command, abort.test_id), ("abort-sessions", "run"))
 
     def test_resume_targets_an_existing_inactive_role(self):
         client = mock.Mock()
@@ -323,6 +344,41 @@ class ConfigStateTest(unittest.TestCase):
             ["start", "ontology-3-010", "ontology-3", "--from", "ontology-3-009"]
         )
         self.assertEqual(inherited.from_test_id, "ontology-3-009")
+
+    def test_abort_sessions_stops_busy_execution_tree_without_deleting_history(self):
+        client = mock.Mock()
+        client.children.side_effect = lambda session_id=None: {
+            "ses_root": [{"id": "ses_a5"}, {"id": "ses_idle"}],
+            "ses_a5": [{"id": "ses_nested"}],
+        }.get(session_id, [])
+        client.statuses.side_effect = [
+            {
+                "ses_root": {"type": "idle"},
+                "ses_a5": {"type": "busy"},
+                "ses_idle": {"type": "idle"},
+                "ses_nested": {"type": "busy"},
+            },
+            {
+                "ses_root": {"type": "idle"},
+                "ses_a5": {"type": "idle"},
+                "ses_idle": {"type": "idle"},
+                "ses_nested": {"type": "idle"},
+            },
+        ]
+        context = mock.Mock()
+        context.state = {"exec_name": "run-001", "session_id": "ses_root"}
+        context.client.return_value = client
+
+        result = _abort_sessions(context)
+
+        self.assertEqual(set(result["sessions"]),
+                         {"ses_root", "ses_a5", "ses_idle", "ses_nested"})
+        self.assertEqual(set(result["aborted"]), {"ses_a5", "ses_nested"})
+        self.assertEqual(set(result["already_idle"]), {"ses_root", "ses_idle"})
+        self.assertEqual(
+            {call.args[0] for call in client.abort_session.call_args_list},
+            {"ses_a5", "ses_nested"},
+        )
 
     def test_run_requires_test_id_and_reserved_port(self):
         args = run_parser().parse_args(["ontology-3-006", "4199"])

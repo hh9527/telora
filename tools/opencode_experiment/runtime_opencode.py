@@ -101,9 +101,11 @@ def generate(manifest: Manifest, workspace: Path) -> dict[str, str]:
     agents.mkdir(parents=True, exist_ok=True)
     generated: list[Path] = []
     config = workspace / "opencode.json"
+    primary = (manifest.execution["role"]
+               if manifest.execution["kind"] == "thread-service" else "coordinator")
     atomic_json(config, {
         "$schema": "https://opencode.ai/config.json",
-        "default_agent": "coordinator",
+        "default_agent": primary,
         "model": MODEL,
         "permission": "deny",
     })
@@ -113,14 +115,17 @@ def generate(manifest: Manifest, workspace: Path) -> dict[str, str]:
         "schema": "telora.experiment-runtime/v1",
         "plan_id": manifest.plan_id,
         "workflow": manifest.workflow,
+        "execution": manifest.execution,
     })
     generated.append(runtime_manifest)
-    coordinator = agents / "coordinator.md"
-    atomic_write(coordinator, _coordinator(manifest).encode(), 0o444)
-    generated.append(coordinator)
+    if manifest.execution["kind"] == "artifact-dag":
+        coordinator = agents / "coordinator.md"
+        atomic_write(coordinator, _coordinator(manifest).encode(), 0o444)
+        generated.append(coordinator)
     for name, role in manifest.roles.items():
         instructions = (manifest.root / role["instructions"]).read_text(encoding="utf-8")
-        text = _frontmatter(role["description"], "subagent", _role_permission(role)) + instructions.rstrip() + "\n"
+        mode = "primary" if manifest.execution["kind"] == "thread-service" else "subagent"
+        text = _frontmatter(role["description"], mode, _role_permission(role)) + instructions.rstrip() + "\n"
         path = agents / f"{name}.md"
         atomic_write(path, text.encode(), 0o444)
         generated.append(path)

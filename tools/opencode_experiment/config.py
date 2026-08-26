@@ -72,6 +72,7 @@ class Manifest:
     manifest_name: str = "experiment.json"
     metrics: dict[str, Any] = field(default_factory=lambda: {"roles": {}})
     workflow: dict[str, Any] | None = None
+    execution: dict[str, Any] = field(default_factory=lambda: {"kind": "artifact-dag"})
 
     @property
     def permission_preflight(self) -> dict[str, tuple[str, ...]]:
@@ -113,7 +114,8 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
         raise ControlError(f"invalid experiment plan manifest: {exc}") from None
     if not isinstance(data, dict):
         raise ControlError("experiment manifest must be an object")
-    _keys(data, {"schema", "workspace", "roles", "validation", "archive", "observe", "artifacts", "reporting", "metrics", "workflow"}, "manifest")
+    _keys(data, {"schema", "workspace", "roles", "validation", "archive", "observe",
+                 "artifacts", "reporting", "metrics", "workflow", "execution"}, "manifest")
     if data.get("schema") != "telora.experiment-plan/v1":
         raise ControlError("unsupported experiment manifest schema")
 
@@ -298,10 +300,62 @@ def load_manifest(repo: Path, plan_id: str) -> Manifest:
             raise ControlError(str(exc), exc.code) from None
         if list(normalized_roles) != workflow["roles"]:
             raise ControlError("manifest roles must match workflow roles in declaration order")
+    execution_value = data.get("execution", {"kind": "artifact-dag"})
+    if not isinstance(execution_value, dict):
+        raise ControlError("execution must be an object")
+    kind = execution_value.get("kind")
+    if kind == "artifact-dag":
+        _keys(execution_value, {"kind"}, "execution")
+        execution = {"kind": kind}
+    elif kind == "thread-service":
+        _keys(execution_value, {"kind", "role", "start", "baseline", "bundle"}, "execution")
+        role = execution_value.get("role")
+        if not isinstance(role, str) or role not in normalized_roles:
+            raise ControlError("thread-service execution.role must name a manifest role")
+        if list(normalized_roles) != [role]:
+            raise ControlError("thread-service execution requires exactly its primary role")
+        if workflow is not None:
+            raise ControlError("thread-service execution cannot define artifact workflow")
+        start = execution_value.get("start")
+        if not isinstance(start, str):
+            raise ControlError("thread-service execution.start must be a path")
+        safe_relative(start, "thread-service start prompt")
+        if not (root / start).is_file():
+            raise ControlError(f"missing thread-service start prompt: {start}", 66)
+        baseline = execution_value.get("baseline")
+        if not isinstance(baseline, dict):
+            raise ControlError("thread-service execution.baseline must be an object")
+        _keys(baseline, {"checks", "command"}, "execution.baseline")
+        checks = _string_array(baseline.get("checks", []), "execution.baseline.checks")
+        if not checks:
+            raise ControlError("execution.baseline.checks must not be empty")
+        for value in checks:
+            safe_relative(value, "thread-service baseline check")
+        command = _string_array(baseline.get("command"), "execution.baseline.command")
+        if not command:
+            raise ControlError("execution.baseline.command must not be empty")
+        bundle = execution_value.get("bundle")
+        if not isinstance(bundle, dict):
+            raise ControlError("thread-service execution.bundle must be an object")
+        _keys(bundle, {"paths"}, "execution.bundle")
+        bundle_paths = _string_array(bundle.get("paths", []), "execution.bundle.paths")
+        if not bundle_paths:
+            raise ControlError("execution.bundle.paths must not be empty")
+        for value in bundle_paths:
+            safe_relative(value, "thread-service bundle path")
+        execution = {
+            "kind": kind,
+            "role": role,
+            "start": start,
+            "baseline": {"checks": checks, "command": command},
+            "bundle": {"paths": bundle_paths},
+        }
+    else:
+        raise ControlError(f"unsupported execution kind: {kind!r}")
     unknown_metric_roles = set(normalized_metric_roles) - set(normalized_roles)
     if unknown_metric_roles:
         raise ControlError(f"metrics reference unknown role(s): {', '.join(sorted(unknown_metric_roles))}")
     return Manifest(plan_id, root, tuple(workspace), normalized_roles, tuple(validation),
                     tuple(archive), tuple(observe), tuple(artifacts),
                     {"sinks": normalized_sinks}, metrics={"roles": normalized_metric_roles},
-                    workflow=workflow)
+                    workflow=workflow, execution=execution)

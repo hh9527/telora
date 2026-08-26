@@ -47,12 +47,19 @@ class Client:
         return self._request(f"/session/{session_id or self.session_id}/children")
     def session_messages(self, session_id: str) -> list[dict[str, Any]]:
         return self._request(f"/session/{session_id}/message")
-    def create_session(self, title: str, parent_id: str | None = None) -> dict[str, Any]:
+    def create_session(self, title: str, parent_id: str | None = None,
+                       agent: str | None = None) -> dict[str, Any]:
         payload = {"title": title}
         if parent_id is not None: payload["parentID"] = parent_id
+        if agent is not None: payload["agent"] = agent
         return self._request("/session", "POST", payload)
-    def prompt(self, text: str) -> Any:
-        return self._request(f"/session/{self.session_id}/prompt_async", "POST", {"parts": [{"type": "text", "text": text}]})
+    def fork_session(self, session_id: str, message_id: str | None = None) -> dict[str, Any]:
+        payload = {} if message_id is None else {"messageID": message_id}
+        return self._request(f"/session/{session_id}/fork", "POST", payload)
+    def update_session(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request(f"/session/{session_id}", "PATCH", payload)
+    def prompt(self, text: str, agent: str | None = None) -> Any:
+        return self.prompt_session(str(self.session_id), text, agent)
     def prompt_session(self, session_id: str, text: str, agent: str | None = None) -> Any:
         payload = {"parts": [{"type": "text", "text": text}]}
         if agent is not None: payload["agent"] = agent

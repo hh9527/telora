@@ -9,6 +9,7 @@ from .config import ControlError
 from .context import Context
 from .observe import text_parts
 from .task_cli import task_records
+from .thread_service import thread_records
 
 
 def _ms_from_ns(value: Any) -> int | None:
@@ -195,12 +196,28 @@ def project_events(context: Context, since_ms: int) -> list[dict[str, Any]]:
             })
     try:
         client = context.client()
-        for child in client.children():
-            session = child.get("id")
-            if not isinstance(session, str):
-                continue
-            role = str(child.get("agent") or child.get("title") or session)
-            result.extend(_message_events(session, role, client.session_messages(session)))
+        if context.state.get("execution", {}).get("kind") == "thread-service":
+            role = context.state["execution"]["role"]
+            sessions = []
+            root_session = context.state.get("session_id")
+            if isinstance(root_session, str):
+                sessions.append((root_session, role, 0))
+            sessions.extend((record["session_id"], role, record.get("opened_at_ms", 0))
+                            for record in thread_records(context)
+                            if isinstance(record.get("session_id"), str))
+            for session, session_role, opened in sessions:
+                messages = [message for message in client.session_messages(session)
+                            if message.get("info", {}).get("time", {}).get("created", 0)
+                            >= opened]
+                result.extend(_message_events(session, session_role, messages))
+        else:
+            sessions = [(child.get("id"),
+                         str(child.get("agent") or child.get("title") or child.get("id")))
+                        for child in client.children()]
+            for session, role in sessions:
+                if not isinstance(session, str):
+                    continue
+                result.extend(_message_events(session, role, client.session_messages(session)))
     except ControlError:
         # Local task/artifact history remains queryable after the external runtime exits.
         pass

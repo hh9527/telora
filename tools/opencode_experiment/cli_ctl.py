@@ -22,7 +22,7 @@ from .lifecycle import (
     send_round,
     verify_prepared,
 )
-from .metrics import collect_metrics
+from .metrics import collect_metrics, summarize_thread_metrics
 from .observe import assistant_messages, text_parts
 from .runtime_opencode import START_PROMPT, resume_prompt
 from .state import (
@@ -40,6 +40,14 @@ from .state import (
 from .task_cli import (
     TaskError, remove_artifact, supersede_role_task, task_records, workflow_status,
 )
+from .thread_service import (
+    approve_baseline,
+    close_thread,
+    comment_thread,
+    install_bundle,
+    open_thread,
+    thread_records,
+)
 
 
 def emit(value: object) -> None:
@@ -47,7 +55,7 @@ def emit(value: object) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named artifact-DAG experiment.")
+    root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named experiment execution.")
     commands = root.add_subparsers(dest="command", required=True)
     for name in ("test-connect", "stat"):
         item = commands.add_parser(name)
@@ -74,6 +82,7 @@ def parser() -> argparse.ArgumentParser:
         "--from", dest="from_test_id",
         help="inherit current artifacts and checked files from an earlier execution",
     )
+    start.add_argument("--bundle", help="install a declared thread-service input bundle")
     update = commands.add_parser("update")
     update.add_argument("test_id")
     update.add_argument("files", nargs="+")
@@ -91,6 +100,27 @@ def parser() -> argparse.ArgumentParser:
                         help="seconds to wait until the role loop is observed")
     resume.add_argument("--force", action="store_true",
                         help="abort the current role turn before re-entering its loop")
+    abort_sessions = commands.add_parser(
+        "abort-sessions",
+        help="abort active sessions belonging to a completed or retired execution",
+    )
+    abort_sessions.add_argument("test_id")
+    approve = commands.add_parser("approve-baseline", help="freeze a qualified role session")
+    approve.add_argument("test_id")
+    approve.add_argument("role")
+    open_item = commands.add_parser("open-thread", help="fork the baseline for one production problem")
+    open_item.add_argument("test_id")
+    open_item.add_argument("role")
+    open_item.add_argument("thread_name")
+    open_item.add_argument("problem_file")
+    comment = commands.add_parser("comment-thread", help="continue the active problem session")
+    comment.add_argument("test_id")
+    comment.add_argument("role")
+    comment.add_argument("thread_name")
+    comment.add_argument("comment_file")
+    close = commands.add_parser("close-thread", help="archive the active problem session")
+    close.add_argument("test_id")
+    close.add_argument("role")
     return root
 
 
@@ -113,10 +143,20 @@ def _controller_repo() -> Path:
 
 
 def _configure_start(repo: Path, test_id: str, plan_id: str,
-                     from_test_id: str | None = None) -> dict[str, Any]:
+                     from_test_id: str | None = None,
+                     bundle: str | None = None) -> dict[str, Any]:
     load_connect_test(repo, test_id)
     runner = load_runner_config(repo, test_id)
-    load_manifest(repo, plan_id)
+    manifest = load_manifest(repo, plan_id)
+    if manifest.execution["kind"] == "thread-service":
+        if bundle is None:
+            raise ControlError("thread-service start requires --bundle", 64)
+        if from_test_id is not None:
+            raise ControlError("thread-service start does not support --from", 64)
+        if not Path(bundle).expanduser().is_dir():
+            raise ControlError(f"bundle is not a directory: {bundle}", 66)
+    elif bundle is not None:
+        raise ControlError("--bundle is only valid for a thread-service plan", 64)
     path = run_config_path(repo, test_id)
     if path.is_file():
         configured = load_run_config(repo, test_id)
@@ -126,8 +166,11 @@ def _configure_start(repo: Path, test_id: str, plan_id: str,
             raise ControlError("execution port does not match the external runner", 64)
         if configured.get("from_test_id") != from_test_id:
             raise ControlError("execution source does not match the requested source", 64)
+        expected_bundle = str(Path(bundle).expanduser().resolve()) if bundle else None
+        if configured.get("bundle") != expected_bundle:
+            raise ControlError("execution bundle does not match the requested bundle", 64)
         return configured
-    return create_run_config(repo, test_id, plan_id, runner["port"], from_test_id)
+    return create_run_config(repo, test_id, plan_id, runner["port"], from_test_id, bundle)
 
 
 def _test_connect(repo: Path, test_id: str) -> dict[str, Any]:
@@ -386,6 +429,61 @@ def _intervention_summary(context: Context) -> dict[str, Any]:
 
 def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
     workspace = _workspace(context)
+    execution = context.state.get("execution", {"kind": "artifact-dag"})
+    if execution["kind"] == "thread-service":
+        client = context.client()
+        statuses = client.statuses()
+        service = context.state.get("thread_service", {})
+        baseline = service.get("baseline")
+        records = thread_records(context)
+        sessions = []
+        message_map: dict[str, list[dict[str, Any]]] = {}
+        root_session = context.state.get("session_id")
+        role = execution["role"]
+        if isinstance(root_session, str):
+            sessions.append({"id": root_session, "agent": role, "title": "qualification baseline"})
+            message_map[root_session] = client.session_messages(root_session)
+        for record in records:
+            session_id = record.get("session_id")
+            if not isinstance(session_id, str):
+                continue
+            sessions.append({"id": session_id, "agent": role,
+                             "title": f"thread {record.get('name')}"})
+            opened = record.get("opened_at_ms", 0)
+            message_map[session_id] = [
+                message for message in client.session_messages(session_id)
+                if message.get("info", {}).get("time", {}).get("created", 0) >= opened
+            ]
+        command_definitions = context.state.get(
+            "metrics", context.manifest.metrics
+        ).get("roles", {}).get(role, {}).get("commands", {})
+        metrics = collect_metrics(
+            context.state["exec_name"], context.state["phase"], workspace, sessions,
+            message_map.__getitem__, context.state.get("metrics", context.manifest.metrics),
+            {"active": [], "history": []},
+        )
+        metrics["host_interventions"] = _intervention_summary(context)
+        metrics["thread_service"] = {
+            "baseline": baseline,
+            "active": service.get("active"),
+            "threads": [
+                {**record, "metrics": summarize_thread_metrics(
+                    message_map.get(record.get("session_id"), []), command_definitions
+                )}
+                for record in records
+            ],
+        }
+        active_session = (service.get("active") or {}).get("session_id") or root_session
+        agents = [{
+            "role": role,
+            "session_id": active_session,
+            "state": "thread_active" if service.get("active") else (
+                "ready" if baseline else "qualification"
+            ),
+            "runtime_state": statuses.get(active_session, {"type": "unknown"}),
+            "active_thread": service.get("active"),
+        }]
+        return metrics, {"agents": agents, "records": {"active": [], "history": []}}
     children, messages, statuses = _live_children(context)
     records = task_records(workspace)
     metrics = collect_metrics(
@@ -436,6 +534,26 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
                 "workspace": context.state.get("workspace"), "complete": False,
                 "quiescent": False, "next_host_actions": [], "agents": []}
     metrics, detail = _metrics(context)
+    if context.state.get("execution", {}).get("kind") == "thread-service":
+        service = context.state.get("thread_service", {})
+        baseline = service.get("baseline")
+        result = {
+            "test_id": context.state["exec_name"],
+            "phase": context.state["phase"],
+            "workspace": context.state.get("workspace"),
+            "baseline": {
+                "approved": baseline is not None,
+                "approved_at": baseline.get("approved_at") if baseline else None,
+            },
+            "active_thread": service.get("active"),
+            "threads": metrics["thread_service"]["threads"],
+            "agents": detail["agents"],
+            "tokens": metrics["aggregate"]["tokens"],
+        }
+        if not verbose:
+            for agent in result["agents"]:
+                agent.pop("runtime_state", None)
+        return result
     workflow = context.state.get("workflow")
     artifacts = workflow_status(_workspace(context), workflow)
     publishable = [name for name, value in artifacts["artifacts"].items()
@@ -569,6 +687,17 @@ def _start(context: Context) -> dict[str, Any]:
             raise ControlError("timed out waiting for oc-run to enter the TUI", 75)
         time.sleep(.1)
     verify_prepared(context.manifest, context.state)
+    if context.manifest.execution["kind"] == "thread-service":
+        initial = [record for record in context.rounds() if record.get("kind") == "qualification"]
+        if initial and initial[0].get("user_message_id"):
+            return initial[0]
+        prompt = (context.manifest.root / context.manifest.execution["start"]).read_text(
+            encoding="utf-8"
+        )
+        return send_round(
+            context, "qualification", prompt, require_empty=True,
+            agent=context.manifest.execution["role"],
+        )
     workflow = context.state.get("workflow")
     if workflow:
         artifact_status = workflow_status(_workspace(context), workflow)["artifacts"]
@@ -581,6 +710,53 @@ def _start(context: Context) -> dict[str, Any]:
     return send_round(context, "initial", START_PROMPT, require_empty=True)
 
 
+def _abort_sessions(context: Context, timeout: float = 5.0) -> dict[str, Any]:
+    root_session = context.state.get("session_id")
+    if not isinstance(root_session, str):
+        raise ControlError("execution has no session to abort", 75)
+    client = context.client()
+    pending = [root_session]
+    sessions: list[str] = []
+    while pending:
+        session_id = pending.pop()
+        if session_id in sessions:
+            continue
+        sessions.append(session_id)
+        pending.extend(
+            child["id"] for child in client.children(session_id)
+            if isinstance(child.get("id"), str)
+        )
+    if context.state.get("execution", {}).get("kind") == "thread-service":
+        for record in thread_records(context):
+            session_id = record.get("session_id")
+            if isinstance(session_id, str) and session_id not in sessions:
+                sessions.append(session_id)
+
+    statuses = client.statuses()
+    active = [session_id for session_id in sessions
+              if statuses.get(session_id, {}).get("type") == "busy"]
+    for session_id in reversed(active):
+        client.abort_session(session_id)
+
+    deadline = time.monotonic() + max(timeout, 0)
+    remaining = list(active)
+    while remaining and time.monotonic() < deadline:
+        statuses = client.statuses()
+        remaining = [session_id for session_id in active
+                     if statuses.get(session_id, {}).get("type") == "busy"]
+        if remaining:
+            time.sleep(.05)
+    if remaining:
+        raise ControlError(f"timed out aborting session(s): {', '.join(remaining)}", 75)
+    return {
+        "schema": "telora.opencode-sessions-abort/v1",
+        "test_id": context.state["exec_name"],
+        "sessions": sessions,
+        "aborted": active,
+        "already_idle": [session_id for session_id in sessions if session_id not in active],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
@@ -589,7 +765,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "start":
             repo = _controller_repo()
-            configured = _configure_start(repo, args.test_id, args.plan_id, args.from_test_id)
+            configured = _configure_start(
+                repo, args.test_id, args.plan_id, args.from_test_id, args.bundle
+            )
             root, _ = reserve(
                 args.plan_id,
                 args.test_id,
@@ -603,6 +781,10 @@ def main(argv: list[str] | None = None) -> int:
                 configured["port"],
                 from_test_id=args.from_test_id,
             )
+            execution = state.get("execution", {"kind": "artifact-dag"})
+            if execution["kind"] == "thread-service":
+                manifest = load_manifest(repo, args.plan_id)
+                state = install_bundle(root, state, manifest, configured.get("bundle"))
             create_execution_session(root, state, f"{args.plan_id} / {args.test_id} (ready)")
             context = resolve(args.test_id, repo)
             emit(_start(context))
@@ -622,6 +804,18 @@ def main(argv: list[str] | None = None) -> int:
             emit(_publish(context, args.artifacts, force=args.force))
         elif args.command == "resume":
             emit(_resume(context, args.role, args.timeout, force=args.force))
+        elif args.command == "abort-sessions":
+            emit(_abort_sessions(context))
+        elif args.command == "approve-baseline":
+            emit(approve_baseline(context, args.role))
+        elif args.command == "open-thread":
+            emit(open_thread(context, args.role, args.thread_name, args.problem_file))
+        elif args.command == "comment-thread":
+            emit(comment_thread(
+                context, args.role, args.thread_name, args.comment_file
+            ))
+        elif args.command == "close-thread":
+            emit(close_thread(context, args.role))
         return 0
     except (ControlError, TaskError) as exc:
         print(f"oc-ctl: {exc}", file=sys.stderr)

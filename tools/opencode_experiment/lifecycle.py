@@ -229,6 +229,7 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             "plan_revision": plan_revision, "plan_source": plan_source,
             "opencode_environment": ENVIRONMENT,
             "workflow": manifest.workflow,
+            "execution": manifest.execution,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
             "artifact_overrides": dict(artifacts or {}),
             "from_test_id": from_test_id,
@@ -395,7 +396,8 @@ def create_execution_session(root: Path, state: dict[str, Any], title: str) -> d
     if state.get("session_id"): return state
     client = Client(state["server_url"], state["workspace"])
     client.health()
-    response = client.create_session(title); session_id = response.get("id") if isinstance(response, dict) else None
+    response = client.create_session(title)
+    session_id = response.get("id") if isinstance(response, dict) else None
     if not isinstance(session_id, str) or not session_id.startswith("ses_"): raise ControlError("opencode returned an invalid session identity")
     with locked(root):
         current = load_state(root); current["session_id"] = session_id; current["phase"] = "ready"; save_state(root, current); state = current
@@ -421,7 +423,9 @@ def _remote_user_with_text(messages: list[dict[str, Any]], text: str, after_mess
     return matches[-1] if matches else None
 
 
-def send_round(context: Context, kind: str, text: str, *, require_empty: bool = False, require_finish: str = "stop", source: dict[str, Any] | None = None) -> dict[str, Any]:
+def send_round(context: Context, kind: str, text: str, *, require_empty: bool = False,
+               require_finish: str = "stop", source: dict[str, Any] | None = None,
+               agent: str | None = None) -> dict[str, Any]:
     digest = hashlib.sha256(text.encode()).hexdigest()
     # Observation is part of every mutation; callers do not need a separate
     # status command to close the preceding round locally.
@@ -458,7 +462,7 @@ def send_round(context: Context, kind: str, text: str, *, require_empty: bool = 
         state["next_round"] = number + 1
         if kind == "initial" and not state["started_at"]: state["started_at"] = now()
         save_state(context.root, state)
-        client.prompt(text)
+        client.prompt(text, agent=agent)
         existing = None
         for _ in range(10):
             messages = client.messages(); existing = _remote_user_with_text(messages, text, preceding_message_id)

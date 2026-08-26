@@ -82,6 +82,70 @@ def _command_metrics(
     return result
 
 
+def summarize_thread_metrics(
+    messages: list[dict[str, Any]], definitions: dict[str, list[str]],
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    rounds: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] | None = None
+    round_started: int | None = None
+    for message in messages:
+        info = message.get("info", {})
+        if info.get("role") == "user":
+            if current is not None:
+                rounds.append(_thread_round(len(rounds) + 1, round_started, current,
+                                            definitions, now_ms))
+            current = []
+            created = info.get("time", {}).get("created")
+            round_started = int(created) if isinstance(created, (int, float)) else None
+        elif info.get("role") == "assistant" and current is not None:
+            current.append(message)
+    if current is not None:
+        rounds.append(_thread_round(len(rounds) + 1, round_started, current,
+                                    definitions, now_ms))
+    assistants = [message for message in messages
+                  if message.get("info", {}).get("role") == "assistant"]
+    timing = _time(assistants)
+    commands = _command_metrics(assistants, definitions)
+    start = timing["first_created"] or now_ms
+    end = timing["last_completed"] or now_ms
+    return {
+        "rounds": rounds,
+        "assistant_messages": len(assistants),
+        "time": timing,
+        "tokens": _tokens(assistants),
+        "longest_thinking_ms": max(
+            (_longest_thinking_ms(message, (start, end), now_ms) for message in assistants),
+            default=0,
+        ),
+        "commands": commands,
+        "command_count": sum(value["count"] for value in commands.values()),
+        "command_elapsed_ms": sum(value["elapsed_ms"] for value in commands.values()),
+    }
+
+
+def _thread_round(number: int, started: int | None, messages: list[dict[str, Any]],
+                  definitions: dict[str, list[str]], now_ms: int) -> dict[str, Any]:
+    timing = _time(messages)
+    start = started if started is not None else (timing["first_created"] or now_ms)
+    end = timing["last_completed"] or now_ms
+    commands = _command_metrics(messages, definitions)
+    return {
+        "round": number,
+        "elapsed_ms": max(0, end - start),
+        "assistant_messages": len(messages),
+        "tokens": _tokens(messages),
+        "longest_thinking_ms": max(
+            (_longest_thinking_ms(message, (start, end), now_ms) for message in messages),
+            default=0,
+        ),
+        "commands": commands,
+        "command_count": sum(value["count"] for value in commands.values()),
+        "command_elapsed_ms": sum(value["elapsed_ms"] for value in commands.values()),
+    }
+
+
 def collect_task_metrics(
     records: dict[str, list[dict[str, Any]]],
     messages_by_role: dict[str, list[dict[str, Any]]],
