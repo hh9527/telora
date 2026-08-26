@@ -20,9 +20,9 @@ ontology 概念或企业领域事实。本轮只实现 SQLite，不扩展其他 
 
 - `qb-feedback` artifact 与 `query-builder/FEEDBACK.md`：Host 从
   `qb-feedback.a2/.a3` 原始审查中筛选、整合并发布的反馈。首次实现时可以不存在；
-  更新后 `oc-task pull a1` 会重新返回 `qb.a1`。
+  更新后 `labflow agent pull a1` 会重新返回 `qb.a1`。
 
-不在清单中的文件不是 A1 输入。任务就绪与重跑由 `oc-task` 根据文件时间戳确定。
+不在清单中的文件不是 A1 输入。任务就绪与重跑由 Labflow 根据 Artifact 时间戳确定。
 
 ## 交付物
 
@@ -54,5 +54,5 @@ ontology 概念或企业领域事实。本轮只实现 SQLite，不扩展其他 
 
 `qb.a1` 首次运行时发布并验证可执行候选。Host `qb-feedback` 出现后，同一任务
 重新就绪；完整读取 `query-builder/FEEDBACK.md`，修订实现、教程和契约并重跑全部验证。不得直接读取
-企业或 ontology 的其他私有输入与源码。完成后用一次 `oc-task submit a1 ...` 提交本次
+企业或 ontology 的其他私有输入与源码。完成后用一次 `labflow agent submit a1 ...` 提交本次
 pull 返回的唯一 artifact。

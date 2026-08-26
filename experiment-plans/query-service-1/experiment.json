@@ -1,49 +1,79 @@
 {
-  "schema": "telora.experiment-plan/v1",
-  "workspace": ["README.md", "query-1"],
+  "schema": "labflow.experiment-plan/v1",
+  "workspace": ["README.md", "justfile"],
   "roles": {
-    "a5": {
-      "description": "在隔离的生产问题会话中把业务需求转换为可执行查询。",
-      "instructions": "roles/a5.md",
-      "read": ["query-1/GOAL.md", "query-1/QUERY-DOC.md", "query-1/HOMEWORK.md", "thread-inputs/a5/**"],
-      "write": ["query-1/answers/*.json"],
+    "q": {
+      "description": "依据题面与隐藏业务事实回答必要澄清，不判断答案。",
+      "instructions": "roles/q.md",
+      "commands": ["labflow problem start *", "labflow problem end *"],
+      "preflight": ["labflow problem start sample", "labflow problem end cancel"]
+    },
+    "a": {
+      "description": "把每道业务需求转换为可执行查询，或给出业务层面的失败归因。",
+      "instructions": "roles/a.md",
       "commands": ["just a5", "just a5 *"],
-      "preflight": ["just a5", "just a5 make-query *"]
+      "preflight": [
+        "just a5",
+        "just a5 clear-ok",
+        "just a5 clear-err",
+        "just a5 make-query ok-answer"
+      ]
     }
   },
   "execution": {
-    "kind": "thread-service",
-    "role": "a5",
-    "start": "qualification.md",
-    "baseline": {
-      "checks": ["query-1/answers/0000.json"],
-      "command": ["just", "a5", "make-query", "0000"]
-    },
+    "kind": "benchmark-mode",
+    "questioner": "q",
+    "answerer": "a",
+    "batchSize": 5,
+    "input": [
+      {"path": "query-1/QUERY-DOC.md"}
+    ],
+    "output": [{"path": "ch/out/", "level": 2}],
+    "problems": [
+      {"q": "problems/0001.md", "maxTurns": 3},
+      {"q": "problems/0002.md", "maxTurns": 3},
+      {"q": "problems/0003.md", "maxTurns": 3},
+      {"q": "problems/0004.md", "k": "problems/0004-info.md", "maxTurns": 3},
+      {"q": "problems/0005.md", "k": "problems/0005-info.md", "maxTurns": 3},
+      {"q": "problems/0006.md", "maxTurns": 3},
+      {"q": "problems/0007.md", "maxTurns": 3},
+      {"q": "problems/0008.md", "k": "problems/0008-info.md", "maxTurns": 3},
+      {"q": "problems/0009.md", "k": "problems/0009-info.md", "maxTurns": 3},
+      {"q": "problems/0010.md", "k": "problems/0010-info.md", "maxTurns": 3}
+    ],
     "bundle": {
-      "paths": ["query-builder", "ontology", "ent-1", "query-1/GOAL.md", "query-1/HOMEWORK.md", "query-1/QUERY-DOC.md", "query-1/query_task.py", "query-1/src", "query-1/telora-deps.json", "justfile"]
+      "paths": [
+        "query-builder",
+        "ontology",
+        "ent-1",
+        "query-1/QUERY-DOC.md",
+        "query-1/src",
+        "query-1/telora-deps.json"
+      ]
     }
   },
   "metrics": {
     "roles": {
-      "a5": {
-        "learning_phases": ["qualification"],
-        "work_phase": "production_query",
-        "work_files": ["query-1/answers/*.json"],
+      "q": {},
+      "a": {
+        "learning_phases": [],
+        "work_phase": "answer",
+        "work_files": ["ch/out/ok-*", "ch/out/err-*"],
         "commands": {"query": ["just a5 *"]},
-        "artifacts": {"documents": {"intent": ["query-1/answers/*.json"]}}
+        "artifacts": {
+          "documents": {"intent": ["ch/out/ok-*", "ch/out/err-*"]}
+        }
       }
     }
   },
-  "artifacts": [
+  "validation": [],
+  "observe": ["problem", "ch", "result"],
+  "assets": [
     {
-      "name": "telora",
       "source": "target/release/telora",
-      "to": "bin/telora",
+      "path": "bin/telora",
       "build": ["cargo", "build", "--release", "-p", "telora"],
       "mode": "0555"
     }
-  ],
-  "validation": [],
-  "observe": ["query-1/answers"],
-  "archive": ["query-1/answers"]
+  ]
 }

@@ -19,15 +19,15 @@ root -> prepared `Fn(Request) -> Plan`。Plan、PlanProfile 与 Query 只能使�
 
 动态输入：
 
-- `oc-task` 返回 `qb-feedback.a2` 后读取 QueryBuilder 公共候选并完成能力
+- `labflow agent pull a2` 返回 `qb-feedback.a2` 后读取 QueryBuilder 公共候选并完成能力
   审查，结果写入 `ontology/QUERY-BUILDER-FEEDBACK.md`；
-- `oc-task` 返回 `edsl.a2` 后读取 QueryBuilder 已放行的公共教程与契约并实现 eDSL；
+- `labflow agent pull a2` 返回 `edsl.a2` 后读取 QueryBuilder 已放行的公共教程与契约并实现 eDSL；
 - `ontology/QUERY-BUILDER-FEEDBACK.md`：A2 对 QueryBuilder 公共草案的审查交付。
 - `edsl-feedback` artifact：首版 `edsl.a2` 后由 Host 筛选发布的 eDSL
   修订反馈；存在时必须完整读取、修订并重验。
 
 不得读取 QueryBuilder 私有设计、源码、tests 或 notes；不得读取企业 DOMAIN 或源码。
-任务就绪与重跑由 `oc-task` 根据文件时间戳确定。
+任务就绪与重跑由 Labflow 根据 Artifact 时间戳确定。
 
 ## 交付物
 
@@ -71,4 +71,4 @@ ordering/limit。非法筛选值、未授权或缺失筛选能力、未请求排
 ## 反馈修订
 
 `qb` 或 `edsl-feedback` 更新使 `edsl.a2` 重新就绪时，重新读取当前公共输入并验证既有
-eDSL。完成后用一次 `oc-task submit a2 ...` 提交本次 pull 返回的唯一 artifact。
+eDSL。完成后用一次 `labflow agent submit a2 ...` 提交本次 pull 返回的唯一 artifact。

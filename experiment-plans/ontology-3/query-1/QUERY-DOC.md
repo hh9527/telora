@@ -1,12 +1,8 @@
 # Ent-1 查询能力
 
-你只需把业务问题写成题号对应的答案 JSON，再执行
-`just a5 make-query <problem-id>`。成功时命令输出
-规范化后的 `intent` 以及参数化的 `query.sql` 和 `query.bindings`；失败时输出带来源的
-Telora 诊断。不要删除必要条件来换取成功。
-
-A4 使用同一形状的 `intent-1/intent.json` 和 `intent-1/invalid/<name>.json`，但通过
-`just a4 ...` 验收接口；A5 不应使用 A4 的命令或文件。
+调用方把业务问题表达为下述 JSON 结构化意图，再通过运行环境提供的固定查询入口完成验证。
+成功时入口输出规范化后的 `intent` 以及参数化的 `query.sql` 和 `query.bindings`；失败时输出
+带来源的 Telora 诊断。不要删除必要条件来换取成功。
 
 ## 完整 JSON 形状
 

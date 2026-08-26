@@ -2,6 +2,3 @@ set positional-arguments
 
 a4 action="" name="":
     @python3 query-1/query_task.py a4 "$1" "$2"
-
-a5 action="" problem_id="":
-    @python3 query-1/query_task.py a5 "$1" "$2"
