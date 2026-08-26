@@ -472,6 +472,11 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
         metrics["host_interventions"] = _intervention_summary(context)
         metrics["thread_service"] = {
             "baseline": baseline,
+            "baseline_metrics": (
+                summarize_thread_metrics(
+                    message_map.get(root_session, []), command_definitions
+                ) if isinstance(root_session, str) else None
+            ),
             "active": service.get("active"),
             "threads": [
                 {**record, "metrics": summarize_thread_metrics(
