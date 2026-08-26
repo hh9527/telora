@@ -49,8 +49,13 @@ Host 只使用 `./labflow host ...`。开始长程任务前一次性确认完整
 
 该命令创建临时 lab root，启动无头 OpenCode server，并创建
 `.labs/lab-1 -> <lab-root>` 符号链接。`<lab-root>/config.json` 记录实验室名称、端口和 Host
-workspace。它不读取方案、不创建实验 session。关闭该前台进程会移除链接并回收实验室，
-因此要先导出需保留的资产。
+workspace。它不读取方案、不创建实验 session，完成初始化后会直接 `exec` 为 OpenCode
+server，因此运行中的实验室不占用 Labflow runtime。停止 server 后，先导出需保留的资产，
+再显式回收实验室：
+
+```bash
+./labflow lab remove lab-1
+```
 
 Host 在长程任务开始时验证连接：
 

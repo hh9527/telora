@@ -76,6 +76,8 @@ Artifact 都独立产生工作压力，没有 `start_artifacts` 或 `finish_arti
 ./labflow lab run lab-1 --port 4201
 ```
 
+停止 server 后使用 `./labflow lab remove lab-1` 显式回收实验室目录。
+
 Host 在仓库根目录执行：
 
 ```bash
