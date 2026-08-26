@@ -1,4 +1,5 @@
 /target
+/.labs/
 /experiments/
 __pycache__/
 *.py[cod]

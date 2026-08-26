@@ -47,9 +47,10 @@ Host 只使用 `./labflow host ...`。开始长程任务前一次性确认完整
 ./labflow lab run lab-1 --port 4201
 ```
 
-该命令创建临时 lab root，启动无头 OpenCode server，并把 `{port, root}` 写入
-`target/labs/lab-1/config.json`。它不读取方案、不创建实验 session。关闭该前台进程会回收
-实验室，因此要先导出需保留的资产。
+该命令创建临时 lab root，启动无头 OpenCode server，并创建
+`.labs/lab-1 -> <lab-root>` 符号链接。`<lab-root>/config.json` 记录实验室名称、端口和 Host
+workspace。它不读取方案、不创建实验 session。关闭该前台进程会移除链接并回收实验室，
+因此要先导出需保留的资产。
 
 Host 在长程任务开始时验证连接：
 
@@ -57,7 +58,7 @@ Host 在长程任务开始时验证连接：
 ./labflow host test-connect lab-1
 ```
 
-这只建立 `connect/<generation>` 探针 session，不投递实验材料。若连接或权限有问题，必须在
+这只建立 `connect@<generation>` 探针 session，不投递实验材料。若连接或权限有问题，必须在
 此时修复；完成其他代码工作后再正式 start。
 
 外部操作员可观察实验室：
@@ -114,15 +115,16 @@ workspace 中的流程资产。两者用途不同。
 Host 从仓库根目录选择方案：
 
 ```bash
-./labflow host start lab-1 ontology-3/1 ontology-3
+./labflow host start lab-1 ontology-3
 ```
 
-Labflow 校验方案、复制 workspace、构建并投递顶层 Asset、生成 runtime adapter、执行权限
-预检，然后创建 `ontology-3/1` 等确定性 title 的 session。方案根 Artifact 不会隐式刷新；
+Labflow 自动分配 generation，并返回 `ontology-3@1` 这样的确定性 title。它校验方案、复制
+workspace、构建并投递顶层 Asset、生成 runtime adapter、执行权限预检，然后创建 session。
+方案根 Artifact 不会隐式刷新；
 Host 根据计划显式 submit 初始输入：
 
 ```bash
-./labflow host submit lab-1 ontology-3/1 lang qb-req edsl-req
+./labflow host submit lab-1 ontology-3@1 lang qb-req edsl-req
 ```
 
 角色循环由 coordinator 一次性启动。每个角色始终执行：
@@ -142,8 +144,8 @@ pull 最多等待 60 秒。成功响应列出 target、全部直接 input 的 `f
 Host 不使用不可感知的长时间 sleep，而使用有界 pull：
 
 ```bash
-./labflow host pull lab-1 ontology-3/1
-./labflow host pull lab-1 ontology-3/1 <previous-next_since>
+./labflow host pull lab-1 ontology-3@1
+./labflow host pull lab-1 ontology-3@1 <previous-next_since>
 ```
 
 响应中 `timeline.events` 是 `at >= since` 的增量事件；`result.requests` 是当前待 Host submit
@@ -152,9 +154,9 @@ Host 不使用不可感知的长时间 sleep，而使用有界 pull：
 权威状态和统计：
 
 ```bash
-./labflow host status lab-1 ontology-3/1
-./labflow host status lab-1 ontology-3/1 --verbose
-./labflow host stat lab-1 ontology-3/1
+./labflow host status lab-1 ontology-3@1
+./labflow host status lab-1 ontology-3@1 --verbose
+./labflow host stat lab-1 ontology-3@1
 ```
 
 ## Host 干预
@@ -162,37 +164,37 @@ Host 不使用不可感知的长时间 sleep，而使用有界 pull：
 Host 审核角色候选并运行方案验收命令，确认后刷新无角色后缀的批准 Artifact：
 
 ```bash
-./labflow host submit lab-1 ontology-3/1 qb
+./labflow host submit lab-1 ontology-3@1 qb
 ```
 
 投递或删除 Asset：
 
 ```bash
-./labflow host update lab-1 ontology-3/1 \
+./labflow host update lab-1 ontology-3@1 \
   query-builder/FEEDBACK.md=feedback/qb.md
-./labflow host update lab-1 ontology-3/1 query-builder/FEEDBACK.md=!
+./labflow host update lab-1 ontology-3@1 query-builder/FEEDBACK.md=!
 ```
 
 普通 Host 操作不能覆盖角色所有的输出。确实需要预制、修复或替换时显式使用 `--force`；
 它不绕过安全路径、未知 Artifact、DAG 输入和 Asset 检查：
 
 ```bash
-./labflow host update lab-1 ontology-3/1 role/output=host/replacement --force
-./labflow host submit lab-1 ontology-3/1 candidate.a3 --force
+./labflow host update lab-1 ontology-3@1 role/output=host/replacement --force
+./labflow host submit lab-1 ontology-3@1 candidate.a3 --force
 ```
 
 角色意外退出循环时恢复：
 
 ```bash
-./labflow host resume lab-1 ontology-3/1 a5
-./labflow host resume lab-1 ontology-3/1 a5 --force
+./labflow host resume lab-1 ontology-3@1 a5
+./labflow host resume lab-1 ontology-3@1 a5 --force
 ```
 
 普通 resume 对健康循环幂等；`--force` 中止偏离任务的当前 turn 后重新进入循环。结束执行但
 保留实验室时，可中止该 execution 的 session tree：
 
 ```bash
-./labflow host abort-sessions lab-1 ontology-3/1
+./labflow host abort-sessions lab-1 ontology-3@1
 ```
 
 ## 继承与打榜
@@ -200,7 +202,7 @@ Host 审核角色候选并运行方案验收命令，确认后刷新无角色后
 复用旧执行中仍有效的昂贵产出：
 
 ```bash
-./labflow host start lab-1 ontology-3/2 ontology-3 --from ontology-3/1
+./labflow host start lab-1 ontology-3 --from ontology-3@1
 ```
 
 这会创建新 workspace 和 session，只继承兼容、current 的 Artifact 及其等级 1/2 Asset；
@@ -246,7 +248,7 @@ Questioner 不判断正确性，最终判断由 Host 完成。
 知识工厂输出先整理为 bundle，再启动打榜流水线：
 
 ```bash
-./labflow host start lab-1 query-service-1/1 query-service-1 \
+./labflow host start lab-1 query-service-1 \
   --bundle target/exp-outputs/08-26
 ```
 

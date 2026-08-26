@@ -80,31 +80,32 @@ Host 在仓库根目录执行：
 
 ```bash
 ./labflow host test-connect lab-1
-./labflow host start lab-1 ontology-3/1 ontology-3
-./labflow host submit lab-1 ontology-3/1 \
+./labflow host start lab-1 ontology-3
+# 使用 start 返回的 title；首次通常是 ontology-3@1。
+./labflow host submit lab-1 ontology-3@1 \
   lang qb-req edsl-req domain-ent-1 intent-req
 ```
 
 初始输入和后续门禁都由 Host 显式 submit。观察与调度使用：
 
 ```bash
-./labflow host pull lab-1 ontology-3/1
-./labflow host status lab-1 ontology-3/1
-./labflow host stat lab-1 ontology-3/1
-./labflow host submit lab-1 ontology-3/1 qb
-./labflow host resume lab-1 ontology-3/1 a4
+./labflow host pull lab-1 ontology-3@1
+./labflow host status lab-1 ontology-3@1
+./labflow host stat lab-1 ontology-3@1
+./labflow host submit lab-1 ontology-3@1 qb
+./labflow host resume lab-1 ontology-3@1 a4
 ```
 
 反馈先更新 Asset，再刷新 Artifact：
 
 ```bash
-./labflow host update lab-1 ontology-3/1 \
+./labflow host update lab-1 ontology-3@1 \
   query-builder/FEEDBACK.md=feedback/qb.md
-./labflow host submit lab-1 ontology-3/1 qb-feedback
+./labflow host submit lab-1 ontology-3@1 qb-feedback
 ```
 
 Host 强制替换角色输出必须显式使用 `update --force` 或 `submit --force`。知识工厂完成后，Host
 把验收资产整理为 bundle，交给独立的 `benchmark-mode` 计划；题面不进入本 DAG。
 
-需要复用旧执行的已验收资产时使用 `start --from <session-name>`。方案自身不包含
+需要复用旧执行的已验收资产时使用 `start --from <title>`。方案自身不包含
 OpenCode 配置或角色 frontmatter；Labflow 在实验 workspace 中确定性生成运行时 adapter。
