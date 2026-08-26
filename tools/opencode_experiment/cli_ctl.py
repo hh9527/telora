@@ -487,7 +487,7 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
             "state": "thread_active" if service.get("active") else (
                 "ready" if baseline else "qualification"
             ),
-            "runtime_state": statuses.get(active_session, {"type": "unknown"}),
+            "runtime_state": statuses.get(active_session, {"type": "idle"}),
             "active_thread": service.get("active"),
         }]
         return metrics, {"agents": agents, "records": {"active": [], "history": []}}
