@@ -20,7 +20,7 @@
       "command": ["just", "a5", "make-query", "0000"]
     },
     "bundle": {
-      "paths": ["query-builder", "ontology", "ent-1", "query-1/GOAL.md", "query-1/HOMEWORK.md", "query-1/QUERY-DOC.md", "query-1/query_task.py", "query-1/telora-deps.json", "justfile"]
+      "paths": ["query-builder", "ontology", "ent-1", "query-1/GOAL.md", "query-1/HOMEWORK.md", "query-1/QUERY-DOC.md", "query-1/query_task.py", "query-1/src", "query-1/telora-deps.json", "justfile"]
     }
   },
   "metrics": {
