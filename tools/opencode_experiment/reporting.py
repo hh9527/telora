@@ -34,7 +34,7 @@ def submit_report(context: Context, body_file: Path) -> dict[str, Any]:
         atomic_write(stored, content.encode())
         record: dict[str, Any] = {
             "schema": "telora.opencode-report/v1",
-            "exec_name": context.state["exec_name"],
+            "session_name": context.state["session_name"],
             "number": number,
             "created_at": now(),
             "body": stored.name,

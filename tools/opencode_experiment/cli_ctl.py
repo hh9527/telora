@@ -9,16 +9,16 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .client import Client
 from .config import ControlError, load_manifest, repository_root, sha256
 from .context import Context, resolve
 from .events import event_detail, pending_request_sets, project_events
 from .lifecycle import (
     create_execution_session,
+    next_session_title,
     prepare,
     probe_opencode_connection,
     publish_workflow_artifact,
-    request_start,
-    reserve,
     send_round,
     verify_prepared,
 )
@@ -28,15 +28,10 @@ from .runtime_opencode import START_PROMPT, resume_prompt
 from .state import (
     atomic_write,
     atomic_json,
-    create_runner_config,
-    create_run_config,
+    load_lab_config,
     load_connect_test,
-    load_run_config,
-    load_runner_config,
     load_state,
     record_connect_test,
-    run_config_path,
-    runner_workspace_path,
 )
 from .task_cli import (
     TaskError, remove_artifact, supersede_role_task, task_records, workflow_status,
@@ -59,45 +54,49 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="oc-ctl", description="Control a named experiment execution.")
     commands = root.add_subparsers(dest="command", required=True)
     connect = commands.add_parser("test-connect")
-    connect.add_argument("test_id")
-    connect.add_argument("--lab", help="reuse an existing oc-run laboratory")
+    connect.add_argument("lab_name")
+
+    def target(command: argparse.ArgumentParser) -> None:
+        command.add_argument("lab_name")
+        command.add_argument("session_name")
+
     stat_command = commands.add_parser("stat")
-    stat_command.add_argument("test_id")
+    target(stat_command)
     status = commands.add_parser("status")
-    status.add_argument("test_id")
+    target(status)
     status.add_argument(
         "--verbose", action="store_true",
         help="include the complete artifact graph and raw runtime states",
     )
     pull = commands.add_parser("pull")
-    pull.add_argument("test_id")
+    target(pull)
     pull.add_argument("since", nargs="?", type=int,
                       help="previous response's next_since; Unix milliseconds, defaults to call start")
     pull.add_argument("--timeout", type=float, default=60.0,
                       help="seconds to wait for a Host decision; range 0..60 (default: 60)")
     event = commands.add_parser("event")
-    event.add_argument("test_id")
+    target(event)
     event.add_argument("event_id")
     start = commands.add_parser("start")
-    start.add_argument("test_id")
+    start.add_argument("lab_name")
     start.add_argument("plan_id")
     start.add_argument(
-        "--from", dest="from_test_id",
+        "--from", dest="from_session",
         help="inherit current artifacts and checked files from an earlier execution",
     )
     start.add_argument("--bundle", help="install a declared thread-service input bundle")
     update = commands.add_parser("update")
-    update.add_argument("test_id")
+    target(update)
     update.add_argument("files", nargs="+")
     update.add_argument("--force", action="store_true",
                         help="allow explicit Host replacement of role-owned output files")
     publish = commands.add_parser("publish")
-    publish.add_argument("test_id")
+    target(publish)
     publish.add_argument("artifacts", nargs="+")
     publish.add_argument("--force", action="store_true",
                          help="allow explicit Host publication of role-owned artifacts")
     resume = commands.add_parser("resume")
-    resume.add_argument("test_id")
+    target(resume)
     resume.add_argument("role")
     resume.add_argument("--timeout", type=float, default=15.0,
                         help="seconds to wait until the role loop is observed")
@@ -107,22 +106,22 @@ def parser() -> argparse.ArgumentParser:
         "abort-sessions",
         help="abort active sessions belonging to a completed or retired execution",
     )
-    abort_sessions.add_argument("test_id")
+    target(abort_sessions)
     approve = commands.add_parser("approve-baseline", help="freeze a qualified role session")
-    approve.add_argument("test_id")
+    target(approve)
     approve.add_argument("role")
     open_item = commands.add_parser("open-thread", help="fork the baseline for one production problem")
-    open_item.add_argument("test_id")
+    target(open_item)
     open_item.add_argument("role")
     open_item.add_argument("thread_name")
     open_item.add_argument("problem_file")
     comment = commands.add_parser("comment-thread", help="continue the active problem session")
-    comment.add_argument("test_id")
+    target(comment)
     comment.add_argument("role")
     comment.add_argument("thread_name")
     comment.add_argument("comment_file")
     close = commands.add_parser("close-thread", help="archive the active problem session")
-    close.add_argument("test_id")
+    target(close)
     close.add_argument("role")
     return root
 
@@ -145,49 +144,31 @@ def _controller_repo() -> Path:
     return repository_root(Path(__file__).resolve().parent)
 
 
-def _configure_start(repo: Path, test_id: str, plan_id: str,
-                     from_test_id: str | None = None,
+def _configure_start(repo: Path, lab_name: str, plan_id: str,
+                     from_session: str | None = None,
                      bundle: str | None = None) -> dict[str, Any]:
-    load_connect_test(repo, test_id)
-    runner = load_runner_config(repo, test_id)
+    lab = load_lab_config(repo, lab_name)
+    load_connect_test(lab_name, Path(lab["root"]))
     manifest = load_manifest(repo, plan_id)
     if manifest.execution["kind"] == "thread-service":
         if bundle is None:
             raise ControlError("thread-service start requires --bundle", 64)
-        if from_test_id is not None:
+        if from_session is not None:
             raise ControlError("thread-service start does not support --from", 64)
         if not Path(bundle).expanduser().is_dir():
             raise ControlError(f"bundle is not a directory: {bundle}", 66)
     elif bundle is not None:
         raise ControlError("--bundle is only valid for a thread-service plan", 64)
-    path = run_config_path(repo, test_id)
-    if path.is_file():
-        configured = load_run_config(repo, test_id)
-        if configured["plan_id"] != plan_id:
-            raise ControlError("execution plan does not match the requested plan", 64)
-        if configured["port"] != runner["port"]:
-            raise ControlError("execution port does not match the external runner", 64)
-        if configured.get("from_test_id") != from_test_id:
-            raise ControlError("execution source does not match the requested source", 64)
-        expected_bundle = str(Path(bundle).expanduser().resolve()) if bundle else None
-        if configured.get("bundle") != expected_bundle:
-            raise ControlError("execution bundle does not match the requested bundle", 64)
-        return configured
-    return create_run_config(repo, test_id, plan_id, runner["port"], from_test_id, bundle)
+    return {**lab, "lab_name": lab_name,
+            "bundle": str(Path(bundle).expanduser().resolve()) if bundle else None}
 
 
-def _test_connect(repo: Path, test_id: str, lab_id: str | None = None) -> dict[str, Any]:
-    if run_config_path(repo, test_id).exists():
-        raise ControlError(
-            f"execution {test_id} is already configured; connection tests must run before start",
-            64,
-        )
-    runner = load_runner_config(repo, lab_id or test_id)
-    result = probe_opencode_connection(test_id, runner["port"], runner_workspace_path(repo, test_id))
-    receipt = record_connect_test(repo, test_id, result)
-    if lab_id is not None:
-        create_runner_config(repo, test_id, runner["port"])
-        receipt["lab_id"] = lab_id
+def _test_connect(repo: Path, lab_name: str) -> dict[str, Any]:
+    lab = load_lab_config(repo, lab_name)
+    workspace = Path(lab["root"]) / "connection"
+    workspace.mkdir(parents=True, exist_ok=True)
+    result = probe_opencode_connection(lab_name, lab["port"], workspace)
+    receipt = record_connect_test(lab_name, Path(lab["root"]), result)
     return receipt
 
 
@@ -219,7 +200,7 @@ def _matches_check(path: str, pattern: str) -> bool:
 def _record_intervention(context: Context, kind: str, targets: list[dict[str, Any]]) -> dict[str, Any]:
     event = {
         "schema": "telora.host-intervention/v1",
-        "test_id": context.state["exec_name"],
+        "session_name": context.state["session_name"],
         "host_forced": True,
         "kind": kind,
         "recorded_at_ns": time.time_ns(),
@@ -342,7 +323,7 @@ def _resume(context: Context, role: str, timeout: float = 15.0,
         child, loop_state = running[-1]
         session_id = child["id"]
         return {
-            "schema": "telora.opencode-role-resume/v2", "test_id": context.state["exec_name"],
+            "schema": "telora.opencode-role-resume/v2", "session_name": context.state["session_name"],
             "role": role, "action": "already_running", "session_id": session_id,
             "previous_runtime_state": statuses[session_id], "runtime_state": statuses[session_id],
             "loop_observed": True, "loop_state": loop_state,
@@ -358,7 +339,9 @@ def _resume(context: Context, role: str, timeout: float = 15.0,
     else:
         action = "recreated"
         response = client.create_session(
-            f"恢复 {role.upper()} 角色循环", parent_id=context.state["session_id"]
+            next_session_title(client, f"{context.state['session_base']}.{role}",
+                               context.state["lab_root"]),
+            parent_id=context.state["session_id"],
         )
         session_id = response.get("id") if isinstance(response, dict) else None
         if not isinstance(session_id, str):
@@ -389,7 +372,9 @@ def _resume(context: Context, role: str, timeout: float = 15.0,
             if action == "resumed_existing":
                 action = "recreated"
                 response = client.create_session(
-                    f"恢复 {role.upper()} 角色循环", parent_id=context.state["session_id"]
+                    next_session_title(client, f"{context.state['session_base']}.{role}",
+                                       context.state["lab_root"]),
+                    parent_id=context.state["session_id"],
                 )
                 session_id = response.get("id") if isinstance(response, dict) else None
                 if not isinstance(session_id, str):
@@ -402,7 +387,7 @@ def _resume(context: Context, role: str, timeout: float = 15.0,
         time.sleep(.1)
     return {
         "schema": "telora.opencode-role-resume/v2",
-        "test_id": context.state["exec_name"],
+        "session_name": context.state["session_name"],
         "role": role,
         "session_id": session_id,
         "action": action,
@@ -465,7 +450,7 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
             "metrics", context.manifest.metrics
         ).get("roles", {}).get(role, {}).get("commands", {})
         metrics = collect_metrics(
-            context.state["exec_name"], context.state["phase"], workspace, sessions,
+            context.state["session_name"], context.state["phase"], workspace, sessions,
             message_map.__getitem__, context.state.get("metrics", context.manifest.metrics),
             {"active": [], "history": []},
         )
@@ -499,7 +484,7 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
     children, messages, statuses = _live_children(context)
     records = task_records(workspace)
     metrics = collect_metrics(
-        context.state["exec_name"], context.state["phase"], workspace, children,
+        context.state["session_name"], context.state["phase"], workspace, children,
         messages.__getitem__, context.state.get("metrics", context.manifest.metrics), records,
     )
     metrics["host_interventions"] = _intervention_summary(context)
@@ -542,7 +527,7 @@ def _metrics(context: Context) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
     if context.state["phase"] in ("waiting", "preparing"):
-        return {"test_id": context.state["exec_name"], "phase": context.state["phase"],
+        return {"session_name": context.state["session_name"], "phase": context.state["phase"],
                 "workspace": context.state.get("workspace"), "complete": False,
                 "quiescent": False, "next_host_actions": [], "agents": []}
     metrics, detail = _metrics(context)
@@ -550,7 +535,7 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
         service = context.state.get("thread_service", {})
         baseline = service.get("baseline")
         result = {
-            "test_id": context.state["exec_name"],
+            "session_name": context.state["session_name"],
             "phase": context.state["phase"],
             "workspace": context.state.get("workspace"),
             "baseline": {
@@ -576,7 +561,7 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
                for name, value in artifacts["artifacts"].items()
                if value["owner"] is not None and not value["current"] and value["blocked_by"]]
     result = {
-        "test_id": context.state["exec_name"],
+        "session_name": context.state["session_name"],
         "phase": context.state["phase"],
         "workspace": context.state.get("workspace"),
         "complete": artifacts["complete"],
@@ -589,7 +574,8 @@ def _status(context: Context, verbose: bool = False) -> dict[str, Any]:
         "next_host_actions": [{
             "action": "review_and_publish",
             "artifact": name,
-            "command": f"oc-ctl publish {context.state['exec_name']} {name}",
+            "command": (f"oc-ctl publish {context.state['lab_name']} "
+                        f"{context.state['session_name']} {name}"),
         } for name in publishable],
         "agents": detail["agents"],
         "tokens": metrics["aggregate"]["tokens"],
@@ -669,7 +655,7 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
     next_since = max([since, *(event["at"] for event in events)])
     return {
         "schema": "telora.oc-host-pull/v3",
-        "test_id": context.state["exec_name"],
+        "session_name": context.state["session_name"],
         "clock": "unix_ms",
         "since": since,
         "next_since": next_since,
@@ -683,21 +669,7 @@ def _host_pull(context: Context, since_ms: int | None, timeout: float = 60.0) ->
 
 
 def _start(context: Context) -> dict[str, Any]:
-    request_start(context.root)
-    deadline = time.monotonic() + 600
-    while True:
-        context.state = load_state(context.root)
-        if context.state["phase"] == "failed":
-            raise ControlError("oc-run failed while preparing the execution")
-        if context.state["phase"] in ("ready", "active", "idle"):
-            try:
-                context.client().health()
-                break
-            except ControlError:
-                pass
-        if time.monotonic() >= deadline:
-            raise ControlError("timed out waiting for oc-run to enter the TUI", 75)
-        time.sleep(.1)
+    context.client().health()
     verify_prepared(context.manifest, context.state)
     if context.manifest.execution["kind"] == "thread-service":
         initial = [record for record in context.rounds() if record.get("kind") == "qualification"]
@@ -762,7 +734,7 @@ def _abort_sessions(context: Context, timeout: float = 5.0) -> dict[str, Any]:
         raise ControlError(f"timed out aborting session(s): {', '.join(remaining)}", 75)
     return {
         "schema": "telora.opencode-sessions-abort/v1",
-        "test_id": context.state["exec_name"],
+        "session_name": context.state["session_name"],
         "sessions": sessions,
         "aborted": active,
         "already_idle": [session_id for session_id in sessions if session_id not in active],
@@ -773,35 +745,34 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "test-connect":
-            emit(_test_connect(_controller_repo(), args.test_id, args.lab))
+            emit(_test_connect(_controller_repo(), args.lab_name))
             return 0
         if args.command == "start":
             repo = _controller_repo()
             configured = _configure_start(
-                repo, args.test_id, args.plan_id, args.from_test_id, args.bundle
+                repo, args.lab_name, args.plan_id, args.from_session, args.bundle
             )
-            root, _ = reserve(
-                args.plan_id,
-                args.test_id,
-                configured["port"],
-                from_test_id=args.from_test_id,
+            client = Client(
+                f"http://127.0.0.1:{configured['port']}", configured["root"]
             )
-            request_start(root)
+            session_name = next_session_title(client, args.plan_id, configured["root"])
             root, state, _ = prepare(
                 args.plan_id,
-                args.test_id,
+                session_name,
                 configured["port"],
-                from_test_id=args.from_test_id,
+                from_session=args.from_session,
+                lab_name=args.lab_name,
+                lab_root=configured["root"],
             )
             execution = state.get("execution", {"kind": "artifact-dag"})
             if execution["kind"] == "thread-service":
                 manifest = load_manifest(repo, args.plan_id)
                 state = install_bundle(root, state, manifest, configured.get("bundle"))
-            create_execution_session(root, state, f"{args.plan_id} / {args.test_id} (ready)")
-            context = resolve(args.test_id, repo)
-            emit(_start(context))
+            create_execution_session(root, state, session_name)
+            context = resolve(args.lab_name, session_name, repo)
+            emit({"session_name": session_name, **_start(context)})
             return 0
-        context = resolve(args.test_id, _controller_repo())
+        context = resolve(args.lab_name, args.session_name, _controller_repo())
         if args.command == "status":
             emit(_status(context, args.verbose))
         elif args.command == "pull":

@@ -1,17 +1,21 @@
 # OpenCode experiment control
 
-`oc-run <test-id> <port>` starts a persistent headless OpenCode daemon in an empty runner workspace,
-thereby occupying the requested loopback port before any experiment material exists. The external
-operator selects the port but never selects a plan. Early in a long-running task, the Host runs
-`oc-ctl test-connect <test-id>` to exercise that exact daemon and record
-`target/exp/<test-id>/connect-test.json`. This neither chooses a plan nor writes `config.json`, so it
-does not release `oc-run` or freeze experiment inputs. After prerequisite fixes are complete, the
-Host runs `oc-ctl start <test-id> <plan-id>` from the repository root; `plan-id` names a tracked
-directory under `experiment-plans/`. `start` requires the successful receipt and external runner, adopts its port,
-and atomically writes `target/exp/<test-id>/config.json`. `oc-ctl start` then prepares the isolated
-experiment workspace and creates the formal session on the existing daemon. `oc-run` never prepares
-an execution or attaches a TUI; it keeps the headless daemon alive until the external operator
-explicitly terminates the process. A failed Host preparation therefore cannot tear down the lab.
+`oc-lab run <lab-name> [--port PORT]` owns one persistent headless OpenCode server and a temporary
+lab root. Once healthy, it writes exactly `{port, root}` to
+`target/labs/<lab-name>/config.json`. The port is selected automatically when omitted. Every
+execution workspace and controller record created by `oc-ctl` lives below that root, so exiting
+`oc-lab run` terminates the server and reclaims the complete laboratory.
+
+Early in a long-running task, the Host runs `oc-ctl test-connect <lab-name>`. This exercises health
+and session creation in the lab without choosing a plan. After prerequisite fixes, the Host runs
+`oc-ctl start <lab-name> <plan-id>`. It allocates a deterministic OpenCode session title such as
+`ontology-3/1`, prepares its workspace under the lab root, starts the session, and returns that title.
+Later control commands identify an execution with the pair `<lab-name> <session-name>`.
+OpenCode's `title` is the session name and the sole session-name registry. Titles contain no spaces.
+Root executions use `<plan-id>/<generation>`; a thread named `0001` uses
+`<plan-id>.0001/<generation>`; controller-created role replacements use
+`<plan-id>.<role>/<generation>`. `oc-lab ls` queries these sessions directly, and
+`oc-lab attach <lab-name> <session-name>` resolves an exact title before launching the TUI.
 `oc-ctl` controls and observes the execution. The tracked plan is runtime-neutral: it declares
 workspace inputs, role capabilities and the artifact DAG. `oc-ctl` deterministically generates
 `opencode.json`, `.opencode/agents/*.md` and the runtime `experiment.json`; Host-only assets are not
@@ -49,26 +53,25 @@ as a merged task-wide set, so a role can see exactly why each output became runn
 The Host control surface is deliberately limited to:
 
 ```text
-oc-ctl test-connect <test-id>
-oc-ctl test-connect <new-test-id> --lab <existing-lab-id>
-oc-ctl start <test-id> <plan-id>
-oc-ctl start <test-id> <plan-id> --from <earlier-test-id>
-oc-ctl start <test-id> <thread-service-plan> --bundle <bundle-directory>
-oc-ctl stat <test-id>
-oc-ctl status <test-id>
-oc-ctl pull <test-id> [<since>] [--timeout 60]
-oc-ctl event <test-id> <event-id>
-oc-ctl update <test-id> <dest-file>=<src-file>...
-oc-ctl update <test-id> <dest-file>=<src-file>... --force
-oc-ctl publish <test-id> <artifact>[=!]...
-oc-ctl publish <test-id> <artifact>[=!]... --force
-oc-ctl resume <test-id> <role>
-oc-ctl resume <test-id> <role> --force
-oc-ctl abort-sessions <test-id>
-oc-ctl approve-baseline <test-id> <role>
-oc-ctl open-thread <test-id> <role> <thread-name> <problem-file>
-oc-ctl comment-thread <test-id> <role> <thread-name> <comment-file>
-oc-ctl close-thread <test-id> <role>
+oc-ctl test-connect <lab-name>
+oc-ctl start <lab-name> <plan-id>
+oc-ctl start <lab-name> <plan-id> --from <earlier-session-name>
+oc-ctl start <lab-name> <thread-service-plan> --bundle <bundle-directory>
+oc-ctl stat <lab-name> <session-name>
+oc-ctl status <lab-name> <session-name>
+oc-ctl pull <lab-name> <session-name> [<since>] [--timeout 60]
+oc-ctl event <lab-name> <session-name> <event-id>
+oc-ctl update <lab-name> <session-name> <dest-file>=<src-file>...
+oc-ctl update <lab-name> <session-name> <dest-file>=<src-file>... --force
+oc-ctl publish <lab-name> <session-name> <artifact>[=!]...
+oc-ctl publish <lab-name> <session-name> <artifact>[=!]... --force
+oc-ctl resume <lab-name> <session-name> <role>
+oc-ctl resume <lab-name> <session-name> <role> --force
+oc-ctl abort-sessions <lab-name> <session-name>
+oc-ctl approve-baseline <lab-name> <session-name> <role>
+oc-ctl open-thread <lab-name> <session-name> <role> <thread-name> <problem-file>
+oc-ctl comment-thread <lab-name> <session-name> <role> <thread-name> <comment-file>
+oc-ctl close-thread <lab-name> <session-name> <role>
 ```
 
 `update` atomically copies any Host-readable file. Relative source paths are resolved from the
@@ -110,9 +113,9 @@ role's current turn and creates a clean replacement child session. Use it when a
 role is stuck or must reload a corrected runtime adapter; the active artifact task remains in the
 DAG and is reclaimed by the replacement role.
 
-`abort-sessions` retires an execution's live session tree without stopping the external lab. It
+`abort-sessions` retires an execution's live session tree without stopping the lab. It
 recursively finds the coordinator and child sessions, aborts only active turns, and preserves all
-session history, workspace files, artifacts, and the `oc-run` daemon. Repeating it after the tree is
+session history, workspace files, artifacts, and the `oc-lab` daemon. Repeating it after the tree is
 idle is a no-op.
 
 A plan with `execution.kind = thread-service` runs its declared role as the root Agent and has no
@@ -153,7 +156,7 @@ starts every role once and exits; it never dispatches, retries, observes, or int
 
 ## Host scheduling contract
 
-`oc-run` is an external-operator command. It owns only the headless daemon lifecycle and is never part of
+`oc-lab run` is an external-operator command. It owns the lab root and headless daemon lifecycle and is never part of
 the Host permission preflight or Host scheduling command set. The Host runs `test-connect` while
 authorization can still be attended and persistently approves the whole `oc-ctl` command prefix,
 not only the probe's exact argv.

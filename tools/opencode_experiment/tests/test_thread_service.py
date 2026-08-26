@@ -53,9 +53,11 @@ class ThreadServiceTest(unittest.TestCase):
         self.root.mkdir()
         atomic_write(self.root / "plan", b"service\n")
         self.state = {
-            "schema": SCHEMA, "plan_id": "service", "exec_name": "run",
+            "schema": SCHEMA, "plan_id": "service", "session_name": "service/1",
             "phase": "idle", "workspace": str(self.workspace),
             "session_id": "ses_base", "active_round": None,
+            "session_base": "query-service",
+            "lab_root": str(self.base),
             "execution": self.manifest.execution,
         }
         save_state(self.root, self.state)
@@ -120,6 +122,7 @@ class ThreadServiceTest(unittest.TestCase):
             assistant("msg_base" if session == "ses_base" else "msg_thread")
         ]
         client.fork_session.return_value = {"id": "ses_thread"}
+        client.sessions.return_value = []
         context = self.context(client)
 
         opened = open_thread(context, "a5", "0001", str(problem))
@@ -136,7 +139,9 @@ class ThreadServiceTest(unittest.TestCase):
         closed = close_thread(context, "a5")
         self.assertEqual(closed["status"], "closed")
         self.assertIsNone(load_state(self.root)["thread_service"]["active"])
-        client.update_session.assert_called_once()
+        self.assertEqual(client.update_session.call_args_list[0].args,
+                         ("ses_thread", {"title": "query-service.0001/1"}))
+        self.assertEqual(client.update_session.call_count, 2)
 
     def test_query_service_plan_generates_primary_a5_without_coordinator(self):
         repo = Path(__file__).resolve().parents[3]

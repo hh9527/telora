@@ -1,4 +1,0 @@
-#!/usr/bin/env python3
-from tools.opencode_experiment.cli_run import main
-
-raise SystemExit(main())

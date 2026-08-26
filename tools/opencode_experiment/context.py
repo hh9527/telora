@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from .client import Client
-from .config import ControlError, Manifest, load_manifest, repository_root, validate_identifier
-from .state import execution_root, load_state
+from .config import ControlError, Manifest, load_manifest, repository_root
+from .state import execution_root, load_lab_config, load_state, validate_session_name
 
 
 @dataclass
@@ -30,8 +30,13 @@ class Context:
         return result
 
 
-def resolve(exec_name: str, cwd: Path | None = None) -> Context:
-    validate_identifier(exec_name, "exec-name")
-    repo = repository_root(cwd); root = execution_root(repo, exec_name); state = load_state(root)
-    if state.get("exec_name") != exec_name: raise ControlError("execution name mismatch")
+def resolve(lab_name: str, session_name: str, cwd: Path | None = None) -> Context:
+    validate_session_name(session_name)
+    repo = repository_root(cwd)
+    lab = load_lab_config(repo, lab_name)
+    root = execution_root(Path(lab["root"]), session_name)
+    state = load_state(root)
+    if state.get("session_name") != session_name: raise ControlError("session name mismatch")
+    if state.get("lab_name") != lab_name or state.get("lab_root") != lab["root"]:
+        raise ControlError("execution lab identity mismatch")
     return Context(repo, root, state, load_manifest(repo, state["plan_id"]))

@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
@@ -20,7 +20,8 @@ from .observe import latest_assistant, normalized, text_parts
 from .permissions import preflight_permissions
 from .runtime_opencode import ENVIRONMENT, generate as generate_opencode_adapter
 from .state import (
-    SCHEMA, atomic_json, atomic_write, bind_plan, execution_root, load_state, locked, now, save_state,
+    SCHEMA, atomic_json, atomic_write, bind_plan, execution_root, load_state, locked, now,
+    save_state, validate_session_name,
 )
 from .task_cli import TaskError, evaluate, publish_artifact, restore_artifacts
 
@@ -31,20 +32,62 @@ def opencode_environment(state: dict[str, Any]) -> dict[str, str]:
     return environment
 
 
-def probe_opencode_connection(test_id: str, port: int, workspace: Path) -> dict[str, Any]:
-    """Exercise the external runner's daemon without preparing a real execution."""
-    from .config import validate_identifier
+def lab_sessions(client: Client, lab_root: str | Path) -> list[dict[str, Any]]:
+    root = Path(lab_root).resolve()
+    if not isinstance(client.workspace, str):
+        return client.sessions()
+    workspaces = {Path(client.workspace).resolve()}
+    connection = root / "connection"
+    if connection.is_dir():
+        workspaces.add(connection)
+    executions = root / "executions"
+    if executions.is_dir():
+        workspaces.update(path for path in executions.glob("*/*/runtime/ws") if path.is_dir())
+    records: dict[str, dict[str, Any]] = {}
+    for workspace in sorted(workspaces):
+        source = client if workspace == Path(client.workspace).resolve() else Client(
+            client.url, str(workspace), timeout=client.timeout
+        )
+        for session in source.sessions():
+            session_id = session.get("id") if isinstance(session, dict) else None
+            if isinstance(session_id, str):
+                records[session_id] = session
+    return list(records.values())
 
-    validate_identifier(test_id, "test-id")
+
+def next_session_title(client: Client, base: str, lab_root: str | Path) -> str:
+    if not base or any(character.isspace() for character in base):
+        raise ControlError(f"session title base must not contain whitespace: {base!r}", 64)
+    pattern = re.compile(rf"^{re.escape(base)}/([1-9][0-9]*)$")
+    generations = []
+    for session in lab_sessions(client, lab_root):
+        title = session.get("title") if isinstance(session, dict) else None
+        match = pattern.fullmatch(title) if isinstance(title, str) else None
+        if match:
+            generations.append(int(match.group(1)))
+    execution_generations = Path(lab_root).resolve() / "executions" / base
+    if execution_generations.is_dir():
+        generations.extend(
+            int(path.name) for path in execution_generations.iterdir()
+            if path.is_dir() and path.name.isdigit() and int(path.name) > 0
+        )
+    return f"{base}/{max(generations, default=0) + 1}"
+
+
+def probe_opencode_connection(lab_name: str, port: int, workspace: Path) -> dict[str, Any]:
+    """Exercise the lab daemon without preparing a real execution."""
+    validate_identifier(lab_name, "lab-name")
     client = Client(f"http://127.0.0.1:{port}", str(workspace), timeout=0.5)
     health = client.health()
-    session = client.create_session(f"connection test / {test_id}")
+    title = next_session_title(client, "connect", workspace.parent)
+    session = client.create_session(title)
     session_id = session.get("id") if isinstance(session, dict) else None
     if not isinstance(session_id, str) or not session_id.startswith("ses_"):
         raise ControlError("opencode connection test returned an invalid session identity")
     return {
         "health": bool(isinstance(health, dict) and health.get("healthy")),
         "session_id": session_id,
+        "title": title,
     }
 
 
@@ -98,88 +141,6 @@ def _copy_plan_workspace(manifest: Manifest, workspace: Path) -> None:
             _copy_file(source, destination, source.stat().st_mode & 0o7777)
 
 
-def _port_free(port: int) -> bool:
-    with socket.socket() as sock:
-        sock.settimeout(.2)
-        return sock.connect_ex(("127.0.0.1", port)) != 0
-
-
-def reserve(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None,
-            from_test_id: str | None = None) -> tuple[Path, dict[str, Any]]:
-    repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
-    if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
-    # Validate that the plan exists, but deliberately defer cloning, builds and
-    # permission preflight until oc-ctl start releases this execution.
-    load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
-    overrides = dict(artifacts or {})
-    if from_test_id is not None:
-        validate_identifier(from_test_id, "source test-id")
-        if from_test_id == exec_name:
-            raise ControlError("an execution cannot inherit from itself", 64)
-    with locked(root):
-        if (root / "state.json").exists():
-            state = load_state(root)
-            if state["plan_id"] != plan_id: raise ControlError("execution plan mismatch")
-            if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"execution {exec_name} is {state['phase']}")
-            if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError("execution already uses another port", 64)
-            if state.get("artifact_overrides", {}) != overrides: raise ControlError("execution already uses other artifact overrides", 64)
-            if state.get("from_test_id") != from_test_id: raise ControlError("execution already uses another source", 64)
-            return root, state
-        selected_port = port or 4096
-        state = {
-            "schema": SCHEMA,
-            "plan_id": plan_id,
-            "exec_name": exec_name,
-            "run_id": uuid.uuid4().hex,
-            "phase": "waiting",
-            "workspace": None,
-            "run_root": None,
-            "session_id": None,
-            "server_url": f"http://127.0.0.1:{selected_port}",
-            "artifact_overrides": overrides,
-            "from_test_id": from_test_id,
-            "next_round": 0,
-            "active_round": None,
-            "created_at": now(),
-            "start_requested_at": None,
-            "started_at": None,
-            "finished_at": None,
-        }
-        save_state(root, state)
-        return root, state
-
-
-def request_start(root: Path) -> dict[str, Any]:
-    with locked(root):
-        state = load_state(root)
-        path = root / "start-request.json"
-        if state["phase"] == "waiting":
-            if not path.exists():
-                requested_at = now()
-                atomic_json(path, {
-                    "schema": "telora.opencode-start-request/v1",
-                    "plan_id": state["plan_id"],
-                    "exec_name": state["exec_name"],
-                    "requested_at": requested_at,
-                })
-                state["start_requested_at"] = requested_at
-                save_state(root, state)
-        elif state["phase"] == "preparing":
-            if not path.is_file(): raise ControlError("preparing execution has no start request")
-        elif state["phase"] not in ("ready", "active", "idle"):
-            raise ControlError(f"execution cannot start in phase {state['phase']}")
-        return state
-
-
-def start_requested(root: Path) -> bool:
-    path = root / "start-request.json"
-    if not path.is_file(): return False
-    try: value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc: raise ControlError(f"invalid start request: {exc}") from None
-    if value.get("schema") != "telora.opencode-start-request/v1": raise ControlError("unsupported start request schema")
-    return True
-
-
 def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
     workspace = Path(state["workspace"])
     if state.get("workflow") != manifest.workflow:
@@ -196,45 +157,46 @@ def verify_prepared(manifest: Manifest, state: dict[str, Any]) -> None:
             raise ControlError(f"workspace artifact changed since preparation: {name}")
 
 
-def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str, str] | None = None,
-            from_test_id: str | None = None) -> tuple[Path, dict[str, Any], bool]:
-    repo = repository_root(); validate_identifier(plan_id, "plan-id"); validate_identifier(exec_name, "exec-name")
+def prepare(plan_id: str, session_name: str, port: int | None, artifacts: dict[str, str] | None = None,
+            from_session: str | None = None, *, lab_name: str,
+            lab_root: str) -> tuple[Path, dict[str, Any], bool]:
+    repo = repository_root(); validate_identifier(plan_id, "plan-id")
+    validate_identifier(lab_name, "lab-name"); validate_session_name(session_name)
     if port is not None and not 1 <= port <= 65535: raise ControlError("port must be from 1 through 65535", 64)
-    manifest = load_manifest(repo, plan_id); root = bind_plan(repo, plan_id, exec_name)
-    if from_test_id is not None:
-        validate_identifier(from_test_id, "source test-id")
-        if from_test_id == exec_name:
+    selected_lab_root = Path(lab_root).resolve()
+    if not selected_lab_root.is_dir():
+        raise ControlError(f"lab root is unavailable: {selected_lab_root}", 75)
+    manifest = load_manifest(repo, plan_id); root = bind_plan(selected_lab_root, plan_id, session_name)
+    if from_session is not None:
+        validate_session_name(from_session)
+        if from_session == session_name:
             raise ControlError("an execution cannot inherit from itself", 64)
-    reserved_state: dict[str, Any] | None = None
     with locked(root):
         if (root / "state.json").exists():
             state = load_state(root)
             if state["plan_id"] != plan_id: raise ControlError("execution plan mismatch")
-            if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"execution {exec_name} is {state['phase']}")
+            if state["phase"] in ("finished", "retired", "failed"): raise ControlError(f"session {session_name} is {state['phase']}")
             if port is not None and int(state["server_url"].rsplit(":", 1)[1]) != port: raise ControlError("execution already uses another port", 64)
-            if state["phase"] != "waiting":
-                if not Path(state["workspace"]).is_dir(): raise ControlError("recorded workspace is missing", 66)
-                verify_prepared(manifest, state); return root, state, False
-            if not start_requested(root): raise ControlError("execution is waiting for oc-ctl start", 75)
-            artifacts = state.get("artifact_overrides", {})
-            from_test_id = state.get("from_test_id")
-            port = int(state["server_url"].rsplit(":", 1)[1])
-            reserved_state = state
+            if not Path(state["workspace"]).is_dir(): raise ControlError("recorded workspace is missing", 66)
+            verify_prepared(manifest, state); return root, state, False
         port = port or 4096
         revision, dirty = git_metadata(repo); plan_revision, plan_source = plan_git_metadata(repo, manifest)
-        run_root = Path(tempfile.mkdtemp(prefix=f"oc-exp-{exec_name}-", dir="/tmp")).resolve(); workspace = run_root / "ws"
-        state: dict[str, Any] = {"schema": SCHEMA, "plan_id": plan_id, "exec_name": exec_name, "run_id": uuid.uuid4().hex,
+        run_root = root / "runtime"; workspace = run_root / "ws"
+        run_root.mkdir()
+        state: dict[str, Any] = {"schema": SCHEMA, "plan_id": plan_id, "session_name": session_name, "run_id": uuid.uuid4().hex,
             "phase": "preparing", "workspace": str(workspace), "run_root": str(run_root), "session_id": None,
             "server_url": f"http://127.0.0.1:{port}", "repository_revision": revision, "repository_dirty": dirty,
+            "lab_root": str(selected_lab_root),
+            "lab_name": lab_name,
             "plan_revision": plan_revision, "plan_source": plan_source,
             "opencode_environment": ENVIRONMENT,
             "workflow": manifest.workflow,
             "execution": manifest.execution,
             "input_hashes": {}, "binary_hashes": {}, "next_round": 0, "active_round": None,
             "artifact_overrides": dict(artifacts or {}),
-            "from_test_id": from_test_id,
-            "created_at": reserved_state.get("created_at", now()) if reserved_state else now(),
-            "start_requested_at": reserved_state.get("start_requested_at") if reserved_state else None,
+            "from_session": from_session,
+            "created_at": now(),
+            "start_requested_at": now(),
             "started_at": None, "finished_at": None}
         save_state(root, state)
         try:
@@ -251,8 +213,8 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
             state["reporting"] = manifest.reporting
             state["metrics"] = manifest.metrics
             state["input_hashes"][manifest.manifest_name] = sha256(manifest.root / manifest.manifest_name)
-            if from_test_id is not None:
-                state["inheritance"] = _inherit_execution(repo, from_test_id, plan_id, workspace,
+            if from_session is not None:
+                state["inheritance"] = _inherit_execution(selected_lab_root, from_session, plan_id, workspace,
                                                             manifest.workflow)
             save_state(root, state)
         except Exception:
@@ -260,11 +222,11 @@ def prepare(plan_id: str, exec_name: str, port: int | None, artifacts: dict[str,
     return root, state, True
 
 
-def _inherit_execution(repo: Path, source_id: str, plan_id: str, workspace: Path,
+def _inherit_execution(lab_root: Path, source_id: str, plan_id: str, workspace: Path,
                        workflow: dict[str, Any] | None) -> dict[str, Any]:
     if workflow is None:
         raise ControlError("target experiment has no artifact workflow", 64)
-    source_root = execution_root(repo, source_id)
+    source_root = execution_root(lab_root, source_id)
     source_state = load_state(source_root)
     if source_state["plan_id"] != plan_id:
         raise ControlError("source execution uses another plan", 64)
@@ -327,7 +289,7 @@ def _inherit_execution(repo: Path, source_id: str, plan_id: str, workspace: Path
     except TaskError as exc:
         raise ControlError(f"cannot restore inherited artifacts: {exc}", exc.code) from None
     return {
-        "source_test_id": source_id,
+        "source_session": source_id,
         "source_plan_revision": source_state.get("plan_revision"),
         "artifacts": [item["artifact"] for item in restored],
         "files": sorted(copied),
@@ -400,7 +362,9 @@ def create_execution_session(root: Path, state: dict[str, Any], title: str) -> d
     session_id = response.get("id") if isinstance(response, dict) else None
     if not isinstance(session_id, str) or not session_id.startswith("ses_"): raise ControlError("opencode returned an invalid session identity")
     with locked(root):
-        current = load_state(root); current["session_id"] = session_id; current["phase"] = "ready"; save_state(root, current); state = current
+        current = load_state(root); current["session_id"] = session_id
+        current["session_base"] = title.rsplit("/", 1)[0]; current["session_title"] = title
+        current["phase"] = "ready"; save_state(root, current); state = current
     return state
 
 
@@ -581,7 +545,7 @@ def finish(context: Context) -> dict[str, Any]:
         atomic_json(result / "query.json", document)
         summary = document["summary"]
         atomic_write(result / "RUNLOG.md", ("# Run log\n\n```json\n" + json.dumps(summary, indent=2) + "\n```\n").encode())
-        atomic_write(result / "SUMMARY.md", f"# {state['exec_name']} summary\n\nExecution data was frozen at {now()}.\n".encode())
+        atomic_write(result / "SUMMARY.md", f"# {state['session_name']} summary\n\nExecution data was frozen at {now()}.\n".encode())
     except Exception:
         with locked(context.root):
             current = load_state(context.root); current["phase"] = "idle"; save_state(context.root, current)
@@ -593,7 +557,9 @@ def finish(context: Context) -> dict[str, Any]:
 
 def safe_cleanup(state: dict[str, Any]) -> None:
     run_root = Path(state["run_root"]); workspace = Path(state["workspace"])
-    expected = f"oc-exp-{state['exec_name']}-"
-    if run_root.parent != Path("/tmp") or not run_root.name.startswith(expected) or workspace != run_root / "ws" or run_root.is_symlink():
+    lab_root = Path(state["lab_root"]).resolve()
+    execution = execution_root(lab_root, state["session_name"])
+    if (run_root != execution / "runtime" or workspace != run_root / "ws" or run_root.is_symlink()
+            or not run_root.resolve().is_relative_to(lab_root)):
         raise ControlError("refusing unsafe temporary cleanup")
     if run_root.exists(): shutil.rmtree(run_root)

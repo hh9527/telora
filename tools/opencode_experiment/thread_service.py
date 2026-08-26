@@ -207,6 +207,8 @@ def _record_path(context: Any, role: str, name: str) -> Path:
 
 
 def open_thread(context: Any, role: str, name: str, problem_file: str) -> dict[str, Any]:
+    from .lifecycle import next_session_title
+
     validate_identifier(name, "thread-name")
     baseline = _baseline(context, role)
     service = context.state["thread_service"]
@@ -216,13 +218,18 @@ def open_thread(context: Any, role: str, name: str, problem_file: str) -> dict[s
     if record_path.exists():
         raise ControlError(f"thread already exists: {name}", 64)
     problem = _copy_input(context, role, name, problem_file, 0, "problem")
-    response = context.client().fork_session(baseline["session_id"])
+    client = context.client()
+    title = next_session_title(client, f"{context.state['session_base']}.{name}",
+                               context.state["lab_root"])
+    response = client.fork_session(baseline["session_id"])
     session_id = response.get("id") if isinstance(response, dict) else None
     if not isinstance(session_id, str) or not session_id.startswith("ses_"):
         raise ControlError("opencode returned an invalid fork session identity", 69)
+    client.update_session(session_id, {"title": title})
     opened_ms = int(time.time() * 1000)
     record = {"schema": "telora.thread-service-thread/v1", "role": role, "name": name,
               "session_id": session_id, "status": "active", "opened_at": now(),
+              "title": title,
               "opened_at_ms": opened_ms, "closed_at": None, "inputs": [problem]}
     atomic_json(record_path, record)
     with locked(context.root):
@@ -232,7 +239,7 @@ def open_thread(context: Any, role: str, name: str, problem_file: str) -> dict[s
         }
         save_state(context.root, state)
         context.state = state
-    context.client().prompt_session(session_id, problem["text"], agent=role)
+    client.prompt_session(session_id, problem["text"], agent=role)
     return record
 
 

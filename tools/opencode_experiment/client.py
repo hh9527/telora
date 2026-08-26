@@ -17,7 +17,8 @@ class Client:
             raise ControlError(f"unsafe opencode server URL: {server_url}")
         self.url = server_url.rstrip("/"); self.workspace = workspace; self.session_id = session_id; self.timeout = timeout
 
-    def _request(self, path: str, method: str = "GET", payload: Any = None, timeout: float | None = None) -> Any:
+    def _request(self, path: str, method: str = "GET", payload: Any = None,
+                 timeout: float | None = None) -> Any:
         separator = "&" if "?" in path else "?"
         path += separator + urllib.parse.urlencode({"directory": self.workspace})
         body = None if payload is None else json.dumps(payload).encode()
@@ -40,6 +41,11 @@ class Client:
         except json.JSONDecodeError as exc: raise ControlError(f"malformed opencode response: {exc}") from None
 
     def health(self) -> Any: return self._request("/global/health")
+    def sessions(self) -> list[dict[str, Any]]:
+        value = self._request("/session")
+        if not isinstance(value, list):
+            raise ControlError("opencode returned an invalid session list", 69)
+        return value
     def statuses(self) -> dict[str, Any]: return self._request("/session/status")
     def status(self) -> dict[str, Any]: return self.statuses().get(self.session_id, {"type": "idle"})
     def messages(self) -> list[dict[str, Any]]: return self._request(f"/session/{self.session_id}/message")

@@ -12,8 +12,6 @@ from typing import Any, Iterator
 from .config import ControlError, validate_identifier
 
 SCHEMA = "telora.opencode-execution/v1"
-RUN_CONFIG_SCHEMA = "telora.opencode-run-config/v1"
-RUNNER_CONFIG_SCHEMA = "telora.opencode-runner-config/v1"
 CONNECT_TEST_SCHEMA = "telora.opencode-connect-test/v1"
 PHASES = {"waiting", "preparing", "ready", "active", "idle", "finishing", "finished", "failed", "retired"}
 
@@ -22,197 +20,150 @@ def now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def execution_root(repo: Path, exec_name: str) -> Path:
-    validate_identifier(exec_name, "exec-name")
-    return repo / "target" / "exp" / exec_name
+def validate_session_name(value: str) -> str:
+    parts = value.split("/")
+    if len(parts) != 2:
+        raise ControlError(f"invalid session-name: {value!r}", 64)
+    validate_identifier(parts[0], "session-name base")
+    if not parts[1].isdigit() or int(parts[1]) < 1:
+        raise ControlError(f"invalid session-name generation: {value!r}", 64)
+    return value
 
 
-def run_config_path(repo: Path, test_id: str) -> Path:
-    return execution_root(repo, test_id) / "config.json"
+def execution_root(lab_root: Path, session_name: str) -> Path:
+    validate_session_name(session_name)
+    base, generation = session_name.split("/")
+    return lab_root.resolve() / "executions" / base / generation
 
 
-def runner_config_path(repo: Path, test_id: str) -> Path:
-    return execution_root(repo, test_id) / "runner.json"
+def lab_config_path(repo: Path, lab_name: str) -> Path:
+    validate_identifier(lab_name, "lab-name")
+    return repo / "target" / "labs" / lab_name / "config.json"
 
 
-def runner_workspace_path(repo: Path, test_id: str) -> Path:
-    return execution_root(repo, test_id) / "runner-workspace"
-
-
-def create_runner_config(repo: Path, test_id: str, port: int) -> dict[str, Any]:
-    validate_identifier(test_id, "test-id")
+def create_lab_config(repo: Path, lab_name: str, port: int, root: Path) -> dict[str, Any]:
+    validate_identifier(lab_name, "lab-name")
     if not 1 <= port <= 65535:
         raise ControlError("port must be from 1 through 65535", 64)
-    root = execution_root(repo, test_id)
-    with locked(root):
-        path = runner_config_path(repo, test_id)
-        if path.is_file():
-            value = load_runner_config(repo, test_id)
-            if value["port"] != port:
-                raise ControlError(f"runner {test_id} is already configured for another port")
-            return value
-        value = {
-            "schema": RUNNER_CONFIG_SCHEMA,
-            "test_id": test_id,
-            "port": port,
-            "created_at": now(),
-        }
-        atomic_json(path, value)
+    lab_root = root.resolve()
+    if not lab_root.is_absolute() or not lab_root.is_dir():
+        raise ControlError("lab root must be an existing absolute directory", 66)
+    path = lab_config_path(repo, lab_name)
+    if path.is_file():
+        value = load_lab_config(repo, lab_name)
+        if value != {"port": port, "root": str(lab_root)}:
+            raise ControlError(f"lab {lab_name} is already configured differently")
         return value
+    value = {"port": port, "root": str(lab_root)}
+    atomic_json(path, value)
+    return value
 
 
-def load_runner_config(repo: Path, test_id: str) -> dict[str, Any]:
-    path = runner_config_path(repo, test_id)
+def load_lab_config(repo: Path, lab_name: str) -> dict[str, Any]:
+    path = lab_config_path(repo, lab_name)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ControlError(
-            f"missing external runner for {test_id}; run oc-run {test_id} <port> before start",
+            f"missing lab {lab_name}; run oc-lab run {lab_name} before continuing",
             75,
         ) from None
     except (OSError, json.JSONDecodeError) as exc:
-        raise ControlError(f"invalid runner configuration: {exc}") from None
+        raise ControlError(f"invalid lab configuration: {exc}") from None
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema", "test_id", "port", "created_at"}
-        or value.get("schema") != RUNNER_CONFIG_SCHEMA
-        or value.get("test_id") != test_id
+        or set(value) != {"port", "root"}
         or not isinstance(value.get("port"), int)
         or not 1 <= value["port"] <= 65535
-        or not isinstance(value.get("created_at"), str)
+        or not isinstance(value.get("root"), str)
+        or not Path(value["root"]).is_absolute()
+        or not Path(value["root"]).is_dir()
     ):
-        raise ControlError("invalid runner configuration")
+        raise ControlError("invalid lab configuration")
     return value
 
 
-def connect_test_path(repo: Path, test_id: str) -> Path:
-    return execution_root(repo, test_id) / "connect-test.json"
+def remove_lab_config(repo: Path, lab_name: str, expected: dict[str, Any]) -> None:
+    path = lab_config_path(repo, lab_name)
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, json.JSONDecodeError):
+        return
+    if current == expected:
+        path.unlink()
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass
 
 
-def record_connect_test(repo: Path, test_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    validate_identifier(test_id, "test-id")
+def connect_test_path(lab_root: Path) -> Path:
+    return lab_root.resolve() / "control" / "connect-test.json"
+
+
+def record_connect_test(lab_name: str, lab_root: Path,
+                        result: dict[str, Any]) -> dict[str, Any]:
+    validate_identifier(lab_name, "lab-name")
     value = {
         "schema": CONNECT_TEST_SCHEMA,
-        "test_id": test_id,
+        "lab_name": lab_name,
+        "lab_root": str(lab_root.resolve()),
         "tested_at": now(),
         "transport": "opencode-loopback-http",
         "health": result.get("health"),
         "session_id": result.get("session_id"),
+        "title": result.get("title"),
     }
     if value["health"] is not True:
         raise ControlError("connection test did not report a healthy daemon")
     if not isinstance(value["session_id"], str) or not value["session_id"].startswith("ses_"):
         raise ControlError("connection test did not create a valid session")
-    atomic_json(connect_test_path(repo, test_id), value)
+    if not isinstance(value["title"], str):
+        raise ControlError("connection test did not create a named session")
+    atomic_json(connect_test_path(lab_root), value)
     return value
 
 
-def load_connect_test(repo: Path, test_id: str) -> dict[str, Any]:
-    path = connect_test_path(repo, test_id)
+def load_connect_test(lab_name: str, lab_root: Path) -> dict[str, Any]:
+    path = connect_test_path(lab_root)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ControlError(
-            f"missing connection test for {test_id}; run oc-ctl test-connect {test_id} before start",
+            f"missing connection test; run oc-ctl test-connect {lab_name} before start",
             75,
         ) from None
     except (OSError, json.JSONDecodeError) as exc:
         raise ControlError(f"invalid connection test: {exc}") from None
     if (
         not isinstance(value, dict)
-        or set(value)
-        != {"schema", "test_id", "tested_at", "transport", "health", "session_id"}
+        or set(value) != {"schema", "lab_name", "lab_root", "tested_at",
+                          "transport", "health", "session_id", "title"}
         or value.get("schema") != CONNECT_TEST_SCHEMA
-        or value.get("test_id") != test_id
+        or value.get("lab_name") != lab_name
+        or value.get("lab_root") != str(lab_root.resolve())
         or value.get("transport") != "opencode-loopback-http"
         or value.get("health") is not True
+        or not isinstance(value.get("lab_name"), str)
+        or not isinstance(value.get("lab_root"), str)
+        or not Path(value["lab_root"]).is_absolute()
         or not isinstance(value.get("tested_at"), str)
         or not isinstance(value.get("session_id"), str)
         or not value["session_id"].startswith("ses_")
+        or not isinstance(value.get("title"), str)
     ):
         raise ControlError("invalid connection test receipt")
     return value
 
 
-def _validate_run_config(value: Any, test_id: str) -> dict[str, Any]:
-    required = {"schema", "test_id", "plan_id", "port", "created_at"}
-    if (not isinstance(value, dict) or not required.issubset(value)
-            or not set(value).issubset(required | {"from_test_id", "bundle"})):
-        raise ControlError("invalid run configuration")
-    if value.get("schema") != RUN_CONFIG_SCHEMA or value.get("test_id") != test_id:
-        raise ControlError("run configuration identity mismatch")
-    if not isinstance(value.get("plan_id"), str):
-        raise ControlError("invalid run configuration plan-id")
-    validate_identifier(value["plan_id"], "plan-id")
-    if not isinstance(value.get("port"), int) or not 1 <= value["port"] <= 65535:
-        raise ControlError("invalid run configuration port")
-    if "from_test_id" in value:
-        source = value["from_test_id"]
-        if not isinstance(source, str):
-            raise ControlError("invalid source test-id")
-        validate_identifier(source, "source test-id")
-        if source == test_id:
-            raise ControlError("an execution cannot inherit from itself")
-    if "bundle" in value and (not isinstance(value["bundle"], str)
-                              or not Path(value["bundle"]).is_absolute()):
-        raise ControlError("invalid bundle path")
-    return value
-
-
-def load_run_config(repo: Path, test_id: str) -> dict[str, Any]:
-    path = run_config_path(repo, test_id)
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise ControlError(f"missing run configuration: {path}", 66) from None
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ControlError(f"invalid run configuration: {exc}") from None
-    return _validate_run_config(value, test_id)
-
-
-def create_run_config(repo: Path, test_id: str, plan_id: str, port: int,
-                      from_test_id: str | None = None,
-                      bundle: str | None = None) -> dict[str, Any]:
-    validate_identifier(test_id, "test-id")
-    validate_identifier(plan_id, "plan-id")
-    if from_test_id is not None:
-        validate_identifier(from_test_id, "source test-id")
-        if from_test_id == test_id:
-            raise ControlError("an execution cannot inherit from itself", 64)
-    if not 1 <= port <= 65535:
-        raise ControlError("port must be from 1 through 65535", 64)
-    bundle_path = str(Path(bundle).expanduser().resolve()) if bundle is not None else None
-    root = execution_root(repo, test_id)
-    with locked(root):
-        path = run_config_path(repo, test_id)
-        if path.is_file():
-            try:
-                value = _validate_run_config(json.loads(path.read_text(encoding="utf-8")), test_id)
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ControlError(f"invalid run configuration: {exc}") from None
-            if value["plan_id"] != plan_id:
-                raise ControlError(f"execution {test_id} is already configured for {value['plan_id']}")
-            if value.get("from_test_id") != from_test_id:
-                raise ControlError("execution is already configured with another source", 64)
-            if value.get("bundle") != bundle_path:
-                raise ControlError("execution is already configured with another bundle", 64)
-            return value
-        value = {"schema": RUN_CONFIG_SCHEMA, "test_id": test_id, "plan_id": plan_id,
-                 "port": port, "created_at": now()}
-        if from_test_id is not None:
-            value["from_test_id"] = from_test_id
-        if bundle_path is not None:
-            value["bundle"] = bundle_path
-        atomic_json(path, value)
-        return value
-
-
-def bind_plan(repo: Path, plan_id: str, exec_name: str) -> Path:
-    root = execution_root(repo, exec_name); root.mkdir(parents=True, exist_ok=True)
+def bind_plan(lab_root: Path, plan_id: str, session_name: str) -> Path:
+    root = execution_root(lab_root, session_name); root.mkdir(parents=True, exist_ok=True)
     binding = root / "plan"; expected = f"{plan_id}\n"
     if binding.exists():
         if binding.read_text(encoding="utf-8") != expected:
-            raise ControlError(f"execution {exec_name} is bound to another plan")
+            raise ControlError(f"session {session_name} is bound to another plan")
     else:
         atomic_write(binding, expected.encode(), 0o444)
     return root

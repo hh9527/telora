@@ -367,7 +367,7 @@ def _sum_values(values: list[dict[str, int]], names: tuple[str, ...]) -> dict[st
 
 
 def collect_metrics(
-    exec_name: str,
+    session_name: str,
     execution_phase: str,
     workspace: Path,
     children: list[dict[str, Any]],
@@ -461,7 +461,7 @@ def collect_metrics(
     last = max(ends) if ends else None
     return {
         "schema": "telora.opencode-stats/v1",
-        "exec_name": exec_name,
+        "session_name": session_name,
         "execution_phase": execution_phase,
         "roles": roles,
         "aggregate": {

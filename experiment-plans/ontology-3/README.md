@@ -83,29 +83,29 @@ feedback 状态。
 所有跨角色正式移交都由 Host 审核后发布无角色后缀的 artifact：
 
 ```bash
-./oc-ctl status t001
-./oc-ctl update t001 query-builder/FEEDBACK.md=feedback/qb.md
-./oc-ctl publish t001 qb-feedback
-./oc-ctl publish t001 qb
-./oc-ctl publish t001 edsl-feedback
-./oc-ctl publish t001 edsl
-./oc-ctl publish t001 ent-1-model
-./oc-ctl publish t001 ent-1-query-surface
-./oc-ctl update t001 ent-1/QUERY-SURFACE-FEEDBACK.md=feedback/query-surface.md
-./oc-ctl publish t001 ent-1-query-surface-feedback
-./oc-ctl publish t001 intent-1
-./oc-ctl publish t001 query-engine query-doc
-./oc-ctl publish t001 lic
-./oc-ctl publish t001 problem
-./oc-ctl publish t001 answer
+./oc-ctl status t1 ontology-3/1
+./oc-ctl update t1 ontology-3/1 query-builder/FEEDBACK.md=feedback/qb.md
+./oc-ctl publish t1 ontology-3/1 qb-feedback
+./oc-ctl publish t1 ontology-3/1 qb
+./oc-ctl publish t1 ontology-3/1 edsl-feedback
+./oc-ctl publish t1 ontology-3/1 edsl
+./oc-ctl publish t1 ontology-3/1 ent-1-model
+./oc-ctl publish t1 ontology-3/1 ent-1-query-surface
+./oc-ctl update t1 ontology-3/1 ent-1/QUERY-SURFACE-FEEDBACK.md=feedback/query-surface.md
+./oc-ctl publish t1 ontology-3/1 ent-1-query-surface-feedback
+./oc-ctl publish t1 ontology-3/1 intent-1
+./oc-ctl publish t1 ontology-3/1 query-engine query-doc
+./oc-ctl publish t1 ontology-3/1 lic
+./oc-ctl publish t1 ontology-3/1 problem
+./oc-ctl publish t1 ontology-3/1 answer
 ```
 
 A5 上岗通过后，十道真题由 Host 从 `host/a5-cases/` 逐题投递。例如在 Telora 仓根目录：
 
 ```bash
-./oc-ctl update t001 \
+./oc-ctl update t1 ontology-3/1 \
   query-1/PROBLEM.md=experiment-plans/ontology-3/host/a5-cases/01.problem.md
-./oc-ctl publish t001 problem
+./oc-ctl publish t1 ontology-3/1 problem
 ```
 
 每份题面首行包含四位题号。A5 以相同题号创建 `query-1/answers/<problem-id>.json`；信息
@@ -120,22 +120,20 @@ A5 上岗通过后，十道真题由 Host 从 `host/a5-cases/` 逐题投递。�
 ## 运行
 
 ```bash
-./oc-run t001 4199
+./oc-lab run t1 --port 4199
 ```
 
-外部窗口只提供 test-id，并等待 Host 配置。Host 从 Telora 仓根目录选择本计划：
+外部窗口只提供 lab。Host 从 Telora 仓根目录验证连接并选择本计划：
 
 ```bash
-./oc-ctl test-connect t001
-./oc-ctl start t001 ontology-3
+./oc-ctl test-connect t1
+./oc-ctl start t1 ontology-3
 ```
 
 要在新会话中复用旧执行已经验收的 A1-A4 产物，而不重新运行长耗时阶段：
 
 ```bash
-./oc-run t002 4200
-./oc-ctl test-connect t002
-./oc-ctl start t002 ontology-3 --from t001
+./oc-ctl start t1 ontology-3 --from ontology-3/1
 ```
 
 来源执行中兼容且仍为 current 的 artifact 会连同 checks 文件一起继承；Host promotion
@@ -146,12 +144,12 @@ A5 上岗通过后，十道真题由 Host 从 `host/a5-cases/` 逐题投递。�
 使用以下命令观察和干预：
 
 ```bash
-./oc-ctl status t001
-./oc-ctl status t001 --verbose
-./oc-ctl stat t001
-./oc-ctl update t001 path/in/workspace=path/in/current/directory
-./oc-ctl publish t001 artifact
-./oc-ctl resume t001 a5
+./oc-ctl status t1 ontology-3/1
+./oc-ctl status t1 ontology-3/1 --verbose
+./oc-ctl stat t1 ontology-3/1
+./oc-ctl update t1 ontology-3/1 path/in/workspace=path/in/current/directory
+./oc-ctl publish t1 ontology-3/1 artifact
+./oc-ctl resume t1 ontology-3/1 a5
 ```
 
 准备阶段复制 manifest 声明的方案资产并构建 release Telora binary。OpenCode 配置、角色
