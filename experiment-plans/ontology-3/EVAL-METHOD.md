@@ -40,9 +40,9 @@ runtime 更新前后的结果属于同一 execution 中两个不同 epoch。
 - coordinator 只作为 DAG 根 Session；Supervisor 创建并维护 A1-A4 各一个角色 Session。
 - `ent-1/FEEDBACK.md` 初始必须为零字节；角色只在 Supervisor 投递对应任务后读取动态输入。
 - 核对 `control/artifacts/**` 与实际交付顺序一致；coordinator 不直接创建 artifact。
-- Agent 只通过 `labflow agent submit <role> <artifact...>` 控制自己的 `.<role>` Artifact；
-  Host 只通过 `labflow host submit` 控制无角色后缀 Artifact。
-- feedback 与 build 同时 runnable 时按 artifact 声明顺序逐个投递、逐个 submit，任务不合并。
+- Supervisor 在角色 turn 结束后校验资产并结算对应的 `.<role>` Artifact；Host 通过
+  `labflow host submit` 控制无角色后缀 Artifact。
+- feedback 与 build 同时 runnable 时按 Artifact 声明顺序逐个投递、逐个结算，任务保持独立。
 - 核对每个 Host promotion 都晚于对应角色候选和必要评审，且下游首次输出发生在
   promotion 之后。
 - Host 发布的新反馈必须使旧候选失效；上游重新执行后旧 promotion 必须失效并重新

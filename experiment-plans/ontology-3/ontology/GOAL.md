@@ -71,4 +71,4 @@ ordering/limit。非法筛选值、未授权或缺失筛选能力、未请求排
 ## 反馈修订
 
 `qb` 或 `edsl-feedback` 更新使 `edsl.a2` 重新就绪时，重新读取当前公共输入并验证既有
-eDSL。完成后用一次 `labflow agent submit a2 ...` 提交本次 prompt 指定的唯一 artifact。
+eDSL。完成唯一 Artifact 的实现和验证后结束当前 turn，Supervisor 负责校验资产和结算。

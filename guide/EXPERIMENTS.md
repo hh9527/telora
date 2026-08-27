@@ -20,8 +20,8 @@ Labflow 有两种计划：知识工厂使用 `dag-mode`，由 Artifact DAG 承�
 移交资产，但不共享 Agent session。
 
 在知识工厂中，Artifact 名称以 `.<role>` 结尾时归该角色所有，否则归 Host 所有。每个 Artifact
-独立产生工作压力；输入只控制就绪和失效，不定义起点或终点。Host 和 Agent 都通过 submit
-刷新 Artifact。
+独立产生工作压力；输入只控制就绪和失效，不定义起点或终点。Host 通过 `host submit` 刷新
+Host Artifact；Supervisor 在角色 turn 结束后结算角色 Artifact。
 
 Asset 路径以 `/` 结尾时表示目录，否则表示文件。`level` 控制保留策略：
 
@@ -31,7 +31,7 @@ Asset 路径以 `/` 结尾时表示目录，否则表示文件。`level` 控制�
 2  结果资产，默认备份
 ```
 
-Artifact 的 Asset 必须存在且类型正确才能 submit。Agent 对自己所有 Artifact 的 Asset 有读写
+Artifact 的 Asset 必须存在且类型正确才能结算。Agent 对自己所有 Artifact 的 Asset 有读写
 权限，对直接输入 Artifact 的 Asset有只读权限；方案不再单独维护角色 `read`/`write`。
 
 ## 启动前
@@ -48,7 +48,7 @@ Host 只使用 `./labflow host ...`。开始长程任务前一次性确认完整
 ```
 
 该命令创建临时 lab root，启动无头 OpenCode server，并创建
-`.labs/lab-1 -> <lab-root>` 符号链接。`<lab-root>/config.json` 记录实验室名称、端口和 Host
+`.labs/lab-1 -> <lab-root>` 符号链接。`<lab-root>/.labflow.config` 记录实验室名称、端口和 Host
 workspace。它不读取方案、不创建实验 session，完成初始化后会直接 `exec` 为 OpenCode
 server，因此运行中的实验室不占用 Labflow runtime。停止 server 后，先导出需保留的资产，
 再显式回收实验室：
@@ -85,8 +85,8 @@ Host 在长程任务开始时验证连接：
     "a1": {
       "description": "实现输出",
       "instructions": "roles/a1.md",
-      "commands": ["labflow agent submit a1 *"],
-      "preflight": ["labflow agent submit a1 *"]
+      "commands": ["just check"],
+      "preflight": ["just check"]
     }
   },
   "assets": [
@@ -132,23 +132,23 @@ Host 根据计划显式 submit 初始输入：
 ./labflow host submit lab-1 ontology-3@1 lang qb-req edsl-req
 ```
 
-coordinator 只是 DAG 的根 Session，不启动角色。Supervisor 为每个角色维护唯一 Session；当角色空闲且
-存在可执行 artifact 时，Supervisor 在任务锁内生成 active task，并主动投递文本化 prompt。prompt
-包含目标和要求、输入与资产变化，以及精确的 submit 命令。角色执行：
+coordinator 是 DAG 的根 Session。Supervisor 为每个角色维护唯一 Session；当角色空闲且存在可执行
+Artifact 时，Supervisor 在任务锁内生成 active task，并主动投递文本化 prompt。prompt 包含目标和
+要求、输入与资产变化。角色执行：
 
 ```text
 收到 Supervisor 任务
 -> 充分处理并验证唯一 target
--> labflow agent submit <role> <target>
 -> 结束当前 turn
+-> Supervisor 校验资产并结算 target
 ```
 
 角色不主动领取、轮询或等待任务。Supervisor 把结构化 task 转化为易读文本：“本轮已更新”对应
 `fresh: true`，“需要重新读取”对应 `updated: true`，并明确尚未提供的可选输入。底层 task record
-仍保存完整结构和时间戳，用于 submit 校验、恢复与统计。
+保存完整结构和时间戳，用于结算校验、恢复与统计。
 
-Agent submit 表示本次任务已完成、可以交由 Host 检视，不表示任务要求已经达到。Agent 充分尝试后
-仍无法达到要求时，也要整理现有产出和原因并 submit；Host 决定是否批准、反馈或终止流程。
+Agent 结束 turn 表示本次任务已完成、可以交由 Host 检视，不表示任务要求已经达到。Agent 充分尝试后
+仍有阻碍时，在交付中整理现有产出和原因；Host 决定是否批准、反馈或终止流程。
 
 Host 不使用不可感知的长时间 sleep，而使用有界 pull：
 

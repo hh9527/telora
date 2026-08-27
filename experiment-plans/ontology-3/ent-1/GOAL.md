@@ -115,8 +115,8 @@ query = query_builder.transform(plan)
 Host 需要修订私有模型时，写入 `ent-1/FEEDBACK.md` 并发布
 `ent-1-model-feedback`；输入时间戳会使旧提交失效，Supervisor 将重新投递修订任务。
 Host 审核私有模型并发布 `ent-1-model` 后，Supervisor 才会投递
-`ent-1-query-surface.a3`。完成公共 facade、教程和契约及其验证后，用一次
-`labflow agent submit a3 ...` 提交本次 prompt 指定的唯一 artifact。私有模型与公共查询面是两个独立 Host
+`ent-1-query-surface.a3`。完成公共 facade、教程和契约及其验证后结束当前 turn，Supervisor
+负责校验资产和结算。私有模型与公共查询面是两个独立 Host
 审核边界，但都由同一个 A3 session 和同一份 EnterpriseKnowledge 维护。
 
 公共面阶段至少实际运行：

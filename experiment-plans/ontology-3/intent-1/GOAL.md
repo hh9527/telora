@@ -53,5 +53,5 @@ just a4 expect-invalid wrong-filter-type
 ```
 
 `make-query` 与 `verify` 必须成功并产生逐字节相同的结果；每个 `expect-invalid` 必须观察到
-带外诊断且不能发布 Query。完成后用一次 `labflow agent submit a4 ...` 提交本次 prompt 指定的唯一
-artifact。
+带外诊断且不能发布 Query。完成唯一 Artifact 的验收和验证后结束当前 turn，Supervisor 负责校验
+资产和结算。

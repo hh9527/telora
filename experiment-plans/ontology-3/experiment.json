@@ -16,7 +16,6 @@
       "description": "通过 artifact DAG 完成 QueryBuilder。",
       "instructions": "roles/a1.md",
       "commands": [
-        "labflow agent submit a1 *",
         "./bin/telora run * -C query-builder",
         "./bin/telora run * -C query-builder *",
         "./bin/telora check * -C query-builder",
@@ -27,7 +26,6 @@
         "rm query-builder/tests/*"
       ],
       "preflight": [
-        "labflow agent submit a1 *",
         "./bin/telora run main -C query-builder",
         "./bin/telora run verify -C query-builder",
         "./bin/telora run invalid -C query-builder --best-effort",
@@ -39,7 +37,6 @@
       "description": "通过 artifact DAG 学习、检视并完成 EnterpriseKnowledge eDSL。",
       "instructions": "roles/a2.md",
       "commands": [
-        "labflow agent submit a2 *",
         "./bin/telora run * -C ontology",
         "./bin/telora run * -C ontology *",
         "./bin/telora check * -C ontology",
@@ -50,7 +47,6 @@
         "rm ontology/tests/*"
       ],
       "preflight": [
-        "labflow agent submit a2 *",
         "./bin/telora run main -C ontology",
         "./bin/telora run verify -C ontology",
         "./bin/telora run invalid -C ontology --best-effort",
@@ -62,7 +58,6 @@
       "description": "通过 artifact DAG 学习、检视并完成 Ent-1 建模。",
       "instructions": "roles/a3.md",
       "commands": [
-        "labflow agent submit a3 *",
         "./bin/telora run * -C ent-1",
         "./bin/telora run * -C ent-1 *",
         "./bin/telora check * -C ent-1",
@@ -73,7 +68,6 @@
         "rm ent-1/tests/*"
       ],
       "preflight": [
-        "labflow agent submit a3 *",
         "./bin/telora run main -C ent-1",
         "./bin/telora run verify -C ent-1",
         "./bin/telora run query-surface -C ent-1",
@@ -87,12 +81,10 @@
       "description": "通过角色专属 just 入口验收公共 JSON 查询接口。",
       "instructions": "roles/a4.md",
       "commands": [
-        "labflow agent submit a4 *",
         "just a4",
         "just a4 *"
       ],
       "preflight": [
-        "labflow agent submit a4 *",
         "just a4",
         "just a4 make-query",
         "just a4 expect-invalid *",
@@ -373,7 +365,7 @@
           "qb-req",
           "qb-feedback?"
         ],
-        "instruction": "完整学习 Telora，依据 query-builder/GOAL.md 与 DESIGN.md 实现并验证 QueryBuilder。若已发布 qb-feedback，完整读取 query-builder/FEEDBACK.md、修订并重验，然后提交 qb.a1。",
+        "instruction": "完整学习 Telora，依据 query-builder/GOAL.md 与 DESIGN.md 实现并验证 QueryBuilder。若已发布 qb-feedback，完整读取 query-builder/FEEDBACK.md、修订并重验；完成后结束当前 turn。",
         "assets": [
           {
             "path": "query-builder/NOTES.md",
@@ -415,7 +407,7 @@
           "lang",
           "edsl-req"
         ],
-        "instruction": "完整学习 Telora 教程、CLI 和 eDSL 设计需求；可探索语言，但不读取 QueryBuilder 交付、不开始 eDSL 实现，然后提交 lang-learn.sess.a2。",
+        "instruction": "完整学习 Telora 教程、CLI 和 eDSL 设计需求；本任务的工作范围是语言探索，完成学习记录后结束当前 turn。",
         "assets": []
       },
       "lang-learn.sess.a3": {
@@ -424,7 +416,7 @@
           "lang",
           "domain-ent-1"
         ],
-        "instruction": "完整学习 Telora 教程、CLI 和 Ent-1 领域知识；可探索语言，但不读取上游交付、不开始建模，然后提交 lang-learn.sess.a3。",
+        "instruction": "完整学习 Telora 教程、CLI 和 Ent-1 领域知识；本任务的工作范围是语言探索，完成学习记录后结束当前 turn。",
         "assets": []
       },
       "lang-learn.sess.a4": {
@@ -433,7 +425,7 @@
           "lang",
           "intent-req"
         ],
-        "instruction": "完整学习 Telora 教程、CLI 和私有文字意图；不读取尚未放行的公共查询面、不开始构造 Request，然后提交 lang-learn.sess.a4。",
+        "instruction": "完整学习 Telora 教程、CLI 和私有文字意图；本任务的工作范围是语言和验收意图学习，完成后结束当前 turn。",
         "assets": []
       },
       "qb-feedback.a2": {
@@ -442,7 +434,7 @@
           "qb.a1",
           "lang-learn.sess.a2"
         ],
-        "instruction": "阅读 QueryBuilder 公共草案，依据 ontology/DESIGN.md 检视 Plan 算子和 profile 能力，更新 ontology/QUERY-BUILDER-FEEDBACK.md，然后提交 qb-feedback.a2。",
+        "instruction": "阅读 QueryBuilder 公共草案，依据 ontology/DESIGN.md 检视 Plan 算子和 profile 能力，更新 ontology/QUERY-BUILDER-FEEDBACK.md；完成后结束当前 turn。",
         "assets": [
           {
             "path": "ontology/QUERY-BUILDER-FEEDBACK.md",
@@ -456,7 +448,7 @@
           "qb.a1",
           "lang-learn.sess.a3"
         ],
-        "instruction": "阅读 QueryBuilder 公共草案，依据 ent-1/DOMAIN.md 检视真实领域所需算子和 Plan 形状，更新 ent-1/QUERY-BUILDER-FEEDBACK.md，然后提交 qb-feedback.a3。",
+        "instruction": "阅读 QueryBuilder 公共草案，依据 ent-1/DOMAIN.md 检视真实领域所需算子和 Plan 形状，更新 ent-1/QUERY-BUILDER-FEEDBACK.md；完成后结束当前 turn。",
         "assets": [
           {
             "path": "ent-1/QUERY-BUILDER-FEEDBACK.md",
@@ -499,7 +491,7 @@
           "qb",
           "edsl-feedback?"
         ],
-        "instruction": "学习批准后的 QueryBuilder 公共交付，依据 ontology/GOAL.md 与 DESIGN.md 实现并验证 EnterpriseKnowledge eDSL。若 edsl-feedback 已发布，完整读取 ontology/FEEDBACK.md、修订并重验，然后提交 edsl.a2。",
+        "instruction": "学习批准后的 QueryBuilder 公共交付，依据 ontology/GOAL.md 与 DESIGN.md 实现并验证 EnterpriseKnowledge eDSL。若 edsl-feedback 已发布，完整读取 ontology/FEEDBACK.md、修订并重验；完成后结束当前 turn。",
         "assets": [
           {
             "path": "ontology/DSL-TUTORIAL.md",
@@ -541,7 +533,7 @@
           "edsl.a2",
           "lang-learn.sess.a3"
         ],
-        "instruction": "依据 Ent-1 领域需要检视 eDSL 送审版，更新 ent-1/EDSL-FEEDBACK.md，然后提交 edsl-feedback.a3。",
+        "instruction": "依据 Ent-1 领域需要检视 eDSL 送审版，更新 ent-1/EDSL-FEEDBACK.md；完成后结束当前 turn。",
         "assets": [
           {
             "path": "ent-1/EDSL-FEEDBACK.md",
@@ -584,7 +576,7 @@
           "edsl",
           "ent-1-model-feedback?"
         ],
-        "instruction": "学习批准后的 QueryBuilder 和 eDSL 公共交付，依据 ent-1/GOAL.md 与 DOMAIN.md 建立并验证私有 EnterpriseKnowledge，更新 UPSTREAM-FEEDBACK.md 与 NOTES.md。若 ent-1-model-feedback 已发布，完整读取 ent-1/FEEDBACK.md、修订并重验，然后提交 ent-1-model.a3。",
+        "instruction": "学习批准后的 QueryBuilder 和 eDSL 公共交付，依据 ent-1/GOAL.md 与 DOMAIN.md 建立并验证私有 EnterpriseKnowledge，更新 UPSTREAM-FEEDBACK.md 与 NOTES.md。若 ent-1-model-feedback 已发布，完整读取 ent-1/FEEDBACK.md、修订并重验；完成后结束当前 turn。",
         "assets": [
           {
             "path": "ent-1/NOTES.md",
@@ -639,7 +631,7 @@
           "ent-1-model",
           "ent-1-query-surface-feedback?"
         ],
-        "instruction": "从已批准的同一份私有 EnterpriseKnowledge 建立并验证公共查询 facade，同时交付与 typed lower 同源的 lower_value(Value) JSON 动态入口并保留输入来源诊断，不泄漏物理信息。若 ent-1-query-surface-feedback 已发布，读取 ent-1/QUERY-SURFACE-FEEDBACK.md、修订并重验，然后提交 ent-1-query-surface.a3。",
+        "instruction": "从已批准的同一份私有 EnterpriseKnowledge 建立并验证公共查询 facade，同时交付与 typed lower 同源的 lower_value(Value) JSON 动态入口并保留输入来源诊断，公共资产仅表达业务语义。若 ent-1-query-surface-feedback 已发布，读取 ent-1/QUERY-SURFACE-FEEDBACK.md、修订并重验；完成后结束当前 turn。",
         "assets": [
           {
             "path": "ent-1/PUBLIC-QUERY-CONTRACT.md",
@@ -687,7 +679,7 @@
           "intent-req",
           "ent-1-query-surface.a3"
         ],
-        "instruction": "依据私有文字意图检视公共查询面，更新 intent-1/FEEDBACK.md，然后提交 ent-1-query-surface-feedback.a4。",
+        "instruction": "依据私有文字意图检视公共查询面，更新 intent-1/FEEDBACK.md；完成后结束当前 turn。",
         "assets": [
           {
             "path": "intent-1/FEEDBACK.md",
@@ -702,7 +694,7 @@
           "intent-req",
           "ent-1-query-surface"
         ],
-        "instruction": "依据 INTENT.md、公共查询文档和批准后的公共查询面，用 JSON 表达合法与非法意图；只通过 just a4 入口完成 Query、确定性和诊断验证，记录结果后提交 intent-1.a4。",
+        "instruction": "依据 INTENT.md、公共查询文档和批准后的公共查询面，用 JSON 表达合法与非法意图；通过 just a4 入口完成 Query、确定性和诊断验证，记录结果后结束当前 turn。",
         "assets": [
           {
             "path": "intent-1/FEEDBACK.md",

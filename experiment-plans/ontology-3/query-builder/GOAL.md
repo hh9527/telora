@@ -54,5 +54,5 @@ ontology 概念或企业领域事实。本轮只实现 SQLite，不扩展其他 
 
 `qb.a1` 首次运行时发布并验证可执行候选。Host `qb-feedback` 出现后，同一任务
 重新就绪；完整读取 `query-builder/FEEDBACK.md`，修订实现、教程和契约并重跑全部验证。不得直接读取
-企业或 ontology 的其他私有输入与源码。完成后用一次 `labflow agent submit a1 ...` 提交本次
-prompt 指定的唯一 artifact。
+企业或 ontology 的其他私有输入与源码。完成唯一 Artifact 的实现和验证后结束当前 turn，
+Supervisor 负责校验资产和结算。
