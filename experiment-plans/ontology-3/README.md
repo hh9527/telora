@@ -58,21 +58,26 @@ lang + qb-req + qb-feedback? -> qb.a1
 qb.a1 -> qb-feedback.a2 / qb-feedback.a3
 qb.a1 + 两份检视 -> Host submit qb
 
-lang + edsl-req -> lang-learn.a2
-qb + lang-learn.a2 + edsl-feedback? -> edsl.a2
+lang + edsl-req -> lang-learn.sess.a2
+qb + lang-learn.sess.a2 + edsl-feedback? -> edsl.a2
 edsl.a2 -> edsl-feedback.a3 -> Host submit edsl
 
-lang + domain-ent-1 -> lang-learn.a3
-qb + edsl + lang-learn.a3 + ent-1-model-feedback? -> ent-1-model.a3
+lang + domain-ent-1 -> lang-learn.sess.a3
+qb + edsl + lang-learn.sess.a3 + ent-1-model-feedback? -> ent-1-model.a3
 ent-1-model.a3 -> Host submit ent-1-model
-ent-1-model + ent-1-query-surface-feedback? -> ent-1-query-surface.a3
+lang-learn.sess.a3 + ent-1-model + ent-1-query-surface-feedback? -> ent-1-query-surface.a3
 ent-1-query-surface.a3 -> A4 检视 -> Host submit ent-1-query-surface
 
-intent-req + ent-1-query-surface -> intent-1.a4 -> Host submit intent-1
+lang + intent-req -> lang-learn.sess.a4
+lang-learn.sess.a4 + intent-req + ent-1-query-surface -> A4 检视与 intent-1.a4
+intent-1.a4 -> Host submit intent-1
 ```
 
 带 `?` 的输入是普通可选 Artifact：缺失不阻断首版；刷新后使较旧输出及下游失效。所有
 Artifact 都独立产生工作压力，没有 `start_artifacts` 或 `finish_artifact`。
+
+以 `.sess.<role>` 结尾的 Artifact 是当前角色 Session 的资质，只阻断该角色的新任务，
+不参与持久产出的 freshness。新建或替换 Session 后必须重新取得资质；实验继承不会复制资质。
 
 ## 运行
 

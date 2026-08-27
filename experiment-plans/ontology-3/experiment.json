@@ -409,29 +409,38 @@
           }
         ]
       },
-      "lang-learn.a2": {
+      "lang-learn.sess.a2": {
         "desc": "A2 语言学习",
         "input": [
           "lang",
           "edsl-req"
         ],
-        "instruction": "完整学习 Telora 教程、CLI 和 eDSL 设计需求；可探索语言，但不读取 QueryBuilder 交付、不开始 eDSL 实现，然后提交 lang-learn.a2。",
+        "instruction": "完整学习 Telora 教程、CLI 和 eDSL 设计需求；可探索语言，但不读取 QueryBuilder 交付、不开始 eDSL 实现，然后提交 lang-learn.sess.a2。",
         "assets": []
       },
-      "lang-learn.a3": {
+      "lang-learn.sess.a3": {
         "desc": "A3 语言学习",
         "input": [
           "lang",
           "domain-ent-1"
         ],
-        "instruction": "完整学习 Telora 教程、CLI 和 Ent-1 领域知识；可探索语言，但不读取上游交付、不开始建模，然后提交 lang-learn.a3。",
+        "instruction": "完整学习 Telora 教程、CLI 和 Ent-1 领域知识；可探索语言，但不读取上游交付、不开始建模，然后提交 lang-learn.sess.a3。",
+        "assets": []
+      },
+      "lang-learn.sess.a4": {
+        "desc": "A4 语言和验收意图学习",
+        "input": [
+          "lang",
+          "intent-req"
+        ],
+        "instruction": "完整学习 Telora 教程、CLI 和私有文字意图；不读取尚未放行的公共查询面、不开始构造 Request，然后提交 lang-learn.sess.a4。",
         "assets": []
       },
       "qb-feedback.a2": {
         "desc": "A2 对 QueryBuilder 的检视意见",
         "input": [
           "qb.a1",
-          "lang-learn.a2"
+          "lang-learn.sess.a2"
         ],
         "instruction": "阅读 QueryBuilder 公共草案，依据 ontology/DESIGN.md 检视 Plan 算子和 profile 能力，更新 ontology/QUERY-BUILDER-FEEDBACK.md，然后提交 qb-feedback.a2。",
         "assets": [
@@ -445,7 +454,7 @@
         "desc": "A3 对 QueryBuilder 的检视意见",
         "input": [
           "qb.a1",
-          "lang-learn.a3"
+          "lang-learn.sess.a3"
         ],
         "instruction": "阅读 QueryBuilder 公共草案，依据 ent-1/DOMAIN.md 检视真实领域所需算子和 Plan 形状，更新 ent-1/QUERY-BUILDER-FEEDBACK.md，然后提交 qb-feedback.a3。",
         "assets": [
@@ -485,7 +494,7 @@
       "edsl.a2": {
         "desc": "eDSL 设计与实现（A2 送审版）",
         "input": [
-          "lang-learn.a2",
+          "lang-learn.sess.a2",
           "edsl-req",
           "qb",
           "edsl-feedback?"
@@ -530,7 +539,7 @@
         "desc": "A3 对 eDSL 送审版的检视意见",
         "input": [
           "edsl.a2",
-          "lang-learn.a3"
+          "lang-learn.sess.a3"
         ],
         "instruction": "依据 Ent-1 领域需要检视 eDSL 送审版，更新 ent-1/EDSL-FEEDBACK.md，然后提交 edsl-feedback.a3。",
         "assets": [
@@ -569,7 +578,7 @@
       "ent-1-model.a3": {
         "desc": "Ent-1 私有 EnterpriseKnowledge（A3 送审版）",
         "input": [
-          "lang-learn.a3",
+          "lang-learn.sess.a3",
           "domain-ent-1",
           "qb",
           "edsl",
@@ -626,6 +635,7 @@
       "ent-1-query-surface.a3": {
         "desc": "Ent-1 公共查询面（A3 送审版）",
         "input": [
+          "lang-learn.sess.a3",
           "ent-1-model",
           "ent-1-query-surface-feedback?"
         ],
@@ -673,6 +683,7 @@
       "ent-1-query-surface-feedback.a4": {
         "desc": "A4 对公共查询面送审版的检视意见",
         "input": [
+          "lang-learn.sess.a4",
           "intent-req",
           "ent-1-query-surface.a3"
         ],
@@ -687,6 +698,7 @@
       "intent-1.a4": {
         "desc": "A4 公共 JSON 查询接口验收结果（送审版）",
         "input": [
+          "lang-learn.sess.a4",
           "intent-req",
           "ent-1-query-surface"
         ],
