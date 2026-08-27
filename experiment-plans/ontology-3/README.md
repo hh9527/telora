@@ -28,7 +28,7 @@ Artifact 的 `assets` 同时定义提交检查、保留等级和角色文件权�
 
 ```text
 阅读 prompt 中的唯一目标、要求和输入变化
-完成并验证目标
+充分处理并验证本次任务
 labflow agent submit <role> <artifact>
 结束当前 turn
 ```
@@ -47,6 +47,9 @@ labflow agent submit <role> <artifact>
 文本中的“本轮已更新”表示 `fresh: true`，“需要重新读取”表示 `updated: true`；可选输入尚未发布时
 会明确说明尚未提供。已有旧文件不代表当前任务已经完成。prompt 投递失败或 Supervisor 重启时，
 同一有效 active task 会被重新投递，而不会产生重复任务。
+
+`submit` 只表示本次任务已完成并交给 Host 检视，不表示任务要求已经达到。角色充分尝试后仍无法
+达到要求时，也要整理现有产出和原因并提交；是否批准、反馈或结束流程由 Host 决定。
 
 ## Artifact DAG
 

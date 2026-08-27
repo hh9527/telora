@@ -138,7 +138,7 @@ coordinator 只是 DAG 的根 Session，不启动角色。Supervisor 为每个�
 
 ```text
 收到 Supervisor 任务
--> 完成唯一 target
+-> 充分处理并验证唯一 target
 -> labflow agent submit <role> <target>
 -> 结束当前 turn
 ```
@@ -146,6 +146,9 @@ coordinator 只是 DAG 的根 Session，不启动角色。Supervisor 为每个�
 角色不主动领取、轮询或等待任务。Supervisor 把结构化 task 转化为易读文本：“本轮已更新”对应
 `fresh: true`，“需要重新读取”对应 `updated: true`，并明确尚未提供的可选输入。底层 task record
 仍保存完整结构和时间戳，用于 submit 校验、恢复与统计。
+
+Agent submit 表示本次任务已完成、可以交由 Host 检视，不表示任务要求已经达到。Agent 充分尝试后
+仍无法达到要求时，也要整理现有产出和原因并 submit；Host 决定是否批准、反馈或终止流程。
 
 Host 不使用不可感知的长时间 sleep，而使用有界 pull：
 
