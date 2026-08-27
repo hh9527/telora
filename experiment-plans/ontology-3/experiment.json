@@ -16,7 +16,6 @@
       "description": "通过 artifact DAG 完成 QueryBuilder。",
       "instructions": "roles/a1.md",
       "commands": [
-        "labflow agent pull a1",
         "labflow agent submit a1 *",
         "./bin/telora run * -C query-builder",
         "./bin/telora run * -C query-builder *",
@@ -28,7 +27,6 @@
         "rm query-builder/tests/*"
       ],
       "preflight": [
-        "labflow agent pull a1",
         "labflow agent submit a1 *",
         "./bin/telora run main -C query-builder",
         "./bin/telora run verify -C query-builder",
@@ -41,7 +39,6 @@
       "description": "通过 artifact DAG 学习、检视并完成 EnterpriseKnowledge eDSL。",
       "instructions": "roles/a2.md",
       "commands": [
-        "labflow agent pull a2",
         "labflow agent submit a2 *",
         "./bin/telora run * -C ontology",
         "./bin/telora run * -C ontology *",
@@ -53,7 +50,6 @@
         "rm ontology/tests/*"
       ],
       "preflight": [
-        "labflow agent pull a2",
         "labflow agent submit a2 *",
         "./bin/telora run main -C ontology",
         "./bin/telora run verify -C ontology",
@@ -66,7 +62,6 @@
       "description": "通过 artifact DAG 学习、检视并完成 Ent-1 建模。",
       "instructions": "roles/a3.md",
       "commands": [
-        "labflow agent pull a3",
         "labflow agent submit a3 *",
         "./bin/telora run * -C ent-1",
         "./bin/telora run * -C ent-1 *",
@@ -78,7 +73,6 @@
         "rm ent-1/tests/*"
       ],
       "preflight": [
-        "labflow agent pull a3",
         "labflow agent submit a3 *",
         "./bin/telora run main -C ent-1",
         "./bin/telora run verify -C ent-1",
@@ -93,13 +87,11 @@
       "description": "通过角色专属 just 入口验收公共 JSON 查询接口。",
       "instructions": "roles/a4.md",
       "commands": [
-        "labflow agent pull a4",
         "labflow agent submit a4 *",
         "just a4",
         "just a4 *"
       ],
       "preflight": [
-        "labflow agent pull a4",
         "labflow agent submit a4 *",
         "just a4",
         "just a4 make-query",

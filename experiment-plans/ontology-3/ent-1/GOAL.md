@@ -25,7 +25,7 @@ prepared EnterpriseKnowledge + Request -> Plan -> Query
   `ent-1-model-feedback` 发布后作为输入读取，A3 不得修改；
 - A3 自己已经产生的 `ent-1/src/**` 与 `ent-1/tests/**`
 
-动态输入由 `labflow agent pull a3` 按任务依赖开放：
+动态输入由 Supervisor 按投递任务的依赖开放：
 
 - `qb-feedback.a3`：读取 QueryBuilder 公共候选，依据 DOMAIN 完成能力审查并
   写入 `ent-1/QUERY-BUILDER-FEEDBACK.md`，但不开始最终建模；
@@ -113,10 +113,10 @@ query = query_builder.transform(plan)
 完成时报告真实结果与具体反馈，不要求 Git commit。
 
 Host 需要修订私有模型时，写入 `ent-1/FEEDBACK.md` 并发布
-`ent-1-model-feedback`；输入时间戳会使旧提交失效，A3 自动重新领取、修订和提交。
-Host 审核私有模型并发布 `ent-1-model` 后，`labflow agent pull a3` 才会返回
+`ent-1-model-feedback`；输入时间戳会使旧提交失效，Supervisor 将重新投递修订任务。
+Host 审核私有模型并发布 `ent-1-model` 后，Supervisor 才会投递
 `ent-1-query-surface.a3`。完成公共 facade、教程和契约及其验证后，用一次
-`labflow agent submit a3 ...` 提交本次 pull 返回的唯一 artifact。私有模型与公共查询面是两个独立 Host
+`labflow agent submit a3 ...` 提交本次 prompt 指定的唯一 artifact。私有模型与公共查询面是两个独立 Host
 审核边界，但都由同一个 A3 session 和同一份 EnterpriseKnowledge 维护。
 
 公共面阶段至少实际运行：

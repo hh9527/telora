@@ -37,12 +37,12 @@ runtime 更新前后的结果属于同一 execution 中两个不同 epoch。
   公共教程/契约和固定 JSON 查询契约作为上游知识，也永远不读 A4 私有 `INTENT.md`。
 - A4 只读 A3 公共查询教程/契约、JSON 查询接口说明和自己的 GOAL/INTENT/FEEDBACK，不读
   语言/CLI、DOMAIN、A3 私有源码或 A1/A2 文件。依赖清单中的传递 package 不构成可见输入。
-- coordinator 只启动 A1-A4 各一个原生 child session，不补写任务定义或观察交付状态。
-- `ent-1/FEEDBACK.md` 初始必须为零字节；角色只在 `labflow agent pull` 返回对应任务后读取动态输入。
+- coordinator 只作为 DAG 根 Session；Supervisor 创建并维护 A1-A4 各一个角色 Session。
+- `ent-1/FEEDBACK.md` 初始必须为零字节；角色只在 Supervisor 投递对应任务后读取动态输入。
 - 核对 `control/artifacts/**` 与实际交付顺序一致；coordinator 不直接创建 artifact。
 - Agent 只通过 `labflow agent submit <role> <artifact...>` 控制自己的 `.<role>` Artifact；
   Host 只通过 `labflow host submit` 控制无角色后缀 Artifact。
-- feedback 与 build 同时 runnable 时按 artifact 声明顺序逐个 pull、逐个 submit，任务不合并。
+- feedback 与 build 同时 runnable 时按 artifact 声明顺序逐个投递、逐个 submit，任务不合并。
 - 核对每个 Host promotion 都晚于对应角色候选和必要评审，且下游首次输出发生在
   promotion 之后。
 - Host 发布的新反馈必须使旧候选失效；上游重新执行后旧 promotion 必须失效并重新

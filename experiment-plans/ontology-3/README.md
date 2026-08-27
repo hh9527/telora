@@ -19,31 +19,34 @@ A4 intent-1: private text intent -> JSON -> fixed query command -> acceptance re
 - A2 只修改 `ontology/`；批准后的 `qb` 只暴露 QueryBuilder 公共教程和契约。
 - A3 只修改 `ent-1/`；批准后的 `edsl` 只暴露 eDSL 公共教程和契约。
 - A4 只修改 `intent-1/` 验收资产，只读取 A3 的公共查询教程/契约。
-- coordinator 只启动四个长期角色，之后不解释或调度工作。
+- coordinator 只作为 DAG 根 Session；Supervisor 创建和维护四个角色 Session，并主动投递任务。
 
 Artifact 的 `assets` 同时定义提交检查、保留等级和角色文件权限。角色拥有的 Artifact Asset
 可读写；直接输入 Artifact 的 Asset 只读；Host 批准节点只引用允许下游看到的公共资产。
 
-每个角色永远循环：
+每个角色只响应 Supervisor 当前投递的任务：
 
 ```text
-labflow agent pull <role>
+阅读 prompt 中的唯一目标、要求和输入变化
+完成并验证目标
 labflow agent submit <role> <artifact>
+结束当前 turn
 ```
 
-一次 pull 只返回声明顺序中的第一个可执行 Artifact。没有工作时，最多 60 秒返回 JSON
-`null`，角色必须立即再次 pull。成功时返回：
+角色不主动轮询。Supervisor 按声明顺序选择第一个可执行 Artifact，在锁内生成或复用 active task，
+并将如下结构转化为文本 prompt：
 
 ```json
 {
-  "target": {"name": "qb.a1"},
+  "target": {"name": "qb.a1", "instruction": "完成 QueryBuilder"},
   "inputs": [{"name": "qb-req", "fresh": true}],
   "assets": [{"path": "query-builder/GOAL.md", "updated": true}]
 }
 ```
 
-角色重新读取 `fresh: true` 的输入和 `updated: true` 的资产；可选输入尚未发布时
-`fresh: null`。已有旧文件不代表当前任务已经完成。
+文本中的“本轮已更新”表示 `fresh: true`，“需要重新读取”表示 `updated: true`；可选输入尚未发布时
+会明确说明尚未提供。已有旧文件不代表当前任务已经完成。prompt 投递失败或 Supervisor 重启时，
+同一有效 active task 会被重新投递，而不会产生重复任务。
 
 ## Artifact DAG
 

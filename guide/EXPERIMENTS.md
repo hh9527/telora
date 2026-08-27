@@ -85,8 +85,8 @@ Host 在长程任务开始时验证连接：
     "a1": {
       "description": "实现输出",
       "instructions": "roles/a1.md",
-      "commands": ["labflow agent pull a1", "labflow agent submit a1 *"],
-      "preflight": ["labflow agent pull a1", "labflow agent submit a1 *"]
+      "commands": ["labflow agent submit a1 *"],
+      "preflight": ["labflow agent submit a1 *"]
     }
   },
   "assets": [
@@ -132,19 +132,20 @@ Host 根据计划显式 submit 初始输入：
 ./labflow host submit lab-1 ontology-3@1 lang qb-req edsl-req
 ```
 
-角色循环由 coordinator 一次性启动。每个角色始终执行：
+coordinator 只是 DAG 的根 Session，不启动角色。Supervisor 为每个角色维护唯一 Session；当角色空闲且
+存在可执行 artifact 时，Supervisor 在任务锁内生成 active task，并主动投递文本化 prompt。prompt
+包含目标和要求、输入与资产变化，以及精确的 submit 命令。角色执行：
 
 ```text
-loop {
-  match labflow agent pull <role> {
-    null => continue,
-    task => { 完成唯一 target；labflow agent submit <role> <target>; }
-  }
-}
+收到 Supervisor 任务
+-> 完成唯一 target
+-> labflow agent submit <role> <target>
+-> 结束当前 turn
 ```
 
-pull 最多等待 60 秒。成功响应列出 target、全部直接 input 的 `fresh` 状态，以及输入 Asset 的
-`updated` 状态。`fresh: null` 表示可选输入未出现；Agent 不保存旧时间戳。
+角色不主动领取、轮询或等待任务。Supervisor 把结构化 task 转化为易读文本：“本轮已更新”对应
+`fresh: true`，“需要重新读取”对应 `updated: true`，并明确尚未提供的可选输入。底层 task record
+仍保存完整结构和时间戳，用于 submit 校验、恢复与统计。
 
 Host 不使用不可感知的长时间 sleep，而使用有界 pull：
 

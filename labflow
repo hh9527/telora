@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-exec uvx --from 'git+https://github.com/hh9527/labflow.git@1e66e7e' labflow "$@"
+exec uvx --from 'git+https://github.com/hh9527/labflow.git@9cf9ac2' labflow "$@"

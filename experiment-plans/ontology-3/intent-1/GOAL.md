@@ -14,7 +14,7 @@
 - Host 放行后：`ent-1/QUERY-DESIGNER-TUTORIAL.md` 与
   `ent-1/PUBLIC-QUERY-CONTRACT.md`
 
-`labflow agent pull a4` 返回 `ent-1-query-surface-feedback.a4` 时，先依据私有文字意图检视公共查询面，
+Supervisor 投递 `ent-1-query-surface-feedback.a4` 时，先依据私有文字意图检视公共查询面，
 并把原始意见写入 `intent-1/FEEDBACK.md`；Host 整合并放行公共查询面后才开始最终 Request。
 
 不得读取企业私有 DOMAIN、A3 私有模型源码、QueryBuilder/ontology 的文档或源码。
@@ -53,5 +53,5 @@ just a4 expect-invalid wrong-filter-type
 ```
 
 `make-query` 与 `verify` 必须成功并产生逐字节相同的结果；每个 `expect-invalid` 必须观察到
-带外诊断且不能发布 Query。完成后用一次 `labflow agent submit a4 ...` 提交本次 pull 返回的唯一
+带外诊断且不能发布 Query。完成后用一次 `labflow agent submit a4 ...` 提交本次 prompt 指定的唯一
 artifact。
