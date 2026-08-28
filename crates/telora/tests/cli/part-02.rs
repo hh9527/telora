@@ -187,7 +187,7 @@ export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(9) };"#,
     )
     .unwrap();
     let run = telora(&cwd)
-        .args(["run", "tool", "-C", other.to_str().unwrap()])
+        .args(["-C", other.to_str().unwrap(), "run", "tool"])
         .output()
         .unwrap();
     assert!(
@@ -209,7 +209,7 @@ fn check_and_query_context_select_the_manifest_discovery_start() {
     .unwrap();
 
     let check = telora(&cwd)
-        .args(["check", "@src/lib", "-C", other.to_str().unwrap()])
+        .args(["-C", other.to_str().unwrap(), "check", "@src/lib"])
         .output()
         .unwrap();
     assert!(
@@ -220,11 +220,11 @@ fn check_and_query_context_select_the_manifest_discovery_start() {
 
     let show = telora(&cwd)
         .args([
+            "-C",
+            other.to_str().unwrap(),
             "query",
             "exports",
             "@src/lib",
-            "-C",
-            other.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -236,6 +236,26 @@ fn check_and_query_context_select_the_manifest_discovery_start() {
     let records = jsonl(&show.stdout);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["name"], "Answer");
+
+    let postfix = telora(&cwd)
+        .args(["check", "@src/lib", "-C", other.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!postfix.status.success());
+    assert!(String::from_utf8_lossy(&postfix.stderr).contains("unexpected argument '-C'"));
+
+    let duplicate = telora(&cwd)
+        .args([
+            "-C",
+            cwd.to_str().unwrap(),
+            "-C",
+            other.to_str().unwrap(),
+            "check",
+            "@src/lib",
+        ])
+        .output()
+        .unwrap();
+    assert!(!duplicate.status.success());
 }
 
 #[test]
@@ -260,6 +280,19 @@ fn standalone_run_uses_only_embedded_dependency_options() {
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "12");
+    let context_conflict = telora(&cwd)
+        .args([
+            "-C",
+            cwd.to_str().unwrap(),
+            "run",
+            "-S",
+            standalone.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!context_conflict.status.success());
+    assert!(String::from_utf8_lossy(&context_conflict.stderr)
+        .contains("-C cannot be used with -S"));
     fs::write(
         cwd.join("src/bin/standalone.telora"),
         fs::read_to_string(&standalone).unwrap(),

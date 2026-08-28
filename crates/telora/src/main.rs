@@ -784,6 +784,9 @@ impl Drop for ProcessRunHost {
 #[derive(Parser)]
 #[command(name = "telora", version, about = "The Telora language toolchain")]
 struct Cli {
+    /// Find telora-deps.json upward from this path (default: current directory).
+    #[arg(short = 'C', value_name = "CONTEXT")]
+    context: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -813,9 +816,7 @@ struct RunArgs {
 struct ApplicationArgs {
     #[arg(required_unless_present = "standalone", conflicts_with = "standalone", value_parser = binary_name)]
     binary: Option<String>,
-    #[arg(short = 'C', value_name = "CONTEXT", conflicts_with = "standalone")]
-    context: Option<PathBuf>,
-    #[arg(short = 'S', value_name = "FILE", conflicts_with_all = ["binary", "context"])]
+    #[arg(short = 'S', value_name = "FILE", conflicts_with = "binary")]
     standalone: Option<PathBuf>,
     #[arg(long)]
     best_effort: bool,
@@ -847,8 +848,6 @@ struct RunWithArgs {
 #[derive(Args)]
 struct CheckArgs {
     module_id: String,
-    #[arg(short = 'C', value_name = "CONTEXT")]
-    context: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -856,9 +855,6 @@ struct CheckArgs {
     after_help = "Examples:\n  telora query modules\n  telora q modules -p std/\n  telora query exports @src/lib\n  telora query at @src/lib -k type,def -p Query\n  telora query at @src/lib:13:0"
 )]
 struct QueryArgs {
-    /// Find telora-deps.json upward from this path (default: current directory).
-    #[arg(short = 'C', value_name = "CONTEXT", global = true)]
-    context: Option<PathBuf>,
     #[command(subcommand)]
     command: QueryCommand,
 }
@@ -994,12 +990,30 @@ fn parse_module_selector(value: &str) -> Result<ModuleSelector, String> {
 }
 
 fn run_cli(cli: Cli) -> Result<i32, String> {
+    let explicit_context = cli.context.is_some();
+    let context = command_context(cli.context)?;
+    if explicit_context {
+        let standalone = match &cli.command {
+            Command::Run(arguments) => arguments.application.standalone.is_some(),
+            Command::Serve(arguments) => arguments.application.standalone.is_some(),
+            Command::RunWith(arguments) => arguments.application.standalone.is_some(),
+            _ => false,
+        };
+        if standalone {
+            return Err("-C cannot be used with -S".into());
+        }
+    }
     match cli.command {
         Command::Run(arguments) => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command("std/entry/default", arguments.application, &[])),
+            .block_on(run_command(
+                context,
+                "std/entry/default",
+                arguments.application,
+                &[],
+            )),
         Command::Serve(arguments) => {
             if arguments.bind != "stdio://" {
                 return Err(format!(
@@ -1011,30 +1025,35 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 .enable_all()
                 .build()
                 .map_err(|error| format!("cannot start the serve Host: {error}"))?
-                .block_on(run_command("std/entry/serve", arguments.application, &[]))
+                .block_on(run_command(
+                    context,
+                    "std/entry/serve",
+                    arguments.application,
+                    &[],
+                ))
         }
         Command::RunWith(arguments) => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(
+                context,
                 &arguments.entry,
                 arguments.application,
                 &arguments.entry_args,
             )),
-        Command::Check(arguments) => check_command(arguments),
-        Command::Query(arguments) => query_command(arguments),
-        Command::Lsp => lsp_command().map(|()| 0),
+        Command::Check(arguments) => check_command(context, arguments),
+        Command::Query(arguments) => query_command(context, arguments),
+        Command::Lsp => lsp_command(context).map(|()| 0),
     }
 }
 
-fn lsp_command() -> Result<(), String> {
-    let root = env::current_dir()
-        .map_err(|error| format!("cannot determine current directory: {error}"))?;
+fn lsp_command(root: PathBuf) -> Result<(), String> {
     telora::lsp::run_stdio(root, engine_config()).map_err(|error| error.to_string())
 }
 
 async fn run_command(
+    context: PathBuf,
     entry: &str,
     arguments: ApplicationArgs,
     entry_args: &[String],
@@ -1048,7 +1067,6 @@ async fn run_command(
     {
         return Err("serve --bind stdio:// reserves standard input for JSONL requests".into());
     }
-    let context = command_context(arguments.context.clone())?;
     let module_id = arguments
         .binary
         .as_ref()
@@ -1135,8 +1153,7 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot determine context: {error}"))
 }
 
-fn check_command(arguments: CheckArgs) -> Result<i32, String> {
-    let context = command_context(arguments.context)?;
+fn check_command(context: PathBuf, arguments: CheckArgs) -> Result<i32, String> {
     let module_name = ModuleResolver::from_cwd(&context, &arguments.module_id)
         .and_then(|resolver| resolver.selected_root())
         .map(|module| module.id.to_string())
@@ -1199,8 +1216,7 @@ enum ModuleQuery {
     Position(QueryPosition),
 }
 
-fn query_command(arguments: QueryArgs) -> Result<i32, String> {
-    let context = command_context(arguments.context)?;
+fn query_command(context: PathBuf, arguments: QueryArgs) -> Result<i32, String> {
     if let QueryCommand::Modules(arguments) = &arguments.command {
         let modules = match engine().module_catalog(context) {
             Ok(modules) => modules,
