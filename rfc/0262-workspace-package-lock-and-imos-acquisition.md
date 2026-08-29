@@ -1,6 +1,7 @@
 # RFC 0262: Workspace Package Lock and IMOS Acquisition
 
 - Status: Proposed
+- Tracking: #144
 - Depends on: RFC 0261
 - Supersedes: RFC 0164
 
