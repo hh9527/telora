@@ -1,0 +1,13 @@
+{
+  "measures": ["OrdersCreated"],
+  "dimensions": [],
+  "filters": [
+    {
+      "dimension": "CustomerTier",
+      "op": "Ge",
+      "value": "Gold"
+    }
+  ],
+  "ordering": [],
+  "limit": null
+}

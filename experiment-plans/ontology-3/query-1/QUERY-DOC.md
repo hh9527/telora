@@ -14,12 +14,12 @@
     {
       "dimension": "OrderMonth",
       "op": "Eq",
-      "value": {"String": "2026-07"}
+      "value": "2026-07"
     },
     {
       "dimension": "OriginRegion",
       "op": "Eq",
-      "value": {"String": "East China"}
+      "value": "East China"
     }
   ],
   "ordering": [
@@ -30,8 +30,8 @@
 }
 ```
 
-请求必须至少包含一个指标。指标和分组维度直接写公共业务名称；筛选值写作
-`{"String":"具体值"}`。没有筛选或排序时写空数组；没有条数限制时 `limit` 写
+请求必须至少包含一个指标。指标和分组维度直接写公共业务名称；筛选值使用原生 JSON
+标量，例如字符串写作 `"具体值"`、整数写作 `3`。没有筛选或排序时写空数组；没有条数限制时 `limit` 写
 `null`，否则必须写正整数。查询发起者不属于当前 Request 契约，不要把题面给出的
 发起者写入 JSON，也不要把它臆造为业务筛选。
 
@@ -62,16 +62,19 @@
 
 只支持以下筛选维度，值均为字符串：
 
-- `OrderMonth`：例如 `{"String":"2026-07"}`。
-- `CustomerTier`：例如 `{"String":"Gold"}`。
+- `OrderMonth`：例如 `"2026-07"`。
+- `CustomerTier`：封闭等级目录，只包含 `Gold`、`Silver`、`Bronze`，例如
+  `"Gold"`。该目录可从公共查询能力中发现；这个维度只支持 `Eq`，
+  `Ge`、`Le` 或目录外的值都会失败。
 - `OriginRegion`：地区值使用查询能力定义的规范文本。目前题面使用的规范值包括
-  `{"String":"East China"}`（华东）、`{"String":"South China"}`（华南）和
-  `{"String":"North China"}`（华北）。如果用户给出的地区没有对应规范值，先询问，
+  `"East China"`（华东）、`"South China"`（华南）和
+  `"North China"`（华北）。如果用户给出的地区没有对应规范值，先询问，
   不要自行翻译或类推。
-- `ProductCategory`：例如 `{"String":"电子产品"}`。
+- `ProductCategory`：例如 `"电子产品"`。
 
-操作符为 `Eq`、`Ge`、`Le`。多个筛选按数组顺序以 AND 组合；一个维度可同时用
-`Ge` 和 `Le` 表达闭区间。筛选维度不必同时出现在 `dimensions` 中。
+除上述封闭的 `CustomerTier` 外，开放 String 筛选维度支持 `Eq`、`Ge`、`Le`。
+多个筛选按数组顺序以 AND 组合；开放 String 维度可同时用 `Ge` 和 `Le` 表达闭区间。
+筛选维度不必同时出现在 `dimensions` 中。
 `CarrierName` 和 `ServiceName` 目前只能分组，不能筛选。
 
 ## 排序与 Top N

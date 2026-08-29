@@ -88,6 +88,16 @@ JSON 解码、公共词汇、筛选值、排序和 limit 的问题必须通过�
 公共 facade 的测试必须同时覆盖 `lower` 和 `lower_value`，并证明二者对同一意图产生相同
 Query。
 
+公共动态边界还必须用真实 JSON source 分别验证 `CustomerTier = Diamond` 和
+`CustomerTier Ge Gold`。两者都应通过 `lower_value(Value)` 带外失败，不产生部分 Query；
+诊断来源必须指向输入 JSON 中相应的 `value` 或筛选字段，而不是 facade 或私有模型源码。
+这些失败证据必须出现在公共入口测试或可重复执行的验证入口中。
+
+公共 Request 的筛选标量在 JSON codec 边界使用 untagged 表示：String、Int 与 Float
+分别编码为原生 JSON string、integer 与 number，不出现 `{"String": ...}`、
+`{"Int": ...}` 或 `{"Number": ...}` wrapper。Telora 内部仍使用封闭名义类型并保持
+明确的分支与类型检查；公共测试必须覆盖 encode/decode round-trip 和 Int/Float 分派。
+
 公共查询面必须从私有 ontology root 的已发布 property 捕获 prepared lowering，不能
 手工维护第二份领域知识。公共
 文档和 facade 不得泄漏表名、列名、alias、join 路径/mapping、SQL 片段或模板。A3 永远

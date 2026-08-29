@@ -723,6 +723,14 @@
           {
             "path": "intent-1/invalid/wrong-filter-type.json",
             "level": 2
+          },
+          {
+            "path": "intent-1/invalid/unknown-enum-value.json",
+            "level": 2
+          },
+          {
+            "path": "intent-1/invalid/enum-range-operation.json",
+            "level": 2
           }
         ]
       },
@@ -861,6 +869,26 @@
         "a4",
         "expect-invalid",
         "wrong-filter-type"
+      ],
+      "required": true
+    },
+    {
+      "name": "intent-invalid-enum-value",
+      "command": [
+        "just",
+        "a4",
+        "expect-invalid",
+        "unknown-enum-value"
+      ],
+      "required": true
+    },
+    {
+      "name": "intent-invalid-enum-operation",
+      "command": [
+        "just",
+        "a4",
+        "expect-invalid",
+        "enum-range-operation"
       ],
       "required": true
     }

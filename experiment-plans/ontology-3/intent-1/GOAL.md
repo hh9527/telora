@@ -27,6 +27,8 @@ Supervisor 投递 `ent-1-query-surface-feedback.a4` 时，先依据私有文字�
 - `intent-1/invalid/non-positive-limit.json`：非正 limit；
 - `intent-1/invalid/unsupported-ordering.json`：未请求或不受支持的排序目标；
 - `intent-1/invalid/wrong-filter-type.json`：类型不合规的筛选输入；
+- `intent-1/invalid/unknown-enum-value.json`：目录外的客户等级；
+- `intent-1/invalid/enum-range-operation.json`：封闭客户等级上的范围操作；
 - `intent-1/FEEDBACK.md`：公共查询面存在的具体歧义、缺口或不必要泄漏；
 - `intent-1/NOTES.md`：JSON 选择、从真实命令输出取得的完整 `{sql, bindings}`、诊断
   结果和剩余风险，不得只转述“bindings 已验证”。
@@ -36,6 +38,10 @@ Supervisor 投递 `ent-1-query-surface-feedback.a4` 时，先依据私有文字�
 同时验证指标降序与三项维度升序的稳定顺序。非法入口除 grain/fan-out 组合外，还应覆盖
 至少一个非正 limit、一个未请求的排序目标和一个类型不合规的筛选输入，全部通过带外
 `fail!` 失败且不发布部分 Query。
+
+枚举边界还必须分别验证目录外的 `CustomerTier = Diamond` 和不受支持的
+`CustomerTier Ge Gold`。两次动态 JSON 调用都必须非零退出、没有部分 Query，并在记录中
+保留诊断来源指向对应 JSON 输入字段的证据。
 
 不得修改查询引擎、依赖配置或 `justfile`，不得定义替代 Request DSL、Plan、QueryBuilder、
 SQL renderer 或诊断容器，不得直接执行 Telora。A4 不负责解析任意自然语言，只处理本轮
@@ -50,6 +56,8 @@ just a4 expect-invalid grain-fan-out
 just a4 expect-invalid non-positive-limit
 just a4 expect-invalid unsupported-ordering
 just a4 expect-invalid wrong-filter-type
+just a4 expect-invalid unknown-enum-value
+just a4 expect-invalid enum-range-operation
 ```
 
 `make-query` 与 `verify` 必须成功并产生逐字节相同的结果；每个 `expect-invalid` 必须观察到

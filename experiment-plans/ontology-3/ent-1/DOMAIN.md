@@ -36,7 +36,9 @@ Package -> PackageItem
 - `DeliveredPackages`：Package grain，获准，并要求 Order。
 - `UnitsShipped`：PackageItem grain，获准，并要求 Package 和 Order。
 - `OrderMonth`：要求 Order，获准。
-- `CustomerTier`：要求 Customer，获准。
+- `CustomerTier`：要求 Customer，获准；它是封闭业务枚举，成员为 `Gold`、
+  `Silver`、`Bronze`，稳定外部/物理值分别为同名 String，展示标签分别为
+  `Gold customer`、`Silver customer`、`Bronze customer`。
 - `OriginRegion`：要求 Region，获准。
 - `CarrierName`：要求 Carrier，获准。
 - `ServiceName`：要求 ServiceLevel，获准。
@@ -44,10 +46,18 @@ Package -> PackageItem
   到达。
 - `DeliveryException`：属于封闭 Dimension vocabulary，但没有获准 capability。
 
-以下维度具有值筛选能力，支持标准 `Eq`、`Ge`、`Le`，领域输入必须转换为参数化
-String binding：`OrderMonth`、`CustomerTier`、`OriginRegion`、`ProductCategory`。
+`CustomerTier` 必须用具名、无 payload 的 enum 建模，并利用 eDSL 的封闭枚举值域
+能力发布上述稳定值和标签；它只支持 `Eq` 筛选。合法值转换为参数化 String
+binding，未知值必须在 lowering 中原子失败。
+
+`OrderMonth`、`OriginRegion`、`ProductCategory` 具有开放 String 值筛选能力，支持
+标准 `Eq`、`Ge`、`Le`。
 `CarrierName`、`ServiceName` 与 `DeliveryException` 没有筛选能力。筛选仍遵守相同的
 grain-safe 路径规则；筛选维度可以不出现在分组结果中。
+
+公共查询面必须从同一份 prepared EnterpriseKnowledge 公开 `CustomerTier` 的封闭
+值目录（稳定值与展示标签），使查询设计者无需读取私有模型源码即可发现合法值；
+不得在 facade 中手工维护第二份枚举目录。
 
 不同 natural grain 的指标不能自动组合。当前没有预聚合或 allocation policy。
 
@@ -80,5 +90,10 @@ bindings 中且顺序稳定。
 非法场景：`OrdersCreated`，按 `ProductCategory` 和 `DeliveryException` 分组。该请求
 必须失败，不发布任何部分计划，也不产生 SQL。具体诊断数量和恢复求值结构不属于领域
 模型的验收目标。
+
+枚举验证场景：合法的 `CustomerTier = Gold` 必须产生 String binding `"Gold"`；
+动态 JSON 输入中的未知等级 `Diamond` 以及范围操作 `CustomerTier Ge Gold` 必须失败，
+不产生部分 Query，诊断应归因到对应筛选的 JSON source provenance。公共目录必须按
+声明顺序稳定返回 Gold、Silver、Bronze 及其标签。
 
 最终计划 revision 固定为 `logistics-ontology-v1`。
