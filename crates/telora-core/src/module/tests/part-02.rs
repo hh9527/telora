@@ -232,7 +232,7 @@ name = "rustc"
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("user.toml:2:7"), "{message}");
-        assert!(message.contains("fixture/main:4:"), "{message}");
+        assert!(message.contains("standalone/bin/main:4:"), "{message}");
 
         fs::write(
             directory.join("main.telora"),
@@ -247,7 +247,7 @@ name = "rustc"
         let error = module.execute(100_000).unwrap_err();
         let rendered = error.with_sources(&module.sources).to_string();
         assert!(rendered.contains("user.toml:2:7:"), "{rendered}");
-        assert!(rendered.contains("fixture/main:4:"), "{rendered}");
+        assert!(rendered.contains("standalone/bin/main:4:"), "{rendered}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -360,7 +360,11 @@ name = "rustc"
         )
         .unwrap_err();
         assert!(missing.message().contains("only allowed in built-in std modules"));
-        assert!(missing.to_string().contains("fixture/native-value:1:1"));
+        assert!(
+            missing
+                .to_string()
+                .contains("standalone/bin/native-value:1:1")
+        );
         let recovered = recovery_engine()
             .recover_workspace(directory.join("native-value.telora"))
             .unwrap();
@@ -389,7 +393,7 @@ name = "rustc"
         assert!(
             missing_type
                 .to_string()
-                .contains("fixture/native-type:1:1")
+                .contains("standalone/bin/native-type:1:1")
         );
 
         fs::write(
@@ -490,7 +494,7 @@ name = "rustc"
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("user.json:1:21"), "{message}");
-        assert!(message.contains("fixture/main:4:"), "{message}");
+        assert!(message.contains("standalone/bin/main:4:"), "{message}");
         fs::remove_dir_all(directory).unwrap();
     }
 

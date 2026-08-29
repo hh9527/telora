@@ -116,12 +116,12 @@
         let data_location = failure.data_location().expect("codec data location");
         assert_eq!(
             module.sources.get(data_location.source).name.as_ref(),
-            "fixture/data.json"
+            "standalone/data.json"
         );
         let rule_location = failure.rule_location().expect("codec rule location");
         assert_eq!(
             module.sources.get(rule_location.source).name.as_ref(),
-            "fixture/main"
+            "standalone/bin/main"
         );
         assert!(
             module
@@ -353,7 +353,11 @@
             "callback.telora",
             "arrays.map([1], fn(value) { value / 0 })",
         );
-        assert!(callback.to_string().contains("fixture/callback:1:"));
+        assert!(
+            callback
+                .to_string()
+                .contains("standalone/bin/callback:1:")
+        );
         assert!(
             callback
                 .trace
@@ -435,7 +439,7 @@
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(appended.contains("fixture/main:6:"), "{appended}");
+        assert!(appended.contains("standalone/bin/main:6:"), "{appended}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -689,7 +693,7 @@
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(failure.contains("fixture/main:6:"), "{failure}");
+        assert!(failure.contains("standalone/bin/main:6:"), "{failure}");
         fs::remove_dir_all(directory).unwrap();
     }
 

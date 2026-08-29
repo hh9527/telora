@@ -1,6 +1,6 @@
 # RFC 0262: Workspace Package Lock and IMOS Acquisition
 
-- Status: Proposed
+- Status: Implemented
 - Tracking: #144
 - Depends on: RFC 0261
 - Supersedes: RFC 0164
@@ -62,8 +62,7 @@ Every workspace and downloaded crate has one `telora-crate.json` at its root:
   "modules": [
     "@src/domain/user",
     "@src/model",
-    "@src/schema.json",
-    "@bin/t1"
+    "@src/schema.json"
   ],
   "dependencies": ["query", "local-model"]
 }
@@ -81,23 +80,31 @@ meaning. The accepted forms are:
 @src/data.yaml
 @src/data.yml
 @src/data.toml
-@bin/name
-@entry/name
-@tests/name
 ```
 
 Telora source selectors omit `.telora`; static-data selectors retain their
 recognized format suffix. `@src` entries follow the ordinary nested module
-path rules. `@bin`, `@entry` and `@tests` entries contain one name and no nested
-path, matching their flat physical source directories.
+path rules.
 
-The module catalog maps deterministically to `src/`, `src/bin/`, `src/entry/`
-and `tests/`. Every listed file must exist and match its declared format. A
-source or static-data file absent from `modules` does not participate in
-resolution, special-target selection, workspace recovery or packaging.
-Directory enumeration never adds an implicit module. Duplicate selectors,
-selectors that normalize to the same canonical module identity, and files
-that escape the crate root are errors.
+The module catalog maps deterministically to ordinary files under `src/`.
+Every listed file must exist and match its declared format. A source or
+static-data file absent from `modules` does not participate in resolution,
+workspace recovery or packaging. Directory enumeration never adds an implicit
+library module. Duplicate selectors, selectors that normalize to the same
+canonical module identity, and files that escape the crate root are errors.
+
+`src/bin/*`, `src/entry/*` and `tests/*` are outside the module catalog
+contract. Binary, Entry and test targets continue to use their dedicated
+Host-selected flat-directory rules; they are neither listed in `modules` nor
+diagnosed as undeclared files. Entry modules remain unavailable to ordinary
+import resolution.
+
+`telora check` additionally scans the configured crate directories for valid
+module files. A file that exists but is absent from `modules` produces a
+warning naming the file and the selector that would declare it. The warning
+does not add the file to the catalog, change the checked graph, or make the
+module importable. Other commands continue to consume only the declared
+catalog.
 
 `dependencies` is a set encoded as a JSON array of unique crate names;
 authored order has no semantic meaning. It contains no URL, path, version,
@@ -183,7 +190,7 @@ The lock stores one global package table and binary roots into that table:
   "packages": {
     "app": {
       "source": { "workspace": "app" },
-      "modules": ["@src/domain/user", "@src/model", "@src/schema.json", "@bin/t1"],
+      "modules": ["@src/domain/user", "@src/model", "@src/schema.json"],
       "dependencies": ["local-model", "query"]
     },
     "local-model": {
@@ -272,9 +279,9 @@ and every catalog entry must resolve to exactly one installed file.
 
 Telora converts every locked remote package into a deterministic IMOS Plan.
 The Plan key is derived from a domain-separated encoding of the source URL,
-archive kind and installation rules. Telora submits complete plans to a
-managed or configured `imos serve` process and consumes the returned immutable
-installation root.
+archive kind and installation rules. Telora writes each complete plan under
+the workspace request home, invokes the configured `imos create` command, and
+consumes its single-line immutable installation root.
 
 The workspace request home is:
 
@@ -382,19 +389,21 @@ when they encounter `telora-deps.json`; they do not silently translate it.
    mismatches are rejected before resolver construction.
 9. Undeclared source files cannot be imported or selected, and missing catalog
    entries are rejected before graph discovery.
-10. `.telora/crates-refs/` accurately retains IMOS intent for every live remote
+10. `telora check` warns for valid module files absent from the authoritative
+    catalog without adding them to the checked graph.
+11. `.telora/crates-refs/` accurately retains IMOS intent for every live remote
    lock node and drops stale intent after a lock update.
-11. The same lock produces the same canonical crate graph independently of
+12. The same lock produces the same canonical crate graph independently of
     physical IMOS store paths.
-12. Development overrides affect effective roots without rewriting locked
+13. Development overrides affect effective roots without rewriting locked
     remote source identities or dependency edges.
-13. `run`, `check`, `query` and LSP consume the same package-preparation
+14. `run`, `check`, `query` and LSP consume the same package-preparation
     semantics.
-14. Module IDs and source provenance contain canonical crate paths and no
+15. Module IDs and source provenance contain canonical crate paths and no
     workspace, download or cache paths.
-15. Existing built-in vendor ownership and private-module visibility remain
+16. Existing built-in vendor ownership and private-module visibility remain
     unchanged.
-16. Formatting, warning-denied Clippy and the complete workspace test suite
+17. Formatting, warning-denied Clippy and the complete workspace test suite
     pass after implementation.
 
 ## Stopping rules

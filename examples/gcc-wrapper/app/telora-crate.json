@@ -1,0 +1,10 @@
+{
+  "name": "gcc-wrapper-app",
+  "modules": [],
+  "dependencies": [
+    "domain-method",
+    "gcc-toolchain-define",
+    "gcc-wrapper",
+    "toolchain-method"
+  ]
+}

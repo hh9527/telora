@@ -1,4 +1,0 @@
-set positional-arguments
-
-a4 action="" name="":
-    @python3 query-1/query_task.py a4 "$1" "$2"

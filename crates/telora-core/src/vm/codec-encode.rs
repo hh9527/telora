@@ -272,7 +272,8 @@ fn transform_dynamic_encode(
         .map(|node| (node, true));
     }
 
-    let result = match value.value() {
+
+    match value.value() {
         DecodedValue::BuiltinAtom(BuiltinAtom::None | BuiltinAtom::True | BuiltinAtom::False)
         | DecodedValue::Int(_)
         | DecodedValue::InlineString(_)
@@ -419,8 +420,7 @@ fn transform_dynamic_encode(
             value,
             value,
         )),
-    };
-    result
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -41,6 +41,61 @@
         assert_eq!(completion.trigger_characters, Some(vec![".".to_owned()]));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn configured_workspace_rebuild_uses_the_locked_package_graph() {
+        let root = std::env::temp_dir().join(format!(
+            "telora-lsp-package-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        ));
+        let app = root.join("app");
+        let dependency = root.join("dependency");
+        std::fs::create_dir_all(app.join("src")).expect("create app source");
+        std::fs::create_dir_all(dependency.join("src")).expect("create dependency source");
+        let main = app.join("src/main.telora");
+        std::fs::write(
+            &main,
+            "import \"dependency/lib\" {answer}; export def value = answer;",
+        )
+        .expect("write app module");
+        std::fs::write(
+            dependency.join("src/lib.telora"),
+            "export def answer = 42;",
+        )
+        .expect("write dependency module");
+        std::fs::write(
+            root.join("telora-config.json"),
+            r#"{"version":1,"members":["app","dependency"]}"#,
+        )
+        .expect("write workspace config");
+        std::fs::write(
+            app.join("telora-crate.json"),
+            r#"{"name":"app","modules":["@src/main"],"dependencies":["dependency"]}"#,
+        )
+        .expect("write app manifest");
+        std::fs::write(
+            dependency.join("telora-crate.json"),
+            r#"{"name":"dependency","modules":["@src/lib"],"dependencies":[]}"#,
+        )
+        .expect("write dependency manifest");
+        let spec = telora_core::WorkspaceSpec::discover(&app).expect("discover workspace");
+        let lock = spec
+            .generate_lock(&std::collections::BTreeMap::new())
+            .expect("generate workspace lock");
+        spec.write_lock(&lock).expect("write workspace lock");
+
+        let workspace = lsp_workspace(&main, config()).expect("create configured LSP workspace");
+        let context = workspace.context();
+        workspace
+            .rebuild(&context)
+            .await
+            .expect("rebuild configured workspace");
+        assert!(workspace.published().is_some());
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
+
     #[test]
     fn applies_ordered_utf16_changes_transactionally() {
         let (root, state) = fixture();
@@ -533,7 +588,7 @@ export def output = render(1);"#;
             .expect("snapshot")
             .sources()
             .files()
-            .find(|file| file.name.as_ref() == "fixture/main")
+            .find(|file| file.name.as_ref() == "standalone/bin/main")
             .expect("main source")
             .text()
             .clone();

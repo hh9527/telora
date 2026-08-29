@@ -1,4 +1,5 @@
 import "std/argv" as argv;
+import "std/codec" as codec;
 import "std/dict" as dict;
 import "std/hash" as hash;
 import "std/rt-types/exec" as exec_types;
@@ -13,8 +14,8 @@ type ToolchainSource = struct {
     sysroots: Dict(Package),
 };
 
-def validated_source: Fn(Any) -> ToolchainSource = fn(raw) {
-    match validate(ToolchainSource, raw) {
+def validated_source: Fn(codec.Value) -> ToolchainSource = fn(raw) {
+    match codec.decode(ToolchainSource, raw) {
         'Ok(source) => source,
         'Err(error) => fail!(error.message, error),
     }
@@ -23,15 +24,15 @@ def validated_source: Fn(Any) -> ToolchainSource = fn(raw) {
 def checked_compiler_args = fn(request, sysroot_dest) {
     let arguments = match argv.reject_option(request.args, "--sysroot") {
         'Ok(arguments) => arguments,
-        'Err(error) => fail!(error.message, error),
+        'Err(error) => fail!(error),
     };
     let arguments = match argv.reject_option(arguments, "-ffile-prefix-map") {
         'Ok(arguments) => arguments,
-        'Err(error) => fail!(error.message, error),
+        'Err(error) => fail!(error),
     };
     let arguments = match argv.reject_option(arguments, "-fdebug-prefix-map") {
         'Ok(arguments) => arguments,
-        'Err(error) => fail!(error.message, error),
+        'Err(error) => fail!(error),
     };
     argv.prepend([
         `--sysroot=\{sysroot_dest}`,
@@ -40,12 +41,12 @@ def checked_compiler_args = fn(request, sysroot_dest) {
     ], arguments)
 };
 
-export def command: Fn(String, Any) -> ExecFn = fn(tool, raw) {
+export def command: Fn(String, codec.Value) -> ExecFn = fn(tool, raw) {
     let source = validated_source(raw);
     fn(settings, request) {
         let host = `\{settings.platform.os}-\{settings.platform.arch}`;
         let compiler = toolchain.require_package(source.compilers, host, `unsupported GCC host: \{host}`);
-        let unpack_ty = 'TarGzip;
+        let unpack_ty: exec_types.UnpackType = 'TarGzip;
         let strip = 1;
         let compiler_prepared = toolchain.prepare_archive(settings, compiler, unpack_ty, strip);
         let compiler_dest = compiler_prepared.dest;

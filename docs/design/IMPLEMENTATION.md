@@ -49,8 +49,10 @@ source path。
 | VM、配额、失败 | `vm.rs`、`evaluation.rs` |
 | 值、heap、复制 | `heap.rs`、`value.rs` |
 | typed property registry / 反射 bridge | `property.rs`、`heap/`、`types/dependency.rs` |
+| workspace/package model | `package.rs` |
 | 模块解析与 Host 生命周期 | `module_id.rs`、`module.rs` |
 | canonical runtime types | `type_store.rs` |
+| CLI/LSP package Host | `crates/telora/src/package_host.rs` |
 | CLI Host | `crates/telora/src/main.rs` |
 
 以上路径均相对于 `crates/telora-core/src/`，除非另有说明。
@@ -84,7 +86,19 @@ annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中�
 
 ## 3. 模块图、骨架和静态身份
 
-`ModuleResolver` 在图发现前完成 crate source 清单。`builtin_list()` 先登记 builtin
+crate mode 在构造 `ModuleResolver` 前执行 package preparation：向上发现
+`telora-config.json`，严格校验 `telora-lock.json`，将远程 tarball 转成确定的 IMOS plan，
+调用 `imos create` 取得 immutable installation root，再校验每个 `telora-crate.json`。
+开发 override 只在 baseline package 与 lock 一致后替换 effective root。准备结果是
+`ResolvedWorkspace`，同时供 CLI 和 LSP 使用；resolver、module loader 和 VM 不执行
+package acquisition，也不改写 lock。
+
+`telora-crate.json` 的 `modules` 是普通 `src/` module 的权威清单。清单项在准备阶段
+映射并 canonicalize 到物理文件；未列出的文件不会进入 catalog。`src/bin/*`、
+`src/entry/*` 和 `tests/*` 仍只在 Host 选择特殊根时加入当前图。`telora check` 在准备后
+额外扫描普通 `src/`，为未声明文件输出 warning，但不改变 resolver 输入。
+
+`ModuleResolver` 消费已经准备好的 crate source 清单。`builtin_list()` 先登记 builtin
 vendor 的 crate，resolver 随后登记当前 crate 和 manifest/standalone dependencies；
 同名登记使用 first-win，已选 source 不再改变。import 先按 selector 首段选择 crate，
 再只在该 crate 中解析 module，因此 configured `std` 不能补充 builtin `std`。
@@ -272,8 +286,7 @@ VM 计算并按 VM allocation 核算。
 
 ## 9. Entry 与 CLI Host 生命周期
 
-`src/entry/<name>.telora` 只能由 Host 通过 `run-with @src/entry/<name>` 选择，普通模块
-不能 import。Entry 必须只
+`src/entry/<name>.telora` 只能由 Host 选择，普通模块不能 import。Entry 必须只
 导出 `MainType`、`State` 和 `config`：
 
 ```text
@@ -302,8 +315,8 @@ Main 不直接读取 open world。Entry 也只声明 capabilities、接收 resou
 data；实际文件、环境、stdin 和子进程操作由 CLI `RunHost` 执行。当前没有为了 Entry
 而延迟发现或动态修改 Main module graph。
 
-CLI 的公开命令只有 `run`、`serve`、`run-with`、`check`、`query`（别名 `q`）和 `lsp`。
-`run` 等价于选择 `std/entry/default` 的 `run-with`；`serve --bind stdio://` 选择
+CLI 的公开命令只有 `run`、`serve`、`check`、`query`（别名 `q`）和 `lsp`。
+`run` 固定选择 `std/entry/default`；`serve --bind stdio://` 固定选择
 `std/entry/serve`。`check`、`query` 和 `lsp` 当前是
 Host 固定工具路径，不通过用户 Entry ABI。
 

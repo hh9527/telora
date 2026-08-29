@@ -22,6 +22,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 mod source_arg;
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
+use telora::package_host;
 
 const EVALUATION_FUEL: usize = 1_000_000;
 const STACK_SLOTS: usize = 65_536;
@@ -784,7 +785,7 @@ impl Drop for ProcessRunHost {
 #[derive(Parser)]
 #[command(name = "telora", version, about = "The Telora language toolchain")]
 struct Cli {
-    /// Find telora-deps.json upward from this path (default: current directory).
+    /// Find telora-config.json upward from this path (default: current directory).
     #[arg(short = 'C', value_name = "CONTEXT")]
     context: Option<PathBuf>,
     #[command(subcommand)]
@@ -797,8 +798,10 @@ enum Command {
     Run(RunArgs),
     /// Initialize serve(Dict(Value)) and process requests continuously.
     Serve(ServeArgs),
-    /// Run a module through an explicitly selected Entry adapter.
+    #[command(hide = true)]
     RunWith(RunWithArgs),
+    /// Resolve package sources and rewrite telora-lock.json.
+    Lock,
     Check(CheckArgs),
     /// Query module and semantic facts as JSONL.
     #[command(visible_alias = "q")]
@@ -1042,6 +1045,10 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 arguments.application,
                 &arguments.entry_args,
             )),
+        Command::Lock => package_host::lock(&context).map(|path| {
+            println!("{}", path.display());
+            0
+        }),
         Command::Check(arguments) => check_command(context, arguments),
         Command::Query(arguments) => query_command(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),
@@ -1059,6 +1066,11 @@ async fn run_command(
     entry_args: &[String],
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
+    let prepared = arguments
+        .standalone
+        .is_none()
+        .then(|| package_host::prepare(&context))
+        .transpose()?;
     if entry == "std/entry/serve"
         && entry_sources
             .locators
@@ -1076,8 +1088,11 @@ async fn run_command(
         let workspace = if let Some(path) = arguments.standalone.as_deref() {
             recovery_engine.recover_standalone(path)
         } else {
-            recovery_engine
-                .recover_workspace_id(&context, module_id.as_deref().expect("required by clap"))
+            recovery_engine.recover_workspace_id_in_workspace(
+                Arc::clone(prepared.as_ref().expect("crate mode is prepared")),
+                &context,
+                module_id.as_deref().expect("required by clap"),
+            )
         }
         .map_err(|error| error.to_string())?;
         let selected = module_id.as_deref().unwrap_or("@standalone");
@@ -1107,7 +1122,11 @@ async fn run_command(
     let pending = if let Some(path) = arguments.standalone {
         engine.prepare_standalone(path)
     } else {
-        engine.prepare_module_id(context, module_id.as_deref().expect("required by clap"))
+        engine.prepare_module_id_in_workspace(
+            prepared.expect("crate mode is prepared"),
+            context,
+            module_id.as_deref().expect("required by clap"),
+        )
     }
     .map_err(|error| error.to_string())?;
     let mut host = ProcessRunHost::new(entry_sources.locators);
@@ -1154,13 +1173,36 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
 }
 
 fn check_command(context: PathBuf, arguments: CheckArgs) -> Result<i32, String> {
-    let module_name = ModuleResolver::from_cwd(&context, &arguments.module_id)
-        .and_then(|resolver| resolver.selected_root())
-        .map(|module| module.id.to_string())
-        .map_err(|error| error.to_string())?;
+    let prepared = package_host::prepare(&context)?;
+    let module_name =
+        ModuleResolver::from_workspace(Arc::clone(&prepared), &context, &arguments.module_id)
+            .and_then(|resolver| resolver.selected_root())
+            .map(|module| module.id.to_string())
+            .map_err(|error| error.to_string())?;
     let workspace = engine()
-        .recover_workspace_id(context, &arguments.module_id)
+        .recover_workspace_id_in_workspace(Arc::clone(&prepared), context, &arguments.module_id)
         .map_err(|error| error.to_string())?;
+    for (crate_name, _) in prepared.crates() {
+        for undeclared in prepared
+            .undeclared_modules(crate_name)
+            .map_err(|error| error.to_string())?
+        {
+            emit(json!({
+                "schema": "telora.check/v1",
+                "module": module_name,
+                "record": "diagnostic",
+                "severity": "warning",
+                "message": format!(
+                    "crate {:?} contains undeclared module file {}; add {:?} to telora-crate.json modules",
+                    undeclared.crate_name,
+                    undeclared.relative_path.display(),
+                    undeclared.selector,
+                ),
+                "labels": [],
+                "notes": [],
+            }))?;
+        }
+    }
     let has_error_diagnostic = workspace
         .diagnostics()
         .iter()
@@ -1218,7 +1260,8 @@ enum ModuleQuery {
 
 fn query_command(context: PathBuf, arguments: QueryArgs) -> Result<i32, String> {
     if let QueryCommand::Modules(arguments) = &arguments.command {
-        let modules = match engine().module_catalog(context) {
+        let prepared = package_host::prepare(&context)?;
+        let modules = match engine().module_catalog_in_workspace(prepared, context) {
             Ok(modules) => modules,
             Err(error) => {
                 emit(json!({
@@ -1277,18 +1320,31 @@ fn query_command(context: PathBuf, arguments: QueryArgs) -> Result<i32, String> 
         }
         QueryCommand::Modules(_) => unreachable!("handled above"),
     };
+    let prepared = if module_id.starts_with("std/") {
+        None
+    } else {
+        Some(package_host::prepare(&context)?)
+    };
     let canonical_module_id = if module_id.starts_with("std/") {
         module_id.clone()
     } else {
-        ModuleResolver::from_cwd(&context, &module_id)
-            .and_then(|resolver| resolver.selected_root())
-            .map(|module| module.id.to_string())
-            .unwrap_or_else(|_| module_id.clone())
+        ModuleResolver::from_workspace(
+            Arc::clone(prepared.as_ref().expect("crate query is prepared")),
+            &context,
+            &module_id,
+        )
+        .and_then(|resolver| resolver.selected_root())
+        .map(|module| module.id.to_string())
+        .unwrap_or_else(|_| module_id.clone())
     };
     let workspace = if module_id.starts_with("std/") {
         engine().recover_builtin_workspace(&module_id)
     } else {
-        engine().recover_workspace_id(context, &module_id)
+        engine().recover_workspace_id_in_workspace(
+            prepared.expect("crate query is prepared"),
+            context,
+            &module_id,
+        )
     };
     let workspace = match workspace {
         Ok(workspace) => workspace,

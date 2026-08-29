@@ -218,6 +218,15 @@ Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect�
 resolver 按 vendor 顺序注册 crate，并以 crate 为颗粒采用 first-win；builtin vendor
 先提供 `std`，当前 crate 先于 dependencies。后序同名来源不能补充或覆盖该 crate。
 
+**Workspace config** 为 workspace 中的每个 crate name 选择唯一 source：workspace
+member 或确定的远程 tarball。**Crate manifest** 声明 crate 的 canonical name、权威
+普通 module catalog 和直接 dependency names。**Workspace lock** 固定完整精确 package
+graph 和每个 binary 的 crate closure；除显式 lock 操作外，Host 只验证和消费它。
+
+**Package preparation** 是 resolver 之前的 Host 阶段。它验证 config 与 lock、通过
+IMOS 物化远程 source、校验物化 manifest，并产生一次命令生命周期内不变的
+crate-name 到 root 映射。Package source 和物理 root 不进入 module identity。
+
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入
 只有 canonical source path。

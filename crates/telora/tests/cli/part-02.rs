@@ -177,6 +177,136 @@ fn run_rejects_removed_input_option() {
 }
 
 #[test]
+fn lock_is_the_only_command_that_recreates_a_missing_workspace_lock() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/lib.telora"), "export def value = 1;").unwrap();
+    let mut check = telora(&cwd);
+    fs::remove_file(cwd.join("telora-lock.json")).unwrap();
+    let missing = check.args(["check", "@src/lib"]).output().unwrap();
+    assert!(!missing.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("run `telora lock`"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+
+    let locked = telora(&cwd).arg("lock").output().unwrap();
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    assert!(cwd.join("telora-lock.json").is_file());
+}
+
+#[test]
+fn lock_removes_stale_imos_plans_without_remote_sources() {
+    let cwd = fixture();
+    let plans = cwd.join(".telora/crates-refs");
+    fs::create_dir_all(&plans).unwrap();
+    fs::write(plans.join("telora-stale.json"), "{}\n").unwrap();
+    fs::write(plans.join("host-note.txt"), "keep\n").unwrap();
+
+    let locked = telora(&cwd).arg("lock").output().unwrap();
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    assert!(!plans.join("telora-stale.json").exists());
+    assert!(plans.join("host-note.txt").exists());
+}
+
+#[test]
+fn check_warns_about_files_outside_the_authoritative_module_catalog() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/lib.telora"), "export def value = 1;").unwrap();
+    let mut check = telora(&cwd);
+    fs::write(cwd.join("src/extra.telora"), "export def extra = 2;").unwrap();
+    let output = check.args(["check", "@src/lib"]).output().unwrap();
+    assert!(output.status.success());
+    let records = jsonl(&output.stdout);
+    let warning = records
+        .iter()
+        .find(|record| record["severity"] == "warning")
+        .expect("undeclared module warning");
+    assert!(warning["message"].as_str().unwrap().contains("src/extra.telora"));
+    assert!(warning["message"].as_str().unwrap().contains("@src/extra"));
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_crates_are_materialized_through_the_imos_command_boundary() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = fixture();
+    fs::remove_file(root.join("telora-crate.json")).unwrap();
+    fs::remove_file(root.join("telora-lock.json")).unwrap();
+    let app = root.join("app");
+    let remote = root.join("installed");
+    fs::create_dir_all(app.join("src/bin")).unwrap();
+    fs::create_dir_all(remote.join("src")).unwrap();
+    fs::write(
+        root.join("telora-config.json"),
+        r#"{"version":1,"members":["app"],"sources":{"remote":{"tarball":"https://example.test/remote.tar.gz"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        app.join("telora-crate.json"),
+        r#"{"name":"app","modules":[],"dependencies":["remote"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        app.join("src/bin/main.telora"),
+        "import \"remote/lib\" {answer}; export {answer};",
+    )
+    .unwrap();
+    fs::write(
+        remote.join("telora-crate.json"),
+        r#"{"name":"remote","modules":["@src/lib"],"dependencies":[]}"#,
+    )
+    .unwrap();
+    fs::write(remote.join("src/lib.telora"), "export def answer = 42;").unwrap();
+    let imos = root.join("fake-imos");
+    fs::write(&imos, "#!/bin/sh\nprintf '%s\\n' \"$TELORA_TEST_IMOS_ROOT\"\n").unwrap();
+    fs::set_permissions(&imos, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let locked = telora(&root)
+        .arg("lock")
+        .env("TELORA_IMOS", &imos)
+        .env("TELORA_TEST_IMOS_ROOT", &remote)
+        .output()
+        .unwrap();
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    let queried = telora(&root)
+        .args(["-C", app.to_str().unwrap(), "query", "exports", "remote/lib"])
+        .env("TELORA_IMOS", &imos)
+        .env("TELORA_TEST_IMOS_ROOT", &remote)
+        .output()
+        .unwrap();
+    assert!(
+        queried.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&queried.stdout),
+        String::from_utf8_lossy(&queried.stderr)
+    );
+    assert!(jsonl(&queried.stdout)
+        .iter()
+        .any(|record| record["name"] == "answer"));
+    let plans = fs::read_dir(root.join(".telora/crates-refs"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(plans.len(), 1);
+    let plan: Value = serde_json::from_slice(&fs::read(plans[0].path()).unwrap()).unwrap();
+    assert_eq!(plan["items"][0]["kind"]["archive"], "TarGzip");
+}
+
+#[test]
 fn run_context_selects_the_manifest_discovery_start() {
     let cwd = fixture();
     let other = fixture();
@@ -186,6 +316,7 @@ fn run_context_selects_the_manifest_discovery_start() {
 export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(9) };"#,
     )
     .unwrap();
+    refresh_fixture_workspace(&other);
     let run = telora(&cwd)
         .args(["-C", other.to_str().unwrap(), "run", "tool"])
         .output()
@@ -207,6 +338,7 @@ fn check_and_query_context_select_the_manifest_discovery_start() {
         "type Answer = Int; export {Answer};",
     )
     .unwrap();
+    refresh_fixture_workspace(&other);
 
     let check = telora(&cwd)
         .args(["-C", other.to_str().unwrap(), "check", "@src/lib"])
@@ -846,8 +978,8 @@ fn selected_entry_alone_can_import_dependency_private_modules() {
     let dependency = cwd.join("dependency");
     fs::create_dir_all(dependency.join("src")).unwrap();
     fs::write(
-        cwd.join("telora-deps.json"),
-        r#"{"name":"app","dependencies":{"dep":{"path":"dependency"}}}"#,
+        cwd.join("telora-config.json"),
+        r#"{"version":1,"members":[".","dependency"]}"#,
     )
     .unwrap();
     fs::write(
@@ -856,6 +988,21 @@ fn selected_entry_alone_can_import_dependency_private_modules() {
     )
     .unwrap();
     fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
+    fs::write(
+        cwd.join("telora-crate.json"),
+        r#"{"name":"app","modules":[],"dependencies":["dep"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("telora-crate.json"),
+        r#"{"name":"dep","modules":["@src/_secret"],"dependencies":[]}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("telora-lock.json"),
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":[],"dependencies":["dep"]},"dep":{"source":{"workspace":"dependency"},"modules":["@src/_secret"],"dependencies":[]}},"binaries":{"app/main":{"root":"app","packages":["app","dep"]}}}"#,
+    )
+    .unwrap();
     write_entry(&cwd,
         r#"import "std/_rt" as rt;
 import "dep/_secret" {value};

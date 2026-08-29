@@ -772,7 +772,7 @@ export { CallExpr, Expr };"#,
         let first = pending.initialize().unwrap_err().to_string();
         let second = pending.initialize().unwrap_err().to_string();
         assert_eq!(first, second);
-        assert!(first.contains("fixture/missing"), "{first}");
+        assert!(first.contains("standalone/missing"), "{first}");
 
         fs::write(&main, "export def output = 42;").unwrap();
         let pending = engine.prepare_module(&main).unwrap();
@@ -871,10 +871,10 @@ export { CallExpr, Expr };"#,
         );
         assert!(main.imports.iter().any(|import| import.target == model.id));
         assert_ne!(main.source, model.source);
-        assert_eq!(model.name, "fixture/model");
+        assert_eq!(model.name, "standalone/model");
         assert_eq!(
             snapshot.sources().get(model.source.unwrap()).name.as_ref(),
-            "fixture/model"
+            "standalone/model"
         );
         fs::remove_dir_all(directory).unwrap();
     }

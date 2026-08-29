@@ -6,6 +6,7 @@ fn help_is_clap_owned_and_types_is_removed() {
     assert!(help.status.success());
     assert!(output.contains("lsp"));
     assert!(!output.contains("types"));
+    assert!(!output.contains("run-with"));
     let types = telora(&cwd)
         .args(["types", "@src/lib"])
         .output()
@@ -135,8 +136,23 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
     fs::write(dependency.join("src/_hidden.telora"), "0").unwrap();
     fs::write(dependency.join("src/bin/tool.telora"), "0").unwrap();
     fs::write(
-        cwd.join("telora-deps.json"),
-        r#"{"name":"app","dependencies":{"dep":{"path":"dependency"}}}"#,
+        cwd.join("telora-config.json"),
+        r#"{"version":1,"members":[".","dependency"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("telora-crate.json"),
+        r#"{"name":"app","modules":["@src/_local","@src/lib","@src/local-native"],"dependencies":["dep"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("telora-crate.json"),
+        r#"{"name":"dep","modules":["@src/_hidden","@src/public"],"dependencies":[]}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("telora-lock.json"),
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":["@src/_local","@src/lib","@src/local-native"],"dependencies":["dep"]},"dep":{"source":{"workspace":"dependency"},"modules":["@src/_hidden","@src/public"],"dependencies":[]}},"binaries":{"app/main":{"root":"app","packages":["app","dep"]},"dep/tool":{"root":"dep","packages":["dep"]}}}"#,
     )
     .unwrap();
 
@@ -630,14 +646,28 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     let dependency = cwd.join("query-builder");
     fs::create_dir_all(dependency.join("src")).unwrap();
     fs::write(
-        cwd.join("telora-deps.json"),
-        r#"{"name":"app","dependencies":{"query-builder":{"path":"query-builder"}}}"#,
+        cwd.join("telora-config.json"),
+        r#"{"version":1,"members":[".","query-builder"]}"#,
     )
     .unwrap();
-    fs::write(dependency.join("telora-deps.json"), "{}").unwrap();
     fs::write(
         dependency.join("src/query-builder.telora"),
         "type Plan = struct {sql: String}; export {Plan};",
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("telora-crate.json"),
+        r#"{"name":"app","modules":[],"dependencies":["query-builder"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("telora-crate.json"),
+        r#"{"name":"query-builder","modules":["@src/query-builder"],"dependencies":[]}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("telora-lock.json"),
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":[],"dependencies":["query-builder"]},"query-builder":{"source":{"workspace":"query-builder"},"modules":["@src/query-builder"],"dependencies":[]}},"binaries":{}}"#,
     )
     .unwrap();
 
@@ -760,13 +790,13 @@ fn public_cli_rejects_physical_paths_and_missing_manifests() {
         .unwrap();
     assert!(!physical.status.success());
     let outside = fixture();
-    fs::remove_file(outside.join("telora-deps.json")).unwrap();
+    fs::remove_file(outside.join("telora-config.json")).unwrap();
     let missing = telora(&outside)
         .args(["check", "@src/lib"])
         .output()
         .unwrap();
     assert!(!missing.status.success());
-    assert!(String::from_utf8_lossy(&missing.stderr).contains("cannot find telora-deps.json"));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("cannot find telora-config.json"));
 }
 
 #[test]

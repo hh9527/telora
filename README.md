@@ -29,14 +29,22 @@ cargo build --release -p telora
 
 ```text
 hello/
-  telora-deps.json
+  telora-config.json
+  telora-crate.json
+  telora-lock.json
   src/bin/main.telora
 ```
 
-`hello/telora-deps.json`：
+`hello/telora-config.json`：
 
 ```json
-{"name":"hello","dependencies":{}}
+{"version":1,"members":["."]}
+```
+
+`hello/telora-crate.json`：
+
+```json
+{"name":"hello","modules":[],"dependencies":[]}
 ```
 
 `hello/src/bin/main.telora`：
@@ -52,6 +60,7 @@ export def main: Fn(Dict(Value)) -> Value = fn(sources) {
 运行：
 
 ```bash
+target/release/telora lock -C hello
 target/release/telora check @bin/main -C hello
 target/release/telora run main -C hello
 target/release/telora query exports @bin/main -C hello
@@ -190,15 +199,14 @@ value.dbg!("message")     # 返回原值，向 Host 发送 JSONL 观察
 
 ## Host 与 Entry
 
-Telora 程序本身没有外部权限。`run` 选择一个纯 Entry；Entry 约束 Main 模块接口，
+Telora 程序本身没有外部权限。`run` 选择内置的单次运行 Entry；Entry 约束 Main 模块接口，
 接收 `SystemEvent`，并返回下一状态和 `SystemEffect`。当前 Host 协议可以表达 String
 输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
 子进程以及最终发布。
 
-普通 `run main` 等价于 `run-with std/entry/default main`。自定义 Entry 位于
-`src/entry/name.telora`，使用 `telora run-with @src/entry/name main` 选择；Entry 不能
-作为普通模块根或被普通模块 import。只有被 Host 选中的 Entry 可以访问其他 crate 的
-private 模块和 `std/_...` 内部模块。
+`run` 固定选择 `std/entry/default`，`serve` 固定选择 `std/entry/serve`。Entry 源码位于
+`src/entry/name.telora`，由 Host 选择，不能作为普通模块根或被普通模块 import。只有
+被 Host 选中的 Entry 可以访问其他 crate 的 private 模块和 `std/_...` 内部模块。
 
 `serve --bind stdio://` 对每行请求返回包含 `ok`、`error` 和 `diagnostics` 的 JSON。
 可恢复的请求失败不会结束服务；初始化、协议和资源类终止失败仍带外报告并退出。
@@ -210,8 +218,7 @@ private 模块和 `std/_...` 内部模块。
 ```text
 telora run [binary]        调用 @bin/<binary> 的单次 main
 telora serve [binary]      通过 stdio JSONL 持续调用 serve handler
-telora run-with <entry> [binary]
-                           通过指定的 Entry 模块调度 binary
+telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器
@@ -239,7 +246,6 @@ fuel 当作正常终止条件。
 
 - [guide/TELORA.md](guide/TELORA.md)：语言使用教程与当前限制。
 - [guide/TELORA-CLI.md](guide/TELORA-CLI.md)：CLI、工作区解析和 JSONL 契约。
-- [guide/EXPERIMENTS.md](guide/EXPERIMENTS.md)：实验计划、启动、调度、审核和归档流程。
 - [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md)：当前语言设计 SSOT。
 - [docs/design/CONCEPT.md](docs/design/CONCEPT.md)：核心概念和所有权边界。
 - [docs/MOTIVATION.md](docs/MOTIVATION.md)：问题域、动机与能力准入原则。

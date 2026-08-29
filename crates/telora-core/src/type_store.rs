@@ -3,7 +3,7 @@ use crate::types::TypeDescriptor;
 use hashbrown::raw::RawTable;
 use std::collections::HashMap;
 use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 use std::sync::{Arc, Mutex};
 
 pub(crate) type SharedTypeStore = Arc<Mutex<TypeStore>>;
@@ -431,9 +431,7 @@ impl TypeStore {
     }
 
     fn hash(&self, key: &TypeInternKey) -> u64 {
-        let mut hasher = self.hasher.build_hasher();
-        key.hash(&mut hasher);
-        hasher.finish()
+        self.hasher.hash_one(key)
     }
 }
 

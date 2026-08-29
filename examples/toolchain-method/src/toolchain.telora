@@ -18,6 +18,13 @@ type PreparedPackage = struct {
     install: Install,
 };
 
+def unpack_type_name: Fn(UnpackType) -> String = fn(ty) {
+    match ty {
+        'TarGzip => "tar-gzip",
+        'Tar => "tar",
+    }
+};
+
 def require_package: Fn(Dict(Package), String, String) -> Package = fn(packages, key, message) {
     method.or_else(dict.get(packages, key), fn() { panic!(message) })
 };
@@ -26,7 +33,7 @@ def prepare_archive:
     Fn(ExecSettings, Package, UnpackType, Int)
         -> PreparedPackage =
     fn(settings, package, ty, strip) {
-        let identity = `unpack-v1\n\{package.name}\n\{package.src}\n\{package.digest}\n\{ty}\n\{strip}`;
+        let identity = `unpack-v1\n\{package.name}\n\{package.src}\n\{package.digest}\n\{unpack_type_name(ty)}\n\{strip}`;
         let dest = `\{settings.install_prefix}/\{hash.sha256(identity)}`;
         {
             dest,

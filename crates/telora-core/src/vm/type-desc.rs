@@ -271,10 +271,7 @@ fn run_core_type_desc(
         }
         CoreTypeDescFunction::StripAttributes => {
             let mut value = input;
-            loop {
-                let DecodedValue::Dict(handle) = value.value() else {
-                    break;
-                };
+            while let DecodedValue::Dict(handle) = value.value() {
                 let kind = view
                     .dict_get_text(handle, "kind")
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?

@@ -1187,7 +1187,7 @@ export def output = (compared, selected);"#,
         assert_eq!(requested, parse_bytes);
         let (result, _) = execute_with_allocation(&parsed, parse_bytes - 1);
         assert_eq!(
-            result.err().expect("one byte short must fail").kind,
+            result.expect_err("one byte short must fail").kind,
             crate::RuntimeErrorKind::AllocationQuotaExceeded
         );
 
@@ -1211,7 +1211,7 @@ export def output = (compared, selected);"#,
         assert_eq!(requested, encode_bytes);
         let (result, _) = execute_with_allocation(&encoded, encode_bytes - 1);
         assert_eq!(
-            result.err().expect("one byte short must fail").kind,
+            result.expect_err("one byte short must fail").kind,
             crate::RuntimeErrorKind::AllocationQuotaExceeded
         );
 

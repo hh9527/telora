@@ -825,7 +825,8 @@ identity 和 provenance；不包装、重求值或重建 binding。Namespace bin
 
 Telora crate 使用 `src/`、`src/bin/`、`src/entry/` 和 `tests/`。`src/bin`、
 `src/entry`、`tests` 只允许直接包含文件。Host 从当前工作目录向上查找最近的
-`telora-deps.json`，其 `name` 字段给出稳定 crate 身份。Host 通过 selector 选择根：
+`telora-config.json`，并从 workspace 的 `telora-crate.json` 得到稳定 crate 身份和
+权威普通模块清单。Host 通过 selector 选择根：
 普通 source 是 `@src/<path>`，应用是 `@bin/<name>`，Entry 是
 `@src/entry/<name>`，测试是 `@test/<name>`。例如：
 
@@ -872,19 +873,32 @@ export record 定义，Host 再按所选协议校验或选择其中的值。
 模块的语义身份由 crate 和逻辑路径组成的 canonical cname 决定，不等于偶然的物理绝对路径。
 相同模块经不同相对边解析时应复用同一身份；resolver 拒绝词法或 symlink 越界。
 
-Path crate 的依赖由根目录 `telora-deps.json` 固定。dependency map key 声明被依赖
-crate 的 canonical name，也是 package import 的首段；crate 名与逻辑路径共同形成
-canonical cname。
-resolver 按顺序查询 vendor：builtin vendor 在先，当前发布 `std/*`；manifest 或
-standalone option 建立的 configured vendor 在后。vendor 以 crate 为选择颗粒；一旦
+workspace 根的 `telora-config.json` 为每个 crate name 选择唯一的 workspace member
+或远程 tarball source，并可为远程 source 设置 workspace 内的开发 override。每个
+crate 的 `telora-crate.json` 声明 canonical name、权威普通模块清单和直接依赖名称。
+`telora-lock.json` 固定 workspace 唯一精确包图和每个 binary 的完整 crate closure。
+crate 名与逻辑路径共同形成 canonical cname，物理 workspace 与缓存路径不进入身份。
+
+`telora lock` 是唯一创建或改写 lock 的命令。其他 crate-mode 命令和 LSP 校验 lock，
+通过 IMOS 物化缺失的远程 tarball，再把准备好的 immutable crate-root map 交给 resolver。
+resolver、module loader、求值器和 VM 均不执行网络 I/O，也不改写 lock。
+
+`telora-crate.json` 的 `modules` 只接受 `@src/...` selector，并且是普通 `src/` 模块的
+权威集合。未声明文件不可 import；`telora check` 会为存在但未声明的普通 source 或
+静态数据文件产生 warning。`src/bin/*`、`src/entry/*` 和 `tests/*` 由 Host 选择，不进入
+该清单。
+
+resolver 按顺序查询 vendor：builtin vendor 在先，当前发布 `std/*`；prepared
+workspace 建立的 configured vendor 在后。vendor 以 crate 为选择颗粒；一旦
 builtin vendor 提供 `std`，全部 `std/*` selector 都只在该 crate 内解析，后序同名 crate
 整体被遮蔽，不能补充或覆盖 module。crate 清单在模块图发现前完成；注册采用 first-win，
 当前 crate 先于 dependencies，已登记的 crate name 及其 source 指向此后不可改变。
-当前没有通用 registry 获取、版本求解或运行时 package acquisition。
+当前没有 registry、语义版本求解或同名多版本能力；远程 source 是确定的 HTTP(S)
+tarball URL。
 
-普通 crate 模式的 resolver 配置只来自向上发现的最近一个 `telora-deps.json`；模块中
-不得声明 `crate.dependency` resolver option。`run -S` 的 standalone 模式不查找
-manifest；其 canonical owner 默认为 `standalone`，根文件可用
+普通 crate 模式的 resolver 配置只来自 prepared workspace；模块中不得声明
+`crate.dependency` resolver option。`run -S` 的 standalone 模式不进行 workspace
+发现；其 canonical owner 默认为 `standalone`，根文件可用
 `option "crate.name" "..."` 显式指定，并可用 `crate.dependency` 补充依赖图。依赖路径
 相对根文件的父目录解析，被导入的文件不能继续声明 resolver options。其他静态
 `option` 可声明模块或 Host 协议配置，必须位于 import 解析之前的有效位置，嵌套依赖
@@ -1273,8 +1287,6 @@ telora check <module> [-C <context>]
 telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]...
 telora run -S <file> [--best-effort] [--source <name>=<source>]...
 telora serve <binary-name> [-C <context>] [--source <name>=<source>]... --bind stdio://
-telora run-with <entry-module> <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]... [-- <entry-args>...]
-telora run-with <entry-module> -S <file> [--best-effort] [--source <name>=<source>]... [-- <entry-args>...]
 telora query|q modules [-C <context>] [-p <substring>]
 telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
@@ -1343,14 +1355,12 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
 最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
-`run` 选择一个 Main application，并且完全等价于用内置 Entry 执行
-`run-with std/entry/default`。默认 Entry 要求 Main 导出
+`run` 选择一个 Main application，并固定使用 `std/entry/default`。该 Entry 要求 Main 导出
 `main: Fn(Dict(Value)) -> Value`，调用一次后把结果编码为 JSON。`serve --bind stdio://`
 选择 `std/entry/serve`，要求 Main 导出
 `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次 handler 后，以 stdin/stdout
-上的 JSONL 逐项收发请求和响应。`run-with <entry-module>` 是 Host 的显式授权动作；
-selector 必须指向 `src/entry` 中的模块，例如 `@src/entry/tool`。该源码获得保留的
-Entry 身份，可以访问图内所有模块，包括其他 crate 的 private 模块和 `std/_...`
+上的 JSONL 逐项收发请求和响应。Host 选中的 `src/entry` 源码获得保留的 Entry
+身份，可以访问图内所有模块，包括其他 crate 的 private 模块和 `std/_...`
 内部模块。特权仅属于这个 requester，不传递给它导入的普通模块。Entry 不能作为
 普通模块根或被普通模块 import。
 

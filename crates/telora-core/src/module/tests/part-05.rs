@@ -610,7 +610,7 @@
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         let error = module.execute(100_000).unwrap_err();
-        assert!(error.to_string().contains("fixture/main:3:"));
+        assert!(error.to_string().contains("standalone/bin/main:3:"));
         assert!(
             error
                 .trace

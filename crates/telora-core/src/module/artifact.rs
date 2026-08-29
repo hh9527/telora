@@ -98,14 +98,14 @@ impl PendingModule {
                     Ok(bindings)
                 }
                 PendingModuleState::Initializing => {
-                    return Err(ModuleError::new(
+                    Err(ModuleError::new(
                         "module initialization is already in progress",
-                    ));
+                    ))
                 }
                 PendingModuleState::Ready(_) => {
-                    return Err(ModuleError::new("module is already initialized"));
+                    Err(ModuleError::new("module is already initialized"))
                 }
-                PendingModuleState::Failed(error) => return Err(error.clone()),
+                PendingModuleState::Failed(error) => Err(error.clone()),
             }
         }
     }

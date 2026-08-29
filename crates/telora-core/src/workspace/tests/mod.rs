@@ -23,7 +23,6 @@ fn fixture(source: &str) -> (PathBuf, PathBuf) {
         .as_nanos();
     let directory = std::env::temp_dir().join(format!("telora-workspace-test-{unique}"));
     std::fs::create_dir_all(&directory).unwrap();
-    std::fs::write(directory.join("telora-deps.json"), r#"{"name":"fixture"}"#).unwrap();
     let root = directory.join("main.telora");
     std::fs::write(&root, source).unwrap();
     (directory, root)

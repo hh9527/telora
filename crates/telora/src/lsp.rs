@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::ControlFlow;
-#[cfg(test)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
@@ -18,8 +16,9 @@ use lsp::notification::Notification as _;
 use lsp::request::Request as _;
 use serde::de::DeserializeOwned;
 use telora_core::{
-    CancellationToken, CompletionKind, DocumentVersion, Engine, EngineConfig, FactState, Location,
-    PositionEncoding, QueryError, TextEdit, TextPosition, TextRange, Workspace, WorkspaceSnapshot,
+    CONFIG_FILE, CancellationToken, CompletionKind, DocumentVersion, Engine, EngineConfig,
+    FactState, Location, PositionEncoding, QueryError, TextEdit, TextPosition, TextRange,
+    Workspace, WorkspaceSnapshot,
 };
 use tower_service::Service;
 
@@ -333,7 +332,7 @@ fn initialize(
     state.workspace = root
         .is_file()
         .then(|| {
-            Workspace::new(root, Engine::new(state.engine_config))
+            lsp_workspace(&root, state.engine_config)
                 .map(Rc::new)
                 .map_err(|error| protocol_error(ErrorCode::INTERNAL_ERROR, error))
         })
@@ -416,8 +415,7 @@ fn dispatch_notification(
         }
         if borrowed.workspace.is_none() {
             borrowed.workspace = Some(Rc::new(
-                Workspace::new(&path, Engine::new(borrowed.engine_config))
-                    .map_err(|error| error.to_string())?,
+                lsp_workspace(&path, borrowed.engine_config).map_err(|error| error.to_string())?,
             ));
         }
         borrowed
@@ -460,6 +458,21 @@ fn dispatch_notification(
         schedule_rebuild(state);
     }
     Ok(NotificationOutcome::Continue)
+}
+
+fn lsp_workspace(path: &Path, config: EngineConfig) -> Result<Workspace, String> {
+    let configured = path
+        .parent()
+        .unwrap_or(path)
+        .ancestors()
+        .any(|directory| directory.join(CONFIG_FILE).is_file());
+    if configured {
+        let packages = crate::package_host::prepare(path)?;
+        Workspace::new_in_workspace(path, Engine::new(config), packages)
+            .map_err(|error| error.to_string())
+    } else {
+        Workspace::new(path, Engine::new(config)).map_err(|error| error.to_string())
+    }
 }
 
 fn apply_changes(

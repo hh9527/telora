@@ -133,7 +133,7 @@ pub(crate) fn publish_type_properties(
         },
         &roots,
     )?;
-    for ((key, _), value) in unpublished.into_iter().zip(copied.into_iter()) {
+    for ((key, _), value) in unpublished.into_iter().zip(copied) {
         target.properties.insert(*key, value);
     }
     if let Some(marker) = property_attr_type {

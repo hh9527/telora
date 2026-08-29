@@ -99,7 +99,6 @@
             .as_nanos();
         let path = std::env::temp_dir().join(format!("telora-module-test-{unique}"));
         fs::create_dir(&path).unwrap();
-        fs::write(path.join("telora-deps.json"), r#"{"name":"fixture"}"#).unwrap();
         path
     }
 
@@ -270,8 +269,8 @@ let user = {name: unwrap('Ok("telora"))};
             message.contains("open import name \"shared\" is ambiguous"),
             "{message}"
         );
-        assert!(message.contains("fixture/left"));
-        assert!(message.contains("fixture/right"));
+        assert!(message.contains("standalone/left"));
+        assert!(message.contains("standalone/right"));
         let recovered = recovery_engine()
             .recover_workspace(directory.join("ambiguous.telora"))
             .unwrap();
@@ -727,7 +726,7 @@ type Independent = String;
         assert_eq!(events.len(), 5);
         assert_eq!(events[0].message.as_deref(), Some("loaded\nvalue"));
         assert_eq!(events[0].name, "data");
-        assert_eq!(events[0].module, "fixture/main");
+        assert_eq!(events[0].module, "standalone/bin/main");
         assert_eq!(events[0].line, 3);
         assert_eq!(
             events[0].repr,
@@ -953,7 +952,7 @@ type Independent = String;
             .expect("codec failure must retain the invalid JSON value location");
         assert_eq!(
             module.sources.get(data_location.source).name.as_ref(),
-            "fixture/abc.json"
+            "standalone/abc.json"
         );
         assert_eq!(
             module
@@ -977,7 +976,7 @@ type Independent = String;
                 .sources
                 .get(rule_location.source)
                 .name
-                .ends_with("fixture/User")
+                .ends_with("standalone/User")
         );
         assert_eq!(
             module

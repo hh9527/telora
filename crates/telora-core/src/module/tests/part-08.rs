@@ -941,20 +941,35 @@
         let directory = fixture_dir();
         let app = directory.join("app");
         let models = directory.join("models");
-        fs::create_dir(&app).unwrap();
-        fs::create_dir(&models).unwrap();
+        fs::create_dir_all(app.join("src/bin")).unwrap();
+        fs::create_dir_all(models.join("src")).unwrap();
         fs::write(
-            directory.join("telora-deps.json"),
-            r#"{"name":"app","dependencies":{"models":{"path":"models"}}}"#,
+            directory.join("telora-config.json"),
+            r#"{"version":1,"members":["app","models"],"sources":{},"overrides":{}}"#,
         )
         .unwrap();
-        fs::write(models.join("base.telora"), "export def answer = 42;").unwrap();
         fs::write(
-            models.join("user.telora"),
+            directory.join("telora-lock.json"),
+            r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"modules":[],"dependencies":["models"]},"models":{"source":{"workspace":"models"},"modules":["@src/base","@src/user"],"dependencies":[]}},"binaries":{"app/main":{"root":"app","packages":["app","models"]}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            app.join("telora-crate.json"),
+            r#"{"name":"app","modules":[],"dependencies":["models"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            models.join("telora-crate.json"),
+            r#"{"name":"models","modules":["@src/base","@src/user"],"dependencies":[]}"#,
+        )
+        .unwrap();
+        fs::write(models.join("src/base.telora"), "export def answer = 42;").unwrap();
+        fs::write(
+            models.join("src/user.telora"),
             "import \"./base\" as base; export { base as base };",
         )
         .unwrap();
-        let main = app.join("main.telora");
+        let main = app.join("src/bin/main.telora");
         fs::write(
             &main,
             "import \"models/user\" as user; export def output = user.base.answer;",
@@ -1205,7 +1220,7 @@ inspect(User)(checked)"#;
         let data = error.data_location().expect("blame data location");
         assert_eq!(
             module.sources.get(data.source).name.as_ref(),
-            "fixture/user.json"
+            "standalone/user.json"
         );
         assert_eq!(
             module.sources.get(data.source).slice(data).as_deref(),
@@ -1228,9 +1243,15 @@ inspect(User)(checked)"#;
             Some("fail!(\"age rejected\", age)")
         );
         let rendered = error.to_string();
-        assert!(rendered.contains("fixture/main:14:1"), "{rendered}");
+        assert!(
+            rendered.contains("standalone/bin/main:14:1"),
+            "{rendered}"
+        );
         assert!(rendered.contains("user.json:1:8"), "{rendered}");
-        assert!(rendered.contains("fixture/main:8:21"), "{rendered}");
+        assert!(
+            rendered.contains("standalone/bin/main:8:21"),
+            "{rendered}"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

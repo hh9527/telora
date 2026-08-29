@@ -1,11 +1,16 @@
 # Telora CLI 指南
 
-每个 Telora crate 的可复用模块位于 `src/`，应用位于 `src/bin/`，Entry 位于
-`src/entry/`，测试位于 `tests/`。`telora-deps.json` 声明 canonical crate name 和依赖
-边界。
+Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它们准备输入、执行 Entry
+效果并呈现诊断。
 
-Telora 从当前目录向上查找最近的 `telora-deps.json`，因此命令可以从目标 crate 根
-目录或其任意子目录执行。`-C` 可以显式改变查找的起始目录，该目录不必是 crate 根。
+每个 Telora crate 的可复用模块位于 `src/`，应用位于 `src/bin/`，Entry 位于
+`src/entry/`，测试位于 `tests/`。`telora-crate.json` 声明 canonical crate name、
+普通模块清单和直接依赖名称；workspace 根的 `telora-config.json` 选择这些名称的唯一
+来源，`telora-lock.json` 固定完整包图和 binary closure。
+
+Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令可以从 workspace 内
+任意目录执行。`-C` 可以显式改变查找的起始目录。`telora lock` 是唯一写入 lock 的
+命令；`run`、`serve`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
 命令参数使用稳定逻辑模块 ID，不使用物理文件名：
 
 ```text
@@ -22,8 +27,8 @@ telora query at @src/compiler:12:3 -C examples/my-crate
 telora query exports std/string -C examples/my-crate
 telora query at std/array -C examples/my-crate -p flat_map
 telora run -S path/to/file.telora
-telora run-with @src/entry/tool main -C examples/my-crate -- argument
 telora run invalid -C examples/my-crate --best-effort
+telora lock -C examples/my-crate
 ```
 
 `check` 的输入仍是完整 Module，不是任意表达式 scratch。模块顶层使用 `def` 声明
@@ -39,7 +44,7 @@ export def lowering_case = do {
 
 多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
 
-- `run name` 完全等价于 `run-with std/entry/default name`。默认 Entry 要求 Main 导出
+- `run name` 要求 Main 导出
   `main: Fn(Dict(Value)) -> Value`，调用一次并把返回值编码为 JSON。`name` 是不含路径
   分隔符和 `.telora` 后缀的单个 stem。
 - `serve name --bind stdio://` 选择标准持续服务 Entry。Main 导出
@@ -57,46 +62,24 @@ export def lowering_case = do {
   请求通道，因此不能再用 stdin 初始化 source。
   Main 收到的 Dict key 就是 `name`。值的诊断来源固定为 `@run-ctx/name`，不会暴露文件
   路径；该来源名不是模块，不能 import，也不会由 `query modules` 列出。
-- `run name -C context` 从 `context` 开始向上发现 manifest。
+- `run name -C context` 从 `context` 开始向上发现 workspace config，并以包含
+  `context` 的 member crate 作为 Main 所属 crate。
 - `run ... --best-effort` 只在遇到问题时用于扩大诊断覆盖。它在启动 Entry 前对 Main 做
   best-effort 诊断求值；只要出现任何 error，stderr 输出 `telora.run/v1` JSONL 诊断与
   error summary，非零退出且不产生任何 Entry effect，即使一个不依赖失败的干净根值仍能
-  算出。没有 error 时仍重新走严格 Entry/Host lifecycle；成功结果的最终验收使用普通
+  算出。没有 error 时仍重新走严格 Entry/运行时 lifecycle；成功结果的最终验收使用普通
   `run`。本参数用于调查问题时扩大诊断覆盖。
-- `run-with <entry-module> ...` 由 Host 显式选择纯 Edge Entry。自定义 Entry 的
-  `MainType` 和输出编码由它自己规定，可以通过 stdio-child effects 编排进程。Entry
-  位于 `src/entry/<name>.telora`，使用 `@src/entry/<name>` selector。它不能作为普通
-  模块根，也不能被普通模块 import。
-- `run-with` 中 `--` 后的参数按顺序进入 `Env.args`；`--source` 提供的描述进入
-  `Env.sources`。Main 顶层的 `option` action 按
-  源码顺序进入 `SystemOptions`。Entry 的 `config(options, env)` 返回 capability 诉求
-  和 initializer；Host 提供的私有 native 在 Entry WorkWorld 内按诉求构造
-  `SystemResources`，并由 runtime 直接传给 initializer，再由 initializer 把环境数据显式
-  传给 Main。该资源值不会返回 Host 侧解码或重建。CLI 不提供 `--input`；Entry 负责解析参数，并通过 `SystemCaps` 请求具名
-  JSON/YAML/TOML 数据源、文本源、环境变量、stdin 模式和 child-process 权限。文件
-  诉求可用 `default: 'Some(value)` 容忍数据文件不存在，该默认值是 `Value`，不会按
-  文件格式再解析；文本文件默认值仍是 String。已有但无法解析的数据文件仍报错。
-  JSON/YAML/TOML import 与 `data_srcs` 共用同一管线：先完成 CST 和全部格式级验证，
-  再把通用 `Value` 直接物化进目标 Heap；前者进入构建中的 MainWorld，后者进入 Entry
-  WorkWorld。该过程不经过 `DataWorld` 或 Host-owned Telora value。业务 schema 校验属于
-  codec，不属于资源读取。物理文件使用有界读取；文件大小、节点总数、深度、单容器大小、
-  单 Bytes/String 长度和解码 payload 总字节数由独立 data limits 控制，不消耗或借用 VM
-  的 fuel、stack、allocation quota。
-  不存在的环境变量从 `SystemResources.vars` 省略，非字符串环境值报错。
-  `stdin: 'Text` 注入完整文本；`'Lined` 在 `Initialize` 后逐行产生 `StdinLine`，并以
-  单个 `None` 表示 EOF。`spawn_child` 必须为真才能发出 `SpawnStdioChild` 或
-  `PostStdin`。
 - `run -S file` 进入 standalone 模式，不发现 manifest。canonical owner 默认为
   `standalone`；根文件可用 `option "crate.name" "..."` 显式覆盖，并可声明相对文件
   父目录解析的 `crate.dependency`。
   `-S` 与 binary name、`-C` 互斥。
-- `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 manifest；
+- `run`、`check` 和 `query` 的 `-C context` 都从 `context` 开始向上发现 workspace；
   `check` 和 `query` 接受完整稳定模块 ID，`check @test/...` 检查测试入口，`run` 只
   接受 binary name。
 - `check` 用 best-effort 模式继续彼此独立的求值，以一次收集更多诊断；最终判定仍然
   严格。stdout 完全采用 `telora.check/v1` JSONL：先输出诊断 records，最后输出一条
   `summary` record。只有完整求值并形成内部 semantic Module graph 时 summary 才是
-  `status: "ok"`；它不把递归 TypeMetadata 等内部图物化为 legacy Host value。任何
+  `status: "ok"`；它不把递归 TypeMetadata 等内部图物化为外部 owned value。任何
   语法、类型、解析或运行时失败都会得到 `status: "error"` 和非零退出。
   最终应用验收仍以 `run` 为准，因为 `run` 还经过 Entry 调度。
 - `query`（可见别名 `q`）输出 `telora.query/v1` JSONL 语义记录。`query modules`
@@ -107,8 +90,7 @@ export def lowering_case = do {
   `check` 或 `run`。
 - `query modules` 只列出本 crate 的普通 public/private source、dependency 的 public
   source 和 public built-in；未选择的 Main、Entry、test 与 private built-in 不进入
-  catalog。Entry 只能由 `run-with` 选择，不能交给 `check`、`query exports` 或普通
-  import。
+  catalog。Entry 由 CLI 选择，不能交给 `check`、`query exports` 或普通 import。
 - `query at std/...` 和 `query exports std/...` 直接查询内置标准库模块，与源码
   `import "std/..."` 使用同一模块身份。resolver 在图发现前按 crate 粒度建立 first-win
   清单，builtin `std` 先于 workspace 配置；后序同名 dependency 不能补充或改写它。
@@ -131,7 +113,7 @@ export def lowering_case = do {
 ```
 
 固定字段为 `name`、`repr`、`module`、`line`；只有显式 message 时才有 `message`。
-`repr` 是有界 debug 表示，不是可反序列化的 JSON 值。Host 是否输出或丢弃事件对
+`repr` 是有界 debug 表示，不是可反序列化的 JSON 值。运行时适配器是否输出或丢弃事件对
 Telora 程序不可感知。Float 的 `repr` 使用 Debug 表示，例如 `3.0` 和 `-0.0`；它与
 字符串插值和 `fmt.display` 使用的 Display 表示不同。
 

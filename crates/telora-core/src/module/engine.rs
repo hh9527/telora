@@ -81,6 +81,26 @@ impl Engine {
         )
     }
 
+    pub fn load_module_id_in_workspace(
+        &self,
+        workspace: Arc<crate::package::ResolvedWorkspace>,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+        external_bindings: BTreeMap<String, crate::DataWorld>,
+    ) -> Result<LoadedModule, ModuleError> {
+        let resolver = ModuleResolver::from_workspace(workspace, cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .with_builtins(builtin_list());
+        load_module_with_resolver(
+            resolver,
+            external_bindings,
+            self.config.module_quota,
+            self.config.data_limits,
+            Arc::clone(&self.debug_sink),
+            ModuleSourcePolicy::ExplicitExports,
+        )
+    }
+
     pub fn load_standalone(
         &self,
         path: impl AsRef<Path>,
@@ -117,6 +137,17 @@ impl Engine {
         module_id: &str,
     ) -> Result<PendingModule, ModuleError> {
         let resolver = ModuleResolver::from_cwd(cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        self.prepare_resolved_module(resolver)
+    }
+
+    pub fn prepare_module_id_in_workspace(
+        &self,
+        workspace: Arc<crate::package::ResolvedWorkspace>,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+    ) -> Result<PendingModule, ModuleError> {
+        let resolver = ModuleResolver::from_workspace(workspace, cwd.as_ref(), module_id)
             .map_err(|error| ModuleError::new(error.to_string()))?;
         self.prepare_resolved_module(resolver)
     }
@@ -448,8 +479,8 @@ impl Engine {
         debug_assert_eq!(compiled_main_path, main_path);
         let actual_main_type =
             concrete_module_descriptor(&main_compiled.analysis.module_interface)?;
-        if !matches!(main_type, TypeDescriptor::Dyn) {
-            if !crate::types::assignable(
+        if !matches!(main_type, TypeDescriptor::Dyn)
+            && !crate::types::assignable(
                 &crate::types::erase_declared_identity(&actual_main_type),
                 &crate::types::erase_declared_identity(&main_type),
             ) {
@@ -459,7 +490,6 @@ impl Engine {
                     main_type.display_name()
                 )));
             }
-        }
 
         let workspace = WorkspaceSnapshot::build(
             loader.sources.clone(),
@@ -762,11 +792,32 @@ impl Engine {
         self.recover_with_resolver(resolver)
     }
 
+    pub fn recover_workspace_id_in_workspace(
+        &self,
+        workspace: Arc<crate::package::ResolvedWorkspace>,
+        cwd: impl AsRef<Path>,
+        module_id: &str,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
+        let resolver = ModuleResolver::from_workspace(workspace, cwd.as_ref(), module_id)
+            .map_err(|error| ModuleError::new(error.to_string()))?
+            .with_builtins(builtin_list());
+        self.recover_with_resolver(resolver)
+    }
+
     pub fn module_catalog(
         &self,
         cwd: impl AsRef<Path>,
     ) -> Result<Vec<ModuleCatalogEntry>, ModuleError> {
         ModuleResolver::catalog_from_cwd(cwd.as_ref(), builtin_list())
+            .map_err(|error| ModuleError::new(error.to_string()))
+    }
+
+    pub fn module_catalog_in_workspace(
+        &self,
+        workspace: Arc<crate::package::ResolvedWorkspace>,
+        cwd: impl AsRef<Path>,
+    ) -> Result<Vec<ModuleCatalogEntry>, ModuleError> {
+        ModuleResolver::catalog_from_workspace(workspace, cwd.as_ref(), builtin_list())
             .map_err(|error| ModuleError::new(error.to_string()))
     }
 
@@ -871,8 +922,41 @@ impl Engine {
             )
             .map_err(|error| ModuleError::new(error.to_string()))?
             .with_builtins(builtin_list());
+        self.recover_with_resolver_async(resolver, overlays, context)
+            .await
+    }
+
+    pub async fn recover_workspace_async_in_workspace(
+        &self,
+        workspace: Arc<crate::package::ResolvedWorkspace>,
+        path: impl AsRef<Path>,
+        overlays: &BTreeMap<PathBuf, crate::document::DocumentText>,
+        context: &crate::query::QueryContext,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
+        context
+            .checkpoint()
+            .await
+            .map_err(|error| ModuleError::new(error.to_string()))?;
+        let root_path = path.as_ref();
+        let resolver = ModuleResolver::for_root_in_workspace(
+            workspace,
+            root_path,
+            overlays.get(root_path),
+        )
+        .map_err(|error| ModuleError::new(error.to_string()))?
+        .with_builtins(builtin_list());
+        self.recover_with_resolver_async(resolver, overlays, context)
+            .await
+    }
+
+    async fn recover_with_resolver_async(
+        &self,
+        resolver: ModuleResolver,
+        overlays: &BTreeMap<PathBuf, crate::document::DocumentText>,
+        context: &crate::query::QueryContext,
+    ) -> Result<WorkspaceSnapshot, ModuleError> {
         let root_module = resolver
-            .resolve_root(path.as_ref())
+            .selected_root()
             .map_err(|error| ModuleError::new(error.to_string()))?;
         let opaque_modules = builtin_list()
             .into_iter()

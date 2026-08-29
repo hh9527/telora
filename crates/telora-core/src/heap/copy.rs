@@ -579,7 +579,8 @@ fn object_contains_disallowed(
 ) -> bool {
     let foreign = |storage| storage != target && Some(storage) != background;
     let value_foreign = |value: Val| {
-        let payload_is_foreign = match value.value() {
+
+        match value.value() {
             DecodedValue::Atom(id) | DecodedValue::ShortString(id) => foreign(id.storage),
             DecodedValue::NativeType(_) => false,
             DecodedValue::Bytes(handle)
@@ -601,8 +602,7 @@ fn object_contains_disallowed(
             | DecodedValue::InlineAtom(_)
             | DecodedValue::InlineString(_)
             | DecodedValue::FuncRef(_) => false,
-        };
-        payload_is_foreign
+        }
     };
     match object {
         Object::Reserved | Object::OpenFunc => true,
@@ -654,4 +654,3 @@ fn builtin_atom(text: &str) -> Option<BuiltinAtom> {
         _ => None,
     }
 }
-

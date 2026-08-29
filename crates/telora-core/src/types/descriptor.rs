@@ -148,11 +148,11 @@ pub(crate) struct NominalTypeConstructor {
 }
 
 impl TypeFamilyTemplate {
-    pub(crate) fn template(self: &Self) -> PersistentValue {
+    pub(crate) fn template(&self) -> PersistentValue {
         self.template
     }
 
-    pub(crate) fn root(self: &Self) -> PersistentValue {
+    pub(crate) fn root(&self) -> PersistentValue {
         self.root
     }
 

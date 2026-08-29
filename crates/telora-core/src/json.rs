@@ -19,10 +19,10 @@ pub(crate) fn semantic_tag(
     payload: Val,
     location: Location,
 ) -> Val {
-    let tag = Val::original(heap.atom(target.background, tag), Some(location.into()));
+    let tag = Val::original(heap.atom(target.background, tag), Some(location));
     Val::original(
         DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload })),
-        Some(location.into()),
+        Some(location),
     )
     .with_type_id(target.type_id)
 }
@@ -70,18 +70,18 @@ impl DataScalar {
         let value = match self {
             Self::Int(value) => DecodedValue::Int(*value),
             Self::Float(value) => DecodedValue::Float(*value),
-            Self::String(value) => heap.string(None, &value),
+            Self::String(value) => heap.string(None, value),
             Self::Bytes(value) => {
                 DecodedValue::Bytes(heap.allocate(Object::Bytes(value.clone().into_boxed_slice())))
             }
-            Self::Atom(value) => heap.atom(None, &value),
+            Self::Atom(value) => heap.atom(None, value),
             Self::TaggedString { tag, value } => {
-                let tag = Val::original(heap.atom(None, &tag), Some(location.into()));
-                let payload = Val::original(heap.string(None, &value), Some(location.into()));
+                let tag = Val::original(heap.atom(None, tag), Some(location));
+                let payload = Val::original(heap.string(None, value), Some(location));
                 DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload }))
             }
         };
-        Val::original(value, Some(location.into()))
+        Val::original(value, Some(location))
     }
 
     pub(crate) fn lower_semantic(
@@ -95,21 +95,18 @@ impl DataScalar {
                 heap,
                 target,
                 "Int",
-                Val::original(DecodedValue::Int(*value), Some(location.into())),
+                Val::original(DecodedValue::Int(*value), Some(location)),
                 location,
             ),
             Self::Float(value) => semantic_tag(
                 heap,
                 target,
                 "Float",
-                Val::original(DecodedValue::Float(*value), Some(location.into())),
+                Val::original(DecodedValue::Float(*value), Some(location)),
                 location,
             ),
             Self::String(value) => {
-                let payload = Val::original(
-                    heap.string(target.background, &value),
-                    Some(location.into()),
-                );
+                let payload = Val::original(heap.string(target.background, value), Some(location));
                 semantic_tag(heap, target, "String", payload, location)
             }
             Self::Bytes(value) => {
@@ -117,20 +114,15 @@ impl DataScalar {
                     DecodedValue::Bytes(
                         heap.allocate(Object::Bytes(value.clone().into_boxed_slice())),
                     ),
-                    Some(location.into()),
+                    Some(location),
                 );
                 semantic_tag(heap, target, "Bytes", payload, location)
             }
-            Self::Atom(value) => {
-                Val::original(heap.atom(target.background, &value), Some(location.into()))
-                    .with_type_id(target.type_id)
-            }
+            Self::Atom(value) => Val::original(heap.atom(target.background, value), Some(location))
+                .with_type_id(target.type_id),
             Self::TaggedString { tag, value } => {
-                let payload = Val::original(
-                    heap.string(target.background, &value),
-                    Some(location.into()),
-                );
-                semantic_tag(heap, target, &tag, payload, location)
+                let payload = Val::original(heap.string(target.background, value), Some(location));
+                semantic_tag(heap, target, tag, payload, location)
             }
         }
     }
@@ -443,7 +435,7 @@ pub(crate) fn materialize_data_plan(
                 }
                 let raw = Val::original(
                     DecodedValue::Array(heap.allocate(Object::Array(values.into_boxed_slice()))),
-                    Some(location.into()),
+                    Some(location),
                 );
                 semantic.map_or(raw, |target| {
                     semantic_tag(heap, target, "Array", raw, location)
@@ -472,7 +464,7 @@ pub(crate) fn materialize_data_plan(
                         shape,
                         values: values.into_boxed_slice(),
                     })),
-                    Some(location.into()),
+                    Some(location),
                 );
                 semantic.map_or(raw, |target| {
                     semantic_tag(heap, target, "Object", raw, location)

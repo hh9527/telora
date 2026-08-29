@@ -1,3 +1,11 @@
+#![allow(
+    clippy::chunks_exact_to_as_chunks,
+    clippy::large_enum_variant,
+    clippy::result_large_err,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
+
 pub mod ast;
 pub mod bytecode;
 pub mod compiler;
@@ -13,6 +21,7 @@ pub mod lexer;
 pub mod lir;
 pub mod module;
 pub mod module_id;
+pub mod package;
 pub mod parser;
 mod pattern;
 mod property;
@@ -60,6 +69,11 @@ pub use module_id::{
     FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleCName, ModuleCatalogEntry, ModuleCatalogOrigin,
     ModuleFormat, ModuleId, ModuleResolver, ModuleVendor, ModuleVisibility, ResolveModuleError,
     ResolvedModule, TraitId, TraitImplId, TypeConstructorId, resolve_root_module,
+};
+pub use package::{
+    CONFIG_FILE, CRATE_FILE, CrateManifest, LOCK_FILE, LockedBinary, LockedPackage, LockedSource,
+    ModuleDeclaration, PackageError, RemoteSource, ResolvedWorkspace, UndeclaredModule,
+    WorkspaceConfig, WorkspaceLock, WorkspaceSpec,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
 pub use semantic::{

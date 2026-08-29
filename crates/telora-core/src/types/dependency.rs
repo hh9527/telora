@@ -638,7 +638,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .iter()
                     .map(|parameter| TypeDescriptor::Bound(parameter.id))
                     .collect::<Vec<_>>();
-                let descriptor = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+
+                TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: crate::value::DeclaredTypeId::applied(
                         constructor.id.module,
                         constructor.id.local,
@@ -646,8 +647,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     ),
                     name: constructor.name.clone(),
                     body: Arc::new(descriptor),
-                });
-                descriptor
+                })
             } else {
                 descriptor
             };
@@ -792,7 +792,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 }
                 let mut bodies = BTreeMap::new();
                 for definition in &component {
-                    let binding = type_bindings[&definition];
+                    let binding = type_bindings[definition];
                     let value = evaluate_tool_expression(
                         source_name,
                         &binding.value.value,
@@ -1390,12 +1390,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .value
         .bindings
         .iter()
-        .filter_map(|binding| {
-            (binding.value.kind == BindingKind::Import
+        .filter(|&binding| binding.value.kind == BindingKind::Import
                 && binding.value.imported_name.is_none()
-                && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/dyn"))
-            .then(|| binding.value.name.value.clone())
-        })
+                && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/dyn")).map(|binding| binding.value.name.value.clone())
         .collect::<HashSet<_>>();
     let display_trait = program
         .value
@@ -2179,10 +2176,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .value
         .bindings
         .iter()
-        .filter_map(|binding| {
-            (binding.value.kind == BindingKind::Impl
-                && !binding.value.type_parameters.is_empty())
-            .then(|| {
+        .filter(|&binding| binding.value.kind == BindingKind::Impl
+                && !binding.value.type_parameters.is_empty()).map(|binding| {
                 let scheme = binding_schemes
                     .get(&binding.value.name.value)
                     .expect("blanket impl has a static scheme");
@@ -2201,7 +2196,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 );
                 (binding.value.value.location, parameters)
             })
-        })
         .collect();
     let bootstrap_root = if let Some(root) = cached_bootstrap_root {
         root

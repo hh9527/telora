@@ -11,6 +11,7 @@ use crate::semantic::WorkspaceSnapshot;
 pub struct Workspace {
     root: PathBuf,
     engine: Engine,
+    packages: Option<Arc<crate::package::ResolvedWorkspace>>,
     clock: RevisionClock,
     state: RwLock<WorkspaceState>,
 }
@@ -26,9 +27,20 @@ impl Workspace {
         Ok(Self {
             root: canonical_document_path(root.as_ref())?,
             engine,
+            packages: None,
             clock: RevisionClock::default(),
             state: RwLock::new(WorkspaceState::default()),
         })
+    }
+
+    pub fn new_in_workspace(
+        root: impl AsRef<Path>,
+        engine: Engine,
+        packages: Arc<crate::package::ResolvedWorkspace>,
+    ) -> Result<Self, WorkspaceError> {
+        let mut workspace = Self::new(root, engine)?;
+        workspace.packages = Some(packages);
+        Ok(workspace)
     }
 
     pub fn revision(&self) -> Revision {
@@ -116,11 +128,21 @@ impl Workspace {
             .iter()
             .map(|(path, document)| (path.clone(), document.text().clone()))
             .collect::<BTreeMap<_, _>>();
-        let mut snapshot = match self
-            .engine
-            .recover_workspace_async(&self.root, &overlays, context)
-            .await
-        {
+        let recovered = if let Some(packages) = &self.packages {
+            self.engine
+                .recover_workspace_async_in_workspace(
+                    Arc::clone(packages),
+                    &self.root,
+                    &overlays,
+                    context,
+                )
+                .await
+        } else {
+            self.engine
+                .recover_workspace_async(&self.root, &overlays, context)
+                .await
+        };
+        let mut snapshot = match recovered {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 context.check()?;

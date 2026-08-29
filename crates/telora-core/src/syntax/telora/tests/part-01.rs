@@ -528,7 +528,6 @@ impl(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" }, };"#;
     }
 
     #[test]
-    #[ignore = "manual full-file parse baseline"]
     fn full_file_parse_baseline() {
         let source = include_str!("../../../../../../examples/mvp/main.telora");
         let mut sources = crate::source::SourceDatabase::default();

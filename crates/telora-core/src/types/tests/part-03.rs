@@ -986,7 +986,8 @@
 
     #[test]
     fn partial_type_evaluation_rejects_recursive_aliases() {
-        for (name, source) in [("alias", "type Left = Right; type Right = Left; 0")] {
+        {
+            let (name, source) = ("alias", "type Left = Right; type Right = Left; 0");
             let partial = analyze_partial_types(
                 &format!("recursive-{name}.telora"),
                 source,

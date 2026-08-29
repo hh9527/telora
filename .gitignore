@@ -1,4 +1,5 @@
 /target
+/.telora/
 /.labs/
 /experiments/
 __pycache__/
