@@ -20,9 +20,10 @@ Three JSON documents replace `telora-deps.json`:
   complete package closure of each locked binary.
 
 The first version supports workspace-contained source paths and immutable
-remote tarball URLs. Telora asks IMOS to download, unpack, install, reuse and
-garbage-collect remote packages. Package preparation completes before the
-existing module resolver discovers a module graph.
+remote tarball URLs. Telora submits `InstallShared` through its embedded EES
+facade; the IMOS component downloads, unpacks, installs, reuses and collects
+remote packages. Package preparation completes before the existing module
+resolver discovers a module graph.
 
 ## Workspace layout
 
@@ -242,8 +243,9 @@ closures, and atomically publishes the new lock.
 
 `run`, `check`, `query` and LSP startup do not rewrite the lock. They require a
 present lock consistent with config source selection and crate dependency
-names. They automatically ask IMOS to materialize missing packages described
-by that lock. A stale or absent lock produces a diagnostic directing the user
+names. They automatically ask the embedded EES IMOS component to materialize
+missing packages described by that lock. A stale or absent lock produces a
+diagnostic directing the user
 to `telora lock`; it does not silently change committed dependency state.
 
 After the baseline graph is validated, development overrides replace effective
@@ -275,13 +277,15 @@ installed root becomes visible. The installed manifest name and dependency
 set must match the locked package node. Its module catalog must match the lock,
 and every catalog entry must resolve to exactly one installed file.
 
-## IMOS boundary
+## EES and IMOS boundary
 
 Telora converts every locked remote package into a deterministic IMOS Plan.
 The Plan key is derived from a domain-separated encoding of the source URL,
-archive kind and installation rules. Telora writes each complete plan under
-the workspace request home, invokes the configured `imos create` command, and
-consumes its single-line immutable installation root.
+archive kind and installation rules. Telora submits an EES-owned
+`InstallShared { id, home, plan }` request through the embedded `telora-ees`
+facade and consumes its correlated immutable installation root. The IMOS
+component atomically publishes the complete plan under the workspace request
+home as part of the operation.
 
 The workspace request home is:
 
@@ -301,9 +305,12 @@ Unix filesystem. Telora checks this before submitting a request and reports an
 actionable configuration error instead of copying or relocating request files
 implicitly.
 
+`telora-ees` owns the public Request/Event vocabulary and component dispatch.
 IMOS owns network transfer, concurrent same-key reuse, archive installation,
 atomic publication and garbage collection. It does not parse Telora manifests,
 choose crate sources, construct dependency graphs or assign module identities.
+The package Host depends only on `telora-ees`; `telora-core` and the resolver do
+not depend on either EES or IMOS.
 
 ## Preparation and resolution
 
@@ -363,8 +370,8 @@ when they encounter `telora-deps.json`; they do not silently translate it.
 2. Replace manifest discovery with upward workspace-config discovery.
 3. Build and validate the workspace-wide name-to-source catalog.
 4. Add deterministic lock graph reading, generation and atomic writing.
-5. Add an IMOS client boundary and deterministic tarball Plans under
-   `.telora/crates-refs/`.
+5. Add the embedded EES `InstallShared` boundary and deterministic tarball Plans
+   under `.telora/crates-refs/`.
 6. Validate materialized crate roots and pass the resulting root map into the
    existing resolver.
 7. Migrate CLI, LSP, fixtures, tests and current repository manifests.
@@ -383,8 +390,8 @@ when they encounter `telora-deps.json`; they do not silently translate it.
 5. One crate name cannot select multiple paths, URLs or installed roots.
 6. Workspace path dependencies resolve without network access and cannot
    escape the workspace root.
-7. A locked HTTPS tarball is installed through IMOS and reused by a second
-   process without a second installation.
+7. A locked HTTPS tarball is installed through the EES IMOS component and
+   reused by a second process without a second installation.
 8. Archive traversal, escaping links, invalid layouts and manifest-name
    mismatches are rejected before resolver construction.
 9. Undeclared source files cannot be imported or selected, and missing catalog
@@ -410,5 +417,5 @@ when they encounter `telora-deps.json`; they do not silently translate it.
 
 Implementation returns to design discussion if the first vertical slice
 requires a package registry, version comparison, multiple same-name sources,
-network access during module loading, an IMOS store mutation outside the IMOS
-protocol, or physical cache paths in canonical module identity.
+network access during module loading, an IMOS store mutation outside the EES
+`InstallShared` protocol, or physical cache paths in canonical module identity.

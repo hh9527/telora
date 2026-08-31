@@ -880,8 +880,9 @@ crate 的 `telora-crate.json` 声明 canonical name、权威普通模块清单�
 crate 名与逻辑路径共同形成 canonical cname，物理 workspace 与缓存路径不进入身份。
 
 `telora lock` 是唯一创建或改写 lock 的命令。其他 crate-mode 命令和 LSP 校验 lock，
-通过 IMOS 物化缺失的远程 tarball，再把准备好的 immutable crate-root map 交给 resolver。
-resolver、module loader、求值器和 VM 均不执行网络 I/O，也不改写 lock。
+通过内嵌 `telora-ees` facade 向 IMOS component 提交 `InstallShared`，物化缺失的远程
+tarball，再把准备好的 immutable crate-root map 交给 resolver。resolver、module loader、
+求值器和 VM 均不执行网络 I/O，也不改写 lock。
 
 `telora-crate.json` 的 `modules` 只接受 `@src/...` selector，并且是普通 `src/` 模块的
 权威集合。未声明文件不可 import；`telora check` 会为存在但未声明的普通 source 或

@@ -213,7 +213,7 @@ Telora 程序本身没有外部权限。`run` 选择内置的单次运行 Entry�
 
 ## 命令行
 
-当前稳定命令面有六项：
+当前稳定命令面有七项：
 
 ```text
 telora run [binary]        调用 @bin/<binary> 的单次 main
@@ -222,7 +222,12 @@ telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器
+telora ees                 通过 stdio JSONL 提供 Extra Effect Service
 ```
+
+`ees` 不发现 workspace，也不加载 Telora source。它组合内置 Native Actor
+Components；当前组件是 IMOS，共享安装请求名为 `InstallShared`。普通 package
+preparation 在进程内使用同一个 `telora-ees` facade，不需要额外的 executable。
 
 `query` 包含：
 

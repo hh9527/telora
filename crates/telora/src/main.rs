@@ -20,7 +20,9 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufRead
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
+mod ees_cli;
 mod source_arg;
+use ees_cli::EesArgs;
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
 use telora::package_host;
 
@@ -798,6 +800,8 @@ enum Command {
     Run(RunArgs),
     /// Initialize serve(Dict(Value)) and process requests continuously.
     Serve(ServeArgs),
+    /// Serve native actor effects over stdin/stdout JSON Lines.
+    Ees(EesArgs),
     #[command(hide = true)]
     RunWith(RunWithArgs),
     /// Resolve package sources and rewrite telora-lock.json.
@@ -993,6 +997,9 @@ fn parse_module_selector(value: &str) -> Result<ModuleSelector, String> {
 }
 
 fn run_cli(cli: Cli) -> Result<i32, String> {
+    if let Command::Ees(arguments) = &cli.command {
+        return ees_cli::run(arguments, cli.context.is_some());
+    }
     let explicit_context = cli.context.is_some();
     let context = command_context(cli.context)?;
     if explicit_context {
@@ -1035,6 +1042,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                     &[],
                 ))
         }
+        Command::Ees(_) => unreachable!("EES returns before workspace context discovery"),
         Command::RunWith(arguments) => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

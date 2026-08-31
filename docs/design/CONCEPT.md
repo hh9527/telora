@@ -223,9 +223,15 @@ member 或确定的远程 tarball。**Crate manifest** 声明 crate 的 canonica
 普通 module catalog 和直接 dependency names。**Workspace lock** 固定完整精确 package
 graph 和每个 binary 的 crate closure；除显式 lock 操作外，Host 只验证和消费它。
 
-**Package preparation** 是 resolver 之前的 Host 阶段。它验证 config 与 lock、通过
-IMOS 物化远程 source、校验物化 manifest，并产生一次命令生命周期内不变的
-crate-name 到 root 映射。Package source 和物理 root 不进入 module identity。
+**Package preparation** 是 resolver 之前的 Host 阶段。它验证 config 与 lock、通过内嵌
+`telora-ees` 的 IMOS component 物化远程 source、校验物化 manifest，并产生一次命令
+生命周期内不变的 crate-name 到 root 映射。Package source 和物理 root 不进入 module
+identity。
+
+**Extra Effect Service（EES）** 是 Native Actor Components 的组合 facade。`telora ees`
+以 JSONL 暴露同一 facade；工具链可以在进程内提交同样的 Request。当前首个 component
+是 IMOS，其 `InstallShared` operation 负责共享、不可变 installation root 的构造、发布
+与复用。Telora 工具链和 `telora-core` 不直接依赖 IMOS 内部类型。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入

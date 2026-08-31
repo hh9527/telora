@@ -88,10 +88,16 @@ annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中�
 
 crate mode 在构造 `ModuleResolver` 前执行 package preparation：向上发现
 `telora-config.json`，严格校验 `telora-lock.json`，将远程 tarball 转成确定的 IMOS plan，
-调用 `imos create` 取得 immutable installation root，再校验每个 `telora-crate.json`。
-开发 override 只在 baseline package 与 lock 一致后替换 effective root。准备结果是
-`ResolvedWorkspace`，同时供 CLI 和 LSP 使用；resolver、module loader 和 VM 不执行
-package acquisition，也不改写 lock。
+通过内嵌 `telora-ees` facade 提交 `InstallShared` 并取得 immutable installation root，
+再校验每个 `telora-crate.json`。开发 override 只在 baseline package 与 lock 一致后替换
+effective root。准备结果是 `ResolvedWorkspace`，同时供 CLI 和 LSP 使用；resolver、
+module loader 和 VM 不执行 package acquisition，也不改写 lock。
+
+Cargo workspace 中的 `telora-ees` 是 Native Actor Components 的组合根，当前只依赖
+`imos` component。`telora` package Host 和 `telora ees` JSONL adapter 都依赖
+`telora-ees` 的 Request/Event facade；`telora-core` 不依赖 EES 或 IMOS。公开 operation
+和 progress vocabulary 使用 `InstallShared`，组件内部 reducer/effect 继续拥有下载、锁、
+安装发布与回收状态。
 
 `telora-crate.json` 的 `modules` 是普通 `src/` module 的权威清单。清单项在准备阶段
 映射并 canonicalize 到物理文件；未列出的文件不会进入 catalog。`src/bin/*`、
@@ -315,10 +321,12 @@ Main 不直接读取 open world。Entry 也只声明 capabilities、接收 resou
 data；实际文件、环境、stdin 和子进程操作由 CLI `RunHost` 执行。当前没有为了 Entry
 而延迟发现或动态修改 Main module graph。
 
-CLI 的公开命令只有 `run`、`serve`、`check`、`query`（别名 `q`）和 `lsp`。
+CLI 的公开命令有 `run`、`serve`、`lock`、`check`、`query`（别名 `q`）、`lsp` 和
+`ees`。
 `run` 固定选择 `std/entry/default`；`serve --bind stdio://` 固定选择
 `std/entry/serve`。`check`、`query` 和 `lsp` 当前是
-Host 固定工具路径，不通过用户 Entry ABI。
+Host 固定工具路径，不通过用户 Entry ABI。`ees` 不发现 workspace 或加载 Telora source，
+只建立 EES component 状态并桥接 stdin/stdout JSONL。
 
 ## 10. 维护不变量与验证入口
 

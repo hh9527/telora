@@ -200,24 +200,6 @@ fn lock_is_the_only_command_that_recreates_a_missing_workspace_lock() {
 }
 
 #[test]
-fn lock_removes_stale_imos_plans_without_remote_sources() {
-    let cwd = fixture();
-    let plans = cwd.join(".telora/crates-refs");
-    fs::create_dir_all(&plans).unwrap();
-    fs::write(plans.join("telora-stale.json"), "{}\n").unwrap();
-    fs::write(plans.join("host-note.txt"), "keep\n").unwrap();
-
-    let locked = telora(&cwd).arg("lock").output().unwrap();
-    assert!(
-        locked.status.success(),
-        "{}",
-        String::from_utf8_lossy(&locked.stderr)
-    );
-    assert!(!plans.join("telora-stale.json").exists());
-    assert!(plans.join("host-note.txt").exists());
-}
-
-#[test]
 fn check_warns_about_files_outside_the_authoritative_module_catalog() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export def value = 1;").unwrap();
@@ -234,21 +216,55 @@ fn check_warns_about_files_outside_the_authoritative_module_catalog() {
     assert!(warning["message"].as_str().unwrap().contains("@src/extra"));
 }
 
-#[cfg(unix)]
 #[test]
-fn remote_crates_are_materialized_through_the_imos_command_boundary() {
-    use std::os::unix::fs::PermissionsExt;
-
+fn remote_crates_are_materialized_through_the_embedded_ees() {
     let root = fixture();
     fs::remove_file(root.join("telora-crate.json")).unwrap();
     fs::remove_file(root.join("telora-lock.json")).unwrap();
     let app = root.join("app");
-    let remote = root.join("installed");
     fs::create_dir_all(app.join("src/bin")).unwrap();
-    fs::create_dir_all(remote.join("src")).unwrap();
+    let tarball = root.join("remote.tar.gz");
+    {
+        let file = fs::File::create(&tarball).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let files = [
+            (
+                "remote/telora-crate.json",
+                br#"{"name":"remote","modules":["@src/lib"],"dependencies":[]}"#.as_slice(),
+            ),
+            ("remote/src/lib.telora", b"export def answer = 42;".as_slice()),
+        ];
+        for (name, contents) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(name).unwrap();
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append(&header, contents).unwrap();
+        }
+        archive.into_inner().unwrap().finish().unwrap();
+    }
+    let tarball_bytes = fs::read(&tarball).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = stream.read(&mut request).unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            tarball_bytes.len()
+        )
+        .unwrap();
+        stream.write_all(&tarball_bytes).unwrap();
+    });
     fs::write(
         root.join("telora-config.json"),
-        r#"{"version":1,"members":["app"],"sources":{"remote":{"tarball":"https://example.test/remote.tar.gz"}}}"#,
+        format!(
+            r#"{{"version":1,"members":["app"],"sources":{{"remote":{{"tarball":"http://{address}/remote.tar.gz"}}}}}}"#
+        ),
     )
     .unwrap();
     fs::write(
@@ -261,22 +277,13 @@ fn remote_crates_are_materialized_through_the_imos_command_boundary() {
         "import \"remote/lib\" {answer}; export {answer};",
     )
     .unwrap();
-    fs::write(
-        remote.join("telora-crate.json"),
-        r#"{"name":"remote","modules":["@src/lib"],"dependencies":[]}"#,
-    )
-    .unwrap();
-    fs::write(remote.join("src/lib.telora"), "export def answer = 42;").unwrap();
-    let imos = root.join("fake-imos");
-    fs::write(&imos, "#!/bin/sh\nprintf '%s\\n' \"$TELORA_TEST_IMOS_ROOT\"\n").unwrap();
-    fs::set_permissions(&imos, fs::Permissions::from_mode(0o755)).unwrap();
-
+    let store = root.join("ees-store");
     let locked = telora(&root)
         .arg("lock")
-        .env("TELORA_IMOS", &imos)
-        .env("TELORA_TEST_IMOS_ROOT", &remote)
+        .env("TELORA_EES_STORE", &store)
         .output()
         .unwrap();
+    server.join().unwrap();
     assert!(
         locked.status.success(),
         "{}",
@@ -284,8 +291,7 @@ fn remote_crates_are_materialized_through_the_imos_command_boundary() {
     );
     let queried = telora(&root)
         .args(["-C", app.to_str().unwrap(), "query", "exports", "remote/lib"])
-        .env("TELORA_IMOS", &imos)
-        .env("TELORA_TEST_IMOS_ROOT", &remote)
+        .env("TELORA_EES_STORE", &store)
         .output()
         .unwrap();
     assert!(

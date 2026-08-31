@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -170,3 +170,4 @@ fn jsonl(bytes: &[u8]) -> Vec<Value> {
 
 include!("cli/part-01.rs");
 include!("cli/part-02.rs");
+include!("cli/part-03.rs");

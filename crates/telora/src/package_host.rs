@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use telora_core::{ResolvedWorkspace, WorkspaceSpec};
+use telora_ees::{InstallSharedRequest, Request};
 
 pub fn prepare(context: &Path) -> Result<Arc<ResolvedWorkspace>, String> {
     let spec = WorkspaceSpec::discover(context).map_err(|error| error.to_string())?;
@@ -53,52 +52,21 @@ fn materialize(spec: &WorkspaceSpec) -> Result<BTreeMap<String, PathBuf>, String
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "generated IMOS plan has no name".to_owned())?;
         live.insert(plan_name.to_owned());
-        let path = home.join(plan_name);
-        publish_plan(&path, &plan)?;
-        roots.insert(name, create(&path)?);
+        roots.insert(name.clone(), install_shared(&name, &home, plan)?);
     }
     remove_stale_plans(&home, &live)?;
     Ok(roots)
 }
 
-fn publish_plan(path: &Path, plan: &serde_json::Value) -> Result<(), String> {
-    let mut bytes =
-        serde_json::to_vec(plan).map_err(|error| format!("cannot encode IMOS plan: {error}"))?;
-    bytes.push(b'\n');
-    if fs::read(path).is_ok_and(|existing| existing == bytes) {
-        return Ok(());
-    }
-    let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    fs::write(&temporary, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
-    fs::rename(&temporary, path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        format!("cannot replace {}: {error}", path.display())
-    })
-}
-
-fn create(plan: &Path) -> Result<PathBuf, String> {
-    let executable = env::var_os("TELORA_IMOS").unwrap_or_else(|| "imos".into());
-    let output = Command::new(&executable)
-        .arg("create")
-        .arg(plan)
-        .output()
-        .map_err(|error| format!("cannot start {:?}: {error}", executable))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "IMOS could not materialize {}: {}",
-            plan.display(),
-            stderr.trim()
-        ));
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| "IMOS returned a non-UTF-8 installation path".to_owned())?;
-    let lines = stdout.lines().collect::<Vec<_>>();
-    if lines.len() != 1 || lines[0].is_empty() {
-        return Err("IMOS returned an invalid installation path".into());
-    }
-    Ok(PathBuf::from(lines[0]))
+fn install_shared(id: &str, home: &Path, plan: serde_json::Value) -> Result<PathBuf, String> {
+    telora_ees::dispatch_blocking(Request::InstallShared(InstallSharedRequest {
+        id: id.to_owned(),
+        home: home.to_path_buf(),
+        plan,
+    }))
+    .map_err(|error| format!("EES could not start InstallShared: {error:#}"))?
+    .into_root()
+    .map_err(|message| format!("EES InstallShared failed: {message}"))
 }
 
 fn remove_stale_plans(home: &Path, live: &BTreeSet<String>) -> Result<(), String> {
