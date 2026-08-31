@@ -22,7 +22,13 @@ fn ees_serves_install_shared_requests() {
     let home = root.join("ees-refs");
     fs::create_dir(&home).unwrap();
     let mut child = telora(&root)
-        .args(["ees", "--store", root.join("ees-store").to_str().unwrap()])
+        .args([
+            "ees",
+            "--store",
+            root.join("ees-store").to_str().unwrap(),
+            "--home",
+            home.to_str().unwrap(),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -37,22 +43,22 @@ fn ees_serves_install_shared_requests() {
     });
     for request in [
         serde_json::json!({
-            "type": "InstallShared",
             "id": "request-1",
-            "home": home,
-            "plan": plan
+            "actor": "imos",
+            "operation": "InstallShared",
+            "input": {"plan": plan}
         }),
         serde_json::json!({
-            "type": "InstallShared",
             "id": "request-2",
-            "home": home,
-            "plan": plan
+            "actor": "imos",
+            "operation": "InstallShared",
+            "input": {"plan": plan}
         }),
         serde_json::json!({
-            "type": "InstallShared",
             "id": "request-bad",
-            "home": home,
-            "plan": {}
+            "actor": "imos",
+            "operation": "InstallShared",
+            "input": {"plan": {}}
         }),
     ] {
         writeln!(input, "{request}").unwrap();
@@ -81,8 +87,8 @@ fn ees_serves_install_shared_requests() {
         .unwrap();
     assert_eq!(first["type"], "result");
     assert_eq!(second["type"], "result");
-    assert_eq!(first["root"], second["root"]);
-    assert!(first["root"].as_str().unwrap().ends_with("/root"));
+    assert_eq!(first["value"]["root"], second["value"]["root"]);
+    assert!(first["value"]["root"].as_str().unwrap().ends_with("/root"));
     assert_eq!(failed["type"], "error");
     assert!(home.join("empty.json").is_file());
 }

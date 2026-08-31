@@ -1520,6 +1520,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlite-query"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1657,8 +1668,11 @@ dependencies = [
  "anyhow",
  "directories",
  "imos",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sqlite-query",
+ "tempfile",
  "tokio",
 ]
 

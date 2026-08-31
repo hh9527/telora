@@ -6,36 +6,34 @@
 
 ## Summary
 
-An Extra Effect Service is constructed from a complete, typed manifest before
-it admits requests. The manifest binds logical actor names to physical native
-component configuration. Requests select an existing logical actor and carry
-only operation data.
+An Extra Effect Service is constructed from a complete typed manifest before
+it admits requests. The manifest binds logical actor names to physical Native
+Actor Component configuration. An operation can select an existing logical
+actor but cannot create an actor or select a new physical resource.
 
-This version adds the second Native Actor Component, `sqlite-query`, and one
-new crate:
+Application commands accept repeatable EES bindings:
+
+```text
+telora run BINARY --ees KIND:NAME=LOCATOR
+telora serve BINARY --ees KIND:NAME=LOCATOR --bind stdio://
+```
+
+The first application component kinds are `imos` and `sqlite-query`. This
+version adds one crate:
 
 ```text
 crates/sqlite-query
 ```
 
-It also moves IMOS `store` and `home` from operation data into actor
-construction data. Telora package preparation privately constructs and calls
-the IMOS actor before loading application code. Application Telora cannot
-submit IMOS operations.
+An application may use an explicitly bound IMOS actor to materialize its own
+plans. Telora package preparation separately constructs a private IMOS actor
+before loading application code. The private actor is absent from the
+application manifest, so application effects cannot address or interfere with
+Telora package acquisition.
 
-`telora run` and `telora serve` accept repeatable database bindings:
+## Actor construction
 
-```text
---db NAME=sqlite://PATH
-```
-
-The Host uses these bindings to construct application SQLite query actors.
-Application requests refer only to `NAME` and contain SQL plus positional
-bindings. Physical database paths never enter a Telora World.
-
-## Manifest construction
-
-`telora-ees` owns a strongly typed construction manifest:
+`telora-ees` owns the strong construction types:
 
 ```text
 Manifest {
@@ -54,28 +52,29 @@ ComponentSpec =
     }
 ```
 
-Component names are non-empty and unique within one service. Construction
-validates every component and opens all required physical resources before
-returning a Service. A construction failure is a Host startup failure, not a
-request event.
+Names are non-empty and unique within one Service. Construction validates all
+specifications and opens all physical resources before returning. A failure is
+a Host startup diagnostic, not a request event.
 
-The first implementation uses a Rust enum rather than a public generic JSON
-component schema. This keeps component construction typed while two concrete
-components establish the reusable boundary. It does not introduce dynamic
-plugins, a component SDK, or a stable Rust ABI.
+The first implementation uses a Rust enum rather than a generic public JSON
+component schema. Two concrete components establish the reusable boundary
+before a component SDK is extracted.
 
 The lifecycle is:
 
 ```text
-Manifest -> Service::open -> dispatch(Request) -> TerminalEvent
+Manifest -> Service::open -> dispatch(Call) -> Reply
 ```
 
-An operation cannot add actors, replace actor configuration, or select a new
-physical resource.
+The Service owns every actor for its complete lifetime. A `serve` process can
+therefore reuse IMOS state and SQLite connections across requests.
 
-## Internal package IMOS actor
+## Isolated service domains
 
-Package preparation constructs one reserved IMOS actor from Host-owned values:
+Telora constructs separate Service values for separate authorities.
+
+Package preparation creates a private service containing one reserved IMOS
+actor:
 
 ```text
 name  = telora-packages
@@ -83,45 +82,70 @@ store = Telora shared package cache
 home  = <workspace>/.telora/crates-refs
 ```
 
-The package Host computes these values. They are not read from the application
-Main module and are not included in application `SystemCaps`, `SystemEffect`,
-`SystemEvent`, or `SystemResources`.
+These values are computed by the package Host. This service is used and
+dropped before application execution. It is not included in application
+`SystemCaps`, `SystemResources`, effects, events, options, or EES manifest.
 
-The IMOS operation becomes:
+Application execution creates another service solely from `--ees` bindings.
+It may contain an actor also backed by IMOS, but that actor has its own name,
+store and home. Equal names in separate service domains do not grant access
+across domains.
+
+For example:
+
+```text
+telora serve app \
+  --ees imos:a=/srv/app/materializer \
+  --ees sqlite-query:catalog=sqlite:///srv/app/catalog.sqlite \
+  --bind stdio://
+```
+
+The raw path in an `imos` CLI locator denotes an actor root. The CLI derives:
+
+```text
+store = <root>/store
+home  = <root>/home
+```
+
+The Rust manifest retains separately configurable `store` and `home` fields,
+which package preparation uses directly. A `sqlite-query` locator must use
+`sqlite://`; its remainder is the database path.
+
+Actor names and kinds are visible to application capability validation.
+Physical locators never enter a Telora World. Public provenance uses:
+
+```text
+@run-ctx/ees/<percent-encoded-name>
+```
+
+## IMOS actor operation
+
+IMOS `store` and `home` are construction data. The operation is:
 
 ```text
 InstallShared {
-    id: String,
-    actor: String,
     plan: JsonValue,
 }
 ```
 
-`home` is no longer request data. The selected actor publishes every submitted
-plan through its configured home and installs through its configured shared
-store. Package acquisition uses a typed embedded Rust call. `telora ees` may
-expose the same operation for service-level integration, but this transport is
-not an application capability.
+The selected actor publishes the plan through its configured home and installs
+through its configured store. The operation cannot choose either path.
 
-The standalone EES CLI supplies both IMOS construction parameters:
+Package acquisition calls this operation through a typed embedded Rust facade.
+Application code calls the same component only through a logical actor present
+in its own capability set. There is no application operation for discovering
+another Service or its actors.
 
-```text
-telora ees --store PATH --home PATH
-```
-
-All requests admitted by that process select the preconstructed IMOS actor.
+`telora ees` constructs an explicit service manifest from its CLI arguments;
+it does not accept physical IMOS paths in individual requests.
 
 ## SQLite query component
 
-`sqlite-query` owns a SQLite connection and query execution. It does not depend
-on Telora, `telora-core`, Entry types, diagnostics, or the EES protocol.
+`sqlite-query` owns one SQLite connection and query execution. It does not
+depend on Telora, `telora-core`, Entry types, diagnostics, or the EES protocol.
 
-Construction opens the configured database read-only. One actor serializes
-operations through its connection. A `serve` Host retains the actor for the
-whole service lifetime, allowing SQLite and the component to reuse connection
-state and prepared resources.
-
-The component request is:
+Construction opens the database read-only. One actor serializes access to its
+connection. Its operation is:
 
 ```text
 Query {
@@ -130,15 +154,13 @@ Query {
 }
 ```
 
-`JsonScalar` is Null, Bool, Int, Float, or String. Bool binds as SQLite integer
-zero or one. An unsigned JSON integer that does not fit SQLite `i64`, a
-non-finite float, Array, Object, or binary value is rejected before execution.
+`JsonScalar` is Null, Bool, Int, Float or String. Bool binds as SQLite integer
+zero or one. An unsigned integer outside SQLite `i64`, non-finite Float, Array,
+Object or binary binding fails before execution.
 
-The first version accepts exactly one read-only SQLite statement. Prepared
-statements classified as writable are rejected. Multiple statements, DDL,
-transactions, attachment and write-affecting PRAGMA operations are rejected.
-The database is also opened with SQLite read-only flags so validation is not
-the only write barrier.
+The component accepts one read-only statement. It rejects writable statements,
+multiple statements, DDL, transactions, attachment and write-affecting PRAGMA.
+SQLite read-only open flags remain an independent write barrier.
 
 Success is:
 
@@ -149,138 +171,132 @@ QueryOutput {
 }
 ```
 
-SQLite Null, Integer, Real and Text cells map directly to JSON scalar values.
-Blob cells are unsupported in this version and fail the request. Column count,
-row count and accumulated output bytes have fixed admission limits. Crossing a
-limit fails the request without returning a partial result.
+SQLite Null, Integer, Real and Text map to JSON scalars. Blob is unsupported.
+Column count, row count and accumulated output bytes have fixed limits. A
+limit failure returns no partial output.
 
-## Application database bindings
+## Application declarations
 
-Application commands accept:
-
-```text
-telora run BINARY --db NAME=sqlite://PATH
-telora serve BINARY --db NAME=sqlite://PATH --bind stdio://
-```
-
-`--db` is repeatable. Names must be non-empty and unique. The first version
-accepts only `sqlite://`; it treats the remainder as a filesystem path and
-requires a non-empty path. The Host canonicalizes its internal locator but
-publishes only this logical source name:
-
-```text
-@run-ctx/db/<percent-encoded-name>
-```
-
-Main declares its complete database requirement once:
+Main declares the complete logical actor set once:
 
 ```telora
-option "run-ctx.databases" ["a", "analytics"];
+option "run-ctx.ees" [
+    {name: "a", kind: "imos"},
+    {name: "catalog", kind: "sqlite-query"},
+];
 ```
 
-The database-aware standard Entry checks exact set equality between declared
-and provided names. Missing, extra and duplicate names fail during Entry
-configuration. `SystemCaps` carries the approved logical names. The Host
-rejects any query effect whose database is outside those capabilities even if
-an actor with that name exists.
+The EES-aware standard Entry checks exact equality between these declarations
+and Host bindings. Duplicate declarations, duplicate bindings, missing actors,
+extra actors and kind mismatches fail during configuration.
 
-## Entry query ABI
+`SystemCaps` carries the approved name-to-kind map. Before calling the Host,
+the engine rejects an EES effect that names an actor outside the capabilities.
+The Host repeats this check against its manifest and never routes by a physical
+locator supplied in operation data.
 
-The private Entry runtime vocabulary adds:
+## Generic Entry effect boundary
+
+The private Entry runtime vocabulary adds one component-neutral call:
 
 ```text
-SqliteQuery = {
+EesCall = {
     key: String,
-    db: String,
-    sql: String,
-    bindings: Array(Value),
+    actor: String,
+    operation: String,
+    input: Value,
 }
 
-SystemEffect += 'SqliteQuery(SqliteQuery)
+SystemEffect += 'EesCall(EesCall)
 
-SqliteQueryResult = {
+EesReply = {
     key: String,
     result: Result(Value, String),
 }
 
-SystemEvent += 'SqliteQueryResult(SqliteQueryResult)
+SystemEvent += 'EesReply(EesReply)
 ```
 
-`key` correlates an asynchronous effect with its result. The engine validates
-the effect shape and capability before calling the Host. The Host converts
-Telora `Value` scalars to the EES request, dispatches it asynchronously, and
-queues exactly one result event. Reducers remain single-threaded and observe
-events one at a time.
+`key` correlates one asynchronous call with one reply. `actor` selects a
+capability. `operation` and `input` are interpreted by `telora-ees`, which
+validates them against the actor kind and adapts them to component-owned DTOs.
 
-The Entry ABI contains no IMOS effect or event.
+The Host converts semantic `Value` at the explicit effect boundary, dispatches
+asynchronously, and queues exactly one reply event. Reducers remain
+single-threaded and observe events one at a time. Component failure is a
+request-local `Err(String)` and does not stop another actor or request.
 
-## Standard task surface
+There is no IMOS-specific or SQLite-specific variant in `SystemEffect`.
+`telora-core` contains no native component dependency.
 
-Synchronous native SQLite calls inside VM evaluation would hide an external
-effect inside a pure Telora function. Instead, `std/sqlite` defines an explicit
-continuation task:
+## Standard EES task surface
+
+Synchronous native component calls inside VM evaluation would hide effects in
+pure functions. `std/ees` therefore defines an explicit continuation task:
 
 ```telora
-type Query = struct {
-    db: String,
-    sql: String,
-    bindings: Array(Value),
-};
-
-type QueryOutput = struct {
-    columns: Array(String),
-    rows: Array(Array(Value)),
+type Call = struct {
+    actor: String,
+    operation: String,
+    input: Value,
 };
 
 type Task = enum {
     'Done(Value),
-    'Query(struct {
-        request: Query,
-        then: Fn(Result(QueryOutput, String)) -> Task,
+    'Call(struct {
+        request: Call,
+        then: Fn(Result(Value, String)) -> Task,
     }),
 };
 ```
 
-When no `--db` is provided, `run` and `serve` retain their existing pure Main
-contracts. When at least one database is provided, the CLI selects
-database-aware standard Entries with these contracts:
+Component helper modules build ordinary calls. For example, `std/sqlite-query`
+encodes `{sql, bindings}` and decodes `{columns, rows}`; `std/imos` encodes an
+`InstallShared` plan. Helpers do not execute effects.
+
+Without `--ees`, `run` and `serve` keep their existing pure Main contracts.
+With one or more bindings, the CLI selects EES-aware standard Entries:
 
 ```telora
-run:   main: Fn(Dict(Value)) -> sqlite.Task
-serve: serve: Fn(Dict(Value)) -> Fn(Value) -> sqlite.Task
+run:   main: Fn(Dict(Value)) -> ees.Task
+serve: serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task
 ```
 
-The run Entry drives one task until `Done`, JSON-encodes the value and exits.
-The serve Entry starts one task for every input request, correlates pending
-continuations by generated effect key, and emits each completed response using
-the existing in-band diagnostic envelope. Independent requests may complete
-out of input order. Each task is sequential unless it explicitly produces a
-later Query from its continuation.
+The run Entry drives one task until `Done`. The serve Entry starts a task for
+each input request and correlates continuations with generated effect keys.
+Independent requests may complete out of input order. A continuation may
+return another `Call`, enabling multi-step workflows without concealing I/O.
 
-This is ordinary interpreted Telora code. The Host executes only explicit
-`SystemEffect` values. No database handle, native closure or synchronous I/O is
-inserted into Main arguments.
+This task layer is interpreted Telora code. Only emitted `SystemEffect` values
+cross into the Host.
 
-## EES request and terminal events
+## EES facade protocol
 
-The EES facade adds an application operation:
+The EES facade uses one envelope:
 
 ```text
-SqliteQuery {
+Call {
     id: String,
-    db: String,
-    sql: String,
-    bindings: Array(JsonScalar),
+    actor: String,
+    operation: String,
+    input: JsonValue,
 }
 ```
 
-Success retains the request ID and carries `QueryOutput`. Failure retains the
-request ID and a concise component error. Service-level protocol errors use an
-explicit null ID. IMOS and SQLite terminal results are distinct typed variants
-inside Rust; their JSON encoding remains unambiguous.
+Success is a correlated JSON Value. Failure retains the request ID and a
+concise message. Service-level protocol failures have an explicit null ID.
+Request IDs are unique while in flight.
 
-Request IDs remain unique while in flight. SQLite failures are request-local
-and do not stop the service or another database actor.
+The facade validates operation names by actor kind:
+
+```text
+imos          -> InstallShared
+sqlite-query  -> Query
+```
+
+An unknown operation, malformed input or actor mismatch is request-local. The
+facade DTO does not expose `imos::Store`, rusqlite types, physical paths or
+component-private reducer state.
 
 ## Dependency boundaries
 
@@ -291,32 +307,30 @@ telora binary -> telora-ees -> imos
 telora-core   -> no EES or native component dependency
 ```
 
-`telora-core` defines only transport-neutral Host capability, effect and event
-data. It does not open SQLite, construct EES requests, depend on rusqlite or
-know an IMOS type. The CLI Host adapts these values to `telora-ees`.
+The CLI Host adapts transport-neutral Entry effect data to `telora-ees`.
+Package Host also depends only on the EES facade.
 
 ## Verification
 
 Tests establish:
 
-- IMOS uses manifest `store/home` and `InstallShared` cannot select a home;
-- package preparation privately uses the reserved package actor;
-- a SQLite actor opens read-only, binds every scalar without interpolation,
-  and returns stable columns and rows;
-- writable and multi-statement SQL, unsupported bindings, blobs and result
+- manifest construction rejects empty or duplicate names and invalid physical
+  resources;
+- IMOS requests cannot select `store` or `home`;
+- package preparation uses a private Service absent from application caps;
+- an application-bound IMOS actor installs only through its own root;
+- SQLite binds scalars without interpolation and returns stable columns/rows;
+- writable or multiple SQL statements, structured bindings, blobs and result
   limits fail without partial output;
-- duplicate manifest names and missing physical resources fail construction;
-- undeclared, missing, extra and duplicate CLI database names are rejected;
-- `run --db` completes a chained query task;
-- `serve --db` processes multiple requests, correlates results and survives a
-  request-local SQL failure;
-- an Entry cannot emit an IMOS operation;
+- declaration/binding mismatches fail before Main initialization;
+- generic EES effects cannot address undeclared actors or mismatch operations;
+- `run --ees` completes a chained task;
+- `serve --ees` correlates multiple tasks and survives request-local failures;
 - package acquisition, pure run/serve, check, query and LSP do not regress;
 - dependency scanning confirms `telora-core` has no native component edge.
 
 ## Deferred work
 
-This RFC does not add SQLite writes, execute, migrations, transactions,
-connection pools, user-selected open flags, blobs, named SQL parameters,
-dynamic actors, application package installation, a generic component SDK,
-Highway transport or shared ring-buffer mailboxes.
+This RFC does not add SQLite writes, migrations, transactions, connection
+pools, blobs, named SQL parameters, dynamic actors, cross-Service discovery,
+a generic component SDK, Highway transport or shared ring-buffer mailboxes.

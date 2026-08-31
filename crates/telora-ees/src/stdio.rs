@@ -9,7 +9,7 @@ use tokio::task::{JoinHandle, JoinSet};
 
 use imos::progress::ProgressSender;
 
-use crate::{Request, Service, TerminalEvent};
+use crate::{Call, Service, TerminalEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServeOutcome {
@@ -26,16 +26,16 @@ struct State {
 }
 
 enum Event {
-    Request(Request),
+    Call(Call),
     ProtocolError { id: Option<String>, message: String },
-    InstallSharedFinished { id: String, terminal: TerminalEvent },
+    CallFinished { id: String, terminal: TerminalEvent },
     TerminalWritten { id: String },
     DiagnosticWritten { fatal: bool },
     OutputFailed,
 }
 
 enum Effect {
-    InstallShared(Request),
+    Dispatch(Call),
     WriteTerminal { id: String, value: TerminalEvent },
     WriteDiagnostic { value: TerminalEvent, fatal: bool },
 }
@@ -50,8 +50,8 @@ struct EffectContext {
 impl Event {
     fn reduce(self, state: &mut State, effects: &mut Vec<Effect>, events_to_stderr: bool) {
         match self {
-            Self::Request(request) => {
-                let id = request.id().to_owned();
+            Self::Call(call) => {
+                let id = call.id().to_owned();
                 if id.is_empty() {
                     Self::protocol_error(
                         Some(id),
@@ -69,13 +69,13 @@ impl Event {
                         events_to_stderr,
                     );
                 } else {
-                    effects.push(Effect::InstallShared(request));
+                    effects.push(Effect::Dispatch(call));
                 }
             }
             Self::ProtocolError { id, message } => {
                 Self::protocol_error(id, message, state, effects, events_to_stderr)
             }
-            Self::InstallSharedFinished { id, terminal } => {
+            Self::CallFinished { id, terminal } => {
                 effects.push(Effect::WriteTerminal {
                     id,
                     value: terminal,
@@ -115,14 +115,14 @@ impl Event {
 impl Effect {
     async fn apply(self, ctx: EffectContext) -> Vec<Event> {
         match self {
-            Self::InstallShared(request) => {
-                let id = request.id().to_owned();
+            Self::Dispatch(call) => {
+                let id = call.id().to_owned();
                 let progress = ctx
                     .status_output
                     .as_ref()
                     .map(|output| ProgressSender::new(output.clone()));
-                let terminal = ctx.service.dispatch(request, progress).await;
-                vec![Event::InstallSharedFinished { id, terminal }]
+                let terminal = ctx.service.dispatch(call, progress).await;
+                vec![Event::CallFinished { id, terminal }]
             }
             Self::WriteTerminal { id, value } => {
                 if ctx.completion_output.send(value).await.is_ok() {
@@ -194,8 +194,8 @@ pub async fn serve(service: Service, events_to_stderr: bool) -> Result<ServeOutc
                         None
                     }
                     Ok(_) if line.iter().all(u8::is_ascii_whitespace) => None,
-                    Ok(_) => Some(match serde_json::from_slice::<Request>(&line) {
-                        Ok(request) => Event::Request(request),
+                    Ok(_) => Some(match serde_json::from_slice::<Call>(&line) {
+                        Ok(call) => Event::Call(call),
                         Err(error) => Event::ProtocolError {
                             id: recover_id(&line),
                             message: error.to_string(),
@@ -322,21 +322,21 @@ mod tests {
     fn reducer_releases_an_id_only_after_the_terminal_output_effect() {
         let mut state = State::default();
         let mut effects = Vec::new();
-        Event::Request(Request::InstallShared(crate::InstallSharedRequest {
-            id: "request-1".into(),
-            home: "/requests".into(),
-            plan: json!({}),
-        }))
+        Event::Call(crate::Call::install_shared(
+            "request-1",
+            "packages",
+            json!({}),
+        ))
         .reduce(&mut state, &mut effects, false);
         assert!(state.active.contains("request-1"));
-        assert!(matches!(effects.as_slice(), [Effect::InstallShared(_)]));
+        assert!(matches!(effects.as_slice(), [Effect::Dispatch(_)]));
 
         effects.clear();
-        Event::InstallSharedFinished {
+        Event::CallFinished {
             id: "request-1".into(),
             terminal: TerminalEvent::Result {
                 id: "request-1".into(),
-                root: "/store/install/plan/root".into(),
+                value: json!({"root": "/store/install/plan/root"}),
             },
         }
         .reduce(&mut state, &mut effects, false);

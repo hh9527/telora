@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use telora_core::{ResolvedWorkspace, WorkspaceSpec};
-use telora_ees::{InstallSharedRequest, Request};
+use telora_ees::{Call, dispatch_blocking, imos_manifest};
+
+const PACKAGE_ACTOR: &str = "telora-packages";
 
 pub fn prepare(context: &Path) -> Result<Arc<ResolvedWorkspace>, String> {
     let spec = WorkspaceSpec::discover(context).map_err(|error| error.to_string())?;
@@ -44,29 +46,37 @@ fn materialize(spec: &WorkspaceSpec) -> Result<BTreeMap<String, PathBuf>, String
     }
     fs::create_dir_all(&home)
         .map_err(|error| format!("cannot create {}: {error}", home.display()))?;
-    let mut roots = BTreeMap::new();
     let mut live = BTreeSet::new();
+    let mut names = Vec::with_capacity(plans.len());
+    let mut calls = Vec::with_capacity(plans.len());
     for (name, plan) in plans {
         let plan_name = plan
             .get("name")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "generated IMOS plan has no name".to_owned())?;
         live.insert(plan_name.to_owned());
-        roots.insert(name.clone(), install_shared(&name, &home, plan)?);
+        calls.push(Call::install_shared(&name, PACKAGE_ACTOR, plan));
+        names.push(name);
     }
+    let store = telora_ees::configured_store_path().map_err(|error| error.to_string())?;
+    let events = dispatch_blocking(imos_manifest(PACKAGE_ACTOR, store, &home), calls)
+        .map_err(|error| format!("EES could not start package actors: {error:#}"))?;
+    let roots = names
+        .into_iter()
+        .zip(events)
+        .map(|(name, event)| {
+            let value = event
+                .into_value()
+                .map_err(|message| format!("EES InstallShared failed: {message}"))?;
+            let root = value
+                .get("root")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "EES InstallShared returned no root".to_owned())?;
+            Ok((name, PathBuf::from(root)))
+        })
+        .collect::<Result<_, String>>()?;
     remove_stale_plans(&home, &live)?;
     Ok(roots)
-}
-
-fn install_shared(id: &str, home: &Path, plan: serde_json::Value) -> Result<PathBuf, String> {
-    telora_ees::dispatch_blocking(Request::InstallShared(InstallSharedRequest {
-        id: id.to_owned(),
-        home: home.to_path_buf(),
-        plan,
-    }))
-    .map_err(|error| format!("EES could not start InstallShared: {error:#}"))?
-    .into_root()
-    .map_err(|message| format!("EES InstallShared failed: {message}"))
 }
 
 fn remove_stale_plans(home: &Path, live: &BTreeSet<String>) -> Result<(), String> {
