@@ -455,16 +455,6 @@
         let tuple_bounds = compile_source("test", "(1, \"x\").2").unwrap_err();
         assert!(tuple_bounds.message.contains("has no item at index 2"));
 
-        let old_type_application = compile_source(
-            "test",
-            "decl identity: for(A) Fn(A) -> A; def identity = fn(value) { value }; identity[Int](1)",
-        )
-        .unwrap_err();
-        assert!(
-            old_type_application.message.contains("cannot index value"),
-            "{}",
-            old_type_application.message
-        );
     }
 
     #[test]

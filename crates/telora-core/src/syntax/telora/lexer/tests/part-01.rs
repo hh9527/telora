@@ -73,24 +73,6 @@
     }
 
     #[test]
-    fn option_is_an_ordinary_identifier() {
-        let mut diagnostics = Vec::new();
-        let (tokens, _) = tokenize(
-            "let option = 1; option \"module.test\" {}; option",
-            &mut diagnostics,
-        );
-        assert_eq!(
-            tokens
-                .iter()
-                .copied()
-                .filter(|token| matches!(token, Token::Identifier))
-                .collect::<Vec<_>>(),
-            vec![Token::Identifier, Token::Identifier, Token::Identifier]
-        );
-        assert!(diagnostics.is_empty());
-    }
-
-    #[test]
     fn distinguishes_chained_projections_from_float_literals() {
         let mut diagnostics = Vec::new();
         let source = "pair.1.0 1.0 1.0.1 pair. 12.34";

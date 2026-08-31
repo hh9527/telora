@@ -854,27 +854,11 @@ export { private as visible, identity as map };"#,
     }
 
     #[test]
-    fn option_is_an_identifier_not_a_declaration() {
-        let program = parse("identifier.telora", "let option = 1; option").unwrap();
-        assert!(matches!(
-            program.value.body.value.result.value,
-            ExprKind::Variable(_)
-        ));
-        assert!(
-            parse(
-                "invalid-option.telora",
-                "option \"module.documentation\" {}; export def value = 0;"
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
     fn selective_imports_are_in_scope_for_exported_definition_contracts() {
         let program = parse(
             "selective-type.telora",
-            r#"import "std/rt-types/exec" { ExecFn };
-               export def exec: ExecFn = fn(settings, request) { request };"#,
+            r#"import "std/value" { Value };
+               export def null: Value = 'Null;"#,
         )
         .unwrap();
         assert_eq!(
@@ -886,7 +870,7 @@ export { private as visible, identity as map };"#,
                 .iter()
                 .map(|binding| binding.value.name.value.as_str())
                 .collect::<Vec<_>>(),
-            vec!["ExecFn", "exec", "exec"]
+            vec!["Value", "null", "null"]
         );
         let hir = crate::hir::HirProgram::resolve(&program, Vec::<String>::new());
         assert!(

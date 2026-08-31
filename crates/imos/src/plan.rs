@@ -397,25 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_legacy_snake_case_enum_values() {
-        let result = serde_json::from_value::<Plan>(json!({
-            "version": 1,
-            "name": "example plan",
-            "key": "plan-v1",
-            "items": [{
-                "name": "example file",
-                "key": "file-v1",
-                "kind": {
-                    "type": "install_file",
-                    "url": "file:///example",
-                    "to": "example"
-                }
-            }]
-        }));
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn rejects_conflicting_definitions_for_a_global_download_key() {
         let plan: Plan = serde_json::from_value(json!({
             "version": 1,

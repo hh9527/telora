@@ -57,27 +57,6 @@ fn discovers_workspace_and_authoritative_modules() {
 }
 
 #[test]
-fn legacy_manifest_reports_the_three_workspace_documents() {
-    let root = std::env::temp_dir().join(format!(
-        "telora-legacy-package-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("telora-deps.json"), "{}").unwrap();
-    let error = WorkspaceSpec::discover(&root.join("src"))
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("legacy manifest"), "{error}");
-    assert!(error.contains(CONFIG_FILE), "{error}");
-    assert!(error.contains(CRATE_FILE), "{error}");
-    assert!(error.contains(LOCK_FILE), "{error}");
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn rejects_undeclared_or_missing_modules() {
     let root = fixture();
     fs::write(

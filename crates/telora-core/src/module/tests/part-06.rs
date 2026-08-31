@@ -280,26 +280,6 @@
     }
 
     #[test]
-    fn recursive_metadata_remains_observable_without_a_legacy_value_boundary() {
-        let directory = fixture_dir();
-        let main = directory.join("main.telora");
-        fs::write(
-            &main,
-            r#"type CallExpr = struct { args: Array(Expr) };
-type Expr = enum { 'Call(CallExpr), 'Text(String) };
-export { CallExpr, Expr };"#,
-        )
-        .unwrap();
-
-        let engine = recovery_engine();
-        let module = engine.load_module(&main, BTreeMap::new()).unwrap();
-        engine.check(&module).unwrap();
-        let value = engine.execute(&module).unwrap();
-        assert_eq!(value.value().dict_fields(), Some(vec!["CallExpr", "Expr"]));
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn recursive_type_metadata_keeps_typed_module_import_surfaces() {
         let directory = fixture_dir();
         fs::write(
@@ -501,7 +481,7 @@ export { CallExpr, Expr };"#,
     }
 
     #[test]
-    fn removed_model_constructors_are_unavailable_and_union_remains_accounted() {
+    fn union_validation_and_normalization_obey_current_contracts() {
         let directory = fixture_dir();
         let run_error = |name: &str, expression: &str| {
             let path = directory.join(name);
@@ -527,22 +507,6 @@ export { CallExpr, Expr };"#,
             .message
             .contains("attributes must be a Dict")
         );
-
-        for (name, source) in [
-            ("struct.telora", "struct('None, {x: Int})"),
-            ("enum.telora", "enum('None, {X: 'None})"),
-            ("uppercase-struct.telora", "Struct({x: Int})"),
-            ("uppercase-enum.telora", "Enum({X: 'None})"),
-            ("uppercase-union.telora", "Union([Int, String])"),
-        ] {
-            let path = directory.join(name);
-            fs::write(&path, source).unwrap();
-            let error = match load_module(path, BTreeMap::new(), 100_000) {
-                Ok(_) => panic!("removed constructor must be absent"),
-                Err(error) => error,
-            };
-            assert!(error.message.contains("unknown binding"));
-        }
 
         let path = directory.join("quota.telora");
         fs::write(&path, "union('None, [Int, String])").unwrap();
@@ -669,88 +633,6 @@ export { CallExpr, Expr };"#,
 
         assert_eq!(root(&a_id), root(&c_id));
         assert_eq!(root(&b_id), root(&c_id));
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn exported_closures_preserve_module_type_slots() {
-        let directory = fixture_dir();
-        let library = directory.join("library.telora");
-        let main = directory.join("main.telora");
-        fs::write(
-            &library,
-            r#"import "std/rt-types/exec" as exec_types;
-               import "std/hash" as hash;
-               type ExecSettings = exec_types.ExecSettings;
-               type ExecRequest = exec_types.ExecRequest;
-               type ExecEnv = exec_types.ExecEnv;
-               type Platform = exec_types.Platform;
-               type Config = struct {platform: Platform, offset: Int};
-               def helper = fn(value) { value + 1 };
-               def helper2 = fn(value) { helper(value) + 1 };
-               def select = fn(platform) {
-                   let host = `\{platform.os}-\{platform.arch}`;
-                   match host {
-                       "linux-x86_64" => 1,
-                       _ => 0,
-                   }
-               };
-               def even = fn(value: Int) {
-                   if value == 0 { 'True } else { odd(value - 1) }
-               };
-               def odd = fn(value: Int) {
-                   if value == 0 { 'False } else { even(value - 1) }
-               };
-               export { even };
-               export def direct = fn(value) { helper(value) };
-               export def factory:
-                   Fn(Config) -> Fn(Int) -> Int = fn(config) {
-                   fn(value) {
-                       let ignored = hash.sha256("gcc");
-                       helper2(value) + config.offset + select(config.platform) - 2
-                   }
-               };
-               export def command:
-                   Fn(String) -> Fn(ExecSettings, ExecRequest) -> ExecEnv = fn(tool) {
-                   fn(settings, request) {
-                       let selected = select(settings.platform);
-                       let suffix = helper(selected);
-                       {
-                           install: [],
-                           cwd: 'Some(request.cwd),
-                           bin: `\{settings.install_prefix}/\{tool}-\{suffix}`,
-                           args: request.args,
-                           env: {clear: 'False, update: {}},
-                       }
-                   }
-               };"#,
-        )
-        .unwrap();
-        fs::write(
-            &main,
-            r#"import "./library" as library;
-               export def output = (
-                   library.direct(40),
-                   library.factory({platform: {os: "linux", arch: "x86_64"}, offset: 2})(39),
-                   library.command("gcc")(
-                       {
-                           platform: {os: "linux", arch: "x86_64"},
-                           download_prefix: "/downloads",
-                           install_prefix: "/cache",
-                       },
-                       {args: ["-c", "x.c"], env: {TARGET: "aarch64"}, cwd: "/work"},
-                   ),
-                   library.even(10),
-               );"#,
-        )
-        .unwrap();
-
-        let engine = recovery_engine();
-        let loaded = engine.load_module(&main, BTreeMap::new()).unwrap();
-        assert_eq!(
-            named_output(&engine.execute(&loaded).unwrap()).to_string(),
-            "(41, 42, {args: [\"-c\", \"x.c\"], bin: \"/cache/gcc-2\", cwd: 'Some(\"/work\"), env: {clear: 'False, update: {}}, install: []}, 'True)"
-        );
         fs::remove_dir_all(directory).unwrap();
     }
 

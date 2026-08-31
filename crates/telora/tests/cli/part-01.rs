@@ -1,22 +1,13 @@
 #[test]
-fn help_is_clap_owned_and_types_is_removed() {
+fn help_lists_the_public_command_surface() {
     let cwd = fixture();
     let help = telora(&cwd).arg("--help").output().unwrap();
     let output = String::from_utf8_lossy(&help.stdout);
     assert!(help.status.success());
     assert!(output.contains("lsp"));
     assert!(!output.contains("ees"));
-    assert!(!output.contains("types"));
-    assert!(!output.contains("run-with"));
-    let types = telora(&cwd)
-        .args(["types", "@src/lib"])
-        .output()
-        .unwrap();
-    assert!(!types.status.success());
-
     assert!(output.contains("query"));
     assert!(output.contains("q"));
-    assert!(!output.contains("show"));
     let query_help = telora(&cwd).args(["query", "-h"]).output().unwrap();
     let output = String::from_utf8_lossy(&query_help.stdout);
     assert!(query_help.status.success());

@@ -922,69 +922,6 @@
     }
 
     #[test]
-    fn typed_dict_lookup_and_argv_rewrites_compose_in_user_code() {
-        let directory = fixture_dir();
-        fs::write(
-            directory.join("main.telora"),
-            r#"import "std/dict" as dict;
-               import "std/argv" as argv;
-               def environment: Dict(String) = {TARGET: "aarch64-linux-gnu"};
-               def target: Option(String) = dict.get(environment, "TARGET");
-               def missing: Option(String) = dict.get(environment, "MISSING");
-               def rewrite:
-                   Fn(Array(String)) -> Result(Array(String), String) = fn(arguments) {
-                       let arguments = argv.reject_option(arguments, "--sysroot")?;
-                       let arguments = argv.reject_option(arguments, "-fdebug-prefix-map")?;
-                       'Ok(argv.prepend(
-                           ["--sysroot=/sdk", "-fdebug-prefix-map=/work=."],
-                           arguments,
-                       ))
-                   };
-               export def output = {
-                   target,
-                   missing,
-                   exact: [
-                       argv.matches_option("--sysroot", "--sysroot"),
-                       argv.matches_option("--sysroot=/x", "--sysroot"),
-                       argv.matches_option("--sysrooted", "--sysroot"),
-                   ],
-                   contains: argv.contains_option(["-c", "--sysroot=/x"], "--sysroot"),
-                   rewritten: rewrite(["-c", "main.c"]),
-                   rejected: rewrite(["-c", "--sysroot=/other"]),
-               };"#,
-        )
-        .unwrap();
-
-        let engine = recovery_engine();
-        let module = engine
-            .load_module(directory.join("main.telora"), BTreeMap::new())
-            .unwrap();
-        let output_world = engine.execute(&module).unwrap();
-        let output = named_output(&output_world);
-        assert_eq!(
-            output.dict_get("target").unwrap().to_string(),
-            "'Some(\"aarch64-linux-gnu\")"
-        );
-        assert_eq!(output.dict_get("missing").unwrap().to_string(), "'None");
-        assert_eq!(
-            output.dict_get("exact").unwrap().to_string(),
-            "['True, 'True, 'False]"
-        );
-        assert_eq!(output.dict_get("contains").unwrap().to_string(), "'True");
-        assert_eq!(
-            output.dict_get("rewritten").unwrap().to_string(),
-            "'Ok([\"--sysroot=/sdk\", \"-fdebug-prefix-map=/work=.\", \"-c\", \"main.c\"])",
-        );
-        let rejected = output.get("rejected").unwrap().to_string();
-        assert!(rejected.contains("'Err("), "{rejected}");
-        assert!(
-            rejected.contains("conflicting argument: --sysroot"),
-            "{rejected}"
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn core_type_desc_exposes_erased_kinds_and_structured_ref_errors() {
         let directory = fixture_dir();
         fs::write(

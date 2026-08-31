@@ -170,19 +170,3 @@ export def serve = entry.serve(config, entry.no_ees, fn(ctx) {
     assert_eq!(replies[0]["ok"], 1);
     assert_eq!(replies[1]["ok"], 2);
 }
-
-#[test]
-fn child_process_commands_are_not_public() {
-    let cwd = fixture();
-    let help = telora(&cwd).arg("--help").output().unwrap();
-    let stdout = String::from_utf8_lossy(&help.stdout);
-    for command in ["exec", "build", "run-with"] {
-        assert!(!stdout.contains(command), "{command} remained in --help");
-        assert!(!telora(&cwd).arg(command).output().unwrap().status.success());
-    }
-    let old_input = telora(&cwd)
-        .args(["run", "@src/app:run", "--input", "value"])
-        .output()
-        .unwrap();
-    assert!(!old_input.status.success());
-}

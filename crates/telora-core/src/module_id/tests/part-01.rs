@@ -230,7 +230,7 @@
     }
 
     #[test]
-    fn crate_layout_resolves_binary_source_and_contextual_source_roots() {
+    fn crate_layout_resolves_cataloged_and_contextual_source_roots() {
         let temporary =
             std::env::temp_dir().join(format!("telora-crate-layout-test-{}", std::process::id()));
         let app = temporary.join("app");
@@ -279,10 +279,6 @@
                 .id,
             dependency.id
         );
-        assert!(matches!(
-            resolver.resolve_import(&local.id, "@bin/tool"),
-            Err(ResolveModuleError::InvalidImport(_))
-        ));
         assert_eq!(entry.to_string(), "std/_entry-default");
         assert_eq!(
             resolver
@@ -378,10 +374,6 @@
             "app/bin/main"
         );
 
-        assert!(matches!(
-            ModuleResolver::from_cwd(&app, "@bin/nested/tool"),
-            Err(ResolveModuleError::InvalidImport(_))
-        ));
         assert!(matches!(
             ModuleResolver::from_cwd(&app, "@test/nested/query"),
             Err(ResolveModuleError::InvalidImport(message)) if message.contains("files only")

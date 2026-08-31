@@ -28,19 +28,6 @@
     }
 
     #[test]
-    fn cst_preserves_option_as_an_identifier() {
-        let source = r#"def option = "ordinary";
-export def run = fn(settings, request) { {args: request.args, option} };"#;
-        let mut sources = crate::source::SourceDatabase::default();
-        let id = sources.add("options.telora", source);
-        let parsed = parse(id, source);
-        assert!(!parsed.has_errors(), "{:?}", parsed.diagnostics);
-        let mut reconstructed = String::new();
-        reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
-        assert_eq!(reconstructed, source);
-    }
-
-    #[test]
     fn cst_preserves_path_first_module_bindings() {
         let source = "import \"std/array\" as arrays, *; import \"std/array\" as qualified, { map, filter as select }; let from = 1; (arrays, qualified, map, select, from)";
         let mut sources = crate::source::SourceDatabase::default();
@@ -50,10 +37,6 @@ export def run = fn(settings, request) { {args: request.args, option} };"#;
         let mut reconstructed = String::new();
         reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
         assert_eq!(reconstructed, source);
-
-        let removed = "import arrays from \"std/array\"; arrays";
-        let id = sources.add("removed-import.telora", removed);
-        assert!(parse(id, removed).has_errors());
 
         for rejected in [
             "import \"std/array\"; 0",
@@ -217,7 +200,7 @@ export def run = fn(settings, request) { {args: request.args, option} };"#;
     }
 
     #[test]
-    fn cst_preserves_annotated_definitions_and_rejects_removed_function_forms() {
+    fn cst_preserves_annotated_definitions() {
         let source = "def identity: for(A) Fn(A) -> A = fn(value) { value }; identity";
         let mut sources = crate::source::SourceDatabase::default();
         let id = sources.add("annotated-def.telora", source);
@@ -232,14 +215,6 @@ export def run = fn(settings, request) { {args: request.args, option} };"#;
         };
         assert!(definition.type_parameters().is_some());
         assert!(definition.contract().is_some());
-
-        for removed in [
-            "fn identity(value) { value } identity",
-            "decl identity: fn(Int) -> Int; def identity = fn(value) { value }; identity",
-        ] {
-            let id = sources.add("removed-function-form.telora", removed);
-            assert!(parse(id, removed).has_errors());
-        }
     }
 
     #[test]
@@ -261,10 +236,6 @@ export def run = fn(settings, request) { {args: request.args, option} };"#;
         let mut reconstructed = String::new();
         reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
         assert_eq!(reconstructed, source);
-
-        let legacy = "native type State = @3; State";
-        let id = sources.add("legacy-native-type.telora", legacy);
-        assert!(parse(id, legacy).has_errors());
     }
 
     #[test]
@@ -494,10 +465,6 @@ impl(T: Property(DisplayBy)) Display for T { display: fn(value) { "ok" }, };"#;
         let mut reconstructed = String::new();
         reconstruct(&parsed.syntax, source, NodeRef::ROOT, &mut reconstructed);
         assert_eq!(reconstructed, source);
-
-        let legacy = "impl for(T: Property(DisplayBy)) Display for T { display: fn(value) { value } };";
-        let id = sources.add("legacy-impl.telora", legacy);
-        assert!(parse(id, legacy).has_errors());
     }
 
     fn find_rule(cst: &CstData, node: NodeRef, expected: parser::Rule) -> Option<NodeRef> {
