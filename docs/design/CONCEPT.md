@@ -303,8 +303,8 @@ contract 中，并使值 `Box` 具有
 
 Family 声明以刚性 Bound 参数求值一次并发布符号模板；application 只替换模板中的
 Bound，不按 concrete 参数重跑声明 body。这个限制使泛型 contract 与值级结果保持
-一致，也让工具能够发布完整、可诊断的 scheme。符号模板保留规范 TypeMetadata 的
-attribute wrapper；application 产生的规则节点保留 authored call-site provenance。
+一致，也让工具能够发布完整、可诊断的 scheme。符号模板保留规范 TypeMetadata；
+application 产生的规则节点保留 authored call-site provenance。
 Partial recovery 对独立有效的 family 同样发布精确 scheme，而不是以 `Any` 代替关系。
 
 Family 不是任意 metadata function、associated type、trait implementation、

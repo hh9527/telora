@@ -534,8 +534,8 @@ TypeDesc   用户态解释器观察的擦除后 descriptor 视图
 
 `TypeDesc` 在这里表示公开观察模型，不是与 `Type` 并列的可构造静态类型。当前
 `std/type-desc` observer 接受 `Type` 值，并通过 kind、children 和 resolve 等操作
-暴露该擦除视图。`strip_attributes` 递归去掉 `WithAttributes` wrapper 并返回同一图中的
-inner descriptor；consumer 不需要依赖 wrapper 的 Dict 编码。
+暴露规范 descriptor 视图。声明类型以 `'Ref` 暴露，通过 `resolve` 获得其结构 descriptor；
+property 由独立的 property registry 按目标与 property 类型查询。
 
 内建元数据构造器也是普通 callable 值：
 
@@ -1592,7 +1592,7 @@ declarations。普通 definitions 实现 Option、Result、argv 等组合政策�
 declarations 提供需要高效 heap 观察或受控 runtime identity 的确定操作。
 
 当前通用能力包括 Array/Dict 组合、String、lexical path、SHA-256、regex、JSON codec
-与 schema、TypeMetadata attribute、Dyn observer、文本 parse/display 等。
+与 schema、typed property、Dyn observer、文本 parse/display 等。
 这些 API 不授予环境或文件系统访问权限。例如 path 操作是词法操作，hash 操作只
 处理显式输入。
 

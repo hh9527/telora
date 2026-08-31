@@ -1,7 +1,0 @@
-native normalize: Fn(Any) -> Any;
-native add: Fn(Any, Any) -> Any;
-native get: Fn(Any, String) -> Any;
-native has: Fn(Any, String) -> Any;
-native all: Fn(Any) -> Any;
-native strip: Fn(Any) -> Any;
-export { normalize, add, get, has, all, strip };

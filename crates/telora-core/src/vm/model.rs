@@ -46,17 +46,15 @@ fn run_core_model(
     let mut normalized = Vec::with_capacity(entries.len());
     for (name, member) in entries {
         let path = format!("{member_name}.{name}");
-        let (inner, attributes) =
-            flatten_attributes(member, &path, function, pc, current, background)?;
         match operation {
             CoreModelFunction::Struct => {
                 if !matches!(
-                    inner.value(),
+                    member.value(),
                     DecodedValue::DeclaredType(_)
                         | DecodedValue::SymbolicType(_)
                         | DecodedValue::TypeSlot(_)
                 ) {
-                    decode_runtime_type_at(inner, &path, current, background).map_err(
+                    decode_runtime_type_at(member, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
                     )?;
                 }
@@ -67,33 +65,24 @@ fn run_core_model(
                     background: Some(background),
                 };
                 let unit = view
-                    .atom_text(inner)
+                    .atom_text(member)
                     .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
                     .is_some_and(|atom| atom == "None");
                 if !unit
                     && !matches!(
-                        inner.value(),
+                        member.value(),
                         DecodedValue::DeclaredType(_)
                             | DecodedValue::SymbolicType(_)
                             | DecodedValue::TypeSlot(_)
                     )
                 {
-                    decode_runtime_type_at(inner, &path, current, background).map_err(
+                    decode_runtime_type_at(member, &path, current, background).map_err(
                         |message| error(RuntimeErrorKind::TypeMismatch, message, function, pc),
                     )?;
                 }
             }
             CoreModelFunction::Union => unreachable!("Union handled above"),
         }
-        let member = allocate_attributes_wrapper(
-            inner,
-            attributes,
-            member.loc().or(instruction_location(function, pc)),
-            function,
-            pc,
-            current,
-            account,
-        )?;
         normalized.push((name, member));
     }
 
@@ -103,7 +92,7 @@ fn run_core_model(
         CoreModelFunction::Enum => "Enum",
         CoreModelFunction::Union => unreachable!("Union handled above"),
     };
-    let metadata = allocate_core_dict(
+    let value = allocate_core_dict(
         BTreeMap::from([
             (
                 "kind".to_owned(),
@@ -121,18 +110,8 @@ fn run_core_model(
         current,
         account,
     )?;
-    let value = allocate_attributes_wrapper(
-        metadata,
-        BTreeMap::new(),
-        instruction_location(function, pc),
-        function,
-        pc,
-        current,
-        account,
-    )?;
     Ok(VmAction::Return {
         value,
         return_target,
     })
 }
-

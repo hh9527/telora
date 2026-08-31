@@ -58,8 +58,3 @@ contract. These are implementation invariants, not duplicate language examples.
 because the equivalent public package currently encounters an internal trait
 implementation binding while loading. It must move only after that public path
 is valid evidence.
-
-`WithAttributes`, `std/attributes`, and `strip_attributes` are intentionally not
-accepted by the new fixture suite. They are legacy implementation paths slated
-for removal, so this migration does not establish them as current language
-behavior.

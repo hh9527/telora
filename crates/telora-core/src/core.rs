@@ -1,12 +1,11 @@
 use crate::value::{
-    CoreArrayFunction, CoreAttributesFunction, CoreCodecFunction, CoreDictFunction,
-    CoreDynFunction, CoreEqFunction, CoreHashFunction, CoreJsonFunction, CoreModelFunction,
-    CorePathFunction, CoreResultFunction, CoreStringFunction, CoreTypeDescFunction, NativeFunction,
+    CoreArrayFunction, CoreCodecFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
+    CoreHashFunction, CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction,
+    CoreStringFunction, CoreTypeDescFunction, NativeFunction,
 };
 
 pub(crate) const PRELUDE_MODULE: &str = "std/prelude";
 pub(crate) const ARRAY_MODULE: &str = "std/array";
-pub(crate) const ATTRIBUTES_MODULE: &str = "std/attributes";
 pub(crate) const DICT_MODULE: &str = "std/dict";
 pub(crate) const BUILD_MODULE: &str = "std/build";
 pub(crate) const EXEC_MODULE: &str = "std/rt-types/exec";
@@ -239,43 +238,8 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Resolve),
                 ),
                 (
-                    "strip_attributes",
-                    NativeFunction::core_type_desc(CoreTypeDescFunction::StripAttributes),
-                ),
-                (
                     "variants",
                     NativeFunction::core_type_desc(CoreTypeDescFunction::Variants),
-                ),
-            ],
-        },
-        BuiltinModuleSpec {
-            native_id: 4,
-            name: ATTRIBUTES_MODULE,
-            source: include_str!("../modules/std/attributes.telora"),
-            functions: vec![
-                (
-                    "add",
-                    NativeFunction::core_attributes(CoreAttributesFunction::Add),
-                ),
-                (
-                    "all",
-                    NativeFunction::core_attributes(CoreAttributesFunction::All),
-                ),
-                (
-                    "get",
-                    NativeFunction::core_attributes(CoreAttributesFunction::Get),
-                ),
-                (
-                    "has",
-                    NativeFunction::core_attributes(CoreAttributesFunction::Has),
-                ),
-                (
-                    "normalize",
-                    NativeFunction::core_attributes(CoreAttributesFunction::Normalize),
-                ),
-                (
-                    "strip",
-                    NativeFunction::core_attributes(CoreAttributesFunction::Strip),
                 ),
             ],
         },
@@ -692,15 +656,14 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
         EQ_MODULE => 2,
         DYN_MODULE => 3,
         TYPE_DESC_MODULE => 4,
-        ATTRIBUTES_MODULE => 5,
-        ARRAY_MODULE => 6,
-        DICT_MODULE => 7,
-        REGEX_MODULE => 8,
-        STRING_MODULE => 9,
-        FMT_MODULE => 10,
-        CODEC_MODULE => 11,
-        JSON_MODULE => 12,
-        _ => 13,
+        ARRAY_MODULE => 5,
+        DICT_MODULE => 6,
+        REGEX_MODULE => 7,
+        STRING_MODULE => 8,
+        FMT_MODULE => 9,
+        CODEC_MODULE => 10,
+        JSON_MODULE => 11,
+        _ => 12,
     });
     specs
 }

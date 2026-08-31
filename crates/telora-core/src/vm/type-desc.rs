@@ -65,7 +65,6 @@ fn run_core_type_desc(
                     "Enum",
                     "Union",
                     "Func",
-                    "WithAttributes",
                     "Bound",
                     "Named",
                     "Dyn",
@@ -266,33 +265,6 @@ fn run_core_type_desc(
                     })),
                     input.loc(),
                 ),
-                return_target,
-            })
-        }
-        CoreTypeDescFunction::StripAttributes => {
-            let mut value = input;
-            while let DecodedValue::Dict(handle) = value.value() {
-                let kind = view
-                    .dict_get_text(handle, "kind")
-                    .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-                    .and_then(|kind| view.atom_text(kind).ok().flatten());
-                if !kind.is_some_and(|kind| kind == "WithAttributes") {
-                    break;
-                }
-                value = view
-                    .dict_get_text(handle, "inner")
-                    .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-                    .ok_or_else(|| {
-                        error(
-                            RuntimeErrorKind::TypeMismatch,
-                            "WithAttributes Type descriptor has no inner type",
-                            function,
-                            pc,
-                        )
-                    })?;
-            }
-            Ok(VmAction::Return {
-                value,
                 return_target,
             })
         }

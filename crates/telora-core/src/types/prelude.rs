@@ -527,25 +527,6 @@ fn decode_type_ref_with_visiting(
         .dict_get("kind")
         .and_then(ValueRef::as_atom)
         .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
-    if kind == "WithAttributes" {
-        if fields != ["attributes", "inner", "kind"] {
-            return Err(format!(
-                "{path} WithAttributes wrapper must have exactly attributes, inner, and kind fields"
-            ));
-        }
-        let attributes = value
-            .dict_get("attributes")
-            .expect("validated wrapper field");
-        if attributes.kind() != ValueKind::Dict {
-            return Err(format!("{path}.attributes must be a Dict"));
-        }
-        return decode_type_ref_with_visiting(
-            value.dict_get("inner").expect("validated wrapper field"),
-            path,
-            shallow_declared_types,
-            visiting_declared,
-        );
-    }
     let require = |expected: &[&str]| -> Result<(), String> {
         if fields.iter().copied().eq(expected.iter().copied()) {
             Ok(())
@@ -744,12 +725,11 @@ fn decode_type_ref_with_visiting(
                     .map(|name| {
                         let variant = variants.dict_get(name).expect("Dict field exists");
                         let variant_path = format!("{path}.variants.{name}");
-                        let inner = strip_attributes_ref(variant, &variant_path)?;
-                        let payload = if inner.as_atom().is_some_and(|atom| atom == "None") {
+                        let payload = if variant.as_atom().is_some_and(|atom| atom == "None") {
                             None
                         } else {
                             Some(Box::new(decode_type_ref_with_visiting(
-                                inner,
+                                variant,
                                 &variant_path,
                                 shallow_declared_types,
                                 visiting_declared,
@@ -793,33 +773,6 @@ fn decode_type_ref_with_visiting(
         }
         _ => return Err(format!("{path}.kind has unknown value '{kind}")),
     })
-}
-
-fn strip_attributes_ref<'a>(mut value: ValueRef<'a>, path: &str) -> Result<ValueRef<'a>, String> {
-    loop {
-        let Some(fields) = value.dict_fields() else {
-            return Ok(value);
-        };
-        if !value
-            .dict_get("kind")
-            .and_then(ValueRef::as_atom)
-            .is_some_and(|kind| kind == "WithAttributes")
-        {
-            return Ok(value);
-        }
-        if fields != ["attributes", "inner", "kind"] {
-            return Err(format!(
-                "{path} WithAttributes wrapper must have exactly attributes, inner, and kind fields"
-            ));
-        }
-        let attributes = value
-            .dict_get("attributes")
-            .expect("validated wrapper field");
-        if attributes.kind() != ValueKind::Dict {
-            return Err(format!("{path}.attributes must be a Dict"));
-        }
-        value = value.dict_get("inner").expect("validated wrapper field");
-    }
 }
 
 fn validate_value_ref(

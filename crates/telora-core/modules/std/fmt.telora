@@ -55,7 +55,6 @@ def project_atom: Fn(Dyn) -> Fmt = fn(value) {
 
 decl display_for: Fn(Type) -> Fn(Dyn) -> Fmt;
 def display_for = fn(target) {
-    let target = type_desc.strip_attributes(target);
     let target_kind = type_desc.kind(target);
     let resolved = match target_kind {
         'Ref => match type_desc.resolve(target) {

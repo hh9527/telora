@@ -15,9 +15,6 @@ def reject: Fn(Dyn, String) -> HashResult = fn(value, message) {
 
 def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
     match desc.kind(ty) {
-        'WithAttributes => arrays.fold(desc.children(ty), 'Any, fn(ignored, child) {
-            logical_kind(child)
-        }),
         'Ref => match desc.resolve(ty) {
             'Ok(target) => logical_kind(target),
             'Err(_) => 'Ref,

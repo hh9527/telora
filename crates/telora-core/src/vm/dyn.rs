@@ -555,21 +555,10 @@ fn normalize_dyn_descriptor(mut descriptor: Val, view: &HeapView<'_>) -> Result<
                 .ok_or_else(|| "Dyn descriptor reference is not initialized".to_owned())?;
             continue;
         }
-        let DecodedValue::Dict(handle) = descriptor.value() else {
+        let DecodedValue::Dict(_) = descriptor.value() else {
             return Err("Dyn descriptor is not canonical Type metadata".into());
         };
-        let kind = view
-            .dict_get_text(handle, "kind")
-            .map_err(|error| error.to_string())?
-            .and_then(|kind| view.atom_text(kind).ok().flatten())
-            .ok_or_else(|| "Dyn descriptor is missing an Atom kind".to_owned())?;
-        if kind != "WithAttributes" {
-            return Ok(descriptor);
-        }
-        descriptor = view
-            .dict_get_text(handle, "inner")
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "WithAttributes descriptor is missing inner".to_owned())?;
+        return Ok(descriptor);
     }
 }
 
@@ -755,9 +744,8 @@ fn dyn_tagged_parts(
                 .dict_get_text(variants, &runtime.0)
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("Enum has no variant {:?}", runtime.0))?;
-            let inner = strip_runtime_attributes(variant, "Dyn.enum.variant", view)?;
             let unit = view
-                .atom_text(inner)
+                .atom_text(variant)
                 .ok()
                 .flatten()
                 .is_some_and(|atom| atom == "None");
@@ -958,13 +946,7 @@ fn dyn_descriptor_leaf_kind(mut descriptor: Val, view: &HeapView<'_>) -> Result<
             .map_err(|error| error.to_string())?
             .and_then(|kind| view.atom_text(kind).ok().flatten())
             .ok_or_else(|| "Dyn descriptor is missing an Atom kind".to_owned())?;
-        if kind != "WithAttributes" {
-            return Ok(kind.as_str().to_owned());
-        }
-        descriptor = view
-            .dict_get_text(handle, "inner")
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "WithAttributes descriptor is missing inner".to_owned())?;
+        return Ok(kind.as_str().to_owned());
     }
 }
 
@@ -1010,7 +992,6 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
         "TypeOf" => Ok(vec![get("instance")?]),
         "Array" | "Dict" => Ok(vec![get("item")?]),
         "Tagged" => Ok(vec![get("payload")?]),
-        "WithAttributes" => Ok(vec![get("inner")?]),
         "Tuple" | "Union" => {
             let field = if kind == "Tuple" { "items" } else { "variants" };
             let DecodedValue::Array(items) = get(field)?.value() else {
@@ -1038,19 +1019,15 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
             values
                 .iter()
                 .filter_map(|value| {
-                    let stripped = strip_runtime_attributes(*value, "Type.variants", view);
-                    match stripped {
-                        Ok(inner)
-                            if view
-                                .atom_text(inner)
-                                .ok()
-                                .flatten()
-                                .is_some_and(|atom| atom == "None") =>
-                        {
-                            None
-                        }
-                        Ok(inner) => Some(Ok(inner)),
-                        Err(error) => Some(Err(error)),
+                    if view
+                        .atom_text(*value)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|atom| atom == "None")
+                    {
+                        None
+                    } else {
+                        Some(Ok(*value))
                     }
                 })
                 .collect()
@@ -1105,13 +1082,12 @@ fn type_desc_members(
             if !variants {
                 return Ok((name, Some(*value)));
             }
-            let inner = strip_runtime_attributes(*value, "Type.variant", view)?;
             let unit = view
-                .atom_text(inner)
+                .atom_text(*value)
                 .ok()
                 .flatten()
                 .is_some_and(|atom| atom == "None");
-            Ok((name, (!unit).then_some(inner)))
+            Ok((name, (!unit).then_some(*value)))
         })
         .collect()
 }

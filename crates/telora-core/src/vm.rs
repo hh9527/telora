@@ -6,11 +6,10 @@ use crate::heap::{
 };
 use crate::lir::RegisterId;
 use crate::value::{
-    BuiltinAtom, CoreArrayFunction, CoreAttributesFunction, CoreBuiltinTypeFunction,
-    CoreCodecFunction, CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
-    CoreHashFunction, CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction,
-    CoreRuntimeFunction, CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind,
-    NativeLimit,
+    BuiltinAtom, CoreArrayFunction, CoreBuiltinTypeFunction, CoreCodecFunction,
+    CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction,
+    CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction, CoreRuntimeFunction,
+    CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind, NativeLimit,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -30,7 +29,6 @@ include!("vm/string.rs");
 include!("vm/path.rs");
 include!("vm/hash.rs");
 include!("vm/dict.rs");
-include!("vm/attributes.rs");
 include!("vm/model.rs");
 include!("vm/type-desc.rs");
 include!("vm/dyn.rs");

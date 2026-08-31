@@ -183,37 +183,6 @@ fn decode_runtime_type_at(
         .map_err(|error| error.to_string())?
         .and_then(|kind| view.atom_text(kind).ok().flatten())
         .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
-    if kind == "WithAttributes" {
-        let fields = view
-            .dict_fields(handle)
-            .map_err(|error| error.to_string())?;
-        if fields != ["attributes", "inner", "kind"] {
-            return Err(format!(
-                "{path} WithAttributes wrapper must have exactly attributes, inner, and kind fields"
-            ));
-        }
-        let attributes = view
-            .dict_get_text(handle, "attributes")
-            .map_err(|error| error.to_string())?
-            .expect("validated wrapper field");
-        let DecodedValue::Dict(attribute_handle) = attributes.value() else {
-            return Err(format!("{path}.attributes must be a Dict"));
-        };
-        let has_attributes = !view
-            .dict_parts(attribute_handle)
-            .map_err(|error| error.to_string())?
-            .0
-            .is_empty();
-        let inner = view
-            .dict_get_text(handle, "inner")
-            .map_err(|error| error.to_string())?
-            .expect("validated wrapper field");
-        let mut decoded = decode_runtime_type_at(inner, path, current, background)?;
-        if has_attributes || decoded.rule.loc().is_none() {
-            decoded.rule = value;
-        }
-        return Ok(decoded);
-    }
     let kind = match kind.as_str() {
         "Bound" => CodecKind::Any,
         "Named" => CodecKind::Any,
@@ -356,16 +325,15 @@ fn decode_runtime_type_at(
             for (name, variant) in names.iter().zip(values) {
                 let name = view.text(*name).map_err(|error| error.to_string())?;
                 let variant_path = format!("{path}.variants.{name}");
-                let inner = strip_runtime_attributes(*variant, &variant_path, &view)?;
                 let payload = if view
-                    .atom_text(inner)
+                    .atom_text(*variant)
                     .map_err(|error| error.to_string())?
                     .is_some_and(|atom| atom == "None")
                 {
                     None
                 } else {
                     Some(Box::new(decode_runtime_type_at(
-                        inner,
+                        *variant,
                         &variant_path,
                         current,
                         background,
@@ -391,42 +359,6 @@ fn decode_runtime_type_at(
         json_untagged: None,
         declared_owner: None,
     })
-}
-
-fn strip_runtime_attributes(
-    mut value: Val,
-    path: &str,
-    view: &HeapView<'_>,
-) -> Result<Val, String> {
-    while let DecodedValue::Dict(handle) = value.value() {
-        let kind = view
-            .dict_get_text(handle, "kind")
-            .map_err(|error| error.to_string())?
-            .and_then(|kind| view.atom_text(kind).ok().flatten());
-        if !kind.is_some_and(|kind| kind == "WithAttributes") {
-            break;
-        }
-        let fields = view
-            .dict_fields(handle)
-            .map_err(|error| error.to_string())?;
-        if fields != ["attributes", "inner", "kind"] {
-            return Err(format!(
-                "{path} WithAttributes wrapper must have exactly attributes, inner, and kind fields"
-            ));
-        }
-        let attributes = view
-            .dict_get_text(handle, "attributes")
-            .map_err(|error| error.to_string())?
-            .expect("validated wrapper field");
-        let DecodedValue::Dict(_) = attributes.value() else {
-            return Err(format!("{path}.attributes must be a Dict"));
-        };
-        value = view
-            .dict_get_text(handle, "inner")
-            .map_err(|error| error.to_string())?
-            .expect("validated wrapper field");
-    }
-    Ok(value)
 }
 
 fn option_item(schema: &CodecType) -> Option<&CodecType> {

@@ -611,7 +611,7 @@ impl TypeGraph {
 
     fn decode_persistent_node(
         &mut self,
-        mut value: ValueRef<'_>,
+        value: ValueRef<'_>,
         path: &str,
         links: &mut HashMap<Handle, AnalysisTypeId>,
     ) -> Result<TypeNode, String> {
@@ -625,39 +625,13 @@ impl TypeGraph {
                 body: self.decode_persistent(body, path, links)?,
             });
         }
-        loop {
-            let fields = value
-                .dict_fields()
-                .ok_or_else(|| format!("{path} must be a Dict"))?;
-            let kind = value
-                .dict_get("kind")
-                .and_then(ValueRef::as_atom)
-                .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
-            if kind != "WithAttributes" {
-                break;
-            }
-            if fields != ["attributes", "inner", "kind"] {
-                return Err(format!("{path} has an invalid WithAttributes wrapper"));
-            }
-            let attributes = value.dict_get("attributes").expect("wrapper field exists");
-            if attributes.kind() != ValueKind::Dict {
-                return Err(format!("{path}.attributes must be a Dict"));
-            }
-            value = value.dict_get("inner").expect("wrapper field exists");
-            if value.is_hidden_type_slot()
-                || value.as_native_type().is_some()
-                || value.declared_type_parts().is_some()
-            {
-                let id = self.decode_persistent(value, path, links)?;
-                return Ok(TypeNode::Ref(id));
-            }
-        }
-
-        let fields = value.dict_fields().expect("metadata Dict checked above");
+        let fields = value
+            .dict_fields()
+            .ok_or_else(|| format!("{path} must be a Dict"))?;
         let kind = value
             .dict_get("kind")
             .and_then(ValueRef::as_atom)
-            .expect("metadata kind checked above");
+            .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
         let require = |expected: &[&str]| {
             fields
                 .iter()
@@ -827,14 +801,11 @@ impl TypeGraph {
                 let mut decoded = BTreeMap::new();
                 for name in names {
                     let variant_path = format!("{path}.variants.{name}");
-                    let inner = strip_attributes_ref(
-                        values.dict_get(name).expect("Dict field"),
-                        &variant_path,
-                    )?;
-                    let payload = if inner.as_atom().is_some_and(|atom| atom == "None") {
+                    let variant = values.dict_get(name).expect("Dict field");
+                    let payload = if variant.as_atom().is_some_and(|atom| atom == "None") {
                         None
                     } else {
-                        Some(self.decode_persistent(inner, &variant_path, links)?)
+                        Some(self.decode_persistent(variant, &variant_path, links)?)
                     };
                     decoded.insert(name.to_owned(), payload);
                 }

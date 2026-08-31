@@ -3,7 +3,7 @@ type TypeDescKind = enum {
     'Int, 'Float, 'String, 'Bytes,
     'Atom, 'Array, 'Dict, 'Tagged,
     'Tuple, 'Struct, 'Enum, 'Union,
-    'Func, 'Opaque, 'WithAttributes, 'Bound, 'Dyn, 'Ref,
+    'Func, 'Opaque, 'Bound, 'Dyn, 'Ref,
 };
 type FieldDesc = struct { index: Int, name: String, ty: Type };
 type VariantDesc = struct { index: Int, name: String, payload: Option(Type) };
@@ -13,7 +13,6 @@ native fields: Fn(Type) -> Array(FieldDesc);
 native variants: Fn(Type) -> Array(VariantDesc);
 native opaque_name: Fn(Type) -> Option(String);
 native resolve: Fn(Type) -> Result(Type, BlameError);
-native strip_attributes: Fn(Type) -> Type;
 
 export {
     Type as TypeDesc,
@@ -26,5 +25,4 @@ export {
     variants,
     opaque_name,
     resolve,
-    strip_attributes,
 };

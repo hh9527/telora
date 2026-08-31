@@ -165,25 +165,8 @@ fn resolve_metadata(mut metadata: crate::ValueRef<'_>) -> Result<crate::ValueRef
     ))
 }
 
-fn stripped_metadata(
-    mut metadata: crate::ValueRef<'_>,
-) -> Result<crate::ValueRef<'_>, NativeError> {
-    metadata = resolve_metadata(metadata)?;
-    while metadata
-        .dict_get("kind")
-        .and_then(|kind| kind.as_atom())
-        .is_some_and(|kind| kind == "WithAttributes")
-    {
-        metadata = metadata
-            .dict_get("inner")
-            .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
-        metadata = resolve_metadata(metadata)?;
-    }
-    Ok(metadata)
-}
-
 fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> {
-    let metadata = stripped_metadata(metadata).ok()?;
+    let metadata = resolve_metadata(metadata).ok()?;
     if metadata.dict_get("kind")?.as_atom()? != "Enum" {
         return None;
     }
@@ -191,11 +174,11 @@ fn option_payload(metadata: crate::ValueRef<'_>) -> Option<crate::ValueRef<'_>> 
     if variants.dict_fields()?.as_slice() != ["None", "Some"] {
         return None;
     }
-    let none = stripped_metadata(variants.dict_get("None")?).ok()?;
+    let none = resolve_metadata(variants.dict_get("None")?).ok()?;
     if none.as_atom()? != "None" {
         return None;
     }
-    let payload = stripped_metadata(variants.dict_get("Some")?).ok()?;
+    let payload = resolve_metadata(variants.dict_get("Some")?).ok()?;
     (!payload.as_atom().is_some_and(|atom| atom == "None")).then_some(payload)
 }
 
@@ -208,16 +191,6 @@ fn attached_regex(
             metadata = metadata
                 .resolve_hidden_type_slot()
                 .map_err(NativeError::new)?;
-            continue;
-        }
-        if metadata
-            .dict_get("kind")
-            .and_then(|kind| kind.as_atom())
-            .is_some_and(|kind| kind == "WithAttributes")
-        {
-            metadata = metadata
-                .dict_get("inner")
-                .ok_or_else(|| NativeError::new("attributed type has no inner metadata"))?;
             continue;
         }
         break;
@@ -251,7 +224,7 @@ fn parse_plan(
         let fields = validate_relation(&compiled, metadata, property_type)?;
         return Ok(ParsePlan::Regex { compiled, fields });
     }
-    let metadata = stripped_metadata(metadata)?;
+    let metadata = resolve_metadata(metadata)?;
     let kind = metadata.dict_get("kind").and_then(|kind| kind.as_atom());
     match kind.as_ref().map(crate::TextRef::as_str) {
         Some("String") => Ok(ParsePlan::String),
@@ -266,7 +239,7 @@ fn validate_relation(
     metadata: crate::ValueRef<'_>,
     property_type: crate::TypeId,
 ) -> Result<BTreeMap<String, FieldPlan>, NativeError> {
-    let metadata = stripped_metadata(metadata)?;
+    let metadata = resolve_metadata(metadata)?;
     if !metadata
         .dict_get("kind")
         .and_then(|kind| kind.as_atom())

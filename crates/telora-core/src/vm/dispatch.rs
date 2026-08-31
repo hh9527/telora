@@ -478,16 +478,6 @@ fn drive_vm_action(
                                 background,
                                 account,
                             )?,
-                            NativeKind::CoreAttributes(function) => run_core_attributes(
-                                function,
-                                &arguments,
-                                return_target,
-                                &call_function,
-                                call_pc,
-                                current,
-                                background,
-                                account,
-                            )?,
                             NativeKind::CoreModel(function) => run_core_model(
                                 function,
                                 &arguments,

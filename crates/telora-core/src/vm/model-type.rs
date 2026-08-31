@@ -40,21 +40,11 @@ fn run_core_union_model(
     let mut normalized = Vec::with_capacity(variants.len());
     for (index, variant) in variants.into_iter().enumerate() {
         let path = format!("variants[{index}]");
-        let (inner, attributes) =
-            flatten_attributes(variant, &path, function, pc, current, background)?;
-        if !matches!(inner.value(), DecodedValue::TypeSlot(_)) {
-            decode_runtime_type_at(inner, &path, current, background)
+        if !matches!(variant.value(), DecodedValue::TypeSlot(_)) {
+            decode_runtime_type_at(variant, &path, current, background)
                 .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
         }
-        normalized.push(allocate_attributes_wrapper(
-            inner,
-            attributes,
-            variant.loc().or(instruction_location(function, pc)),
-            function,
-            pc,
-            current,
-            account,
-        )?);
+        normalized.push(variant);
     }
     charge_allocation(
         account,
@@ -67,7 +57,7 @@ fn run_core_union_model(
         DecodedValue::Array(current.allocate(Object::Array(normalized.into()))),
         instruction_location(function, pc),
     );
-    let metadata = allocate_core_dict(
+    let value = allocate_core_dict(
         vec![
             (
                 "kind".into(),
@@ -78,15 +68,6 @@ fn run_core_union_model(
             ),
             ("variants".into(), variants),
         ],
-        function,
-        pc,
-        current,
-        account,
-    )?;
-    let value = allocate_attributes_wrapper(
-        metadata,
-        BTreeMap::new(),
-        instruction_location(function, pc),
         function,
         pc,
         current,
@@ -143,34 +124,20 @@ fn allocate_builtin_enum(
     let mut normalized = Vec::with_capacity(variants.len());
     for (name, payload) in variants {
         let path = format!("variants.{name}");
-        let (inner, attributes) = if let Some(payload) = payload {
-            let (inner, attributes) =
-                flatten_attributes(payload, &path, function, pc, current, background)?;
-            if !matches!(inner.value(), DecodedValue::TypeSlot(_)) {
-                decode_runtime_type_at(inner, &path, current, background).map_err(|message| {
+        let variant = if let Some(payload) = payload {
+            if !matches!(payload.value(), DecodedValue::TypeSlot(_)) {
+                decode_runtime_type_at(payload, &path, current, background).map_err(|message| {
                     error(RuntimeErrorKind::TypeMismatch, message, function, pc)
                 })?;
             }
-            (inner, attributes)
+            payload
         } else {
-            (
-                Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), loc),
-                BTreeMap::new(),
-            )
+            Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), loc)
         };
-        let variant = allocate_attributes_wrapper(
-            inner,
-            attributes,
-            inner.loc().or(loc),
-            function,
-            pc,
-            current,
-            account,
-        )?;
         normalized.push((name, variant));
     }
     let variants = allocate_core_dict(normalized, function, pc, current, account)?;
-    let metadata = allocate_core_dict(
+    allocate_core_dict(
         vec![
             (
                 "kind".into(),
@@ -178,15 +145,6 @@ fn allocate_builtin_enum(
             ),
             ("variants".into(), variants),
         ],
-        function,
-        pc,
-        current,
-        account,
-    )?;
-    allocate_attributes_wrapper(
-        metadata,
-        BTreeMap::new(),
-        loc,
         function,
         pc,
         current,

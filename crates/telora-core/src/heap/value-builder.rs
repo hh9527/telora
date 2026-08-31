@@ -26,26 +26,13 @@ impl Heap {
         &mut self,
         background: Option<&Heap>,
     ) -> Result<Val, HeapError> {
-        fn wrap(heap: &mut Heap, background: Option<&Heap>, inner: Val) -> Result<Val, HeapError> {
-            let attributes = heap.record_value([])?;
-            let kind = Val::unknown(heap.atom(background, "WithAttributes"));
-            heap.record_value([
-                ("attributes".into(), attributes),
-                ("inner".into(), inner),
-                ("kind".into(), kind),
-            ])
-        }
-
         let none = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None));
-        let false_variant = wrap(self, background, none)?;
-        let true_variant = wrap(self, background, none)?;
         let variants = self.record_value([
-            ("False".into(), false_variant),
-            ("True".into(), true_variant),
+            ("False".into(), none),
+            ("True".into(), none),
         ])?;
         let kind = Val::unknown(self.atom(background, "Enum"));
-        let metadata = self.record_value([("kind".into(), kind), ("variants".into(), variants)])?;
-        wrap(self, background, metadata)
+        self.record_value([("kind".into(), kind), ("variants".into(), variants)])
     }
 
     pub(crate) fn type_descriptor_value(
