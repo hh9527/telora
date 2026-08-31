@@ -951,7 +951,7 @@ CLI 从当前目录向上查找最近的 `telora-config.json`，因此可以在 
 中的 Value 编码为 JSON。环境与输入由 `entry.ContextConfig` 显式声明，不形成 ambient
 binding。
 
-普通 `@src` module 的纯结果使用 `telora eval @src/module:name`；带显式 source、环境变量
+普通 module 的纯结果使用 `telora eval module:name`；带显式 source、环境变量
 白名单和字符串参数的纯函数使用 `eval-with`。两者都要求返回 `Value`，并且不创建 Entry
 或 effect loop。完整示例：
 

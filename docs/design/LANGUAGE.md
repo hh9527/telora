@@ -1270,18 +1270,18 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 当前 `telora` 二进制提供：
 
 ```text
-telora check <module> [-C <context>]
-telora eval <@src/module:name> [-C <context>]
-telora eval-with <@src/module:name> [-C <context>] [--source <name>=<source>]... [-- <arg>...]
-telora run <module:export> [-C <context>] [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]... [-- <arg>...]
-telora serve <module:export> [-C <context>] [--source <name>=<source>]... [--ees-var <name>=<value>]... --bind stdio:// [-- <arg>...]
-telora query|q modules [-C <context>] [-p <substring>]
-telora query|q exports <module> [-C <context>] [-p <substring>]
-telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
+telora [-C <context>] check <module>
+telora [-C <context>] eval <module:export>
+telora [-C <context>] eval-with <module:export> [--source <name>=<source>]... [-- <arg>...]
+telora [-C <context>] run <module:export> [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]... [-- <arg>...]
+telora [-C <context>] serve <module:export> [--source <name>=<source>]... [--ees-var <name>=<value>]... --bind stdio:// [-- <arg>...]
+telora [-C <context>] query|q modules [-p <substring>]
+telora [-C <context>] query|q exports <module> [-p <substring>]
+telora [-C <context>] query|q at <module>[:<line>[:<column>]] [-p <substring>] [-k type,let,def,import]
 telora lsp
 ```
 
-`eval @src/model:answer` 选择普通 `@src` module 的公开导出。`eval` 要求导出类型是
+`eval @src/model:answer` 是选择普通 module 公开导出的一个示例。`eval` 要求导出类型是
 `Value`；`eval-with` 要求导出类型是 `entry.Eval`。该 wrapper 中的
 `entry.ContextConfig` 声明 source、环境变量和参数能力。前者只读取求值后的导出，
 后者只做一次普通函数调用；二者都不运行 reducer loop 或应用 EES。

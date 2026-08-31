@@ -44,7 +44,7 @@ export def lowering_case = do {
 
 多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
 
-- `eval @src/module:name` 要求公开导出 `name: Value`，直接求值并编码为 JSON。
+- `eval module:name` 要求公开导出 `name: Value`，直接求值并编码为 JSON。
   `eval-with` 要求导出 `entry.Eval`。其 `entry.ContextConfig` 声明 source、环境变量和
   参数能力；两条命令都不进入 reducer/effect loop。
 - `run module:name` 和 `serve module:name --bind stdio://` 分别要求导出
