@@ -1,0 +1,6 @@
+import "@src/check/module-interfaces/origin" {Box};
+
+type Local = enum {'A};
+type LocalBox = Box(Local);
+
+export {LocalBox, Local};

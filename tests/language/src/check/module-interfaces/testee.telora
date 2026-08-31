@@ -1,0 +1,144 @@
+import "@src/check/module-interfaces/origin" as origin;
+import "@src/check/module-interfaces/origin" {accepts, identity as direct, use};
+import "@src/check/module-interfaces/facade" {Box, Tree, Family, identity};
+import "@src/check/module-interfaces/local-alias" {LocalBox as ImportedLocalBox, Local};
+import "@src/check/module-interfaces/namespace" {model};
+import "@src/check/module-interfaces/second" {answer, identity as relayed};
+import "@src/check/module-interfaces/opaque-facade" {State};
+import "std/type-desc" as type_desc;
+import "std/array" as array;
+
+def expect: Fn(Bool) -> Bool = fn(value) {
+    if value { 'True } else { fail!("module interface expectation failed") }
+};
+
+type StringBox = Box(String);
+type TreeBox = Box(Tree);
+type LocalBox(A) = struct {value: A};
+type LocalMaybe(A) = enum {'None, 'Some(A)};
+type LocalStringBox = LocalBox(String);
+type LocalNode = struct {value: Int, children: Array(LocalNode)};
+
+type LocalBranch = struct {children: Array(LocalTree)};
+type LocalTree = enum {'Leaf(Int), 'Branch(LocalBranch)};
+
+type Node = enum {'A, 'B};
+type Requirement = struct {target: Node};
+def target_of: Fn(Requirement) -> Node = fn(requirement) { requirement.target };
+type EvalBranch = struct {children: Array(EvalExpr)};
+type EvalExpr = enum {'Leaf(Int), 'Branch(EvalBranch)};
+def eval_expr: Fn(EvalExpr) -> Int = fn(expr) {
+    match expr {
+        'Leaf(value) => value,
+        'Branch(branch) => array.fold(branch.children, 0, fn(total, child) {
+            total + eval_expr(child)
+        }),
+    }
+};
+
+export def t0400_should_ok = expect(
+    origin.identity(1) == 1
+        && origin.identity("x") == "x"
+        && origin.identity@[_](2) == 2
+);
+
+export def t0401_should_ok = expect({
+    let value: StringBox = {value: "ready"};
+    value.value == "ready"
+});
+
+export def t0402_should_ok = expect({
+    let value: LocalStringBox = {value: "ready"};
+    value.value == "ready"
+});
+
+export def t0403_should_ok = expect({
+    let boxed: LocalBox(String) = {value: "ready"};
+    let maybe: LocalMaybe(Int) = 'Some(3);
+    let node: LocalNode = {value: 1, children: [{value: 2, children: []}]};
+    let tree: LocalTree = 'Branch({children: ['Leaf(2)]});
+    boxed.value == "ready"
+        && maybe == 'Some(3)
+        && node.children[0].value == 2
+        && match tree {
+            'Leaf(value) => value == 2,
+            'Branch(branch) => match branch.children[0] {
+                'Leaf(value) => value == 2,
+                'Branch(_) => 'False,
+            },
+        }
+});
+
+export def t0404_should_ok = expect({
+    let wrapper: origin.Wrapper = 'Box("x");
+    let expected: origin.Wrapper = 'Box("x");
+    let status: origin.Status = 'Ready;
+    let point: origin.Point = {x: 1};
+    wrapper == expected
+        && wrapper == 'Box("x")
+        && 'Box("x") == wrapper
+        && status == 'Ready
+        && 'Ready == status
+        && point == {x: 1}
+        && {x: 1} == point
+});
+
+export def t0405_should_ok = expect(accepts({statuses: ['Ready]}));
+
+export def t0406_should_ok = expect({
+    let value: TreeBox = {value: 'Branch({children: ['Leaf(1)]})};
+    let same: TreeBox = identity(value);
+    match same.value {
+        'Leaf(_) => 'False,
+        'Branch(branch) => match branch.children[0] {
+            'Leaf(value) => value == 1,
+            'Branch(_) => 'False,
+        },
+    }
+});
+
+export def t0407_should_ok = expect({
+    let value: TreeBox = identity({value: 'Leaf(1)});
+    match value.value { 'Leaf(item) => item == 1, 'Branch(_) => 'False }
+});
+
+export def t0408_should_ok = expect({
+    let value: model.Box(Int) = model.identity({value: 1});
+    value.value == 1 && model.identity(1) == 1 && model.identity("x") == "x"
+});
+
+export def t0409_should_ok = expect(
+    answer == 7
+        && direct == relayed
+        && relayed(1) == 1
+        && relayed("x") == "x"
+);
+
+export def t0410_should_ok = expect(
+    type_desc.kind(State) == 'Opaque
+        && type_desc.opaque_name(State) == 'Some("std/hash#HashState")
+);
+
+export def t0411_should_ok = expect({
+    let selected: Node = use([{target: 'B}], target_of);
+    selected == 'B
+});
+
+export def t0412_should_ok = expect({
+    let value: Family(String) = {expr: 'Literal(1), value: "ready"};
+    value.value == "ready"
+        && match value.expr {
+            'Literal(item) => item == 1,
+            'Call(_) => 'False,
+        }
+});
+
+export def t0413_should_ok = expect({
+    eval_expr('Branch({children: ['Leaf(1)]})) == 1
+});
+
+export def t0414_should_ok = expect({
+    let via_alias: ImportedLocalBox = {value: 'A};
+    let direct_box: origin.Box(Local) = {value: 'A};
+    via_alias.value == 'A && direct_box.value == 'A
+});

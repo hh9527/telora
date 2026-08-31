@@ -1,0 +1,35 @@
+import "std/array" as array;
+
+type Box(A) = struct {value: A};
+type Branch = struct {children: Array(Tree)};
+type Tree = enum {'Leaf(Int), 'Branch(Branch)};
+type Wrapper = enum {'Box(String), 'Bag(Int)};
+type Status = enum {'Ready, 'Waiting};
+type Point = struct {x: Int};
+type ExprCall = struct {args: Array(FamilyExpr)};
+type FamilyExpr = enum {'Literal(Int), 'Call(ExprCall)};
+type Family(A) = struct {expr: FamilyExpr, value: A};
+
+type PrivateStatus = enum {'Ready, 'Waiting};
+type PrivateInput = struct {statuses: Array(PrivateStatus)};
+
+def identity: for(A) Fn(A) -> A = fn(value) { value };
+def value = 7;
+def accepts: Fn(PrivateInput) -> Bool = fn(input) {
+    array.any(input.statuses, fn(status) { status == 'Ready })
+};
+def use: for(Req, Node) Fn(Array(Req), Fn(Req) -> Node) -> Node =
+    fn(requirements, selector) { selector(requirements[0]) };
+
+export {
+    Box,
+    Tree,
+    Wrapper,
+    Status,
+    Point,
+    Family,
+    identity,
+    value,
+    accepts,
+    use,
+};

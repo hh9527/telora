@@ -61,6 +61,18 @@ failed expectation without stopping later exports.
 | `t0320_should_error`, `t0016_should_ok` | `pipeline_is_uniform_reverse_application` |
 | `t0321_should_error` | `dynamic_ordered_comparison_rejects_mismatched_domains` |
 | `t0323_should_error`, `t0324_should_error` | `rejects_return_outside_functions_and_wrong_result_types` |
+| `t0400_should_ok` | `generic_definition_exports_instantiate_per_member_access` |
+| `t0402_should_ok` | `parameterized_type_families_construct_local_concrete_types` |
+| `t0403_should_ok` | `declaration_initializers_preserve_structural_family_and_recursive_behavior` |
+| `t0405_should_ok` | `imported_function_contracts_brand_nested_private_nominal_literals` |
+| `t0406_should_ok` | `imported_families_preserve_recursive_arguments_in_top_level_aliases` |
+| `t0408_should_ok` | `exports_imported_namespace_as_a_semantic_module` |
+| `t0409_should_ok` | `exports_open_imported_locals_through_multihop_facades` |
+| `t0410_should_ok` | `exports_imported_opaque_types_with_provider_identity` |
+| `t0411_should_ok` | `imported_generic_apis_widen_singleton_fields_in_anonymous_records` |
+| `t0412_should_ok` | `reexported_families_preserve_provider_recursive_fields` |
+| `t0413_should_ok` | `generic_array_callbacks_preserve_recursive_nominal_items` |
+| `t0414_should_ok` | `imported_family_aliases_preserve_provider_local_concrete_arguments` |
 
 The pilot fixtures fully cover these tests:
 
@@ -78,6 +90,9 @@ an error path or an internal representation and are not yet replaceable:
 - `t0034_should_ok`: `logical_negation_executes_with_unary_precedence_and_dynamic_checks` (dynamic boundary errors remain in Rust)
 - `t0202_should_ok`: `fmt_display_uses_the_display_by_blanket_implementation` (direct property display is covered; blanket trait dispatch remains in Rust)
 - `t0203_should_ok`: `fmt_fragments_render_primitives_and_structured_concatenation` (invalid concat diagnostics remain in Rust)
+- `t0401_should_ok`: `parameterized_type_families_preserve_schemes_across_import_forms` (one re-exported selective form is covered)
+- `t0404_should_ok`: `equality_contextualizes_nominal_literals_in_both_operand_orders` (the distinct nominal rejection remains in Rust)
+- `t0407_should_ok`: `exports_imported_local_bindings_without_creating_local_aliases` (the invalid local alias diagnostic remains in Rust)
 - `t0100_should_ok`: `generic_definition_contracts_check_rigidly_and_instantiate_at_each_use`
 - `t0102_should_ok`: `contracted_definitions_preserve_generic_callback_result_precision`
 - `t0103_should_ok`, `t0104_should_ok`: `recursive_concrete_types_remain_strict_in_definition_contracts_and_families`

@@ -1,0 +1,3 @@
+import "@src/check/module-interfaces/first" {answer, identity as relay};
+
+export {answer, relay as identity};
