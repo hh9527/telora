@@ -1,0 +1,5 @@
+{
+  "name": "app",
+  "modules": ["@src/main"],
+  "dependencies": ["domain-method"]
+}

@@ -58,12 +58,10 @@ pub use json::{
 };
 pub use lexer::{FrontendError, SourceLocation};
 pub use module::{
-    ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildStdio,
-    ChildText, DataLimits, EesCall, EesReply, Engine, EngineBuilder, EngineConfig,
-    EntryDataSources, EvalContext, EvalSource, InstantiatedModule, LoadedModule,
-    LoadedOptionAction, ModuleError, PendingModule, RunHost, RunHostFuture, RunOutcome,
-    RunTermination, SpawnStdioChild, SystemCaps, SystemDataFormat, SystemDataSource, SystemEvent,
-    SystemStdin, SystemTextSource, evaluate_expression_module,
+    DataLimits, EesCall, EesReply, Engine, EngineBuilder, EngineConfig, EntryDataSources,
+    EvalContext, EvalSource, InstantiatedModule, LoadedModule, ModuleError, PendingModule, RunHost,
+    RunHostFuture, RunOutcome, RunTermination, SystemCaps, SystemDataFormat, SystemDataSource,
+    SystemEesModel, SystemEvent, SystemStdin, SystemTextSource, evaluate_expression_module,
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
@@ -72,7 +70,7 @@ pub use module_id::{
     ResolvedModule, TraitId, TraitImplId, TypeConstructorId, resolve_root_module,
 };
 pub use package::{
-    CONFIG_FILE, CRATE_FILE, CrateManifest, LOCK_FILE, LockedBinary, LockedPackage, LockedSource,
+    CONFIG_FILE, CRATE_FILE, CrateManifest, LOCK_FILE, LockedPackage, LockedSource,
     ModuleDeclaration, PackageError, RemoteSource, ResolvedWorkspace, UndeclaredModule,
     WorkspaceConfig, WorkspaceLock, WorkspaceSpec,
 };

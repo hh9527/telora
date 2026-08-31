@@ -854,36 +854,19 @@ export { private as visible, identity as map };"#,
     }
 
     #[test]
-    fn lowers_only_immediate_ordered_module_options() {
-        let program = parse(
-            "options.telora",
-            r#"option "module.documentation" {name: "tool"}; export def value = 0; option "module.documentation" 'Stable;"#,
-        )
-        .unwrap();
-        assert_eq!(program.value.options.len(), 2);
-        assert_eq!(program.value.options[0].key.value, "module.documentation");
+    fn option_is_an_identifier_not_a_declaration() {
+        let program = parse("identifier.telora", "let option = 1; option").unwrap();
         assert!(matches!(
-            program.value.options[0].value.value,
-            ExprKind::Dict(_)
+            program.value.body.value.result.value,
+            ExprKind::Variable(_)
         ));
-        assert!(matches!(
-            program.value.options[1].value.value,
-            ExprKind::Atom(_)
-        ));
-
-        for invalid in [
-            "@@manifest {}; export def value = 0;",
-            "option \"documentation\" {}; export def value = 0;",
-            "option \"module.documentation\" value; export def value = 0;",
-            "option \"module.documentation\" `tool-\\{value}`; export def value = 0;",
-            "option \"module.documentation\" {...value}; export def value = 0;",
-            "export def f = fn() { option \"module.documentation\" {}; 0 };",
-        ] {
-            assert!(
-                parse("invalid-option.telora", invalid).is_err(),
-                "{invalid}"
-            );
-        }
+        assert!(
+            parse(
+                "invalid-option.telora",
+                "option \"module.documentation\" {}; export def value = 0;"
+            )
+            .is_err()
+        );
     }
 
     #[test]

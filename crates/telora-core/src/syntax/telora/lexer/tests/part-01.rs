@@ -73,7 +73,7 @@
     }
 
     #[test]
-    fn option_is_contextual_before_a_string_key() {
+    fn option_is_an_ordinary_identifier() {
         let mut diagnostics = Vec::new();
         let (tokens, _) = tokenize(
             "let option = 1; option \"module.test\" {}; option",
@@ -83,9 +83,9 @@
             tokens
                 .iter()
                 .copied()
-                .filter(|token| matches!(token, Token::Option | Token::Identifier))
+                .filter(|token| matches!(token, Token::Identifier))
                 .collect::<Vec<_>>(),
-            vec![Token::Identifier, Token::Option, Token::Identifier]
+            vec![Token::Identifier, Token::Identifier, Token::Identifier]
         );
         assert!(diagnostics.is_empty());
     }

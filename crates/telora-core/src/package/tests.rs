@@ -24,7 +24,7 @@ fn fixture() -> PathBuf {
     .unwrap();
     fs::write(
         root.join("app").join(CRATE_FILE),
-        r#"{"name":"app","modules":["@src/model"],"dependencies":["model"]}"#,
+        r#"{"name":"app","modules":["@src/bin/main","@src/model"],"dependencies":["model"]}"#,
     )
     .unwrap();
     fs::write(
@@ -34,7 +34,7 @@ fn fixture() -> PathBuf {
     .unwrap();
     fs::write(
         root.join(LOCK_FILE),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"modules":["@src/model"],"dependencies":["model"]},"model":{"source":{"workspace":"model"},"modules":["@src/lib"],"dependencies":[]}},"binaries":{"app/main":{"root":"app","packages":["app","model"]}}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"modules":["@src/bin/main","@src/model"],"dependencies":["model"]},"model":{"source":{"workspace":"model"},"modules":["@src/lib"],"dependencies":[]}}}"#,
     )
     .unwrap();
     root
@@ -115,13 +115,13 @@ fn reports_files_absent_from_the_module_catalog() {
     assert_eq!(undeclared.len(), 1);
     assert_eq!(undeclared[0].selector, "@src/extra");
     fs::write(root.join("app/src/bin/extra.telora"), "0").unwrap();
-    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 1);
+    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 2);
     fs::create_dir_all(root.join("app/tests")).unwrap();
     fs::write(root.join("app/tests/extra.telora"), "0").unwrap();
-    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 1);
+    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 2);
     fs::create_dir_all(root.join("app/src/entry")).unwrap();
     fs::write(root.join("app/src/entry/extra.telora"), "0").unwrap();
-    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 1);
+    assert_eq!(workspace.undeclared_modules("app").unwrap().len(), 3);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -132,11 +132,6 @@ fn generates_and_atomically_writes_the_complete_workspace_lock() {
     let spec = WorkspaceSpec::discover(&root).unwrap();
     let lock = spec.generate_lock(&BTreeMap::new()).unwrap();
     assert_eq!(lock.packages.keys().collect::<Vec<_>>(), ["app", "model"]);
-    assert_eq!(lock.binaries["app/main"].root, "app");
-    assert_eq!(
-        lock.binaries["app/main"].packages,
-        ["app".to_owned(), "model".to_owned()]
-    );
     spec.write_lock(&lock).unwrap();
     assert_eq!(spec.validate_existing_lock().unwrap(), lock);
     assert!(

@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::module_id::{ModuleFormat, validate_crate_name, validate_module_filename};
+use crate::module_id::{ModuleFormat, validate_crate_name};
 
 pub const CONFIG_FILE: &str = "telora-config.json";
 pub const CRATE_FILE: &str = "telora-crate.json";
@@ -69,8 +69,6 @@ pub enum ModuleDeclarationKind {
 pub struct WorkspaceLock {
     pub version: u32,
     pub packages: BTreeMap<String, LockedPackage>,
-    #[serde(default)]
-    pub binaries: BTreeMap<String, LockedBinary>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -86,13 +84,6 @@ pub struct LockedPackage {
 pub enum LockedSource {
     Workspace { workspace: PathBuf },
     Tarball { tarball: String },
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct LockedBinary {
-    pub root: String,
-    pub packages: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -308,11 +299,9 @@ impl WorkspaceSpec {
                 )
             })
             .collect();
-        let binaries = binary_locks(&crates, &self.members)?;
         Ok(WorkspaceLock {
             version: 1,
             packages,
-            binaries,
         })
     }
 
@@ -633,12 +622,6 @@ fn validate_lock(lock: &WorkspaceLock, spec: &WorkspaceSpec) -> Result<(), Packa
         }
     }
     validate_locked_dependency_graph(&lock.packages)?;
-    let expected_binaries = binary_locks_from_packages(&lock.packages, &spec.members)?;
-    if lock.binaries != expected_binaries {
-        return Err(PackageError::new(format!(
-            "{LOCK_FILE} binary closures do not match workspace binaries"
-        )));
-    }
     Ok(())
 }
 
@@ -671,99 +654,6 @@ fn validate_locked_dependency_graph(
         visit(name, packages, &mut BTreeSet::new(), &mut visited)?;
     }
     Ok(())
-}
-
-fn binary_locks(
-    crates: &BTreeMap<String, ResolvedCrate>,
-    members: &BTreeMap<String, ResolvedCrate>,
-) -> Result<BTreeMap<String, LockedBinary>, PackageError> {
-    let packages = crates
-        .iter()
-        .map(|(name, package)| {
-            (
-                name.clone(),
-                LockedPackage {
-                    source: LockedSource::Workspace {
-                        workspace: PathBuf::new(),
-                    },
-                    modules: Vec::new(),
-                    dependencies: package.manifest.dependencies.clone(),
-                },
-            )
-        })
-        .collect();
-    binary_locks_from_packages(&packages, members)
-}
-
-fn binary_locks_from_packages(
-    packages: &BTreeMap<String, LockedPackage>,
-    members: &BTreeMap<String, ResolvedCrate>,
-) -> Result<BTreeMap<String, LockedBinary>, PackageError> {
-    let mut binaries = BTreeMap::new();
-    for (name, member) in members {
-        let directory = member.root.join("src/bin");
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(PackageError::new(format!(
-                    "cannot scan binary directory {}: {error}",
-                    directory.display()
-                )));
-            }
-        };
-        let mut names = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                PackageError::new(format!("cannot scan {}: {error}", directory.display()))
-            })?;
-            let path = entry.path();
-            if !entry
-                .file_type()
-                .map_err(|error| {
-                    PackageError::new(format!("cannot inspect {}: {error}", path.display()))
-                })?
-                .is_file()
-                || path.extension().and_then(|value| value.to_str()) != Some("telora")
-            {
-                continue;
-            }
-            validate_module_filename(&path)
-                .map_err(|error| PackageError::new(error.to_string()))?;
-            names.push(
-                path.file_stem()
-                    .and_then(|value| value.to_str())
-                    .ok_or_else(|| PackageError::new("binary name is not UTF-8"))?
-                    .to_owned(),
-            );
-        }
-        names.sort();
-        for binary in names {
-            let mut closure = BTreeSet::new();
-            collect_locked_closure(name, packages, &mut closure);
-            binaries.insert(
-                format!("{name}/{binary}"),
-                LockedBinary {
-                    root: name.clone(),
-                    packages: closure.into_iter().collect(),
-                },
-            );
-        }
-    }
-    Ok(binaries)
-}
-
-fn collect_locked_closure(
-    name: &str,
-    packages: &BTreeMap<String, LockedPackage>,
-    closure: &mut BTreeSet<String>,
-) {
-    if !closure.insert(name.to_owned()) {
-        return;
-    }
-    for dependency in &packages[name].dependencies {
-        collect_locked_closure(dependency, packages, closure);
-    }
 }
 
 fn installed_crate_root(root: &Path) -> Result<PathBuf, PackageError> {
@@ -936,9 +826,7 @@ fn collect_source_modules(
             PackageError::new(format!("cannot inspect {}: {error}", path.display()))
         })?;
         if file_type.is_dir() {
-            let special =
-                root == directory && matches!(entry.file_name().to_str(), Some("bin" | "entry"));
-            if recursive && !special {
+            if recursive {
                 collect_source_modules(root, &path, prefix, true, declared, crate_name, found)?;
             }
             continue;

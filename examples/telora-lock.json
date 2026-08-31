@@ -1,6 +1,17 @@
 {
   "version": 1,
   "packages": {
+    "app": {
+      "source": {
+        "workspace": "app"
+      },
+      "modules": [
+        "@src/main"
+      ],
+      "dependencies": [
+        "domain-method"
+      ]
+    },
     "domain-method": {
       "source": {
         "workspace": "domain-method"
@@ -9,82 +20,6 @@
         "@src/method"
       ],
       "dependencies": []
-    },
-    "gcc-toolchain-define": {
-      "source": {
-        "workspace": "gcc-wrapper/gcc-toolchain-define"
-      },
-      "modules": [
-        "@src/source.json"
-      ],
-      "dependencies": []
-    },
-    "gcc-wrapper": {
-      "source": {
-        "workspace": "gcc-wrapper/gcc-wrapper"
-      },
-      "modules": [
-        "@src/toolchain"
-      ],
-      "dependencies": [
-        "domain-method",
-        "toolchain-method"
-      ]
-    },
-    "gcc-wrapper-app": {
-      "source": {
-        "workspace": "gcc-wrapper/app"
-      },
-      "modules": [],
-      "dependencies": [
-        "domain-method",
-        "gcc-toolchain-define",
-        "gcc-wrapper",
-        "toolchain-method"
-      ]
-    },
-    "toolchain-method": {
-      "source": {
-        "workspace": "toolchain-method"
-      },
-      "modules": [
-        "@src/toolchain"
-      ],
-      "dependencies": [
-        "domain-method"
-      ]
-    }
-  },
-  "binaries": {
-    "gcc-wrapper-app/ar": {
-      "root": "gcc-wrapper-app",
-      "packages": [
-        "domain-method",
-        "gcc-toolchain-define",
-        "gcc-wrapper",
-        "gcc-wrapper-app",
-        "toolchain-method"
-      ]
-    },
-    "gcc-wrapper-app/g++": {
-      "root": "gcc-wrapper-app",
-      "packages": [
-        "domain-method",
-        "gcc-toolchain-define",
-        "gcc-wrapper",
-        "gcc-wrapper-app",
-        "toolchain-method"
-      ]
-    },
-    "gcc-wrapper-app/gcc": {
-      "root": "gcc-wrapper-app",
-      "packages": [
-        "domain-method",
-        "gcc-toolchain-define",
-        "gcc-wrapper",
-        "gcc-wrapper-app",
-        "toolchain-method"
-      ]
     }
   }
 }

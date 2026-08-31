@@ -726,7 +726,7 @@ type Independent = String;
         assert_eq!(events.len(), 5);
         assert_eq!(events[0].message.as_deref(), Some("loaded\nvalue"));
         assert_eq!(events[0].name, "data");
-        assert_eq!(events[0].module, "standalone/bin/main");
+        assert_eq!(events[0].module, "standalone/main");
         assert_eq!(events[0].line, 3);
         assert_eq!(
             events[0].repr,

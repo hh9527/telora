@@ -1,0 +1,7 @@
+import "std/value" {Value};
+import "domain-method/method" as method;
+
+export def answer: Value = 'String(method.or_else(
+    'Some("ready"),
+    fn() { "fallback" },
+));

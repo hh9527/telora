@@ -3,9 +3,6 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use crate::DataWorld;
-use crate::ast::{Expr, ExprKind};
-use crate::heap::{DecodedValue, Heap, Object, Val};
 use crate::package::{ModuleDeclarationKind, ResolvedWorkspace, WorkspaceSpec};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -184,8 +181,7 @@ impl From<TraitId> for TypeConstructorId {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ModuleCName {
     Source { owner: String, path: PathBuf },
-    Binary { owner: String, path: PathBuf },
-    Entry { owner: String, path: PathBuf },
+    Standalone { owner: String, path: PathBuf },
     Test { owner: String, path: PathBuf },
     Builtin(String),
     Dependency { name: String, path: PathBuf },
@@ -199,8 +195,7 @@ impl ModuleCName {
     pub fn owner(&self) -> &str {
         match self {
             Self::Source { owner, .. }
-            | Self::Binary { owner, .. }
-            | Self::Entry { owner, .. }
+            | Self::Standalone { owner, .. }
             | Self::Test { owner, .. } => owner,
             Self::Builtin(name) => name.split_once('/').map_or(name, |(owner, _)| owner),
             Self::Dependency { name, .. } => name,
@@ -212,8 +207,7 @@ impl fmt::Display for ModuleCName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Source { owner, path } => write!(formatter, "{owner}/{}", path.display()),
-            Self::Binary { owner, path } => write!(formatter, "{owner}/bin/{}", path.display()),
-            Self::Entry { owner, path } => write!(formatter, "{owner}/entry/{}", path.display()),
+            Self::Standalone { owner, path } => write!(formatter, "{owner}/{}", path.display()),
             Self::Test { owner, path } => write!(formatter, "{owner}/tests/{}", path.display()),
             Self::Builtin(name) => formatter.write_str(name),
             Self::Dependency { name, path } => write!(formatter, "{name}/{}", path.display()),
@@ -256,8 +250,6 @@ pub enum ResolveModuleError {
     CrateEscape(String),
     PrivateModuleAccess(String),
     PrivateModuleRoot,
-    EntryModuleAccess(String),
-    EntryModuleRoot,
     Manifest(String),
     Io(String),
 }
@@ -292,13 +284,6 @@ impl fmt::Display for ResolveModuleError {
             ),
             Self::PrivateModuleRoot => {
                 formatter.write_str("a private module cannot be used as the root module")
-            }
-            Self::EntryModuleAccess(request) => write!(
-                formatter,
-                "Entry module {request:?} can only be selected by the Host"
-            ),
-            Self::EntryModuleRoot => {
-                formatter.write_str("an entry module cannot be used as an ordinary root")
             }
             Self::Manifest(message) | Self::Io(message) => formatter.write_str(message),
         }
@@ -342,48 +327,21 @@ impl ModuleResolver {
             ResolveModuleError::InvalidImport("standalone root has no module file name".to_owned())
         })?;
         let canonical_name = canonical_path_for_physical(Path::new(name))?;
-        let mut resolver = Self {
-            crate_name: String::new(),
+        Ok(Self {
+            crate_name: "standalone".into(),
             standalone: true,
             workspace_root: workspace_root.clone(),
             source_root: workspace_root,
             root_path: root_path.clone(),
-            root_id: ModuleCName::Binary {
-                owner: String::new(),
-                path: canonical_name.clone(),
+            root_id: ModuleCName::Standalone {
+                owner: "standalone".into(),
+                path: canonical_name,
             },
             dependencies: BTreeMap::new(),
             builtins: BTreeMap::new(),
             selected_entry: None,
             workspace: None,
-        };
-        let source = root_source.map_or_else(
-            || {
-                std::fs::read_to_string(&root_path).map_err(|error| {
-                    ResolveModuleError::Io(format!("cannot read {}: {error}", root_path.display()))
-                })
-            },
-            Ok,
-        )?;
-        let mut sources = crate::SourceDatabase::default();
-        let source_id = sources.add(resolver.root_id.to_string(), source);
-        let parsed = crate::parser::parse_registered(&sources, source_id);
-        for option in parsed
-            .options
-            .iter()
-            .filter(|option| option.key.value.starts_with("crate."))
-        {
-            let value = immediate_value(&option.value)?;
-            resolver.apply_standalone_option(&option.key.value, value.value())?;
-        }
-        if resolver.crate_name.is_empty() {
-            resolver.crate_name = "standalone".into();
-        }
-        resolver.root_id = ModuleCName::Binary {
-            owner: resolver.crate_name.clone(),
-            path: canonical_name,
-        };
-        Ok(resolver)
+        })
     }
 
     pub fn from_cwd(cwd: &Path, root_id: &str) -> Result<Self, ResolveModuleError> {
@@ -413,8 +371,7 @@ impl ModuleResolver {
         let root_path = resolve_physical(&path)?;
         let expected_root = match &id {
             ModuleCName::Source { .. } => source_root.clone(),
-            ModuleCName::Binary { .. } => resolve_physical(&source_root.join("bin"))?,
-            ModuleCName::Entry { .. } => resolve_physical(&source_root.join("entry"))?,
+            ModuleCName::Standalone { .. } => source_root.clone(),
             ModuleCName::Test { .. } => resolve_physical(&crate_root.join("tests"))?,
             _ => crate_root.clone(),
         };
@@ -673,9 +630,6 @@ impl ModuleResolver {
                 path.display()
             )));
         }
-        if matches!(self.root_id, ModuleCName::Entry { .. }) {
-            return Err(ResolveModuleError::EntryModuleRoot);
-        }
         if is_private_file_name(&path) {
             return Err(ResolveModuleError::PrivateModuleRoot);
         }
@@ -704,12 +658,8 @@ impl ModuleResolver {
         }
         let privileged = self.selected_entry.as_ref() == Some(importer);
         if !target.starts_with(['.', '@']) && self.builtins.contains_key(target) {
-            match special_root_of_logical_name(target) {
-                Some("entry") => {
-                    return Err(ResolveModuleError::EntryModuleAccess(target.into()));
-                }
-                Some(_) => return Err(ResolveModuleError::InvalidImport(target.into())),
-                None => {}
+            if special_root_of_logical_name(target).is_some() {
+                return Err(ResolveModuleError::InvalidImport(target.into()));
             }
             if is_private_logical_name(target)
                 && !privileged
@@ -742,45 +692,22 @@ impl ModuleResolver {
                 physical_path: Some(self.root_path.clone()),
             });
         }
-        if let Some(path) = target.strip_prefix("@bin/") {
-            if !privileged {
-                return Err(ResolveModuleError::InvalidImport(target.into()));
-            }
-            let expected = match &self.root_id {
-                ModuleCName::Binary { path, .. } => path,
-                _ => return Err(ResolveModuleError::InvalidImport(target.into())),
-            };
-            if Path::new(path) == expected {
-                return Ok(ResolvedModule {
-                    id: self.root_id.clone(),
-                    format: self.format_for(&self.root_path)?,
-                    vendor: ModuleVendor::Configured,
-                    physical_path: Some(self.root_path.clone()),
-                });
-            }
-            return Err(ResolveModuleError::InvalidImport(target.into()));
-        }
         if target.starts_with("@test/") {
             return Err(ResolveModuleError::InvalidImport(target.into()));
-        }
-        if target.starts_with("@src/entry/") {
-            return Err(ResolveModuleError::EntryModuleAccess(target.into()));
         }
         if let Some(path) = target.strip_prefix("@src/") {
             return self.resolve_in_owner(importer, Path::new(path), target);
         }
         if target.starts_with("./") || target.starts_with("../") {
             return match importer {
-                ModuleCName::Binary { .. } if self.standalone => {
+                ModuleCName::Standalone { .. } if self.standalone => {
                     let logical = lexical_normalize_relative(Path::new(target))
                         .ok_or_else(|| ResolveModuleError::CrateEscape(target.into()))?;
                     self.resolve_source(logical, target)
                 }
-                ModuleCName::Binary { .. }
-                | ModuleCName::Entry { .. }
-                | ModuleCName::Test { .. } => {
+                ModuleCName::Standalone { .. } | ModuleCName::Test { .. } => {
                     return Err(ResolveModuleError::InvalidImport(format!(
-                        "{target}; binary and test roots must import crate sources with @src/..."
+                        "{target}; standalone and test roots must import crate sources with @src/..."
                     )));
                 }
                 ModuleCName::Source { path, .. } => {
@@ -812,26 +739,6 @@ impl ModuleResolver {
             if !privileged && importer.owner() != self.crate_name {
                 return Err(ResolveModuleError::PrivateModuleAccess(target.into()));
             }
-            if let Some(path) = path.strip_prefix("bin/") {
-                if !privileged {
-                    return Err(ResolveModuleError::PrivateModuleAccess(target.into()));
-                }
-                let ModuleCName::Binary { path: selected, .. } = &self.root_id else {
-                    return Err(ResolveModuleError::InvalidImport(target.into()));
-                };
-                if Path::new(path) != selected {
-                    return Err(ResolveModuleError::InvalidImport(target.into()));
-                }
-                return Ok(ResolvedModule {
-                    id: self.root_id.clone(),
-                    format: self.format_for(&self.root_path)?,
-                    vendor: ModuleVendor::Configured,
-                    physical_path: Some(self.root_path.clone()),
-                });
-            }
-            if path.starts_with("entry/") {
-                return Err(ResolveModuleError::EntryModuleAccess(target.into()));
-            }
             if path.starts_with("tests/") {
                 return Err(ResolveModuleError::InvalidImport(target.into()));
             }
@@ -841,124 +748,6 @@ impl ModuleResolver {
             self.ensure_dependency(importer.owner(), owner)?;
         }
         self.resolve_dependency(target, target, privileged || importer.owner() == owner)
-    }
-
-    pub fn resolve_entry(&self, target: &str) -> Result<ResolvedModule, ResolveModuleError> {
-        let (owner, selector, root) = if let Some(path) = target.strip_prefix("@src/entry/") {
-            (
-                self.crate_name.as_str(),
-                path,
-                self.source_root.join("entry"),
-            )
-        } else {
-            let (owner, path) = target.split_once("/entry/").ok_or_else(|| {
-                ResolveModuleError::InvalidImport(format!(
-                    "Entry selector {target:?} must be @src/entry/<name> or <crate>/entry/<name>"
-                ))
-            })?;
-            if self.builtin_owns(owner) {
-                return Err(ResolveModuleError::ModuleNotFound(target.into()));
-            }
-            let root = if owner == self.crate_name {
-                self.source_root.join("entry")
-            } else {
-                let dependency = self
-                    .dependencies
-                    .get(owner)
-                    .ok_or_else(|| ResolveModuleError::UnknownDependency(owner.into()))?;
-                let source = dependency.join("src");
-                if source.is_dir() {
-                    source
-                } else {
-                    dependency.clone()
-                }
-                .join("entry")
-            };
-            (owner, path, root)
-        };
-        if selector.contains('/') {
-            return Err(ResolveModuleError::InvalidImport(
-                "Entry roots support files only".into(),
-            ));
-        }
-        let (path, physical_path) = resolve_selector(&root, PathBuf::from(selector), target)?;
-        Ok(ResolvedModule {
-            id: ModuleCName::Entry {
-                owner: owner.to_owned(),
-                path,
-            },
-            format: ModuleFormat::Telora,
-            vendor: ModuleVendor::Configured,
-            physical_path: Some(physical_path),
-        })
-    }
-
-    fn apply_standalone_option(
-        &mut self,
-        key: &str,
-        value: crate::ValueRef<'_>,
-    ) -> Result<(), ResolveModuleError> {
-        match key {
-            "crate.name" => {
-                let name = value.as_str().ok_or_else(|| {
-                    ResolveModuleError::Manifest("option \"crate.name\" must be a String".into())
-                })?;
-                validate_crate_name(name.as_str())?;
-                if !self.crate_name.is_empty() {
-                    return Err(ResolveModuleError::Manifest(
-                        "option \"crate.name\" may be declared only once".into(),
-                    ));
-                }
-                self.crate_name = name.as_str().to_owned();
-            }
-            "crate.dependency" => {
-                if value.kind() != crate::ValueKind::Dict {
-                    return Err(ResolveModuleError::Manifest(
-                        "option \"crate.dependency\" must contain a Dict".into(),
-                    ));
-                }
-                let name = value
-                    .get("name")
-                    .and_then(crate::ValueRef::as_str)
-                    .map(|value| value.as_str().to_owned())
-                    .ok_or_else(|| {
-                        ResolveModuleError::Manifest(
-                            "crate.dependency field \"name\" must be a String".into(),
-                        )
-                    })?;
-                validate_crate_name(&name)?;
-                let source = value
-                    .get("source")
-                    .and_then(crate::ValueRef::tagged_parts)
-                    .filter(|(tag, _)| tag.as_atom().as_deref() == Some("Path"))
-                    .map(|(_, payload)| payload)
-                    .ok_or_else(|| {
-                        ResolveModuleError::Manifest(
-                            "crate.dependency field \"source\" must be 'Path({path: String})"
-                                .into(),
-                        )
-                    })?;
-                let path = source
-                    .get("path")
-                    .and_then(crate::ValueRef::as_str)
-                    .map(|value| value.as_str().to_owned())
-                    .ok_or_else(|| {
-                        ResolveModuleError::Manifest(
-                            "crate.dependency Path field \"path\" must be a String".into(),
-                        )
-                    })?;
-                if !self.dependencies.contains_key(&name) {
-                    let root = resolve_physical(&self.workspace_root.join(&path))?;
-                    self.dependencies.insert(name, root);
-                }
-            }
-            _ => {
-                return Err(ResolveModuleError::Manifest(format!(
-                    "unknown standalone resolver option {key:?}"
-                )));
-            }
-        }
-        Ok(())
     }
 
     fn resolve_dependency(
@@ -988,9 +777,7 @@ impl ModuleResolver {
             .ok_or_else(|| ResolveModuleError::CrateEscape(original.into()))?;
         match importer {
             ModuleCName::Source { .. } => self.resolve_source(path, original),
-            ModuleCName::Binary { owner, .. }
-            | ModuleCName::Entry { owner, .. }
-            | ModuleCName::Test { owner, .. } => {
+            ModuleCName::Standalone { owner, .. } | ModuleCName::Test { owner, .. } => {
                 if owner == &self.crate_name {
                     self.resolve_source(path, original)
                 } else {
@@ -1015,7 +802,6 @@ impl ModuleResolver {
         if !physical.starts_with(&self.source_root) || physical == self.root_path {
             return Err(ResolveModuleError::CrateEscape(original.into()));
         }
-        reject_special_source_path(&path, original)?;
         self.ensure_declared_source(&self.crate_name, &path, original)?;
         let id = ModuleCName::Source {
             owner: self.crate_name.clone(),
@@ -1051,7 +837,6 @@ impl ModuleResolver {
         if !physical.starts_with(&source_root) {
             return Err(ResolveModuleError::CrateEscape(original.into()));
         }
-        reject_special_source_path(&path, original)?;
         let private = is_private_module_path(&path);
         self.ensure_declared_source(name, &path, original)?;
         let id = ModuleCName::Dependency {
@@ -1235,39 +1020,8 @@ fn logical_root(
     if value.starts_with("@src/") {
         let selector = parse("@src/")?;
         let (path, physical) = resolve_selector(source_root, selector, value)?;
-        if path
-            .components()
-            .next()
-            .is_some_and(|part| part.as_os_str() == "bin")
-        {
-            return Err(ResolveModuleError::InvalidImport(value.into()));
-        }
-        if path
-            .components()
-            .next()
-            .is_some_and(|part| part.as_os_str() == "entry")
-        {
-            return Err(ResolveModuleError::EntryModuleRoot);
-        }
         return Ok((
             ModuleCName::Source {
-                owner: crate_name.to_owned(),
-                path: path.clone(),
-            },
-            physical,
-        ));
-    }
-    if value.starts_with("@bin/") {
-        let selector = parse("@bin/")?;
-        if selector.components().count() != 1 {
-            return Err(ResolveModuleError::InvalidImport(
-                "binary roots support files only".into(),
-            ));
-        }
-        let binary_root = source_root.join("bin");
-        let (path, physical) = resolve_selector(&binary_root, selector, value)?;
-        return Ok((
-            ModuleCName::Binary {
                 owner: crate_name.to_owned(),
                 path: path.clone(),
             },
@@ -1305,73 +1059,6 @@ pub fn resolve_root_module(path: &Path) -> Result<ResolvedModule, ResolveModuleE
     ModuleResolver::for_root(path)?.resolve_root(path)
 }
 
-pub(crate) fn immediate_value(expression: &Expr) -> Result<DataWorld, ResolveModuleError> {
-    fn lower(expression: &Expr, heap: &mut Heap) -> Result<Val, ResolveModuleError> {
-        let value = match &expression.value {
-            ExprKind::Int(value) => DecodedValue::Int(*value),
-            ExprKind::Float(value) if value.is_finite() => DecodedValue::Float(*value),
-            ExprKind::String(value) => heap.string(None, value.as_str()),
-            ExprKind::Atom(name) => heap.atom(None, name),
-            ExprKind::Array(values) => {
-                let values = values
-                    .iter()
-                    .map(|value| lower(value, heap))
-                    .collect::<Result<Vec<_>, _>>()?;
-                DecodedValue::Array(heap.allocate(Object::Array(values.into_boxed_slice())))
-            }
-            ExprKind::Dict(fields) => {
-                let mut entries = fields
-                    .iter()
-                    .map(|field| {
-                        lower(&field.value.value, heap).map(|value| {
-                            (
-                                field
-                                    .value
-                                    .name
-                                    .as_ref()
-                                    .expect("manifest fields have names")
-                                    .value
-                                    .clone(),
-                                value,
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                entries.sort_by(|left, right| left.0.cmp(&right.0));
-                let names = entries.iter().map(|(name, _)| heap.intern(name)).collect();
-                let values = entries
-                    .into_iter()
-                    .map(|(_, value)| value)
-                    .collect::<Vec<_>>();
-                let shape = heap.intern_shape(names);
-                DecodedValue::Dict(heap.allocate(Object::Dict {
-                    shape,
-                    values: values.into_boxed_slice(),
-                }))
-            }
-            ExprKind::Call { callee, arguments }
-                if matches!(callee.value, ExprKind::Atom(_)) && arguments.len() == 1 =>
-            {
-                let ExprKind::Atom(tag) = &callee.value else {
-                    unreachable!("guarded above")
-                };
-                let tag = Val::new(heap.atom(None, tag), Some(callee.location));
-                let payload = lower(&arguments[0], heap)?;
-                DecodedValue::Tagged(heap.allocate(Object::Tagged { tag, payload }))
-            }
-            _ => {
-                return Err(ResolveModuleError::Manifest(
-                    "option accepts only immediate values".into(),
-                ));
-            }
-        };
-        Ok(Val::new(value, Some(expression.location)))
-    }
-    let mut heap = Heap::work();
-    let root = lower(expression, &mut heap)?;
-    Ok(DataWorld::new(heap, root))
-}
-
 fn absolute_normalized(path: &Path) -> Result<PathBuf, ResolveModuleError> {
     if path.as_os_str().is_empty() {
         return Err(ResolveModuleError::EmptyPath);
@@ -1406,28 +1093,6 @@ fn module_id_for_physical_root(
     crate_name: &str,
 ) -> Result<(ModuleCName, bool), ResolveModuleError> {
     let tests_root = resolve_physical(&workspace_root.join("tests"))?;
-    let binary_root = resolve_physical(&source_root.join("bin"))?;
-    let entry_root = resolve_physical(&source_root.join("entry"))?;
-    if let Ok(path) = root.strip_prefix(&binary_root) {
-        let path = validate_special_root_relative(path, root, "binary")?;
-        return Ok((
-            ModuleCName::Binary {
-                owner: crate_name.to_owned(),
-                path: canonical_path_for_physical(&path)?,
-            },
-            true,
-        ));
-    }
-    if let Ok(path) = root.strip_prefix(&entry_root) {
-        let path = validate_special_root_relative(path, root, "Entry")?;
-        return Ok((
-            ModuleCName::Entry {
-                owner: crate_name.to_owned(),
-                path: canonical_path_for_physical(&path)?,
-            },
-            true,
-        ));
-    }
     if let Ok(path) = root.strip_prefix(&tests_root) {
         let path = validate_special_root_relative(path, root, "test")?;
         return Ok((
@@ -1440,15 +1105,6 @@ fn module_id_for_physical_root(
     }
     if let Ok(path) = root.strip_prefix(source_root) {
         let path = canonical_path_for_physical(&validate_root_relative(path, root)?)?;
-        if path
-            .components()
-            .next()
-            .is_some_and(|part| part.as_os_str() == "bin")
-        {
-            return Err(ResolveModuleError::InvalidImport(
-                root.display().to_string(),
-            ));
-        }
         return Ok((
             ModuleCName::Source {
                 owner: crate_name.to_owned(),
@@ -1505,25 +1161,13 @@ fn is_private_logical_name(name: &str) -> bool {
 fn special_root_of_logical_name(name: &str) -> Option<&str> {
     let (_, path) = name.split_once('/')?;
     match path.split('/').next() {
-        Some(root @ ("bin" | "entry" | "tests")) => Some(root),
+        Some(root @ "tests") => Some(root),
         _ => None,
     }
 }
 
 pub(crate) fn is_public_builtin_name(name: &str) -> bool {
     !is_private_module_path(Path::new(name)) && special_root_of_logical_name(name).is_none()
-}
-
-fn reject_special_source_path(path: &Path, original: &str) -> Result<(), ResolveModuleError> {
-    match path
-        .components()
-        .next()
-        .and_then(|part| part.as_os_str().to_str())
-    {
-        Some("entry") => Err(ResolveModuleError::EntryModuleAccess(original.into())),
-        Some("bin" | "tests") => Err(ResolveModuleError::InvalidImport(original.into())),
-        _ => Ok(()),
-    }
 }
 
 fn is_private_module_path(path: &Path) -> bool {

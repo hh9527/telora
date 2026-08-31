@@ -121,7 +121,7 @@
         let rule_location = failure.rule_location().expect("codec rule location");
         assert_eq!(
             module.sources.get(rule_location.source).name.as_ref(),
-            "standalone/bin/main"
+            "standalone/main"
         );
         assert!(
             module
@@ -356,7 +356,7 @@
         assert!(
             callback
                 .to_string()
-                .contains("standalone/bin/callback:1:")
+                .contains("standalone/callback:1:")
         );
         assert!(
             callback
@@ -439,7 +439,7 @@
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(appended.contains("standalone/bin/main:6:"), "{appended}");
+        assert!(appended.contains("standalone/main:6:"), "{appended}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -693,7 +693,7 @@
             .unwrap_err()
             .with_sources(&module.sources)
             .to_string();
-        assert!(failure.contains("standalone/bin/main:6:"), "{failure}");
+        assert!(failure.contains("standalone/main:6:"), "{failure}");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -878,6 +878,7 @@
             directory.join("main.telora"),
             r#"import "std/dict" as dicts;
                let source = { z: 3, a: 1, middle: 2 };
+               let empty: Array(Tuple([String, Int])) = [];
                {
                    keys: dicts.keys(source),
                    values: dicts.values(source),
@@ -889,7 +890,7 @@
                    ),
                    empty_keys: dicts.keys({}),
                    empty_pairs: dicts.pairs({}),
-                   empty_from_pairs: dicts.from_pairs([]),
+                   empty_from_pairs: dicts.from_pairs(empty),
                }"#,
         )
         .unwrap();

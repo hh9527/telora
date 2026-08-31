@@ -62,12 +62,6 @@ impl WorkspaceBuilder<'_> {
             };
             let source_id = self.sources.add_document(key.clone(), source);
             let parsed = parse_registered(&self.sources, source_id);
-            let invalid_scoped_options = parsed
-                .options
-                .iter()
-                .filter(|_| !self.resolver.is_root(&module_id))
-                .cloned()
-                .collect::<Vec<_>>();
             let program = parsed.program.clone();
             let imports = parsed
                 .recovered
@@ -100,15 +94,6 @@ impl WorkspaceBuilder<'_> {
             let mut open_candidates: BTreeMap<String, Vec<WorkspaceOpenImportCandidate>> =
                 BTreeMap::new();
             let mut diagnostics = Vec::new();
-            for option in &invalid_scoped_options {
-                diagnostics.push(Diagnostic::error(
-                    format!(
-                        "option {:?} is only allowed in the selected root",
-                        option.key.value
-                    ),
-                    option.location,
-                ));
-            }
             if vendor == ModuleVendor::Configured
                 && let Some(binding) = program.as_ref().and_then(|program| {
                     program.value.body.value.bindings.iter().find(|binding| {
@@ -429,10 +414,7 @@ impl WorkspaceBuilder<'_> {
                 .modules
                 .id(&module_id)
                 .unwrap_or(ModuleId::ANONYMOUS);
-            let evaluated = if self.cycle_members.contains(&module_id)
-                || !invalid_scoped_options.is_empty()
-                || missing_exports
-            {
+            let evaluated = if self.cycle_members.contains(&module_id) || missing_exports {
                 ModuleEvaluation::default()
             } else {
                 program

@@ -1,5 +1,0 @@
-{
-  "name": "gcc-toolchain-define",
-  "modules": ["@src/source.json"],
-  "dependencies": []
-}

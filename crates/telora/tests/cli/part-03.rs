@@ -108,16 +108,20 @@ fn run_with_sqlite_query_actor_drives_an_ees_call() {
         .unwrap();
     drop(connection);
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
+import "std/entry" as entry;
 import "std/sqlite-query" as sqlite;
-import "std/value" {Value};
 
-option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,31}"};
-option "ees.sqlite" {name: "catalog", path: "user-data:{tenant}/catalog.sqlite"};
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def ees: entry.Ees = {
+    vars: {"tenant": "[a-z][a-z0-9-]{0,31}"},
+    models: [sqlite.model("catalog", "user-data:{tenant}/catalog.sqlite")],
+};
 
 type State = enum {'Ready, 'Waiting};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+export def run = entry.run(config, ees, fn(ctx) {
+    let initial: State = 'Ready;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             ('Ready, 'Request(request)) => (
@@ -135,12 +139,18 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             _ => fail!("unexpected actor event", state, event),
         }
     };
-    actor.service(State, 'Ready, reduce)
-};"#,
+    (initial, reduce)
+});"#,
     )
     .unwrap();
+    refresh_fixture_workspace(&cwd);
     let output = telora(&cwd)
-        .args(["run", "main", "--ees-var", "tenant=hello"])
+        .args([
+            "run",
+            "@src/app:run",
+            "--ees-var",
+            "tenant=hello",
+        ])
         .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();
@@ -171,13 +181,14 @@ fn run_actor_can_sequence_multiple_ees_replies_through_explicit_state() {
         .unwrap();
     drop(connection);
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
+import "std/entry" as entry;
 import "std/sqlite-query" as sqlite;
-import "std/value" {Value};
-option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def ees: entry.Ees = {vars: {}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]};
 type State = enum {'Ready, 'WaitingFirst(String), 'WaitingSecond(String)};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+export def run = entry.run(config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             ('Ready, 'Request(request)) => (
@@ -199,13 +210,14 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             _ => fail!("unexpected actor event", state, event),
         }
     };
-    actor.service(State, 'Ready, reduce)
-};"#,
+    let initial: State = 'Ready;
+    (initial, reduce)
+});"#,
     )
     .unwrap();
 
     let output = telora(&cwd)
-        .args(["run", "main"])
+        .args(["run", "@src/app:run"])
         .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();
@@ -245,14 +257,15 @@ fn run_actor_rejects_duplicate_call_ids_and_reply_with_active_calls() {
         ),
     ] {
         fs::write(
-            cwd.join("src/bin/main.telora"),
+            cwd.join("src/app.telora"),
             format!(
                 r#"import "std/actor" as actor;
+import "std/entry" as entry;
 import "std/sqlite-query" as sqlite;
-import "std/value" {{Value}};
-option "ees.sqlite" {{name: "catalog", path: "user-data:catalog.sqlite"}};
+def config: entry.ContextConfig = {{sources: [], envs: [], args: 'False}};
+def ees: entry.Ees = {{vars: {{}}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]}};
 type State = struct {{}};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {{
+export def run = entry.run(config, ees, fn(ctx) {{
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {{
         match event {{
             'Request(request) => {{
@@ -262,13 +275,13 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {{
             'EesReply(_) => fail!("unexpected EES reply"),
         }}
     }};
-    actor.service(State, {{}}, reduce)
-}};"#
+    ({{}}, reduce)
+}});"#
             ),
         )
         .unwrap();
         let output = telora(&cwd)
-            .args(["run", "main"])
+            .args(["run", "@src/app:run"])
             .env("XDG_DATA_HOME", &data)
             .output()
             .unwrap();
@@ -289,32 +302,36 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {{
 fn ees_variables_are_declared_required_and_fully_matched() {
     let cwd = fixture();
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
-import "std/value" {Value};
-
-option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,7}"};
-option "ees.sqlite" {name: "catalog", path: "user-data:{tenant}/catalog.sqlite"};
+import "std/entry" as entry;
+import "std/sqlite-query" as sqlite;
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def ees: entry.Ees = {
+    vars: {"tenant": "[a-z][a-z0-9-]{0,7}"},
+    models: [sqlite.model("catalog", "user-data:{tenant}/catalog.sqlite")],
+};
 
 type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+export def run = entry.run(config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'None)]),
             'EesReply(_) => fail!("unexpected EES reply"),
         }
     };
-    actor.service(State, {}, reduce)
-};"#,
+    ({}, reduce)
+});"#,
     )
     .unwrap();
 
-    let missing = telora(&cwd).args(["run", "main"]).output().unwrap();
+    refresh_fixture_workspace(&cwd);
+    let missing = telora(&cwd).args(["run", "@src/app:run"]).output().unwrap();
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("were not provided"));
 
     let invalid = telora(&cwd)
-        .args(["run", "main", "--ees-var", "tenant=INVALID"])
+        .args(["run", "@src/app:run", "--ees-var", "tenant=INVALID"])
         .output()
         .unwrap();
     assert!(!invalid.status.success());
@@ -323,7 +340,7 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
     let unknown = telora(&cwd)
         .args([
             "run",
-            "main",
+            "@src/app:run",
             "--ees-var",
             "tenant=hello",
             "--ees-var",
@@ -348,16 +365,16 @@ fn serve_with_sqlite_query_actor_correlates_concurrent_calls() {
         .unwrap();
     drop(connection);
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
 import "std/array" as array;
+import "std/entry" as entry;
 import "std/sqlite-query" as sqlite;
-import "std/value" {Value};
-
-option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def ees: entry.Ees = {vars: {}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]};
 
 type State = struct {pending: Array(String)};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+export def serve = entry.serve(config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => {
@@ -383,14 +400,14 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             },
         }
     };
-    actor.service(State, {pending: []}, reduce)
-};"#,
+    ({pending: []}, reduce)
+});"#,
     )
     .unwrap();
     let mut child = telora(&cwd)
         .args([
             "serve",
-            "main",
+            "@src/app:serve",
             "--bind",
             "stdio://",
         ])
@@ -444,22 +461,20 @@ fn application_imos_actor_with_package_name_stays_in_its_bound_root() {
     )
     .unwrap();
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
 import "std/dict" as dict;
+import "std/entry" as entry;
 import "std/imos" as imos;
-import "std/value" {Value};
-
-option "run-ctx.sources" ["plan"];
-option "ees.imos" {
-    name: "telora-packages",
-    home: "user-data:home",
-    store: "user-cache:store",
+def config: entry.ContextConfig = {sources: ["plan"], envs: [], args: 'False};
+def ees: entry.Ees = {
+    vars: {},
+    models: [imos.model("telora-packages", "user-cache:store", "user-data:home")],
 };
 
 type State = enum {'Ready, 'Waiting};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
-    let plan = match dict.get(sources, "plan") {
+export def run = entry.run(config, ees, fn(ctx) {
+    let plan = match dict.get(ctx.sources, "plan") {
         'Some(value) => value,
         'None => fail!("missing plan"),
     };
@@ -480,14 +495,15 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             _ => fail!("unexpected actor event", state, event),
         }
     };
-    actor.service(State, 'Ready, reduce)
-};"#,
+    let initial: State = 'Ready;
+    (initial, reduce)
+});"#,
     )
     .unwrap();
     let output = telora(&cwd)
         .args([
             "run",
-            "main",
+            "@src/app:run",
             "--source",
             &format!("plan={}", plan.display()),
         ])
@@ -518,13 +534,15 @@ fn application_cannot_address_the_package_actor_without_its_own_binding() {
     let database = data.join("catalog.sqlite");
     rusqlite::Connection::open(&database).unwrap();
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
+import "std/entry" as entry;
 import "std/imos" as imos;
-import "std/value" {Value};
-option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
+import "std/sqlite-query" as sqlite;
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def ees: entry.Ees = {vars: {}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]};
 type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+export def run = entry.run(config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (
@@ -538,12 +556,12 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             'EesReply(reply) => (state, [actor.reply(reply.request_id, 'None)]),
         }
     };
-    actor.service(State, {}, reduce)
-};"#,
+    ({}, reduce)
+});"#,
     )
     .unwrap();
     let output = telora(&cwd)
-        .args(["run", "main"])
+        .args(["run", "@src/app:run"])
         .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();

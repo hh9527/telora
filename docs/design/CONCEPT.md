@@ -150,35 +150,30 @@ service、credential 和其他效果的外部环境。只有 Host 与它交互�
 
 ### Host
 
-**Host** 嵌入 Telora。它选择输入和预算、选择 trusted entry、初始化 closed world、
+**Host** 嵌入 Telora。它选择输入和预算、选择工具 adapter、初始化 closed world、
 校验输出、拥有诊断展示，并决定 artifact 是否可以影响 open world。
 
 Host 是权限边界，不只是 foreign-function interface。
 
 ### Main
 
-**Main** 是一次 Host 调用所选择的普通封闭 module graph。除非 Host 在冻结前把信息
+**Application export** 是一次 Host 调用所选择的普通封闭 module graph 中的公开值。除非 Host 在冻结前把信息
 显式准备成输入值或静态数据模块，否则 Main 不能观察 Host facility。
 
 ### Entry
 
-**Entry** 是面向特定协议、由 Host 显式选择的纯 orchestration。它先在准备
-WorkWorld 中声明环境诉求与 Main 类型，再由 Host 初始化、校验并冻结 MainWorld；
-随后在新的 WorkWorld 中以 opaque State、SystemEvent 和 SystemEffect 驱动运行。
-Main 不能 import Entry 的私有协议面，Entry 描述 effect 但不执行 effect。
+**Entry wrapper** 是普通模块构造的名义值。`entry.Eval`、`entry.Run(State)` 和
+`entry.Serve(State)` 把 Context 契约、EES 声明、初始化函数与具体 State 类型保留到
+工具阶段。Host 解析 `MODULE:EXPORT` 后按 wrapper 类型选择内置 adapter；adapter 描述
+effect orchestration，Host 执行 effect。
 
-Entry 位于 crate 的 `src/entry/<name>.telora`，并由 Host 以 `@src/entry/<name>`
-显式选择。文件 stem 以 `_` 开头的模块是 private，只能由同 crate 模块或被选中的
-Entry 访问；该规则只由 module resolver 执行。Entry 可以 resolve 当前依赖图中的全部
-模块，但它的权限不传递给被导入模块。只有内置 `std` crate 可以声明 native symbol。
-
-`run` 和 `serve` 选择内置或用户 Entry。`eval`、`eval-with`、`check`、`query` 和 LSP
-使用 Host 固定的工具路径；其中 `eval` 与 `eval-with` 只做纯 module 求值和普通函数调用。
-CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect。
+文件 stem 以 `_` 开头的模块是 private，只能由同 crate 模块访问；该规则由 module
+resolver 执行。内置工具 adapter 可以访问 `std/_...` 内部协议模块。只有内置 `std`
+crate 可以声明 native symbol。
 
 ### Actor Service
 
-**Actor Service** 是应用在 `run` 与 `serve` 中导出的单 actor 状态机。它由一个显式
+**Actor Service** 是 `Run(State)` 或 `Serve(State)` 初始化出的单 actor 状态机。它由一个显式
 State 和一个 `reduce(State, Event) -> (State, Array(Effect))` reducer 组成。每次成功
 transition 返回完整新 State；Event 与 Effect 都是一阶数据，不携带 callback 或
 continuation。
@@ -190,9 +185,9 @@ EES actor；其中的多个命名 native model 只执行 reducer 发出的 `EesC
 
 ### Pure Eval
 
-**Pure Eval** 是不经过 Entry 或 effect system 的导出求值。`eval` 读取一个 `Value`
-导出；`eval-with` 调用一次接收 `{sources, env, args}` 的函数并要求返回 `Value`。
-source 与环境变量由 module option 显式声明，调用开始前形成封闭输入。
+**Pure Eval** 是不经过 reducer/effect loop 的导出求值。`eval` 读取一个 `Value` 导出；
+`eval-with` 调用一个 `entry.Eval`。source、环境变量和参数能力由 wrapper 中的
+`ContextConfig` 声明，调用开始前形成封闭输入。
 
 ### Freeze 与 Publication
 
@@ -241,7 +236,7 @@ resolver 按 vendor 顺序注册 crate，并以 crate 为颗粒采用 first-win�
 **Workspace config** 为 workspace 中的每个 crate name 选择唯一 source：workspace
 member 或确定的远程 tarball。**Crate manifest** 声明 crate 的 canonical name、权威
 普通 module catalog 和直接 dependency names。**Workspace lock** 固定完整精确 package
-graph 和每个 binary 的 crate closure；除显式 lock 操作外，Host 只验证和消费它。
+graph；除显式 lock 操作外，Host 只验证和消费它。
 
 **Package preparation** 是 resolver 之前的 Host 阶段。它验证 config 与 lock、通过内嵌
 `telora-ees` 的 IMOS component 物化远程 source、校验物化 manifest，并产生一次命令
@@ -253,9 +248,9 @@ identity。
 root；`sqlite-query` actor 对一个只读数据库执行带 positional JSON scalar bindings 的
 `Query`。operation 只能选择 manifest 中已有的逻辑名称，不能选择物理资源。
 
-Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 Main 以
-`ees.imos` 和 `ees.sqlite` option 声明另一个 Service；Host 校验 `ees.vars` 与
-`--ees-var` bindings 后构造 actor，并把 name-to-kind 清单作为 Entry capability。
+Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 wrapper 以
+`entry.Ees` 声明另一个 Service；Host 校验 `entry.Ees.vars` 与 `--ees-var` bindings 后
+构造 actor，并把 name-to-kind 清单作为 Entry capability。
 `user-*:` locator 是 component 解释的用户资源位置，物理路径不进入 Telora World。
 两个 Service 的名称空间、资源和生命周期隔离；应用不能发现或调用 package Service。
 Telora 工具链和 `telora-core` 不依赖 component 内部类型。

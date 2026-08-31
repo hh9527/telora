@@ -51,7 +51,7 @@
                 ("std/string".to_owned(), 1),
                 ("std/_rt".to_owned(), 2),
                 ("std/_host".to_owned(), 3),
-                ("std/entry/default".to_owned(), 4),
+                ("std/_entry-default".to_owned(), 4),
             ],
         )
         .unwrap();
@@ -64,8 +64,12 @@
             by_name.keys().map(String::as_str).collect::<Vec<_>>(),
             [
                 "app/_rules",
+                "app/bin/tool",
+                "app/entry/serve",
                 "app/lib",
                 "app/schema.json",
+                "dep/bin/tool",
+                "dep/entry/serve",
                 "dep/public",
                 "std/string",
             ]
@@ -142,7 +146,7 @@
             ],
         );
 
-        let entry = ModuleCName::builtin("std/entry/default");
+        let entry = ModuleCName::builtin("std/_entry-default");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_builtins([
@@ -243,7 +247,7 @@
             &[("app", "app", &["parser"]), ("dependency", "parser", &[])],
         );
 
-        let entry = ModuleCName::builtin("std/entry/default");
+        let entry = ModuleCName::builtin("std/_entry-default");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_builtins([("std/_rt".to_owned(), 26)])
@@ -251,9 +255,9 @@
         let root = resolver.resolve_root(&main).unwrap();
         assert_eq!(
             root.id,
-            ModuleCName::Binary {
+            ModuleCName::Source {
                 owner: "app".into(),
-                path: PathBuf::from("tool"),
+                path: PathBuf::from("bin/tool"),
             }
         );
         assert_eq!(root.to_string(), "app/bin/tool");
@@ -262,11 +266,7 @@
             .resolve_import(&root.id, "@src/model/a")
             .unwrap();
         assert_eq!(local.to_string(), "app/model/a");
-        assert!(matches!(
-            resolver.resolve_import(&root.id, "./model/a"),
-            Err(ResolveModuleError::InvalidImport(message))
-                if message.contains("binary and test roots must import crate sources with @src/...")
-        ));
+        assert!(resolver.resolve_import(&root.id, "./model/a").is_err());
 
         let dependency = resolver
             .resolve_import(&root.id, "parser/model/a")
@@ -283,16 +283,13 @@
             resolver.resolve_import(&local.id, "@bin/tool"),
             Err(ResolveModuleError::InvalidImport(_))
         ));
-        assert_eq!(entry.to_string(), "std/entry/default");
+        assert_eq!(entry.to_string(), "std/_entry-default");
         assert_eq!(
             resolver
-                .resolve_import(&entry, "@bin/tool")
+                .resolve_import(&entry, "app/bin/tool")
                 .unwrap()
                 .id,
-            ModuleCName::Binary {
-                owner: "app".into(),
-                path: PathBuf::from("tool"),
-            }
+            root.id
         );
         assert_eq!(
             resolver
@@ -346,35 +343,32 @@
         );
 
         let main = app.join("src/bin/main.telora");
-        let selected_entry = ModuleCName::Entry {
-            owner: "app".into(),
-            path: "tool".into(),
-        };
+        let selected_entry = ModuleCName::builtin("std/_entry-default");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
-            .with_builtins([("std/entry/default".to_owned(), 1)])
+            .with_builtins([("std/_entry-default".to_owned(), 1)])
             .with_entry_context(selected_entry.clone());
         let library = ModuleCName::Source {
             owner: "app".into(),
             path: "lib".into(),
         };
 
+        assert_eq!(
+            resolver.resolve_import(&library, "./entry/tool").unwrap().id.to_string(),
+            "app/entry/tool"
+        );
+        assert_eq!(
+            resolver.resolve_import(&library, "dep/entry/tool").unwrap().id.to_string(),
+            "dep/entry/tool"
+        );
         assert!(matches!(
-            resolver.resolve_import(&library, "./entry/tool"),
-            Err(ResolveModuleError::EntryModuleAccess(_))
+            resolver.resolve_import(&library, "std/_entry-default"),
+            Err(ResolveModuleError::PrivateModuleAccess(_))
         ));
-        assert!(matches!(
-            resolver.resolve_import(&library, "dep/entry/tool"),
-            Err(ResolveModuleError::EntryModuleAccess(_))
-        ));
-        assert!(matches!(
-            resolver.resolve_import(&library, "std/entry/default"),
-            Err(ResolveModuleError::EntryModuleAccess(_))
-        ));
-        assert!(matches!(
-            resolver.resolve_import(&selected_entry, "app/bin/other"),
-            Err(ResolveModuleError::InvalidImport(_))
-        ));
+        assert_eq!(
+            resolver.resolve_import(&selected_entry, "app/bin/other").unwrap().id.to_string(),
+            "app/bin/other"
+        );
         assert_eq!(
             resolver
                 .resolve_import(&selected_entry, "app/bin/main")
@@ -384,33 +378,19 @@
             "app/bin/main"
         );
 
-        let dependency_entry = resolver.resolve_entry("dep/entry/tool").unwrap();
-        let dependency_resolver = resolver
-            .clone()
-            .with_entry_context(dependency_entry.id.clone());
-        assert_eq!(
-            dependency_resolver
-                .resolve_import(&dependency_entry.id, "@src/helper")
-                .unwrap()
-                .id
-                .to_string(),
-            "dep/helper"
-        );
-
-        for selector in ["@bin/nested/tool", "@test/nested/query"] {
-            assert!(matches!(
-                ModuleResolver::from_cwd(&app, selector),
-                Err(ResolveModuleError::InvalidImport(message)) if message.contains("files only")
-            ));
-        }
         assert!(matches!(
-            ModuleResolver::for_root(&app.join("src/entry/nested/tool.telora")),
+            ModuleResolver::from_cwd(&app, "@bin/nested/tool"),
+            Err(ResolveModuleError::InvalidImport(_))
+        ));
+        assert!(matches!(
+            ModuleResolver::from_cwd(&app, "@test/nested/query"),
             Err(ResolveModuleError::InvalidImport(message)) if message.contains("files only")
         ));
+        assert!(ModuleResolver::for_root(&app.join("src/entry/nested/tool.telora")).is_ok());
 
         let catalog = ModuleResolver::catalog_from_cwd(
             &app,
-            [("std/entry/default".to_owned(), 1)],
+            [("std/_entry-default".to_owned(), 1)],
         )
         .unwrap();
         assert_eq!(
@@ -418,7 +398,16 @@
                 .into_iter()
                 .map(|module| module.id.to_string())
                 .collect::<Vec<_>>(),
-            ["app/lib", "dep/helper"]
+            [
+                "app/bin/main",
+                "app/bin/nested/tool",
+                "app/bin/other",
+                "app/entry/nested/tool",
+                "app/entry/tool",
+                "app/lib",
+                "dep/entry/tool",
+                "dep/helper",
+            ]
         );
 
         std::fs::remove_dir_all(temporary).unwrap();
@@ -450,7 +439,7 @@
         .unwrap();
 
         assert!(matches!(
-            ModuleResolver::from_cwd(&app, "@bin/escape"),
+            ModuleResolver::from_cwd(&app, "@src/bin/escape"),
             Err(ResolveModuleError::CrateEscape(_))
         ));
         assert!(matches!(
@@ -467,7 +456,7 @@
         std::fs::create_dir_all(temporary.join("app/sub")).unwrap();
         let main = temporary.join("app/main.telora");
         let data = temporary.join("app/data.json");
-        std::fs::write(&main, "option \"crate.name\" \"app\"; 0").unwrap();
+        std::fs::write(&main, "0").unwrap();
         std::fs::write(&data, "{}").unwrap();
         let resolver = ModuleResolver::for_root(&main).unwrap();
         let root = resolver.resolve_root(&main).unwrap();
@@ -496,36 +485,8 @@
         let resolver = ModuleResolver::standalone(&root).unwrap();
         assert_eq!(
             resolver.selected_root().unwrap().id.to_string(),
-            "standalone/bin/main"
+            "standalone/main"
         );
-
-        std::fs::remove_dir_all(temporary).unwrap();
-    }
-
-    #[test]
-    fn standalone_overlay_options_build_the_complete_resolve_graph() {
-        let temporary = std::env::temp_dir().join(format!(
-            "telora-standalone-overlay-test-{}",
-            std::process::id()
-        ));
-        let dependency = temporary.join("dep");
-        std::fs::create_dir_all(&dependency).unwrap();
-        std::fs::write(dependency.join("value.telora"), "export def value = 42;").unwrap();
-        let root = temporary.join("main.telora");
-        let source = crate::DocumentText::new(
-            r#"option "crate.name" "standalone";
-option "crate.dependency" {name: "dep", source: 'Path({path: "dep"})};
-import "dep/value" {value};
-export {value};"#,
-        );
-
-        let resolver = ModuleResolver::for_root_with_source(&root, &source).unwrap();
-        let selected = resolver.resolve_root(&root).unwrap();
-        assert_eq!(selected.id.to_string(), "standalone/bin/main");
-        let imported = resolver.resolve_import(&selected.id, "dep/value").unwrap();
-        assert_eq!(imported.id.to_string(), "dep/value");
-        let expected = std::fs::canonicalize(dependency.join("value.telora")).unwrap();
-        assert_eq!(imported.path(), Some(expected.as_path()));
 
         std::fs::remove_dir_all(temporary).unwrap();
     }
@@ -536,14 +497,10 @@ export {value};"#,
             "telora-standalone-relative-import-test-{}",
             std::process::id()
         ));
-        let dependency = temporary.join("dep");
         std::fs::create_dir_all(temporary.join("nested")).unwrap();
-        std::fs::create_dir_all(dependency.join("sub")).unwrap();
         std::fs::write(temporary.join("main.telora"), "0").unwrap();
         std::fs::write(temporary.join("nested/first.telora"), "0").unwrap();
         std::fs::write(temporary.join("nested/second.telora"), "0").unwrap();
-        std::fs::write(dependency.join("sub/first.telora"), "0").unwrap();
-        std::fs::write(dependency.join("sub/second.telora"), "0").unwrap();
 
         let resolver = ModuleResolver::standalone(&temporary.join("main.telora"))
             .unwrap()
@@ -559,42 +516,20 @@ export {value};"#,
             .unwrap();
         assert_eq!(nested.id.to_string(), "standalone/nested/second");
 
-        let source = crate::DocumentText::new(
-            r#"option "crate.dependency" {name: "dep", source: 'Path({path: "dep"})}; 0"#,
-        );
-        let resolver = ModuleResolver::for_root_with_source(&temporary.join("main.telora"), &source)
-            .unwrap();
-        let dependency_module = resolver
-            .resolve_import(
-                &ModuleCName::Dependency {
-                    name: "dep".into(),
-                    path: PathBuf::from("sub/first"),
-                },
-                "./second",
-            )
-            .unwrap();
-        assert_eq!(dependency_module.id.to_string(), "dep/sub/second");
-
         std::fs::remove_dir_all(temporary).unwrap();
     }
 
     #[test]
-    fn crate_sources_are_unique_and_standalone_registration_is_first_win() {
+    fn crate_sources_are_unique_and_builtin_registration_is_first_win() {
         assert!(validate_crate_name("std").is_ok());
         let temporary = std::env::temp_dir().join(format!(
             "telora-crate-owner-collision-test-{}",
             std::process::id()
         ));
         let app = temporary.join("app");
-        let dependency = temporary.join("dependency");
-        let second_dependency = temporary.join("second-dependency");
         std::fs::create_dir_all(app.join("src")).unwrap();
-        std::fs::create_dir_all(&dependency).unwrap();
-        std::fs::create_dir_all(&second_dependency).unwrap();
         std::fs::write(app.join("src/main.telora"), "0").unwrap();
         std::fs::write(app.join("src/value.telora"), "0").unwrap();
-        std::fs::write(dependency.join("value.telora"), "0").unwrap();
-        std::fs::write(second_dependency.join("value.telora"), "0").unwrap();
         write_test_workspace(&temporary, &[("app", "app", &[])]);
         let resolver = ModuleResolver::for_root(&app.join("src/main.telora")).unwrap();
         let root = resolver.selected_root().unwrap();
@@ -603,34 +538,6 @@ export {value};"#,
         assert_eq!(
             selected.path().unwrap(),
             std::fs::canonicalize(app.join("src/value.telora"))
-                .unwrap()
-                .as_path()
-        );
-
-        std::fs::remove_file(temporary.join(crate::package::CONFIG_FILE)).unwrap();
-        std::fs::remove_file(temporary.join(crate::package::LOCK_FILE)).unwrap();
-        std::fs::write(temporary.join("value.telora"), "0").unwrap();
-        let source = crate::DocumentText::new(
-            r#"option "crate.dependency" {name: "dep", source: 'Path({path: "dependency"})};
-option "crate.dependency" {name: "dep", source: 'Path({path: "second-dependency"})};
-option "crate.dependency" {name: "standalone", source: 'Path({path: "dependency"})}; 0"#,
-        );
-        let resolver =
-            ModuleResolver::for_root_with_source(&temporary.join("main.telora"), &source).unwrap();
-        let root = resolver.selected_root().unwrap();
-        let dependency_value = resolver.resolve_import(&root.id, "dep/value").unwrap();
-        assert_eq!(
-            dependency_value.path().unwrap(),
-            std::fs::canonicalize(dependency.join("value.telora"))
-                .unwrap()
-                .as_path()
-        );
-        let standalone_value = resolver
-            .resolve_import(&root.id, "standalone/value")
-            .unwrap();
-        assert_eq!(
-            standalone_value.path().unwrap(),
-            std::fs::canonicalize(temporary.join("value.telora"))
                 .unwrap()
                 .as_path()
         );
@@ -735,11 +642,6 @@ option "crate.dependency" {name: "standalone", source: 'Path({path: "dependency"
                 let path = entry.path();
                 let file_type = entry.file_type().unwrap();
                 if file_type.is_dir() {
-                    if directory == root
-                        && matches!(entry.file_name().to_str(), Some("bin" | "entry"))
-                    {
-                        continue;
-                    }
                     collect(root, &path, modules);
                     continue;
                 }

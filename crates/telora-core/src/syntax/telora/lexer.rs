@@ -27,7 +27,6 @@ pub enum Token {
     Def,
     Do,
     Native,
-    Option,
     For,
     Type,
     Trait,
@@ -112,8 +111,6 @@ enum NormalToken {
     Do,
     #[token("native")]
     Native,
-    #[token("option")]
-    Option,
     #[token("for")]
     For,
     #[token("type")]
@@ -456,7 +453,6 @@ fn tokenize_internal(
     }
     if contextualize {
         contextualize_projection_tokens(source, &mut tokens, &mut spans, None);
-        contextualize_option_tokens(&mut tokens);
         contextualize_declared_type_tokens(&mut tokens, |index| {
             match &source[spans[index].clone()] {
                 "struct" => Some(Token::StructInitializer),
@@ -501,21 +497,6 @@ fn contextualize_projection_tokens(
         index += 1;
     }
     previous_significant
-}
-
-fn contextualize_option_tokens(tokens: &mut [Token]) {
-    for index in 0..tokens.len() {
-        if tokens[index] != Token::Option {
-            continue;
-        }
-        let next = tokens[index + 1..]
-            .iter()
-            .copied()
-            .find(|token| !matches!(token, Token::Whitespace | Token::Comment));
-        if !matches!(next, Some(Token::DoubleQuote | Token::RawString)) {
-            tokens[index] = Token::Identifier;
-        }
-    }
 }
 
 fn contextualize_declared_type_tokens(
@@ -660,7 +641,6 @@ fn tokenize_fragments<'a>(
         }
     }
 
-    contextualize_option_tokens(&mut tokens);
     contextualize_declared_type_tokens(&mut tokens, |index| {
         let range = crate::source::TextRange::from_usize(spans[index].clone())
             .expect("lexer span fits document");
@@ -742,7 +722,6 @@ impl From<NormalToken> for Token {
             NormalToken::Def => Self::Def,
             NormalToken::Do => Self::Do,
             NormalToken::Native => Self::Native,
-            NormalToken::Option => Self::Option,
             NormalToken::For => Self::For,
             NormalToken::Type => Self::Type,
             NormalToken::Trait => Self::Trait,

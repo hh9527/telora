@@ -60,7 +60,7 @@ source path。`eval-with` 使用相同机制，但 canonical 前缀为 `@eval-ct
 
 ## 2. Frontend 与 recovery
 
-`parse_registered` 总是产生 CST、静态 `option`、recovered program 和有序诊断；只有
+`parse_registered` 总是产生 CST、recovered program 和有序诊断；只有
 不存在 frontend diagnostic 时才产生严格 `Program`。因此 CST 可用于损坏文档上的
 定位和编辑，而严格编译不会把 recovered node 当成有效程序。
 
@@ -97,23 +97,22 @@ module loader 和 VM 不执行 package acquisition，也不改写 lock。
 Cargo workspace 中的 `telora-ees` 是 Native Actor Components 的组合根，依赖 `imos`
 和 `sqlite-query` components。强类型 manifest 在 Service 启动前绑定逻辑 actor name 与
 物理构造参数；通用 `Call {id, actor, operation, input}` 只能调度已构造 actor。
-`telora` package Host、应用 RunHost 和 `telora ees` JSONL adapter 都依赖该 facade；
+`telora` package Host 和应用 RunHost 都依赖该 facade；
 `telora-core` 只拥有 component-neutral `EesCall/EesReply` Entry ABI，不依赖 EES、IMOS
 或 SQLite 实现。
 
-Package preparation 构造私有 `telora-packages` IMOS Service。`run/serve` 从选中 Main 的
-`ees.imos`、`ees.sqlite` 和 `ees.vars` option 单独构造应用 Service，并只把 name-to-kind
-map 注入 `Env`。CLI 校验并替换 `--ees-var`，component adapter 把 `user-*:` locator
+Package preparation 构造私有 `telora-packages` IMOS Service。`run/serve` 从选中 export
+的 `entry.Ees` 单独构造应用 Service。CLI 校验并替换 `--ees-var`，component adapter 把 `user-*:` locator
 解析为 XDG/HOME 物理路径；解析结果不进入 Telora World。RunHost 异步 dispatch call，
 把终态转为一个关联 `EesReply` event。Engine 与 RunHost 都按 `SystemCaps.ees` 校验 actor name。
 
-`telora-crate.json` 的 `modules` 是普通 `src/` module 的权威清单。清单项在准备阶段
-映射并 canonicalize 到物理文件；未列出的文件不会进入 catalog。`src/bin/*`、
-`src/entry/*` 和 `tests/*` 仍只在 Host 选择特殊根时加入当前图。`telora check` 在准备后
-额外扫描普通 `src/`，为未声明文件输出 warning，但不改变 resolver 输入。
+`telora-crate.json` 的 `modules` 是 `src/` module 的权威清单。清单项在准备阶段映射并
+canonicalize 到物理文件；未列出的文件不会进入 catalog。`tests/*` 只在 Host 选择测试
+根时加入当前图。`telora check` 在准备后扫描 `src/`，为未声明文件输出 warning，但不
+改变 resolver 输入。
 
 `ModuleResolver` 消费已经准备好的 crate source 清单。`builtin_list()` 先登记 builtin
-vendor 的 crate，resolver 随后登记当前 crate 和 manifest/standalone dependencies；
+vendor 的 crate，resolver 随后登记当前 crate 和 manifest dependencies；
 同名登记使用 first-win，已选 source 不再改变。import 先按 selector 首段选择 crate，
 再只在该 crate 中解析 module，因此 configured `std` 不能补充 builtin `std`。
 
@@ -142,7 +141,7 @@ binding。当前拒绝模块初始化 cycle，模块内函数和 TypeMetadata �
 机制闭合。
 
 普通 Telora module 与 static data module 的 canonical source path 等于 canonical module
-name，例如 `my-crate/model`、`my-crate/bin/main` 或 `standalone/bin/main`。嵌入式
+name，例如 `my-crate/model`、`my-crate/bin/main` 或 `standalone/main`。嵌入式
 builtin ABI source 同样使用 `std/...` canonical name，不通过 synthetic source name
 取得额外权限。`@run-ctx/config` 等非模块 Source 不能转换为 module name。
 
@@ -298,51 +297,49 @@ slots 1048576；Host 提供的 quota 可以进一步收紧边界。Module/tool �
 通过 admission 后才把规范 Value 图物化到相应 World；运行时 codec/parse 仍属于普通
 VM 计算并按 VM allocation 核算。
 
-## 9. Entry 与 CLI Host 生命周期
+## 9. Entry wrapper 与 CLI Host 生命周期
 
-`src/entry/<name>.telora` 只能由 Host 选择，普通模块不能 import。Entry 必须只
-导出 `MainType`、`State` 和 `config`：
+普通模块通过 `std/entry` 构造 `Eval`、`Run(State)` 或 `Serve(State)` 名义值。CLI 解析
+`MODULE:EXPORT` 并检查 wrapper family；resolver 不赋予目标模块额外执行身份。内置工具
+Entry 实现以下私有 ABI：
 
 ```text
-config: Fn(SystemOptions, Env) -> Tuple([SystemCaps, Initializer])
+config: Fn(Env, MainType) -> Tuple([SystemCaps, Initializer])
 Initializer: Fn(SystemResources, MainType) -> Tuple([State, Reducer])
 Reducer: Fn(State, SystemEvent) -> Tuple([State, Array(SystemEffect)])
 ```
 
-文件 stem 以 `_` 开头的模块由 resolver 统一控制：同 crate 模块与被选中的 Entry 可以
-访问，其他 importer 不能访问。Entry 可以 resolve 整个依赖图，权限不沿 import 传递。
-只有内置 `std` crate 的模块编译时具有 native authority。
+文件 stem 以 `_` 开头的模块由 resolver 统一控制，只允许同 crate 模块访问。内置工具
+Entry 属于 `std` crate，可以访问 `std/_...` 协议模块。只有内置 `std` crate 的模块编译
+时具有 native authority。
 
 当前 Host 顺序是：
 
-1. 发现包含 Entry 的图，在准备 WorkWorld 中检查并执行 `config(options, env)`；
-2. 解析 `SystemCaps`，由 `RunHost.configure` 一次性确认 data/text/env/stdin 和
-   child-process 诉求可被满足；
-3. 冻结已经晋升的依赖与静态根，在以它为 background 的 WorkWorld 中编译、执行 Main，
-   并校验其 export record 可赋给 `Entry.MainType`；
+1. 发现并执行普通 module，按工具要求选择 export 并验证 `Eval` / `Run(State)` /
+   `Serve(State)` 名义 family；
+2. 解开 wrapper payload，在准备 WorkWorld 中检查并执行内置 `config(env, main)`；
+3. 解析 `SystemCaps`，由 `RunHost.configure` 一次性确认 data/env/stdin 与 EES 诉求；
 4. Host 按 caps 读取并校验资源，由私有 runtime bridge 在 Entry WorkWorld 中构造
-   `SystemResources`，再与 Main export record 一起传给 Initializer；
-5. 发送 `'Initialize` 及后续 stdin/child event，每次调用 reducer；
+   `SystemResources`，再与 wrapper payload 一起传给 Initializer；
+5. 发送 `'Initialize` 及后续 stdin/EES event，每次调用 reducer；
 6. Host 先完整解析和审计一批 SystemEffect，再执行第一个 effect。
 
-Main 不直接读取 open world。Entry 也只声明 capabilities、接收 resources、产生 effect
-data；实际文件、环境、stdin 和子进程操作由 CLI `RunHost` 执行。当前没有为了 Entry
-而延迟发现或动态修改 Main module graph。
+应用不直接读取 open world。wrapper 声明 capabilities；实际文件、环境、stdin 和 EES
+调用由 CLI `RunHost` 执行。module graph 在应用求值前封闭。
 
 CLI 的公开命令有 `eval`、`eval-with`、`run`、`serve`、`lock`、`check`、`query`（别名
-`q`）、`lsp` 和 `ees`。`eval` 选择一个 `@src` module 的 `Value` 导出；`eval-with`
-选择一个接收 `{sources, env, args}` 并返回 `Value` 的导出函数。两条 pure eval 路径直接
-执行 module 与普通调用，不初始化 Entry、RunHost 或应用 EES。
+`q`）和 `lsp`。`eval` 选择一个 module 的 `Value` 导出；`eval-with` 选择一个
+`entry.Eval`。两条 pure eval 路径直接执行 module 与普通调用，不初始化 reducer loop、
+RunHost 或应用 EES。
 
-`run` 固定选择 `std/entry/default`，`serve --bind stdio://` 固定选择
-`std/entry/serve`。两个 Entry 都要求 Main 导出
-`service: Fn(Dict(Value)) -> actor.Service`。Service 在标准 Entry 边界将应用具体 State
-擦除为 Dyn，并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
+`run` 固定选择 `std/_entry-default`，`serve --bind stdio://` 固定选择
+`std/_entry-serve`。目标 export 分别是 `entry.Run(State)` 与 `entry.Serve(State)`。
+wrapper 的初始化函数返回具体 State 和 reducer；标准 Entry 边界将 State 擦除为 Dyn，
+并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
 `EesCall` 映射成 component-neutral SystemEffect，将相关 Host reply 映射回 `EesReply`；
-是否声明 EES model 不改变 Entry 或 Main 接口。
+是否声明 EES model 不改变 reducer 接口。
 `check`、`query` 和 `lsp` 当前是
-Host 固定工具路径，不通过用户 Entry ABI。`ees` 不发现 workspace 或加载 Telora source，
-只建立 EES component 状态并桥接 stdin/stdout JSONL。
+Host 固定工具路径，不通过用户 Entry ABI。
 
 ## 10. 维护不变量与验证入口
 

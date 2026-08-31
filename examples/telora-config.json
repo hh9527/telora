@@ -1,10 +1,7 @@
 {
   "version": 1,
   "members": [
-    "domain-method",
-    "gcc-wrapper/app",
-    "gcc-wrapper/gcc-toolchain-define",
-    "gcc-wrapper/gcc-wrapper",
-    "toolchain-method"
+    "app",
+    "domain-method"
   ]
 }

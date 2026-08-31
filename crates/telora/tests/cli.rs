@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,8 +11,7 @@ fn fixture() -> PathBuf {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!("telora-cli-{unique}"));
-    fs::create_dir_all(path.join("src/bin")).unwrap();
-    fs::create_dir_all(path.join("src/entry")).unwrap();
+    fs::create_dir_all(path.join("src")).unwrap();
     fs::create_dir_all(path.join("tests")).unwrap();
     fs::write(
         path.join("telora-config.json"),
@@ -52,10 +51,6 @@ fn refresh_fixture_workspace(root: &Path) {
                 continue;
             };
             if kind.is_dir() {
-                if directory == root && matches!(entry.file_name().to_str(), Some("bin" | "entry"))
-                {
-                    continue;
-                }
                 modules(root, &path, found);
                 continue;
             }
@@ -90,19 +85,6 @@ fn refresh_fixture_workspace(root: &Path) {
         .unwrap(),
     )
     .unwrap();
-    let mut binaries = serde_json::Map::new();
-    if let Ok(entries) = fs::read_dir(root.join("src/bin")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) == Some("telora") {
-                let name = path.file_stem().unwrap().to_string_lossy();
-                binaries.insert(
-                    format!("fixture/{name}"),
-                    serde_json::json!({"root":"fixture","packages":["fixture"]}),
-                );
-            }
-        }
-    }
     fs::write(
         root.join("telora-lock.json"),
         serde_json::to_vec(&serde_json::json!({
@@ -113,53 +95,11 @@ fn refresh_fixture_workspace(root: &Path) {
                     "modules": declared,
                     "dependencies": [],
                 }
-            },
-            "binaries": binaries,
+            }
         }))
         .unwrap(),
     )
     .unwrap();
-}
-
-fn write_entry(cwd: &Path, source: impl AsRef<str>) -> std::io::Result<()> {
-    let source = source
-        .as_ref()
-        .replace(
-            "def legacy_prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'False} };",
-            "",
-        )
-        .replace(
-            "def legacy_prepare: Fn(rt.SystemOptions) -> rt.SystemCaps = fn(options) { {input: 'True} };",
-            "",
-        );
-    let spawn_child = if source.contains("'SpawnStdioChild") || source.contains("'PostStdin") {
-        "'True"
-    } else {
-        "'False"
-    };
-    let source = format!(
-        r#"{source}
-type EntryInitializer = Fn(rt.SystemResources, MainType) -> Tuple([
-    State,
-    Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]),
-]);
-export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, EntryInitializer])
-    = fn(options, env) {{
-    (
-        {{
-            data_srcs: {{}},
-            ees: {{}},
-            spawn_child: {spawn_child},
-            text_srcs: {{}},
-            vars: [],
-            stdin: 'Null,
-        }},
-        fn(resources, main) {{ legacy_initialize(main) }},
-    )
-}};"#
-    );
-    fs::write(cwd.join("src/entry/test.telora"), source)
 }
 
 fn jsonl(bytes: &[u8]) -> Vec<Value> {

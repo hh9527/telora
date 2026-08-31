@@ -5,6 +5,7 @@ fn help_is_clap_owned_and_types_is_removed() {
     let output = String::from_utf8_lossy(&help.stdout);
     assert!(help.status.success());
     assert!(output.contains("lsp"));
+    assert!(!output.contains("ees"));
     assert!(!output.contains("types"));
     assert!(!output.contains("run-with"));
     let types = telora(&cwd)
@@ -30,12 +31,13 @@ fn run_and_check_select_logical_roots_from_cwd() {
     let cwd = fixture();
     fs::write(cwd.join("src/lib.telora"), "export def output = \"42\";").unwrap();
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/app.telora"),
         r#"import "@src/lib" {output};
 import "std/actor" as actor;
-import "std/value" {Value};
+import "std/entry" as entry;
 type State = struct {output: String, completed: Bool};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+export def run = entry.run(config, entry.no_ees, fn(ctx) {
     let initial: State = {output, completed: 'False};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
@@ -46,19 +48,22 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             'EesReply(_) => fail!("unexpected EES reply"),
         }
     };
-    actor.service(State, initial, reduce)
-};"#,
+    (initial, reduce)
+});"#,
     )
     .unwrap();
-    let nested = cwd.join("src/bin");
-    let run = telora(&nested).args(["run", "main"]).output().unwrap();
+    refresh_fixture_workspace(&cwd);
+    let run = telora(&cwd)
+        .args(["run", "@src/app:run"])
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "{}",
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "\"42\"");
-    let check = telora(&nested)
+    let check = telora(&cwd)
         .args(["check", "@src/lib"])
         .output()
         .unwrap();
@@ -141,6 +146,7 @@ fn query_selects_registered_standard_library_modules() {
 fn query_modules_lists_the_crate_view_as_stable_jsonl() {
     let cwd = fixture();
     let dependency = cwd.join("dependency");
+    fs::create_dir_all(cwd.join("src/bin")).unwrap();
     fs::create_dir_all(dependency.join("src/bin")).unwrap();
     fs::write(cwd.join("src/lib.telora"), "0").unwrap();
     fs::write(cwd.join("src/_local.telora"), "0").unwrap();
@@ -167,7 +173,7 @@ fn query_modules_lists_the_crate_view_as_stable_jsonl() {
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":["@src/_local","@src/lib","@src/local-native"],"dependencies":["dep"]},"dep":{"source":{"workspace":"dependency"},"modules":["@src/_hidden","@src/public"],"dependencies":[]}},"binaries":{"app/main":{"root":"app","packages":["app","dep"]},"dep/tool":{"root":"dep","packages":["dep"]}}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":["@src/_local","@src/lib","@src/local-native"],"dependencies":["dep"]},"dep":{"source":{"workspace":"dependency"},"modules":["@src/_hidden","@src/public"],"dependencies":[]}}}"#,
     )
     .unwrap();
 
@@ -352,288 +358,6 @@ export def answer: Value = 'Int(observed);"#,
 }
 
 #[test]
-fn best_effort_run_collects_main_diagnostics_before_starting_entry() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/bin/main.telora"),
-        r#"import "std/array" as array;
-def transform: Fn(Int) -> Int = fn(item) {
-    if item == 2 { fail!("two", item) }
-    else if item == 4 { fail!("four", item) }
-    else { item }
-};
-def broken = array.map([1, 2, 3, 4], transform);
-export def output = if array.length(broken) > 0 { "unexpected" } else { "empty" };"#,
-    )
-    .unwrap();
-
-    let run = telora(&cwd)
-        .args(["run", "main", "--best-effort"])
-        .output()
-        .unwrap();
-    assert!(!run.status.success());
-    assert!(run.stdout.is_empty(), "Entry started for an invalid Main");
-    let records = jsonl(&run.stderr);
-    assert!(records.iter().any(|record| record["message"] == "two"));
-    assert!(records.iter().any(|record| record["message"] == "four"));
-    assert_eq!(records.last().unwrap()["schema"], "telora.run/v1");
-    assert_eq!(records.last().unwrap()["record"], "summary");
-    assert_eq!(records.last().unwrap()["status"], "error");
-}
-
-#[test]
-fn check_and_best_effort_run_do_not_repeat_cross_module_polymorphic_failures() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/dependency.telora"),
-        r#"type Plan(Revision) = struct { revision: Revision };
-def ensure_plan: for(Revision) Fn(Plan(Revision), Plan(Revision)) -> Plan(Revision) = fn(left, right) {
-    fail!("plan rejected", left)
-};
-export { Plan, ensure_plan };"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/bin/main.telora"),
-        r#"import "@src/dependency" as dependency;
-def plan: dependency.Plan(Int) = { revision: 1 };
-export def output = dependency.ensure_plan(plan, plan);"#,
-    )
-    .unwrap();
-
-    let check = telora(&cwd)
-        .args(["check", "@bin/main"])
-        .output()
-        .unwrap();
-    assert!(!check.status.success());
-    let check_records = jsonl(&check.stdout);
-    assert_eq!(
-        check_records
-            .iter()
-            .filter(|record| record["message"] == "plan rejected")
-            .count(),
-        1
-    );
-    assert!(!check_records.iter().any(call_cascade));
-
-    let run = telora(&cwd)
-        .args(["run", "main", "--best-effort"])
-        .output()
-        .unwrap();
-    assert!(!run.status.success());
-    assert!(run.stdout.is_empty());
-    let run_records = jsonl(&run.stderr);
-    assert_eq!(
-        run_records
-            .iter()
-            .filter(|record| record["message"] == "plan rejected")
-            .count(),
-        1
-    );
-    assert!(!run_records.iter().any(call_cascade));
-}
-
-#[test]
-fn best_effort_run_preserves_failure_through_imported_facade_closures() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/rules.telora"),
-        r#"def reject: Fn(Int) -> Int = fn(value) {
-    fail!("source rule rejected value", value)
-};
-export {reject};"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/facade.telora"),
-        r#"import "@src/rules" as rules;
-def lower: Fn(Int) -> Int = fn(value) { rules.reject(value) };
-export {lower};"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/bin/main.telora"),
-        r#"import "@src/facade" as facade;
-import "std/actor" as actor;
-import "std/value" {Value};
-def rejected = facade.lower(7);
-type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            'Request(request) => (state, [actor.reply(request.id, 'String("value={rejected}"))]),
-            'EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    actor.service(State, {}, reduce)
-};"#,
-    )
-    .unwrap();
-
-    let strict = telora(&cwd).args(["run", "main"]).output().unwrap();
-    assert!(!strict.status.success());
-    assert!(String::from_utf8_lossy(&strict.stderr).contains("source rule rejected value"));
-
-    let recovered = telora(&cwd)
-        .args(["run", "main", "--best-effort"])
-        .output()
-        .unwrap();
-    assert!(!recovered.status.success());
-    let records = jsonl(&recovered.stderr);
-    assert_eq!(
-        records
-            .iter()
-            .filter(|record| record["message"] == "source rule rejected value")
-            .count(),
-        1
-    );
-    assert!(
-        records
-            .iter()
-            .any(|record| record.to_string().contains("fixture/rules")),
-        "{}",
-        String::from_utf8_lossy(&recovered.stderr)
-    );
-    assert!(!records.iter().any(|record| {
-        record["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("dependent computation received"))
-    }));
-}
-
-#[test]
-fn best_effort_run_preserves_failure_across_two_imported_computations() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/factory.telora"),
-        r#"def make_rejector: Fn(Int) -> Fn(Int) -> Int = fn(base) {
-    fn(value) { fail!("factory rejected value", base, value) }
-};
-export {make_rejector};"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/transform.telora"),
-        r#"def render: Fn(Int) -> String = fn(value) { "rendered={value}" };
-export {render};"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/facade.telora"),
-        r#"import "@src/factory" as factory;
-import "@src/transform" as transform;
-def lower: Fn(Int) -> String = fn(value) {
-    let rejected: Int = factory.make_rejector(3)(value);
-    transform.render(rejected)
-};
-export {lower};"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/bin/main.telora"),
-        r#"import "@src/facade" as facade;
-import "std/actor" as actor;
-import "std/value" {Value};
-def rejected = facade.lower(7);
-type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            'Request(request) => (state, [actor.reply(request.id, 'String(rejected))]),
-            'EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    actor.service(State, {}, reduce)
-};"#,
-    )
-    .unwrap();
-
-    let strict = telora(&cwd).args(["run", "main"]).output().unwrap();
-    assert!(!strict.status.success());
-    assert!(String::from_utf8_lossy(&strict.stderr).contains("factory rejected value"));
-
-    let recovered = telora(&cwd)
-        .args(["run", "main", "--best-effort"])
-        .output()
-        .unwrap();
-    assert!(!recovered.status.success());
-    let records = jsonl(&recovered.stderr);
-    assert_eq!(
-        records
-            .iter()
-            .filter(|record| record["message"] == "factory rejected value")
-            .count(),
-        1
-    );
-    assert!(
-        records
-            .iter()
-            .any(|record| record.to_string().contains("fixture/factory")),
-        "{}",
-        String::from_utf8_lossy(&recovered.stderr)
-    );
-    assert!(!records.iter().any(|record| {
-        record["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("dependent computation received"))
-    }));
-}
-
-fn call_cascade(record: &Value) -> bool {
-    record["message"].as_str().is_some_and(|message| {
-        message.contains("tag constructor")
-            || message.contains("expected Func")
-            || message.contains("expected Dict")
-    })
-}
-
-#[test]
-fn recursive_type_metadata_does_not_add_recovery_errors() {
-    let cwd = fixture();
-    let source = r#"type CallExpr = struct { args: Array(Expr) };
-type Expr = enum { 'Call(CallExpr), 'Text(String) };
-def reject: Fn(Int) -> Expr = fn(value) { fail!("expected failure", value) };
-def failed = reject(1);
-export def output = "unreachable";"#;
-    fs::write(cwd.join("src/bin/main.telora"), source).unwrap();
-
-    let check = telora(&cwd)
-        .args(["check", "@bin/main"])
-        .output()
-        .unwrap();
-    assert!(!check.status.success());
-    let check_records = jsonl(&check.stdout);
-    assert!(
-        check_records
-            .iter()
-            .any(|record| record["message"] == "expected failure")
-    );
-    assert!(!check_records.iter().any(|record| {
-        record["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("cannot be partially evaluated"))
-    }));
-
-    let run = telora(&cwd)
-        .args(["run", "main", "--best-effort"])
-        .output()
-        .unwrap();
-    assert!(!run.status.success());
-    assert!(run.stdout.is_empty());
-    let run_records = jsonl(&run.stderr);
-    assert!(
-        run_records
-            .iter()
-            .any(|record| record["message"] == "expected failure")
-    );
-    assert!(!run_records.iter().any(|record| {
-        record["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("cannot be partially evaluated"))
-    }));
-}
-
-#[test]
 fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
     let cwd = fixture();
     fs::write(
@@ -706,7 +430,7 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     .unwrap();
     fs::write(
         cwd.join("telora-lock.json"),
-        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":[],"dependencies":["query-builder"]},"query-builder":{"source":{"workspace":"query-builder"},"modules":["@src/query-builder"],"dependencies":[]}},"binaries":{}}"#,
+        r#"{"version":1,"packages":{"app":{"source":{"workspace":""},"modules":[],"dependencies":["query-builder"]},"query-builder":{"source":{"workspace":"query-builder"},"modules":["@src/query-builder"],"dependencies":[]}}}"#,
     )
     .unwrap();
 
@@ -758,75 +482,6 @@ fn query_rejects_a_missing_dependency_module_without_leaking_its_path() {
     assert!(no_match.status.success());
     assert!(no_match.stdout.is_empty());
     assert!(no_match.stderr.is_empty());
-}
-
-#[test]
-fn recursive_modules_are_consistent_across_check_query_and_run_modes() {
-    let cwd = fixture();
-    fs::write(
-        cwd.join("src/tree.telora"),
-        r#"import "std/array" as array;
-type Node = struct {value: Int, children: Array(Node)};
-def total: Fn(Node) -> Int = fn(node) {
-    node.value + match array.get(node.children, 0) {
-        'None => 0,
-        'Some(child) => total(child),
-    }
-};
-def root: Node = {value: 1, children: [{value: 2, children: []}]};
-export {Node, root, total};"#,
-    )
-    .unwrap();
-    fs::write(
-        cwd.join("src/bin/main.telora"),
-        r#"import "@src/tree" as tree;
-import "std/actor" as actor;
-import "std/value" {Value};
-type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
-    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
-        match event {
-            'Request(request) => (state, [actor.reply(request.id, 'Int(tree.total(tree.root)))]),
-            'EesReply(_) => fail!("unexpected EES reply"),
-        }
-    };
-    actor.service(State, {}, reduce)
-};"#,
-    )
-    .unwrap();
-
-    let check = telora(&cwd)
-        .args(["check", "@src/tree"])
-        .output()
-        .unwrap();
-    assert!(
-        check.status.success(),
-        "{}",
-        String::from_utf8_lossy(&check.stdout)
-    );
-    let records = jsonl(&check.stdout);
-    assert_eq!(records.last().unwrap()["status"], "ok");
-
-    let show = telora(&cwd)
-        .args(["query", "exports", "@src/tree"])
-        .output()
-        .unwrap();
-    assert!(show.status.success());
-    let exports = jsonl(&show.stdout);
-    assert_eq!(exports.len(), 3);
-    assert!(exports.iter().all(|record| {
-        record["authority"] == "authoritative" && !record["type"].as_str().unwrap().contains("Any")
-    }));
-
-    for arguments in [vec!["run", "main"], vec!["run", "main", "--best-effort"]] {
-        let run = telora(&cwd).args(arguments).output().unwrap();
-        assert!(
-            run.status.success(),
-            "{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "3");
-    }
 }
 
 #[test]
@@ -1117,259 +772,4 @@ fn test_roots_are_selectable_but_not_importable() {
         .output()
         .unwrap();
     assert!(!check.status.success());
-}
-
-#[test]
-fn run_injects_external_json_as_value() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
-    fs::write(
-        cwd.join("src/entry/input.telora"),
-        r#"import "std/_rt" as rt;
-import "std/value" as value;
-type Main = struct {marker: Int};
-export type MainType = Main;
-export type State = String;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
-    = fn(options, env) {
-        (
-            {
-                data_srcs: {input: {default: 'None, fmt: 'Json, src: "input.json"}},
-                ees: {},
-                spawn_child: 'False,
-                text_srcs: {},
-                vars: [],
-                stdin: 'Null,
-            },
-            fn(resources, main) {
-                let item = resources.data.input;
-                let output = match item.data {
-                    'String(value) => value,
-                    _ => fail!("expected JSON string", item.data),
-                };
-                (output, fn(state, event) {
-                    match event {
-                        'Initialize => (state, ['Output(state), 'Exit(0)]),
-                        _ => fail!("unexpected event", event),
-                    }
-                })
-            },
-        )
-    };"#,
-    )
-    .unwrap();
-    fs::write(cwd.join("input.json"), r#""accepted""#).unwrap();
-    let run = telora(&cwd)
-        .args(["run-with", "@src/entry/input", "main"])
-        .output()
-        .unwrap();
-    assert!(
-        run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "accepted");
-}
-
-#[test]
-fn entry_data_diagnostics_use_the_registered_data_source() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
-    fs::write(cwd.join("input.json"), r#"{"name":"Ada"}"#).unwrap();
-    fs::write(
-        cwd.join("src/entry/provenance.telora"),
-        r#"import "std/_rt" as rt;
-type Main = struct {marker: Int};
-export type MainType = Main;
-export type State = Int;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-export def config: Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
-    = fn(options, env) {
-        (
-            {
-                data_srcs: {input: {default: 'None, fmt: 'Json, src: "input.json"}},
-                ees: {},
-                spawn_child: 'False,
-                text_srcs: {},
-                vars: [],
-                stdin: 'Null,
-            },
-            fn(resources, main) {
-                match resources.data.input.data {
-                    'Object(object) => fail!("review data provenance", object.name),
-                    _ => fail!("expected object"),
-                }
-            },
-        )
-    };"#,
-    )
-    .unwrap();
-    let run = telora(&cwd)
-        .args(["run-with", "@src/entry/provenance", "main"])
-        .output()
-        .unwrap();
-    assert!(!run.status.success());
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        stderr.contains("fixture/entry/provenance:20:40: review data provenance"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("input.json:1:9: subject 1 originated here"),
-        "{stderr}"
-    );
-}
-
-#[test]
-fn run_decodes_all_data_source_formats() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
-    fs::write(cwd.join("input.json"), r#"{"name":"json"}"#).unwrap();
-    fs::write(cwd.join("input.yaml"), "name: yaml\n").unwrap();
-    fs::write(cwd.join("input.toml"), "name = \"toml\"\n").unwrap();
-    fs::write(
-        cwd.join("src/entry/formats.telora"),
-        r#"import "std/_rt" as rt;
-type Main = struct {marker: Int};
-export type MainType = Main;
-export type State = String;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-def object_name = fn(value) -> String {
-    match value {
-        'Object(object) => match object.name {
-            'String(name) => name,
-            _ => fail!("name is not a string", object.name),
-        },
-        _ => fail!("data source is not an object", value),
-    }
-};
-export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
-    = fn(options, env) {
-        (
-            {
-                data_srcs: {
-                    json: {default: 'None, fmt: 'Json, src: "input.json"},
-                    yaml: {default: 'None, fmt: 'Yaml, src: "input.yaml"},
-                    toml: {default: 'None, fmt: 'Toml, src: "input.toml"},
-                },
-                ees: {},
-                spawn_child: 'False,
-                text_srcs: {},
-                vars: [],
-                stdin: 'Null,
-            },
-            fn(resources, main) {
-                let output = `\{object_name(resources.data.json.data)}|\{object_name(resources.data.yaml.data)}|\{object_name(resources.data.toml.data)}`;
-                (output, fn(state, event) {
-                    match event {
-                        'Initialize => (state, ['Output(state), 'Exit(0)]),
-                        _ => fail!("unexpected event", event),
-                    }
-                })
-            },
-        )
-    };"#,
-    )
-    .unwrap();
-    let run = telora(&cwd)
-        .args(["run-with", "@src/entry/formats", "main"])
-        .output()
-        .unwrap();
-    assert!(
-        run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "json|yaml|toml");
-}
-
-#[test]
-fn run_injects_text_environment_and_text_stdin() {
-    let cwd = fixture();
-    fs::write(cwd.join("src/bin/main.telora"), "export def marker = 0;").unwrap();
-    fs::write(cwd.join("message.txt"), "from-file").unwrap();
-    fs::write(
-        cwd.join("src/entry/resources.telora"),
-        r#"import "std/_rt" as rt;
-type Main = struct {marker: Int};
-export type MainType = Main;
-export type State = String;
-type Reducer = Fn(State, rt.SystemEvent) -> Tuple([State, Array(rt.SystemEffect)]);
-type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
-export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
-    = fn(options, env) {
-        (
-            {
-                data_srcs: {},
-                ees: {},
-                spawn_child: 'False,
-                text_srcs: {message: {default: 'None, src: "message.txt"}},
-                vars: ["TELORA_TEST_VAR", "TELORA_TEST_MISSING_VAR"],
-                stdin: 'Text,
-            },
-            fn(resources, main) {
-                let input = match resources.stdin {
-                    'Some(value) => value,
-                    'None => fail!("missing text stdin"),
-                };
-                let output = `\{resources.texts.message.data}|\{resources.texts.message.src}|\{resources.vars.TELORA_TEST_VAR}|\{input}`;
-                (output, fn(state, event) {
-                    match event {
-                        'Initialize => (state, ['Output(state), 'Exit(0)]),
-                        _ => fail!("unexpected event", event),
-                    }
-                })
-            },
-        )
-    };"#,
-    )
-    .unwrap();
-    let mut child = telora(&cwd)
-        .args(["run-with", "@src/entry/resources", "main"])
-        .env("TELORA_TEST_VAR", "from-env")
-        .env_remove("TELORA_TEST_MISSING_VAR")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"from-stdin")
-        .unwrap();
-    let run = child.wait_with_output().unwrap();
-    assert!(
-        run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stdout),
-        "from-file|message.txt|from-env|from-stdin"
-    );
-
-    #[cfg(unix)]
-    {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-
-        let invalid = telora(&cwd)
-            .args(["run-with", "@src/entry/resources", "main"])
-            .env("TELORA_TEST_VAR", "from-env")
-            .env("TELORA_TEST_MISSING_VAR", OsString::from_vec(vec![0xff]))
-            .output()
-            .unwrap();
-        assert!(!invalid.status.success());
-        assert!(invalid.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&invalid.stderr).contains("cannot read variable"));
-    }
 }

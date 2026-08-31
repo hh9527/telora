@@ -315,6 +315,11 @@ fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
 }
 
+pub(crate) fn native_value_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let value = context.argument(0)?;
+    context.set_value_type(context.result(), value)
+}
+
 fn native_tagged_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let tag = context.argument(0)?;
     if context.value(tag)?.as_atom().is_none() {

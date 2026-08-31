@@ -17,7 +17,7 @@ use crate::json::{
 };
 use crate::module_id::{
     ModuleCName, ModuleCatalogEntry, ModuleFormat, ModuleId, ModuleResolver, ModuleVendor,
-    ResolvedModule, immediate_value, is_public_builtin_name,
+    ResolvedModule, is_public_builtin_name,
 };
 use crate::parser::parse_registered;
 use crate::semantic::{

@@ -588,7 +588,7 @@ export def output = render(1);"#;
             .expect("snapshot")
             .sources()
             .files()
-            .find(|file| file.name.as_ref() == "standalone/bin/main")
+            .find(|file| file.name.as_ref() == "standalone/main")
             .expect("main source")
             .text()
             .clone();

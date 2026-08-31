@@ -1,5 +1,0 @@
-{
-  "name": "toolchain-method",
-  "modules": ["@src/toolchain"],
-  "dependencies": ["domain-method"]
-}

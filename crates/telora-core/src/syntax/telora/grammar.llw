@@ -1,4 +1,4 @@
-token Let='let' Decl='decl' Def='def' Do='do' Native='native' Option='option' For='for' Type='type' Trait='trait' Impl='impl' Fn='fn' FunctionType='Fn' Interpreter='interpreter' If='if' Else='else' Match='match' Return='return';
+token Let='let' Decl='decl' Def='def' Do='do' Native='native' For='for' Type='type' Trait='trait' Impl='impl' Fn='fn' FunctionType='Fn' Interpreter='interpreter' If='if' Else='else' Match='match' Return='return';
 token Import='import' Export='export' As='as';
 token SectionLParen='\\(' LParen='(' RParen=')' LBrace='{' RBrace='}' LBracket='[' RBracket=']';
 token Comma=',' Colon=':' Semicolon=';' Ellipsis='...' Dot='.' At='@' Bang='!' Question='?';
@@ -18,8 +18,7 @@ start program;
 
 program: body;
 body: (?1 binding)* [expression];
-binding^: ?6 option_binding | ?5 export_statement | ?4 let_else_binding | ?3 let_pattern_binding | let_binding | decl_binding | def_binding | ?1 native_type_binding | ?2 native_binding | type_binding | trait_binding | impl_binding | import_binding;
-option_binding: 'option' string_literal expression ';';
+binding^: ?5 export_statement | ?4 let_else_binding | ?3 let_pattern_binding | let_binding | decl_binding | def_binding | ?1 native_type_binding | ?2 native_binding | type_binding | trait_binding | impl_binding | import_binding;
 export_statement: 'export' (let_binding | def_binding | type_binding | trait_binding | export_items ';');
 export_items: '{' export_item (?1 ',' export_item)* [','] '}';
 export_item: Identifier ['as' Identifier];

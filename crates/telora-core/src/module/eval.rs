@@ -99,25 +99,12 @@ impl Engine {
                     return Err(error);
                 }
             };
-        let kind = match kind {
-            EvalKind::Value => None,
-            EvalKind::With(context) => match prepare_eval_context(
-                &mut loader.sources,
-                self.config.data_limits,
-                context,
-            ) {
-                Ok(context) => Some(context),
-                Err(error) => {
-                    pending.finish_initialization(&Err(error.clone()));
-                    return Err(error);
-                }
-            },
-        };
+        let eval_type = entry_type_contract(&loader.builtin_modules, "Eval")?;
         if let Err(error) = validate_eval_export(
             &main_compiled.analysis.module_interface,
             export,
             &value_type,
-            kind.is_some(),
+            matches!(kind, EvalKind::With(_)).then_some(&eval_type),
         ) {
             pending.finish_initialization(&Err(error.clone()));
             return Err(error);
@@ -166,17 +153,26 @@ impl Engine {
             .import_world_root(&shared_main.heap, &instantiated.execution)
             .map_err(|error| ModuleError::new(error.to_string()))?;
         world.set_root(main_root);
+        let world = select_world_member_in(
+            &support.runtime.main.heap,
+            &support.runtime.externals,
+            &support.sources,
+            world,
+            export,
+            self.config.session_quota,
+            Arc::clone(&self.debug_sink),
+        )?;
         let world = match kind {
-            None => select_world_member_in(
-                &support.runtime.main.heap,
-                &support.runtime.externals,
-                &support.sources,
-                world,
-                export,
-                self.config.session_quota,
-                Arc::clone(&self.debug_sink),
-            )?,
-            Some(context) => {
+            EvalKind::Value => world,
+            EvalKind::With(context) => {
+                let config = parse_eval_config(world.root_ref(&support.runtime.main.heap))?;
+                let context = prepare_declared_eval_context(
+                    &mut support.sources.clone(),
+                    self.config.data_limits,
+                    config,
+                    context,
+                )?;
+                let mut world = world;
                 let argument = make_eval_context(
                     &mut world,
                     &shared_main.heap,
@@ -188,7 +184,7 @@ impl Engine {
                     &support.runtime.externals,
                     &support.sources,
                     world,
-                    export,
+                    "evaluate",
                     &[argument],
                     false,
                     self.config.session_quota,
@@ -206,7 +202,7 @@ fn validate_eval_export(
     interface: &ModuleInterface,
     export: &str,
     value_type: &TypeDescriptor,
-    with_context: bool,
+    wrapper_type: Option<&TypeDescriptor>,
 ) -> Result<(), ModuleError> {
     let scheme = interface
         .exports
@@ -217,36 +213,9 @@ fn validate_eval_export(
             "eval export {export:?} must not be polymorphic"
         )));
     }
-    let context_type = TypeDescriptor::Struct(BTreeMap::from([
-        (
-            "args".into(),
-            TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
-        ),
-        (
-            "env".into(),
-            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
-        ),
-        (
-            "sources".into(),
-            TypeDescriptor::Dict(Box::new(value_type.clone())),
-        ),
-    ]));
-    let expected = TypeDescriptor::Function {
-        parameters: vec![context_type.clone()],
-        result: Box::new(value_type.clone()),
-    };
-    let valid = if with_context {
-        match &scheme.body {
-            TypeDescriptor::Function { parameters, result } if parameters.len() == 1 => {
-                let parameter = crate::types::erase_declared_identity(&parameters[0]);
-                let expected_parameter = crate::types::erase_declared_identity(&context_type);
-                crate::types::assignable(&parameter, &expected_parameter)
-                    && crate::types::assignable(&expected_parameter, &parameter)
-                    && crate::types::assignable(result, value_type)
-                    && crate::types::assignable(value_type, result)
-            }
-            _ => false,
-        }
+    let valid = if let Some(expected) = wrapper_type {
+        crate::types::assignable(&scheme.body, expected)
+            && crate::types::assignable(expected, &scheme.body)
     } else {
         crate::types::assignable(&scheme.body, value_type)
             && crate::types::assignable(value_type, &scheme.body)
@@ -257,13 +226,108 @@ fn validate_eval_export(
         Err(ModuleError::new(format!(
             "eval export {export:?} has type {}, expected {}",
             scheme.body.display_name(),
-            if with_context {
+            if let Some(expected) = wrapper_type {
                 expected.display_name()
             } else {
                 value_type.display_name()
             }
         )))
     }
+}
+
+struct DeclaredEvalConfig {
+    sources: Vec<String>,
+    envs: Vec<String>,
+    args: bool,
+}
+
+fn parse_eval_config(value: crate::ValueRef<'_>) -> Result<DeclaredEvalConfig, ModuleError> {
+    let value = value
+        .declared_value_parts()
+        .map(|(_, payload)| payload)
+        .ok_or_else(|| ModuleError::new("eval-with export must be entry.Eval"))?;
+    let config = value
+        .dict_get("config")
+        .and_then(|value| value.declared_value_parts().map(|(_, payload)| payload))
+        .ok_or_else(|| ModuleError::new("entry.Eval.config must be entry.ContextConfig"))?;
+    Ok(DeclaredEvalConfig {
+        sources: parse_unique_string_array(config, "sources", "entry.Eval.config.sources")?,
+        envs: parse_unique_string_array(config, "envs", "entry.Eval.config.envs")?,
+        args: match config.dict_get("args").and_then(|value| value.as_atom()) {
+            Some(value) if value.as_str() == "True" => true,
+            Some(value) if value.as_str() == "False" => false,
+            _ => return Err(ModuleError::new("entry.Eval.config.args must be Bool")),
+        },
+    })
+}
+
+fn parse_unique_string_array(
+    value: crate::ValueRef<'_>,
+    field: &str,
+    path: &str,
+) -> Result<Vec<String>, ModuleError> {
+    let value = value
+        .dict_get(field)
+        .ok_or_else(|| ModuleError::new(format!("{path} is missing")))?;
+    let length = value
+        .sequence_len()
+        .ok_or_else(|| ModuleError::new(format!("{path} must be Array(String)")))?;
+    let mut names = (0..length)
+        .map(|index| {
+            value
+                .sequence_get(index)
+                .and_then(|item| item.as_str())
+                .map(|item| item.as_str().to_owned())
+                .ok_or_else(|| ModuleError::new(format!("{path} must be Array(String)")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort();
+    if names.iter().any(String::is_empty) || names.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(ModuleError::new(format!(
+            "{path} must contain unique non-empty names"
+        )));
+    }
+    Ok(names)
+}
+
+fn prepare_declared_eval_context(
+    sources: &mut SourceDatabase,
+    limits: DataLimits,
+    config: DeclaredEvalConfig,
+    mut context: EvalContext,
+) -> Result<PreparedEvalContext, ModuleError> {
+    let provided = context.sources.keys().cloned().collect::<Vec<_>>();
+    if config.sources != provided {
+        return Err(ModuleError::new(format!(
+            "eval sources do not match entry.Eval config: declared {:?}, provided {provided:?}",
+            config.sources
+        )));
+    }
+    let env = config
+        .envs
+        .into_iter()
+        .map(|name| {
+            context
+                .env
+                .remove(&name)
+                .map(|value| (name.clone(), value))
+                .ok_or_else(|| {
+                    ModuleError::new(format!(
+                        "cannot read declared environment variable {name:?}"
+                    ))
+                })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    if !config.args && !context.args.is_empty() {
+        return Err(ModuleError::new(
+            "entry.Eval config does not accept command-line arguments",
+        ));
+    }
+    context.env = env;
+    if !config.args {
+        context.args.clear();
+    }
+    prepare_eval_context(sources, limits, context)
 }
 
 fn make_eval_context(

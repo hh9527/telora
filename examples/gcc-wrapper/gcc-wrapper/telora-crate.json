@@ -1,5 +1,0 @@
-{
-  "name": "gcc-wrapper",
-  "modules": ["@src/toolchain"],
-  "dependencies": ["domain-method", "toolchain-method"]
-}

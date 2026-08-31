@@ -1,0 +1,3 @@
+native state_type: for(State) Fn(State) -> TypeOf(State);
+
+export {state_type};

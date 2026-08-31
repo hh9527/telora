@@ -56,7 +56,6 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
                 | Token::Decl
                 | Token::Def
                 | Token::Native
-                | Token::Option
                 | Token::Type
                 | Token::Trait
                 | Token::Impl
@@ -91,9 +90,6 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
     fn predicate_binding_5(&self) -> bool {
         self.current == Token::Export
-    }
-    fn predicate_binding_6(&self) -> bool {
-        self.current == Token::Option
     }
     fn predicate_primary_1(&self) -> bool {
         self.peek(1) != Token::RParen

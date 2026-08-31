@@ -167,7 +167,6 @@ impl ModuleLoader {
             analysis,
             function,
             externals,
-            options,
         } = compiled;
         let workspace = WorkspaceSnapshot::build(
             self.sources.clone(),
@@ -181,7 +180,6 @@ impl ModuleLoader {
             function,
             sources: self.sources.clone(),
             workspace,
-            options,
             runtime: Arc::new(ModuleRuntime {
                 main: Arc::new(main),
                 externals,
@@ -355,32 +353,6 @@ impl ModuleLoader {
         };
         let source_id = self.sources.add(source_name.clone(), source);
         let parsed = parse_registered(&self.sources, source_id);
-        if let Some(option) = parsed
-            .options
-            .iter()
-            .find(|option| option.key.value.starts_with("crate.") && !self.resolver.is_standalone())
-        {
-            return Err(ModuleError::new(self.sources.render(&Diagnostic::error(
-                format!(
-                    "resolver option {:?} is only allowed in standalone mode",
-                    option.key.value
-                ),
-                option.location,
-            ))));
-        }
-        if let Some(option) = parsed
-            .options
-            .iter()
-            .find(|_| !self.resolver.is_root(module_id))
-        {
-            return Err(ModuleError::new(self.sources.render(&Diagnostic::error(
-                format!(
-                    "option {:?} is only allowed in the selected root",
-                    option.key.value
-                ),
-                option.location,
-            ))));
-        }
         let program = parsed.program.ok_or_else(|| {
             ModuleError::new(
                 parsed
@@ -419,23 +391,6 @@ impl ModuleLoader {
             }
             Some(skeleton)
         };
-        let options = parsed
-            .options
-            .iter()
-            .map(|option| {
-                immediate_value(&option.value)
-                    .map(|value| LoadedOptionAction {
-                        key: option.key.value.clone(),
-                        value,
-                    })
-                    .map_err(|error| {
-                        ModuleError::new(
-                            self.sources
-                                .render(&Diagnostic::error(error.to_string(), option.location)),
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let has_explicit_exports = program
             .value
             .body
@@ -859,7 +814,6 @@ impl ModuleLoader {
             analysis,
             function,
             externals: runtime_roots(&external_roots),
-            options,
         })
     }
 

@@ -18,7 +18,7 @@ hello/
   telora-config.json
   telora-crate.json
   telora-lock.json
-  src/bin/main.telora
+  src/app.telora
 ```
 
 ```json
@@ -26,33 +26,34 @@ hello/
 ```
 
 ```json
-{"name":"hello","modules":[],"dependencies":[]}
+{"name":"hello","modules":["@src/app"],"dependencies":[]}
 ```
 
 ```telora
-# src/bin/main.telora；# 引入行注释
+# src/app.telora；# 引入行注释
 import "std/actor" as actor;
-import "std/value" {Value};
+import "std/entry" as entry;
 
 type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+export def run = entry.run(config, entry.no_ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'String("hello, telora"))]),
             'EesReply(_) => fail!("unexpected EES reply"),
         }
     };
-    actor.service(State, {}, reduce)
-};
+    ({}, reduce)
+});
 ```
 
 在 crate 目录运行：
 
 ```bash
 telora lock
-telora check @bin/main
-telora run main
-telora query exports @bin/main
+telora check @src/app
+telora run @src/app:run
+telora query exports @src/app
 ```
 
 `check` 检查并求值模块导出，`run` 通过 Entry 调度入口，`query` 以 JSONL 查询
@@ -918,7 +919,7 @@ export def compile: Fn(Input) -> Output = fn(input) { ... };
 export { Entity, Requirement, compile };
 ```
 
-import 是静态的。模块顶层是声明空间，只接受 option、import、type、decl、def、
+import 是静态的。模块顶层是声明空间，只接受 import、type、trait、impl、decl、def、
 native 和 export；普通模块值也使用 `def`。`let` 只用于函数或 `do` 等普通 block
 中的顺序计算和局部 shadow。顶层 `let`、`export let`、裸表达式和 final expression
 都不合法。模块只暴露显式 export。库必须导出向调用者承诺的每个类型和函数。
@@ -928,11 +929,11 @@ fallback。`validate` 等 prelude 名不是保留字，本地 binding 可以正�
 仍需访问内建项时使用显式别名，例如
 `import "std/prelude" { validate as builtin_validate };`。
 
-`src/bin/` 下的入口由 CLI 以 `@bin/...` 选择；
-`tests/` 下的入口以 `@test/...` 选择。从这些入口导入可复用代码时，应使用显式源码根路径：
+`src/` 下的文件由 crate module 清单发布；`tests/` 下的入口由 Host 以 `@test/...`
+选择。模块既可以使用显式源码根路径，也可以使用相对路径：
 
 ```telora
-# src/bin/main.telora
+# src/app.telora
 import "@src/compiler" { compile };
 ```
 
@@ -940,26 +941,25 @@ import "@src/compiler" { compile };
 
 ```text
 @src/model       -> <crate>/src/model.telora
-@bin/main        -> <crate>/src/bin/main.telora
 @test/compiler   -> <crate>/tests/compiler.telora
 plan-lib/types     -> <plan-lib>/src/types.telora
 ```
 
 CLI 从当前目录向上查找最近的 `telora-config.json`，因此可以在 workspace 内运行
-命令。`run main` 选择当前 member 的 `@bin/main`；binary name 是不含路径分隔符和
-`.telora` 后缀的单个 stem。`@main` 不是模块 ID。`run main` 初始化 Main 导出的
-`service: Fn(Dict(Value)) -> actor.Service`，投递一个 Request，并把 Reply 中的 Value
-编码为 JSON。环境与输入由运行时适配器显式传给 Main，不形成 ambient binding。
+命令。`run @src/app:run` 选择普通模块的 `run` export；该值必须是
+`entry.Run(State)`。工具解开 wrapper、初始化具体 State、投递一个 Request，并把 Reply
+中的 Value 编码为 JSON。环境与输入由 `entry.ContextConfig` 显式声明，不形成 ambient
+binding。
 
 普通 `@src` module 的纯结果使用 `telora eval @src/module:name`；带显式 source、环境变量
 白名单和字符串参数的纯函数使用 `eval-with`。两者都要求返回 `Value`，并且不创建 Entry
 或 effect loop。完整示例：
 
 ```text
-telora run main -C examples/my-crate
-telora serve main -C examples/my-crate --bind stdio://
-telora eval @src/model:answer -C examples/my-crate
-telora check @test/compiler -C examples/my-crate
+telora -C examples/my-crate run @src/app:run
+telora -C examples/my-crate serve @src/app:serve --bind stdio://
+telora -C examples/my-crate eval @src/model:answer
+telora -C examples/my-crate check @test/compiler
 ```
 
 `serve --bind stdio://` 的每行响应包含 `ok`、`error` 和 `diagnostics`。请求成功或
@@ -973,20 +973,14 @@ telora check @test/compiler -C examples/my-crate
 失败时可以用 `run --best-effort` 扩大诊断覆盖，并检查非零退出、CLI 诊断和无
 output。不能仅以 `check` 成功作为行为证据。
 
-在 binary/test 入口中，`./compiler` 以及其他 `./` 或 `../` import 非法。
-在 `src/` 下的模块中，相对 import 仍然合法，并从导入模块的逻辑目录解析。
+在 test 入口中，`./compiler` 以及其他 `./` 或 `../` import 非法。
+在 `src/` 下的模块中，相对 import 合法，并从导入模块的逻辑目录解析。
 `@src/` 始终从导入模块所属 crate 的源码根解析。`plan-lib/types` 等 package 路径只能
 选择当前 crate manifest 声明的直接依赖；`std/...` 选择 Telora 内置模块。CLI 在模块图
 发现前依据 config 与 lock 准备完整的 crate-name 到物理 root 映射；resolver 随后按
 crate 粒度建立清单，builtin crates 在先，当前 crate 和直接 dependencies 随后。已登记的
 crate name 及 source 指向不再改变。
 依赖只公开自身的普通 `src/` 模块。
-
-单文件探索使用 `telora run -S path/to/file.telora`。该模式不进行 workspace 发现。
-canonical owner 默认为
-`standalone`；根文件可用 `option "crate.name" "..."` 显式覆盖，并可声明相对根文件
-所在目录解析的 `crate.dependency`。普通 crate 模块不能声明这些 resolver options，
-被 standalone 根导入的模块也不能再次声明它们。
 
 ## 递归与有界工作
 

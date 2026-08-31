@@ -124,14 +124,6 @@ fn protocol_string_ref(value: crate::ValueRef<'_>, path: &str) -> Result<String,
         .ok_or_else(|| ModuleError::new(format!("{path} must be String")))
 }
 
-fn protocol_bool_ref(value: crate::ValueRef<'_>, path: &str) -> Result<bool, ModuleError> {
-    match protocol_ref(value).as_atom().as_deref() {
-        Some("True") => Ok(true),
-        Some("False") => Ok(false),
-        _ => Err(ModuleError::new(format!("{path} must be Bool"))),
-    }
-}
-
 fn protocol_option_string_ref(
     value: crate::ValueRef<'_>,
     path: &str,
@@ -147,84 +139,6 @@ fn protocol_option_string_ref(
         return Err(ModuleError::new(format!("{path} must be Option(String)")));
     }
     protocol_string_ref(payload, path).map(Some)
-}
-
-fn parse_child_options_ref(
-    value: crate::ValueRef<'_>,
-    path: &str,
-) -> Result<ChildOptions, ModuleError> {
-    let opts = expect_protocol_record_ref(value, path, &["bin", "clear_env", "cwd", "envs"])?;
-    let envs = protocol_ref(opts.get("envs").expect("field shape checked"));
-    let names = envs
-        .dict_fields()
-        .ok_or_else(|| ModuleError::new(format!("{path}.envs must be a Dict")))?;
-    let envs = names
-        .into_iter()
-        .map(|name| {
-            protocol_option_string_ref(envs.get(name).unwrap(), &format!("{path}.envs.{name}"))
-                .map(|value| (name.to_owned(), value))
-        })
-        .collect::<Result<_, _>>()?;
-    Ok(ChildOptions {
-        bin: protocol_string_ref(opts.get("bin").unwrap(), &format!("{path}.bin"))?,
-        cwd: protocol_option_string_ref(opts.get("cwd").unwrap(), &format!("{path}.cwd"))?,
-        envs,
-        clear_env: protocol_bool_ref(opts.get("clear_env").unwrap(), &format!("{path}.clear_env"))?,
-    })
-}
-
-fn parse_stdin_mode_ref(value: crate::ValueRef<'_>) -> Result<ChildStdinMode, ModuleError> {
-    match protocol_ref(value).as_atom().as_deref() {
-        Some("Piped") => Ok(ChildStdinMode::Piped),
-        Some("Inherit") => Ok(ChildStdinMode::Inherit),
-        Some("Null") => Ok(ChildStdinMode::Null),
-        _ => Err(ModuleError::new("SpawnStdioChild.stdio.stdin is invalid")),
-    }
-}
-
-fn parse_output_mode_ref(
-    value: crate::ValueRef<'_>,
-    path: &str,
-) -> Result<ChildOutputMode, ModuleError> {
-    match protocol_ref(value).as_atom().as_deref() {
-        Some("PipedLine") => Ok(ChildOutputMode::PipedLine),
-        Some("PipedToEnd") => Ok(ChildOutputMode::PipedToEnd),
-        Some("Inherit") => Ok(ChildOutputMode::Inherit),
-        Some("Null") => Ok(ChildOutputMode::Null),
-        _ => Err(ModuleError::new(format!("{path} is invalid"))),
-    }
-}
-
-fn parse_spawn_stdio_child_ref(value: crate::ValueRef<'_>) -> Result<SpawnStdioChild, ModuleError> {
-    let child = expect_protocol_record_ref(value, "SpawnStdioChild", &["key", "opts", "stdio"])?;
-    let stdio = expect_protocol_record_ref(
-        child.get("stdio").unwrap(),
-        "SpawnStdioChild.stdio",
-        &["stderr", "stdin", "stdout"],
-    )?;
-    Ok(SpawnStdioChild {
-        key: protocol_string_ref(child.get("key").unwrap(), "SpawnStdioChild.key")?,
-        opts: parse_child_options_ref(child.get("opts").unwrap(), "SpawnStdioChild.opts")?,
-        stdio: ChildStdio {
-            stdin: parse_stdin_mode_ref(stdio.get("stdin").unwrap())?,
-            stdout: parse_output_mode_ref(
-                stdio.get("stdout").unwrap(),
-                "SpawnStdioChild.stdio.stdout",
-            )?,
-            stderr: parse_output_mode_ref(
-                stdio.get("stderr").unwrap(),
-                "SpawnStdioChild.stdio.stderr",
-            )?,
-        },
-    })
-}
-
-fn parse_child_text_ref(value: crate::ValueRef<'_>, path: &str) -> Result<ChildText, ModuleError> {
-    let text = expect_protocol_record_ref(value, path, &["data", "key"])?;
-    Ok(ChildText {
-        key: protocol_string_ref(text.get("key").unwrap(), &format!("{path}.key"))?,
-        data: protocol_option_string_ref(text.get("data").unwrap(), &format!("{path}.data"))?,
-    })
 }
 
 fn semantic_value_json(
@@ -355,23 +269,6 @@ fn runtime_tagged(heap: &mut Heap, tag: Val, payload: Val) -> Val {
     ))
 }
 
-fn runtime_option_string(heap: &mut Heap, main: &Heap, value: Option<String>) -> Val {
-    match value {
-        None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
-        Some(value) => {
-            let tag = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some));
-            let payload = runtime_string(heap, main, &value);
-            runtime_tagged(heap, tag, payload)
-        }
-    }
-}
-
-fn runtime_child_text(heap: &mut Heap, main: &Heap, text: ChildText) -> Val {
-    let key = runtime_string(heap, main, &text.key);
-    let data = runtime_option_string(heap, main, text.data);
-    runtime_record(heap, vec![("key", key), ("data", data)])
-}
-
 fn runtime_json_value(
     heap: &mut Heap,
     main: &Heap,
@@ -469,55 +366,6 @@ fn runtime_system_event(
             };
             ("StdinLine", line)
         }
-        SystemEvent::ChildStdout(text) => ("ChildStdout", runtime_child_text(heap, main, text)),
-        SystemEvent::ChildStderr(text) => ("ChildStderr", runtime_child_text(heap, main, text)),
-        SystemEvent::ChildSpawnResult(result) => {
-            let key = runtime_string(heap, main, &result.key);
-            let (tag, payload) = match result.result {
-                Ok(pid) => (
-                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Ok)),
-                    Val::unknown(DecodedValue::Int(pid)),
-                ),
-                Err(error) => (
-                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Err)),
-                    runtime_string(heap, main, &error),
-                ),
-            };
-            let result = runtime_tagged(heap, tag, payload);
-            (
-                "ChildSpawnResult",
-                runtime_record(heap, vec![("key", key), ("result", result)]),
-            )
-        }
-        SystemEvent::ChildExited { key, exited } => {
-            let key = runtime_string(heap, main, &key);
-            let exited = match exited {
-                ChildExit::Code(code) => runtime_tagged(
-                    heap,
-                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Ok)),
-                    Val::unknown(DecodedValue::Int(code)),
-                ),
-                ChildExit::Signal(signal) => {
-                    let payload = match signal {
-                        None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
-                        Some(signal) => runtime_tagged(
-                            heap,
-                            Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Some)),
-                            Val::unknown(DecodedValue::Int(signal)),
-                        ),
-                    };
-                    runtime_tagged(
-                        heap,
-                        Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Err)),
-                        payload,
-                    )
-                }
-            };
-            (
-                "ChildExited",
-                runtime_record(heap, vec![("key", key), ("exited", exited)]),
-            )
-        }
     };
     let tag = runtime_atom(heap, main, tag);
     Ok(runtime_tagged(heap, tag, payload))
@@ -537,16 +385,10 @@ fn validate_entry_interface(
                 .collect(),
         )
     };
-    let bool_type = unit_enum(&["False", "True"]);
     let option_string = TypeDescriptor::Enum(BTreeMap::from([
         ("None".into(), None),
         ("Some".into(), Some(Box::new(TypeDescriptor::String))),
     ]));
-    let option_action = TypeDescriptor::Struct(BTreeMap::from([
-        ("key".into(), TypeDescriptor::String),
-        ("value".into(), TypeDescriptor::Dyn),
-    ]));
-    let options_type = TypeDescriptor::Array(Box::new(option_action));
     let platform_type = TypeDescriptor::Struct(BTreeMap::from([
         ("arch".into(), TypeDescriptor::String),
         ("os".into(), TypeDescriptor::String),
@@ -592,7 +434,18 @@ fn validate_entry_interface(
             "ees".into(),
             TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
         ),
-        ("spawn_child".into(), bool_type.clone()),
+        (
+            "ees_models".into(),
+            TypeDescriptor::Array(Box::new(TypeDescriptor::Struct(BTreeMap::from([
+                ("config".into(), value_type.clone()),
+                ("kind".into(), TypeDescriptor::String),
+                ("name".into(), TypeDescriptor::String),
+            ])))),
+        ),
+        (
+            "ees_vars".into(),
+            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
+        ),
         ("stdin".into(), stdin),
         (
             "text_srcs".into(),
@@ -624,63 +477,6 @@ fn validate_entry_interface(
             TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
         ),
     ]));
-    let child_text = TypeDescriptor::Struct(BTreeMap::from([
-        ("data".into(), option_string.clone()),
-        ("key".into(), TypeDescriptor::String),
-    ]));
-    let child_opts = TypeDescriptor::Struct(BTreeMap::from([
-        ("bin".into(), TypeDescriptor::String),
-        ("clear_env".into(), unit_enum(&["False", "True"])),
-        (
-            "cwd".into(),
-            TypeDescriptor::Enum(BTreeMap::from([
-                ("None".into(), None),
-                ("Some".into(), Some(Box::new(TypeDescriptor::String))),
-            ])),
-        ),
-        (
-            "envs".into(),
-            TypeDescriptor::Dict(Box::new(option_string.clone())),
-        ),
-    ]));
-    let stdin_type = unit_enum(&["Inherit", "Null", "Piped"]);
-    let stdout_type = unit_enum(&["Inherit", "Null", "PipedLine", "PipedToEnd"]);
-    let stdio_type = TypeDescriptor::Struct(BTreeMap::from([
-        ("stderr".into(), stdout_type.clone()),
-        ("stdin".into(), stdin_type),
-        ("stdout".into(), stdout_type),
-    ]));
-    let spawn_child = TypeDescriptor::Struct(BTreeMap::from([
-        ("key".into(), TypeDescriptor::String),
-        ("opts".into(), child_opts.clone()),
-        ("stdio".into(), stdio_type),
-    ]));
-    let child_spawn_result = TypeDescriptor::Struct(BTreeMap::from([
-        ("key".into(), TypeDescriptor::String),
-        (
-            "result".into(),
-            TypeDescriptor::Enum(BTreeMap::from([
-                ("Ok".into(), Some(Box::new(TypeDescriptor::Int))),
-                ("Err".into(), Some(Box::new(TypeDescriptor::String))),
-            ])),
-        ),
-    ]));
-    let child_exited = TypeDescriptor::Struct(BTreeMap::from([
-        (
-            "exited".into(),
-            TypeDescriptor::Enum(BTreeMap::from([
-                ("Ok".into(), Some(Box::new(TypeDescriptor::Int))),
-                (
-                    "Err".into(),
-                    Some(Box::new(TypeDescriptor::Enum(BTreeMap::from([
-                        ("None".into(), None),
-                        ("Some".into(), Some(Box::new(TypeDescriptor::Int))),
-                    ])))),
-                ),
-            ])),
-        ),
-        ("key".into(), TypeDescriptor::String),
-    ]));
     let ees_reply = TypeDescriptor::Struct(BTreeMap::from([
         ("key".into(), TypeDescriptor::String),
         (
@@ -695,13 +491,6 @@ fn validate_entry_interface(
         ("Initialize".into(), None),
         ("EesReply".into(), Some(Box::new(ees_reply))),
         ("StdinLine".into(), Some(Box::new(option_string.clone()))),
-        ("ChildStdout".into(), Some(Box::new(child_text.clone()))),
-        ("ChildStderr".into(), Some(Box::new(child_text.clone()))),
-        (
-            "ChildSpawnResult".into(),
-            Some(Box::new(child_spawn_result)),
-        ),
-        ("ChildExited".into(), Some(Box::new(child_exited))),
     ]));
     let ees_call = TypeDescriptor::Struct(BTreeMap::from([
         ("actor".into(), TypeDescriptor::String),
@@ -711,11 +500,8 @@ fn validate_entry_interface(
     ]));
     let effect_type = TypeDescriptor::Enum(BTreeMap::from([
         ("EesCall".into(), Some(Box::new(ees_call))),
-        ("Exec".into(), Some(Box::new(child_opts))),
         ("Exit".into(), Some(Box::new(TypeDescriptor::Int))),
         ("Output".into(), Some(Box::new(TypeDescriptor::String))),
-        ("PostStdin".into(), Some(Box::new(child_text))),
-        ("SpawnStdioChild".into(), Some(Box::new(spawn_child))),
     ]));
     let transition_type = TypeDescriptor::Tuple(vec![
         state_type.clone(),
@@ -744,7 +530,7 @@ fn validate_entry_interface(
         (
             "config",
             TypeDescriptor::Function {
-                parameters: vec![options_type, env_type],
+                parameters: vec![env_type, main_type.clone()],
                 result: Box::new(TypeDescriptor::Tuple(vec![caps_type, initializer_type])),
             },
         ),
@@ -774,51 +560,6 @@ fn runtime_array(heap: &mut Heap, values: Vec<Val>) -> Val {
     Val::unknown(DecodedValue::Array(
         heap.allocate(Object::Array(values.into_boxed_slice())),
     ))
-}
-
-fn runtime_dyn(
-    heap: &mut Heap,
-    main: &Heap,
-    value: Val,
-    origin: impl Into<Arc<str>>,
-) -> Result<Val, ModuleError> {
-    let descriptor = crate::types::infer_value_ref(crate::ValueRef::work(value, heap, main));
-    let descriptor_value = heap
-        .type_descriptor_value(Some(main), &descriptor)
-        .map_err(|error| ModuleError::new(error.to_string()))?;
-    Ok(
-        value.with_value(DecodedValue::Dyn(heap.allocate(Object::Dyn {
-            identity: Arc::new(()),
-            descriptor: descriptor_value,
-            value,
-            scheme: Some(crate::TypeScheme {
-                parameters: Vec::new(),
-                constraints: Vec::new(),
-                body: descriptor,
-            }),
-            origin: Some(origin.into()),
-        }))),
-    )
-}
-
-fn make_system_options(
-    heap: &mut Heap,
-    main: &Heap,
-    options: &[LoadedOptionAction],
-) -> Result<Val, ModuleError> {
-    let options = options
-        .iter()
-        .map(|option| {
-            let value = option
-                .value
-                .relocate_into(heap, main)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            let value = runtime_dyn(heap, main, value, format!("option {:?}", option.key))?;
-            let key = runtime_string(heap, main, &option.key);
-            Ok(runtime_record(heap, vec![("key", key), ("value", value)]))
-        })
-        .collect::<Result<Vec<_>, ModuleError>>()?;
-    Ok(runtime_array(heap, options))
 }
 
 fn make_entry_env(
@@ -889,7 +630,15 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
     let caps = expect_protocol_record_ref(
         value,
         "Entry.config SystemCaps",
-        &["data_srcs", "ees", "spawn_child", "stdin", "text_srcs", "vars"],
+        &[
+            "data_srcs",
+            "ees",
+            "ees_models",
+            "ees_vars",
+            "stdin",
+            "text_srcs",
+            "vars",
+        ],
     )?;
     let (data, data_keys) = dict(caps.get("data_srcs").unwrap(), "SystemCaps.data_srcs")?;
     let data_sources = data_keys
@@ -939,7 +688,7 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
         .collect::<Result<_, _>>()?;
 
     let (ees, ees_keys) = dict(caps.get("ees").unwrap(), "SystemCaps.ees")?;
-    let ees = ees_keys
+    let ees: BTreeMap<String, String> = ees_keys
         .into_iter()
         .map(|key| {
             if key.is_empty() {
@@ -957,6 +706,50 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
             Ok((key.to_owned(), kind))
         })
         .collect::<Result<_, _>>()?;
+
+    let (ees_vars, variable_names) = dict(caps.get("ees_vars").unwrap(), "SystemCaps.ees_vars")?;
+    let ees_vars = variable_names
+        .into_iter()
+        .map(|name| {
+            if name.is_empty() {
+                return Err(ModuleError::new(
+                    "SystemCaps.ees_vars must use non-empty names",
+                ));
+            }
+            let pattern = protocol_string_ref(
+                ees_vars.get(name).unwrap(),
+                &format!("SystemCaps.ees_vars.{name}"),
+            )?;
+            Ok((name.to_owned(), pattern))
+        })
+        .collect::<Result<_, _>>()?;
+    let models = protocol_ref(caps.get("ees_models").unwrap());
+    let length = models
+        .sequence_len()
+        .ok_or_else(|| ModuleError::new("SystemCaps.ees_models must be Array(EesModel)"))?;
+    let mut ees_models = Vec::with_capacity(length);
+    for index in 0..length {
+        let path = format!("SystemCaps.ees_models[{index}]");
+        let model = expect_protocol_record_ref(
+            models.sequence_get(index).expect("index is in range"),
+            &path,
+            &["config", "kind", "name"],
+        )?;
+        let kind = protocol_string_ref(model.get("kind").unwrap(), &format!("{path}.kind"))?;
+        let name = protocol_string_ref(model.get("name").unwrap(), &format!("{path}.name"))?;
+        let config = semantic_value_json(model.get("config").unwrap(), &format!("{path}.config"))?;
+        if ees.get(&name) != Some(&kind) {
+            return Err(ModuleError::new(format!(
+                "{path} does not match SystemCaps.ees"
+            )));
+        }
+        ees_models.push(SystemEesModel {kind, name, config});
+    }
+    if ees_models.len() != ees.len() {
+        return Err(ModuleError::new(
+            "SystemCaps.ees_models does not match SystemCaps.ees",
+        ));
+    }
 
     let (texts, text_keys) = dict(caps.get("text_srcs").unwrap(), "SystemCaps.text_srcs")?;
     let text_sources = text_keys
@@ -1006,27 +799,13 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
         Some("Null") => SystemStdin::Null,
         _ => return Err(ModuleError::new("SystemCaps.stdin is invalid")),
     };
-    let spawn_child =
-        protocol_bool_ref(caps.get("spawn_child").unwrap(), "SystemCaps.spawn_child")?;
     Ok(SystemCaps {
         data_sources,
         ees,
-        spawn_child,
+        ees_models,
+        ees_vars,
         text_sources,
         vars: names,
         stdin,
     })
-}
-
-fn concrete_module_descriptor(interface: &ModuleInterface) -> Result<TypeDescriptor, ModuleError> {
-    let mut fields = BTreeMap::new();
-    for (name, scheme) in &interface.exports {
-        if !scheme.parameters.is_empty() {
-            return Err(ModuleError::new(format!(
-                "Main export {name:?} is generic and has no concrete Entry boundary type"
-            )));
-        }
-        fields.insert(name.clone(), scheme.body.clone());
-    }
-    Ok(TypeDescriptor::Struct(fields))
 }

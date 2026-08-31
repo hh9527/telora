@@ -1,5 +1,0 @@
-import "std/rt-types/exec" { ExecFn };
-import "gcc-toolchain-define/source.json" {data as source};
-import "gcc-wrapper/toolchain" { command };
-
-export def exec: ExecFn = command("ar", source);

@@ -11,7 +11,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    fn program(&self, options: Vec<OptionAction>) -> Result<Program, Diagnostic> {
+    fn program(&self) -> Result<Program, Diagnostic> {
         let root = NodeRef::ROOT;
         let body_node = self
             .rule_children(root)
@@ -54,57 +54,11 @@ impl<'a> Lowerer<'a> {
         }
         Ok(located(
             ProgramKind {
-                options,
                 body,
                 authored_result,
             },
             self.location(root),
         ))
-    }
-
-    fn option_actions(&self) -> Result<Vec<OptionAction>, Diagnostic> {
-        let body = self
-            .rule_children(NodeRef::ROOT)
-            .find(|node| self.rule(*node) == Some(Rule::Body))
-            .ok_or_else(|| self.error(NodeRef::ROOT, "program has no body"))?;
-        let mut options = Vec::new();
-        for child in self.children(body) {
-            let node = if self.rule(child) == Some(Rule::Binding) {
-                self.first_rule(child)
-                    .ok_or_else(|| self.error(child, "empty binding"))?
-            } else {
-                child
-            };
-            if self.rule(node) != Some(Rule::OptionBinding) {
-                continue;
-            }
-            let key_node = self
-                .rule_children(node)
-                .find(|child| self.rule(*child) == Some(Rule::StringLiteral))
-                .ok_or_else(|| self.error(node, "option has no key"))?;
-            let key = self.plain_string(key_node, "option key")?;
-            if !valid_option_key(&key) {
-                return Err(self.error(
-                    key_node,
-                    "option key must contain lower-case dotted segments",
-                ));
-            }
-            let value_node = self
-                .children(node)
-                .find(|child| {
-                    self.is_expression(*child)
-                        && self.cst.span(*child).start >= self.cst.span(key_node).end
-                })
-                .ok_or_else(|| self.error(node, "option has no value"))?;
-            let value = self.expression(value_node)?;
-            validate_option_literal(&value)?;
-            options.push(OptionAction {
-                key: located(key, self.location(key_node)),
-                value,
-                location: self.location(node),
-            });
-        }
-        Ok(options)
     }
 
     fn recover_program(&self, diagnostics: &mut Vec<Diagnostic>) -> RecoveredProgram {
@@ -116,9 +70,6 @@ impl<'a> Lowerer<'a> {
         if let Some(body) = root.body() {
             for binding in body.bindings() {
                 let node = binding.syntax().node_ref();
-                if matches!(binding, crate::syntax::telora::ast::Binding::Option(_)) {
-                    continue;
-                }
                 let lowered = match self.rule(node) {
                     Some(Rule::ImportBinding) => self.import_bindings(node),
                     Some(Rule::ExportStatement) => self.export_bindings(node),
@@ -213,14 +164,6 @@ impl<'a> Lowerer<'a> {
                         .map(BlockEntry::Binding)
                         .collect::<Vec<_>>()
                 }),
-                Some(Rule::OptionBinding) => {
-                    if allow_destructuring {
-                        return Err(self.error(
-                            child,
-                            "option declarations are allowed only at module top level",
-                        ));
-                    }
-                }
                 Some(Rule::LetPatternBinding) => {
                     if !allow_destructuring {
                         return Err(self.error(
@@ -297,13 +240,6 @@ impl<'a> Lowerer<'a> {
                                 .into_iter()
                                 .map(BlockEntry::Binding),
                         );
-                    } else if self.rule(inner) == Some(Rule::OptionBinding) {
-                        if allow_destructuring {
-                            return Err(self.error(
-                                inner,
-                                "option declarations are allowed only at module top level",
-                            ));
-                        }
                     } else {
                         entries.push(BlockEntry::Binding(self.binding(inner)?));
                     }

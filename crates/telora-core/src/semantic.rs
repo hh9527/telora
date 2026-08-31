@@ -142,13 +142,6 @@ pub struct WorkspaceImport {
     pub namespace: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkspaceOption {
-    pub key: String,
-    pub location: Location,
-    pub value_location: Location,
-}
-
 #[derive(Clone, Debug)]
 pub struct WorkspaceModule {
     pub id: WorkspaceModuleId,
@@ -158,7 +151,6 @@ pub struct WorkspaceModule {
     pub state: WorkspaceModuleState,
     pub source: Option<SourceId>,
     pub imports: Vec<WorkspaceImport>,
-    pub options: Vec<WorkspaceOption>,
     pub result_location: Option<Location>,
     pub result_type: Option<WorkspaceTypeId>,
     pub export_schemes: BTreeMap<String, String>,
@@ -560,7 +552,6 @@ impl WorkspaceSnapshot {
                 state: WorkspaceModuleState::Available,
                 source: Some(source),
                 imports: Vec::new(),
-                options: Vec::new(),
                 result_location: parsed
                     .recovered
                     .result
@@ -953,8 +944,7 @@ impl WorkspaceSnapshot {
             .filter_map(|import| match &import.target {
                 ModuleCName::Builtin(name) => Some(name.clone()),
                 ModuleCName::Source { .. }
-                | ModuleCName::Binary { .. }
-                | ModuleCName::Entry { .. }
+                | ModuleCName::Standalone { .. }
                 | ModuleCName::Test { .. }
                 | ModuleCName::Dependency { .. } => None,
             })
@@ -1022,22 +1012,6 @@ impl WorkspaceSnapshot {
                         .as_ref()
                         .map(|interface| type_maps[index][interface.result_type.index()])
                 });
-            let options = input
-                .program
-                .as_ref()
-                .map(|program| {
-                    program
-                        .value
-                        .options
-                        .iter()
-                        .map(|option| WorkspaceOption {
-                            key: option.key.value.clone(),
-                            location: option.location,
-                            value_location: option.value.location,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
             modules.push(WorkspaceModule {
                 id,
                 name: input.key.clone(),
@@ -1046,7 +1020,6 @@ impl WorkspaceSnapshot {
                 state: input.state,
                 source: input.source,
                 imports,
-                options,
                 result_location: input
                     .program
                     .as_ref()

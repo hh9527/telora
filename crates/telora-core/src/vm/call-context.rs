@@ -305,6 +305,24 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, value)
     }
 
+    pub(crate) fn set_value_type(
+        &mut self,
+        destination: RegisterId,
+        source: RegisterId,
+    ) -> Result<(), NativeError> {
+        let value = self.owned(source)?;
+        let value_ref = self.background.map_or_else(
+            || crate::ValueRef::local(value, self.current),
+            |background| crate::ValueRef::work(value, self.current, background),
+        );
+        let descriptor = crate::types::infer_value_ref(value_ref);
+        let value = self
+            .current
+            .type_descriptor_value(self.background, &descriptor)
+            .map_err(|error| NativeError::new(error.to_string()))?;
+        self.set(destination, value)
+    }
+
     pub(crate) fn make_declared_type_application(
         &mut self,
         destination: RegisterId,

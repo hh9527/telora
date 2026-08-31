@@ -760,9 +760,7 @@ export { CallExpr, Expr };"#,
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"option "test.action" 1;
-               option "test.action" 2;
-               import "./missing" as missing;
+            r#"import "./missing" as missing;
                export { missing as output };"#,
         )
         .unwrap();

@@ -39,61 +39,6 @@ impl Default for DataLimits {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChildStdinMode {
-    Piped,
-    Inherit,
-    Null,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChildOutputMode {
-    PipedLine,
-    PipedToEnd,
-    Inherit,
-    Null,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChildOptions {
-    pub bin: String,
-    pub cwd: Option<String>,
-    pub envs: BTreeMap<String, Option<String>>,
-    pub clear_env: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ChildStdio {
-    pub stdin: ChildStdinMode,
-    pub stdout: ChildOutputMode,
-    pub stderr: ChildOutputMode,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SpawnStdioChild {
-    pub key: String,
-    pub opts: ChildOptions,
-    pub stdio: ChildStdio,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChildText {
-    pub key: String,
-    pub data: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ChildSpawnResult {
-    pub key: String,
-    pub result: Result<i64, String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ChildExit {
-    Code(i64),
-    Signal(Option<i64>),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemDataFormat {
     Json,
     Yaml,
@@ -126,10 +71,18 @@ pub enum SystemStdin {
 pub struct SystemCaps {
     pub data_sources: BTreeMap<String, SystemDataSource>,
     pub ees: BTreeMap<String, String>,
-    pub spawn_child: bool,
+    pub ees_models: Vec<SystemEesModel>,
+    pub ees_vars: BTreeMap<String, String>,
     pub text_sources: BTreeMap<String, SystemTextSource>,
     pub vars: Vec<String>,
     pub stdin: SystemStdin,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemEesModel {
+    pub kind: String,
+    pub name: String,
+    pub config: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,10 +103,6 @@ pub struct EesReply {
 pub enum SystemEvent {
     EesReply(EesReply),
     StdinLine(Option<String>),
-    ChildStdout(ChildText),
-    ChildStderr(ChildText),
-    ChildSpawnResult(ChildSpawnResult),
-    ChildExited { key: String, exited: ChildExit },
 }
 
 pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
@@ -174,13 +123,6 @@ pub trait RunHost {
         max_bytes: usize,
     ) -> RunHostFuture<'_, Result<Option<String>, String>>;
 
-    fn spawn_stdio_child(
-        &mut self,
-        child: SpawnStdioChild,
-    ) -> RunHostFuture<'_, Result<(), String>>;
-
-    fn post_stdin(&mut self, text: ChildText) -> RunHostFuture<'_, Result<(), String>>;
-
     fn ees_call(&mut self, call: EesCall) -> RunHostFuture<'_, Result<(), String>>;
 
     fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>>;
@@ -191,7 +133,6 @@ pub trait RunHost {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunTermination {
     Exit(i64),
-    Exec(ChildOptions),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -244,7 +185,6 @@ impl RunHost for NoProcessRunHost {
                 || !caps.text_sources.is_empty()
                 || !caps.vars.is_empty()
                 || caps.stdin != SystemStdin::Null
-                || caps.spawn_child
             {
                 return Err("this Host does not provide initialization capabilities".into());
             }
@@ -258,17 +198,6 @@ impl RunHost for NoProcessRunHost {
         _max_bytes: usize,
     ) -> RunHostFuture<'_, Result<Option<String>, String>> {
         Box::pin(async { Ok(None) })
-    }
-
-    fn spawn_stdio_child(
-        &mut self,
-        _child: SpawnStdioChild,
-    ) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async { Err("this Host does not provide stdio child processes".into()) })
-    }
-
-    fn post_stdin(&mut self, _text: ChildText) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async { Err("this Host does not provide stdio child processes".into()) })
     }
 
     fn ees_call(&mut self, _call: EesCall) -> RunHostFuture<'_, Result<(), String>> {

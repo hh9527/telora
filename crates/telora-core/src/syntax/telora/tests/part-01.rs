@@ -28,11 +28,9 @@
     }
 
     #[test]
-    fn cst_preserves_interleaved_module_options() {
-        let source = r#"#!/usr/bin/env -S telora run tool
-option "module.documentation" {name: "tool"};
-export def run = fn(settings, request) { {args: request.args} };
-option "module.documentation" {stability: "experimental"};"#;
+    fn cst_preserves_option_as_an_identifier() {
+        let source = r#"def option = "ordinary";
+export def run = fn(settings, request) { {args: request.args, option} };"#;
         let mut sources = crate::source::SourceDatabase::default();
         let id = sources.add("options.telora", source);
         let parsed = parse(id, source);

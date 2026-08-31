@@ -1,30 +1,27 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command as ProcessCommand, Stdio as ProcessStdio};
 use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
-    CallContext, ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode,
-    ChildText, DataLimits, DebugEvent, DebugSink, DefinitionKind, EesCall, EesReply, Engine,
+    CallContext, DataLimits, DebugEvent, DebugSink, DefinitionKind, EesCall, EesReply, Engine,
     EngineConfig, FactState, Location, ModuleResolver, NativeError, NativeFunction,
-    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemCaps,
-    SystemDataSource, SystemEvent, SystemStdin, TextPosition, WorkspaceSnapshot,
+    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SystemCaps, SystemDataSource,
+    SystemEvent, SystemStdin, TextPosition, WorkspaceSnapshot,
 };
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command as TokioCommand;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 mod ees_arg;
 mod ees_cli;
 mod eval_cli;
 mod source_arg;
-use ees_arg::{NamedEesVar, collect_ees, parse_named_ees_var};
+use ees_arg::{NamedEesVar, collect_ees_models, parse_named_ees_var};
 use ees_cli::EesArgs;
 use eval_cli::{EvalArgs, EvalWithArgs};
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
@@ -92,10 +89,10 @@ enum ReaderEvent {
 
 struct ProcessRunHost {
     source_locators: BTreeMap<String, String>,
-    children: HashMap<String, Option<mpsc::UnboundedSender<Option<String>>>>,
     ees: Option<telora_ees::Service>,
     ees_actors: BTreeMap<String, String>,
     ees_active: HashSet<String>,
+    ees_vars: Vec<NamedEesVar>,
     sender: mpsc::UnboundedSender<ReaderEvent>,
     receiver: mpsc::UnboundedReceiver<ReaderEvent>,
     cancel: watch::Sender<bool>,
@@ -104,19 +101,15 @@ struct ProcessRunHost {
 }
 
 impl ProcessRunHost {
-    fn new(
-        source_locators: BTreeMap<String, String>,
-        ees: Option<telora_ees::Service>,
-        ees_actors: BTreeMap<String, String>,
-    ) -> Self {
+    fn new(source_locators: BTreeMap<String, String>, ees_vars: Vec<NamedEesVar>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (cancel, _) = watch::channel(false);
         Self {
             source_locators,
-            children: HashMap::new(),
-            ees,
-            ees_actors,
+            ees: None,
+            ees_actors: BTreeMap::new(),
             ees_active: HashSet::new(),
+            ees_vars,
             sender,
             receiver,
             cancel,
@@ -131,283 +124,17 @@ impl ProcessRunHost {
             .map_or(source.src.as_str(), String::as_str)
     }
 
-    fn command(options: &ChildOptions) -> ProcessCommand {
-        let mut command = ProcessCommand::new(&options.bin);
-        if let Some(cwd) = &options.cwd {
-            command.current_dir(cwd);
-        }
-        if options.clear_env {
-            command.env_clear();
-        }
-        for (name, value) in &options.envs {
-            match value {
-                Some(value) => {
-                    command.env(name, value);
-                }
-                None => {
-                    command.env_remove(name);
-                }
-            }
-        }
-        command
-    }
-
-    fn output_stdio(mode: ChildOutputMode) -> ProcessStdio {
-        match mode {
-            ChildOutputMode::PipedLine | ChildOutputMode::PipedToEnd => ProcessStdio::piped(),
-            ChildOutputMode::Inherit => ProcessStdio::inherit(),
-            ChildOutputMode::Null => ProcessStdio::null(),
-        }
-    }
-
-    async fn read_stream(
-        key: String,
-        reader: impl AsyncRead + Unpin,
-        mode: ChildOutputMode,
-        stderr: bool,
-        sender: mpsc::UnboundedSender<ReaderEvent>,
-    ) -> Result<(), String> {
-        let make_event = |data| {
-            let text = ChildText {
-                key: key.clone(),
-                data,
-            };
-            if stderr {
-                SystemEvent::ChildStderr(text)
-            } else {
-                SystemEvent::ChildStdout(text)
-            }
-        };
-        match mode {
-            ChildOutputMode::PipedLine => {
-                let mut lines = BufReader::new(reader).lines();
-                while let Some(line) = lines.next_line().await.map_err(|error| {
-                    format!("cannot read child {key:?} stream as UTF-8 text: {error}")
-                })? {
-                    if sender
-                        .send(ReaderEvent::Event(make_event(Some(line))))
-                        .is_err()
-                    {
-                        return Ok(());
-                    }
-                }
-            }
-            ChildOutputMode::PipedToEnd => {
-                let mut reader = BufReader::new(reader);
-                let mut text = String::new();
-                reader.read_to_string(&mut text).await.map_err(|error| {
-                    format!("cannot read child {key:?} stream as UTF-8 text: {error}")
-                })?;
-                if !text.is_empty()
-                    && sender
-                        .send(ReaderEvent::Event(make_event(Some(text))))
-                        .is_err()
-                {
-                    return Ok(());
-                }
-            }
-            ChildOutputMode::Inherit | ChildOutputMode::Null => unreachable!(),
-        }
-        let _ = sender.send(ReaderEvent::Event(make_event(None)));
-        Ok(())
-    }
-
-    async fn supervise_child(
-        request: SpawnStdioChild,
-        mut stdin_messages: mpsc::UnboundedReceiver<Option<String>>,
-        mut cancel: watch::Receiver<bool>,
-        sender: mpsc::UnboundedSender<ReaderEvent>,
-    ) -> Result<(), String> {
-        let key = request.key.clone();
-        let mut command = TokioCommand::from(Self::command(&request.opts));
-        command.kill_on_drop(true);
-        command.stdin(match request.stdio.stdin {
-            ChildStdinMode::Piped => ProcessStdio::piped(),
-            ChildStdinMode::Inherit => ProcessStdio::inherit(),
-            ChildStdinMode::Null => ProcessStdio::null(),
-        });
-        command.stdout(Self::output_stdio(request.stdio.stdout));
-        command.stderr(Self::output_stdio(request.stdio.stderr));
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                let _ = sender.send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
-                    ChildSpawnResult {
-                        key,
-                        result: Err(format!("cannot spawn {:?}: {error}", request.opts.bin)),
-                    },
-                )));
-                return Ok(());
-            }
-        };
-        let pid = i64::from(child.id().expect("a spawned child has a process id"));
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-
-        if *cancel.borrow() {
-            let _ = child.start_kill();
-            child
-                .wait()
-                .await
-                .map_err(|error| format!("cannot wait for child {key:?}: {error}"))?;
-            return Ok(());
-        }
-
-        let _ = sender.send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
-            ChildSpawnResult {
-                key: key.clone(),
-                result: Ok(pid),
-            },
-        )));
-
-        let mut stream_tasks = JoinSet::new();
-        if let Some(stdout) = stdout {
-            let stream_sender = sender.clone();
-            let stream_key = key.clone();
-            stream_tasks.spawn(async move {
-                let result = Self::read_stream(
-                    stream_key,
-                    stdout,
-                    request.stdio.stdout,
-                    false,
-                    stream_sender.clone(),
-                )
-                .await;
-                if let Err(error) = &result {
-                    let _ = stream_sender.send(ReaderEvent::Error(error.clone()));
-                }
-                result
-            });
-        }
-        if let Some(stderr) = stderr {
-            let stream_sender = sender.clone();
-            let stream_key = key.clone();
-            stream_tasks.spawn(async move {
-                let result = Self::read_stream(
-                    stream_key,
-                    stderr,
-                    request.stdio.stderr,
-                    true,
-                    stream_sender.clone(),
-                )
-                .await;
-                if let Err(error) = &result {
-                    let _ = stream_sender.send(ReaderEvent::Error(error.clone()));
-                }
-                result
-            });
-        }
-
-        let mut stdin_tasks = JoinSet::new();
-        if let Some(mut stdin) = stdin {
-            let error_sender = sender.clone();
-            let stdin_key = key.clone();
-            stdin_tasks.spawn(async move {
-                while let Some(data) = stdin_messages.recv().await {
-                    let Some(data) = data else {
-                        return Ok(());
-                    };
-                    let result = stdin.write_all(data.as_bytes()).await;
-                    let result = match result {
-                        Ok(()) => stdin.flush().await,
-                        Err(error) => Err(error),
-                    };
-                    if let Err(error) = result {
-                        let message = format!("cannot write child {stdin_key:?} stdin: {error}");
-                        let _ = error_sender.send(ReaderEvent::Error(message.clone()));
-                        return Err(message);
-                    }
-                }
-                Ok(())
-            });
-        }
-
-        let status = tokio::select! {
-            biased;
-            changed = cancel.changed() => {
-                if changed.is_ok() && *cancel.borrow() {
-                    let _ = child.start_kill();
-                    child.wait().await.map_err(|error| {
-                        format!("cannot wait for child {key:?}: {error}")
-                    })?;
-                }
-                None
-            },
-            result = child.wait() => Some(result.map_err(|error| {
-                format!("cannot wait for child {key:?}: {error}")
-            })?),
-        };
-
-        stdin_tasks.abort_all();
-        while stdin_tasks.join_next().await.is_some() {}
-
-        let mut cancelled = status.is_none() || *cancel.borrow();
-        if cancelled {
-            stream_tasks.abort_all();
-        }
-        while !stream_tasks.is_empty() {
-            tokio::select! {
-                biased;
-                changed = cancel.changed(), if !cancelled => {
-                    if changed.is_ok() && *cancel.borrow() {
-                        cancelled = true;
-                        stream_tasks.abort_all();
-                    }
-                }
-                result = stream_tasks.join_next() => {
-                    let Some(result) = result else { continue };
-                    if !cancelled {
-                        result.map_err(|error| {
-                            format!("child {key:?} stream task failed: {error}")
-                        })??;
-                    }
-                }
-            }
-        }
-
-        if let Some(status) = status {
-            let exited = match status.code() {
-                Some(code) => ChildExit::Code(i64::from(code)),
-                None => ChildExit::Signal(exit_signal(&status)),
-            };
-            let _ = sender.send(ReaderEvent::Event(SystemEvent::ChildExited { key, exited }));
-        }
-        Ok(())
-    }
-
     fn receive_event(&mut self, event: ReaderEvent) -> Result<Option<SystemEvent>, String> {
         match event {
             ReaderEvent::Error(error) => Err(error),
             ReaderEvent::Event(event) => {
-                match &event {
-                    SystemEvent::EesReply(reply) => {
-                        self.ees_active.remove(&reply.key);
-                    }
-                    SystemEvent::ChildSpawnResult(ChildSpawnResult {
-                        key,
-                        result: Err(_),
-                    })
-                    | SystemEvent::ChildExited { key, .. } => {
-                        self.children.remove(key);
-                    }
-                    _ => {}
+                if let SystemEvent::EesReply(reply) = &event {
+                    self.ees_active.remove(&reply.key);
                 }
                 Ok(Some(event))
             }
         }
     }
-}
-
-#[cfg(unix)]
-fn exit_signal(status: &std::process::ExitStatus) -> Option<i64> {
-    use std::os::unix::process::ExitStatusExt;
-    status.signal().map(i64::from)
-}
-
-#[cfg(not(unix))]
-fn exit_signal(_status: &std::process::ExitStatus) -> Option<i64> {
-    None
 }
 
 fn native_string(
@@ -581,12 +308,26 @@ impl RunHost for ProcessRunHost {
 
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            if caps.ees != self.ees_actors {
+            let collected = collect_ees_models(
+                &caps.ees_vars,
+                &caps.ees_models,
+                std::mem::take(&mut self.ees_vars),
+            )?;
+            if caps.ees != collected.actors {
                 return Err(format!(
-                    "EES actor declarations do not match Host bindings: declared {:?}, provided {:?}",
-                    caps.ees, self.ees_actors
+                    "EES actor declarations do not match model configs: declared {:?}, configured {:?}",
+                    caps.ees, collected.actors
                 ));
             }
+            self.ees_actors = collected.actors;
+            self.ees = match collected.manifest {
+                Some(manifest) => Some(
+                    telora_ees::Service::open(manifest)
+                        .await
+                        .map_err(|error| format!("cannot initialize application EES: {error:#}"))?,
+                ),
+                None => None,
+            };
             if caps.stdin != SystemStdin::Null
                 && caps
                     .data_sources
@@ -682,72 +423,6 @@ impl RunHost for ProcessRunHost {
         })
     }
 
-    fn spawn_stdio_child(
-        &mut self,
-        request: SpawnStdioChild,
-    ) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            if request.key.is_empty() {
-                let _ = self
-                    .sender
-                    .send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
-                        ChildSpawnResult {
-                            key: request.key,
-                            result: Err("child key must not be empty".into()),
-                        },
-                    )));
-                return Ok(());
-            }
-            if self.children.contains_key(&request.key) {
-                let _ = self
-                    .sender
-                    .send(ReaderEvent::Event(SystemEvent::ChildSpawnResult(
-                        ChildSpawnResult {
-                            key: request.key.clone(),
-                            result: Err(format!("child key {:?} is already active", request.key)),
-                        },
-                    )));
-                return Ok(());
-            }
-            let key = request.key.clone();
-            let (stdin_sender, stdin_receiver) = mpsc::unbounded_channel();
-            let stdin_sender =
-                (request.stdio.stdin == ChildStdinMode::Piped).then_some(stdin_sender);
-            self.children.insert(key.clone(), stdin_sender);
-            let cancel = self.cancel.subscribe();
-            let sender = self.sender.clone();
-            self.tasks.spawn(async move {
-                let result = Self::supervise_child(request, stdin_receiver, cancel, sender).await;
-                (key, result)
-            });
-            Ok(())
-        })
-    }
-
-    fn post_stdin(&mut self, text: ChildText) -> RunHostFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            let stdin = self
-                .children
-                .get_mut(&text.key)
-                .ok_or_else(|| format!("unknown active child {:?}", text.key))?
-                .as_ref()
-                .ok_or_else(|| format!("child {:?} has no open piped stdin", text.key))?
-                .clone();
-            let close = text.data.is_none();
-            stdin
-                .send(text.data)
-                .map_err(|_| format!("child {:?} has no open piped stdin", text.key))
-                .map(|()| {
-                    if close {
-                        self.children
-                            .get_mut(&text.key)
-                            .expect("child was resolved above")
-                            .take();
-                    }
-                })
-        })
-    }
-
     fn ees_call(&mut self, call: EesCall) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async move {
             if !self.ees_actors.contains_key(&call.actor) {
@@ -793,7 +468,7 @@ impl RunHost for ProcessRunHost {
                 if let Ok(event) = self.receiver.try_recv() {
                     return self.receive_event(event);
                 }
-                if self.children.is_empty() && self.tasks.is_empty() {
+                if self.tasks.is_empty() {
                     return Ok(None);
                 }
                 tokio::select! {
@@ -805,13 +480,10 @@ impl RunHost for ProcessRunHost {
                     }
                     joined = self.tasks.join_next(), if !self.tasks.is_empty() => {
                         let Some(joined) = joined else { continue };
-                        let (key, result) = joined.map_err(|error| {
-                            format!("child supervisor task failed: {error}")
+                        let (_, result) = joined.map_err(|error| {
+                            format!("Host task failed: {error}")
                         })?;
-                        if let Err(error) = result {
-                            self.children.remove(&key);
-                            return Err(error);
-                        }
+                        result?;
                     }
                 }
             }
@@ -825,14 +497,13 @@ impl RunHost for ProcessRunHost {
             }
             self.finished = true;
             let _ = self.cancel.send(true);
-            self.children.clear();
             let mut first_error = None;
             while let Some(joined) = self.tasks.join_next().await {
                 match joined {
                     Ok((_, Ok(()))) => {}
                     Ok((_, Err(error))) if first_error.is_none() => first_error = Some(error),
                     Err(error) if first_error.is_none() => {
-                        first_error = Some(format!("child supervisor task failed: {error}"));
+                        first_error = Some(format!("Host task failed: {error}"));
                     }
                     _ => {}
                 }
@@ -845,7 +516,6 @@ impl RunHost for ProcessRunHost {
 impl Drop for ProcessRunHost {
     fn drop(&mut self) {
         let _ = self.cancel.send(true);
-        self.children.clear();
         self.tasks.abort_all();
     }
 }
@@ -870,10 +540,8 @@ enum Command {
     Run(RunArgs),
     /// Process transport requests with one application reducer service.
     Serve(ServeArgs),
-    /// Serve native actor effects over stdin/stdout JSON Lines.
-    Ees(EesArgs),
     #[command(hide = true)]
-    RunWith(RunWithArgs),
+    Ees(EesArgs),
     /// Resolve package sources and rewrite telora-lock.json.
     Lock,
     Check(CheckArgs),
@@ -891,18 +559,18 @@ struct RunArgs {
 
 #[derive(Args)]
 struct ApplicationArgs {
-    #[arg(required_unless_present = "standalone", conflicts_with = "standalone", value_parser = binary_name)]
-    binary: Option<String>,
-    #[arg(short = 'S', value_name = "FILE", conflicts_with = "binary")]
-    standalone: Option<PathBuf>,
+    #[arg(value_name = "MODULE:EXPORT", value_parser = parse_application_selector)]
+    selector: ApplicationSelector,
     #[arg(long)]
     best_effort: bool,
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
-    /// Bind a value declared by option "ees.vars": NAME=VALUE.
+    /// Bind a variable declared by the selected entry.Ees value: NAME=VALUE.
     #[arg(long = "ees-var", value_name = "NAME=VALUE", value_parser = parse_named_ees_var)]
     ees_vars: Vec<NamedEesVar>,
+    #[arg(last = true, value_name = "ARG")]
+    args: Vec<String>,
 }
 
 #[derive(Args)]
@@ -914,15 +582,10 @@ struct ServeArgs {
     bind: String,
 }
 
-#[derive(Args)]
-struct RunWithArgs {
-    /// Entry module selector, such as std/entry/default or @src/entry/serve.
-    #[arg(value_name = "ENTRY_MODULE")]
-    entry: String,
-    #[command(flatten)]
-    application: ApplicationArgs,
-    #[arg(last = true, value_name = "ENTRY_ARG")]
-    entry_args: Vec<String>,
+#[derive(Clone)]
+struct ApplicationSelector {
+    module_id: String,
+    export: String,
 }
 
 #[derive(Args)]
@@ -1008,16 +671,25 @@ fn non_empty(value: &str) -> Result<String, String> {
         .ok_or_else(|| "pattern must not be empty".into())
 }
 
-fn binary_name(value: &str) -> Result<String, String> {
-    if value.is_empty()
-        || value == "."
-        || value == ".."
-        || value.contains(['/', '\\'])
-        || value.ends_with(".telora")
-    {
-        return Err("binary name must be a single name without path separators or .telora".into());
+fn parse_application_selector(value: &str) -> Result<ApplicationSelector, String> {
+    let (module_id, export) = value
+        .rsplit_once(':')
+        .ok_or_else(|| "expected MODULE:EXPORT".to_owned())?;
+    if module_id.is_empty() {
+        return Err("application module selector must not be empty".into());
     }
-    Ok(value.to_owned())
+    let mut characters = export.chars();
+    if !characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        || !characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+    {
+        return Err("application export name must be an identifier".into());
+    }
+    Ok(ApplicationSelector {
+        module_id: module_id.to_owned(),
+        export: export.to_owned(),
+    })
 }
 
 fn parse_kinds(value: &str) -> Result<KindSet, String> {
@@ -1073,19 +745,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
     if let Command::Ees(arguments) = &cli.command {
         return ees_cli::run(arguments, cli.context.is_some());
     }
-    let explicit_context = cli.context.is_some();
     let context = command_context(cli.context)?;
-    if explicit_context {
-        let standalone = match &cli.command {
-            Command::Run(arguments) => arguments.application.standalone.is_some(),
-            Command::Serve(arguments) => arguments.application.standalone.is_some(),
-            Command::RunWith(arguments) => arguments.application.standalone.is_some(),
-            _ => false,
-        };
-        if standalone {
-            return Err("-C cannot be used with -S".into());
-        }
-    }
     match cli.command {
         Command::Eval(arguments) => eval_cli::run(context, arguments),
         Command::EvalWith(arguments) => eval_cli::run_with(context, arguments),
@@ -1095,9 +755,8 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(
                 context,
-                "std/entry/default",
+                "std/_entry-default",
                 arguments.application,
-                &[],
             )),
         Command::Serve(arguments) => {
             if arguments.bind != "stdio://" {
@@ -1112,22 +771,11 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 .map_err(|error| format!("cannot start the serve Host: {error}"))?
                 .block_on(run_command(
                     context,
-                    "std/entry/serve",
+                    "std/_entry-serve",
                     arguments.application,
-                    &[],
                 ))
         }
         Command::Ees(_) => unreachable!("EES returns before workspace context discovery"),
-        Command::RunWith(arguments) => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command(
-                context,
-                &arguments.entry,
-                arguments.application,
-                &arguments.entry_args,
-            )),
         Command::Lock => package_host::lock(&context).map(|path| {
             println!("{}", path.display());
             0
@@ -1146,15 +794,10 @@ async fn run_command(
     context: PathBuf,
     entry: &str,
     arguments: ApplicationArgs,
-    entry_args: &[String],
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
-    let prepared = arguments
-        .standalone
-        .is_none()
-        .then(|| package_host::prepare(&context))
-        .transpose()?;
-    if entry == "std/entry/serve"
+    let prepared = package_host::prepare(&context)?;
+    if entry == "std/_entry-serve"
         && entry_sources
             .locators
             .values()
@@ -1162,23 +805,13 @@ async fn run_command(
     {
         return Err("serve --bind stdio:// reserves standard input for JSONL requests".into());
     }
-    let module_id = arguments
-        .binary
-        .as_ref()
-        .map(|binary| format!("@bin/{binary}"));
+    let module_id = &arguments.selector.module_id;
     if arguments.best_effort {
         let recovery_engine = Engine::new(engine_config());
-        let workspace = if let Some(path) = arguments.standalone.as_deref() {
-            recovery_engine.recover_standalone(path)
-        } else {
-            recovery_engine.recover_workspace_id_in_workspace(
-                Arc::clone(prepared.as_ref().expect("crate mode is prepared")),
-                &context,
-                module_id.as_deref().expect("required by clap"),
-            )
-        }
-        .map_err(|error| error.to_string())?;
-        let selected = module_id.as_deref().unwrap_or("@standalone");
+        let workspace = recovery_engine
+            .recover_workspace_id_in_workspace(Arc::clone(&prepared), &context, module_id)
+            .map_err(|error| error.to_string())?;
+        let selected = module_id;
         for diagnostic in workspace.diagnostics() {
             emit_stderr(diagnostic_record(
                 "telora.run/v1",
@@ -1202,31 +835,16 @@ async fn run_command(
         }
     }
     let engine = engine();
-    let pending = if let Some(path) = arguments.standalone {
-        engine.prepare_standalone(path)
-    } else {
-        engine.prepare_module_id_in_workspace(
-            prepared.expect("crate mode is prepared"),
-            context,
-            module_id.as_deref().expect("required by clap"),
-        )
-    }
-    .map_err(|error| error.to_string())?;
-    let entry_ees = collect_ees(pending.option_actions(), arguments.ees_vars)?;
-    let ees = match entry_ees.manifest {
-        Some(manifest) => Some(
-            telora_ees::Service::open(manifest)
-                .await
-                .map_err(|error| format!("cannot initialize application EES: {error:#}"))?,
-        ),
-        None => None,
-    };
-    let mut host = ProcessRunHost::new(entry_sources.locators, ees, entry_ees.actors);
+    let pending = engine
+        .prepare_module_id_in_workspace(prepared, context, module_id)
+        .map_err(|error| error.to_string())?;
+    let mut host = ProcessRunHost::new(entry_sources.locators, arguments.ees_vars);
     let outcome = engine
         .run_pending_with_sources_and_host(
             pending,
             entry,
-            entry_args,
+            &arguments.selector.export,
+            &arguments.args,
             &entry_sources.entry,
             &mut host,
         )
@@ -1239,23 +857,7 @@ async fn run_command(
     match outcome.termination {
         RunTermination::Exit(code) => i32::try_from(code)
             .map_err(|_| format!("Entry exit status {code} is outside the Host range")),
-        RunTermination::Exec(options) => exec_process(options),
     }
-}
-
-#[cfg(unix)]
-fn exec_process(options: ChildOptions) -> Result<i32, String> {
-    use std::os::unix::process::CommandExt;
-    let error = ProcessRunHost::command(&options).exec();
-    Err(format!("cannot exec {:?}: {error}", options.bin))
-}
-
-#[cfg(not(unix))]
-fn exec_process(options: ChildOptions) -> Result<i32, String> {
-    let status = ProcessRunHost::command(&options)
-        .status()
-        .map_err(|error| format!("cannot execute {:?}: {error}", options.bin))?;
-    Ok(status.code().unwrap_or(1))
 }
 
 fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {

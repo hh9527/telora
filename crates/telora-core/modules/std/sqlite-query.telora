@@ -1,4 +1,5 @@
 import "std/ees" as ees;
+import "std/entry" as entry;
 import "std/value" {Value};
 
 def query: Fn(String, String, Array(Value)) -> ees.Request = fn(actor, sql, bindings) {
@@ -9,4 +10,8 @@ def query: Fn(String, String, Array(Value)) -> ees.Request = fn(actor, sql, bind
     )
 };
 
-export { query };
+def model: Fn(String, String) -> entry.EesModel = fn(name, path) {
+    entry.model("sqlite-query", name, 'Object({path: 'String(path)}))
+};
+
+export { query, model };

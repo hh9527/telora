@@ -122,28 +122,6 @@ impl ModuleGraph {
             };
             let source_id = scan_sources.add(cname.to_string(), source);
             let parsed = parse_registered(&scan_sources, source_id);
-            if let Some(option) = parsed
-                .options
-                .iter()
-                .find(|option| option.key.value.starts_with("crate.") && !resolver.is_standalone())
-            {
-                return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
-                    format!(
-                        "resolver option {:?} is only allowed in standalone mode",
-                        option.key.value
-                    ),
-                    option.location,
-                ))));
-            }
-            if let Some(option) = parsed.options.iter().find(|_| !resolver.is_root(&cname)) {
-                return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
-                    format!(
-                        "option {:?} is only allowed in the selected root",
-                        option.key.value
-                    ),
-                    option.location,
-                ))));
-            }
             let mut blueprint = match parsed.program.as_ref() {
                 Some(program) => {
                     reject_nested_imports(program, &cname.to_string())?;

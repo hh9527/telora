@@ -1,4 +1,5 @@
 import "std/value" {Value};
+import "std/entry" as entry;
 
 type Diagnostic = BlameError;
 
@@ -10,13 +11,6 @@ def with_diagnostics:
     for(A, R) Fn(Fn(A) -> R)
         -> Fn(A) -> Result(Tuple([R, Array(BlameError)]), Array(BlameError)) =
     fn(callable) { fn(argument) { call_with_diagnostics(callable, argument) } };
-
-type OptionAction = struct {
-    key: String,
-    value: Dyn,
-};
-
-type SystemOptions = Array(OptionAction);
 
 type Platform = struct {
     os: String,
@@ -56,7 +50,8 @@ type Stdin = enum {
 type SystemCaps = struct {
     data_srcs: Dict(DataSrc),
     ees: Dict(String),
-    spawn_child: Bool,
+    ees_models: Array(entry.EesModel),
+    ees_vars: Dict(String),
     text_srcs: Dict(TextSrc),
     vars: Array(String),
     stdin: Stdin,
@@ -72,53 +67,6 @@ type SystemResources = struct {
     texts: Dict(SrcItem(String)),
     vars: Dict(String),
     stdin: Option(String),
-};
-
-type ChildStdin = enum {
-    'Piped,
-    'Inherit,
-    'Null,
-};
-
-type Stdout = enum {
-    'PipedLine,
-    'PipedToEnd,
-    'Inherit,
-    'Null,
-};
-
-type Stdio = struct {
-    stdin: ChildStdin,
-    stdout: Stdout,
-    stderr: Stdout,
-};
-
-type ChildOpts = struct {
-    bin: String,
-    cwd: Option(String),
-    envs: Dict(Option(String)),
-    clear_env: Bool,
-};
-
-type SpawnStdioChild = struct {
-    key: String,
-    opts: ChildOpts,
-    stdio: Stdio,
-};
-
-type ChildText = struct {
-    key: String,
-    data: Option(String),
-};
-
-type ChildExited = struct {
-    key: String,
-    exited: Result(Int, Option(Int)),
-};
-
-type ChildSpawnResult = struct {
-    key: String,
-    result: Result(Int, String),
 };
 
 type EesCall = struct {
@@ -137,17 +85,10 @@ type SystemEvent = enum {
     'Initialize,
     'EesReply(EesReply),
     'StdinLine(Option(String)),
-    'ChildStdout(ChildText),
-    'ChildStderr(ChildText),
-    'ChildSpawnResult(ChildSpawnResult),
-    'ChildExited(ChildExited),
 };
 
 type SystemEffect = enum {
     'EesCall(EesCall),
-    'SpawnStdioChild(SpawnStdioChild),
-    'PostStdin(ChildText),
-    'Exec(ChildOpts),
     'Output(String),
     'Exit(Int),
 };
@@ -155,8 +96,6 @@ type SystemEffect = enum {
 export {
     Diagnostic,
     with_diagnostics,
-    OptionAction,
-    SystemOptions,
     Platform,
     Env,
     DataFormat,
@@ -166,14 +105,6 @@ export {
     SystemCaps,
     SrcItem,
     SystemResources,
-    ChildStdin,
-    Stdout,
-    Stdio,
-    ChildOpts,
-    SpawnStdioChild,
-    ChildText,
-    ChildExited,
-    ChildSpawnResult,
     EesCall,
     EesReply,
     SystemEvent,

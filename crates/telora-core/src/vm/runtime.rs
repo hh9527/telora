@@ -205,31 +205,6 @@ impl WorkWorld {
         Ok((self, roots[0]))
     }
 
-    pub(crate) fn wrap_root_dyn(
-        mut self,
-        background: &Heap,
-        type_descriptor: &crate::types::TypeDescriptor,
-        origin: impl Into<Arc<str>>,
-    ) -> Result<Self, crate::heap::HeapError> {
-        let descriptor = self
-            .heap
-            .type_descriptor_value(Some(background), type_descriptor)?;
-        self.root = self
-            .root
-            .with_value(DecodedValue::Dyn(self.heap.allocate(Object::Dyn {
-                identity: Arc::new(()),
-                descriptor,
-                value: self.root,
-                scheme: Some(crate::TypeScheme {
-                    parameters: Vec::new(),
-                    constraints: Vec::new(),
-                    body: type_descriptor.clone(),
-                }),
-                origin: Some(origin.into()),
-            })));
-        Ok(self)
-    }
-
     fn module_member(
         &self,
         world: &Heap,

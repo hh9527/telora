@@ -32,7 +32,7 @@ hello/
   telora-config.json
   telora-crate.json
   telora-lock.json
-  src/bin/main.telora
+  src/app.telora
 ```
 
 `hello/telora-config.json`：
@@ -44,18 +44,18 @@ hello/
 `hello/telora-crate.json`：
 
 ```json
-{"name":"hello","modules":[],"dependencies":[]}
+{"name":"hello","modules":["@src/app"],"dependencies":[]}
 ```
 
-`hello/src/bin/main.telora`：
+`hello/src/app.telora`：
 
 ```telora
 import "std/actor" as actor;
-import "std/value" {Value};
+import "std/entry" as entry;
 
 type State = struct {};
-
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+export def run = entry.run(config, entry.no_ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (
@@ -65,20 +65,21 @@ export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
             'EesReply(_) => fail!("unexpected EES reply"),
         }
     };
-    actor.service(State, {}, reduce)
-};
+    ({}, reduce)
+});
 ```
 
 运行：
 
 ```bash
-target/release/telora lock -C hello
-target/release/telora check @bin/main -C hello
-target/release/telora run main -C hello
-target/release/telora query exports @bin/main -C hello
+target/release/telora -C hello lock
+target/release/telora -C hello check @src/app
+target/release/telora -C hello run @src/app:run
+target/release/telora -C hello query exports @src/app
 ```
 
-内置 `run` Entry 向 service 投递一个请求，并把 `Reply` 中的 `Value` 编码为 JSON。
+`entry.run` 保留具体 State 类型；工具阶段验证这个名义 wrapper，向 reducer 投递一个
+请求，并把 `Reply` 中的 `Value` 编码为 JSON。
 
 ## 语言模型
 
@@ -102,7 +103,7 @@ Bool 是由 `'True` 和 `'False` 构成的封闭 Atom 类型，不进行 truthin
 Array 是有序同质序列；Tuple 是固定长度异质积；record 和 Dict 在运行时共享 Dict
 表示，但具有不同静态语义。
 
-模块顶层是声明空间，只接受 `option`、`import`、`type`、`decl`、`def`、`native`
+模块顶层是声明空间，只接受 `import`、`type`、`trait`、`impl`、`decl`、`def`、`native`
 和 `export`。局部顺序计算使用 `let`；复杂模块值通过 `do` 表达：
 
 ```telora
@@ -142,7 +143,6 @@ constructor 使用相同类型实参时得到相同的 canonical 类型。
 
 ```text
 @src/model       -> <crate>/src/model.telora
-@bin/main        -> <crate>/src/bin/main.telora
 @test/model      -> <crate>/tests/model.telora
 dep/types               -> <dependency>/src/types.telora
 ```
@@ -211,19 +211,16 @@ value.dbg!("message")     # 返回原值，向 Host 发送 JSONL 观察
 
 ## Host 与 Entry
 
-Telora 程序本身没有外部权限。`run` 选择内置的单次运行 Entry；Entry 约束 Main 模块接口，
-接收 `SystemEvent`，并返回下一状态和 `SystemEffect`。当前 Host 协议可以表达 String
-输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
-子进程以及最终发布。
+Telora 程序本身没有外部权限。普通模块通过 `std/entry` 构造工具可识别的名义值：
+`Eval`、`Run(State)` 或 `Serve(State)`。resolver 只负责模块身份和可见性；CLI 在工具
+阶段选择 `MODULE:EXPORT`，检查 wrapper 类型，并调用内置 Entry adapter。
 
-`run` 与 `serve` 都要求 Main 导出 `service: Fn(Dict(Value)) -> actor.Service`。
-Service 持有显式 State 和 `reduce(State, Event) -> (State, Array(Effect))`；`run` 投递
-一个请求，`serve` 持续投递 transport 请求。`option "ees.imos"` 和
-`option "ees.sqlite"` 声明应用 EES 中的命名 native model，路径模板变量由
-`option "ees.vars"` 约束并由 `--ees-var NAME=VALUE` 绑定。应用 reducer 以普通数据
-`EesCall` 描述调用，并在后续 `EesReply` event 中处理结果。Entry 源码位于
-`src/entry/name.telora`，由 Host 选择，不能作为普通模块根或被普通模块 import。只有
-被 Host 选中的 Entry 可以访问其他 crate 的 private 模块和 `std/_...` 内部模块。
+`Run(State)` 和 `Serve(State)` 包含 Context 契约、EES 声明和初始化函数。初始化函数
+返回具体 State 与 `reduce(State, Event) -> (State, Array(Effect))`。`run` 产生一次请求，
+`serve` 持续接收 transport 请求。SQLite 与 IMOS model 由 `std/sqlite-query.model` 和
+`std/imos.model` 构造；locator 变量在 `entry.Ees.vars` 中约束，并由
+`--ees-var NAME=VALUE` 绑定。reducer 用 `EesCall` 描述调用，并在后续 `EesReply` 中处理
+结果。CLI Host 执行 EES effect；应用模块不能直接访问文件、环境、网络或进程。
 
 `serve --bind stdio://` 对每行请求返回包含 `ok`、`error` 和 `diagnostics` 的 JSON。
 可恢复的请求失败不会结束服务；初始化、协议和资源类终止失败仍带外报告并退出。
@@ -233,29 +230,27 @@ Service 持有显式 State 和 `reduce(State, Event) -> (State, Array(Effect))`�
 当前命令面包括：
 
 ```text
-telora eval <module:name>  求值 @src module 的一个 Value 导出
-telora eval-with <module:name> [--source ...] [-- args...]  调用一个纯上下文函数
-telora run [binary]        向 @bin/<binary> service 投递一个请求
-telora serve [binary]      通过 stdio JSONL 持续向 service 投递请求
+telora eval <module:name>  求值 module 的一个 Value 导出
+telora eval-with <module:name> [--source ...] [-- args...]  调用一个 entry.Eval 值
+telora run <module:name>   向一个 entry.Run(State) 投递请求
+telora serve <module:name> 通过 stdio JSONL 驱动一个 entry.Serve(State)
 telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器
-telora ees                 通过 stdio JSONL 提供 Extra Effect Service
 ```
 
-`ees` 不发现 workspace，也不加载 Telora source。`telora-ees` 组合内置 Native Actor
-Components：IMOS 提供 `InstallShared`，`sqlite-query` 提供参数绑定的只读 `Query`。
+`telora-ees` 组合内置 Native Actor Components：IMOS 提供 `InstallShared`，
+`sqlite-query` 提供参数绑定的只读 `Query`。
 普通 package preparation 在进程内构造只含 `telora-packages` IMOS actor 的私有 Service；
-应用 EES option 构造另一个 Service，并只向应用暴露逻辑 actor 名称。资源使用
+应用 wrapper 构造另一个 Service，并只向应用暴露逻辑 actor 名称。资源使用
 `user-data:`、`user-cache:`、`user-config:` 或 `user-state:` locator；component adapter
 按 XDG 目录解释，并在 XDG 变量缺失时回退到 `$HOME` 下的标准目录。解析后的物理路径
 不进入 Telora World。应用不能发现或调用包管理 Service。两条路径都不需要额外 executable。
 
-`eval` 要求导出类型为 `Value`。`eval-with` 要求导出类型为
-`Fn({sources: Dict(Value), env: Dict(String), args: Array(String)}) -> Value`；具名 source
-与环境变量分别由 `eval-ctx.sources` 和 `eval-ctx.env` option 声明。两条命令只进行
-module 求值和至多一次普通函数调用，不创建 Entry、运行循环或应用 EES。
+`eval` 要求导出类型为 `Value`。`eval-with` 要求导出类型为 `entry.Eval`，其中
+`entry.ContextConfig` 声明 source、环境变量和参数能力。两条命令只进行 module 求值和
+至多一次普通函数调用，不运行 reducer loop 或应用 EES。
 
 `query` 包含：
 

@@ -28,7 +28,7 @@
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
         assert_eq!(
             module.analysis.display(module.analysis.result_type),
-            "{built: Any, decoded: Dict<String>, encoded: Value, env: Dict<String>, schema: Any, values: Array<Any>}"
+            "{built: Dict<String>, decoded: Dict<String>, encoded: Value, env: Dict<String>, schema: Any, values: Array<Any>}"
         );
         let output_world = module.execute(100_000).unwrap();
         let output = output_world.value();
@@ -1215,4 +1215,3 @@
         assert_eq!(module.execute(100_000).unwrap().to_string(), "'B");
         fs::remove_dir_all(directory).unwrap();
     }
-

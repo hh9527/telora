@@ -31,10 +31,12 @@ pub(crate) const FMT_CAPABILITY_BINDING: &str = "\0std:fmt";
 pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/_rt";
 pub(crate) const EES_MODULE: &str = "std/ees";
 pub(crate) const ACTOR_MODULE: &str = "std/actor";
+pub(crate) const ENTRY_MODULE: &str = "std/entry";
+pub(crate) const PRIVATE_ENTRY_MODULE: &str = "std/_entry";
 pub(crate) const IMOS_MODULE: &str = "std/imos";
 pub(crate) const SQLITE_QUERY_MODULE: &str = "std/sqlite-query";
-pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/entry/default";
-pub(crate) const SERVE_ENTRY_MODULE: &str = "std/entry/serve";
+pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/_entry-default";
+pub(crate) const SERVE_ENTRY_MODULE: &str = "std/_entry-serve";
 
 pub(crate) fn default_entry_source() -> &'static str {
     include_str!("../modules/std/entry/default.telora")
@@ -54,17 +56,6 @@ pub(crate) struct BuiltinModuleSpec {
 pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
     let mut specs = vec![
         BuiltinModuleSpec {
-            native_id: 26,
-            name: EDGE_RUNTIME_MODULE,
-            source: include_str!("../modules/std/_rt.telora"),
-            functions: vec![(
-                "call_with_diagnostics",
-                NativeFunction::core_runtime(
-                    crate::value::CoreRuntimeFunction::CallWithDiagnostics,
-                ),
-            )],
-        },
-        BuiltinModuleSpec {
             native_id: 27,
             name: EES_MODULE,
             source: include_str!("../modules/std/ees.telora"),
@@ -75,6 +66,32 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             name: ACTOR_MODULE,
             source: include_str!("../modules/std/actor.telora"),
             functions: vec![],
+        },
+        BuiltinModuleSpec {
+            native_id: 31,
+            name: PRIVATE_ENTRY_MODULE,
+            source: include_str!("../modules/std/_entry.telora"),
+            functions: vec![(
+                "state_type",
+                NativeFunction::new("std/_entry.state_type", 1, crate::types::native_value_type),
+            )],
+        },
+        BuiltinModuleSpec {
+            native_id: 32,
+            name: ENTRY_MODULE,
+            source: include_str!("../modules/std/entry.telora"),
+            functions: vec![],
+        },
+        BuiltinModuleSpec {
+            native_id: 26,
+            name: EDGE_RUNTIME_MODULE,
+            source: include_str!("../modules/std/_rt.telora"),
+            functions: vec![(
+                "call_with_diagnostics",
+                NativeFunction::core_runtime(
+                    crate::value::CoreRuntimeFunction::CallWithDiagnostics,
+                ),
+            )],
         },
         BuiltinModuleSpec {
             native_id: 28,

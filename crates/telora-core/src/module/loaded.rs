@@ -155,17 +155,6 @@ impl LoadedModule {
         self.analysis.explicit_exports
     }
 
-    pub fn options(&self, key: &str) -> impl Iterator<Item = crate::ValueRef<'_>> {
-        self.options
-            .iter()
-            .filter(move |option| option.key == key)
-            .map(|option| option.value.value())
-    }
-
-    pub fn option_actions(&self) -> &[LoadedOptionAction] {
-        &self.options
-    }
-
     pub fn execute(
         &self,
         evaluation_fuel: usize,

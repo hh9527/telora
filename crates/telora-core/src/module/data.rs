@@ -164,6 +164,54 @@ fn semantic_value_contract(
     Ok((owner, descriptor))
 }
 
+fn entry_type_contract(
+    builtin_modules: &HashMap<String, ModuleArtifact>,
+    name: &str,
+) -> Result<TypeDescriptor, ModuleError> {
+    let module = builtin_modules
+        .get(crate::core::ENTRY_MODULE)
+        .ok_or_else(|| ModuleError::new("std/entry is not installed"))?;
+    module
+        .interface
+        .exports
+        .get(name)
+        .and_then(|scheme| match &scheme.body {
+            TypeDescriptor::TypeOf(descriptor) => Some(descriptor.as_ref().clone()),
+            _ => None,
+        })
+        .ok_or_else(|| ModuleError::new(format!("std/entry {name} export is not a Type")))
+}
+
+fn entry_wrapper_body(
+    builtin_modules: &HashMap<String, ModuleArtifact>,
+    descriptor: &TypeDescriptor,
+    name: &str,
+) -> Result<TypeDescriptor, ModuleError> {
+    let module = builtin_modules
+        .get(crate::core::ENTRY_MODULE)
+        .ok_or_else(|| ModuleError::new("std/entry is not installed"))?;
+    let constructor = module
+        .interface
+        .type_family_templates
+        .get(name)
+        .and_then(TypeFamilyTemplate::constructor)
+        .map(|constructor| constructor.id)
+        .ok_or_else(|| ModuleError::new(format!("std/entry has no {name} type family")))?;
+    let TypeDescriptor::Declared(declared) = descriptor else {
+        return Err(ModuleError::new(format!(
+            "application export has type {}, expected {name}(State)",
+            descriptor.display_name()
+        )));
+    };
+    if declared.id.constructor() != constructor {
+        return Err(ModuleError::new(format!(
+            "application export has type {}, expected {name}(State)",
+            descriptor.display_name()
+        )));
+    }
+    Ok(declared.body.as_ref().clone())
+}
+
 fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
     ModuleInterface {
         exports: BTreeMap::from([(

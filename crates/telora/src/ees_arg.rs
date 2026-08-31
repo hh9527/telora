@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use regex::Regex;
-use telora_core::{LoadedOptionAction, ValueRef};
+use telora_core::SystemEesModel;
 use telora_ees::{ComponentSpec, ImosSpec, Manifest, ResourceLocator, SqliteQuerySpec};
 
 #[derive(Clone, Debug)]
@@ -36,32 +36,97 @@ pub(crate) fn parse_named_ees_var(value: &str) -> Result<NamedEesVar, String> {
     })
 }
 
-pub(crate) fn collect_ees(
-    options: &[LoadedOptionAction],
+pub(crate) fn collect_ees_models(
+    patterns: &BTreeMap<String, String>,
+    models: &[SystemEesModel],
     bindings: Vec<NamedEesVar>,
 ) -> Result<CollectedEes, String> {
-    let patterns = parse_patterns(options)?;
+    let patterns = patterns
+        .iter()
+        .map(|(name, pattern)| {
+            if !valid_name(name) {
+                return Err(format!("invalid EES variable name {name:?}"));
+            }
+            Regex::new(&format!("^(?:{pattern})$"))
+                .map(|regex| (name.clone(), regex))
+                .map_err(|error| format!("invalid EES variable pattern for {name:?}: {error}"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     let values = validate_bindings(&patterns, bindings)?;
     let mut actors = BTreeMap::new();
-    let mut components = Vec::new();
+    let mut components = Vec::with_capacity(models.len());
     let mut used = BTreeSet::new();
-
-    for option in options {
-        let (name, spec) = match option.key.as_str() {
-            "ees.imos" => parse_imos(option.value.value(), &values, &mut used)?,
-            "ees.sqlite" => parse_sqlite(option.value.value(), &values, &mut used)?,
-            _ => continue,
-        };
-        if !valid_name(&name) {
-            return Err(format!("invalid EES actor name {name:?}"));
+    for model in models {
+        if !valid_name(&model.name) {
+            return Err(format!("invalid EES actor name {:?}", model.name));
         }
-        let kind = spec.kind();
-        if actors.insert(name.clone(), kind.as_str().into()).is_some() {
-            return Err(format!("EES actor {name:?} is declared more than once"));
+        let config = model
+            .config
+            .as_object()
+            .ok_or_else(|| format!("EES model {:?} config must be an object", model.name))?;
+        let string = |field: &str| {
+            config
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("EES model {:?} config.{field} must be String", model.name))
+        };
+        let spec = match model.kind.as_str() {
+            "imos" => {
+                if config.len() != 2
+                    || !config.contains_key("home")
+                    || !config.contains_key("store")
+                {
+                    return Err(format!(
+                        "EES model {:?} imos config must contain exactly home and store",
+                        model.name
+                    ));
+                }
+                let store =
+                    ResourceLocator::user(expand_template(string("store")?, &values, &mut used)?)
+                        .map_err(|error| {
+                        format!("invalid EES model {:?} store: {error:#}", model.name)
+                    })?;
+                let home =
+                    ResourceLocator::user(expand_template(string("home")?, &values, &mut used)?)
+                        .map_err(|error| {
+                            format!("invalid EES model {:?} home: {error:#}", model.name)
+                        })?;
+                ComponentSpec::Imos(ImosSpec {
+                    name: model.name.clone(),
+                    store,
+                    home,
+                })
+            }
+            "sqlite-query" => {
+                if config.len() != 1 || !config.contains_key("path") {
+                    return Err(format!(
+                        "EES model {:?} sqlite-query config must contain exactly path",
+                        model.name
+                    ));
+                }
+                let database =
+                    ResourceLocator::user(expand_template(string("path")?, &values, &mut used)?)
+                        .map_err(|error| {
+                            format!("invalid EES model {:?} path: {error:#}", model.name)
+                        })?;
+                ComponentSpec::SqliteQuery(SqliteQuerySpec {
+                    name: model.name.clone(),
+                    database,
+                })
+            }
+            kind => return Err(format!("unsupported EES model kind {kind:?}")),
+        };
+        if actors
+            .insert(model.name.clone(), spec.kind().as_str().to_owned())
+            .is_some()
+        {
+            return Err(format!(
+                "EES actor {:?} is declared more than once",
+                model.name
+            ));
         }
         components.push(spec);
     }
-
     let unused = patterns
         .keys()
         .filter(|name| !used.contains(*name))
@@ -76,70 +141,6 @@ pub(crate) fn collect_ees(
     })
 }
 
-fn parse_imos(
-    value: ValueRef<'_>,
-    variables: &BTreeMap<String, String>,
-    used: &mut BTreeSet<String>,
-) -> Result<(String, ComponentSpec), String> {
-    let context = "option \"ees.imos\"";
-    let value = record(value, context)?;
-    exact_fields(value, &["name", "home", "store"], context)?;
-    let name = string_field(value, "name", context)?;
-    let home = locator_field(value, "home", context, variables, used)?;
-    let store = locator_field(value, "store", context, variables, used)?;
-    Ok((
-        name.clone(),
-        ComponentSpec::Imos(ImosSpec { name, store, home }),
-    ))
-}
-
-fn parse_sqlite(
-    value: ValueRef<'_>,
-    variables: &BTreeMap<String, String>,
-    used: &mut BTreeSet<String>,
-) -> Result<(String, ComponentSpec), String> {
-    let context = "option \"ees.sqlite\"";
-    let value = record(value, context)?;
-    exact_fields(value, &["name", "path"], context)?;
-    let name = string_field(value, "name", context)?;
-    let database = locator_field(value, "path", context, variables, used)?;
-    Ok((
-        name.clone(),
-        ComponentSpec::SqliteQuery(SqliteQuerySpec { name, database }),
-    ))
-}
-
-fn parse_patterns(options: &[LoadedOptionAction]) -> Result<BTreeMap<String, Regex>, String> {
-    let declarations = options
-        .iter()
-        .filter(|option| option.key == "ees.vars")
-        .collect::<Vec<_>>();
-    let Some(declaration) = declarations.first() else {
-        return Ok(BTreeMap::new());
-    };
-    if declarations.len() != 1 {
-        return Err("option \"ees.vars\" may be declared only once".into());
-    }
-    let value = declaration.value.value();
-    let fields = value
-        .dict_fields()
-        .ok_or_else(|| "option \"ees.vars\" must be a Dict(String)".to_owned())?;
-    let mut patterns = BTreeMap::new();
-    for name in fields {
-        if !valid_name(name) {
-            return Err(format!("invalid EES variable name {name:?}"));
-        }
-        let pattern = value
-            .dict_get(name)
-            .and_then(ValueRef::as_str)
-            .ok_or_else(|| format!("EES variable pattern for {name:?} must be String"))?;
-        let regex = Regex::new(&format!("^(?:{})$", pattern.as_str()))
-            .map_err(|error| format!("invalid EES variable pattern for {name:?}: {error}"))?;
-        patterns.insert(name.into(), regex);
-    }
-    Ok(patterns)
-}
-
 fn validate_bindings(
     patterns: &BTreeMap<String, Regex>,
     bindings: Vec<NamedEesVar>,
@@ -148,7 +149,7 @@ fn validate_bindings(
     for binding in bindings {
         let pattern = patterns.get(&binding.name).ok_or_else(|| {
             format!(
-                "EES variable {:?} is not declared by ees.vars",
+                "EES variable {:?} is not declared by the selected entry.Ees value",
                 binding.name
             )
         })?;
@@ -175,19 +176,6 @@ fn validate_bindings(
         return Err(format!("EES variables were not provided: {missing:?}"));
     }
     Ok(values)
-}
-
-fn locator_field(
-    value: ValueRef<'_>,
-    field: &str,
-    context: &str,
-    variables: &BTreeMap<String, String>,
-    used: &mut BTreeSet<String>,
-) -> Result<ResourceLocator, String> {
-    let template = string_field(value, field, context)?;
-    let expanded = expand_template(&template, variables, used)?;
-    ResourceLocator::user(expanded)
-        .map_err(|error| format!("invalid {context}.{field} locator: {error:#}"))
 }
 
 fn expand_template(
@@ -218,37 +206,6 @@ fn expand_template(
     }
     output.push_str(rest);
     Ok(output)
-}
-
-fn record<'a>(value: ValueRef<'a>, context: &str) -> Result<ValueRef<'a>, String> {
-    value
-        .dict_fields()
-        .is_some()
-        .then_some(value)
-        .ok_or_else(|| format!("{context} must be a record"))
-}
-
-fn exact_fields(value: ValueRef<'_>, expected: &[&str], context: &str) -> Result<(), String> {
-    let actual = value
-        .dict_fields()
-        .expect("record was checked")
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let expected = expected.iter().copied().collect::<BTreeSet<_>>();
-    if actual != expected {
-        return Err(format!(
-            "{context} must contain exactly fields {expected:?}; found {actual:?}"
-        ));
-    }
-    Ok(())
-}
-
-fn string_field(value: ValueRef<'_>, field: &str, context: &str) -> Result<String, String> {
-    value
-        .dict_get(field)
-        .and_then(ValueRef::as_str)
-        .map(String::from)
-        .ok_or_else(|| format!("{context}.{field} must be String"))
 }
 
 fn valid_name(name: &str) -> bool {

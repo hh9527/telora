@@ -1,8 +1,8 @@
 use crate::ast::{
     BinaryOperator, Binding, BindingData, BindingKind, Block, BlockKind, ClosureParameter,
     DeclaredInitializerKind, Decorator, DecoratorKind, DictFieldKind, Expr, ExprKind, Identifier,
-    MatchArm, MatchArmKind, OptionAction, Pattern, PatternKind, Program, ProgramKind,
-    StringPartKind, StructPatternField, TypeArgument, TypeArgumentKind, UnaryOperator, located,
+    MatchArm, MatchArmKind, Pattern, PatternKind, Program, ProgramKind, StringPartKind,
+    StructPatternField, TypeArgument, TypeArgumentKind, UnaryOperator, located,
 };
 use crate::lexer::{FrontendError, SourceLocation};
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
@@ -13,7 +13,6 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Debug)]
 pub struct FrontendParse {
     pub cst: CstData,
-    pub options: Vec<OptionAction>,
     pub program: Option<Program>,
     pub recovered: RecoveredProgram,
     pub diagnostics: Vec<Diagnostic>,
@@ -46,13 +45,6 @@ pub fn parse_registered(sources: &SourceDatabase, source_id: SourceId) -> Fronte
     let syntax_diagnostics = parsed.diagnostics;
     let mut lowering_diagnostics = Vec::new();
     let lowerer = Lowerer::new(source_id, source.text(), &parsed.syntax);
-    let options = match lowerer.option_actions() {
-        Ok(options) => options,
-        Err(diagnostic) => {
-            push_unique_diagnostic(&mut lowering_diagnostics, diagnostic);
-            Vec::new()
-        }
-    };
     let recovered = lowerer.recover_program(&mut lowering_diagnostics);
     let mut diagnostics = reconcile_frontend_diagnostics(
         source.text(),
@@ -61,7 +53,7 @@ pub fn parse_registered(sources: &SourceDatabase, source_id: SourceId) -> Fronte
         lowering_diagnostics,
     );
     let program = if diagnostics.is_empty() {
-        match lowerer.program(options.clone()) {
+        match lowerer.program() {
             Ok(program) => Some(program),
             Err(diagnostic) => {
                 diagnostics.push(diagnostic);
@@ -73,7 +65,6 @@ pub fn parse_registered(sources: &SourceDatabase, source_id: SourceId) -> Fronte
     };
     FrontendParse {
         cst: parsed.syntax,
-        options,
         program,
         recovered,
         diagnostics,
@@ -218,7 +209,6 @@ fn collect_recovery_units(cst: &CstData, node: NodeRef, units: &mut Vec<Recovery
                     | Rule::LetPatternBinding
                     | Rule::NativeBinding
                     | Rule::NativeTypeBinding
-                    | Rule::OptionBinding
                     | Rule::TypeBinding
                     | Rule::TraitBinding
                     | Rule::ImplBinding
@@ -380,75 +370,10 @@ enum CallArgument {
     },
 }
 
-fn validate_option_literal(expression: &Expr) -> Result<(), Diagnostic> {
-    let valid = match &expression.value {
-        ExprKind::Int(_) | ExprKind::String(_) => true,
-        ExprKind::Float(value) => value.is_finite(),
-        ExprKind::Atom(_) => true,
-        ExprKind::Array(values) => {
-            for value in values {
-                validate_option_literal(value)?;
-            }
-            true
-        }
-        ExprKind::Dict(fields) => {
-            for field in fields {
-                if field.value.name.is_none() {
-                    return Err(Diagnostic::error(
-                        "option Dicts cannot contain spread fields",
-                        field.location,
-                    ));
-                }
-                if !field.value.decorators.is_empty() {
-                    return Err(Diagnostic::error(
-                        "option fields cannot have decorators",
-                        field.location,
-                    ));
-                }
-                validate_option_literal(&field.value.value)?;
-            }
-            true
-        }
-        ExprKind::Call { callee, arguments }
-            if matches!(callee.value, ExprKind::Atom(_)) && arguments.len() == 1 =>
-        {
-            validate_option_literal(&arguments[0])?;
-            true
-        }
-        _ => false,
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(Diagnostic::error(
-            "option accepts only immediate values",
-            expression.location,
-        ))
-    }
-}
-
 fn parse_float_literal(text: &str) -> Result<f64, &'static str> {
     let value = text.parse::<f64>().map_err(|_| "invalid Float literal")?;
     value
         .is_finite()
         .then_some(value)
         .ok_or("Float literal must be finite")
-}
-
-fn valid_option_key(key: &str) -> bool {
-    let mut segments = key.split('.');
-    let Some(first) = segments.next() else {
-        return false;
-    };
-    let rest = segments.collect::<Vec<_>>();
-    !rest.is_empty()
-        && std::iter::once(first).chain(rest).all(|segment| {
-            let mut characters = segment.chars();
-            characters
-                .next()
-                .is_some_and(|character| character.is_ascii_lowercase())
-                && characters.all(|character| {
-                    character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
-                })
-        })
 }

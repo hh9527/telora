@@ -31,14 +31,7 @@ pub struct LoadedModule {
     pub function: BytecodeFunction,
     pub sources: SourceDatabase,
     pub workspace: WorkspaceSnapshot,
-    options: Vec<LoadedOptionAction>,
     runtime: Arc<ModuleRuntime>,
-}
-
-#[derive(Clone, Debug)]
-pub struct LoadedOptionAction {
-    pub key: String,
-    pub value: crate::DataWorld,
 }
 
 #[derive(Clone)]
@@ -49,7 +42,6 @@ pub struct PendingModule {
 struct PendingModuleInner {
     path: PathBuf,
     resolver: ModuleResolver,
-    options: Vec<LoadedOptionAction>,
     config: EngineConfig,
     debug_sink: Arc<dyn DebugSink>,
     state: Mutex<PendingModuleState>,
@@ -82,10 +74,6 @@ impl fmt::Debug for InstantiatedModule {
 impl PendingModule {
     pub fn path(&self) -> &Path {
         &self.inner.path
-    }
-
-    pub fn option_actions(&self) -> &[LoadedOptionAction] {
-        &self.inner.options
     }
 
     fn begin_initialization(&self) -> Result<BTreeMap<String, crate::DataWorld>, ModuleError> {
@@ -177,7 +165,6 @@ struct CompiledTeloraModule {
     analysis: Analysis,
     function: BytecodeFunction,
     externals: HashMap<String, Val>,
-    options: Vec<LoadedOptionAction>,
 }
 
 fn loaded_from_compiled(
@@ -195,7 +182,6 @@ fn loaded_from_compiled(
         function: compiled.function,
         sources,
         workspace,
-        options: compiled.options,
         runtime: Arc::new(ModuleRuntime {
             main,
             externals: compiled.externals,

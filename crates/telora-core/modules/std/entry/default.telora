@@ -2,12 +2,14 @@ import "std/_rt" as rt;
 import "std/actor" as actor;
 import "std/array" as array;
 import "std/dict" as dict;
-import "std/dyn" as dyn;
+import "std/entry" as entry;
 import "std/json" as json;
 import "std/value" {Value};
 
 export type MainType = struct {
-    service: Fn(Dict(Value)) -> actor.Service,
+    config: entry.ContextConfig,
+    ees: entry.Ees,
+    start: Fn(entry.Context) -> actor.Service,
 };
 
 type Pending = struct { id: String, request_id: String };
@@ -25,34 +27,18 @@ type Transition = Tuple([State, Array(rt.SystemEffect)]);
 type Reducer = Fn(State, rt.SystemEvent) -> Transition;
 type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
 
-def declared_sources: Fn(rt.SystemOptions) -> Array(String) = fn(options) {
-    let declarations = array.filter(options, fn(action) {
-        action.key == "run-ctx.sources"
-    });
-    if array.length(declarations) > 1 {
-        fail!("option run-ctx.sources may be declared only once")
-    } else match array.get(declarations, 0) {
-        'None => [],
-        'Some(action) => match dyn.project_with(Array(String), action.value) {
-            'Some(names) => names,
-            'None => fail!("option run-ctx.sources must be Array(String)"),
-        },
-    }
-};
-
-def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc) =
-    fn(options, sources) {
-        let declared = declared_sources(options);
+def configure_sources: Fn(Array(String), Dict(rt.DataSrc)) -> Dict(rt.DataSrc) =
+    fn(declared, sources) {
         let provided = dict.keys(sources);
         let unique = array.all(declared, fn(name) {
             array.length(array.filter(declared, fn(other) { other == name })) == 1
         });
         if unique == 'False {
-            fail!("option run-ctx.sources must contain unique names")
+            fail!("entry ContextConfig.sources must contain unique names")
         } else if array.all(declared, fn(name) {
             array.any(provided, fn(other) { other == name })
         }) == 'False {
-            fail!("a source declared by run-ctx.sources was not provided", declared, provided)
+            fail!("a source declared by entry ContextConfig was not provided", declared, provided)
         } else if array.all(provided, fn(name) {
             array.any(declared, fn(other) { other == name })
         }) == 'False {
@@ -62,21 +48,8 @@ def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc
         }
     };
 
-def declared_ees: Fn(rt.SystemOptions, Dict(String)) -> Dict(String) = fn(options, provided) {
-    let actions = array.filter(options, fn(action) {
-        action.key == "ees.imos" || action.key == "ees.sqlite"
-    });
-    let pairs = array.map(actions, fn(action) {
-        let name = match dyn.field(action.value, "name") {
-            'Ok(value) => match dyn.check_string(value) {
-                'Some(found) => found,
-                'None => fail!("EES model name must be String"),
-            },
-            'Err(_) => fail!("EES model declaration must contain name"),
-        };
-        let kind = if action.key == "ees.imos" { "imos" } else { "sqlite-query" };
-        (name, kind)
-    });
+def declared_ees: Fn(Array(entry.EesModel)) -> Dict(String) = fn(models) {
+    let pairs = array.map(models, fn(model) { (model.name, model.kind) });
     let unique = array.all(pairs, fn(declaration) {
         declaration.0 != "" && array.length(array.filter(pairs, fn(other) {
             other.0 == declaration.0
@@ -84,16 +57,8 @@ def declared_ees: Fn(rt.SystemOptions, Dict(String)) -> Dict(String) = fn(option
     });
     if unique == 'False {
         fail!("EES model declarations must contain unique non-empty names")
-    } else if array.length(pairs) != array.length(dict.keys(provided)) ||
-        array.all(pairs, fn(declaration) {
-            match dict.get(provided, declaration.0) {
-                'Some(kind) => kind == declaration.1,
-                'None => 'False,
-            }
-        }) == 'False {
-        fail!("EES model declarations do not match Host bindings")
     } else {
-        provided
+        dict.from_pairs(pairs)
     }
 };
 
@@ -158,23 +123,30 @@ def advance: Fn(State, actor.Event) -> Transition = fn(state, event) {
 };
 
 export def config:
-    Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer]) =
-    fn(options, env) {
-        let data_srcs = configure_sources(options, env.sources);
-        let models = declared_ees(options, env.ees);
+    Fn(rt.Env, MainType) -> Tuple([rt.SystemCaps, Initializer]) =
+    fn(env, main) {
+        let data_srcs = configure_sources(main.config.sources, env.sources);
+        let models = declared_ees(main.ees.models);
+        let args = if main.config.args { env.args } else if array.length(env.args) == 0 {
+            []
+        } else {
+            fail!("entry ContextConfig does not accept command-line arguments")
+        };
         (
             {
                 data_srcs,
                 ees: models,
-                spawn_child: 'False,
+                ees_models: main.ees.models,
+                ees_vars: main.ees.vars,
                 text_srcs: {},
-                vars: [],
+                vars: main.config.envs,
                 stdin: 'Null,
             },
             fn(resources, main) {
                 let values = dict.map_values(resources.data, fn(item) { item.data });
+                let ctx: entry.Context = {sources: values, env: resources.vars, args};
                 let state: State = {
-                    service: main.service(values),
+                    service: main.start(ctx),
                     pending: [],
                     completed: 'False,
                 };

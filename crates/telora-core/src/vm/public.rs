@@ -310,6 +310,16 @@ impl<'a> ValueRef<'a> {
         }
     }
 
+    pub(crate) fn local(value: Val, heap: &'a Heap) -> Self {
+        Self {
+            value,
+            view: HeapView {
+                current: heap,
+                background: None,
+            },
+        }
+    }
+
     pub(crate) fn hidden_type_slot_handle(self) -> Option<Handle> {
         let DecodedValue::TypeSlot(handle) = self.value.value() else {
             return None;

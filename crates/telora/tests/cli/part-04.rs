@@ -31,15 +31,14 @@ fn eval_with_supplies_declared_sources_env_and_trailing_args() {
         cwd.join("src/pure.telora"),
         r#"import "std/array" as array;
 import "std/dict" as dict;
+import "std/entry" as entry;
 import "std/value" {Value};
-option "eval-ctx.sources" ["request"];
-option "eval-ctx.env" ["TELORA_EVAL_TEST"];
-type Context = struct {
-    sources: Dict(Value),
-    env: Dict(String),
-    args: Array(String),
+def config: entry.ContextConfig = {
+    sources: ["request"],
+    envs: ["TELORA_EVAL_TEST"],
+    args: 'True,
 };
-export def evaluate: Fn(Context) -> Value = fn(ctx) {
+export def evaluate = entry.main(config, fn(ctx) {
     let env_ok = match dict.get(ctx.env, "TELORA_EVAL_TEST") {
         'Some(value) => value == "visible",
         'None => 'False,
@@ -53,7 +52,7 @@ export def evaluate: Fn(Context) -> Value = fn(ctx) {
     } else {
         fail!("invalid eval context", ctx)
     }
-};"#,
+});"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -124,32 +123,33 @@ export def wrong: Fn(Int) -> Value = fn(value) { 'Int(value) };"#,
         .output()
         .unwrap();
     assert!(!function.status.success());
-    assert!(String::from_utf8_lossy(&function.stderr).contains("expected Fn("));
+    assert!(String::from_utf8_lossy(&function.stderr).contains("expected Eval"));
 }
 
 #[test]
-fn run_context_selects_the_manifest_discovery_start() {
+fn run_selector_uses_the_manifest_discovery_start() {
     let cwd = fixture();
     let other = fixture();
     fs::write(
-        other.join("src/bin/tool.telora"),
+        other.join("src/app.telora"),
         r#"import "std/actor" as actor;
-import "std/value" {Value};
+import "std/entry" as entry;
 type State = struct {};
-export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+export def run = entry.run(config, entry.no_ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'Int(9))]),
             'EesReply(_) => fail!("unexpected EES reply"),
         }
     };
-    actor.service(State, {}, reduce)
-};"#,
+    ({}, reduce)
+});"#,
     )
     .unwrap();
     refresh_fixture_workspace(&other);
     let run = telora(&cwd)
-        .args(["-C", other.to_str().unwrap(), "run", "tool"])
+        .args(["-C", other.to_str().unwrap(), "run", "@src/app:run"])
         .output()
         .unwrap();
     assert!(

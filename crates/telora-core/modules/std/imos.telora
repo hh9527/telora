@@ -1,5 +1,6 @@
 import "std/ees" as ees;
 import "std/dict" as dict;
+import "std/entry" as entry;
 import "std/value" {Value};
 
 def install_shared: Fn(String, Value) -> ees.Request = fn(actor, plan) {
@@ -10,4 +11,12 @@ def install_shared: Fn(String, Value) -> ees.Request = fn(actor, plan) {
     )
 };
 
-export { install_shared };
+def model: Fn(String, String, String) -> entry.EesModel = fn(name, store, home) {
+    entry.model(
+        "imos",
+        name,
+        'Object({store: 'String(store), home: 'String(home)}),
+    )
+};
+
+export { install_shared, model };

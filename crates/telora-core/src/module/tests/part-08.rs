@@ -941,7 +941,7 @@
         let directory = fixture_dir();
         let app = directory.join("app");
         let models = directory.join("models");
-        fs::create_dir_all(app.join("src/bin")).unwrap();
+        fs::create_dir_all(app.join("src")).unwrap();
         fs::create_dir_all(models.join("src")).unwrap();
         fs::write(
             directory.join("telora-config.json"),
@@ -950,12 +950,12 @@
         .unwrap();
         fs::write(
             directory.join("telora-lock.json"),
-            r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"modules":[],"dependencies":["models"]},"models":{"source":{"workspace":"models"},"modules":["@src/base","@src/user"],"dependencies":[]}},"binaries":{"app/main":{"root":"app","packages":["app","models"]}}}"#,
+            r#"{"version":1,"packages":{"app":{"source":{"workspace":"app"},"modules":["@src/main"],"dependencies":["models"]},"models":{"source":{"workspace":"models"},"modules":["@src/base","@src/user"],"dependencies":[]}}}"#,
         )
         .unwrap();
         fs::write(
             app.join("telora-crate.json"),
-            r#"{"name":"app","modules":[],"dependencies":["models"]}"#,
+            r#"{"name":"app","modules":["@src/main"],"dependencies":["models"]}"#,
         )
         .unwrap();
         fs::write(
@@ -969,7 +969,7 @@
             "import \"./base\" as base; export { base as base };",
         )
         .unwrap();
-        let main = app.join("src/bin/main.telora");
+        let main = app.join("src/main.telora");
         fs::write(
             &main,
             "import \"models/user\" as user; export def output = user.base.answer;",
@@ -1244,12 +1244,12 @@ inspect(User)(checked)"#;
         );
         let rendered = error.to_string();
         assert!(
-            rendered.contains("standalone/bin/main:14:1"),
+            rendered.contains("standalone/main:14:1"),
             "{rendered}"
         );
         assert!(rendered.contains("user.json:1:8"), "{rendered}");
         assert!(
-            rendered.contains("standalone/bin/main:8:21"),
+            rendered.contains("standalone/main:8:21"),
             "{rendered}"
         );
         fs::remove_dir_all(directory).unwrap();
