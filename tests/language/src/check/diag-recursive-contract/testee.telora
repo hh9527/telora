@@ -1,0 +1,3 @@
+type Node = struct {value: Int, children: Array(Node)};
+def value_of: Fn(Node) -> Int = fn(node) { node.value };
+export def t0501_should_error = value_of("bad");

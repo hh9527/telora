@@ -1,0 +1,1 @@
+export def invalid = { let get = fn(value) { value.name }; get };

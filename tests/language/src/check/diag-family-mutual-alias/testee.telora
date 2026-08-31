@@ -1,0 +1,3 @@
+type Left(A) = Right(A);
+type Right(A) = Left(A);
+export {Left, Right};

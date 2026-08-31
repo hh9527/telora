@@ -1,0 +1,6 @@
+import "@src/support" as support;
+import "std/value" {Value};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    support.bool_value(support.failed_with(actual, "module cycle"))
+};

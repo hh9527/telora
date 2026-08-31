@@ -1,0 +1,3 @@
+def equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) { 'True };
+def invalid: for(A) Fn(A) -> Fn(A, A) -> Bool = interpreter!(equal);
+export {invalid};

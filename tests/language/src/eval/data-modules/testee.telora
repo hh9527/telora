@@ -1,0 +1,42 @@
+import "./user.json" {data as user_data};
+import "./config.toml" {data as toml_data};
+import "./config.yaml" {data as yaml_data};
+import "std/codec" as codec;
+import "std/result" as results;
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+type User = struct {name: String, age: Int};
+type Date = enum {
+    'OffsetDateTime(String),
+    'LocalDateTime(String),
+    'LocalDate(String),
+    'LocalTime(String),
+};
+type Tool = struct {name: String};
+type Config = struct {
+    title: String,
+    released: Date,
+    environment: Dict(String),
+    tools: Array(Tool),
+};
+type YamlConfig = struct {
+    name: String,
+    features: Array(String),
+    legacy: String,
+};
+
+export def result: Value = {
+    let user = codec.decode(User, user_data) |> results.unwrap;
+    let config = codec.decode(Config, toml_data) |> results.unwrap;
+    let yaml = codec.decode(YamlConfig, yaml_data) |> results.unwrap;
+    bool_value(
+        user == {name: "Ada", age: 36}
+            && config.released == 'LocalDate("2026-08-04")
+            && config.environment.PATH == "/bin"
+            && config.tools == [{name: "telora"}, {name: "rustc"}]
+            && yaml.name == "Telora"
+            && yaml.features == ["static data", "provenance"]
+            && yaml.legacy == "yes"
+    )
+};

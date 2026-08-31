@@ -308,3 +308,38 @@ export def t0035_should_ok = expect(
         && 6 ^ 3 == 5
         && 1 | 2 ^ 3 & 1 == 3
 );
+export def t0036_should_ok = expect({
+    let name = "telora";
+    let version = 1;
+    {name, version} == {name: "telora", version: 1}
+});
+export def t0037_should_ok = expect({
+    def direct: Fn(Int) -> Int = fn(n) {
+        if n < 1 { 0 } else { direct(n - 1) }
+    };
+    decl even: Fn(Int) -> Int;
+    decl odd: Fn(Int) -> Int;
+    def even = fn(n) { if n < 1 { 0 } else { odd(n - 1) } };
+    def odd = fn(n) { if n < 1 { 1 } else { even(n - 1) } };
+    def matched: Fn(Int) -> Int = fn(n) {
+        match n { 0 => 0, value => matched(value - 1) }
+    };
+    let iterate: Fn(Any, Int) -> Int = fn(step, n) {
+        if n < 1 { 0 } else { step(step, n - 1) }
+    };
+    direct(1500) == 0
+        && even(1500) == 0
+        && matched(1500) == 0
+        && iterate(iterate, 1500) == 0
+});
+export def t0038_should_ok = expect({
+    let step: Fn(Option(Int)) -> Option(Int) = fn(option) {
+        let 'Some(item) = option else { return 'None; };
+        'Some(item + 1)
+    };
+    let require = fn(option: Option(Int)) {
+        let 'Some(item) = option else { panic!("none") };
+        item
+    };
+    step('Some(2)) == 'Some(3) && step('None) == 'None && require('Some(4)) == 4
+});

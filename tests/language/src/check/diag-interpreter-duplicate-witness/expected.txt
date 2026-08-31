@@ -1,0 +1,1 @@
+type parameter A has more than one TypeOf witness

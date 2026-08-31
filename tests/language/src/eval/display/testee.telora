@@ -1,0 +1,46 @@
+import "std/fmt" as fmt;
+import "std/result" as results;
+import "std/type-property" as type_property;
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+@fmt.display_by("{host}:{port}")
+type Endpoint = struct {host: String, port: Int};
+@fmt.display_by("{name}@{endpoint} {{ready}} {ratio} {name}")
+type Service = struct {name: String, endpoint: Endpoint, ratio: Float};
+
+@fmt.display_by("{host}:{port}")
+type ExplicitEndpoint = struct {host: String, port: Int};
+impl fmt.Display for ExplicitEndpoint {
+    display: fn(self) {
+        fmt.concat(
+            ["explicit(", ":", ")"],
+            [fmt.from_string(self.host), fmt.from_int(self.port)],
+        )
+    },
+};
+
+type Plain = struct {value: Int};
+def endpoint: Endpoint = {host: "localhost", port: 8080};
+def explicit: ExplicitEndpoint = {host: "localhost", port: 8080};
+def service: Service = {name: "api", endpoint, ratio: -0.0};
+
+def verified = {
+    let endpoint_property = type_property.get_type_prop(Endpoint, fmt.DisplayBy);
+    let property_valid = match endpoint_property {
+        'Some(property) => results.is_ok(validate(fmt.DisplayBy, property)),
+        'None => 'False,
+    };
+    fmt.render(fmt.display(Endpoint, endpoint)) == "localhost:8080"
+        && fmt.render(fmt.Display.display(endpoint)) == "localhost:8080"
+        && fmt.render(fmt.display(Service, service))
+            == "api@localhost:8080 {ready} -0 api"
+        && `endpoint=\{explicit}` == "endpoint=explicit(localhost:8080)"
+        && property_valid
+        && match type_property.get_type_prop(Plain, fmt.DisplayBy) {
+            'Some(_) => 'False,
+            'None => 'True,
+        }
+};
+
+export def result: Value = bool_value(verified);

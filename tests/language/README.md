@@ -9,6 +9,7 @@ The mode selects the public Telora command used to observe the testee:
 
 - `eval`: evaluate the `result` export;
 - `query`: query the testee's exports;
+- `query-at`: query the testee's top-level semantic facts, including recovery;
 - `check`: check the testee and collect diagnostics.
 
 Run the suite after building Telora:

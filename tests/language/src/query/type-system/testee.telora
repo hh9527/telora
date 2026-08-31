@@ -1,0 +1,18 @@
+def identity = fn(value) { value };
+def keep = fn(left: Int, right) { (left, right) };
+def nested = fn(left) { fn(right) { left + right + 1 } };
+def recursive: Fn(Int) -> Int = fn(value) {
+    if value < 1 { 0 } else { recursive(value - 1) }
+};
+def recursive_result: Int = recursive(3);
+
+type Box(A) = struct {value: A};
+type Tree(A) = enum {'Leaf(A), 'Branch(Array(Tree(A)))};
+type IntTree = Tree(Int);
+
+def collect: for(N, M)
+    Fn(Array(Box(Tuple([N, M])))) -> Array(Box(Tuple([N, M]))) = fn(items) {
+        items
+    };
+
+export {identity, keep, nested, recursive, recursive_result, Box, Tree, IntTree, collect};

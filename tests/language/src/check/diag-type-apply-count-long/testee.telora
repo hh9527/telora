@@ -1,0 +1,2 @@
+def identity: for(A) Fn(A) -> A = fn(value) { value };
+export def invalid = identity@[Int, String](1);

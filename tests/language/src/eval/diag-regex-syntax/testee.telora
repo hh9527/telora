@@ -1,0 +1,7 @@
+import "std/regex" as regex;
+import "std/value" {Value};
+export def result: Value = if regex.is_match(regex.compile(r"("), "x") {
+    'True
+} else {
+    'False
+};

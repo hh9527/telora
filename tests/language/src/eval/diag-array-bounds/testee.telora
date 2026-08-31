@@ -1,0 +1,3 @@
+import "std/value" {Value};
+
+export def result: Value = 'Int([1][1]);

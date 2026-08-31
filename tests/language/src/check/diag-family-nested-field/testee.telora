@@ -1,0 +1,3 @@
+type Box(A) = struct {value: Array(Tuple([A, Int]))};
+def make: for(A) Fn(Array(Tuple([A, String]))) -> Box(A) = fn(value) { {value} };
+export {make};

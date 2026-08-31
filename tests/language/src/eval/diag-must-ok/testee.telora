@@ -1,0 +1,7 @@
+import "std/value" {Value};
+
+def reject: Fn(Int, String) -> Result(Int, String) = fn(left, right) {
+    'Err("rejected")
+};
+
+export def result: Value = 'Int(reject.must_ok!(1, "two"));

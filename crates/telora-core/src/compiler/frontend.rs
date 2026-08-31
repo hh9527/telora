@@ -3,8 +3,6 @@ use crate::ast::{
     Pattern, PatternKind, Program, StringPartKind, UnaryOperator, located,
 };
 use crate::bytecode::{BytecodeFunction, Constant};
-#[cfg(test)]
-use crate::heap::Val;
 use crate::heap::{Heap, PersistentValue};
 use crate::hir::HirProgram;
 use crate::lexer::{FrontendError, SourceLocation};

@@ -1,0 +1,2 @@
+def empty: for(A) Fn() -> Array(A) = fn() { [] };
+export def t0509_should_error = empty@[_]();

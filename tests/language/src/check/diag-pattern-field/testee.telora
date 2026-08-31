@@ -1,0 +1,3 @@
+type User = struct {name: String};
+def user: User = {name: "Ada"};
+export def invalid = match user { {age} => age };

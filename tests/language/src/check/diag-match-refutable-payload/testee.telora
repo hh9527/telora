@@ -1,0 +1,2 @@
+def option: Option(Int) = 'Some(1);
+export def invalid = match option { 'None => 0, 'Some(1) => 1 };

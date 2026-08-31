@@ -1,0 +1,1 @@
+export def invalid = { let before = fn(left, right) { left < right }; before };

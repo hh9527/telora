@@ -32,8 +32,6 @@ use crate::types::{
     TypeDescriptor, TypeFamilyTemplate, TypeScheme, analyze_partial_types_recovered_with_query,
     analyze_program_with_bindings_observed, program_references_name, recovered_reference_locations,
 };
-#[cfg(test)]
-use crate::vm::ValueRef;
 use crate::vm::WorkWorld;
 use crate::yaml::validate_yaml_registered;
 use crate::{

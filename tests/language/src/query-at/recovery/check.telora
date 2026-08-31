@@ -1,0 +1,28 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+def has_recovery_definition: Fn(Value, String) -> Bool = fn(actual, name) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(items)) => match array.find(items, fn(item) {
+            support.string_field_equals(item, "record", "definition")
+                && support.string_field_equals(item, "authority", "recovery")
+                && support.string_field_equals(item, "name", name)
+        }) {
+            'Some(_) => 'True,
+            'None => 'False,
+        },
+        _ => 'False,
+    }
+};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    if support.exit_code(actual) == 'Some(0)
+        && has_recovery_definition(actual, "later")
+        && has_recovery_definition(actual, "final")
+        && support.stream_length(actual, "stderr") == 'Some(0) {
+        'True
+    } else {
+        'False
+    }
+};

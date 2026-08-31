@@ -1,0 +1,2 @@
+def value = value;
+export {value};

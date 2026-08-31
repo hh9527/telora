@@ -1,0 +1,4 @@
+import "std/regex" as regex;
+@regex.parse_by(regex.compile(r"(?P<name>\w+)"))
+type Bad = struct {value: Int};
+export {Bad};

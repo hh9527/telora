@@ -14,7 +14,6 @@ fn module_blueprint(source: &str) -> Result<ModuleBlueprint, String> {
 
 include!("part-01.rs");
 include!("part-02.rs");
-include!("part-03.rs");
 include!("part-04.rs");
 include!("part-05.rs");
 include!("part-06.rs");

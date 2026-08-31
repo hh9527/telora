@@ -1,0 +1,75 @@
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+type Box(A) = struct {value: A};
+type Other(A) = struct {value: A};
+type Phantom(A) = struct {value: Int};
+type Maybe(A) = enum {'None, 'Some(A)};
+
+def unbox: for(Content) Fn(Box(Content)) -> Content = fn(boxed) { boxed.value };
+def make_nested: for(A) Fn(Array(Tuple([A, Int]))) -> Box(Array(Tuple([A, Int]))) =
+    fn(value) { {value} };
+
+type Envelope(Payload, Error) = struct {
+    payload: Option(Box(Payload)),
+    error: Option(Error),
+};
+type Response = Envelope(String, Int);
+
+type Outer(A) = Inner(A);
+type Inner(A) = Array(A);
+type ForwardOutput = Outer(String);
+
+type LocalId = Int;
+type Pair(A) = Tuple([LocalId, A]);
+type PairOutput = Pair(String);
+
+type Expr(A) = enum {'Leaf(A), 'Call(Array(Expr(A)))};
+type IntExpr = Expr(Int);
+type StringExpr = Expr(String);
+def int_expr: IntExpr = 'Call(['Leaf(1)]);
+
+type User = struct {name: String, age: Int};
+
+def box_int: Type = Box(Int);
+def same_box_int: Type = Box(Int);
+def box_string: Type = Box(String);
+def other_int: Type = Other(Int);
+def phantom_int: Type = Phantom(Int);
+def phantom_string: Type = Phantom(String);
+def nested_box: Type = Box(Maybe(Int));
+def maybe_int: Type = Maybe(Int);
+def int_expr_type: Type = IntExpr;
+def same_int_expr_type: Type = Expr(Int);
+def string_expr_type: Type = StringExpr;
+
+def verified = box_int == same_box_int
+    && box_int != box_string
+    && box_int != other_int
+    && phantom_int != phantom_string
+    && nested_box != maybe_int
+    && unbox({value: 7}) == 7
+    && make_nested([(1, 2)]).value == [(1, 2)]
+    && match int_expr {
+        'Leaf(_) => 'False,
+        'Call(items) => match items[0] {
+            'Leaf(value) => value == 1,
+            'Call(_) => 'False,
+        },
+    }
+    && int_expr_type == same_int_expr_type
+    && int_expr_type != string_expr_type
+    && match validate(User, {age: 36, name: "Ada"}) {
+        'Ok(_) => 'True,
+        'Err(_) => 'False,
+    }
+    && match validate(User, {age: "old", name: "Ada"}) {
+        'Ok(_) => 'False,
+        'Err(_) => 'True,
+    }
+    && match validate(Box(Int), {value: 42}) {
+        'Ok(_) => 'True,
+        'Err(_) => 'False,
+    };
+
+export def result: Value = bool_value(verified);

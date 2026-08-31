@@ -1,0 +1,2 @@
+type Pair(A, A) = Tuple([A, A]);
+export {Pair};

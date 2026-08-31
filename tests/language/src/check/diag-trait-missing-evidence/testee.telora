@@ -1,0 +1,3 @@
+trait Display { display: Fn(Self) -> String };
+def identity: for(T: Display) Fn(T) -> T = fn(value) { value };
+export def invalid = identity(1);

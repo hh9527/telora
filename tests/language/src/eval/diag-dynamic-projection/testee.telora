@@ -1,0 +1,6 @@
+import "std/value" {Value};
+
+export def result: Value = {
+    let value: Any = 1;
+    value[0]
+};

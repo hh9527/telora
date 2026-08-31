@@ -1,0 +1,5 @@
+export def invalid = {
+    let option: Option(Int) = 'Some(1);
+    let (first, 'Some(value)) = (0, option);
+    value
+};

@@ -1,0 +1,2 @@
+def broken: Fn(Type) -> Type = fn(Item) { Array(1) };
+export {broken};

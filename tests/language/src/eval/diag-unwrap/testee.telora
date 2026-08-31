@@ -1,0 +1,6 @@
+import "std/value" {Value};
+
+export def result: Value = {
+    let result: Result(Int, String) = 'Err("required");
+    'Int(result.unwrap!())
+};

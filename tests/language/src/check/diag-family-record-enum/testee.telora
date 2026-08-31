@@ -1,0 +1,8 @@
+type Node = enum {'A, 'B};
+type Foreign = enum {'Foreign};
+type Requirement = struct {target: Node};
+def target_of: Fn(Requirement) -> Node = fn(req) { req.target };
+def use: for(Req) Fn(Array(Req), Fn(Req) -> Node) -> Node =
+    fn(requirements, selector) { selector(requirements[0]) };
+def foreign: Foreign = 'Foreign;
+export def invalid = use([{target: foreign}], target_of);

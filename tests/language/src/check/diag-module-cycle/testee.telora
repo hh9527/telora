@@ -1,0 +1,3 @@
+import "@src/check/diag-module-cycle/a" {a};
+def root = a;
+export {root};

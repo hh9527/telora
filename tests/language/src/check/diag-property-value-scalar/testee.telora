@@ -1,0 +1,4 @@
+import "std/type-desc" {TypeDesc};
+def deco: Fn(TypeDesc, Option(Int)) -> Int = fn(target, previous) { 1 };
+@deco type Target = struct {};
+export {Target};

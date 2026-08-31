@@ -1,0 +1,8 @@
+import "std/dyn" as dyn;
+import "std/value" {Value};
+type Choice = enum {'Some(Int), 'None};
+def choice: Choice = 'Some(9);
+export def result: Value = match dyn.get_variant_payload(dyn.pack(Choice, choice), 0) {
+    'Some(_) => 'True,
+    'None => 'False,
+};

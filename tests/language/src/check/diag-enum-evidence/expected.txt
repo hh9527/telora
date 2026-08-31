@@ -1,0 +1,1 @@
+variant 'Base is not part of ForeignId

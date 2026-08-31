@@ -1,0 +1,112 @@
+import "std/array" as array;
+import "std/dict" as dict;
+import "std/eq" as eq;
+import "std/path" as path;
+import "std/string" as string;
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+def arrays_ok = {
+    let values = [1, 2, 3];
+    let empty: Array(Int) = [];
+    let empty_strings: Array(String) = [];
+    array.length(values) == 3
+        && array.get(values, 0) == 'Some(1)
+        && array.get(values, -1) == 'None
+        && array.get(values, 3) == 'None
+        && array.get(empty, 0) == 'None
+        && array.enumerate(values) == [(0, 1), (1, 2), (2, 3)]
+        && array.push(values, 4) == [1, 2, 3, 4]
+        && values == [1, 2, 3]
+        && array.zip(values, ["a", "b", "c"]) == 'Some([(1, "a"), (2, "b"), (3, "c")])
+        && array.zip(values, ["a"]) == 'None
+        && array.zip(empty, empty_strings) == 'Some([])
+        && array.map(values, fn(value) { value + 10 }) == [11, 12, 13]
+        && array.filter(values, fn(value) { 1 < value }) == [2, 3]
+        && array.flat_map(values, fn(value) { [value, value] }) == [1, 1, 2, 2, 3, 3]
+        && array.fold(values, 0, fn(total, value) { total + value }) == 6
+        && array.fold_control@[Int, Int, String](
+            values,
+            0,
+            fn(total, value) { 'Continue(total + value) },
+        ) == 'Continue(6)
+        && array.fold_control@[Int, Int, String](
+            [1, 0],
+            0,
+            fn(total, value) {
+                if 0 < value { 'Break("done") } else { 'Continue(total + 1 / value) }
+            },
+        ) == 'Break("done")
+        && array.map(empty, fn(value) { value / 0 }) == []
+        && array.fold(empty, 42, fn(total, value) { total + value }) == 42
+        && array.map(values, fn(value) {
+            array.fold([value, value], 0, fn(total, item) { total + item })
+        }) == [2, 4, 6]
+};
+
+def dicts_ok = {
+    let source: Dict(Int) = {z: 3, a: 1, middle: 2};
+    let empty: Dict(Int) = {};
+    let mapped: Dict(String) = dict.map_values(source, fn(value) { `v\{value}` });
+    let expected_mapped: Dict(String) = {a: "v1", middle: "v2", z: "v3"};
+    let filtered: Dict(Int) = dict.filter(source, fn(value) { 1 < value });
+    let expected_filtered: Dict(Int) = {middle: 2, z: 3};
+    let empty_strings: Dict(String) = {};
+    mapped == expected_mapped
+        && filtered == expected_filtered
+        && dict.fold(source, "", fn(total, key, value) {
+            `\{total}\{key}=\{value};`
+        }) == "a=1;middle=2;z=3;"
+        && dict.map_values(empty, fn(value) { `v\{value}` }) == empty_strings
+        && dict.filter(empty, fn(value) { 0 < value }) == empty
+        && dict.fold(empty, 42, fn(total, key, value) { total + value }) == 42
+};
+
+def text_and_path_ok = array.concat([[1, 2], [], [3]]) == [1, 2, 3]
+    && array.any([1, 0], fn(value) {
+        if 0 < value { 'True } else { value / 0 < 1 }
+    })
+    && !array.all([0, 1], fn(value) {
+        if value < 1 { 'False } else { value / 0 < 1 }
+    })
+    && array.find([1, 2, 3], fn(value) { 1 < value }) == 'Some(2)
+    && array.find([1], fn(value) { value < 0 }) == 'None
+    && !array.any([], fn(value) { value / 0 < 1 })
+    && array.all([], fn(value) { value / 0 < 1 })
+    && string.length("形态a") == 3
+    && string.join(["a", "形", "c"], ":") == "a:形:c"
+    && string.split("a::形", ":") == ["a", "", "形"]
+    && string.split("a形", "") == ["", "a", "形", ""]
+    && string.starts_with("形态", "形")
+    && string.ends_with("telora", "ra")
+    && string.contains("telora", "lor")
+    && string.replace("a-b-a", "a", "xy") == "xy-b-xy"
+    && string.lines("a\r\nb\n") == ["a", "b", ""]
+    && string.join_lines(["a", "形", "c"]) == "a\n形\nc"
+    && string.indent("a\n\nb", 2) == "  a\n\n  b"
+    && string.ensure_trailing_newline("a") == "a\n"
+    && string.trim_margin(r"  |a
+    |b
+unchanged", "|") == "a\nb\nunchanged"
+    && path.normalize("/a/./b/../../../../c") == "/c"
+    && path.normalize("../../a/../b") == "../../b"
+    && path.join(["/tool", "bin", "../lib", "gcc"]) == "/tool/lib/gcc"
+    && path.join(["ignored", "/absolute", "file"]) == "/absolute/file"
+    && path.parent("/a/b/../c") == 'Some("/a")
+    && path.parent("/") == 'None
+    && path.file_name("a/b/../c") == 'Some("c");
+
+type Scalar = union('None, [Int, String]);
+def scalar_left: Scalar = 1;
+def scalar_right: Scalar = "1";
+def identity = fn(value) { value };
+def equality_ok = eq.equal(1, 1)
+    && eq.equal([{a: 1}], [{a: 1}])
+    && eq.equal(identity, identity)
+    && !eq.equal(identity, fn(value) { value })
+    && scalar_left != scalar_right
+    && !eq.equal(scalar_left, scalar_right);
+
+export def result: Value = bool_value(
+    arrays_ok && dicts_ok && text_and_path_ok && equality_ok
+);

@@ -1,0 +1,4 @@
+def apply: for(A) Fn(A, Fn(A) -> Option(String)) -> Option(String) =
+    fn(value, f) { f(value) };
+def build = fn(value) { if value > 0 { 'Some(1) } else { 'None } };
+export def t0502_should_error = apply(1, build);

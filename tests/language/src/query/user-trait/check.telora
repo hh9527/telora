@@ -1,0 +1,32 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+def find_export: Fn(Value, String) -> Value = fn(actual, name) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(items)) => match array.find(items, fn(item) {
+            support.string_field_equals(item, "name", name)
+        }) {
+            'Some(item) => item,
+            'None => 'None,
+        },
+        _ => 'None,
+    }
+};
+
+def has_type: Fn(Value, String, String) -> Bool = fn(actual, name, expected) {
+    support.string_field_equals(find_export(actual, name), "type", expected)
+};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    if support.exit_code(actual) == 'Some(0)
+        && has_type(actual, "Render", "for(Self) Fn(TypeOf(Self)) -> TypeOf(Render)")
+        && has_type(actual, "Name", "TypeOf(Name)")
+        && has_type(actual, "identity", "for(T: Render) Fn(T) -> T")
+        && has_type(actual, "render", "for(T: Render) Fn(T) -> String")
+        && support.stream_length(actual, "stderr") == 'Some(0) {
+        'True
+    } else {
+        'False
+    }
+};

@@ -1,0 +1,5 @@
+import "std/fmt" as fmt;
+import "std/value" {Value};
+export def result: Value = 'String(fmt.render(
+    fmt.concat(["missing tail"], [fmt.from_int(1)])
+));

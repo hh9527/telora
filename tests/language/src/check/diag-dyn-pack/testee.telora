@@ -1,0 +1,2 @@
+import "std/dyn" as dyn;
+export def invalid = dyn.pack@[Int](Int, "wrong");

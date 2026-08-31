@@ -1,0 +1,3 @@
+import "std/string" as string;
+import "std/value" {Value};
+export def result: Value = 'String(string.trim_margin("x", ""));

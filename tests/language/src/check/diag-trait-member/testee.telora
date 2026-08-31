@@ -1,0 +1,4 @@
+trait Display { display: Fn(Self) -> String };
+type Endpoint = struct {host: String};
+impl Display for Endpoint { display: fn(value) { 42 } };
+export {Display, Endpoint};

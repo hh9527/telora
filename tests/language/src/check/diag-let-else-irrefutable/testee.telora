@@ -1,0 +1,5 @@
+type Pair = struct {a: Int, b: Int};
+export def t0338_should_error = fn(pair: Pair) {
+    let {a, b} = pair else { panic!("never") };
+    a + b
+};

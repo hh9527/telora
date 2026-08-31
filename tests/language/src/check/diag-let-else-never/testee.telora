@@ -1,0 +1,4 @@
+export def t0337_should_error = fn(option: Option(Int)) {
+    let 'Some(item) = option else { 0 };
+    item
+};

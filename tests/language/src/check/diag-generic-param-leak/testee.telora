@@ -1,0 +1,6 @@
+def identity: for(N) Fn(N) -> N = fn(value) {
+    let result: N = value;
+    result
+};
+def unrelated: N = 1;
+export {identity, unrelated};

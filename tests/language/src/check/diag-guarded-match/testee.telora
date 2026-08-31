@@ -1,0 +1,5 @@
+let value: Option(Int) = 'Some(1);
+export def t0334_should_error = match value {
+    'Some(item) if 'True => item,
+    'None if 'True => 0,
+};

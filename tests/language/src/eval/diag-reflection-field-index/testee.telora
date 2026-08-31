@@ -1,0 +1,7 @@
+import "std/dyn" as dyn;
+import "std/value" {Value};
+type User = struct {value: Int};
+def user: User = {value: 1};
+export def result: Value = 'Int(dyn.get_field_value(dyn.pack(User, user), 1) |> dyn.check_int |> fn(value) {
+    match value { 'Some(value) => value, 'None => 0 }
+});

@@ -1,0 +1,2 @@
+def pair: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
+export def invalid = pair@[Int](1, 2);

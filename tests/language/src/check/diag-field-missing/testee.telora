@@ -1,0 +1,1 @@
+export def invalid = { let value = {present: 1}; value.missing };

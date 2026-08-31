@@ -1,0 +1,4 @@
+export def invalid = {
+    let apply = fn(callback) { callback(1) };
+    apply(fn(value: String) { value })
+};

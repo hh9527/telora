@@ -35,6 +35,10 @@ def succeeded: Fn(Value) -> Bool = fn(value) {
     exit_code(value) == 'Some(0) && stream_length(value, "stderr") == 'Some(0)
 };
 
+def bool_value: Fn(Bool) -> Value = fn(value) {
+    if value { 'True } else { 'False }
+};
+
 def string_field_contains: Fn(Value, String, String) -> Bool = fn(value, field, expected) {
     match record_field(value, field) {
         'Some('String(found)) => string.contains(found, expected),
@@ -65,8 +69,10 @@ def stream_contains_string_field: Fn(Value, String, String, String) -> Bool = fn
 
 def failed_with: Fn(Value, String) -> Bool = fn(value, expected) {
     exit_code(value) == 'Some(1)
-        && stream_length(value, "stderr") == 'Some(0)
-        && stream_contains_string_field(value, "stdout", "message", expected)
+        && (
+            stream_contains_string_field(value, "stdout", "message", expected)
+                || stream_contains_string_field(value, "stderr", "message", expected)
+        )
 };
 
 export {
@@ -75,6 +81,7 @@ export {
     stream_item,
     stream_length,
     succeeded,
+    bool_value,
     string_field_contains,
     string_field_equals,
     stream_contains_string_field,

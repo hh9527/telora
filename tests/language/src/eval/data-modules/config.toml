@@ -1,0 +1,11 @@
+title = "Telora"
+released = 2026-08-04
+
+[environment]
+PATH = "/bin"
+
+[[tools]]
+name = "telora"
+
+[[tools]]
+name = "rustc"

@@ -1,0 +1,15 @@
+trait Render { render: Fn(Self) -> String };
+
+impl Render for Int {
+    render: fn(value) { `int:\{value}` },
+};
+
+type Name = struct {value: String};
+impl Render for Name {
+    render: fn(value) { value.value },
+};
+
+def identity: for(T: Render) Fn(T) -> T = fn(value) { value };
+def render: for(T: Render) Fn(T) -> String = fn(value) { Render.render(value) };
+
+export {Render, Name, identity, render};

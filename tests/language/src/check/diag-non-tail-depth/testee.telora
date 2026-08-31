@@ -1,0 +1,4 @@
+def descend: Fn(Int) -> Int = fn(n) {
+    if n < 1 { 0 } else { 1 + descend(n - 1) }
+};
+export def t0341_should_error = descend(1500);

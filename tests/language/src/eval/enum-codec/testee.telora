@@ -1,0 +1,76 @@
+import "std/codec" as codec;
+import "std/json" as json;
+import "std/result" as results;
+import "std/string" as string;
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+@json.rename_all('CamelCase)
+type FixtureEvent = enum {
+    'Idle,
+    'UserJoined(FixtureUser),
+    'FatalError(String),
+};
+type FixtureUser = struct {name: String};
+@json.untagged
+type FixtureScalar = enum {'Text(String), 'Count(Int)};
+type FixtureEnvelope = struct {event: FixtureEvent};
+type Choice = enum {'None, 'Number(Int)};
+@json.untagged
+type Ambiguous = enum {'Anything(Any), 'Text(String)};
+@json.rename_all('CamelCase)
+type FixtureModel = struct {
+    user_id: Int,
+    event: FixtureEvent,
+    scalar: FixtureScalar,
+};
+
+def verified = {
+    let fatal: FixtureEvent = 'FatalError("boom");
+    let nested: FixtureEnvelope = {event: 'UserJoined({name: "Lin"})};
+    let count: FixtureScalar = 'Count(3);
+    let encoded_fatal = codec.encode(codec.Value, fatal) |> results.unwrap;
+    let encoded_nested = codec.encode(codec.Value, nested) |> results.unwrap;
+    let encoded_count = codec.encode(codec.Value, count) |> results.unwrap;
+    let no_match = codec.decode(
+        FixtureScalar,
+        codec.encode(codec.Value, []) |> results.unwrap,
+    );
+    let ambiguous = codec.decode(
+        Ambiguous,
+        codec.encode(codec.Value, "text") |> results.unwrap,
+    );
+    let model_schema = json.schema(FixtureModel);
+    let schema_text = json.stringify(
+        codec.encode(codec.Value, model_schema) |> results.unwrap,
+    );
+    let idle = codec.decode(
+        FixtureEvent,
+        codec.encode(codec.Value, "idle") |> results.unwrap,
+    ) |> results.unwrap;
+    let joined = codec.decode(
+        FixtureEvent,
+        codec.encode(codec.Value, {userJoined: {name: "Ada"}}) |> results.unwrap,
+    ) |> results.unwrap;
+    let text = codec.decode(
+        FixtureScalar,
+        codec.encode(codec.Value, "hello") |> results.unwrap,
+    ) |> results.unwrap;
+    !results.is_ok(validate(Choice, 'Other))
+        && !results.is_ok(validate(Choice, 'Number))
+        && !results.is_ok(validate(Choice, 'None(1)))
+        && !results.is_ok(validate(Choice, 'Number("one")))
+        && !results.is_ok(no_match)
+        && !results.is_ok(ambiguous)
+        && string.contains(schema_text, "userId")
+        && string.contains(schema_text, "event")
+        && string.contains(schema_text, "scalar")
+        && idle == 'Idle
+        && joined == 'UserJoined({name: "Ada"})
+        && encoded_fatal == 'Object({fatalError: 'String("boom")})
+        && encoded_nested == 'Object({event: 'Object({userJoined: 'Object({name: 'String("Lin")})})})
+        && text == 'Text("hello")
+        && encoded_count == 'Int(3)
+};
+
+export def result: Value = bool_value(verified);

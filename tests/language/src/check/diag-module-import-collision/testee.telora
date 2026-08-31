@@ -1,0 +1,3 @@
+import "@src/check/diag-module-import-collision/provider" {Capability};
+type Capability = enum {'Local};
+export {Capability};

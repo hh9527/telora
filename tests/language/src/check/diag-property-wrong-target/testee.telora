@@ -1,0 +1,9 @@
+import "std/type-desc" {TypeDesc};
+@property('Field)
+type Prop = struct {};
+def deco: Fn(TypeDesc, Option(Prop)) -> Prop = fn(target, previous) {
+    let value: Prop = {};
+    value
+};
+@deco type Target = struct {};
+export {Prop, Target};

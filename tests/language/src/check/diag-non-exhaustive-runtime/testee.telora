@@ -1,0 +1,2 @@
+def select: Fn(Any) -> Int = fn(value) { match value { 'Some => 1 } };
+export def t0336_should_error = select('None);

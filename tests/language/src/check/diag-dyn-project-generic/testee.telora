@@ -1,0 +1,5 @@
+import "std/dyn" as dyn;
+def project: for(A) Fn(Dyn) -> Option(A) = fn(value) {
+    dyn.project@[A](value)
+};
+export {project};

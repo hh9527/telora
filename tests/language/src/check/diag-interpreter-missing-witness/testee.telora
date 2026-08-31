@@ -1,0 +1,3 @@
+def equal: Fn(Dyn) -> Bool = fn(value) { 'True };
+def invalid: for(A, B) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(equal);
+export {invalid};

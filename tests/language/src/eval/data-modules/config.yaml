@@ -1,0 +1,5 @@
+name: Telora
+features:
+  - static data
+  - provenance
+legacy: yes

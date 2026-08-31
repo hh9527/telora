@@ -1,0 +1,2 @@
+import "std/eq" as eq;
+export def invalid = eq.equal(1, "1");

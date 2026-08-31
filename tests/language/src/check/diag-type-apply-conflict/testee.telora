@@ -1,0 +1,2 @@
+def pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) { (left, right) };
+export def t0510_should_error = pair@[String, _](1, "x");

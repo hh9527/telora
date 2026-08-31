@@ -1,0 +1,152 @@
+def apply = fn(callback, value) { callback(value) };
+
+def select = fn(condition, value) {
+    if condition { value } else { value }
+};
+
+def add_left = fn(value) { value + 1 };
+def add_right = fn(value) { 1 + value };
+def scale = fn(value) { value * 1.5 };
+def before_int = fn(value) { value < 1 };
+def before_string = fn(value) { value < "z" };
+def invert_bool: Fn(Bool) -> Bool = fn(value) { !value };
+def invert_int: Fn(Int) -> Int = fn(value) { !value };
+
+def branch_left = if 'True { 1 } else { "x" };
+def branch_right = if 'True { "x" } else { 1 };
+def branch_nested = if 'True { if 'False { 1 } else { "x" } } else { 1 };
+def branch_three = if 'True { if 'False { 1 } else { "x" } } else { 1.0 };
+def metadata_branch = if 'True { Int } else { String };
+
+def choose_record = fn(flag) {
+    if flag {
+        {kind: 'Full, path: [1]}
+    } else {
+        {kind: 'Empty, path: []}
+    }
+};
+
+def choose_match = fn(value) {
+    match value {
+        0 => {kind: 'First, path: []},
+        1 => {kind: 'Second, path: [1]},
+        2 => {kind: 'Third, path: []},
+    }
+};
+
+def choose_nested = fn(flag) {
+    if flag { 'Some(({path: []},)) } else { 'Some(({path: [1]},)) }
+};
+
+def choose_conflict = fn(value) {
+    match value {
+        0 => {kind: 'Empty, path: []},
+        1 => {kind: 'Ints, path: [1]},
+        2 => {kind: 'Strings, path: ["x"]},
+    }
+};
+
+def add_partial = fn(value: Int, other) { value + other };
+def add_result = fn(value) -> Int { value + 1 };
+def decorate = fn(ctx: Any, value) -> Int { value + 1 };
+def nested_partial = fn(value: Int) {
+    fn(other: Int) -> Int { value + other }
+};
+
+def explicit_pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) {
+    (left, right)
+};
+def explicit_pair_value = explicit_pair@[Int, String](1, "x");
+def partial_pair_value = explicit_pair@[Int, _](1, "x");
+
+def countdown = fn(value) {
+    if value < 1 { 0 } else { countdown(value - 1) }
+};
+def even = fn(value) {
+    if value < 1 { 'True } else { odd(value - 1) }
+};
+def odd = fn(value) {
+    if value < 1 { 'False } else { even(value - 1) }
+};
+
+def polymorphic_identity = fn(value) { value };
+def polymorphic_keep = fn(left: Int, right) { (left, right) };
+def nested_constraints = fn(left) { fn(right) { left + right + 1 } };
+
+def array_union = [1, "x"];
+def array_dynamic: Array(Any) = [1, "x"];
+def dict_union = {
+    let ints: Dict(Int) = {a: 1};
+    let strings: Dict(String) = {b: "x"};
+    {...ints, ...strings}
+};
+def field_projection = {
+    let record = {value: 1};
+    let dictionary: Dict(String) = {value: "x"};
+    let alternative = if 'True { {value: 1} } else { {value: "x"} };
+    let dynamic: Any = record;
+    (record.value, dictionary.value, alternative.value, dynamic.value)
+};
+
+def stop: Fn() -> Never = fn() { fail!("stop") };
+def never_branch = if 'True { 1 } else { stop() };
+def all_never = if 'True { stop() } else { stop() };
+def never_array = [stop(), 1];
+
+def compose = fn(outer, inner, value) { outer(inner(value)) };
+def invoke_factory = fn(factory) { factory()() };
+def recover = fn(callback) { callback() };
+def repeated_callback = fn(callback) { (callback(1), callback(2)) };
+
+def metadata_values = (Type, Int, Array(Int));
+type Function = Int;
+def domain_function: Function = 1;
+
+export {
+    apply,
+    select,
+    add_left,
+    add_right,
+    scale,
+    before_int,
+    before_string,
+    invert_bool,
+    invert_int,
+    branch_left,
+    branch_right,
+    branch_nested,
+    branch_three,
+    metadata_branch,
+    choose_record,
+    choose_match,
+    choose_nested,
+    choose_conflict,
+    add_partial,
+    add_result,
+    decorate,
+    nested_partial,
+    explicit_pair,
+    explicit_pair_value,
+    partial_pair_value,
+    countdown,
+    even,
+    odd,
+    polymorphic_identity,
+    polymorphic_keep,
+    nested_constraints,
+    array_union,
+    array_dynamic,
+    dict_union,
+    field_projection,
+    stop,
+    never_branch,
+    all_never,
+    never_array,
+    compose,
+    invoke_factory,
+    recover,
+    repeated_callback,
+    metadata_values,
+    Function,
+    domain_function,
+};

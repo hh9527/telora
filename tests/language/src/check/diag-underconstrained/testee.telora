@@ -1,0 +1,4 @@
+export def t0505_should_error = {
+    let negate = fn(value) { -value };
+    negate
+};

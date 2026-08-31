@@ -1,0 +1,2 @@
+def identity: for(T: Missing) Fn(T) -> T = fn(value) { value };
+export {identity};

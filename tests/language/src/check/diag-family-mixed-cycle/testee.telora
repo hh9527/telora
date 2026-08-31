@@ -1,0 +1,3 @@
+type Family(A) = Tuple([Concrete, A]);
+type Concrete = Family(Int);
+export {Family, Concrete};

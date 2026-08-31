@@ -1,0 +1,6 @@
+import "std/fmt" as fmt;
+type Plain = struct {value: Int};
+def accept: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> String = fn(target) {
+    "accepted"
+};
+export def invalid = accept(Plain);

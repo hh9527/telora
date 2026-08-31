@@ -1,0 +1,6 @@
+import "std/fmt" as fmt;
+
+@fmt.display_by("{host}:{port}")
+type Endpoint = struct {host: String, port: Int};
+
+export {Endpoint};

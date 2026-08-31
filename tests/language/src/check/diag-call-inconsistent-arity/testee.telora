@@ -1,0 +1,4 @@
+export def invalid = {
+    let invoke = fn(callback) { (callback(1), callback(1, 2)) };
+    invoke
+};

@@ -1,0 +1,40 @@
+import "std/dyn" as dyn;
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+def int_equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) {
+    match dyn.check_int(left) {
+        'Some(left) => match dyn.check_int(right) {
+            'Some(right) => left == right,
+            'None => 'False,
+        },
+        'None => 'False,
+    }
+};
+
+def equal: for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Bool = interpreter!(int_equal);
+
+def consume_string: Fn(Dyn) -> Bool = fn(value) {
+    match dyn.project_with(String, value) {
+        'Some(_) => 'True,
+        'None => 'False,
+    }
+};
+
+def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
+def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
+
+def first_int = first(Int);
+def repeated_int = first(Int);
+def first_string = first(String);
+def second_int = second(Int);
+
+def verified = equal@[Int](Int)(1, 1)
+    && !equal@[Int](Int)(1, 2)
+    && equal(Int)(2, 2)
+    && first_int == repeated_int
+    && !first_int(1)
+    && first_string("text")
+    && first_int != second_int;
+
+export def result: Value = bool_value(verified);

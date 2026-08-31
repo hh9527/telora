@@ -1,0 +1,89 @@
+import "@src/eval/properties/model" as model;
+import "std/fmt" as fmt;
+import "std/type-property" as property;
+import "std/type-property" {FieldPropertyCtx, VariantPropertyCtx};
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+@property('Field)
+type Count = struct {value: Int};
+@property('Type)
+type Total = struct {value: Int};
+
+def count: Fn(Int) -> Fn(FieldPropertyCtx, Option(Count)) -> Count = fn(value) {
+    fn(ctx, previous) {
+        let prior = match previous { 'Some(item) => item.value, 'None => 0 };
+        let result: Count = {value: prior + value};
+        result
+    }
+};
+
+def total: Fn(Type, Option(Total)) -> Total = fn(target, previous) {
+    let count_value = match property.get_field_prop(target, 0, Count) {
+        'Some(item) => item.value,
+        'None => 0,
+    };
+    let result: Total = {value: count_value};
+    result
+};
+
+@total
+type User = struct {
+    @count(2)
+    @count(3)
+    name: String,
+};
+
+@property('Type)
+@property('Field)
+@property('Variant)
+type Mark = struct {value: Int};
+
+def type_mark: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(value) {
+    fn(ctx, previous) {
+        let prior = match previous { 'Some(item) => item.value, 'None => 0 };
+        let result: Mark = {value: prior + value};
+        result
+    }
+};
+
+def field_mark: Fn(FieldPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) {
+    let result: Mark = {value: ctx.index + 10};
+    result
+};
+
+def variant_mark: Fn(VariantPropertyCtx, Option(Mark)) -> Mark = fn(ctx, previous) {
+    let result: Mark = {value: ctx.index + 20};
+    result
+};
+
+@type_mark(40)
+@type_mark(2)
+type Marked = struct {@field_mark name: String};
+type Choice = enum {@variant_mark 'Some(Int), 'None};
+
+def accepts: for(T: Property(fmt.DisplayBy)) Fn(TypeOf(T)) -> Bool = fn(target) {
+    'True
+};
+
+def endpoint: model.Endpoint = {host: "localhost", port: 8080};
+
+def verified = match property.get_field_prop(User, 0, Count) {
+    'Some(item) => item.value == 5,
+    'None => 'False,
+} && match property.get_type_prop(User, Total) {
+    'Some(item) => item.value == 5,
+    'None => 'False,
+} && match property.get_type_prop(Marked, Mark) {
+    'Some(item) => item.value == 42,
+    'None => 'False,
+} && match property.get_field_prop(Marked, 0, Mark) {
+    'Some(item) => item.value == 10,
+    'None => 'False,
+} && match property.get_variant_prop(Choice, 1, Mark) {
+    'Some(item) => item.value == 21,
+    'None => 'False,
+} && accepts(model.Endpoint)
+    && fmt.render(fmt.Display.display(endpoint)) == "localhost:8080";
+
+export def result: Value = bool_value(verified);

@@ -1,0 +1,44 @@
+import "std/regex" as regex;
+import "std/result" as results;
+import "std/string" as string;
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+def record_pattern = regex.compile(
+    r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$"
+);
+
+@regex.parse_by(record_pattern)
+type Record = struct {
+    name: String,
+    value: Int,
+    unit: Option(String),
+};
+
+@regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
+type Endpoint = struct {host: String, port: Int};
+
+@regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
+type Service = struct {name: String, endpoint: Endpoint};
+
+def first = string.parse(Record, "answer=42") |> results.unwrap;
+def second = string.parse(Record, "size=7;px") |> results.unwrap;
+def service = string.parse(Service, "api@localhost:8080") |> results.unwrap;
+
+def verified = regex.is_match(record_pattern, "answer=42")
+    && record_pattern == regex.compile(
+        r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$"
+    )
+    && (string.parse(String, "plain") |> results.unwrap) == "plain"
+    && (string.parse(Int, "42") |> results.unwrap) == 42
+    && (string.parse(Float, "1.5") |> results.unwrap) == 1.5
+    && first == {name: "answer", value: 42, unit: 'None}
+    && second == {name: "size", value: 7, unit: 'Some("px")}
+    && !results.is_ok(string.parse(Record, "not a record"))
+    && !results.is_ok(string.parse(Int, "4x"))
+    && !results.is_ok(string.parse(Float, "1.5x"))
+    && service.name == "api"
+    && service.endpoint.host == "localhost"
+    && service.endpoint.port == 8080;
+
+export def result: Value = bool_value(verified);

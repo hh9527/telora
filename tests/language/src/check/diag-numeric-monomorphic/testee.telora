@@ -1,0 +1,5 @@
+export def invalid = {
+    let add = fn(left, right) { left + right };
+    let integer = add(1, 2);
+    add(1.0, 2.0)
+};

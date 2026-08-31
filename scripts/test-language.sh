@@ -117,11 +117,18 @@ generated="$workspace/src/generated/check-all.telora"
     echo '});'
 } >"$generated"
 
-mapfile -t module_files < <(find "$workspace/src" -type f -name '*.telora' | sort)
+mapfile -t module_files < <(
+    find "$workspace/src" -type f \
+        \( -name '*.telora' -o -name '*.json' -o -name '*.toml' -o -name '*.yaml' -o -name '*.yml' \) \
+        | sort
+)
 modules_json=$(
     for module_file in "${module_files[@]}"; do
         relative=${module_file#"$workspace/src/"}
-        printf '@src/%s\n' "${relative%.telora}"
+        if [[ $relative == *.telora ]]; then
+            relative=${relative%.telora}
+        fi
+        printf '@src/%s\n' "$relative"
     done | jaq -Rsc 'split("\n") | map(select(length > 0))'
 )
 
@@ -178,6 +185,10 @@ for case_id in "${cases[@]}"; do
                 ;;
             query)
                 "$telora_bin" -C "$workspace" query exports "@src/$case_id/testee" \
+                    >"$raw_stdout" 2>"$raw_stderr"
+                ;;
+            query-at)
+                "$telora_bin" -C "$workspace" query at "@src/$case_id/testee" \
                     >"$raw_stdout" 2>"$raw_stderr"
                 ;;
             check)

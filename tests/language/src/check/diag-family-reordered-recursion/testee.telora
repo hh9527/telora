@@ -1,0 +1,2 @@
+type Swap(A, B) = struct {next: Swap(B, A)};
+export {Swap};

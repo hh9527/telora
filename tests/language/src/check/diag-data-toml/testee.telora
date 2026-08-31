@@ -1,0 +1,2 @@
+import "./invalid.toml" {data};
+export {data};

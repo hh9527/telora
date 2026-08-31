@@ -1,0 +1,1 @@
+strings.len == items.len + 1

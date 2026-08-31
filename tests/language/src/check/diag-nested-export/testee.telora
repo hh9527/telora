@@ -1,0 +1,1 @@
+export def value = { export def nested = 1; nested };

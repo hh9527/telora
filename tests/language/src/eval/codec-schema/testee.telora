@@ -1,0 +1,67 @@
+import "std/codec" as codec;
+import "std/dict" as dict;
+import "std/json" as json;
+import "std/result" as results;
+import "std/string" as string;
+import "std/toml" as toml;
+import "std/value" {Value};
+import "std/yaml" as yaml;
+import "@src/support" {bool_value};
+
+type User = struct {name: String, age: Int};
+type Model = struct {
+    users: Array(User),
+    labels: Dict(String),
+    selected: Option(User),
+};
+type Node = struct {value: Int, children: Array(Node)};
+
+def user: User = {name: "Ada", age: 36};
+def model: Model = {
+    users: [user],
+    labels: {role: "admin"},
+    selected: 'Some(user),
+};
+def node: Node = {value: 1, children: [{value: 2, children: []}]};
+
+def encoded_user = codec.encode(codec.Value, user) |> results.unwrap;
+def encoded_model = codec.encode(codec.Value, model) |> results.unwrap;
+def encoded_node = codec.encode(codec.Value, node) |> results.unwrap;
+def decoded_user = codec.decode(User, encoded_user) |> results.unwrap;
+def decoded_model = codec.decode(Model, encoded_model) |> results.unwrap;
+def decoded_node = codec.decode(Node, encoded_node) |> results.unwrap;
+
+def model_schema = json.schema(Model);
+def node_schema = json.schema(Node);
+def model_schema_text = codec.encode(codec.Value, model_schema)
+    |> results.unwrap
+    |> json.stringify;
+def node_schema_text = codec.encode(codec.Value, node_schema)
+    |> results.unwrap
+    |> json.stringify;
+
+def parsed_json = json.parse("{\"name\":\"Ada\",\"age\":36}") |> results.unwrap;
+def parsed_toml = toml.parse("name = \"Ada\"\nage = 36\n") |> results.unwrap;
+def parsed_yaml = yaml.parse("name: Ada\nage: 36\n") |> results.unwrap;
+
+def verified = decoded_user == user
+    && decoded_model == model
+    && decoded_node == node
+    && codec.decode(User, parsed_json) == 'Ok(user)
+    && codec.decode(User, parsed_toml) == 'Ok(user)
+    && codec.decode(User, parsed_yaml) == 'Ok(user)
+    && !results.is_ok(codec.decode(User, 'Object({name: 'String("Ada")})))
+    && !results.is_ok(codec.decode(User, 'Object({
+        name: 'String("Ada"),
+        age: 'String("old"),
+    })))
+    && dict.keys(model.labels) == ["role"]
+    && string.contains(model_schema_text, "properties")
+    && string.contains(model_schema_text, "users")
+    && string.contains(node_schema_text, "$defs")
+    && string.contains(node_schema_text, "$ref")
+    && json.stringify(encoded_user) == "{\"age\":36,\"name\":\"Ada\"}"
+    && (json.stringify_pretty(2))(encoded_user)
+        == "{\n  \"age\": 36,\n  \"name\": \"Ada\"\n}";
+
+export def result: Value = bool_value(verified);

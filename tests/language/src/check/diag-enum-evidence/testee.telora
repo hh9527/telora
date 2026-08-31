@@ -1,0 +1,5 @@
+type NodeId = enum {'Base, 'Other};
+type ForeignId = enum {'Foreign};
+def choose: for(Node) Fn(Node, Array(Node)) -> Node = fn(base, nodes) { base };
+def foreign: Array(ForeignId) = ['Foreign];
+export def t0503_should_error = choose('Base, foreign);

@@ -1,0 +1,71 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+def find_export: Fn(Value, String) -> Value = fn(actual, name) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(items)) => match array.find(items, fn(item) {
+            support.string_field_equals(item, "name", name)
+        }) {
+            'Some(item) => item,
+            'None => 'None,
+        },
+        _ => 'None,
+    }
+};
+
+def has_type: Fn(Value, String, String) -> Bool = fn(actual, name, expected) {
+    support.string_field_equals(find_export(actual, name), "type", expected)
+};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    if support.exit_code(actual) == 'Some(0)
+        && has_type(actual, "apply", "for(A, B) Fn(Fn(A) -> B, A) -> B")
+        && has_type(actual, "select", "for(A) Fn(enum {False, True}, A) -> A")
+        && has_type(actual, "add_left", "Fn(Int) -> Int")
+        && has_type(actual, "add_right", "Fn(Int) -> Int")
+        && has_type(actual, "scale", "Fn(Float) -> Float")
+        && has_type(actual, "before_int", "Fn(Int) -> enum {False, True}")
+        && has_type(actual, "before_string", "Fn(String) -> enum {False, True}")
+        && has_type(actual, "invert_bool", "Fn(enum {False, True}) -> enum {False, True}")
+        && has_type(actual, "invert_int", "Fn(Int) -> Int")
+        && has_type(actual, "branch_left", "Int | String")
+        && has_type(actual, "branch_right", "Int | String")
+        && has_type(actual, "branch_nested", "Int | String")
+        && has_type(actual, "branch_three", "Float | Int | String")
+        && has_type(actual, "metadata_branch", "Type")
+        && has_type(actual, "choose_record", "Fn(enum {False, True}) -> {kind: 'Empty, path: Array<Int>} | {kind: 'Full, path: Array<Int>}")
+        && has_type(actual, "choose_match", "for(A) Fn(A) -> {kind: 'First, path: Array<Int>} | {kind: 'Second, path: Array<Int>} | {kind: 'Third, path: Array<Int>}")
+        && has_type(actual, "choose_nested", "Fn(enum {False, True}) -> 'Some(({path: Array<Int>}))")
+        && has_type(actual, "choose_conflict", "for(A) Fn(A) -> {kind: 'Empty, path: Array<Int | String>} | {kind: 'Ints, path: Array<Int>} | {kind: 'Strings, path: Array<String>}")
+        && has_type(actual, "add_partial", "Fn(Int, Int) -> Int")
+        && has_type(actual, "add_result", "Fn(Int) -> Int")
+        && has_type(actual, "decorate", "Fn(Any, Int) -> Int")
+        && has_type(actual, "nested_partial", "Fn(Int) -> Fn(Int) -> Int")
+        && has_type(actual, "explicit_pair", "for(A, B) Fn(A, B) -> (A, B)")
+        && has_type(actual, "explicit_pair_value", "(Int, String)")
+        && has_type(actual, "partial_pair_value", "(Int, String)")
+        && has_type(actual, "polymorphic_identity", "for(A) Fn(A) -> A")
+        && has_type(actual, "polymorphic_keep", "for(A) Fn(Int, A) -> (Int, A)")
+        && has_type(actual, "nested_constraints", "Fn(Int) -> Fn(Int) -> Int")
+        && has_type(actual, "array_union", "Array<Int | String>")
+        && has_type(actual, "array_dynamic", "Array<Any>")
+        && has_type(actual, "dict_union", "Dict<Int | String>")
+        && has_type(actual, "field_projection", "(Int, String, Int | String, Any)")
+        && has_type(actual, "stop", "Fn() -> Never")
+        && has_type(actual, "never_branch", "Int")
+        && has_type(actual, "all_never", "Never")
+        && has_type(actual, "never_array", "Array<Int>")
+        && has_type(actual, "compose", "for(A, B, C) Fn(Fn(A) -> B, Fn(C) -> A, C) -> B")
+        && has_type(actual, "invoke_factory", "for(A) Fn(Fn() -> Fn() -> A) -> A")
+        && has_type(actual, "recover", "for(A) Fn(Fn() -> A) -> A")
+        && has_type(actual, "repeated_callback", "for(A) Fn(Fn(Int) -> A) -> (A, A)")
+        && has_type(actual, "metadata_values", "(TypeOf(Type), TypeOf(Int), TypeOf(Array<Int>))")
+        && has_type(actual, "Function", "TypeOf(Int)")
+        && has_type(actual, "domain_function", "Int")
+        && support.stream_length(actual, "stderr") == 'Some(0) {
+        'True
+    } else {
+        'False
+    }
+};

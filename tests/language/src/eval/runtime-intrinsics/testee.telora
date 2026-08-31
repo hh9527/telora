@@ -1,0 +1,23 @@
+import "std/value" {Value};
+import "@src/support" {bool_value};
+
+type A = struct {value: Int};
+type B = struct {value: Int};
+
+export def result: Value = {
+    let dynamic_array: Any = [1, 2];
+    let dynamic_tuple: Any = (1, "x");
+    let ok: Result(Int, String) = 'Ok(7);
+    let recoverable: Result(Int, String) = 'Err("recoverable");
+    let a: A = {value: 1};
+    bool_value(
+        dynamic_array[1] == 2
+            && dynamic_tuple.1 == "x"
+            && 1.cast!(Int) == 'Ok(1)
+            && "1".cast!(Int) == 'Err("value must be Int, got String")
+            && a.cast!(B) == 'Err("value has a different declared type identity")
+            && ok.try_unwrap!() == 'Some(7)
+            && ok.unwrap!() == 7
+            && recoverable.try_unwrap!() == 'None
+    )
+};

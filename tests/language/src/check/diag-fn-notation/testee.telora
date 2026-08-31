@@ -1,0 +1,1 @@
+export def invalid: Fn([Int], String) = fn(value) { "x" };

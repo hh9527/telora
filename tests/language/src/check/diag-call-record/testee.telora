@@ -1,0 +1,1 @@
+export def invalid = { let value = {item: 1}; value(2) };

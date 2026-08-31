@@ -1,0 +1,2 @@
+type Broken(A) = 1;
+export {Broken};

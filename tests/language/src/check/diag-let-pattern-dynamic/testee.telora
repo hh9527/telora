@@ -1,0 +1,5 @@
+export def invalid = {
+    let pair: Any = (1, 2);
+    let (left, right) = pair;
+    left
+};
