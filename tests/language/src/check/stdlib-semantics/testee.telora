@@ -1,0 +1,93 @@
+import "std/codec" as codec;
+import "std/dict" as dict;
+import "std/fmt" as fmt;
+import "std/json" as json;
+import "std/option" as option;
+import "std/result" as result;
+import "std/string" as string;
+
+def expect: Fn(Bool) -> Bool = fn(value) {
+    if value { 'True } else { fail!("stdlib expectation failed") }
+};
+
+@fmt.display_by("{host}:{port}")
+type Endpoint = struct {host: String, port: Int};
+def endpoint: Endpoint = {host: "localhost", port: 8080};
+
+export def t0200_should_ok = expect({
+    let ok: Result(Int, String) = 'Ok(3);
+    let err: Result(Int, String) = 'Err("bad");
+    option.map('Some(2), fn(value) { value + 1 }) == 'Some(3)
+        && option.map('None, fn(value) { value / 0 }) == 'None
+        && option.flat_map('Some(2), fn(value) { 'Some(value + 2) }) == 'Some(4)
+        && option.flat_map('None, fn(value) { 'Some(value / 0) }) == 'None
+        && option.unwrap_or('Some(4), 9) == 4
+        && option.unwrap_or('None, 9) == 9
+        && option.is_some('Some("x"))
+        && !option.is_some('None)
+        && result.map(ok, fn(value) { value + 1 }) == 'Ok(4)
+        && result.map(err, fn(value) { value / 0 }) == 'Err("bad")
+        && result.map_err(err, fn(error) { error }) == 'Err("bad")
+        && result.map_err(ok, fn(error) { error }) == 'Ok(3)
+        && result.unwrap_or(ok, 9) == 3
+        && result.unwrap_or(err, 9) == 9
+        && result.is_ok(ok)
+        && !result.is_ok(err)
+});
+
+export def t0201_should_ok = expect({
+    let source: Dict(Int) = {z: 3, a: 1, middle: 2};
+    let empty: Array(Tuple([String, Int])) = [];
+    let round_trip = dict.from_pairs(dict.pairs(source));
+    let merged = dict.merge(
+        {a: 1, nested: {left: 1}},
+        {b: 2, nested: {right: 2}},
+    );
+    dict.keys(source) == ["a", "middle", "z"]
+        && dict.values(source) == [1, 2, 3]
+        && dict.pairs(source) == [("a", 1), ("middle", 2), ("z", 3)]
+        && dict.get(round_trip, "a") == 'Some(1)
+        && dict.get(round_trip, "middle") == 'Some(2)
+        && dict.get(round_trip, "z") == 'Some(3)
+        && merged.a == 1
+        && merged.b == 2
+        && merged.nested.right == 2
+        && dict.keys(dict.from_pairs(empty)) == []
+});
+
+export def t0202_should_ok = expect(
+    fmt.render(fmt.display(Endpoint, endpoint)) == "localhost:8080"
+);
+
+export def t0203_should_ok = expect(
+    fmt.render(fmt.from_string("host")) == "host"
+        && fmt.render(fmt.from_int(8080)) == "8080"
+        && fmt.render(fmt.from_float(1.25)) == "1.25"
+        && fmt.render(fmt.from_atom('Ready)) == "Ready"
+        && fmt.render(fmt.concat(
+            ["[", "]:", ""],
+            [fmt.from_string("api"), fmt.from_int(3)],
+        )) == "[api]:3"
+);
+
+export def t0205_should_ok = expect({
+    let boolean = codec.decode(Bool, codec.encode(codec.Value, 'True) |> result.unwrap)
+        |> result.unwrap;
+    let none = codec.decode(Option(Int), codec.encode(codec.Value, 'None) |> result.unwrap)
+        |> result.unwrap;
+    let some = codec.decode(Option(Int), codec.encode(codec.Value, 3) |> result.unwrap)
+        |> result.unwrap;
+    let encoded = codec.encode(codec.Value, 4) |> result.unwrap;
+    let bool_schema = json.stringify(
+        codec.encode(codec.Value, json.schema(Bool)) |> result.unwrap,
+    );
+    let option_schema = json.stringify(
+        codec.encode(codec.Value, json.schema(Option(Int))) |> result.unwrap,
+    );
+    boolean
+        && none == 'None
+        && some == 'Some(3)
+        && encoded == 'Int(4)
+        && string.contains(bool_schema, "boolean")
+        && string.contains(option_schema, "null")
+});

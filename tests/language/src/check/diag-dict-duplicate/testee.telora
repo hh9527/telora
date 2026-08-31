@@ -1,0 +1,4 @@
+export def t0318_should_error = {
+    let base: Dict(Int) = {};
+    {...base, a: 1, a: 2}
+};

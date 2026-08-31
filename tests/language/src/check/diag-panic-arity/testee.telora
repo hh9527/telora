@@ -1,0 +1,1 @@
+export def t0316_should_error = panic!();

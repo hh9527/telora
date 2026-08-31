@@ -28,15 +28,20 @@ if [[ ${#testees[@]} -eq 0 ]]; then
 fi
 
 cases=()
+case_checks=()
 for testee in "${testees[@]}"; do
     relative=${testee#"$workspace/src/"}
     case_id=${relative%/testee.telora}
     checker="$workspace/src/$case_id/check.telora"
-    if [[ ! -f "$checker" ]]; then
-        echo "missing checker for $case_id" >&2
-        exit 2
-    fi
+    expected="$workspace/src/$case_id/expected.txt"
     cases+=("$case_id")
+    if [[ -f "$checker" ]]; then
+        case_checks+=(1)
+    elif [[ -f "$expected" ]]; then
+        case_checks+=(2)
+    else
+        case_checks+=(0)
+    fi
 done
 
 generated="$workspace/src/generated/check-all.telora"
@@ -44,8 +49,11 @@ generated="$workspace/src/generated/check-all.telora"
     echo 'import "std/dict" as dict;'
     echo 'import "std/entry" as entry;'
     echo 'import "std/value" { Value };'
+    echo 'import "@src/support" as support;'
     for index in "${!cases[@]}"; do
-        printf 'import "@src/%s/check" as case_%s;\n' "${cases[$index]}" "$index"
+        if [[ ${case_checks[$index]} -eq 1 ]]; then
+            printf 'import "@src/%s/check" as case_%s;\n' "${cases[$index]}" "$index"
+        fi
     done
     echo 'def config: entry.ContextConfig = {sources: ["actual"], envs: [], args: '\''False};'
     echo 'def required: Fn(Dict(Value), String) -> Value = fn(values, name) {'
@@ -61,8 +69,17 @@ generated="$workspace/src/generated/check-all.telora"
     echo '    };'
     echo '    '\''Object({'
     for index in "${!cases[@]}"; do
-        printf '        "%s": case_%s.check(required(actual, "%s")),\n' \
-            "${cases[$index]}" "$index" "${cases[$index]}"
+        if [[ ${case_checks[$index]} -eq 1 ]]; then
+            printf '        "%s": case_%s.check(required(actual, "%s")),\n' \
+                "${cases[$index]}" "$index" "${cases[$index]}"
+        elif [[ ${case_checks[$index]} -eq 2 ]]; then
+            expected=$(jaq -Rs 'rtrimstr("\n")' "$workspace/src/${cases[$index]}/expected.txt")
+            printf '        "%s": if support.failed_with(required(actual, "%s"), %s) { '\''True } else { '\''False },\n' \
+                "${cases[$index]}" "${cases[$index]}" "$expected"
+        else
+            printf '        "%s": if support.succeeded(required(actual, "%s")) { '\''True } else { '\''False },\n' \
+                "${cases[$index]}" "${cases[$index]}"
+        fi
     done
     echo '    })'
     echo '});'

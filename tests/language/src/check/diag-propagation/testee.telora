@@ -1,0 +1,8 @@
+export def t0303_should_error = {
+    let f = fn(a: Option(Int), b: Result(Int, String)) {
+        let x = a?;
+        let y = b?;
+        'Some(x + y)
+    };
+    f
+};

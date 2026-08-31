@@ -1,0 +1,203 @@
+def expect: Fn(Bool) -> Bool = fn(value) {
+    if value { 'True } else { fail!("type expectation failed") }
+};
+
+def generic_identity: for(A) Fn(A) -> A = fn(value) { value };
+def generic_apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(function, value) {
+    function(value)
+};
+
+type EarlyPlan = struct {name: String};
+def early_builder: Fn(Int) -> EarlyPlan = fn(value) { {name: `plan \{value}`} };
+def late_builder: Fn(Int) -> LatePlan = fn(value) { {name: `plan \{value}`} };
+type LatePlan = struct {name: String};
+type Input = struct {value: Int};
+type Output = struct {text: String};
+def convert: Fn(Input) -> Output = fn(input) { {text: `value \{input.value}`} };
+type PlanAlias = NamedPlan;
+type NamedPlan = struct {name: String};
+def alias_builder: Fn(Int) -> PlanAlias = fn(value) { {name: `plan \{value}`} };
+
+type Boxed(T) = struct {value: T};
+type CallbackPlan = struct {name: String};
+def invoke_builder: for(P) Fn(Fn(Int) -> P) -> Boxed(P) = fn(build) {
+    {value: build(1)}
+};
+def callback_builder: Fn(Int) -> CallbackPlan = fn(value) {
+    {name: `plan:\{value}`}
+};
+
+type Node = struct {value: Int, children: Array(Node)};
+def node_value: Fn(Node) -> Int = fn(node) { node.value };
+
+type Expr = enum {'Value(Int), 'Call(CallExpr)};
+type CallExpr = struct {name: String, args: Array(Expr)};
+type Renderer(Context) = struct {render: Fn(Context, Expr) -> String};
+type RenderContext = struct {prefix: String};
+def inspect_expr: Fn(Expr) -> Int = fn(expr) {
+    match expr { 'Value(value) => value, 'Call(_) => 0 }
+};
+
+def option_apply: for(A, B) Fn(A, Fn(A) -> Option(B)) -> Option(B) = fn(value, f) {
+    f(value)
+};
+
+type NodeId = enum {'Base, 'Other};
+def choose_node: for(N) Fn(N, Array(N)) -> N = fn(base, nodes) { base };
+
+def explicit_pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) {
+    (left, right)
+};
+
+def recursive_countdown = fn(value) {
+    if value < 1 { 0 } else { recursive_countdown(value - 1) }
+};
+def recursive_even = fn(value) {
+    if value < 1 { 'True } else { recursive_odd(value - 1) }
+};
+def recursive_odd = fn(value) {
+    if value < 1 { 'False } else { recursive_even(value - 1) }
+};
+
+def ordered_identity = fn(value) { value };
+def ordered_apply = fn(value) { ordered_identity(value) };
+def reverse_apply = fn(value) { reverse_identity(value) };
+def reverse_identity = fn(value) { value };
+
+type Pair(Left, Right) = struct {left: Left, right: Right};
+type FamilyBox(Content) = struct {value: Content};
+def collect: for(N, M)
+    Fn(Array(FamilyBox(Pair(N, M)))) -> Array(FamilyBox(Pair(N, M))) = fn(items) {
+    let result: Array(FamilyBox(Pair(N, M))) = items;
+    let retain = fn(values: Array(FamilyBox(Pair(N, M))))
+        -> Array(FamilyBox(Pair(N, M))) { values };
+    retain(result)
+};
+
+type FamilyTree(A) = enum {'Leaf(A), 'Branch(Array(FamilyTree(A)))};
+def int_leaf: FamilyTree(Int) = 'Leaf(1);
+def string_leaf: FamilyTree(String) = 'Leaf("x");
+def string_tree: FamilyTree(String) = 'Branch([string_leaf]);
+
+export def t0100_should_ok = expect(
+    generic_identity(1) == 1
+        && generic_identity("x") == "x"
+        && generic_apply(fn(value) { value + 1 }, 2) == 3
+);
+
+export def t0101_should_ok = expect(
+    early_builder(1).name == "plan 1"
+        && late_builder(2).name == "plan 2"
+        && convert({value: 3}).text == "value 3"
+        && alias_builder(4).name == "plan 4"
+);
+
+export def t0102_should_ok = expect(
+    invoke_builder(callback_builder).value.name == "plan:1"
+);
+
+export def t0103_should_ok = expect({
+    let node: Node = {value: 1, children: []};
+    node_value(node) == 1
+});
+
+export def t0104_should_ok = expect({
+    let expr: Expr = 'Call({name: "sum", args: ['Value(1)]});
+    let renderer: Renderer(RenderContext) = {
+        render: fn(context, expr) { context.prefix },
+    };
+    inspect_expr(expr) == 0
+        && renderer.render({prefix: "p"}, 'Value(1)) == "p"
+});
+
+export def t0105_should_ok = expect({
+    let build = fn(value) {
+        if value > 0 { 'Some("ok") } else { 'None }
+    };
+    option_apply(1, build) == 'Some("ok")
+});
+
+export def t0106_should_ok = expect({
+    let nodes: Array(NodeId) = ['Other];
+    let selected: NodeId = choose_node('Base, nodes);
+    selected == 'Base
+});
+
+export def t0107_should_ok = expect(
+    explicit_pair@[Int, String](1, "x") == (1, "x")
+        && explicit_pair@[Int, _](1, "x") == (1, "x")
+        && explicit_pair@[_, String](1, "x") == (1, "x")
+        && explicit_pair@[_, _](1, "x") == (1, "x")
+);
+
+export def t0108_should_ok = expect({
+    let direct: Fn(Int) -> Int = recursive_countdown;
+    let even: Fn(Int) -> Bool = recursive_even;
+    let odd: Fn(Int) -> Bool = recursive_odd;
+    def sum = fn(value) {
+        if value < 1 { 0 } else { value + sum(value - 1) }
+    };
+    let nested: Fn(Int) -> Int = sum;
+    direct(3) == 0 && even(4) && !odd(4) && nested(3) == 6
+});
+
+export def t0109_should_ok = expect({
+    def outer = fn(value) {
+        def identity = fn(item) { item };
+        (identity(value), identity("x"))
+    };
+    def shadowed = fn(shadowed) { shadowed };
+    ordered_apply(1) == 1
+        && ordered_apply("x") == "x"
+        && reverse_apply(2) == 2
+        && reverse_apply("y") == "y"
+        && outer(1) == (1, "x")
+        && shadowed(3) == 3
+        && shadowed("z") == "z"
+});
+
+export def t0110_should_ok = expect({
+    let identity = fn(value) { value };
+    let wrap = fn(value) { [value] };
+    identity(1) == 1
+        && identity("text") == "text"
+        && wrap(2) == [2]
+        && wrap("value") == ["value"]
+        && identity@[Int](3) == 3
+});
+
+export def t0111_should_ok = expect({
+    let keep = fn(left: Int, right) { (left, right) };
+    keep(1, "x") == (1, "x") && keep(2, 3) == (2, 3)
+});
+
+export def t0112_should_ok = expect({
+    let nested: Fn(Int) -> Fn(Int) -> Int = fn(left) {
+        fn(right) { left + right + 1 }
+    };
+    nested(20)(21) == 42
+});
+
+export def t0113_should_ok = expect({
+    let values: Array(Int) = if 'True { [] } else { [1] };
+    let selected: Int = match (1, "x") { (number, _) => number };
+    values == [] && selected == 1
+});
+
+export def t0114_should_ok = expect({
+    let boxes: Array(FamilyBox(Pair(Int, String))) = [
+        {value: {left: 1, right: "x"}},
+    ];
+    collect(boxes) == boxes
+});
+
+export def t0115_should_ok = expect(
+    match int_leaf { 'Leaf(value) => value == 1, 'Branch(_) => 'False }
+        && match string_tree {
+            'Leaf(_) => 'False,
+            'Branch(items) => match items[0] {
+                'Leaf(value) => value == "x",
+                'Branch(_) => 'False,
+            },
+        }
+);

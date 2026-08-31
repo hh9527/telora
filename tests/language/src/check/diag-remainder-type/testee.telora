@@ -1,0 +1,1 @@
+export def t0325_should_error = "x" % 1;

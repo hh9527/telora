@@ -1,0 +1,4 @@
+export def t0313_should_error = {
+    let base = {a: 1};
+    {...base, b: 2}
+};

@@ -1,0 +1,6 @@
+export def t0324_should_error = {
+    let f: Fn(Bool) -> Int = fn(condition) {
+        if condition { return "wrong"; } else { 1 }
+    };
+    f
+};

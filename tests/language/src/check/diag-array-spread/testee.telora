@@ -1,0 +1,1 @@
+export def t0312_should_error = [0, ...1];

@@ -1,0 +1,1 @@
+export def t0307_should_error = if let 'Some(item) = 1 { item } else { 0 };

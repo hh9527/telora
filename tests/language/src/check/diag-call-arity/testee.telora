@@ -1,0 +1,4 @@
+export def t0314_should_error = {
+    let f = fn(a) { a };
+    f(1, 2)
+};

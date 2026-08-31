@@ -1,0 +1,1 @@
+export def t0306_should_error = fail!(1);
