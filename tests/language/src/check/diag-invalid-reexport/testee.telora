@@ -1,0 +1,3 @@
+let a = 1;
+export {a as b};
+export def t0332_should_error = b;

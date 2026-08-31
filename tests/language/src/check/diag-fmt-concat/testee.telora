@@ -1,0 +1,3 @@
+import "std/fmt" as fmt;
+
+export def t0330_should_error = fmt.concat(["missing tail"], [fmt.from_int(1)]);

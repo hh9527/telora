@@ -1,0 +1,4 @@
+export def t0328_should_error = {
+    let invert: Fn(Any) -> Bool = fn(value) { !value };
+    invert(1)
+};

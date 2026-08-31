@@ -41,7 +41,7 @@ failed expectation without stopping later exports.
 | `t0031_should_ok` | `checked_cast_preserves_representation_and_nominal_identity` |
 | `t0032_should_ok`, `t0325_should_error` | `remainder_supports_int_float_precedence_and_dynamic_boundaries` |
 | `t0033_should_ok`, `t0326_should_error` | `boolean_operators_short_circuit_and_preserve_precedence` |
-| `t0034_should_ok` | logical negation success semantics |
+| `t0034_should_ok`, `t0328_should_error`, `t0329_should_error` | `logical_negation_executes_with_unary_precedence_and_dynamic_checks` |
 | `t0035_should_ok`, `t0327_should_error` | `bitwise_integer_operators_execute_with_stable_precedence` |
 | `t0101_should_ok` | `definition_contracts_evaluate_referenced_concrete_types_first` |
 | `t0108_should_ok` | `monomorphic_recursive_closures_infer_direct_mutual_and_nested_types` |
@@ -73,6 +73,10 @@ failed expectation without stopping later exports.
 | `t0412_should_ok` | `reexported_families_preserve_provider_recursive_fields` |
 | `t0413_should_ok` | `generic_array_callbacks_preserve_recursive_nominal_items` |
 | `t0414_should_ok` | `imported_family_aliases_preserve_provider_local_concrete_arguments` |
+| `t0017_should_ok` | `call_sections_elaborate_to_ordinary_closures` |
+| `t0203_should_ok`, `t0330_should_error` | `fmt_fragments_render_primitives_and_structured_concatenation` |
+| `t0404_should_ok`, `t0331_should_error` | `equality_contextualizes_nominal_literals_in_both_operand_orders` |
+| `t0407_should_ok`, `t0332_should_error` | `exports_imported_local_bindings_without_creating_local_aliases` |
 
 The pilot fixtures fully cover these tests:
 
@@ -84,15 +88,10 @@ The pilot fixtures fully cover these tests:
 These behaviors are exercised by a fixture, but their Rust tests also assert
 an error path or an internal representation and are not yet replaceable:
 
-- `t0017_should_ok`: `call_sections_elaborate_to_ordinary_closures`
 - `t0025_should_ok`: `propagates_from_module_blocks_and_isolates_nested_functions`
 - `t0302_should_error`, `t0322_should_error`: `checks_known_and_dynamic_unsupported_interpolation_values` (the CLI diagnostic wording differs from the direct compiler API)
-- `t0034_should_ok`: `logical_negation_executes_with_unary_precedence_and_dynamic_checks` (dynamic boundary errors remain in Rust)
 - `t0202_should_ok`: `fmt_display_uses_the_display_by_blanket_implementation` (direct property display is covered; blanket trait dispatch remains in Rust)
-- `t0203_should_ok`: `fmt_fragments_render_primitives_and_structured_concatenation` (invalid concat diagnostics remain in Rust)
 - `t0401_should_ok`: `parameterized_type_families_preserve_schemes_across_import_forms` (one re-exported selective form is covered)
-- `t0404_should_ok`: `equality_contextualizes_nominal_literals_in_both_operand_orders` (the distinct nominal rejection remains in Rust)
-- `t0407_should_ok`: `exports_imported_local_bindings_without_creating_local_aliases` (the invalid local alias diagnostic remains in Rust)
 - `t0100_should_ok`: `generic_definition_contracts_check_rigidly_and_instantiate_at_each_use`
 - `t0102_should_ok`: `contracted_definitions_preserve_generic_callback_result_precision`
 - `t0103_should_ok`, `t0104_should_ok`: `recursive_concrete_types_remain_strict_in_definition_contracts_and_families`

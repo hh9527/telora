@@ -1,0 +1,6 @@
+type Left = struct {x: Int};
+type Right = struct {x: Int};
+def left: Left = {x: 1};
+def right: Right = {x: 1};
+
+export def t0331_should_error = left == right;

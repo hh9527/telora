@@ -1,0 +1,4 @@
+export def t0329_should_error = {
+    let invert: Fn(Any) -> Int = fn(value) { !value };
+    invert('True)
+};

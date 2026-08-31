@@ -1,5 +1,6 @@
 import "std/dict" as dict;
 import "std/string" as string;
+import "std/type-desc" as type_desc;
 
 def expect: Fn(Bool) -> Bool = fn(value) {
     if value { 'True } else { fail!("language expectation failed") }
@@ -78,10 +79,19 @@ def call_sections = {
     let flipped = subtract\(_1, _0);
     let add = fn(a, b) { a + b };
     let twice = add\(_0, _0);
+    let increment = fn(value) { value + 1 };
+    let apply = fn(callback, value) { callback(value) };
+    let array_type = Array\(_);
+    let second = fn(first, second) { second };
+    let make: Fn() -> Fn(Any) -> Any = fn() { fn(value) { value } };
+    let reevaluated = second\(_, make());
     section(1, 2) == 13
         && flipped(2, 10) == 8
         && twice(21) == 42
         && (40 |> add\(_, 2)) == 42
+        && apply(increment\(_), 41) == 42
+        && type_desc.kind(array_type(Int)) == 'Array
+        && reevaluated(1) != reevaluated(2)
 };
 
 def control_flow = {
@@ -289,6 +299,8 @@ export def t0034_should_ok = expect(
         && !('True && 'False)
         && !0 == -1
         && !-1 == 0
+        && { let invert: Fn(Any) -> Bool = fn(value) { !value }; invert('True) == 'False && invert('False) }
+        && { let invert: Fn(Any) -> Any = fn(value) { !value }; invert('True) == 'False && invert(0) == -1 }
 );
 export def t0035_should_ok = expect(
     6 & 3 == 2
