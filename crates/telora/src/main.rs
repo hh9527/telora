@@ -23,7 +23,7 @@ use tokio::task::JoinSet;
 mod ees_arg;
 mod ees_cli;
 mod source_arg;
-use ees_arg::{NamedEes, collect_ees, parse_named_ees};
+use ees_arg::{NamedEesVar, collect_ees, parse_named_ees_var};
 use ees_cli::EesArgs;
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
 use telora::package_host;
@@ -894,9 +894,9 @@ struct ApplicationArgs {
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
-    /// Bind a named EES actor: KIND:NAME=LOCATOR.
-    #[arg(long = "ees", value_name = "KIND:NAME=LOCATOR", value_parser = parse_named_ees)]
-    ees: Vec<NamedEes>,
+    /// Bind a value declared by option "ees.vars": NAME=VALUE.
+    #[arg(long = "ees-var", value_name = "NAME=VALUE", value_parser = parse_named_ees_var)]
+    ees_vars: Vec<NamedEesVar>,
 }
 
 #[derive(Args)]
@@ -1087,11 +1087,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(
                 context,
-                if arguments.application.ees.is_empty() {
-                    "std/entry/default"
-                } else {
-                    "std/entry/ees-default"
-                },
+                "std/entry/default",
                 arguments.application,
                 &[],
             )),
@@ -1108,11 +1104,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 .map_err(|error| format!("cannot start the serve Host: {error}"))?
                 .block_on(run_command(
                     context,
-                    if arguments.application.ees.is_empty() {
-                        "std/entry/serve"
-                    } else {
-                        "std/entry/ees-serve"
-                    },
+                    "std/entry/serve",
                     arguments.application,
                     &[],
                 ))
@@ -1149,15 +1141,6 @@ async fn run_command(
     entry_args: &[String],
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
-    let entry_ees = collect_ees(arguments.ees.clone())?;
-    let ees = match entry_ees.manifest {
-        Some(manifest) => Some(
-            telora_ees::Service::open(manifest)
-                .await
-                .map_err(|error| format!("cannot initialize application EES: {error:#}"))?,
-        ),
-        None => None,
-    };
     let prepared = arguments
         .standalone
         .is_none()
@@ -1221,6 +1204,20 @@ async fn run_command(
         )
     }
     .map_err(|error| error.to_string())?;
+    let entry_ees = collect_ees(pending.option_actions(), arguments.ees_vars)?;
+    let entry = match (entry, entry_ees.manifest.is_some()) {
+        ("std/entry/default", true) => "std/entry/ees-default",
+        ("std/entry/serve", true) => "std/entry/ees-serve",
+        (selected, _) => selected,
+    };
+    let ees = match entry_ees.manifest {
+        Some(manifest) => Some(
+            telora_ees::Service::open(manifest)
+                .await
+                .map_err(|error| format!("cannot initialize application EES: {error:#}"))?,
+        ),
+        None => None,
+    };
     let mut host = ProcessRunHost::new(entry_sources.locators, ees, entry_ees.actors);
     let outcome = engine
         .run_pending_with_sources_and_host(

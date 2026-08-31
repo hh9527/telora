@@ -1636,6 +1636,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

@@ -7,16 +7,21 @@
 ## Summary
 
 An Extra Effect Service is constructed from a complete typed manifest before
-it admits requests. The manifest binds logical actor names to physical Native
-Actor Component configuration. An operation can select an existing logical
+it admits requests. The manifest binds logical actor names to Native Actor
+Component construction configuration. An operation can select an existing logical
 actor but cannot create an actor or select a new physical resource.
 
-Application commands accept repeatable EES bindings:
+Main modules declare complete EES actor configurations and constrained variables:
 
-```text
-telora run BINARY --ees KIND:NAME=LOCATOR
-telora serve BINARY --ees KIND:NAME=LOCATOR --bind stdio://
+```telora
+option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,31}"};
+option "ees.sqlite" {
+    name: "catalog",
+    path: "user-data:catalog/{tenant}/db.sqlite",
+};
 ```
+
+Commands bind only declared variables with repeatable `--ees-var NAME=VALUE` arguments.
 
 The first application component kinds are `imos` and `sqlite-query`. This
 version adds one crate:
@@ -43,17 +48,19 @@ Manifest {
 ComponentSpec =
     Imos {
         name: String,
-        store: Path,
-        home: Path,
+        store: ResourceLocator,
+        home: ResourceLocator,
     }
   | SqliteQuery {
         name: String,
-        database: Path,
+        database: ResourceLocator,
     }
+
+ResourceLocator = Physical(Path) | User(String)
 ```
 
 Names are non-empty and unique within one Service. Construction validates all
-specifications and opens all physical resources before returning. A failure is
+specifications, resolves component-owned logical locators and opens all physical resources before returning. A failure is
 a Host startup diagnostic, not a request event.
 
 The first implementation uses a Rust enum rather than a generic public JSON
@@ -86,7 +93,8 @@ These values are computed by the package Host. This service is used and
 dropped before application execution. It is not included in application
 `SystemCaps`, `SystemResources`, effects, events, options, or EES manifest.
 
-Application execution creates another service solely from `--ees` bindings.
+Application execution creates another service solely from the selected Main's EES options and
+validated `--ees-var` bindings.
 It may contain an actor also backed by IMOS, but that actor has its own name,
 store and home. Equal names in separate service domains do not grant access
 across domains.
@@ -95,26 +103,31 @@ For example:
 
 ```text
 telora serve app \
-  --ees imos:a=/srv/app/materializer \
-  --ees sqlite-query:catalog=sqlite:///srv/app/catalog.sqlite \
+  --ees-var tenant=production \
   --bind stdio://
 ```
 
-The raw path in an `imos` CLI locator denotes an actor root. The CLI derives:
+The Main declares IMOS construction fields independently:
 
-```text
-store = <root>/store
-home  = <root>/home
+```telora
+option "ees.imos" {
+    name: "a",
+    home: "user-data:materialized/{tenant}",
+    store: "user-cache:imos/{tenant}",
+};
 ```
 
-The Rust manifest retains separately configurable `store` and `home` fields,
-which package preparation uses directly. A `sqlite-query` locator must use
-`sqlite://`; its remainder is the database path.
+The CLI validates each variable against the full regular expression declared by `ees.vars`,
+substitutes it as one safe path segment, and passes the resulting logical locator to the native
+actor component adapter. The adapter resolves `user-data:`, `user-cache:`, `user-config:` and
+`user-state:` through the corresponding XDG directory, with standard `$HOME`-based fallbacks.
+Package preparation uses direct physical `store` and `home` paths and does not consume application
+options or variables.
 
 Actor names and kinds are visible to application capability validation.
-Physical locators never enter a Telora World: `Env` contains only the
-name-to-kind map, and request-time component diagnostics identify the logical
-actor. Host startup diagnostics may identify a locator that failed to open.
+Entry options retain logical locator templates, and `Env` contains only the name-to-kind map.
+Resolved physical paths never enter a Telora World. Request-time component diagnostics identify
+the logical actor; Host startup diagnostics may identify a resource that failed to open.
 
 ## IMOS actor operation
 
@@ -175,18 +188,20 @@ limit failure returns no partial output.
 
 ## Application declarations
 
-Main declares the complete logical actor set once:
+Main declares the complete logical actor set directly through component options:
 
 ```telora
-option "run-ctx.ees" [
-    {name: "a", kind: "imos"},
-    {name: "catalog", kind: "sqlite-query"},
-];
+option "ees.imos" {
+    name: "a",
+    home: "user-data:materialized/production",
+    store: "user-cache:imos/production",
+};
+option "ees.sqlite" {name: "catalog", path: "user-data:catalog/production.sqlite"};
 ```
 
-The EES-aware standard Entry checks exact equality between these declarations
-and Host bindings. Duplicate declarations, duplicate bindings, missing actors,
-extra actors and kind mismatches fail during configuration.
+The EES-aware standard Entry checks exact equality between these declarations and Host bindings.
+Duplicate names and malformed component records fail before Service construction. Unknown,
+missing, duplicate, invalid or unused EES variables fail before component resource resolution.
 
 `SystemCaps` carries the approved name-to-kind map. Before calling the Host,
 the engine rejects an EES effect that names an actor outside the capabilities.
@@ -248,8 +263,8 @@ Component helper modules build ordinary calls. `std/sqlite-query` encodes
 `Request` is a transparent internal carrier. Applications construct it through
 `ees.request` or component helpers rather than depending on tuple positions.
 
-Without `--ees`, `run` and `serve` keep their existing pure Main contracts.
-With one or more bindings, the CLI selects EES-aware standard Entries:
+Without EES actor options, `run` and `serve` keep their pure Main contracts.
+With one or more actor options, the CLI selects EES-aware standard Entries:
 
 ```telora
 run:   main: Fn(Dict(Value)) -> ees.Task
@@ -316,10 +331,10 @@ Tests establish:
 - SQLite binds scalars without interpolation and returns stable columns/rows;
 - writable or multiple SQL statements, structured bindings, blobs and result
   limits fail without partial output;
-- declaration/binding mismatches fail before Main initialization;
+- malformed declarations and variable bindings fail before Main initialization;
 - generic EES effects cannot address undeclared actors or mismatch operations;
-- `run --ees` completes a chained task;
-- `serve --ees` correlates multiple tasks and survives request-local failures;
+- EES-aware `run` completes a chained task;
+- EES-aware `serve` correlates multiple tasks and survives request-local failures;
 - package acquisition, pure run/serve, check, query and LSP do not regress;
 - dependency scanning confirms `telora-core` has no native component edge.
 

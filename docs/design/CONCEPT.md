@@ -233,10 +233,15 @@ identity。
 root；`sqlite-query` actor 对一个只读数据库执行带 positional JSON scalar bindings 的
 `Query`。operation 只能选择 manifest 中已有的逻辑名称，不能选择物理资源。
 
-Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 Host 只从
-`run/serve --ees` 构造另一个 Service，并把其 name-to-kind 清单作为 Entry capability。
+Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 Main 以
+`ees.imos` 和 `ees.sqlite` option 声明另一个 Service；Host 校验 `ees.vars` 与
+`--ees-var` bindings 后构造 actor，并把 name-to-kind 清单作为 Entry capability。
+`user-*:` locator 是 component 解释的用户资源位置，物理路径不进入 Telora World。
 两个 Service 的名称空间、资源和生命周期隔离；应用不能发现或调用 package Service。
 Telora 工具链和 `telora-core` 不依赖 component 内部类型。
+
+`run` 与 `serve` 共享 capability、effect、actor 和诊断语义。`run` 服务一个任务直至完成，
+`serve` 初始化一次 handler 并服务输入流中的多个任务；二者的差异是生命周期和请求基数。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入

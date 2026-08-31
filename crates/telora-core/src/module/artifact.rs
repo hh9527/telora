@@ -84,6 +84,10 @@ impl PendingModule {
         &self.inner.path
     }
 
+    pub fn option_actions(&self) -> &[LoadedOptionAction] {
+        &self.inner.options
+    }
+
     fn begin_initialization(&self) -> Result<BTreeMap<String, crate::DataWorld>, ModuleError> {
         {
             let mut state = self

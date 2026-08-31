@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use anyhow::{Context, Result, bail};
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use imos::Store;
 use imos::progress::ProgressSender;
 use serde::{Deserialize, Serialize};
@@ -70,14 +70,78 @@ impl ComponentKind {
 #[derive(Clone, Debug)]
 pub struct ImosSpec {
     pub name: String,
-    pub store: PathBuf,
-    pub home: PathBuf,
+    pub store: ResourceLocator,
+    pub home: ResourceLocator,
 }
 
 #[derive(Clone, Debug)]
 pub struct SqliteQuerySpec {
     pub name: String,
-    pub database: PathBuf,
+    pub database: ResourceLocator,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceLocator {
+    Physical(PathBuf),
+    User(String),
+}
+
+impl ResourceLocator {
+    pub fn physical(path: impl Into<PathBuf>) -> Self {
+        Self::Physical(path.into())
+    }
+
+    pub fn user(locator: impl Into<String>) -> Result<Self> {
+        let locator = locator.into();
+        validate_user_locator(&locator)?;
+        Ok(Self::User(locator))
+    }
+
+    fn resolve(&self) -> Result<PathBuf> {
+        let locator = match self {
+            Self::Physical(path) => return Ok(path.clone()),
+            Self::User(locator) => locator,
+        };
+        let (scheme, relative) = locator
+            .split_once(':')
+            .context("user resource locator has no scheme")?;
+        let dirs = BaseDirs::new().context("cannot determine user resource directories")?;
+        let base = match scheme {
+            "user-data" => dirs.data_dir().to_path_buf(),
+            "user-cache" => dirs.cache_dir().to_path_buf(),
+            "user-config" => dirs.config_dir().to_path_buf(),
+            "user-state" => dirs
+                .state_dir()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| dirs.home_dir().join(".local/state")),
+            _ => bail!("unsupported user resource locator scheme {scheme:?}"),
+        };
+        Ok(base.join(relative))
+    }
+}
+
+fn validate_user_locator(locator: &str) -> Result<()> {
+    let (scheme, relative) = locator.split_once(':').context(
+        "resource locator must use user-data:, user-cache:, user-config: or user-state:",
+    )?;
+    if !matches!(
+        scheme,
+        "user-data" | "user-cache" | "user-config" | "user-state"
+    ) {
+        bail!("unsupported user resource locator scheme {scheme:?}");
+    }
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || relative.ends_with('/')
+        || relative.contains("//")
+        || relative.contains(['\\', '\0'])
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        bail!("user resource locator must contain a normalized relative path");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -175,20 +239,35 @@ impl Service {
                 bail!("EES component name {name:?} is duplicated");
             }
             let component = match spec {
-                ComponentSpec::Imos(spec) => Component::Imos {
-                    store: Store::open(spec.store)
+                ComponentSpec::Imos(spec) => {
+                    let store = spec
+                        .store
+                        .resolve()
+                        .with_context(|| format!("cannot resolve IMOS actor {name:?} store"))?;
+                    let home = spec
+                        .home
+                        .resolve()
+                        .with_context(|| format!("cannot resolve IMOS actor {name:?} home"))?;
+                    tokio::fs::create_dir_all(&home)
                         .await
-                        .with_context(|| format!("cannot open IMOS actor {name:?}"))?,
-                    home: spec.home,
-                },
+                        .with_context(|| format!("cannot create IMOS actor {name:?} home"))?;
+                    Component::Imos {
+                        store: Store::open(store)
+                            .await
+                            .with_context(|| format!("cannot open IMOS actor {name:?}"))?,
+                        home,
+                    }
+                }
                 ComponentSpec::SqliteQuery(spec) => {
                     let actor_name = name.clone();
-                    let database =
-                        tokio::task::spawn_blocking(move || Database::open(spec.database))
-                            .await
-                            .with_context(|| {
-                                format!("SQLite actor {actor_name:?} construction task failed")
-                            })??;
+                    let database = spec.database.resolve().with_context(|| {
+                        format!("cannot resolve SQLite actor {name:?} database")
+                    })?;
+                    let database = tokio::task::spawn_blocking(move || Database::open(database))
+                        .await
+                        .with_context(|| {
+                            format!("SQLite actor {actor_name:?} construction task failed")
+                        })??;
                     Component::SqliteQuery(Arc::new(Mutex::new(database)))
                 }
             };
@@ -296,8 +375,8 @@ pub fn imos_manifest(
 ) -> Manifest {
     Manifest::new(vec![ComponentSpec::Imos(ImosSpec {
         name: name.into(),
-        store: store.as_ref().to_path_buf(),
-        home: home.as_ref().to_path_buf(),
+        store: ResourceLocator::physical(store.as_ref()),
+        home: ResourceLocator::physical(home.as_ref()),
     })])
 }
 
@@ -336,6 +415,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn user_locators_require_supported_schemes_and_normalized_relative_paths() {
+        for locator in [
+            "user-data:catalog/db.sqlite",
+            "user-cache:imos/store",
+            "user-config:app/config.json",
+            "user-state:app/state.sqlite",
+        ] {
+            assert!(ResourceLocator::user(locator).is_ok(), "{locator}");
+        }
+        for locator in [
+            "catalog/db.sqlite",
+            "file:/tmp/db.sqlite",
+            "user-data:/tmp/db.sqlite",
+            "user-data:../db.sqlite",
+            "user-data:app//db.sqlite",
+            "user-data:app/",
+        ] {
+            assert!(ResourceLocator::user(locator).is_err(), "{locator}");
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn manifest_rejects_empty_and_duplicate_names() {
         let root = tempfile::tempdir().unwrap();
@@ -343,13 +444,13 @@ mod tests {
             Manifest::new(vec![
                 ComponentSpec::Imos(ImosSpec {
                     name: first.into(),
-                    store: root.path().join("store-1"),
-                    home: root.path().join("home-1"),
+                    store: ResourceLocator::physical(root.path().join("store-1")),
+                    home: ResourceLocator::physical(root.path().join("home-1")),
                 }),
                 ComponentSpec::Imos(ImosSpec {
                     name: second.into(),
-                    store: root.path().join("store-2"),
-                    home: root.path().join("home-2"),
+                    store: ResourceLocator::physical(root.path().join("store-2")),
+                    home: ResourceLocator::physical(root.path().join("home-2")),
                 }),
             ])
         };
@@ -368,7 +469,7 @@ mod tests {
         let service = Service::open(Manifest::new(vec![ComponentSpec::SqliteQuery(
             SqliteQuerySpec {
                 name: "db".into(),
-                database: path,
+                database: ResourceLocator::physical(path),
             },
         )]))
         .await

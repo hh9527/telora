@@ -204,10 +204,11 @@ Telora 程序本身没有外部权限。`run` 选择内置的单次运行 Entry�
 输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
 子进程以及最终发布。
 
-没有 `--ees` 时，`run` 选择 `std/entry/default`，`serve` 选择 `std/entry/serve`。
-提供 `--ees KIND:NAME=LOCATOR` 时，Host 构造应用自己的命名 actor Service，并选择
-EES task Entry。应用以 `option "run-ctx.ees" [{name, kind}, ...]` 声明 actor 全集，
-以 `std/ees.Task` 的 `Done` / `Call` continuation 显式描述外部效果。Entry 源码位于
+Main 没有 EES actor option 时，`run` 选择 `std/entry/default`，`serve` 选择
+`std/entry/serve`。`option "ees.imos"` 和 `option "ees.sqlite"` 声明应用自己的完整
+actor Service，Host 据此选择 EES task Entry。路径模板中的变量由 `option "ees.vars"`
+约束，并由 `--ees-var NAME=VALUE` 绑定。应用以 `std/ees.Task` 的 `Done` / `Call`
+continuation 显式描述外部效果。Entry 源码位于
 `src/entry/name.telora`，由 Host 选择，不能作为普通模块根或被普通模块 import。只有
 被 Host 选中的 Entry 可以访问其他 crate 的 private 模块和 `std/_...` 内部模块。
 
@@ -231,8 +232,10 @@ telora ees                 通过 stdio JSONL 提供 Extra Effect Service
 `ees` 不发现 workspace，也不加载 Telora source。`telora-ees` 组合内置 Native Actor
 Components：IMOS 提供 `InstallShared`，`sqlite-query` 提供参数绑定的只读 `Query`。
 普通 package preparation 在进程内构造只含 `telora-packages` IMOS actor 的私有 Service；
-应用 `--ees imos:a=/root` 构造另一个 Service，并只向应用暴露名称 `a`。应用不能发现或
-调用包管理 Service。两条路径都不需要额外 executable。
+应用 EES option 构造另一个 Service，并只向应用暴露逻辑 actor 名称。资源使用
+`user-data:`、`user-cache:`、`user-config:` 或 `user-state:` locator；component adapter
+按 XDG 目录解释，并在 XDG 变量缺失时回退到 `$HOME` 下的标准目录。解析后的物理路径
+不进入 Telora World。应用不能发现或调用包管理 Service。两条路径都不需要额外 executable。
 
 `query` 包含：
 

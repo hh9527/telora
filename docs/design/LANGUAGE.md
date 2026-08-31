@@ -1285,9 +1285,9 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]... [--ees <kind>:<name>=<locator>]...
-telora run -S <file> [--best-effort] [--source <name>=<source>]... [--ees <kind>:<name>=<locator>]...
-telora serve <binary-name> [-C <context>] [--source <name>=<source>]... [--ees <kind>:<name>=<locator>]... --bind stdio://
+telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]...
+telora run -S <file> [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]...
+telora serve <binary-name> [-C <context>] [--source <name>=<source>]... [--ees-var <name>=<value>]... --bind stdio://
 telora query|q modules [-C <context>] [-p <substring>]
 telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
@@ -1356,7 +1356,7 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
 最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
-没有 `--ees` 时，`run` 选择 `std/entry/default`。该 Entry 要求 Main 导出
+没有 EES actor option 时，`run` 选择 `std/entry/default`。该 Entry 要求 Main 导出
 `main: Fn(Dict(Value)) -> Value`，调用一次后把结果编码为 JSON。`serve --bind stdio://`
 选择 `std/entry/serve`，要求 Main 导出
 `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次 handler 后，以 stdin/stdout
@@ -1365,20 +1365,41 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 内部模块。特权仅属于这个 requester，不传递给它导入的普通模块。Entry 不能作为
 普通模块根或被普通模块 import。
 
-提供一个或多个 `--ees KIND:NAME=LOCATOR` 时，Host 构造应用 Service，并分别选择
-`std/entry/ees-default` 或 `std/entry/ees-serve`。Main 用
-`option "run-ctx.ees" [{name: "a", kind: "imos"}, ...]` 声明完整 actor 集合；声明与
-Host bindings 的 name 和 kind 必须完全相等。EES run Main 导出
+Main 用 `option "ees.imos"` 和 `option "ees.sqlite"` 声明完整 actor 集合时，Host
+构造应用 Service，并分别选择 `std/entry/ees-default` 或 `std/entry/ees-serve`：
+
+```telora
+option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,31}"};
+option "ees.imos" {
+    name: "materializer",
+    home: "user-data:materialized/{tenant}",
+    store: "user-cache:imos/{tenant}",
+};
+option "ees.sqlite" {
+    name: "catalog",
+    path: "user-data:catalog/{tenant}/db.sqlite",
+};
+```
+
+同一种 component option 可以声明多次，actor name 在所有 component 间唯一。
+`ees.vars` 最多声明一次，它的 Dict key 是变量名，value 是自动进行整串匹配的正则表达式。
+每个声明变量都必须被 locator 使用并通过 `--ees-var NAME=VALUE` 恰好绑定一次；未知、缺失、
+重复、格式不匹配以及含路径分隔符的值都失败。EES run Main 导出
 `main: Fn(Dict(Value)) -> ees.Task`，EES serve Main 导出
 `serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task`。
+两种模式具有相同的 EES capability 与 effect 语义：`run` 服务一个任务直至 `Done`，
+`serve` 初始化一次 handler，并为输入流中的每个请求分别服务一个任务。
 
 `std/ees.Task` 是 `'Done(Value)` 或带 `Call` 与 continuation 的 `'Call`。Entry 为每次调用
 产生唯一 key，Host 异步执行，随后用 `EesReply {key, result}` 恢复 continuation；一个
 continuation 可以继续产生下一次调用。`std/imos.install_shared` 和
-`std/sqlite-query.query` 只构造 component-neutral request，不执行 I/O。IMOS locator
-`imos:a=/root` 将 `/root/store` 与 `/root/home` 作为 actor 构造参数；SQLite locator
-`sqlite-query:a=sqlite:///path/db.sqlite` 只读打开数据库。这些 locator 不进入 Telora
-World，也不能由 operation 改写。
+`std/sqlite-query.query` 只构造 component-neutral request，不执行 I/O。资源 locator
+使用 `user-data:`、`user-cache:`、`user-config:` 或 `user-state:`，冒号后是规范化
+相对路径。component adapter 优先使用对应的 `XDG_DATA_HOME`、`XDG_CACHE_HOME`、
+`XDG_CONFIG_HOME`、`XDG_STATE_HOME`；缺失时分别回退到 `$HOME/.local/share`、
+`$HOME/.cache`、`$HOME/.config`、`$HOME/.local/state`。Entry 能看到 Main 的逻辑 option，
+普通 Main 不能读取 Entry options；解析后的物理路径不进入 Telora World，也不能由
+operation 改写。
 
 Package Host 使用单独的私有 Service，其中的 actor 名为 `telora-packages`。该 actor 不进入应用
 `Env`、`SystemCaps` 或 manifest；应用即使使用相同逻辑名字，也只能寻址自己 Service 中

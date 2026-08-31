@@ -96,7 +96,9 @@ fn ees_serves_install_shared_requests() {
 #[test]
 fn run_with_sqlite_query_actor_drives_an_ees_task() {
     let cwd = fixture();
-    let database = cwd.join("catalog.sqlite");
+    let data = cwd.join("data");
+    fs::create_dir_all(data.join("hello")).unwrap();
+    let database = data.join("hello/catalog.sqlite");
     let connection = rusqlite::Connection::open(&database).unwrap();
     connection
         .execute_batch(
@@ -111,7 +113,8 @@ fn run_with_sqlite_query_actor_drives_an_ees_task() {
 import "std/sqlite-query" as sqlite;
 import "std/value" {Value};
 
-option "run-ctx.ees" [{name: "catalog", kind: "sqlite-query"}];
+option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,31}"};
+option "ees.sqlite" {name: "catalog", path: "user-data:{tenant}/catalog.sqlite"};
 
 export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
     ees.call(
@@ -131,12 +134,8 @@ export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
     )
     .unwrap();
     let output = telora(&cwd)
-        .args([
-            "run",
-            "main",
-            "--ees",
-            &format!("sqlite-query:catalog=sqlite://{}", database.display()),
-        ])
+        .args(["run", "main", "--ees-var", "tenant=hello"])
+        .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();
     assert!(
@@ -155,9 +154,53 @@ export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
 }
 
 #[test]
+fn ees_variables_are_declared_required_and_fully_matched() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/ees" as ees;
+import "std/value" {Value};
+
+option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,7}"};
+option "ees.sqlite" {name: "catalog", path: "user-data:{tenant}/catalog.sqlite"};
+
+export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) { ees.done('None) };"#,
+    )
+    .unwrap();
+
+    let missing = telora(&cwd).args(["run", "main"]).output().unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("were not provided"));
+
+    let invalid = telora(&cwd)
+        .args(["run", "main", "--ees-var", "tenant=INVALID"])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("does not match"));
+
+    let unknown = telora(&cwd)
+        .args([
+            "run",
+            "main",
+            "--ees-var",
+            "tenant=hello",
+            "--ees-var",
+            "shard=one",
+        ])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("is not declared"));
+}
+
+#[test]
 fn serve_with_sqlite_query_actor_correlates_concurrent_tasks() {
     let cwd = fixture();
-    let database = cwd.join("catalog.sqlite");
+    let home = cwd.join("home");
+    let data = home.join(".local/share");
+    fs::create_dir_all(&data).unwrap();
+    let database = data.join("catalog.sqlite");
     let connection = rusqlite::Connection::open(&database).unwrap();
     connection
         .execute_batch("CREATE TABLE items (score INTEGER); INSERT INTO items VALUES (1), (2), (3);")
@@ -169,7 +212,7 @@ fn serve_with_sqlite_query_actor_correlates_concurrent_tasks() {
 import "std/sqlite-query" as sqlite;
 import "std/value" {Value};
 
-option "run-ctx.ees" [{name: "catalog", kind: "sqlite-query"}];
+option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
 
 export def serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task = fn(sources) {
     fn(request) {
@@ -194,11 +237,11 @@ export def serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task = fn(sources) {
         .args([
             "serve",
             "main",
-            "--ees",
-            &format!("sqlite-query:catalog=sqlite://{}", database.display()),
             "--bind",
             "stdio://",
         ])
+        .env("HOME", &home)
+        .env_remove("XDG_DATA_HOME")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -254,7 +297,11 @@ import "std/imos" as imos;
 import "std/value" {Value};
 
 option "run-ctx.sources" ["plan"];
-option "run-ctx.ees" [{name: "telora-packages", kind: "imos"}];
+option "ees.imos" {
+    name: "telora-packages",
+    home: "user-data:home",
+    store: "user-cache:store",
+};
 
 export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
     let plan = match dict.get(sources, "plan") {
@@ -276,9 +323,9 @@ export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
             "main",
             "--source",
             &format!("plan={}", plan.display()),
-            "--ees",
-            &format!("imos:telora-packages={}", actor_root.display()),
         ])
+        .env("XDG_DATA_HOME", &actor_root)
+        .env("XDG_CACHE_HOME", &actor_root)
         .output()
         .unwrap();
     assert!(
@@ -299,28 +346,31 @@ export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
 #[test]
 fn application_cannot_address_the_package_actor_without_its_own_binding() {
     let cwd = fixture();
-    let database = cwd.join("catalog.sqlite");
+    let data = cwd.join("data");
+    fs::create_dir_all(&data).unwrap();
+    let database = data.join("catalog.sqlite");
     rusqlite::Connection::open(&database).unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "std/ees" as ees;
+import "std/imos" as imos;
 import "std/value" {Value};
-option "run-ctx.ees" [{name: "telora-packages", kind: "imos"}];
-export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) { ees.done('None) };"#,
+option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
+export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
+    ees.call(imos.install_shared("telora-packages", 'None), fn(result) { ees.done('None) })
+};"#,
     )
     .unwrap();
     let output = telora(&cwd)
-        .args([
-            "run",
-            "main",
-            "--ees",
-            &format!("sqlite-query:catalog=sqlite://{}", database.display()),
-        ])
+        .args(["run", "main"])
+        .env("XDG_DATA_HOME", &data)
         .output()
         .unwrap();
     assert!(!output.status.success());
     assert!(
+        String::from_utf8_lossy(&output.stderr).contains("undeclared actor"),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-            .contains("run-ctx.ees declarations do not match Host actor bindings")
     );
 }
