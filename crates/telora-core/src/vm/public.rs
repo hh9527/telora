@@ -241,6 +241,30 @@ impl ExecutionWorld {
         .format(self.work.root)
         .map_err(|error| error.to_string())
     }
+
+    pub fn into_semantic_json(mut self) -> Result<String, String> {
+        let owner = HeapView {
+            current: &self.work.heap,
+            background: Some(&self.main),
+        }
+            .type_witness(self.work.root)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "eval result must be std/value.Value".to_owned())?;
+        let raw = unwrap_semantic_value(
+            &mut self.work.heap,
+            Some(&self.main),
+            self.work.root,
+            owner,
+        )
+        .map_err(|error| error.to_string())?;
+        let view = HeapView {
+            current: &self.work.heap,
+            background: Some(&self.main),
+        };
+        let mut writer = JsonWriter::new(view, None);
+        writer.value(raw, 0)?;
+        Ok(writer.output)
+    }
 }
 
 impl fmt::Debug for ExecutionWorld {

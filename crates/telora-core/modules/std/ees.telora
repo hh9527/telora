@@ -2,17 +2,8 @@ import "std/value" {Value};
 
 type Request = Tuple([String, String, Value]);
 
-type Task = enum {
-    'Done(Value),
-    'Call(Tuple([Request, Fn(Result(Value, String)) -> Task])),
-};
-
-def done: Fn(Value) -> Task = fn(value) { 'Done(value) };
 def request: Fn(String, String, Value) -> Request = fn(actor, operation, input) {
     (actor, operation, input)
 };
-def call: Fn(Request, Fn(Result(Value, String)) -> Task) -> Task = fn(request, then) {
-    'Call((request, then))
-};
 
-export { Request, Task, done, request, call };
+export { Request, request };

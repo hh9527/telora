@@ -314,90 +314,6 @@ fn remote_crates_are_materialized_through_the_embedded_ees() {
 }
 
 #[test]
-fn run_context_selects_the_manifest_discovery_start() {
-    let cwd = fixture();
-    let other = fixture();
-    fs::write(
-        other.join("src/bin/tool.telora"),
-        r#"import "std/value" {Value};
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(9) };"#,
-    )
-    .unwrap();
-    refresh_fixture_workspace(&other);
-    let run = telora(&cwd)
-        .args(["-C", other.to_str().unwrap(), "run", "tool"])
-        .output()
-        .unwrap();
-    assert!(
-        run.status.success(),
-        "{}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "9");
-}
-
-#[test]
-fn check_and_query_context_select_the_manifest_discovery_start() {
-    let cwd = fixture();
-    let other = fixture();
-    fs::write(
-        other.join("src/lib.telora"),
-        "type Answer = Int; export {Answer};",
-    )
-    .unwrap();
-    refresh_fixture_workspace(&other);
-
-    let check = telora(&cwd)
-        .args(["-C", other.to_str().unwrap(), "check", "@src/lib"])
-        .output()
-        .unwrap();
-    assert!(
-        check.status.success(),
-        "{}",
-        String::from_utf8_lossy(&check.stderr)
-    );
-
-    let show = telora(&cwd)
-        .args([
-            "-C",
-            other.to_str().unwrap(),
-            "query",
-            "exports",
-            "@src/lib",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        show.status.success(),
-        "{}",
-        String::from_utf8_lossy(&show.stderr)
-    );
-    let records = jsonl(&show.stdout);
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["name"], "Answer");
-
-    let postfix = telora(&cwd)
-        .args(["check", "@src/lib", "-C", other.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(!postfix.status.success());
-    assert!(String::from_utf8_lossy(&postfix.stderr).contains("unexpected argument '-C'"));
-
-    let duplicate = telora(&cwd)
-        .args([
-            "-C",
-            cwd.to_str().unwrap(),
-            "-C",
-            other.to_str().unwrap(),
-            "check",
-            "@src/lib",
-        ])
-        .output()
-        .unwrap();
-    assert!(!duplicate.status.success());
-}
-
-#[test]
 fn standalone_run_uses_only_embedded_dependency_options() {
     let cwd = fixture();
     let dependency = cwd.join("dep");
@@ -408,7 +324,7 @@ fn standalone_run_uses_only_embedded_dependency_options() {
     )
     .unwrap();
     let standalone = cwd.join("standalone.telora");
-    fs::write(&standalone, r#"option "crate.dependency" {name: "dep", source: 'Path({path: "dep"})}; import "dep/value" {value}; import "std/value" {Value}; export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(value) };"#).unwrap();
+    fs::write(&standalone, r#"option "crate.dependency" {name: "dep", source: 'Path({path: "dep"})}; import "dep/value" {value}; import "std/actor" as actor; import "std/value" {Value}; type State = struct {}; export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) { let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) { match event { 'Request(request) => (state, [actor.reply(request.id, 'Int(value))]), 'EesReply(_) => fail!("unexpected EES reply"), } }; actor.service(State, {}, reduce) };"#).unwrap();
     let run = telora(&cwd)
         .args(["run", "-S", standalone.to_str().unwrap()])
         .output()
@@ -500,8 +416,18 @@ fn run_is_run_with_the_default_entry_and_rejects_the_old_entry_flag() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String("default") };"#,
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'String("default"))]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
     let implicit = telora(&cwd).args(["run", "main"]).output().unwrap();
@@ -535,14 +461,23 @@ fn run_injects_declared_file_and_stdin_value_sources() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
 import "std/dict" as dict;
 option "run-ctx.sources" ["request"];
-export def main: Fn(Dict(Value)) -> Value = fn(sources) {
-    match dict.get(sources, "request") {
+type State = struct {output: Value};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let output = match dict.get(sources, "request") {
         'Some(value) => value,
         'None => fail!("missing request"),
-    }
+    };
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, state.output)]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {output}, reduce)
 };"#,
     )
     .unwrap();
@@ -591,9 +526,19 @@ fn run_context_provenance_uses_the_public_key_not_the_source_locator() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
 option "run-ctx.sources" ["request"];
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'None)]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
     let source = cwd.join("private-input.json");
@@ -618,9 +563,19 @@ fn run_rejects_sources_that_do_not_match_run_context_declaration() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
 option "run-ctx.sources" ["request"];
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'None)]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
     let missing = telora(&cwd).args(["run", "main"]).output().unwrap();
@@ -629,8 +584,18 @@ export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
 
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'None };"#,
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'None)]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
     let extra = telora(&cwd)
@@ -647,9 +612,20 @@ fn serve_stdio_processes_jsonl_with_one_initialized_handler() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
-export def serve: Fn(Dict(Value)) -> Fn(Value) -> Value = fn(sources) {
-    fn(request) { request }
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
+type State = struct {handled: Int};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (
+                {handled: state.handled + 1},
+                [actor.reply(request.id, request.input)],
+            ),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {handled: 0}, reduce)
 };"#,
     )
     .unwrap();
@@ -684,10 +660,15 @@ fn serve_stdio_returns_request_local_diagnostics_and_keeps_serving() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
-export def serve: Fn(Dict(Value)) -> Fn(Value) -> Value = fn(sources) {
-    fn(request) {
-        match request {
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(envelope) => {
+                let request = envelope.input;
+                let output = match request {
             'Int(value) => if value < 0 {
                 fail!("value must not be negative", request)
             } else {
@@ -697,8 +678,13 @@ export def serve: Fn(Dict(Value)) -> Fn(Value) -> Value = fn(sources) {
                 request
             },
             _ => fail!("request must be an Int", request),
+                };
+                (state, [actor.reply(envelope.id, output)])
+            },
+            'EesReply(_) => fail!("unexpected EES reply"),
         }
-    }
+    };
+    actor.service(State, {}, reduce)
 };"#,
     )
     .unwrap();
@@ -754,11 +740,19 @@ fn serve_stdio_does_not_capture_terminal_runtime_failures() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/value" {Value};
-export def serve: Fn(Dict(Value)) -> Fn(Value) -> Value = fn(sources) {
+        r#"import "std/actor" as actor;
+import "std/value" {Value};
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
     decl recurse: Fn(Int) -> Int;
     def recurse = fn(value) { 1 + recurse(value) };
-    fn(request) { 'Int(recurse(0)) }
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'Int(recurse(0)))]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
 };"#,
     )
     .unwrap();

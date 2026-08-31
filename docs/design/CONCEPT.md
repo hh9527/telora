@@ -172,8 +172,27 @@ Entry 位于 crate 的 `src/entry/<name>.telora`，并由 Host 以 `@src/entry/<
 Entry 访问；该规则只由 module resolver 执行。Entry 可以 resolve 当前依赖图中的全部
 模块，但它的权限不传递给被导入模块。只有内置 `std` crate 可以声明 native symbol。
 
-`run` 可以选择内置或用户 Entry；`check`、`query` 和 LSP 使用 Host 固定的 tooling
-Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect。
+`run` 和 `serve` 选择内置或用户 Entry。`eval`、`eval-with`、`check`、`query` 和 LSP
+使用 Host 固定的工具路径；其中 `eval` 与 `eval-with` 只做纯 module 求值和普通函数调用。
+CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect。
+
+### Actor Service
+
+**Actor Service** 是应用在 `run` 与 `serve` 中导出的单 actor 状态机。它由一个显式
+State 和一个 `reduce(State, Event) -> (State, Array(Effect))` reducer 组成。每次成功
+transition 返回完整新 State；Event 与 Effect 都是一阶数据，不携带 callback 或
+continuation。
+
+`run` 产生一个 Request 并在对应 Reply 后结束，`serve` 从 transport 持续产生 Request。
+二者共享相同的 service、EES capability、状态迁移和诊断语义。应用执行还可以拥有一个
+EES actor；其中的多个命名 native model 只执行 reducer 发出的 `EesCall`，并把结果作为
+`EesReply` 重新送入 reducer。
+
+### Pure Eval
+
+**Pure Eval** 是不经过 Entry 或 effect system 的导出求值。`eval` 读取一个 `Value`
+导出；`eval-with` 调用一次接收 `{sources, env, args}` 的函数并要求返回 `Value`。
+source 与环境变量由 module option 显式声明，调用开始前形成封闭输入。
 
 ### Freeze 与 Publication
 
@@ -191,8 +210,9 @@ Entry。CLI 不把 exec、build 或其他领域 plan 固化为语言级 effect�
 
 **Canonical source path（规范来源路径）**是 Source 对语言值和诊断公开的稳定名字。
 它与 Host 用于读取数据的物理 locator 分离，也不必是 module identity。运行上下文中的
-具名 source 使用 `@run-ctx/<key>`；这个名字只标识来源，不创建模块、不能被 import，
-也不会出现在模块查询中。
+具名 run/serve source 使用 `@run-ctx/<key>`，eval-with source 使用
+`@eval-ctx/<key>`；这些名字只标识来源，不创建模块、不能被 import，也不会出现在模块
+查询中。
 
 ### Static Data Module
 
@@ -240,8 +260,9 @@ Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应�
 两个 Service 的名称空间、资源和生命周期隔离；应用不能发现或调用 package Service。
 Telora 工具链和 `telora-core` 不依赖 component 内部类型。
 
-`run` 与 `serve` 共享 capability、effect、actor 和诊断语义。`run` 服务一个任务直至完成，
-`serve` 初始化一次 handler 并服务输入流中的多个任务；二者的差异是生命周期和请求基数。
+`run` 与 `serve` 共享 capability、effect、actor 和诊断语义。`run` 投递一个 Request
+并等待 Reply，`serve` 使用同一个 reducer service 处理输入流中的多个 Request；二者的
+差异是请求来源、请求基数和终止条件。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入

@@ -32,8 +32,22 @@ fn run_and_check_select_logical_roots_from_cwd() {
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/lib" {output};
+import "std/actor" as actor;
 import "std/value" {Value};
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String(output) };"#,
+type State = struct {output: String, completed: Bool};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let initial: State = {output, completed: 'False};
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (
+                {output: state.output, completed: 'True},
+                [actor.reply(request.id, 'String(state.output))],
+            ),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, initial, reduce)
+};"#,
     )
     .unwrap();
     let nested = cwd.join("src/bin");
@@ -305,17 +319,21 @@ fn check_accepts_a_complete_module_with_warnings() {
 }
 
 #[test]
-fn run_writes_contextual_debug_as_stderr_jsonl() {
+fn eval_writes_contextual_debug_as_stderr_jsonl() {
     let cwd = fixture();
     fs::write(
-        cwd.join("src/bin/main.telora"),
+        cwd.join("src/debug.telora"),
         r#"import "std/value" {Value};
 def var = 3;
 def observed = var.dbg!("observed");
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(observed) };"#,
+export def answer: Value = 'Int(observed);"#,
     )
     .unwrap();
-    let run = telora(&cwd).args(["run", "main"]).output().unwrap();
+    refresh_fixture_workspace(&cwd);
+    let run = telora(&cwd)
+        .args(["eval", "@src/debug:answer"])
+        .output()
+        .unwrap();
     assert!(
         run.status.success(),
         "{}",
@@ -327,7 +345,7 @@ export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(observed) };"#,
     for record in records {
         assert_eq!(record["name"], "var");
         assert_eq!(record["repr"], "3");
-        assert_eq!(record["module"], "fixture/bin/main");
+        assert_eq!(record["module"], "fixture/debug");
         assert_eq!(record["line"], 3);
         assert_eq!(record["message"], "observed");
     }
@@ -436,9 +454,19 @@ export {lower};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/facade" as facade;
+import "std/actor" as actor;
 import "std/value" {Value};
 def rejected = facade.lower(7);
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String("value={rejected}") };"#,
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'String("value={rejected}"))]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
 
@@ -504,9 +532,19 @@ export {lower};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/facade" as facade;
+import "std/actor" as actor;
 import "std/value" {Value};
 def rejected = facade.lower(7);
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'String(rejected) };"#,
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'String(rejected))]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
 
@@ -742,8 +780,18 @@ export {Node, root, total};"#,
     fs::write(
         cwd.join("src/bin/main.telora"),
         r#"import "@src/tree" as tree;
+import "std/actor" as actor;
 import "std/value" {Value};
-export def main: Fn(Dict(Value)) -> Value = fn(sources) { 'Int(tree.total(tree.root)) };"#,
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'Int(tree.total(tree.root)))]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
 

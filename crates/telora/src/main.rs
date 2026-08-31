@@ -22,9 +22,11 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 mod ees_arg;
 mod ees_cli;
+mod eval_cli;
 mod source_arg;
 use ees_arg::{NamedEesVar, collect_ees, parse_named_ees_var};
 use ees_cli::EesArgs;
+use eval_cli::{EvalArgs, EvalWithArgs};
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
 use telora::package_host;
 
@@ -860,9 +862,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Invoke main(Dict(Value)) once and write its JSON result.
+    /// Evaluate one exported Value without an Entry or effect system.
+    Eval(EvalArgs),
+    /// Invoke one pure context function and write its Value result.
+    EvalWith(EvalWithArgs),
+    /// Submit one request to an application reducer service.
     Run(RunArgs),
-    /// Initialize serve(Dict(Value)) and process requests continuously.
+    /// Process transport requests with one application reducer service.
     Serve(ServeArgs),
     /// Serve native actor effects over stdin/stdout JSON Lines.
     Ees(EesArgs),
@@ -1081,6 +1087,8 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
         }
     }
     match cli.command {
+        Command::Eval(arguments) => eval_cli::run(context, arguments),
+        Command::EvalWith(arguments) => eval_cli::run_with(context, arguments),
         Command::Run(arguments) => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1146,7 +1154,7 @@ async fn run_command(
         .is_none()
         .then(|| package_host::prepare(&context))
         .transpose()?;
-    if matches!(entry, "std/entry/serve" | "std/entry/ees-serve")
+    if entry == "std/entry/serve"
         && entry_sources
             .locators
             .values()
@@ -1205,11 +1213,6 @@ async fn run_command(
     }
     .map_err(|error| error.to_string())?;
     let entry_ees = collect_ees(pending.option_actions(), arguments.ees_vars)?;
-    let entry = match (entry, entry_ees.manifest.is_some()) {
-        ("std/entry/default", true) => "std/entry/ees-default",
-        ("std/entry/serve", true) => "std/entry/ees-serve",
-        (selected, _) => selected,
-    };
     let ees = match entry_ees.manifest {
         Some(manifest) => Some(
             telora_ees::Service::open(manifest)

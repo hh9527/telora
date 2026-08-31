@@ -347,16 +347,6 @@ impl Engine {
                 ModuleCName::builtin("std/entry/serve"),
                 serve_entry_source().to_owned(),
             )
-        } else if entry_selector == EES_DEFAULT_ENTRY_MODULE {
-            (
-                ModuleCName::builtin(EES_DEFAULT_ENTRY_MODULE),
-                ees_default_entry_source().to_owned(),
-            )
-        } else if entry_selector == EES_SERVE_ENTRY_MODULE {
-            (
-                ModuleCName::builtin(EES_SERVE_ENTRY_MODULE),
-                ees_serve_entry_source().to_owned(),
-            )
         } else {
             let entry = resolver
                 .resolve_entry(entry_selector)

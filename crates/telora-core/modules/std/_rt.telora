@@ -1,5 +1,7 @@
 import "std/value" {Value};
 
+type Diagnostic = BlameError;
+
 native call_with_diagnostics:
     for(A, R) Fn(Fn(A) -> R, A)
         -> Result(Tuple([R, Array(BlameError)]), Array(BlameError));
@@ -151,6 +153,7 @@ type SystemEffect = enum {
 };
 
 export {
+    Diagnostic,
     with_diagnostics,
     OptionAction,
     SystemOptions,

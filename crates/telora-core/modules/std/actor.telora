@@ -1,0 +1,84 @@
+import "std/dyn" as dyn;
+import "std/ees" as ees;
+import "std/value" {Value};
+
+type Request = struct {
+    id: String,
+    input: Value,
+};
+
+type EesReply = struct {
+    id: String,
+    request_id: String,
+    result: Result(Value, String),
+};
+
+type Event = enum {
+    'Request(Request),
+    'EesReply(EesReply),
+};
+
+type EesCall = struct {
+    id: String,
+    request_id: String,
+    request: ees.Request,
+};
+
+type Reply = struct {
+    request_id: String,
+    value: Value,
+};
+
+type Effect = enum {
+    'EesCall(EesCall),
+    'Reply(Reply),
+};
+
+type Transition(State) = Tuple([State, Array(Effect)]);
+type ErasedTransition = Tuple([Dyn, Array(Effect)]);
+type ErasedReducer = Fn(Tuple([Dyn, Event])) -> ErasedTransition;
+
+type Service = struct {
+    state: Dyn,
+    reduce: ErasedReducer,
+};
+
+def service: for(State)
+    Fn(TypeOf(State), State, Fn(State, Event) -> Transition(State)) -> Service =
+    fn(target, initial_state, reduce) {
+        {
+            state: dyn.pack(target, initial_state),
+            reduce: fn(input) {
+                let state = input.0;
+                let event = input.1;
+                let state = match dyn.project_with(target, state) {
+                    'Some(state) => state,
+                    'None => fail!("actor Service state does not match its declared State"),
+                };
+                let transition = reduce(state, event);
+                (dyn.pack(target, transition.0), transition.1)
+            },
+        }
+    };
+
+def ees_call: Fn(String, String, ees.Request) -> Effect = fn(id, request_id, request) {
+    'EesCall({id, request_id, request})
+};
+
+def reply: Fn(String, Value) -> Effect = fn(request_id, value) {
+    'Reply({request_id, value})
+};
+
+export {
+    Request,
+    EesReply,
+    Event,
+    EesCall,
+    Reply,
+    Effect,
+    Transition,
+    Service,
+    service,
+    ees_call,
+    reply,
+};

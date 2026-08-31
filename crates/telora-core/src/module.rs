@@ -7,9 +7,8 @@ use crate::compiler::{
     type_family_template_link_key,
 };
 use crate::core::{
-    DEFAULT_ENTRY_MODULE, EES_DEFAULT_ENTRY_MODULE, EES_SERVE_ENTRY_MODULE, FMT_CAPABILITY_BINDING,
-    FMT_MODULE, PRELUDE_MODULE, SERVE_ENTRY_MODULE, default_entry_source, ees_default_entry_source,
-    ees_serve_entry_source, module_specs, serve_entry_source,
+    DEFAULT_ENTRY_MODULE, FMT_CAPABILITY_BINDING, FMT_MODULE, PRELUDE_MODULE, SERVE_ENTRY_MODULE,
+    default_entry_source, module_specs, serve_entry_source,
 };
 use crate::heap::{DecodedValue, Heap, Object, PersistentValue, Val, semantic_value_type_id};
 use crate::json::{
@@ -53,6 +52,7 @@ include!("module/graph.rs");
 include!("module/loaded.rs");
 include!("module/host.rs");
 include!("module/engine.rs");
+include!("module/eval.rs");
 include!("module/workspace.rs");
 include!("module/entry.rs");
 include!("module/loader.rs");

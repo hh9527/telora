@@ -94,7 +94,7 @@ fn ees_serves_install_shared_requests() {
 }
 
 #[test]
-fn run_with_sqlite_query_actor_drives_an_ees_task() {
+fn run_with_sqlite_query_actor_drives_an_ees_call() {
     let cwd = fixture();
     let data = cwd.join("data");
     fs::create_dir_all(data.join("hello")).unwrap();
@@ -109,27 +109,33 @@ fn run_with_sqlite_query_actor_drives_an_ees_task() {
     drop(connection);
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/ees" as ees;
+        r#"import "std/actor" as actor;
 import "std/sqlite-query" as sqlite;
 import "std/value" {Value};
 
 option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,31}"};
 option "ees.sqlite" {name: "catalog", path: "user-data:{tenant}/catalog.sqlite"};
 
-export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
-    ees.call(
-        sqlite.query(
-            "catalog",
-            "SELECT name, score FROM items WHERE score > ? ORDER BY score DESC",
-            ['Int(1)],
-        ),
-        fn(result) {
-            match result {
-                'Ok(value) => ees.done(value),
+type State = enum {'Ready, 'Waiting};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match (state, event) {
+            ('Ready, 'Request(request)) => (
+                'Waiting,
+                [actor.ees_call("query", request.id, sqlite.query(
+                    "catalog",
+                    "SELECT name, score FROM items WHERE score > ? ORDER BY score DESC",
+                    ['Int(1)],
+                ))],
+            ),
+            ('Waiting, 'EesReply(reply)) => match reply.result {
+                'Ok(value) => ('Ready, [actor.reply(reply.request_id, value)]),
                 'Err(message) => fail!("SQLite query failed", message),
-            }
-        },
-    )
+            },
+            _ => fail!("unexpected actor event", state, event),
+        }
+    };
+    actor.service(State, 'Ready, reduce)
 };"#,
     )
     .unwrap();
@@ -154,17 +160,152 @@ export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
 }
 
 #[test]
+fn run_actor_can_sequence_multiple_ees_replies_through_explicit_state() {
+    let cwd = fixture();
+    let data = cwd.join("data");
+    fs::create_dir_all(&data).unwrap();
+    let database = data.join("catalog.sqlite");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch("CREATE TABLE items (score INTEGER); INSERT INTO items VALUES (1), (2), (3);")
+        .unwrap();
+    drop(connection);
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/actor" as actor;
+import "std/sqlite-query" as sqlite;
+import "std/value" {Value};
+option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
+type State = enum {'Ready, 'WaitingFirst(String), 'WaitingSecond(String)};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match (state, event) {
+            ('Ready, 'Request(request)) => (
+                'WaitingFirst(request.id),
+                [actor.ees_call("first", request.id, sqlite.query(
+                    "catalog", "SELECT MAX(score) AS score FROM items", []
+                ))],
+            ),
+            ('WaitingFirst(request_id), 'EesReply(reply)) => (
+                'WaitingSecond(request_id),
+                [actor.ees_call("second", request_id, sqlite.query(
+                    "catalog", "SELECT MIN(score) AS score FROM items", []
+                ))],
+            ),
+            ('WaitingSecond(request_id), 'EesReply(reply)) => match reply.result {
+                'Ok(value) => ('Ready, [actor.reply(request_id, value)]),
+                'Err(message) => fail!("second query failed", message),
+            },
+            _ => fail!("unexpected actor event", state, event),
+        }
+    };
+    actor.service(State, 'Ready, reduce)
+};"#,
+    )
+    .unwrap();
+
+    let output = telora(&cwd)
+        .args(["run", "main"])
+        .env("XDG_DATA_HOME", &data)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({"columns": ["score"], "rows": [[1]]})
+    );
+}
+
+#[test]
+fn run_actor_rejects_duplicate_call_ids_and_reply_with_active_calls() {
+    let cwd = fixture();
+    let data = cwd.join("data");
+    fs::create_dir_all(&data).unwrap();
+    rusqlite::Connection::open(data.join("catalog.sqlite")).unwrap();
+    for (case, effects, expected) in [
+        (
+            "duplicate",
+            "[actor.ees_call(\"same\", request.id, query), actor.ees_call(\"same\", request.id, query)]",
+            "reused an active EES call id",
+        ),
+        (
+            "early-reply",
+            "[actor.ees_call(\"query\", request.id, query), actor.reply(request.id, 'None)]",
+            "replied while EES calls were still active",
+        ),
+        (
+            "duplicate-reply",
+            "[actor.reply(request.id, 'None), actor.reply(request.id, 'None)]",
+            "replied more than once",
+        ),
+    ] {
+        fs::write(
+            cwd.join("src/bin/main.telora"),
+            format!(
+                r#"import "std/actor" as actor;
+import "std/sqlite-query" as sqlite;
+import "std/value" {{Value}};
+option "ees.sqlite" {{name: "catalog", path: "user-data:catalog.sqlite"}};
+type State = struct {{}};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {{
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {{
+        match event {{
+            'Request(request) => {{
+                let query = sqlite.query("catalog", "SELECT 1", []);
+                (state, {effects})
+            }},
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }}
+    }};
+    actor.service(State, {{}}, reduce)
+}};"#
+            ),
+        )
+        .unwrap();
+        let output = telora(&cwd)
+            .args(["run", "main"])
+            .env("XDG_DATA_HOME", &data)
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "{case} unexpectedly succeeded: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn ees_variables_are_declared_required_and_fully_matched() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/ees" as ees;
+        r#"import "std/actor" as actor;
 import "std/value" {Value};
 
 option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,7}"};
 option "ees.sqlite" {name: "catalog", path: "user-data:{tenant}/catalog.sqlite"};
 
-export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) { ees.done('None) };"#,
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'None)]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
+};"#,
     )
     .unwrap();
 
@@ -195,7 +336,7 @@ export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) { ees.done('None) };"
 }
 
 #[test]
-fn serve_with_sqlite_query_actor_correlates_concurrent_tasks() {
+fn serve_with_sqlite_query_actor_correlates_concurrent_calls() {
     let cwd = fixture();
     let home = cwd.join("home");
     let data = home.join(".local/share");
@@ -208,28 +349,41 @@ fn serve_with_sqlite_query_actor_correlates_concurrent_tasks() {
     drop(connection);
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/ees" as ees;
+        r#"import "std/actor" as actor;
+import "std/array" as array;
 import "std/sqlite-query" as sqlite;
 import "std/value" {Value};
 
 option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
 
-export def serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task = fn(sources) {
-    fn(request) {
-        let query = match request {
+type State = struct {pending: Array(String)};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => {
+                let query = match request.input {
             'String(_) => sqlite.query("catalog", "SELECT missing FROM absent", []),
-            _ => sqlite.query("catalog", "SELECT score FROM items WHERE score > ? ORDER BY score", [request]),
-        };
-        ees.call(
-            query,
-            fn(result) {
-                match result {
-                    'Ok(value) => ees.done(value),
+                    _ => sqlite.query(
+                        "catalog",
+                        "SELECT score FROM items WHERE score > ? ORDER BY score",
+                        [request.input],
+                    ),
+                };
+                (
+                    {pending: array.push(state.pending, request.id)},
+                    [actor.ees_call(request.id, request.id, query)],
+                )
+            },
+            'EesReply(reply) => {
+                let pending = array.filter(state.pending, fn(id) { id != reply.id });
+                match reply.result {
+                    'Ok(value) => ({pending}, [actor.reply(reply.request_id, value)]),
                     'Err(message) => fail!("SQLite query failed", message),
                 }
             },
-        )
-    }
+        }
+    };
+    actor.service(State, {pending: []}, reduce)
 };"#,
     )
     .unwrap();
@@ -291,8 +445,8 @@ fn application_imos_actor_with_package_name_stays_in_its_bound_root() {
     .unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/dict" as dict;
-import "std/ees" as ees;
+        r#"import "std/actor" as actor;
+import "std/dict" as dict;
 import "std/imos" as imos;
 import "std/value" {Value};
 
@@ -303,17 +457,30 @@ option "ees.imos" {
     store: "user-cache:store",
 };
 
-export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
+type State = enum {'Ready, 'Waiting};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
     let plan = match dict.get(sources, "plan") {
         'Some(value) => value,
         'None => fail!("missing plan"),
     };
-    ees.call(imos.install_shared("telora-packages", plan), fn(result) {
-        match result {
-            'Ok(value) => ees.done(value),
-            'Err(message) => fail!("installation failed", message),
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match (state, event) {
+            ('Ready, 'Request(request)) => (
+                'Waiting,
+                [actor.ees_call(
+                    "install",
+                    request.id,
+                    imos.install_shared("telora-packages", plan),
+                )],
+            ),
+            ('Waiting, 'EesReply(reply)) => match reply.result {
+                'Ok(value) => ('Ready, [actor.reply(reply.request_id, value)]),
+                'Err(message) => fail!("installation failed", message),
+            },
+            _ => fail!("unexpected actor event", state, event),
         }
-    })
+    };
+    actor.service(State, 'Ready, reduce)
 };"#,
     )
     .unwrap();
@@ -352,12 +519,26 @@ fn application_cannot_address_the_package_actor_without_its_own_binding() {
     rusqlite::Connection::open(&database).unwrap();
     fs::write(
         cwd.join("src/bin/main.telora"),
-        r#"import "std/ees" as ees;
+        r#"import "std/actor" as actor;
 import "std/imos" as imos;
 import "std/value" {Value};
 option "ees.sqlite" {name: "catalog", path: "user-data:catalog.sqlite"};
-export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
-    ees.call(imos.install_shared("telora-packages", 'None), fn(result) { ees.done('None) })
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (
+                state,
+                [actor.ees_call(
+                    "install",
+                    request.id,
+                    imos.install_shared("telora-packages", 'None),
+                )],
+            ),
+            'EesReply(reply) => (state, [actor.reply(reply.request_id, 'None)]),
+        }
+    };
+    actor.service(State, {}, reduce)
 };"#,
     )
     .unwrap();

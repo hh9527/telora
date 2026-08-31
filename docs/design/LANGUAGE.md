@@ -1285,6 +1285,8 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
+telora eval <@src/module:name> [-C <context>]
+telora eval-with <@src/module:name> [-C <context>] [--source <name>=<source>]... [-- <arg>...]
 telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]...
 telora run -S <file> [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]...
 telora serve <binary-name> [-C <context>] [--source <name>=<source>]... [--ees-var <name>=<value>]... --bind stdio://
@@ -1293,6 +1295,19 @@ telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
 telora lsp
 ```
+
+`eval @src/model:answer` 选择普通 `@src` module 的公开导出。`eval` 要求导出类型是
+`Value`；`eval-with` 要求导出类型是
+`Fn({sources: Dict(Value), env: Dict(String), args: Array(String)}) -> Value`。前者只读取
+求值后的导出，后者只做一次普通函数调用；二者都不初始化 Entry、RunHost、应用 EES
+或 effect loop。
+
+`eval-with` 以 `option "eval-ctx.sources" [name, ...]` 声明 source 全集，以
+`option "eval-ctx.env" [name, ...]` 声明可见环境变量全集。清单只允许声明一次且名称
+唯一；CLI 提供的 source 必须与声明全集相等，环境变量必须存在并可表示为 String。
+`--` 后的参数保持顺序进入 `args`。source transport、格式验证、data limits 与
+run context 相同，但 canonical source path 使用 `@eval-ctx/<name>`。物理 locator 与
+未声明环境变量不进入 Telora World。
 
 `run abc` 的 binary name 是一个不含路径分隔符和 `.telora` 后缀的 stem；Host 从 CWD
 向上发现最近的 manifest，并固定选择 `@bin/abc`。调用者写 `run abc`，不写
@@ -1356,17 +1371,44 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
 最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
-没有 EES actor option 时，`run` 选择 `std/entry/default`。该 Entry 要求 Main 导出
-`main: Fn(Dict(Value)) -> Value`，调用一次后把结果编码为 JSON。`serve --bind stdio://`
-选择 `std/entry/serve`，要求 Main 导出
-`serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次 handler 后，以 stdin/stdout
-上的 JSONL 逐项收发请求和响应。Host 选中的 `src/entry` 源码获得保留的 Entry
+`run` 选择 `std/entry/default`，`serve --bind stdio://` 选择 `std/entry/serve`。两个
+标准 Entry 都要求 Main 导出：
+
+```telora
+service: Fn(Dict(Value)) -> actor.Service
+```
+
+`actor.Service` 持有显式应用 State 和 reducer。应用以具体类型编写：
+
+```telora
+reduce: Fn(State, actor.Event) -> actor.Transition(State)
+actor.service(State, initial_state, reduce)
+```
+
+标准库在 service 边界把 State 擦除为 Dyn；应用 reducer 内仍保留具体 State 类型。每个
+transition 返回完整新 State 与 `Array(actor.Effect)`。Event 与 Effect 都是一阶数据，
+不包含 callback 或 continuation。
+
+```text
+Event  = Request {id, input}
+       | EesReply {id, request_id, result}
+
+Effect = EesCall {id, request_id, request}
+       | Reply {request_id, value}
+```
+
+`run` 产生唯一 `Request {id: "run", input: None}`，持续处理 EES reply，收到对应 Reply
+后输出其中的 Value 并退出。`serve` 为每个 stdin JSONL 输入分配 request ID；多个请求和
+EES call 可以同时 pending，reply 通过显式 ID 关联并可按完成顺序输出。重复的活动 call
+ID、未知 request、存在活动 call 时提前 Reply，以及同一请求重复 Reply 都是协议错误。
+
+Host 选中的 `src/entry` 源码获得保留的 Entry
 身份，可以访问图内所有模块，包括其他 crate 的 private 模块和 `std/_...`
 内部模块。特权仅属于这个 requester，不传递给它导入的普通模块。Entry 不能作为
 普通模块根或被普通模块 import。
 
 Main 用 `option "ees.imos"` 和 `option "ees.sqlite"` 声明完整 actor 集合时，Host
-构造应用 Service，并分别选择 `std/entry/ees-default` 或 `std/entry/ees-serve`：
+构造一个 application EES actor，其中包含相应的命名 native model：
 
 ```telora
 option "ees.vars" {"tenant": "[a-z][a-z0-9-]{0,31}"};
@@ -1384,15 +1426,13 @@ option "ees.sqlite" {
 同一种 component option 可以声明多次，actor name 在所有 component 间唯一。
 `ees.vars` 最多声明一次，它的 Dict key 是变量名，value 是自动进行整串匹配的正则表达式。
 每个声明变量都必须被 locator 使用并通过 `--ees-var NAME=VALUE` 恰好绑定一次；未知、缺失、
-重复、格式不匹配以及含路径分隔符的值都失败。EES run Main 导出
-`main: Fn(Dict(Value)) -> ees.Task`，EES serve Main 导出
-`serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task`。
-两种模式具有相同的 EES capability 与 effect 语义：`run` 服务一个任务直至 `Done`，
-`serve` 初始化一次 handler，并为输入流中的每个请求分别服务一个任务。
+重复、格式不匹配以及含路径分隔符的值都失败。是否存在 EES option 不改变
+`actor.Service` 接口；标准 Entry 校验 option 与 Host model 清单完全一致。
 
-`std/ees.Task` 是 `'Done(Value)` 或带 `Call` 与 continuation 的 `'Call`。Entry 为每次调用
-产生唯一 key，Host 异步执行，随后用 `EesReply {key, result}` 恢复 continuation；一个
-continuation 可以继续产生下一次调用。`std/imos.install_shared` 和
+`std/ees.Request` 是 `(model, operation, input)` 的 component-neutral 普通数据。
+应用用 `actor.ees_call(id, request_id, request)` 发出调用；Host 异步执行并把结果作为
+`actor.EesReply` 重新送入 reducer。多步调用所需的阶段与关联信息保存在显式 State 中。
+`std/imos.install_shared` 和
 `std/sqlite-query.query` 只构造 component-neutral request，不执行 I/O。资源 locator
 使用 `user-data:`、`user-cache:`、`user-config:` 或 `user-state:`，冒号后是规范化
 相对路径。component adapter 优先使用对应的 `XDG_DATA_HOME`、`XDG_CACHE_HOME`、
@@ -1457,11 +1497,14 @@ Entry reducer 接受单个
 ```text
 DataFormat = Json | Yaml | Toml
 DataSrc = { default: Option(Value), fmt: DataFormat, src: String }
-Env = { args: Array(String), platform: Platform, sources: Dict(DataSrc) }
+Env = {
+    args: Array(String), ees: Dict(String),
+    platform: Platform, sources: Dict(DataSrc),
+}
 TextSrc = { default: Option(String), src: String }
 SystemStdin = Text | Lined | Null
 SystemCaps = {
-    data_srcs: Dict(DataSrc), spawn_child: Bool,
+    data_srcs: Dict(DataSrc), ees: Dict(String), spawn_child: Bool,
     text_srcs: Dict(TextSrc), vars: Array(String), stdin: SystemStdin,
 }
 SrcItem(T) = { data: T, src: String }
@@ -1486,13 +1529,15 @@ ChildSpawnResult = { key: String, result: Result(Int, String) }
 ChildExited     = { key: String, exited: Result(Int, Option(Int)) }
 
 SystemEvent = Initialize
+            | EesReply({key: String, result: Result(Value, String)})
             | StdinLine(Option(String))
             | ChildStdout(ChildText)
             | ChildStderr(ChildText)
             | ChildSpawnResult(ChildSpawnResult)
             | ChildExited(ChildExited)
 
-SystemEffect = SpawnStdioChild(SpawnStdioChild)
+SystemEffect = EesCall({actor: String, input: Value, key: String, operation: String})
+             | SpawnStdioChild(SpawnStdioChild)
              | PostStdin(ChildText)
              | Exec(ChildOpts)
              | Output(String)

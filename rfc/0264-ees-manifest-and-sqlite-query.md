@@ -242,18 +242,13 @@ request-local `Err(String)` and does not stop another actor or request.
 There is no IMOS-specific or SQLite-specific variant in `SystemEffect`.
 `telora-core` contains no native component dependency.
 
-## Standard EES task surface
+## Standard EES request surface
 
 Synchronous native component calls inside VM evaluation would hide effects in
-pure functions. `std/ees` therefore defines an explicit continuation task:
+pure functions. `std/ees` therefore defines only a first-order request:
 
 ```telora
 type Request = Tuple([String, String, Value]);
-
-type Task = enum {
-    'Done(Value),
-    'Call(Tuple([Request, Fn(Result(Value, String)) -> Task])),
-};
 ```
 
 Component helper modules build ordinary calls. `std/sqlite-query` encodes
@@ -263,21 +258,16 @@ Component helper modules build ordinary calls. `std/sqlite-query` encodes
 `Request` is a transparent internal carrier. Applications construct it through
 `ees.request` or component helpers rather than depending on tuple positions.
 
-Without EES actor options, `run` and `serve` keep their pure Main contracts.
-With one or more actor options, the CLI selects EES-aware standard Entries:
+Applications expose one reducer service independently of which EES models they declare:
 
 ```telora
-run:   main: Fn(Dict(Value)) -> ees.Task
-serve: serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task
+service: Fn(Dict(Value)) -> actor.Service
 ```
 
-The run Entry drives one task until `Done`. The serve Entry starts a task for
-each input request and correlates continuations with generated effect keys.
-Independent requests may complete out of input order. A continuation may
-return another `Call`, enabling multi-step workflows without concealing I/O.
-
-This task layer is interpreted Telora code. Only emitted `SystemEffect` values
-cross into the Host.
+The reducer emits `actor.EesCall {id, request_id, request}` and receives a correlated
+`actor.EesReply` event. Multi-step workflows keep their phase and correlation data in the explicit
+application State. Independent requests may complete out of input order. Only translated
+`SystemEffect` values cross into the Host.
 
 ## EES facade protocol
 
@@ -333,9 +323,9 @@ Tests establish:
   limits fail without partial output;
 - malformed declarations and variable bindings fail before Main initialization;
 - generic EES effects cannot address undeclared actors or mismatch operations;
-- EES-aware `run` completes a chained task;
-- EES-aware `serve` correlates multiple tasks and survives request-local failures;
-- package acquisition, pure run/serve, check, query and LSP do not regress;
+- `run` completes multiple sequential EES calls through explicit State;
+- `serve` correlates concurrent calls and survives request-local failures;
+- package acquisition, reducer run/serve, pure eval, check, query and LSP do not regress;
 - dependency scanning confirms `telora-core` has no native component edge.
 
 ## Deferred work

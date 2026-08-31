@@ -31,10 +31,18 @@ hello/
 
 ```telora
 # src/bin/main.telora；# 引入行注释
+import "std/actor" as actor;
 import "std/value" {Value};
 
-export def main: Fn(Dict(Value)) -> Value = fn(sources) {
-    'String("hello, telora")
+type State = struct {};
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (state, [actor.reply(request.id, 'String("hello, telora"))]),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
 };
 ```
 
@@ -939,23 +947,29 @@ plan-lib/types     -> <plan-lib>/src/types.telora
 
 CLI 从当前目录向上查找最近的 `telora-config.json`，因此可以在 workspace 内运行
 命令。`run main` 选择当前 member 的 `@bin/main`；binary name 是不含路径分隔符和
-`.telora` 后缀的单个 stem。`@main` 不是模块 ID。`run main` 调用 Main 的
-`main: Fn(Dict(Value)) -> Value`，并把结果编码为 JSON。环境与输入由运行时适配器显式传给
-Main，不形成 ambient binding。完整示例：
+`.telora` 后缀的单个 stem。`@main` 不是模块 ID。`run main` 初始化 Main 导出的
+`service: Fn(Dict(Value)) -> actor.Service`，投递一个 Request，并把 Reply 中的 Value
+编码为 JSON。环境与输入由运行时适配器显式传给 Main，不形成 ambient binding。
+
+普通 `@src` module 的纯结果使用 `telora eval @src/module:name`；带显式 source、环境变量
+白名单和字符串参数的纯函数使用 `eval-with`。两者都要求返回 `Value`，并且不创建 Entry
+或 effect loop。完整示例：
 
 ```text
 telora run main -C examples/my-crate
 telora serve main -C examples/my-crate --bind stdio://
+telora eval @src/model:answer -C examples/my-crate
 telora check @test/compiler -C examples/my-crate
 ```
 
-`serve --bind stdio://` 的每行响应包含 `ok`、`error` 和 `diagnostics`。handler 成功或
+`serve --bind stdio://` 的每行响应包含 `ok`、`error` 和 `diagnostics`。请求成功或
 产生可恢复诊断后服务均继续运行；当前响应中的诊断项稳定公开 `message`。初始化失败、
 协议失败和资源类 terminal failure 仍由运行时适配器带外报告。
 
 `check` 用统一 Module 管线的 best-effort 策略求值所选模块；任何 error 都会非零退出，
 但内部图仍可保留以查询健康事实。它不进行 Entry 调度，也不会调用已经
-导出的函数，因此不等价于应用行为验收。成功路径必须由普通 `run` 严格执行；遇到
+导出的函数，因此不等价于行为验收。纯导出由 `eval` / `eval-with` 验收，应用 service
+由普通 `run` 严格执行；遇到
 失败时可以用 `run --best-effort` 扩大诊断覆盖，并检查非零退出、CLI 诊断和无
 output。不能仅以 `check` 成功作为行为证据。
 
@@ -987,4 +1001,5 @@ Telora 支持带显式契约的递归函数。调用和 back-edge 消耗 fuel；
 - 应用事实和物理映射留在可复用方法库之外。
 - 不得添加外部函数、native 声明、`Any` 或 `Dyn` 来绕过困难的泛型关系。
 - 优先让类型表达静态约束；动态失败使用 `fail!` 并携带原始证据。
-- 以严格 `run` 作为最终验收；失败排查时再使用 `--best-effort` 扩大诊断覆盖。
+- 纯导出使用 `eval` / `eval-with` 验收，应用 service 使用严格 `run` 验收；失败排查时
+  再使用 `--best-effort` 扩大诊断覆盖。

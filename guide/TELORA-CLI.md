@@ -10,13 +10,15 @@ Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它�
 
 Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令可以从 workspace 内
 任意目录执行。`-C` 可以显式改变查找的起始目录。`telora lock` 是唯一写入 lock 的
-命令；`run`、`serve`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
+命令；`eval`、`eval-with`、`run`、`serve`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
 命令参数使用稳定逻辑模块 ID，不使用物理文件名：
 
 ```text
+telora eval @src/model:answer -C examples/my-crate
+telora eval-with @src/model:evaluate -C examples/my-crate --source request=request.json -- arg
 telora run main -C examples/my-crate
 telora run main -C examples/my-crate --source request=stdin+json://
-telora run main -C examples/my-crate --ees sqlite-query:catalog=sqlite:///srv/catalog.sqlite
+telora run main -C examples/my-crate --ees-var tenant=production
 telora serve main -C examples/my-crate --bind stdio://
 telora run verify -C examples/my-crate
 telora check @test/compiler -C examples/my-crate
@@ -45,20 +47,22 @@ export def lowering_case = do {
 
 多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
 
-- `run name` 要求 Main 导出
-  `main: Fn(Dict(Value)) -> Value`，调用一次并把返回值编码为 JSON。`name` 是不含路径
-  分隔符和 `.telora` 后缀的单个 stem。
-- `serve name --bind stdio://` 选择标准持续服务 Entry。Main 导出
-  `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次后，每行 JSON 请求产生一行
+- `eval @src/module:name` 要求公开导出 `name: Value`，直接求值并编码为 JSON。
+  `eval-with` 要求导出
+  `Fn({sources: Dict(Value), env: Dict(String), args: Array(String)}) -> Value`。source 与
+  环境变量分别由 `eval-ctx.sources` 和 `eval-ctx.env` option 声明；两条命令都不进入
+  Entry 或 effect loop。
+- `run name` 和 `serve name --bind stdio://` 要求 Main 导出
+  `service: Fn(Dict(Value)) -> actor.Service`。`run` 投递一次 Request 并在 Reply 后输出
+  Value；`serve` 持续把每行 JSON 转成 Request，每个 Reply 产生一行
   JSON 响应。成功响应是 `{"ok": value, "error": false, "diagnostics": [...]}`；请求
   触发可恢复 failure 时是 `{"ok": null, "error": true, "diagnostics": [...]}`，服务
   继续处理下一行。当前诊断 JSON 只稳定公开 `message`。资源耗尽、取消等终止性失败，
   以及初始化和 Entry 协议错误仍带外报告并终止进程。
-- `run` 和 `serve` 可重复使用 `--ees KIND:NAME=LOCATOR` 构造应用自己的命名 Native
-  Actor Service。Main 用 `option "run-ctx.ees" [{name, kind}, ...]` 声明完全相同的
-  actor 集合，并返回 `std/ees.Task`。`std/imos.install_shared` 构造应用 IMOS 请求，
-  `std/sqlite-query.query` 构造带 positional bindings 的只读查询；两者都由标准 Entry
-  产生显式 effect。应用 Service 与 package Host 的私有 IMOS Service 完全隔离。
+- `run` 和 `serve` 用 `option "ees.imos"`、`option "ees.sqlite"` 声明应用 EES 中的
+  命名 native model，并以 `option "ees.vars"` 与 `--ees-var` 绑定 locator 变量。
+  reducer 发出 `actor.EesCall`，Host 完成调用后投递 `actor.EesReply`；多步行为的阶段
+  和关联信息保存在显式 State。应用 EES 与 package Host 的私有 IMOS Service 完全隔离。
 - Main 用 `option "run-ctx.sources" ["config", "request"]` 声明 `run` 和 `serve`
   共用的初始化 source。声明的名称必须全部提供，CLI 也不能提供未声明或重复的名称。
   `--source name=path.json` 按 `.json/.yaml/.yml/.toml` 推断格式；
@@ -87,7 +91,8 @@ export def lowering_case = do {
   `summary` record。只有完整求值并形成内部 semantic Module graph 时 summary 才是
   `status: "ok"`；它不把递归 TypeMetadata 等内部图物化为外部 owned value。任何
   语法、类型、解析或运行时失败都会得到 `status: "error"` 和非零退出。
-  最终应用验收仍以 `run` 为准，因为 `run` 还经过 Entry 调度。
+  纯导出以 `eval` / `eval-with` 验收；应用 service 仍以 `run` 为准，因为 `run` 还经过
+  Entry 和 reducer/effect 调度。
 - `query`（可见别名 `q`）输出 `telora.query/v1` JSONL 语义记录。`query modules`
   列出当前 crate 可见的规范模块 ID；`query exports <module>` 查询公共接口；
   `query at <module>` 查询顶层 local definitions，追加 `:<line>` 或 `:<line>:<column>`

@@ -188,6 +188,10 @@ impl WorkWorld {
         &self.heap
     }
 
+    pub(crate) fn set_root(&mut self, root: Val) {
+        self.root = root;
+    }
+
     pub(crate) fn value_ref<'a>(&'a self, world: &'a Heap, value: Val) -> ValueRef<'a> {
         ValueRef::work(value, &self.heap, world)
     }

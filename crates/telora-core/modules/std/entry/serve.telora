@@ -1,20 +1,36 @@
 import "std/_rt" as rt;
+import "std/actor" as actor;
 import "std/array" as array;
+import "std/codec" as codec;
 import "std/dict" as dict;
 import "std/dyn" as dyn;
+import "std/fmt" as fmt;
 import "std/json" as json;
 import "std/result" as result;
 import "std/string" as string;
 import "std/value" {Value};
 
 export type MainType = struct {
-    serve: Fn(Dict(Value)) -> Fn(Value) -> Value,
+    service: Fn(Dict(Value)) -> actor.Service,
 };
 
+type RequestContext = struct {
+    id: String,
+    diagnostics: Array(Value),
+};
+type Pending = struct { id: String, request_id: String };
 type State = struct {
-    handler: Fn(Value) -> Value,
+    service: actor.Service,
+    next_request: Int,
+    requests: Array(RequestContext),
+    pending: Array(Pending),
+    eof: Bool,
 };
-
+type Collected = struct {
+    requests: Array(RequestContext),
+    pending: Array(Pending),
+    effects: Array(rt.SystemEffect),
+};
 type Transition = Tuple([State, Array(rt.SystemEffect)]);
 type Reducer = Fn(State, rt.SystemEvent) -> Transition;
 type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
@@ -38,9 +54,10 @@ def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc
     fn(options, sources) {
         let declared = declared_sources(options);
         let provided = dict.keys(sources);
-        if array.all(declared, fn(name) {
+        let unique = array.all(declared, fn(name) {
             array.length(array.filter(declared, fn(other) { other == name })) == 1
-        }) == 'False {
+        });
+        if unique == 'False {
             fail!("option run-ctx.sources must contain unique names")
         } else if array.all(declared, fn(name) {
             array.any(provided, fn(other) { other == name })
@@ -55,14 +72,183 @@ def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc
         }
     };
 
+def declared_ees: Fn(rt.SystemOptions, Dict(String)) -> Dict(String) = fn(options, provided) {
+    let actions = array.filter(options, fn(action) {
+        action.key == "ees.imos" || action.key == "ees.sqlite"
+    });
+    let pairs = array.map(actions, fn(action) {
+        let name = match dyn.field(action.value, "name") {
+            'Ok(value) => match dyn.check_string(value) {
+                'Some(found) => found,
+                'None => fail!("EES model name must be String"),
+            },
+            'Err(_) => fail!("EES model declaration must contain name"),
+        };
+        let kind = if action.key == "ees.imos" { "imos" } else { "sqlite-query" };
+        (name, kind)
+    });
+    let unique = array.all(pairs, fn(declaration) {
+        declaration.0 != "" && array.length(array.filter(pairs, fn(other) {
+            other.0 == declaration.0
+        })) == 1
+    });
+    if unique == 'False {
+        fail!("EES model declarations must contain unique non-empty names")
+    } else if array.length(pairs) != array.length(dict.keys(provided)) ||
+        array.all(pairs, fn(declaration) {
+            match dict.get(provided, declaration.0) {
+                'Some(kind) => kind == declaration.1,
+                'None => 'False,
+            }
+        }) == 'False {
+        fail!("EES model declarations do not match Host bindings")
+    } else {
+        provided
+    }
+};
+
+def diagnostics: Fn(Array(rt.Diagnostic)) -> Array(Value) = fn(found) {
+    array.map(found, fn(diagnostic) {
+        'Object({message: 'String(codec.format_error(diagnostic))})
+    })
+};
+
+def success_response: Fn(Value, Array(Value)) -> String = fn(value, found) {
+    string.join([json.stringify('Object({
+        ok: value,
+        error: 'False,
+        diagnostics: 'Array(found),
+    })), ""], "\n")
+};
+
+def failure_response: Fn(Array(Value)) -> String = fn(found) {
+    string.join([json.stringify('Object({
+        ok: 'None,
+        error: 'True,
+        diagnostics: 'Array(found),
+    })), ""], "\n")
+};
+
+def find_request: Fn(Array(RequestContext), String) -> Option(RequestContext) =
+    fn(requests, id) { array.find(requests, fn(item) { item.id == id }) };
+
+def remove_request: Fn(Array(RequestContext), String) -> Array(RequestContext) =
+    fn(requests, id) { array.filter(requests, fn(item) { item.id != id }) };
+
+def add_diagnostics: Fn(Array(RequestContext), String, Array(Value)) -> Array(RequestContext) =
+    fn(requests, id, found) {
+        array.map(requests, fn(item) {
+            if item.id == id {
+                {id: item.id, diagnostics: array.concat([item.diagnostics, found])}
+            } else {
+                item
+            }
+        })
+    };
+
+def remove_pending: Fn(Array(Pending), String) -> Array(Pending) = fn(pending, id) {
+    array.filter(pending, fn(item) { item.id != id })
+};
+
+def maybe_exit: Fn(State, Array(rt.SystemEffect)) -> Transition = fn(state, effects) {
+    if state.eof && array.length(state.requests) == 0 && array.length(state.pending) == 0 {
+        (state, array.push(effects, 'Exit(0)))
+    } else {
+        (state, effects)
+    }
+};
+
+def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id, event) {
+    match rt.with_diagnostics(state.service.reduce)((state.service.state, event)) {
+        'Err(found) => {
+            let current = match find_request(state.requests, active_id) {
+                'Some(current) => current,
+                'None => fail!("actor reducer failed for an unknown request", active_id),
+            };
+            let state: State = {
+                service: state.service,
+                next_request: state.next_request,
+                requests: remove_request(state.requests, active_id),
+                pending: state.pending,
+                eof: state.eof,
+            };
+            maybe_exit(state, ['Output(failure_response(array.concat([
+                current.diagnostics,
+                diagnostics(found),
+            ])))])
+        },
+        'Ok(observed) => {
+            let requests = add_diagnostics(state.requests, active_id, diagnostics(observed.1));
+            let service: actor.Service = {
+                state: observed.0.0,
+                reduce: state.service.reduce,
+            };
+            let initial: Collected = {requests, pending: state.pending, effects: []};
+            let collected = array.fold(observed.0.1, initial, fn(found, effect) {
+                match effect {
+                    'EesCall(call) => {
+                        if find_request(found.requests, call.request_id) == 'None {
+                            fail!("actor emitted EesCall for an unknown request", call.request_id)
+                        } else if array.any(found.pending, fn(item) { item.id == call.id }) {
+                            fail!("actor reused an active EES call id", call.id)
+                        } else {
+                            {
+                                requests: found.requests,
+                                pending: array.push(found.pending, {
+                                    id: call.id,
+                                    request_id: call.request_id,
+                                }),
+                                effects: array.push(found.effects, 'EesCall({
+                                    actor: call.request.0,
+                                    input: call.request.2,
+                                    key: call.id,
+                                    operation: call.request.1,
+                                })),
+                            }
+                        }
+                    },
+                    'Reply(reply) => match find_request(found.requests, reply.request_id) {
+                        'None => fail!("actor replied to an unknown request", reply.request_id),
+                        'Some(current) => if array.any(found.pending, fn(item) {
+                            item.request_id == reply.request_id
+                        }) {
+                            fail!("actor replied while EES calls were still active", reply.request_id)
+                        } else {
+                            {
+                                requests: remove_request(found.requests, reply.request_id),
+                                pending: found.pending,
+                                effects: array.push(found.effects, 'Output(success_response(
+                                    reply.value,
+                                    current.diagnostics,
+                                ))),
+                            }
+                        },
+                    },
+                }
+            });
+            maybe_exit(
+                {
+                    service,
+                    next_request: state.next_request,
+                    requests: collected.requests,
+                    pending: collected.pending,
+                    eof: state.eof,
+                },
+                collected.effects,
+            )
+        },
+    }
+};
+
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer]) =
     fn(options, env) {
         let data_srcs = configure_sources(options, env.sources);
+        let models = declared_ees(options, env.ees);
         (
             {
                 data_srcs,
-                ees: {},
+                ees: models,
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
@@ -70,36 +256,71 @@ export def config:
             },
             fn(resources, main) {
                 let values = dict.map_values(resources.data, fn(item) { item.data });
-                let state: State = {handler: main.serve(values)};
+                let initial: State = {
+                    service: main.service(values),
+                    next_request: 0,
+                    requests: [],
+                    pending: [],
+                    eof: 'False,
+                };
                 let reduce: Reducer = fn(state, event) {
                     match event {
                         'Initialize => (state, []),
-                        'StdinLine('Some(line)) => do {
-                            let request = json.parse(line) |> result.unwrap;
-                            let response: Value = match rt.with_diagnostics(state.handler)(request) {
-                                'Ok(observed) => 'Object({
-                                    ok: observed.0,
-                                    error: 'False,
-                                    diagnostics: 'Array(array.map(observed.1, fn(diagnostic) {
-                                        'Object({message: 'String(diagnostic.message)})
-                                    })),
-                                }),
-                                'Err(diagnostics) => 'Object({
-                                    ok: 'None,
-                                    error: 'True,
-                                    diagnostics: 'Array(array.map(diagnostics, fn(diagnostic) {
-                                        'Object({message: 'String(diagnostic.message)})
-                                    })),
-                                }),
+                        'StdinLine('Some(line)) => {
+                            let input = json.parse(line) |> result.unwrap;
+                            let id = string.join([
+                                "request-",
+                                fmt.render(fmt.from_int(state.next_request)),
+                            ], "");
+                            let state: State = {
+                                service: state.service,
+                                next_request: state.next_request + 1,
+                                requests: array.push(state.requests, {id, diagnostics: []}),
+                                pending: state.pending,
+                                eof: state.eof,
                             };
-                            let response = json.stringify(response);
-                            (state, ['Output(string.join([response, ""], "\n"))])
+                            advance(state, id, 'Request({id, input}))
                         },
-                        'StdinLine('None) => (state, ['Exit(0)]),
-                        _ => fail!("serve Entry received an unsupported event", event),
+                        'StdinLine('None) => maybe_exit(
+                            {
+                                service: state.service,
+                                next_request: state.next_request,
+                                requests: state.requests,
+                                pending: state.pending,
+                                eof: 'True,
+                            },
+                            [],
+                        ),
+                        'EesReply(reply) => match array.find(state.pending, fn(item) {
+                            item.id == reply.key
+                        }) {
+                            'None => fail!("actor received an unknown EES reply", reply.key),
+                            'Some(pending) => {
+                                let state: State = {
+                                    service: state.service,
+                                    next_request: state.next_request,
+                                    requests: state.requests,
+                                    pending: remove_pending(state.pending, pending.id),
+                                    eof: state.eof,
+                                };
+                                match find_request(state.requests, pending.request_id) {
+                                    'None => maybe_exit(state, []),
+                                    'Some(_) => advance(
+                                        state,
+                                        pending.request_id,
+                                        'EesReply({
+                                            id: pending.id,
+                                            request_id: pending.request_id,
+                                            result: reply.result,
+                                        }),
+                                    ),
+                                }
+                            },
+                        },
+                        _ => fail!("serve actor received an unsupported event", event),
                     }
                 };
-                (state, reduce)
+                (initial, reduce)
             },
         )
     };

@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use telora_core::{EntryDataSources, SystemDataFormat, SystemDataSource};
+use std::fs;
+use std::io::{self, Read};
+use telora_core::{EntryDataSources, EvalSource, SystemDataFormat, SystemDataSource};
 
 #[derive(Clone)]
 pub(crate) struct NamedSource {
@@ -105,6 +107,83 @@ pub(crate) fn collect_entry_sources(
         return Err("standard input can provide at most one named source".into());
     }
     Ok(CollectedEntrySources { entry, locators })
+}
+
+pub(crate) fn collect_eval_sources(
+    sources: Vec<NamedSource>,
+    max_bytes: usize,
+) -> Result<BTreeMap<String, EvalSource>, String> {
+    let mut collected = BTreeMap::new();
+    let mut read_stdin = false;
+    for source in sources {
+        if collected.contains_key(&source.name) {
+            return Err(format!(
+                "source {:?} was provided more than once",
+                source.name
+            ));
+        }
+        let public_name = run_context_source_name(&source.name).replace("@run-ctx/", "@eval-ctx/");
+        let description = format!("eval source {public_name:?}");
+        let locator = source.source.src.as_str();
+        let bytes = if let Some((scheme, location)) = locator.split_once("://") {
+            if scheme.starts_with("stdin+") {
+                if read_stdin {
+                    return Err("standard input can provide at most one named source".into());
+                }
+                read_stdin = true;
+                read_limited(io::stdin().lock(), max_bytes, &description)?
+            } else {
+                let file = fs::File::open(location)
+                    .map_err(|error| format!("cannot read {description}: {error}"))?;
+                read_limited(file, max_bytes, &description)?
+            }
+        } else {
+            let file = fs::File::open(locator)
+                .map_err(|error| format!("cannot read {description}: {error}"))?;
+            read_limited(file, max_bytes, &description)?
+        };
+        let text = String::from_utf8(bytes)
+            .map_err(|error| format!("eval source is not UTF-8: {error}"))?;
+        collected.insert(
+            source.name,
+            EvalSource {
+                source_name: public_name,
+                format: source.source.format,
+                text,
+            },
+        );
+    }
+    Ok(collected)
+}
+
+fn read_limited(reader: impl Read, max_bytes: usize, description: &str) -> Result<Vec<u8>, String> {
+    let max_read = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+    reader
+        .take(max_read)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {description}: {error}"))?;
+    if bytes.len() > max_bytes {
+        return Err(format!(
+            "{description} exceeds file_size limit ({} > {max_bytes})",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn eval_source_names(sources: &[NamedSource]) -> Result<Vec<String>, String> {
+    let mut names = sources
+        .iter()
+        .map(|source| source.name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    if names.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("an eval source name was provided more than once".into());
+    }
+    Ok(names)
 }
 
 fn run_context_source_name(key: &str) -> String {

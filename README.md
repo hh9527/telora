@@ -50,10 +50,22 @@ hello/
 `hello/src/bin/main.telora`：
 
 ```telora
+import "std/actor" as actor;
 import "std/value" {Value};
 
-export def main: Fn(Dict(Value)) -> Value = fn(sources) {
-    'String("hello, telora")
+type State = struct {};
+
+export def service: Fn(Dict(Value)) -> actor.Service = fn(sources) {
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (
+                state,
+                [actor.reply(request.id, 'String("hello, telora"))],
+            ),
+            'EesReply(_) => fail!("unexpected EES reply"),
+        }
+    };
+    actor.service(State, {}, reduce)
 };
 ```
 
@@ -66,7 +78,7 @@ target/release/telora run main -C hello
 target/release/telora query exports @bin/main -C hello
 ```
 
-内置 `run` Entry 调用 `main` 一次，并把返回的 `Value` 编码为 JSON。
+内置 `run` Entry 向 service 投递一个请求，并把 `Reply` 中的 `Value` 编码为 JSON。
 
 ## 语言模型
 
@@ -204,11 +216,12 @@ Telora 程序本身没有外部权限。`run` 选择内置的单次运行 Entry�
 输出、退出、进程替换和异步 stdio child 调度。Host 负责执行效果、回送事件、等待
 子进程以及最终发布。
 
-Main 没有 EES actor option 时，`run` 选择 `std/entry/default`，`serve` 选择
-`std/entry/serve`。`option "ees.imos"` 和 `option "ees.sqlite"` 声明应用自己的完整
-actor Service，Host 据此选择 EES task Entry。路径模板中的变量由 `option "ees.vars"`
-约束，并由 `--ees-var NAME=VALUE` 绑定。应用以 `std/ees.Task` 的 `Done` / `Call`
-continuation 显式描述外部效果。Entry 源码位于
+`run` 与 `serve` 都要求 Main 导出 `service: Fn(Dict(Value)) -> actor.Service`。
+Service 持有显式 State 和 `reduce(State, Event) -> (State, Array(Effect))`；`run` 投递
+一个请求，`serve` 持续投递 transport 请求。`option "ees.imos"` 和
+`option "ees.sqlite"` 声明应用 EES 中的命名 native model，路径模板变量由
+`option "ees.vars"` 约束并由 `--ees-var NAME=VALUE` 绑定。应用 reducer 以普通数据
+`EesCall` 描述调用，并在后续 `EesReply` event 中处理结果。Entry 源码位于
 `src/entry/name.telora`，由 Host 选择，不能作为普通模块根或被普通模块 import。只有
 被 Host 选中的 Entry 可以访问其他 crate 的 private 模块和 `std/_...` 内部模块。
 
@@ -217,11 +230,13 @@ continuation 显式描述外部效果。Entry 源码位于
 
 ## 命令行
 
-当前稳定命令面有七项：
+当前命令面包括：
 
 ```text
-telora run [binary]        调用 @bin/<binary> 的单次 main
-telora serve [binary]      通过 stdio JSONL 持续调用 serve handler
+telora eval <module:name>  求值 @src module 的一个 Value 导出
+telora eval-with <module:name> [--source ...] [-- args...]  调用一个纯上下文函数
+telora run [binary]        向 @bin/<binary> service 投递一个请求
+telora serve [binary]      通过 stdio JSONL 持续向 service 投递请求
 telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
@@ -237,6 +252,11 @@ Components：IMOS 提供 `InstallShared`，`sqlite-query` 提供参数绑定的�
 按 XDG 目录解释，并在 XDG 变量缺失时回退到 `$HOME` 下的标准目录。解析后的物理路径
 不进入 Telora World。应用不能发现或调用包管理 Service。两条路径都不需要额外 executable。
 
+`eval` 要求导出类型为 `Value`。`eval-with` 要求导出类型为
+`Fn({sources: Dict(Value), env: Dict(String), args: Array(String)}) -> Value`；具名 source
+与环境变量分别由 `eval-ctx.sources` 和 `eval-ctx.env` option 声明。两条命令只进行
+module 求值和至多一次普通函数调用，不创建 Entry、运行循环或应用 EES。
+
 `query` 包含：
 
 ```text
@@ -246,8 +266,9 @@ telora query at <module-id>[:line[:column]] [-p pattern] [-k kinds]
 ```
 
 JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协议协商位置
-编码。`check` 不进行 Entry 调度，也不会调用已导出的函数，因此最终行为必须由严格
-`run` 验收。遇到失败时再使用 `run --best-effort` 扩大诊断覆盖。
+编码。`check` 不进行 Entry 调度，也不会调用已导出的函数；纯导出由 `eval` 或
+`eval-with` 验收，应用 service 由严格 `run` 验收。遇到应用初始化问题时可使用
+`run --best-effort` 扩大诊断覆盖。
 
 ## 资源限制
 

@@ -35,7 +35,8 @@ workspace snapshot 中的 source、定义、引用、类型图和诊断，不从
 运行上下文 source 以 `@run-ctx/<percent-encoded-key>` 注册；CLI Host 另存从这个公开名字
 到文件或 stdin locator 的私有映射。该 source 不进入 module graph，不分配 `ModuleId`，
 也不参与 import resolution。文件读取错误、provenance 和普通诊断只公开 canonical
-source path。
+source path。`eval-with` 使用相同机制，但 canonical 前缀为 `@eval-ctx/`；它在目标执行
+共享的 `SourceDatabase` 中完成格式验证和 Value 物化。
 
 主要实现入口是：
 
@@ -235,7 +236,7 @@ TypeId，再闭合递归边；不能先降成扁平 `TypeDescriptor`，否则 `O
 模块依赖和静态根成功晋升
 后，当前严格运行路径把 persistent heap 封装为只读 `FrozenMainWorld`；运行期所需的
 canonical witness 已经在该 heap 内闭合，构建用 `TypeStore` 本身不进入 Frozen API。
-所选根模块的执行结果、Entry transition 和普通调用仍位于 Work heap，并把冻结 Main
+所选根模块的执行结果、Entry transition、pure eval 调用和普通调用仍位于 Work heap，并把冻结 Main
 作为只读 background。
 
 Work 到 Main、Work 到新 Work 都使用根驱动的 copy collector：
@@ -328,11 +329,17 @@ Main 不直接读取 open world。Entry 也只声明 capabilities、接收 resou
 data；实际文件、环境、stdin 和子进程操作由 CLI `RunHost` 执行。当前没有为了 Entry
 而延迟发现或动态修改 Main module graph。
 
-CLI 的公开命令有 `run`、`serve`、`lock`、`check`、`query`（别名 `q`）、`lsp` 和
-`ees`。
-没有 EES actor option 时，`run` 选择 `std/entry/default`，`serve --bind stdio://` 选择
-`std/entry/serve`。存在 `ees.imos` 或 `ees.sqlite` 时，CLI 选择 `std/entry/ees-default`
-或 `std/entry/ees-serve`，由 Telora reducer 解释 `std/ees.Task` 并产生通用 EES effect。
+CLI 的公开命令有 `eval`、`eval-with`、`run`、`serve`、`lock`、`check`、`query`（别名
+`q`）、`lsp` 和 `ees`。`eval` 选择一个 `@src` module 的 `Value` 导出；`eval-with`
+选择一个接收 `{sources, env, args}` 并返回 `Value` 的导出函数。两条 pure eval 路径直接
+执行 module 与普通调用，不初始化 Entry、RunHost 或应用 EES。
+
+`run` 固定选择 `std/entry/default`，`serve --bind stdio://` 固定选择
+`std/entry/serve`。两个 Entry 都要求 Main 导出
+`service: Fn(Dict(Value)) -> actor.Service`。Service 在标准 Entry 边界将应用具体 State
+擦除为 Dyn，并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
+`EesCall` 映射成 component-neutral SystemEffect，将相关 Host reply 映射回 `EesReply`；
+是否声明 EES model 不改变 Entry 或 Main 接口。
 `check`、`query` 和 `lsp` 当前是
 Host 固定工具路径，不通过用户 Entry ABI。`ees` 不发现 workspace 或加载 Telora source，
 只建立 EES component 状态并桥接 stdin/stdout JSONL。
@@ -348,6 +355,8 @@ Host 固定工具路径，不通过用户 Entry ABI。`ees` 不发现 workspace 
 - copy/promotion 对共享、循环、closure、type witness 和 provenance 保持闭合且原子；
 - Fail 传播不产生二次根因，任何 error 都阻止最终 publication；
 - Entry capability negotiation 发生在 effect 执行前，Main 仍是封闭纯计算；
+- actor transition 显式返回完整 State，Event 与 Effect 不包含 callback 或 continuation；
+- pure eval 不创建 Entry、RunHost 或 application EES；
 - `query` / JSONL 的位置默认是 1-based line、0-based UTF-8 byte column；LSP 单独按
   客户端协商的 position encoding 转换。
 

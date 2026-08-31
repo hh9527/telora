@@ -172,3 +172,4 @@ fn jsonl(bytes: &[u8]) -> Vec<Value> {
 include!("cli/part-01.rs");
 include!("cli/part-02.rs");
 include!("cli/part-03.rs");
+include!("cli/part-04.rs");

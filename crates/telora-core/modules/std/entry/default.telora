@@ -1,4 +1,5 @@
 import "std/_rt" as rt;
+import "std/actor" as actor;
 import "std/array" as array;
 import "std/dict" as dict;
 import "std/dyn" as dyn;
@@ -6,14 +7,20 @@ import "std/json" as json;
 import "std/value" {Value};
 
 export type MainType = struct {
-    main: Fn(Dict(Value)) -> Value,
+    service: Fn(Dict(Value)) -> actor.Service,
 };
 
+type Pending = struct { id: String, request_id: String };
 type State = struct {
-    output: String,
+    service: actor.Service,
+    pending: Array(Pending),
     completed: Bool,
 };
-
+type Collected = struct {
+    pending: Array(Pending),
+    effects: Array(rt.SystemEffect),
+    reply: Option(actor.Reply),
+};
 type Transition = Tuple([State, Array(rt.SystemEffect)]);
 type Reducer = Fn(State, rt.SystemEvent) -> Transition;
 type Initializer = Fn(rt.SystemResources, MainType) -> Tuple([State, Reducer]);
@@ -37,10 +44,10 @@ def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc
     fn(options, sources) {
         let declared = declared_sources(options);
         let provided = dict.keys(sources);
-        let declarations_are_unique = array.all(declared, fn(name) {
+        let unique = array.all(declared, fn(name) {
             array.length(array.filter(declared, fn(other) { other == name })) == 1
         });
-        if declarations_are_unique == 'False {
+        if unique == 'False {
             fail!("option run-ctx.sources must contain unique names")
         } else if array.all(declared, fn(name) {
             array.any(provided, fn(other) { other == name })
@@ -55,14 +62,110 @@ def configure_sources: Fn(rt.SystemOptions, Dict(rt.DataSrc)) -> Dict(rt.DataSrc
         }
     };
 
+def declared_ees: Fn(rt.SystemOptions, Dict(String)) -> Dict(String) = fn(options, provided) {
+    let actions = array.filter(options, fn(action) {
+        action.key == "ees.imos" || action.key == "ees.sqlite"
+    });
+    let pairs = array.map(actions, fn(action) {
+        let name = match dyn.field(action.value, "name") {
+            'Ok(value) => match dyn.check_string(value) {
+                'Some(found) => found,
+                'None => fail!("EES model name must be String"),
+            },
+            'Err(_) => fail!("EES model declaration must contain name"),
+        };
+        let kind = if action.key == "ees.imos" { "imos" } else { "sqlite-query" };
+        (name, kind)
+    });
+    let unique = array.all(pairs, fn(declaration) {
+        declaration.0 != "" && array.length(array.filter(pairs, fn(other) {
+            other.0 == declaration.0
+        })) == 1
+    });
+    if unique == 'False {
+        fail!("EES model declarations must contain unique non-empty names")
+    } else if array.length(pairs) != array.length(dict.keys(provided)) ||
+        array.all(pairs, fn(declaration) {
+            match dict.get(provided, declaration.0) {
+                'Some(kind) => kind == declaration.1,
+                'None => 'False,
+            }
+        }) == 'False {
+        fail!("EES model declarations do not match Host bindings")
+    } else {
+        provided
+    }
+};
+
+def remove_pending: Fn(Array(Pending), String) -> Array(Pending) = fn(pending, id) {
+    array.filter(pending, fn(item) { item.id != id })
+};
+
+def advance: Fn(State, actor.Event) -> Transition = fn(state, event) {
+    let transition = state.service.reduce((state.service.state, event));
+    let service: actor.Service = {state: transition.0, reduce: state.service.reduce};
+    let initial: Collected = {pending: state.pending, effects: [], reply: 'None};
+    let collected = array.fold(transition.1, initial, fn(found, effect) {
+        match effect {
+            'EesCall(call) => {
+                if call.request_id != "run" {
+                    fail!("run actor emitted EesCall for an unknown request", call.request_id)
+                } else if array.any(found.pending, fn(item) { item.id == call.id }) {
+                    fail!("run actor reused an active EES call id", call.id)
+                } else {
+                    {
+                        pending: array.push(found.pending, {
+                            id: call.id,
+                            request_id: call.request_id,
+                        }),
+                        effects: array.push(found.effects, 'EesCall({
+                            actor: call.request.0,
+                            input: call.request.2,
+                            key: call.id,
+                            operation: call.request.1,
+                        })),
+                        reply: found.reply,
+                    }
+                }
+            },
+            'Reply(reply) => if reply.request_id != "run" {
+                fail!("run actor replied to an unknown request", reply.request_id)
+            } else match found.reply {
+                'Some(_) => fail!("run actor replied more than once"),
+                'None => {
+                    pending: found.pending,
+                    effects: found.effects,
+                    reply: 'Some(reply),
+                },
+            },
+        }
+    });
+    match collected.reply {
+        'Some(reply) => if array.length(collected.pending) != 0 ||
+            array.length(collected.effects) != 0 {
+            fail!("run actor replied while EES calls were still active")
+        } else {
+            (
+                {service, pending: [], completed: 'True},
+                ['Output(json.stringify(reply.value)), 'Exit(0)],
+            )
+        },
+        'None => (
+            {service, pending: collected.pending, completed: 'False},
+            collected.effects,
+        ),
+    }
+};
+
 export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer]) =
     fn(options, env) {
         let data_srcs = configure_sources(options, env.sources);
+        let models = declared_ees(options, env.ees);
         (
             {
                 data_srcs,
-                ees: {},
+                ees: models,
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
@@ -70,17 +173,34 @@ export def config:
             },
             fn(resources, main) {
                 let values = dict.map_values(resources.data, fn(item) { item.data });
-                let output = main.main(values) |> json.stringify;
-                let state: State = {output, completed: 'False};
+                let state: State = {
+                    service: main.service(values),
+                    pending: [],
+                    completed: 'False,
+                };
                 let reduce: Reducer = fn(state, event) {
                     if state.completed {
-                        fail!("default Entry received an event after completion", event)
+                        fail!("run actor received an event after completion", event)
                     } else match event {
-                        'Initialize => (
-                            {output: state.output, completed: 'True},
-                            ['Output(state.output), 'Exit(0)],
-                        ),
-                        _ => fail!("default Entry received an unsupported event", event),
+                        'Initialize => advance(state, 'Request({id: "run", input: 'None})),
+                        'EesReply(reply) => match array.find(state.pending, fn(item) {
+                            item.id == reply.key
+                        }) {
+                            'None => fail!("run actor received an unknown EES reply", reply.key),
+                            'Some(pending) => advance(
+                                {
+                                    service: state.service,
+                                    pending: remove_pending(state.pending, pending.id),
+                                    completed: 'False,
+                                },
+                                'EesReply({
+                                    id: pending.id,
+                                    request_id: pending.request_id,
+                                    result: reply.result,
+                                }),
+                            ),
+                        },
+                        _ => fail!("run actor received an unsupported event", event),
                     }
                 };
                 (state, reduce)
