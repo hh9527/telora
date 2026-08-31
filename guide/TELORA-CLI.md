@@ -16,6 +16,7 @@ Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令�
 ```text
 telora run main -C examples/my-crate
 telora run main -C examples/my-crate --source request=stdin+json://
+telora run main -C examples/my-crate --ees sqlite-query:catalog=sqlite:///srv/catalog.sqlite
 telora serve main -C examples/my-crate --bind stdio://
 telora run verify -C examples/my-crate
 telora check @test/compiler -C examples/my-crate
@@ -53,6 +54,11 @@ export def lowering_case = do {
   触发可恢复 failure 时是 `{"ok": null, "error": true, "diagnostics": [...]}`，服务
   继续处理下一行。当前诊断 JSON 只稳定公开 `message`。资源耗尽、取消等终止性失败，
   以及初始化和 Entry 协议错误仍带外报告并终止进程。
+- `run` 和 `serve` 可重复使用 `--ees KIND:NAME=LOCATOR` 构造应用自己的命名 Native
+  Actor Service。Main 用 `option "run-ctx.ees" [{name, kind}, ...]` 声明完全相同的
+  actor 集合，并返回 `std/ees.Task`。`std/imos.install_shared` 构造应用 IMOS 请求，
+  `std/sqlite-query.query` 构造带 positional bindings 的只读查询；两者都由标准 Entry
+  产生显式 effect。应用 Service 与 package Host 的私有 IMOS Service 完全隔离。
 - Main 用 `option "run-ctx.sources" ["config", "request"]` 声明 `run` 和 `serve`
   共用的初始化 source。声明的名称必须全部提供，CLI 也不能提供未声明或重复的名称。
   `--source name=path.json` 按 `.json/.yaml/.yml/.toml` 推断格式；

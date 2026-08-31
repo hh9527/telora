@@ -92,3 +92,235 @@ fn ees_serves_install_shared_requests() {
     assert_eq!(failed["type"], "error");
     assert!(home.join("empty.json").is_file());
 }
+
+#[test]
+fn run_with_sqlite_query_actor_drives_an_ees_task() {
+    let cwd = fixture();
+    let database = cwd.join("catalog.sqlite");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE items (name TEXT, score INTEGER);\n\
+             INSERT INTO items VALUES ('low', 1), ('high', 3), ('mid', 2);",
+        )
+        .unwrap();
+    drop(connection);
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/ees" as ees;
+import "std/sqlite-query" as sqlite;
+import "std/value" {Value};
+
+option "run-ctx.ees" [{name: "catalog", kind: "sqlite-query"}];
+
+export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
+    ees.call(
+        sqlite.query(
+            "catalog",
+            "SELECT name, score FROM items WHERE score > ? ORDER BY score DESC",
+            ['Int(1)],
+        ),
+        fn(result) {
+            match result {
+                'Ok(value) => ees.done(value),
+                'Err(message) => fail!("SQLite query failed", message),
+            }
+        },
+    )
+};"#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args([
+            "run",
+            "main",
+            "--ees",
+            &format!("sqlite-query:catalog=sqlite://{}", database.display()),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!({
+            "columns": ["name", "score"],
+            "rows": [["high", 3], ["mid", 2]],
+        })
+    );
+}
+
+#[test]
+fn serve_with_sqlite_query_actor_correlates_concurrent_tasks() {
+    let cwd = fixture();
+    let database = cwd.join("catalog.sqlite");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch("CREATE TABLE items (score INTEGER); INSERT INTO items VALUES (1), (2), (3);")
+        .unwrap();
+    drop(connection);
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/ees" as ees;
+import "std/sqlite-query" as sqlite;
+import "std/value" {Value};
+
+option "run-ctx.ees" [{name: "catalog", kind: "sqlite-query"}];
+
+export def serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task = fn(sources) {
+    fn(request) {
+        let query = match request {
+            'String(_) => sqlite.query("catalog", "SELECT missing FROM absent", []),
+            _ => sqlite.query("catalog", "SELECT score FROM items WHERE score > ? ORDER BY score", [request]),
+        };
+        ees.call(
+            query,
+            fn(result) {
+                match result {
+                    'Ok(value) => ees.done(value),
+                    'Err(message) => fail!("SQLite query failed", message),
+                }
+            },
+        )
+    }
+};"#,
+    )
+    .unwrap();
+    let mut child = telora(&cwd)
+        .args([
+            "serve",
+            "main",
+            "--ees",
+            &format!("sqlite-query:catalog=sqlite://{}", database.display()),
+            "--bind",
+            "stdio://",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"1\n\"bad\"\n2\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let replies = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(replies.len(), 3);
+    let failed = replies.iter().find(|reply| reply["error"] == true).unwrap();
+    assert_eq!(failed["ok"], serde_json::Value::Null);
+    assert_eq!(failed["diagnostics"][0]["message"], "SQLite query failed");
+    let mut rows = replies
+        .iter()
+        .filter(|reply| reply["error"] == false)
+        .map(|reply| reply["ok"]["rows"].clone())
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|value| value.to_string());
+    assert_eq!(rows, vec![serde_json::json!([[2], [3]]), serde_json::json!([[3]])]);
+}
+
+#[test]
+fn application_imos_actor_with_package_name_stays_in_its_bound_root() {
+    let cwd = fixture();
+    let actor_root = cwd.join("application-materializer");
+    let plan = cwd.join("plan.json");
+    fs::write(
+        &plan,
+        r#"{"version":1,"name":"application.json","key":"application-v1","items":[]}"#,
+    )
+    .unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/dict" as dict;
+import "std/ees" as ees;
+import "std/imos" as imos;
+import "std/value" {Value};
+
+option "run-ctx.sources" ["plan"];
+option "run-ctx.ees" [{name: "telora-packages", kind: "imos"}];
+
+export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) {
+    let plan = match dict.get(sources, "plan") {
+        'Some(value) => value,
+        'None => fail!("missing plan"),
+    };
+    ees.call(imos.install_shared("telora-packages", plan), fn(result) {
+        match result {
+            'Ok(value) => ees.done(value),
+            'Err(message) => fail!("installation failed", message),
+        }
+    })
+};"#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args([
+            "run",
+            "main",
+            "--source",
+            &format!("plan={}", plan.display()),
+            "--ees",
+            &format!("imos:telora-packages={}", actor_root.display()),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert!(
+        Path::new(root["root"].as_str().unwrap()).starts_with(actor_root.join("store")),
+        "{root}"
+    );
+    assert!(actor_root.join("home/application.json").is_file());
+    assert!(!cwd.join(".telora/crates-refs/application.json").exists());
+}
+
+#[test]
+fn application_cannot_address_the_package_actor_without_its_own_binding() {
+    let cwd = fixture();
+    let database = cwd.join("catalog.sqlite");
+    rusqlite::Connection::open(&database).unwrap();
+    fs::write(
+        cwd.join("src/bin/main.telora"),
+        r#"import "std/ees" as ees;
+import "std/value" {Value};
+option "run-ctx.ees" [{name: "telora-packages", kind: "imos"}];
+export def main: Fn(Dict(Value)) -> ees.Task = fn(sources) { ees.done('None) };"#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args([
+            "run",
+            "main",
+            "--ees",
+            &format!("sqlite-query:catalog=sqlite://{}", database.display()),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("run-ctx.ees declarations do not match Host actor bindings")
+    );
+}

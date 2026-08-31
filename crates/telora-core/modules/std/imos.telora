@@ -1,0 +1,13 @@
+import "std/ees" as ees;
+import "std/dict" as dict;
+import "std/value" {Value};
+
+def install_shared: Fn(String, Value) -> ees.Request = fn(actor, plan) {
+    ees.request(
+        actor,
+        "InstallShared",
+        'Object(dict.map_values({plan}, fn(value) { value })),
+    )
+};
+
+export { install_shared };

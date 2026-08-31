@@ -125,6 +125,7 @@ pub enum SystemStdin {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemCaps {
     pub data_sources: BTreeMap<String, SystemDataSource>,
+    pub ees: BTreeMap<String, String>,
     pub spawn_child: bool,
     pub text_sources: BTreeMap<String, SystemTextSource>,
     pub vars: Vec<String>,
@@ -132,7 +133,22 @@ pub struct SystemCaps {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EesCall {
+    pub key: String,
+    pub actor: String,
+    pub operation: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EesReply {
+    pub key: String,
+    pub result: Result<serde_json::Value, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SystemEvent {
+    EesReply(EesReply),
     StdinLine(Option<String>),
     ChildStdout(ChildText),
     ChildStderr(ChildText),
@@ -144,6 +160,8 @@ pub type RunHostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output
 
 pub trait RunHost {
     fn resources_provider(&mut self) -> crate::NativeFunction;
+
+    fn ees_actors(&self) -> BTreeMap<String, String>;
 
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>>;
 
@@ -162,6 +180,8 @@ pub trait RunHost {
     ) -> RunHostFuture<'_, Result<(), String>>;
 
     fn post_stdin(&mut self, text: ChildText) -> RunHostFuture<'_, Result<(), String>>;
+
+    fn ees_call(&mut self, call: EesCall) -> RunHostFuture<'_, Result<(), String>>;
 
     fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>>;
 
@@ -213,9 +233,14 @@ impl RunHost for NoProcessRunHost {
         )
     }
 
+    fn ees_actors(&self) -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
+
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async move {
             if !caps.data_sources.is_empty()
+                || !caps.ees.is_empty()
                 || !caps.text_sources.is_empty()
                 || !caps.vars.is_empty()
                 || caps.stdin != SystemStdin::Null
@@ -244,6 +269,10 @@ impl RunHost for NoProcessRunHost {
 
     fn post_stdin(&mut self, _text: ChildText) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async { Err("this Host does not provide stdio child processes".into()) })
+    }
+
+    fn ees_call(&mut self, _call: EesCall) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async { Err("this Host does not provide EES actors".into()) })
     }
 
     fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>> {

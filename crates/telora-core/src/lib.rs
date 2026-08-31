@@ -59,11 +59,12 @@ pub use json::{
 pub use lexer::{FrontendError, SourceLocation};
 pub use module::{
     ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode, ChildStdio,
-    ChildText, DataLimits, Engine, EngineBuilder, EngineConfig, EntryDataSources,
-    InstantiatedModule, LoadedModule, LoadedOptionAction, ModuleError, PendingModule, RunHost,
-    RunHostFuture, RunOutcome, RunTermination, SpawnStdioChild, SystemCaps, SystemDataFormat,
-    SystemDataSource, SystemEvent, SystemStdin, SystemTextSource, evaluate_expression_module,
-    evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
+    ChildText, DataLimits, EesCall, EesReply, Engine, EngineBuilder, EngineConfig,
+    EntryDataSources, InstantiatedModule, LoadedModule, LoadedOptionAction, ModuleError,
+    PendingModule, RunHost, RunHostFuture, RunOutcome, RunTermination, SpawnStdioChild, SystemCaps,
+    SystemDataFormat, SystemDataSource, SystemEvent, SystemStdin, SystemTextSource,
+    evaluate_expression_module, evaluate_expression_module_with_quota,
+    evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
     FIRST_DYNAMIC_MODULE_LOCAL, FuncId, ModuleCName, ModuleCatalogEntry, ModuleCatalogOrigin,

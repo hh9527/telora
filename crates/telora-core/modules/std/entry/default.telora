@@ -62,6 +62,7 @@ export def config:
         (
             {
                 data_srcs,
+                ees: {},
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],

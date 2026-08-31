@@ -21,4 +21,6 @@ tower-service = "0.3"
 
 [dev-dependencies]
 flate2 = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4"
+tempfile = "3"

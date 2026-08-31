@@ -14,7 +14,7 @@ export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
-            {data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Lined},
+            {data_srcs: {}, ees: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Lined},
             fn(resources, main) {
                 (0, fn(state, event) {
                     match event {
@@ -74,7 +74,7 @@ export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {
         (
-            {data_srcs: {}, spawn_child: 'False, text_srcs: {missing: {default: 'None, src: "missing.txt"}}, vars: [], stdin: 'Null},
+            {data_srcs: {}, ees: {}, spawn_child: 'False, text_srcs: {missing: {default: 'None, src: "missing.txt"}}, vars: [], stdin: 'Null},
             fn(resources, main) {
                 (0, fn(state, event) { (state, ['Output("initializer ran"), 'Exit(0)]) })
             },
@@ -111,6 +111,7 @@ export def config:
                 data_srcs: {
                     input: {default: 'Some('String("from-default")), fmt: 'Json, src: "input.json"},
                 },
+                ees: {},
                 spawn_child: 'False,
                 text_srcs: {
                     message: {default: 'Some("text-default"), src: "message.txt"},
@@ -888,7 +889,7 @@ export def config:
         };
         let configured = `\{first.key},\{second.key}:\{arg}:\{env.platform.os}:\{env.platform.arch}`;
         (
-            {data_srcs: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null},
+            {data_srcs: {}, ees: {}, spawn_child: 'False, text_srcs: {}, vars: [], stdin: 'Null},
             fn(resources, main) {
                 (configured, fn(state, event) {
                     match event {
@@ -1079,6 +1080,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             'ChildStderr(_) => (state, []),
             'ChildExited(_) => (state, ['Output(state), 'Exit(0)]),
             'StdinLine(_) => fail!("unexpected stdin event"),
+            'EesReply(_) => fail!("unexpected EES event"),
         }
     })
 };"#,
@@ -1122,7 +1124,7 @@ export def config:
     Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initializer])
     = fn(options, env) {{
         (
-            {{data_srcs: {{}}, spawn_child: 'False, text_srcs: {{}}, vars: [], stdin: 'Null}},
+            {{data_srcs: {{}}, ees: {{}}, spawn_child: 'False, text_srcs: {{}}, vars: [], stdin: 'Null}},
             fn(resources, main) {{
                 (0, fn(state, event) {{
                     (state, [
@@ -1240,6 +1242,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             }},
             'ChildExited(status) => (state, ['Output("exited"), 'Exit(0)]),
             'StdinLine(_) => fail!("unexpected stdin event"),
+            'EesReply(_) => fail!("unexpected EES event"),
         }}
     }})
 }};"#,
@@ -1332,6 +1335,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             'ChildStderr(_) => (state, []),
             'ChildExited(_) => fail!("child exited before Entry requested Exit"),
             'StdinLine(_) => fail!("unexpected stdin event"),
+            'EesReply(_) => fail!("unexpected EES event"),
         }}
     }})
 }};"#,
@@ -1408,6 +1412,7 @@ def legacy_initialize: Fn(MainType) -> Tuple([State, Fn(State, rt.SystemEvent) -
             'ChildStderr(_) => (state, []),
             'ChildExited(_) => (state, []),
             'StdinLine(_) => fail!("unexpected stdin event"),
+            'EesReply(_) => fail!("unexpected EES event"),
         }}
     }})
 }};"#,

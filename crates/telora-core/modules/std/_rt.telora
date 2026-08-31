@@ -23,6 +23,7 @@ type Platform = struct {
 
 type Env = struct {
     args: Array(String),
+    ees: Dict(String),
     platform: Platform,
     sources: Dict(DataSrc),
 };
@@ -52,6 +53,7 @@ type Stdin = enum {
 
 type SystemCaps = struct {
     data_srcs: Dict(DataSrc),
+    ees: Dict(String),
     spawn_child: Bool,
     text_srcs: Dict(TextSrc),
     vars: Array(String),
@@ -117,8 +119,21 @@ type ChildSpawnResult = struct {
     result: Result(Int, String),
 };
 
+type EesCall = struct {
+    actor: String,
+    input: Value,
+    key: String,
+    operation: String,
+};
+
+type EesReply = struct {
+    key: String,
+    result: Result(Value, String),
+};
+
 type SystemEvent = enum {
     'Initialize,
+    'EesReply(EesReply),
     'StdinLine(Option(String)),
     'ChildStdout(ChildText),
     'ChildStderr(ChildText),
@@ -127,6 +142,7 @@ type SystemEvent = enum {
 };
 
 type SystemEffect = enum {
+    'EesCall(EesCall),
     'SpawnStdioChild(SpawnStdioChild),
     'PostStdin(ChildText),
     'Exec(ChildOpts),
@@ -155,6 +171,8 @@ export {
     ChildText,
     ChildExited,
     ChildSpawnResult,
+    EesCall,
+    EesReply,
     SystemEvent,
     SystemEffect,
 };

@@ -228,10 +228,15 @@ graph 和每个 binary 的 crate closure；除显式 lock 操作外，Host 只�
 生命周期内不变的 crate-name 到 root 映射。Package source 和物理 root 不进入 module
 identity。
 
-**Extra Effect Service（EES）** 是 Native Actor Components 的组合 facade。`telora ees`
-以 JSONL 暴露同一 facade；工具链可以在进程内提交同样的 Request。当前首个 component
-是 IMOS，其 `InstallShared` operation 负责共享、不可变 installation root 的构造、发布
-与复用。Telora 工具链和 `telora-core` 不直接依赖 IMOS 内部类型。
+**Extra Effect Service（EES）** 是由完整 manifest 构造的命名 Native Actor Components
+组合 facade。IMOS actor 通过 `InstallShared` 构造、发布并复用共享不可变 installation
+root；`sqlite-query` actor 对一个只读数据库执行带 positional JSON scalar bindings 的
+`Query`。operation 只能选择 manifest 中已有的逻辑名称，不能选择物理资源。
+
+Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 Host 只从
+`run/serve --ees` 构造另一个 Service，并把其 name-to-kind 清单作为 Entry capability。
+两个 Service 的名称空间、资源和生命周期隔离；应用不能发现或调用 package Service。
+Telora 工具链和 `telora-core` 不依赖 component 内部类型。
 
 只有模块图节点拥有 module identity 和 `ModuleId`。Telora module 与 static data module
 的 canonical source path 通常等于其 module identity；运行上下文 source 等非模块输入

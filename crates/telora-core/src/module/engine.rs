@@ -347,6 +347,16 @@ impl Engine {
                 ModuleCName::builtin("std/entry/serve"),
                 serve_entry_source().to_owned(),
             )
+        } else if entry_selector == EES_DEFAULT_ENTRY_MODULE {
+            (
+                ModuleCName::builtin(EES_DEFAULT_ENTRY_MODULE),
+                ees_default_entry_source().to_owned(),
+            )
+        } else if entry_selector == EES_SERVE_ENTRY_MODULE {
+            (
+                ModuleCName::builtin(EES_SERVE_ENTRY_MODULE),
+                ees_serve_entry_source().to_owned(),
+            )
         } else {
             let entry = resolver
                 .resolve_entry(entry_selector)
@@ -428,11 +438,13 @@ impl Engine {
             &loader.main.heap,
             &pending.inner.options,
         )?;
+        let host_ees = host.ees_actors();
         let env = make_entry_env(
             entry_world.heap_mut(),
             &loader.main.heap,
             entry_args,
             entry_sources,
+            &host_ees,
         );
         let configured = invoke_world_member_in(
             &loader.main.heap,
@@ -652,7 +664,12 @@ impl Engine {
                         ModuleError::new("Entry made no progress and the Host has no pending event")
                     })?,
             };
-            let event = runtime_system_event(state.heap_mut(), &entry.runtime.main.heap, event)?;
+            let event = runtime_system_event(
+                state.heap_mut(),
+                &entry.runtime.main.heap,
+                type_id,
+                event,
+            )?;
             let transition = entry
                 .invoke_reducer_in_work(
                     reducer,
@@ -680,6 +697,15 @@ impl Engine {
                         "Entry emitted a child-process effect without spawn_child capability",
                     ));
                 }
+                if tag.as_atom().as_deref() == Some("EesCall") {
+                    let call = parse_ees_call_ref(effect.tagged_parts().unwrap().1)?;
+                    if !caps.ees.contains_key(&call.actor) {
+                        return Err(ModuleError::new(format!(
+                            "Entry emitted an EES effect for undeclared actor {:?}",
+                            call.actor
+                        )));
+                    }
+                }
             }
             let mut terminal = None;
             for effect in effects {
@@ -693,6 +719,12 @@ impl Engine {
                     .tagged_parts()
                     .ok_or_else(|| ModuleError::new("Entry returned an invalid SystemEffect"))?;
                 match tag.as_atom().as_deref() {
+                    Some("EesCall") => {
+                        let call = parse_ees_call_ref(payload)?;
+                        host.ees_call(call).await.map_err(|error| {
+                            ModuleError::new(format!("cannot dispatch EES call: {error}"))
+                        })?;
+                    }
                     Some("SpawnStdioChild") => {
                         let child = parse_spawn_stdio_child_ref(payload)?;
                         host.spawn_stdio_child(child).await.map_err(|error| {

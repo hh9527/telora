@@ -149,6 +149,7 @@ export def config:
     (
         {{
             data_srcs: {{}},
+            ees: {{}},
             spawn_child: {spawn_child},
             text_srcs: {{}},
             vars: [],

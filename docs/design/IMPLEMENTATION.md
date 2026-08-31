@@ -93,11 +93,17 @@ crate mode 在构造 `ModuleResolver` 前执行 package preparation：向上发�
 effective root。准备结果是 `ResolvedWorkspace`，同时供 CLI 和 LSP 使用；resolver、
 module loader 和 VM 不执行 package acquisition，也不改写 lock。
 
-Cargo workspace 中的 `telora-ees` 是 Native Actor Components 的组合根，当前只依赖
-`imos` component。`telora` package Host 和 `telora ees` JSONL adapter 都依赖
-`telora-ees` 的 Request/Event facade；`telora-core` 不依赖 EES 或 IMOS。公开 operation
-和 progress vocabulary 使用 `InstallShared`，组件内部 reducer/effect 继续拥有下载、锁、
-安装发布与回收状态。
+Cargo workspace 中的 `telora-ees` 是 Native Actor Components 的组合根，依赖 `imos`
+和 `sqlite-query` components。强类型 manifest 在 Service 启动前绑定逻辑 actor name 与
+物理构造参数；通用 `Call {id, actor, operation, input}` 只能调度已构造 actor。
+`telora` package Host、应用 RunHost 和 `telora ees` JSONL adapter 都依赖该 facade；
+`telora-core` 只拥有 component-neutral `EesCall/EesReply` Entry ABI，不依赖 EES、IMOS
+或 SQLite 实现。
+
+Package preparation 构造私有 `telora-packages` IMOS Service。`run/serve --ees` 单独构造
+应用 Service，并只把 name-to-kind map 注入 `Env`；locator、IMOS store/home 和数据库
+路径不进入 Telora World。RunHost 异步 dispatch call，把终态转为一个关联 `EesReply`
+event。Engine 与 RunHost 都按 `SystemCaps.ees` 校验 actor name。
 
 `telora-crate.json` 的 `modules` 是普通 `src/` module 的权威清单。清单项在准备阶段
 映射并 canonicalize 到物理文件；未列出的文件不会进入 catalog。`src/bin/*`、
@@ -323,8 +329,10 @@ data；实际文件、环境、stdin 和子进程操作由 CLI `RunHost` 执行�
 
 CLI 的公开命令有 `run`、`serve`、`lock`、`check`、`query`（别名 `q`）、`lsp` 和
 `ees`。
-`run` 固定选择 `std/entry/default`；`serve --bind stdio://` 固定选择
-`std/entry/serve`。`check`、`query` 和 `lsp` 当前是
+没有 `--ees` 时，`run` 选择 `std/entry/default`，`serve --bind stdio://` 选择
+`std/entry/serve`。提供一个或多个 `--ees` 时，CLI 选择 `std/entry/ees-default` 或
+`std/entry/ees-serve`，由 Telora reducer 解释 `std/ees.Task` 并产生通用 EES effect。
+`check`、`query` 和 `lsp` 当前是
 Host 固定工具路径，不通过用户 Entry ABI。`ees` 不发现 workspace 或加载 Telora source，
 只建立 EES component 状态并桥接 stdin/stdout JSONL。
 

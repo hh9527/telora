@@ -4,6 +4,10 @@
 - Tracking: #145
 - Depends on: RFC 0262
 
+RFC 0264 extends this boundary with typed manifests, application-visible EES
+tasks, isolated package/application Services and the `sqlite-query` component.
+Its accepted definitions govern those surfaces.
+
 ## Summary
 
 Telora ships one binary and embeds native effect capabilities behind one

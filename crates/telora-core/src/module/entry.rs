@@ -227,6 +227,102 @@ fn parse_child_text_ref(value: crate::ValueRef<'_>, path: &str) -> Result<ChildT
     })
 }
 
+fn semantic_value_json(
+    value: crate::ValueRef<'_>,
+    path: &str,
+) -> Result<serde_json::Value, ModuleError> {
+    let value = protocol_ref(value);
+    if let Some(atom) = value.as_atom() {
+        return match atom.as_str() {
+            "None" => Ok(serde_json::Value::Null),
+            "True" => Ok(serde_json::Value::Bool(true)),
+            "False" => Ok(serde_json::Value::Bool(false)),
+            _ => Err(ModuleError::new(format!(
+                "{path} must be a JSON-compatible Value"
+            ))),
+        };
+    }
+    let (tag, payload) = value
+        .tagged_parts()
+        .ok_or_else(|| ModuleError::new(format!("{path} must be Value")))?;
+    let tag = tag
+        .as_atom()
+        .ok_or_else(|| ModuleError::new(format!("{path} has an invalid Value tag")))?;
+    match tag.as_str() {
+        "Int" => payload
+            .as_int()
+            .map(serde_json::Value::from)
+            .ok_or_else(|| ModuleError::new(format!("{path}.Int must contain Int"))),
+        "Float" => payload
+            .as_float()
+            .and_then(serde_json::Number::from_f64)
+            .map(serde_json::Value::Number)
+            .ok_or_else(|| ModuleError::new(format!("{path}.Float must be finite"))),
+        "String" => payload
+            .as_str()
+            .map(|value| serde_json::Value::String(value.as_str().to_owned()))
+            .ok_or_else(|| ModuleError::new(format!("{path}.String must contain String"))),
+        "Array" => {
+            let length = payload
+                .sequence_len()
+                .ok_or_else(|| ModuleError::new(format!("{path}.Array must contain Array(Value)")))?;
+            (0..length)
+                .map(|index| {
+                    semantic_value_json(
+                        payload.sequence_get(index).expect("index is in range"),
+                        &format!("{path}[{index}]"),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(serde_json::Value::Array)
+        }
+        "Object" => {
+            let names = payload.dict_fields().ok_or_else(|| {
+                ModuleError::new(format!("{path}.Object must contain Dict(Value)"))
+            })?;
+            names
+                .into_iter()
+                .map(|name| {
+                    semantic_value_json(
+                        payload.get(name).expect("field exists"),
+                        &format!("{path}.{name}"),
+                    )
+                    .map(|value| (name.to_owned(), value))
+                })
+                .collect::<Result<serde_json::Map<_, _>, _>>()
+                .map(serde_json::Value::Object)
+        }
+        "Bytes" | "LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime" => Err(
+            ModuleError::new(format!("{path}.{tag} is not supported by EES JSON calls")),
+        ),
+        _ => Err(ModuleError::new(format!(
+            "{path} has unknown Value tag {tag:?}"
+        ))),
+    }
+}
+
+fn parse_ees_call_ref(value: crate::ValueRef<'_>) -> Result<EesCall, ModuleError> {
+    let call = expect_protocol_record_ref(
+        value,
+        "EesCall",
+        &["actor", "input", "key", "operation"],
+    )?;
+    let key = protocol_string_ref(call.get("key").unwrap(), "EesCall.key")?;
+    let actor = protocol_string_ref(call.get("actor").unwrap(), "EesCall.actor")?;
+    let operation = protocol_string_ref(call.get("operation").unwrap(), "EesCall.operation")?;
+    if key.is_empty() || actor.is_empty() || operation.is_empty() {
+        return Err(ModuleError::new(
+            "EesCall key, actor, and operation must not be empty",
+        ));
+    }
+    Ok(EesCall {
+        key,
+        actor,
+        operation,
+        input: semantic_value_json(call.get("input").unwrap(), "EesCall.input")?,
+    })
+}
+
 fn runtime_record(heap: &mut Heap, fields: Vec<(&str, Val)>) -> Val {
     let mut fields = fields;
     fields.sort_by(|left, right| left.0.cmp(right.0));
@@ -276,15 +372,89 @@ fn runtime_child_text(heap: &mut Heap, main: &Heap, text: ChildText) -> Val {
     runtime_record(heap, vec![("key", key), ("data", data)])
 }
 
+fn runtime_json_value(
+    heap: &mut Heap,
+    main: &Heap,
+    type_id: crate::TypeId,
+    value: serde_json::Value,
+) -> Val {
+    let tagged = |heap: &mut Heap, tag: &str, payload| {
+        let tag = runtime_atom(heap, main, tag);
+        runtime_tagged(heap, tag, payload).with_type_id(type_id)
+    };
+    match value {
+        serde_json::Value::Null => runtime_atom(heap, main, "None").with_type_id(type_id),
+        serde_json::Value::Bool(value) => {
+            runtime_atom(heap, main, if value { "True" } else { "False" }).with_type_id(type_id)
+        }
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                tagged(heap, "Int", Val::unknown(DecodedValue::Int(value)))
+            } else {
+                tagged(
+                    heap,
+                    "Float",
+                    Val::unknown(DecodedValue::Float(
+                        value.as_f64().expect("JSON numbers are finite"),
+                    )),
+                )
+            }
+        }
+        serde_json::Value::String(value) => {
+            let value = runtime_string(heap, main, &value);
+            tagged(heap, "String", value)
+        }
+        serde_json::Value::Array(values) => {
+            let values = values
+                .into_iter()
+                .map(|value| runtime_json_value(heap, main, type_id, value))
+                .collect();
+            let values = runtime_array(heap, values);
+            tagged(heap, "Array", values)
+        }
+        serde_json::Value::Object(values) => {
+            let values = values
+                .into_iter()
+                .map(|(name, value)| (name, runtime_json_value(heap, main, type_id, value)))
+                .collect::<Vec<_>>();
+            let fields = values
+                .iter()
+                .map(|(name, value)| (name.as_str(), *value))
+                .collect();
+            let values = runtime_record(heap, fields);
+            tagged(heap, "Object", values)
+        }
+    }
+}
+
 fn runtime_system_event(
     heap: &mut Heap,
     main: &Heap,
+    value_type_id: crate::TypeId,
     event: Option<SystemEvent>,
 ) -> Result<Val, ModuleError> {
     let Some(event) = event else {
         return Ok(runtime_atom(heap, main, "Initialize"));
     };
     let (tag, payload) = match event {
+        SystemEvent::EesReply(reply) => {
+            let key = runtime_string(heap, main, &reply.key);
+            let (tag, payload) = match reply.result {
+                Ok(value) => (
+                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Ok)),
+                    runtime_json_value(heap, main, value_type_id, value),
+                ),
+                Err(error) => (
+                    Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::Err)),
+                    runtime_string(heap, main, &error),
+                ),
+            };
+            let result = runtime_tagged(heap, tag, payload);
+            (
+                "EesReply",
+                runtime_record(heap, vec![("key", key), ("result", result)]),
+            )
+        }
         SystemEvent::StdinLine(line) => {
             let line = match line {
                 Some(line) => {
@@ -398,6 +568,10 @@ fn validate_entry_interface(
             "args".into(),
             TypeDescriptor::Array(Box::new(TypeDescriptor::String)),
         ),
+        (
+            "ees".into(),
+            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
+        ),
         ("platform".into(), platform_type),
         (
             "sources".into(),
@@ -413,6 +587,10 @@ fn validate_entry_interface(
         (
             "data_srcs".into(),
             TypeDescriptor::Dict(Box::new(data_source)),
+        ),
+        (
+            "ees".into(),
+            TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
         ),
         ("spawn_child".into(), bool_type.clone()),
         ("stdin".into(), stdin),
@@ -503,8 +681,19 @@ fn validate_entry_interface(
         ),
         ("key".into(), TypeDescriptor::String),
     ]));
+    let ees_reply = TypeDescriptor::Struct(BTreeMap::from([
+        ("key".into(), TypeDescriptor::String),
+        (
+            "result".into(),
+            TypeDescriptor::Enum(BTreeMap::from([
+                ("Ok".into(), Some(Box::new(value_type.clone()))),
+                ("Err".into(), Some(Box::new(TypeDescriptor::String))),
+            ])),
+        ),
+    ]));
     let event_type = TypeDescriptor::Enum(BTreeMap::from([
         ("Initialize".into(), None),
+        ("EesReply".into(), Some(Box::new(ees_reply))),
         ("StdinLine".into(), Some(Box::new(option_string.clone()))),
         ("ChildStdout".into(), Some(Box::new(child_text.clone()))),
         ("ChildStderr".into(), Some(Box::new(child_text.clone()))),
@@ -514,7 +703,14 @@ fn validate_entry_interface(
         ),
         ("ChildExited".into(), Some(Box::new(child_exited))),
     ]));
+    let ees_call = TypeDescriptor::Struct(BTreeMap::from([
+        ("actor".into(), TypeDescriptor::String),
+        ("input".into(), value_type.clone()),
+        ("key".into(), TypeDescriptor::String),
+        ("operation".into(), TypeDescriptor::String),
+    ]));
     let effect_type = TypeDescriptor::Enum(BTreeMap::from([
+        ("EesCall".into(), Some(Box::new(ees_call))),
         ("Exec".into(), Some(Box::new(child_opts))),
         ("Exit".into(), Some(Box::new(TypeDescriptor::Int))),
         ("Output".into(), Some(Box::new(TypeDescriptor::String))),
@@ -630,6 +826,7 @@ fn make_entry_env(
     main: &Heap,
     arguments: &[String],
     sources: &EntryDataSources,
+    ees: &BTreeMap<String, String>,
 ) -> Val {
     let arguments = arguments
         .iter()
@@ -661,9 +858,19 @@ fn make_entry_env(
         })
         .collect::<Vec<_>>();
     let sources = allocate_record(heap, sources);
+    let ees = ees
+        .iter()
+        .map(|(name, kind)| (name.as_str(), runtime_string(heap, main, kind)))
+        .collect();
+    let ees = runtime_record(heap, ees);
     runtime_record(
         heap,
-        vec![("args", arguments), ("platform", platform), ("sources", sources)],
+        vec![
+            ("args", arguments),
+            ("ees", ees),
+            ("platform", platform),
+            ("sources", sources),
+        ],
     )
 }
 
@@ -682,7 +889,7 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
     let caps = expect_protocol_record_ref(
         value,
         "Entry.config SystemCaps",
-        &["data_srcs", "spawn_child", "stdin", "text_srcs", "vars"],
+        &["data_srcs", "ees", "spawn_child", "stdin", "text_srcs", "vars"],
     )?;
     let (data, data_keys) = dict(caps.get("data_srcs").unwrap(), "SystemCaps.data_srcs")?;
     let data_sources = data_keys
@@ -728,6 +935,26 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
                     has_default,
                 },
             ))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let (ees, ees_keys) = dict(caps.get("ees").unwrap(), "SystemCaps.ees")?;
+    let ees = ees_keys
+        .into_iter()
+        .map(|key| {
+            if key.is_empty() {
+                return Err(ModuleError::new(
+                    "SystemCaps.ees must use non-empty actor names",
+                ));
+            }
+            let kind =
+                protocol_string_ref(ees.get(key).unwrap(), &format!("SystemCaps.ees.{key}"))?;
+            if kind.is_empty() {
+                return Err(ModuleError::new(
+                    "SystemCaps.ees must use non-empty component kinds",
+                ));
+            }
+            Ok((key.to_owned(), kind))
         })
         .collect::<Result<_, _>>()?;
 
@@ -783,6 +1010,7 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
         protocol_bool_ref(caps.get("spawn_child").unwrap(), "SystemCaps.spawn_child")?;
     Ok(SystemCaps {
         data_sources,
+        ees,
         spawn_child,
         text_sources,
         vars: names,

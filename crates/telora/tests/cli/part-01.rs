@@ -64,8 +64,9 @@ fn query_selects_registered_standard_library_modules() {
         .unwrap();
     assert!(
         string.status.success(),
-        "{}",
-        String::from_utf8_lossy(&string.stderr)
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&string.stdout),
+        String::from_utf8_lossy(&string.stderr),
     );
     let records = jsonl(&string.stdout);
     assert!(
@@ -1089,6 +1090,7 @@ export def config:
         (
             {
                 data_srcs: {input: {default: 'None, fmt: 'Json, src: "input.json"}},
+                ees: {},
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
@@ -1142,6 +1144,7 @@ export def config: Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initial
         (
             {
                 data_srcs: {input: {default: 'None, fmt: 'Json, src: "input.json"}},
+                ees: {},
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
@@ -1164,7 +1167,7 @@ export def config: Fn(rt.SystemOptions, rt.Env) -> Tuple([rt.SystemCaps, Initial
     assert!(!run.status.success());
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(
-        stderr.contains("fixture/entry/provenance:19:40: review data provenance"),
+        stderr.contains("fixture/entry/provenance:20:40: review data provenance"),
         "{stderr}"
     );
     assert!(
@@ -1207,6 +1210,7 @@ export def config:
                     yaml: {default: 'None, fmt: 'Yaml, src: "input.yaml"},
                     toml: {default: 'None, fmt: 'Toml, src: "input.toml"},
                 },
+                ees: {},
                 spawn_child: 'False,
                 text_srcs: {},
                 vars: [],
@@ -1256,6 +1260,7 @@ export def config:
         (
             {
                 data_srcs: {},
+                ees: {},
                 spawn_child: 'False,
                 text_srcs: {message: {default: 'None, src: "message.txt"}},
                 vars: ["TELORA_TEST_VAR", "TELORA_TEST_MISSING_VAR"],

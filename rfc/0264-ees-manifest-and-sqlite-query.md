@@ -112,11 +112,9 @@ which package preparation uses directly. A `sqlite-query` locator must use
 `sqlite://`; its remainder is the database path.
 
 Actor names and kinds are visible to application capability validation.
-Physical locators never enter a Telora World. Public provenance uses:
-
-```text
-@run-ctx/ees/<percent-encoded-name>
-```
+Physical locators never enter a Telora World: `Env` contains only the
+name-to-kind map, and request-time component diagnostics identify the logical
+actor. Host startup diagnostics may identify a locator that failed to open.
 
 ## IMOS actor operation
 
@@ -235,24 +233,20 @@ Synchronous native component calls inside VM evaluation would hide effects in
 pure functions. `std/ees` therefore defines an explicit continuation task:
 
 ```telora
-type Call = struct {
-    actor: String,
-    operation: String,
-    input: Value,
-};
+type Request = Tuple([String, String, Value]);
 
 type Task = enum {
     'Done(Value),
-    'Call(struct {
-        request: Call,
-        then: Fn(Result(Value, String)) -> Task,
-    }),
+    'Call(Tuple([Request, Fn(Result(Value, String)) -> Task])),
 };
 ```
 
-Component helper modules build ordinary calls. For example, `std/sqlite-query`
-encodes `{sql, bindings}` and decodes `{columns, rows}`; `std/imos` encodes an
-`InstallShared` plan. Helpers do not execute effects.
+Component helper modules build ordinary calls. `std/sqlite-query` encodes
+`{sql, bindings}` and returns the component's JSON-compatible `Value` reply;
+`std/imos` encodes an `InstallShared` plan. Helpers do not execute effects.
+
+`Request` is a transparent internal carrier. Applications construct it through
+`ees.request` or component helpers rather than depending on tuple positions.
 
 Without `--ees`, `run` and `serve` keep their existing pure Main contracts.
 With one or more bindings, the CLI selects EES-aware standard Entries:

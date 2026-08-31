@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -11,17 +11,19 @@ use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
     CallContext, ChildExit, ChildOptions, ChildOutputMode, ChildSpawnResult, ChildStdinMode,
-    ChildText, DataLimits, DebugEvent, DebugSink, DefinitionKind, Engine, EngineConfig, FactState,
-    Location, ModuleResolver, NativeError, NativeFunction, PositionEncoding, Quota, RunHost,
-    RunHostFuture, RunTermination, SpawnStdioChild, SystemCaps, SystemDataSource, SystemEvent,
-    SystemStdin, TextPosition, WorkspaceSnapshot,
+    ChildText, DataLimits, DebugEvent, DebugSink, DefinitionKind, EesCall, EesReply, Engine,
+    EngineConfig, FactState, Location, ModuleResolver, NativeError, NativeFunction,
+    PositionEncoding, Quota, RunHost, RunHostFuture, RunTermination, SpawnStdioChild, SystemCaps,
+    SystemDataSource, SystemEvent, SystemStdin, TextPosition, WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
+mod ees_arg;
 mod ees_cli;
 mod source_arg;
+use ees_arg::{NamedEes, collect_ees, parse_named_ees};
 use ees_cli::EesArgs;
 use source_arg::{NamedSource, collect_entry_sources, is_stdin_source, parse_named_source};
 use telora::package_host;
@@ -89,6 +91,9 @@ enum ReaderEvent {
 struct ProcessRunHost {
     source_locators: BTreeMap<String, String>,
     children: HashMap<String, Option<mpsc::UnboundedSender<Option<String>>>>,
+    ees: Option<telora_ees::Service>,
+    ees_actors: BTreeMap<String, String>,
+    ees_active: HashSet<String>,
     sender: mpsc::UnboundedSender<ReaderEvent>,
     receiver: mpsc::UnboundedReceiver<ReaderEvent>,
     cancel: watch::Sender<bool>,
@@ -97,12 +102,19 @@ struct ProcessRunHost {
 }
 
 impl ProcessRunHost {
-    fn new(source_locators: BTreeMap<String, String>) -> Self {
+    fn new(
+        source_locators: BTreeMap<String, String>,
+        ees: Option<telora_ees::Service>,
+        ees_actors: BTreeMap<String, String>,
+    ) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let (cancel, _) = watch::channel(false);
         Self {
             source_locators,
             children: HashMap::new(),
+            ees,
+            ees_actors,
+            ees_active: HashSet::new(),
             sender,
             receiver,
             cancel,
@@ -367,6 +379,9 @@ impl ProcessRunHost {
             ReaderEvent::Error(error) => Err(error),
             ReaderEvent::Event(event) => {
                 match &event {
+                    SystemEvent::EesReply(reply) => {
+                        self.ees_active.remove(&reply.key);
+                    }
                     SystemEvent::ChildSpawnResult(ChildSpawnResult {
                         key,
                         result: Err(_),
@@ -558,8 +573,18 @@ impl RunHost for ProcessRunHost {
         )
     }
 
+    fn ees_actors(&self) -> BTreeMap<String, String> {
+        self.ees_actors.clone()
+    }
+
     fn configure(&mut self, caps: SystemCaps) -> RunHostFuture<'_, Result<(), String>> {
         Box::pin(async move {
+            if caps.ees != self.ees_actors {
+                return Err(format!(
+                    "EES actor declarations do not match Host bindings: declared {:?}, provided {:?}",
+                    caps.ees, self.ees_actors
+                ));
+            }
             if caps.stdin != SystemStdin::Null
                 && caps
                     .data_sources
@@ -721,6 +746,45 @@ impl RunHost for ProcessRunHost {
         })
     }
 
+    fn ees_call(&mut self, call: EesCall) -> RunHostFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            if !self.ees_actors.contains_key(&call.actor) {
+                return Err(format!("EES actor {:?} is not configured", call.actor));
+            }
+            if !self.ees_active.insert(call.key.clone()) {
+                return Err(format!("EES call key {:?} is already active", call.key));
+            }
+            let Some(service) = self.ees.clone() else {
+                self.ees_active.remove(&call.key);
+                return Err("EES service is not configured".into());
+            };
+            let key = call.key.clone();
+            let sender = self.sender.clone();
+            self.tasks.spawn(async move {
+                let event = service
+                    .dispatch(
+                        telora_ees::Call {
+                            id: key.clone(),
+                            actor: call.actor,
+                            operation: call.operation,
+                            input: call.input,
+                        },
+                        None,
+                    )
+                    .await;
+                let result = event.into_value();
+                let sent = sender
+                    .send(ReaderEvent::Event(SystemEvent::EesReply(EesReply {
+                        key: key.clone(),
+                        result,
+                    })))
+                    .map_err(|_| "EES reply channel disconnected".to_owned());
+                (format!("ees:{key}"), sent)
+            });
+            Ok(())
+        })
+    }
+
     fn next_event(&mut self) -> RunHostFuture<'_, Result<Option<SystemEvent>, String>> {
         Box::pin(async move {
             loop {
@@ -830,6 +894,9 @@ struct ApplicationArgs {
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
+    /// Bind a named EES actor: KIND:NAME=LOCATOR.
+    #[arg(long = "ees", value_name = "KIND:NAME=LOCATOR", value_parser = parse_named_ees)]
+    ees: Vec<NamedEes>,
 }
 
 #[derive(Args)]
@@ -1020,7 +1087,11 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .map_err(|error| format!("cannot start the run Host: {error}"))?
             .block_on(run_command(
                 context,
-                "std/entry/default",
+                if arguments.application.ees.is_empty() {
+                    "std/entry/default"
+                } else {
+                    "std/entry/ees-default"
+                },
                 arguments.application,
                 &[],
             )),
@@ -1037,7 +1108,11 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 .map_err(|error| format!("cannot start the serve Host: {error}"))?
                 .block_on(run_command(
                     context,
-                    "std/entry/serve",
+                    if arguments.application.ees.is_empty() {
+                        "std/entry/serve"
+                    } else {
+                        "std/entry/ees-serve"
+                    },
                     arguments.application,
                     &[],
                 ))
@@ -1074,12 +1149,21 @@ async fn run_command(
     entry_args: &[String],
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
+    let entry_ees = collect_ees(arguments.ees.clone())?;
+    let ees = match entry_ees.manifest {
+        Some(manifest) => Some(
+            telora_ees::Service::open(manifest)
+                .await
+                .map_err(|error| format!("cannot initialize application EES: {error:#}"))?,
+        ),
+        None => None,
+    };
     let prepared = arguments
         .standalone
         .is_none()
         .then(|| package_host::prepare(&context))
         .transpose()?;
-    if entry == "std/entry/serve"
+    if matches!(entry, "std/entry/serve" | "std/entry/ees-serve")
         && entry_sources
             .locators
             .values()
@@ -1137,7 +1221,7 @@ async fn run_command(
         )
     }
     .map_err(|error| error.to_string())?;
-    let mut host = ProcessRunHost::new(entry_sources.locators);
+    let mut host = ProcessRunHost::new(entry_sources.locators, ees, entry_ees.actors);
     let outcome = engine
         .run_pending_with_sources_and_host(
             pending,

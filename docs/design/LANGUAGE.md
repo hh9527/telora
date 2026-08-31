@@ -1285,9 +1285,9 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora check <module> [-C <context>]
-telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]...
-telora run -S <file> [--best-effort] [--source <name>=<source>]...
-telora serve <binary-name> [-C <context>] [--source <name>=<source>]... --bind stdio://
+telora run <binary-name> [-C <context>] [--best-effort] [--source <name>=<source>]... [--ees <kind>:<name>=<locator>]...
+telora run -S <file> [--best-effort] [--source <name>=<source>]... [--ees <kind>:<name>=<locator>]...
+telora serve <binary-name> [-C <context>] [--source <name>=<source>]... [--ees <kind>:<name>=<locator>]... --bind stdio://
 telora query|q modules [-C <context>] [-p <substring>]
 telora query|q exports <module> [-C <context>] [-p <substring>]
 telora query|q at <module>[:<line>[:<column>]] [-C <context>] [-p <substring>] [-k type,let,def,import]
@@ -1356,7 +1356,7 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 命令重新进入严格 Entry reducer 与 Host effect lifecycle，不进行 speculative recovery。
 最终验收必须使用省略该参数、保持 fail-fast 的普通 `run`。
 
-`run` 选择一个 Main application，并固定使用 `std/entry/default`。该 Entry 要求 Main 导出
+没有 `--ees` 时，`run` 选择 `std/entry/default`。该 Entry 要求 Main 导出
 `main: Fn(Dict(Value)) -> Value`，调用一次后把结果编码为 JSON。`serve --bind stdio://`
 选择 `std/entry/serve`，要求 Main 导出
 `serve: Fn(Dict(Value)) -> Fn(Value) -> Value`；初始化一次 handler 后，以 stdin/stdout
@@ -1364,6 +1364,25 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 身份，可以访问图内所有模块，包括其他 crate 的 private 模块和 `std/_...`
 内部模块。特权仅属于这个 requester，不传递给它导入的普通模块。Entry 不能作为
 普通模块根或被普通模块 import。
+
+提供一个或多个 `--ees KIND:NAME=LOCATOR` 时，Host 构造应用 Service，并分别选择
+`std/entry/ees-default` 或 `std/entry/ees-serve`。Main 用
+`option "run-ctx.ees" [{name: "a", kind: "imos"}, ...]` 声明完整 actor 集合；声明与
+Host bindings 的 name 和 kind 必须完全相等。EES run Main 导出
+`main: Fn(Dict(Value)) -> ees.Task`，EES serve Main 导出
+`serve: Fn(Dict(Value)) -> Fn(Value) -> ees.Task`。
+
+`std/ees.Task` 是 `'Done(Value)` 或带 `Call` 与 continuation 的 `'Call`。Entry 为每次调用
+产生唯一 key，Host 异步执行，随后用 `EesReply {key, result}` 恢复 continuation；一个
+continuation 可以继续产生下一次调用。`std/imos.install_shared` 和
+`std/sqlite-query.query` 只构造 component-neutral request，不执行 I/O。IMOS locator
+`imos:a=/root` 将 `/root/store` 与 `/root/home` 作为 actor 构造参数；SQLite locator
+`sqlite-query:a=sqlite:///path/db.sqlite` 只读打开数据库。这些 locator 不进入 Telora
+World，也不能由 operation 改写。
+
+Package Host 使用单独的私有 Service，其中的 actor 名为 `telora-packages`。该 actor 不进入应用
+`Env`、`SystemCaps` 或 manifest；应用即使使用相同逻辑名字，也只能寻址自己 Service 中
+显式绑定的实例。
 
 标准 Entry 从 Main 的 `option "run-ctx.sources" [name, ...]` 读取初始化 source 契约；
 `run` 与 `serve` 共享这个 option。声明名必须唯一，且 CLI 提供的 source 名与声明集合

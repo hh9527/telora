@@ -29,8 +29,13 @@ pub(crate) const REGEX_MODULE: &str = "std/regex";
 pub(crate) const FMT_MODULE: &str = "std/fmt";
 pub(crate) const FMT_CAPABILITY_BINDING: &str = "\0std:fmt";
 pub(crate) const EDGE_RUNTIME_MODULE: &str = "std/_rt";
+pub(crate) const EES_MODULE: &str = "std/ees";
+pub(crate) const IMOS_MODULE: &str = "std/imos";
+pub(crate) const SQLITE_QUERY_MODULE: &str = "std/sqlite-query";
 pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/entry/default";
 pub(crate) const SERVE_ENTRY_MODULE: &str = "std/entry/serve";
+pub(crate) const EES_DEFAULT_ENTRY_MODULE: &str = "std/entry/ees-default";
+pub(crate) const EES_SERVE_ENTRY_MODULE: &str = "std/entry/ees-serve";
 
 pub(crate) fn default_entry_source() -> &'static str {
     include_str!("../modules/std/entry/default.telora")
@@ -38,6 +43,14 @@ pub(crate) fn default_entry_source() -> &'static str {
 
 pub(crate) fn serve_entry_source() -> &'static str {
     include_str!("../modules/std/entry/serve.telora")
+}
+
+pub(crate) fn ees_default_entry_source() -> &'static str {
+    include_str!("../modules/std/entry/ees-default.telora")
+}
+
+pub(crate) fn ees_serve_entry_source() -> &'static str {
+    include_str!("../modules/std/entry/ees-serve.telora")
 }
 
 pub(crate) struct BuiltinModuleSpec {
@@ -59,6 +72,24 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                     crate::value::CoreRuntimeFunction::CallWithDiagnostics,
                 ),
             )],
+        },
+        BuiltinModuleSpec {
+            native_id: 27,
+            name: EES_MODULE,
+            source: include_str!("../modules/std/ees.telora"),
+            functions: vec![],
+        },
+        BuiltinModuleSpec {
+            native_id: 28,
+            name: IMOS_MODULE,
+            source: include_str!("../modules/std/imos.telora"),
+            functions: vec![],
+        },
+        BuiltinModuleSpec {
+            native_id: 29,
+            name: SQLITE_QUERY_MODULE,
+            source: include_str!("../modules/std/sqlite-query.telora"),
+            functions: vec![],
         },
         BuiltinModuleSpec {
             native_id: 25,
