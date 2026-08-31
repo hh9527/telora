@@ -1,0 +1,4 @@
+type User = struct { name: String, age: Int };
+def user: User = { name: "Ada", age: "old" };
+
+export { User, user };

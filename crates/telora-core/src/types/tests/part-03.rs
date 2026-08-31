@@ -535,22 +535,6 @@
     }
 
     #[test]
-    fn reports_structural_annotation_mismatch() {
-        let error = analyze_source(
-            "test",
-            "type User = struct {name: String, age: Int};\
-             let user: User = {name: \"Ada\", age: \"old\"};\
-             user",
-        )
-        .unwrap_err();
-        assert!(
-            error.message.contains("String") && error.message.contains("Int"),
-            "{}",
-            error.message
-        );
-    }
-
-    #[test]
     fn checks_interpolation_inside_nested_binding_annotations() {
         let error = analyze_source("test", r#"let outer = { let x: `\{[1]}` = "x"; x }; outer"#)
             .unwrap_err();

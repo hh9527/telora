@@ -1,0 +1,13 @@
+import "std/value" { Value };
+
+def name = "Ada";
+def count = 3;
+def ratio = 3.0;
+def small = 1.25e-3;
+def zero = -0.0;
+def state = 'Ok;
+
+export def result: Value = 'Object({
+    rendered: 'String(`hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`),
+    nested: 'String(`value=\{if 'True { "yes" } else { "no" }}`),
+});

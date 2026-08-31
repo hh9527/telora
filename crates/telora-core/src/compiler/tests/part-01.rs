@@ -517,21 +517,6 @@
     }
 
     #[test]
-    fn interpolates_strings_numbers_and_atoms() {
-        let value = run(
-            r#"let name = "Ada"; let count = 3; let ratio = 3.0; let small = 1.25e-3; let zero = -0.0; let state = 'Ok; `hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`"#,
-        )
-        .unwrap();
-        assert_eq!(
-            value.value().as_str().as_deref(),
-            Some("hi, Ada count=3 ratio=3 small=0.00125 zero=-0 state=Ok")
-        );
-
-        let nested = run(r#"`value=\{if 'True { "yes" } else { "no" }}`"#).unwrap();
-        assert_eq!(nested.value().as_str().as_deref(), Some("value=yes"));
-    }
-
-    #[test]
     fn evaluates_escaped_raw_and_continued_strings() {
         let value = run(r####"("A=\x41, shape=\u{5f62}, first \
                 second", r##"raw \n "quote" and #"##)"####)

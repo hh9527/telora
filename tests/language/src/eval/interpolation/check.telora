@@ -1,0 +1,21 @@
+import "@src/support" as support;
+import "std/value" { Value };
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    let output: Value = match support.stream_item(actual, "stdout", 0) {
+        'Some(value) => value,
+        'None => 'None,
+    };
+    if support.exit_code(actual) == 'Some(0)
+        && support.string_field_equals(
+            output,
+            "rendered",
+            "hi, Ada count=3 ratio=3 small=0.00125 zero=-0 state=Ok",
+        )
+        && support.string_field_equals(output, "nested", "value=yes")
+        && support.stream_length(actual, "stderr") == 'Some(0) {
+        'True
+    } else {
+        'False
+    }
+};

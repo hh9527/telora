@@ -1278,8 +1278,15 @@ telora [-C <context>] serve <module:export> [--source <name>=<source>]... [--ees
 telora [-C <context>] query|q modules [-p <substring>]
 telora [-C <context>] query|q exports <module> [-p <substring>]
 telora [-C <context>] query|q at <module>[:<line>[:<column>]] [-p <substring>] [-k type,let,def,import]
+telora [-C <context>] lock
 telora lsp
 ```
+
+Clap 拥有 help、version 和命令行参数校验，其输出是面向人的文本。命令通过参数校验后，
+Telora Host 在 stdout 和 stderr 上只产生 JSON 或 JSONL。成功的 `eval` 输出一个 JSON
+Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`query`、`run` 和
+`serve` 输出各自的 JSONL 协议，`lock` 输出生成的 lock path JSON String。进程退出码
+独立表达命令是否成功。
 
 `eval @src/model:answer` 是选择普通 module 公开导出的一个示例。`eval` 要求导出类型是
 `Value`；`eval-with` 要求导出类型是 `entry.Eval`。该 wrapper 中的

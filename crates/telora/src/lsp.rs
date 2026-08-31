@@ -127,7 +127,14 @@ impl LspService for Server {
                 async_lsp::Error::Protocol("exit received before shutdown".to_owned()),
             )),
             Err(error) => {
-                eprintln!("telora lsp notification error: {error}");
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "schema": "telora.lsp/v1",
+                        "record": "error",
+                        "message": error.to_string(),
+                    })
+                );
                 ControlFlow::Continue(())
             }
         }

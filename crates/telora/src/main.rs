@@ -76,7 +76,12 @@ fn main() {
         Ok(0) => {}
         Ok(code) => std::process::exit(code),
         Err(error) => {
-            eprintln!("error: {error}");
+            emit_stderr(json!({
+                "schema": "telora.error/v1",
+                "record": "error",
+                "message": error,
+            }))
+            .expect("the CLI error record is JSON serializable");
             std::process::exit(1);
         }
     }
@@ -783,10 +788,8 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 ))
         }
         Command::Ees(_) => unreachable!("EES returns before workspace context discovery"),
-        Command::Lock => package_host::lock(&context).map(|path| {
-            println!("{}", path.display());
-            0
-        }),
+        Command::Lock => package_host::lock(&context)
+            .and_then(|path| emit(json!(path.to_string_lossy())).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments),
         Command::Query(arguments) => query_command(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),

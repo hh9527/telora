@@ -1,0 +1,55 @@
+import "std/array" as array;
+import "std/dict" as dict;
+import "std/string" as string;
+import "std/value" { Value };
+
+def record_field: Fn(Value, String) -> Option(Value) = fn(value, name) {
+    match value {
+        'Object(fields) => dict.get(fields, name),
+        _ => 'None,
+    }
+};
+
+def exit_code: Fn(Value) -> Option(Int) = fn(value) {
+    match record_field(value, "exit_code") {
+        'Some('Int(code)) => 'Some(code),
+        _ => 'None,
+    }
+};
+
+def stream_item: Fn(Value, String, Int) -> Option(Value) = fn(value, stream, index) {
+    match record_field(value, stream) {
+        'Some('Array(items)) => array.get(items, index),
+        _ => 'None,
+    }
+};
+
+def stream_length: Fn(Value, String) -> Option(Int) = fn(value, stream) {
+    match record_field(value, stream) {
+        'Some('Array(items)) => 'Some(array.length(items)),
+        _ => 'None,
+    }
+};
+
+def string_field_contains: Fn(Value, String, String) -> Bool = fn(value, field, expected) {
+    match record_field(value, field) {
+        'Some('String(found)) => string.contains(found, expected),
+        _ => 'False,
+    }
+};
+
+def string_field_equals: Fn(Value, String, String) -> Bool = fn(value, field, expected) {
+    match record_field(value, field) {
+        'Some('String(found)) => found == expected,
+        _ => 'False,
+    }
+};
+
+export {
+    record_field,
+    exit_code,
+    stream_item,
+    stream_length,
+    string_field_contains,
+    string_field_equals,
+};

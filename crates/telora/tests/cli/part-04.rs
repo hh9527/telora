@@ -116,14 +116,37 @@ export def wrong: Fn(Int) -> Value = fn(value) { 'Int(value) };"#,
         .output()
         .unwrap();
     assert!(!value.status.success());
-    assert!(String::from_utf8_lossy(&value.stderr).contains("expected Value"));
+    let records = jsonl(&value.stderr);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["schema"], "telora.error/v1");
+    assert_eq!(records[0]["record"], "error");
+    assert!(records[0]["message"].as_str().unwrap().contains("expected Value"));
 
     let function = telora(&cwd)
         .args(["eval-with", "@src/pure:wrong"])
         .output()
         .unwrap();
     assert!(!function.status.success());
-    assert!(String::from_utf8_lossy(&function.stderr).contains("expected Eval"));
+    let records = jsonl(&function.stderr);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["schema"], "telora.error/v1");
+    assert_eq!(records[0]["record"], "error");
+    assert!(records[0]["message"].as_str().unwrap().contains("expected Eval"));
+}
+
+#[test]
+fn language_acceptance_fixtures_pass() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = Command::new(repository.join("scripts/test-language.sh"))
+        .env("TELORA_BIN", env!("CARGO_BIN_EXE_telora"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

@@ -1,0 +1,3 @@
+def identity = fn(value) { value };
+
+export { identity };
