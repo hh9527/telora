@@ -4,6 +4,18 @@ This inventory records Rust tests whose public contract is exercised by a
 language fixture. Rust tests remain in place during classification and are
 removed together only after all suites have been reviewed.
 
+## Execution model
+
+Fixtures remain independent modules so one static failure cannot suppress
+another fixture's analysis. The runner generates one aggregate module for
+ordinary successful `check` fixtures and another for fixtures with a simple
+expected diagnostic. Each group is evaluated by one best-effort `telora check`
+process. Aggregated diagnostics are assigned back to their fixture using the
+stable source identity in diagnostic labels before the common acceptance pass.
+
+Fixtures that exercise a distinct CLI contract (`eval` or `query`) and complex
+diagnostic fixtures with `check.telora` continue to execute independently.
+
 ## Fully replaceable
 
 The `check/compiler-semantics` fixture fully covers these compiler tests. Each

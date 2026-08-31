@@ -29,6 +29,8 @@ fi
 
 cases=()
 case_checks=()
+declare -A aggregate_success_cases
+declare -A aggregate_diagnostic_cases
 for testee in "${testees[@]}"; do
     relative=${testee#"$workspace/src/"}
     case_id=${relative%/testee.telora}
@@ -43,6 +45,36 @@ for testee in "${testees[@]}"; do
         case_checks+=(0)
     fi
 done
+
+success_all="$workspace/src/generated/check-success-all.telora"
+{
+    success_index=0
+    for index in "${!cases[@]}"; do
+        case_id=${cases[$index]}
+        mode=${case_id%%/*}
+        if [[ $mode == check && ${case_checks[$index]} -eq 0 ]]; then
+            printf 'import "@src/%s/testee" as success_%s;\n' "$case_id" "$success_index"
+            aggregate_success_cases["$case_id"]=1
+            success_index=$((success_index + 1))
+        fi
+    done
+    echo "export def all_loaded = 'True;"
+} >"$success_all"
+
+diagnostics_all="$workspace/src/generated/check-diagnostics-all.telora"
+{
+    diagnostic_index=0
+    for index in "${!cases[@]}"; do
+        case_id=${cases[$index]}
+        mode=${case_id%%/*}
+        if [[ $mode == check && ${case_checks[$index]} -eq 2 ]]; then
+            printf 'import "@src/%s/testee" as diagnostic_%s;\n' "$case_id" "$diagnostic_index"
+            aggregate_diagnostic_cases["$case_id"]=1
+            diagnostic_index=$((diagnostic_index + 1))
+        fi
+    done
+    echo "export def all_loaded = 'True;"
+} >"$diagnostics_all"
 
 generated="$workspace/src/generated/check-all.telora"
 {
@@ -103,32 +135,63 @@ jaq -n --argjson modules "$modules_json" \
 
 entries="$actual_root/entries.jsonl"
 : >"$entries"
+
+success_stdout="$actual_root/check-success-all.stdout.jsonl"
+success_stderr="$actual_root/check-success-all.stderr.jsonl"
+set +e
+"$telora_bin" -C "$workspace" check "@src/generated/check-success-all" \
+    >"$success_stdout" 2>"$success_stderr"
+success_exit=$?
+set -e
+
+diagnostics_stdout="$actual_root/check-diagnostics-all.stdout.jsonl"
+diagnostics_stderr="$actual_root/check-diagnostics-all.stderr.jsonl"
+set +e
+"$telora_bin" -C "$workspace" check "@src/generated/check-diagnostics-all" \
+    >"$diagnostics_stdout" 2>"$diagnostics_stderr"
+diagnostics_exit=$?
+set -e
+
 for case_id in "${cases[@]}"; do
-    raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
-    raw_stderr="$actual_root/${case_id//\//__}.stderr.jsonl"
     mode=${case_id%%/*}
 
-    set +e
-    case "$mode" in
-        eval)
-            "$telora_bin" -C "$workspace" eval "@src/$case_id/testee:result" \
-                >"$raw_stdout" 2>"$raw_stderr"
-            ;;
-        query)
-            "$telora_bin" -C "$workspace" query exports "@src/$case_id/testee" \
-                >"$raw_stdout" 2>"$raw_stderr"
-            ;;
-        check)
-            "$telora_bin" -C "$workspace" check "@src/$case_id/testee" \
-                >"$raw_stdout" 2>"$raw_stderr"
-            ;;
-        *)
-            echo "unknown language test mode: $mode" >&2
-            exit 2
-            ;;
-    esac
-    exit_code=$?
-    set -e
+    if [[ -n ${aggregate_success_cases[$case_id]+x} ]]; then
+        raw_stdout=$success_stdout
+        raw_stderr=$success_stderr
+        exit_code=$success_exit
+    elif [[ -n ${aggregate_diagnostic_cases[$case_id]+x} ]]; then
+        raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
+        raw_stderr=$diagnostics_stderr
+        exit_code=$diagnostics_exit
+        jaq -c --arg source "language-tests/$case_id/testee" \
+            'select(any(.labels[]?; .source == $source))' \
+            "$diagnostics_stdout" >"$raw_stdout"
+    else
+        raw_stdout="$actual_root/${case_id//\//__}.stdout.jsonl"
+        raw_stderr="$actual_root/${case_id//\//__}.stderr.jsonl"
+
+        set +e
+        case "$mode" in
+            eval)
+                "$telora_bin" -C "$workspace" eval "@src/$case_id/testee:result" \
+                    >"$raw_stdout" 2>"$raw_stderr"
+                ;;
+            query)
+                "$telora_bin" -C "$workspace" query exports "@src/$case_id/testee" \
+                    >"$raw_stdout" 2>"$raw_stderr"
+                ;;
+            check)
+                "$telora_bin" -C "$workspace" check "@src/$case_id/testee" \
+                    >"$raw_stdout" 2>"$raw_stderr"
+                ;;
+            *)
+                echo "unknown language test mode: $mode" >&2
+                exit 2
+                ;;
+        esac
+        exit_code=$?
+        set -e
+    fi
 
     jaq -n \
         --arg key "$case_id" \

@@ -31,8 +31,11 @@ For every testee, the runner records this value:
 ```
 
 `stdout` and `stderr` contain the JSON or JSONL records emitted by Telora. The
-runner generates a workspace manifest and one aggregate checker. It applies a
-generic success check to self-validating testees, invokes explicit check
+runner generates a workspace manifest, aggregate execution modules, and one
+aggregate checker. Ordinary successful `check` cases share one best-effort
+process. Simple expected-diagnostic cases share another process and are split
+back into per-case observations by their diagnostic source identity. It applies
+a generic success check to self-validating testees, invokes explicit check
 functions where present, and reports whether every case passed.
 
 Generated sources, raw streams, observations, and checker output are kept in
