@@ -544,10 +544,12 @@ enum Command {
     Ees(EesArgs),
     /// Resolve package sources and rewrite telora-lock.json.
     Lock,
+    /// Check a module with best-effort evaluation and emit JSONL diagnostics.
     Check(CheckArgs),
     /// Query module and semantic facts as JSONL.
     #[command(visible_alias = "q")]
     Query(QueryArgs),
+    /// Run the Language Server Protocol service over stdio.
     Lsp,
 }
 
@@ -589,7 +591,12 @@ struct ApplicationSelector {
 }
 
 #[derive(Args)]
+#[command(
+    after_help = "Examples:\n  telora check @src/lib\n  telora -C examples/app check @src/main\n  telora check @test/compiler"
+)]
 struct CheckArgs {
+    /// Canonical module selector, such as @src/lib, @test/compiler, or std/string.
+    #[arg(value_name = "MODULE_ID")]
     module_id: String,
 }
 
