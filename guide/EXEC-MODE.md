@@ -185,8 +185,8 @@ NAME 来自命令行左侧，并成为 `ctx.sources` 的 key；source 文件自�
 一个 stdin source。`serve --bind stdio://` 已将 stdin 用作请求通道，因此不能再用 stdin
 初始化 source。
 
-source 中 Value 的诊断来源使用稳定名称 `@run-ctx/NAME`，不暴露物理文件路径。这个
-名称是数据来源，不是模块 ID。
+source 中 Value 的诊断来源使用稳定名称：eval-with 使用 `@eval-ctx/NAME`，run 和 serve
+使用 `@run-ctx/NAME`。这些名称不暴露物理文件路径，是数据来源而不是模块 ID。
 
 ## Env 与 args
 

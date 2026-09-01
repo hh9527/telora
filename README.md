@@ -275,6 +275,7 @@ fuel 当作正常终止条件。
 ## 文档
 
 - [guide/TELORA.md](guide/TELORA.md)：语言使用教程与当前限制。
+- [guide/WORKSPACE.md](guide/WORKSPACE.md)：workspace、crate、模块清单与依赖锁定。
 - [guide/LIBSTD.md](guide/LIBSTD.md)：标准库模块定位与接口发现。
 - [guide/EXEC-MODE.md](guide/EXEC-MODE.md)：eval、eval-with、run 与 serve 执行模式。
 - [guide/EES.md](guide/EES.md)：Native Effect Service、Actor 协议与外部效果。

@@ -29,6 +29,7 @@ Host 和 tooling。专题文档细化 `LANGUAGE.md` 或 `IMPLEMENTATION.md`，�
 | `docs/MOTIVATION.md` | 稳定动机、价值主张与功能准入原则 | 是 |
 | `docs/design/` | 当前概念、语义、边界与专题设计 | 是，设计 SSOT |
 | `guide/TELORA.md` | 当前公开语言表面的使用方法 | 是，面向使用者 |
+| `guide/WORKSPACE.md` | workspace、crate、模块清单与依赖锁定 | 是，面向使用者 |
 | `guide/LIBSTD.md` | 当前公开标准库的模块定位与接口发现 | 是，面向使用者 |
 | `guide/EXEC-MODE.md` | eval、eval-with、run 与 serve 的执行契约 | 是，面向使用者 |
 | `guide/EES.md` | EES、Actor 协议与外部效果的使用方法 | 是，面向使用者 |

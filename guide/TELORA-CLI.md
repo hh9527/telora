@@ -3,6 +3,9 @@
 Telora CLI 及其运行时适配器共同充当运行时宿主（Host）：它们准备输入、执行 Entry
 效果并呈现诊断。
 
+workspace、crate manifest、模块清单和依赖来源的完整用法见
+[`WORKSPACE.md`](WORKSPACE.md)。
+
 每个 Telora crate 的模块位于 `src/`，测试位于 `tests/`。`telora-crate.json` 声明
 canonical crate name、模块清单和直接依赖名称；workspace 根的 `telora-config.json`
 选择这些名称的唯一来源，`telora-lock.json` 固定完整包图。
