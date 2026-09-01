@@ -1,3 +1,5 @@
+import "std/_codec" as codec;
+
 type Value = enum {
     'None,
     'True,
@@ -14,4 +16,13 @@ type Value = enum {
     'OffsetDateTime(String),
 };
 
-export { Value };
+@codec.untagged
+type ScalarValue = enum {
+    'None,
+    'Bool(Bool),
+    'Int(Int),
+    'Float(Float),
+    'String(String),
+};
+
+export {Value, ScalarValue};

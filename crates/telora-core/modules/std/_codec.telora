@@ -1,0 +1,23 @@
+@property('Type)
+type JsonRenameAll = struct {case: Any};
+
+@property('Type)
+type JsonUntagged = struct {};
+
+def rename_all: Fn(Any) -> Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(case) {
+    fn(target, previous) {
+        if case == 'CamelCase {
+            let property: JsonRenameAll = {case};
+            property
+        } else {
+            fail!("std/json.rename_all currently expects 'CamelCase")
+        }
+    }
+};
+
+def untagged: Fn(Type, Option(JsonUntagged)) -> JsonUntagged = fn(target, previous) {
+    let property: JsonUntagged = {};
+    property
+};
+
+export {JsonRenameAll, JsonUntagged, rename_all, untagged};

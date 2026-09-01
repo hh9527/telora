@@ -3,6 +3,7 @@ import "std/actor" as actor;
 import "std/array" as array;
 import "std/codec" as codec;
 import "std/dict" as dict;
+import "std/ees" as ees;
 import "std/entry" as entry;
 import "std/fmt" as fmt;
 import "std/json" as json;
@@ -12,7 +13,7 @@ import "std/value" {Value};
 
 export type MainType = struct {
     config: entry.ContextConfig,
-    ees: entry.Ees,
+    ees: ees.Config,
     start: Fn(entry.Context) -> actor.Service,
 };
 
@@ -58,7 +59,7 @@ def configure_sources: Fn(Array(String), Dict(rt.DataSrc)) -> Dict(rt.DataSrc) =
         }
     };
 
-def declared_ees: Fn(Array(entry.EesModel)) -> Dict(String) = fn(models) {
+def declared_ees: Fn(Array(ees.Model)) -> Dict(String) = fn(models) {
     let pairs = array.map(models, fn(model) { (model.name, model.kind) });
     let unique = array.all(pairs, fn(declaration) {
         declaration.0 != "" && array.length(array.filter(pairs, fn(other) {
@@ -208,6 +209,9 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
 export def config:
     Fn(rt.Env, MainType) -> Tuple([rt.SystemCaps, Initializer]) =
     fn(env, main) {
+        let _mode = if env.mode == 'Serve { 'True } else {
+            fail!("serve Entry policy requires Serve mode")
+        };
         let data_srcs = configure_sources(main.config.sources, env.sources);
         let models = declared_ees(main.ees.models);
         let args = if main.config.args { env.args } else if array.length(env.args) == 0 {

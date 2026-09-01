@@ -54,9 +54,9 @@ export def lowering_case = do {
   触发可恢复 failure 时是 `{"ok": null, "error": true, "diagnostics": [...]}`，服务
   继续处理下一行。当前诊断 JSON 只稳定公开 `message`。资源耗尽、取消等终止性失败，
   以及初始化和 Entry 协议错误仍带外报告并终止进程。
-- `run` 和 `serve` 在 `entry.Ees` 中声明命名 native model，并以 `entry.Ees.vars` 与
-  `--ees-var` 绑定 locator 变量。model 由 `std/imos.model` 或
-  `std/sqlite-query.model` 构造。
+- `run` 和 `serve` 在 `ees.Config` 中声明命名 native model，并以 `ees.Config.vars` 与
+  `--ees-var` 绑定 locator 变量。model 由 `std/ees.imos_model` 或
+  `std/ees.sqlite_model` 构造。
   reducer 发出 `actor.EesCall`，Host 完成调用后投递 `actor.EesReply`；多步行为的阶段
   和关联信息保存在显式 State。应用 EES 与 package Host 的私有 IMOS Service 完全隔离。
 - `entry.ContextConfig.sources` 声明初始化 source。声明的名称必须全部提供，CLI 也不能

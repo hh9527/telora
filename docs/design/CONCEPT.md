@@ -249,7 +249,7 @@ root；`sqlite-query` actor 对一个只读数据库执行带 positional JSON sc
 `Query`。operation 只能选择 manifest 中已有的逻辑名称，不能选择物理资源。
 
 Package Host 构造只含 `telora-packages` IMOS actor 的私有 Service。应用 wrapper 以
-`entry.Ees` 声明另一个 Service；Host 校验 `entry.Ees.vars` 与 `--ees-var` bindings 后
+`ees.Config` 声明另一个 Service；Host 校验 `ees.Config.vars` 与 `--ees-var` bindings 后
 构造 actor，并把 name-to-kind 清单作为 Entry capability。
 `user-*:` locator 是 component 解释的用户资源位置，物理路径不进入 Telora World。
 两个 Service 的名称空间、资源和生命周期隔离；应用不能发现或调用 package Service。

@@ -51,11 +51,12 @@ hello/
 
 ```telora
 import "std/actor" as actor;
+import "std/ees" as ees;
 import "std/entry" as entry;
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (
@@ -217,8 +218,8 @@ Telora 程序本身没有外部权限。普通模块通过 `std/entry` 构造工
 
 `Run(State)` 和 `Serve(State)` 包含 Context 契约、EES 声明和初始化函数。初始化函数
 返回具体 State 与 `reduce(State, Event) -> (State, Array(Effect))`。`run` 产生一次请求，
-`serve` 持续接收 transport 请求。SQLite 与 IMOS model 由 `std/sqlite-query.model` 和
-`std/imos.model` 构造；locator 变量在 `entry.Ees.vars` 中约束，并由
+`serve` 持续接收 transport 请求。SQLite 与 IMOS model 由 `std/ees.sqlite_model` 和
+`std/ees.imos_model` 构造；locator 变量在 `ees.Config.vars` 中约束，并由
 `--ees-var NAME=VALUE` 绑定。reducer 用 `EesCall` 描述调用，并在后续 `EesReply` 中处理
 结果。CLI Host 执行 EES effect；应用模块不能直接访问文件、环境、网络或进程。
 
@@ -274,6 +275,9 @@ fuel 当作正常终止条件。
 ## 文档
 
 - [guide/TELORA.md](guide/TELORA.md)：语言使用教程与当前限制。
+- [guide/LIBSTD.md](guide/LIBSTD.md)：标准库模块定位与接口发现。
+- [guide/EXEC-MODE.md](guide/EXEC-MODE.md)：eval、eval-with、run 与 serve 执行模式。
+- [guide/EES.md](guide/EES.md)：Native Effect Service、Actor 协议与外部效果。
 - [guide/TELORA-CLI.md](guide/TELORA-CLI.md)：CLI、工作区解析和 JSONL 契约。
 - [docs/design/LANGUAGE.md](docs/design/LANGUAGE.md)：当前语言设计 SSOT。
 - [docs/design/CONCEPT.md](docs/design/CONCEPT.md)：核心概念和所有权边界。

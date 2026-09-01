@@ -102,7 +102,7 @@ Cargo workspace 中的 `telora-ees` 是 Native Actor Components 的组合根，�
 或 SQLite 实现。
 
 Package preparation 构造私有 `telora-packages` IMOS Service。`run/serve` 从选中 export
-的 `entry.Ees` 单独构造应用 Service。CLI 校验并替换 `--ees-var`，component adapter 把 `user-*:` locator
+的 `ees.Config` 单独构造应用 Service。CLI 校验并替换 `--ees-var`，component adapter 把 `user-*:` locator
 解析为 XDG/HOME 物理路径；解析结果不进入 Telora World。RunHost 异步 dispatch call，
 把终态转为一个关联 `EesReply` event。Engine 与 RunHost 都按 `SystemCaps.ees` 校验 actor name。
 
@@ -332,8 +332,8 @@ CLI 的公开命令有 `eval`、`eval-with`、`run`、`serve`、`lock`、`check`
 `entry.Eval`。两条 pure eval 路径直接执行 module 与普通调用，不初始化 reducer loop、
 RunHost 或应用 EES。
 
-`run` 固定选择 `std/_entry-default`，`serve --bind stdio://` 固定选择
-`std/_entry-serve`。目标 export 分别是 `entry.Run(State)` 与 `entry.Serve(State)`。
+`run` 与 `serve --bind stdio://` 选择 `std/_entry` 的对应运行策略。目标 export 分别是
+`entry.Run(State)` 与 `entry.Serve(State)`。
 wrapper 的初始化函数返回具体 State 和 reducer；标准 Entry 边界将 State 擦除为 Dyn，
 并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
 `EesCall` 映射成 component-neutral SystemEffect，将相关 Host reply 映射回 `EesReply`；

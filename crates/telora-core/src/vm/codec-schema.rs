@@ -316,15 +316,21 @@ fn generate_json_schema_node(
                 plan.variants
                     .iter()
                     .map(|variant| {
-                        generate_json_schema_node(
-                            variant.payload.as_ref().expect("planned untagged payload"),
-                            properties,
-                            data,
-                            current,
-                            background,
-                            links,
-                            definitions,
-                        )
+                        match &variant.payload {
+                            Some(payload) => generate_json_schema_node(
+                                payload,
+                                properties,
+                                data,
+                                current,
+                                background,
+                                links,
+                                definitions,
+                            ),
+                            None => Ok(schema_dict(
+                                vec![("type", schema_string("null", variant.rule.loc()))],
+                                variant.rule.loc(),
+                            )),
+                        }
                     })
                     .collect::<Result<Vec<_>, _>>()?
             } else {

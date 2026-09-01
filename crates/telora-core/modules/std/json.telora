@@ -1,7 +1,7 @@
 import "std/value" { Value };
 import "std/codec" as codec;
 import "std/codec" { JsonRenameAll as RenameAll, JsonUntagged as Untagged };
-import "std/type-desc" { TypeDesc };
+import "std/_codec" {rename_all, untagged};
 
 native parse_raw: Fn(Type, String) -> Result(Value, BlameError);
 native decode_with: for(A) Fn(codec.Properties, TypeOf(A), String) -> Result(A, BlameError);
@@ -10,20 +10,6 @@ native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
 native schema_with: Fn(codec.Properties, Type) -> Any;
 def decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, text) {
     decode_with(codec.properties, target, text)
-};
-def rename_all: Fn(Any) -> Fn(TypeDesc, Option(RenameAll)) -> RenameAll = fn(case) {
-    fn(target, previous) {
-        if case == 'CamelCase {
-            let property: RenameAll = {case};
-            property
-        } else {
-            fail!("std/json.rename_all currently expects 'CamelCase")
-        }
-    }
-};
-def untagged: Fn(TypeDesc, Option(Untagged)) -> Untagged = fn(target, previous) {
-    let property: Untagged = {};
-    property
 };
 def schema: Fn(Type) -> Any = fn(target) {
     schema_with(codec.properties, target)

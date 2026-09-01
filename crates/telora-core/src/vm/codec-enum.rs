@@ -208,7 +208,14 @@ fn transform_untagged_enum(
             let mut matches = Vec::new();
             let mut errors = Vec::new();
             for variant in &plan.variants {
-                let payload = variant.payload.as_ref().expect("planned untagged payload");
+                let Some(payload) = &variant.payload else {
+                    if value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::None) {
+                        matches.push((variant, None));
+                    } else {
+                        errors.push(format!("{path}: expected null"));
+                    }
+                    continue;
+                };
                 match transform_codec(
                     payload,
                     properties,
@@ -218,12 +225,12 @@ fn transform_untagged_enum(
                     current,
                     background,
                 ) {
-                    Ok(node) => matches.push((variant, node)),
+                    Ok(node) => matches.push((variant, Some(node))),
                     Err(failure) => errors.push(failure.message),
                 }
             }
             match matches.as_slice() {
-                [(variant, node)] => Ok(CodecNode::Tagged {
+                [(variant, Some(node))] => Ok(CodecNode::Tagged {
                     tag: Box::new(CodecNode::NamedAtom(
                         variant.internal_name.clone(),
                         value.loc(),
@@ -231,6 +238,10 @@ fn transform_untagged_enum(
                     payload: Box::new(node.clone()),
                     loc: value.loc(),
                 }),
+                [(variant, None)] => Ok(CodecNode::NamedAtom(
+                    variant.internal_name.clone(),
+                    value.loc(),
+                )),
                 [] => Err(CodecFailure::new(
                     format!(
                         "{path}: value matches no untagged Enum variant ({})",
@@ -254,6 +265,30 @@ fn transform_untagged_enum(
                 current,
                 background: Some(background),
             };
+            if let Some(tag) = view
+                .atom_text(value)
+                .map_err(|error| CodecFailure::new(error.to_string(), value, value))?
+            {
+                let Some(variant) = plan
+                    .variants
+                    .iter()
+                    .find(|variant| variant.internal_name == tag)
+                else {
+                    return Err(CodecFailure::new(
+                        format!("{path}: unknown Enum tag '{tag}'"),
+                        value,
+                        value,
+                    ));
+                };
+                if variant.payload.is_some() {
+                    return Err(CodecFailure::new(
+                        format!("{path}: variant '{tag}' requires a payload"),
+                        value,
+                        variant.rule,
+                    ));
+                }
+                return Ok(CodecNode::Atom(BuiltinAtom::None, value.loc()));
+            }
             let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(CodecFailure::new(
                     format!("{path}: expected ('Variant, payload)"),
@@ -285,7 +320,13 @@ fn transform_untagged_enum(
                     CodecFailure::new(format!("{path}: unknown Enum tag '{tag}"), value, value)
                 })?;
             transform_codec(
-                variant.payload.as_ref().expect("planned untagged payload"),
+                variant.payload.as_ref().ok_or_else(|| {
+                    CodecFailure::new(
+                        format!("{path}: unit variant '{tag}' must not have a payload"),
+                        value,
+                        variant.rule,
+                    )
+                })?,
                 properties,
                 payload_value,
                 direction,

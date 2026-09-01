@@ -115,12 +115,12 @@ fn run_with_sqlite_query_actor_drives_an_ees_call() {
         cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
 import "std/entry" as entry;
-import "std/sqlite-query" as sqlite;
+import "std/ees" as effect;
 
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-def ees: entry.Ees = {
+def ees: effect.Config = {
     vars: {"tenant": "[a-z][a-z0-9-]{0,31}"},
-    models: [sqlite.model("catalog", "user-data:{tenant}/catalog.sqlite")],
+    models: [effect.sqlite_model("catalog", "user-data:{tenant}/catalog.sqlite")],
 };
 
 type State = enum {'Ready, 'Waiting};
@@ -130,7 +130,7 @@ export def run = entry.run(config, ees, fn(ctx) {
         match (state, event) {
             ('Ready, 'Request(request)) => (
                 'Waiting,
-                [actor.ees_call("query", request.id, sqlite.query(
+                [actor.ees_call("query", request.id, effect.sqlite_query(
                     "catalog",
                     "SELECT name, score FROM items WHERE score > ? ORDER BY score DESC",
                     ['Int(1)],
@@ -188,22 +188,22 @@ fn run_actor_can_sequence_multiple_ees_replies_through_explicit_state() {
         cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
 import "std/entry" as entry;
-import "std/sqlite-query" as sqlite;
+import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-def ees: entry.Ees = {vars: {}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]};
+def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = enum {'Ready, 'WaitingFirst(String), 'WaitingSecond(String)};
 export def run = entry.run(config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             ('Ready, 'Request(request)) => (
                 'WaitingFirst(request.id),
-                [actor.ees_call("first", request.id, sqlite.query(
+                [actor.ees_call("first", request.id, effect.sqlite_query(
                     "catalog", "SELECT MAX(score) AS score FROM items", []
                 ))],
             ),
             ('WaitingFirst(request_id), 'EesReply(reply)) => (
                 'WaitingSecond(request_id),
-                [actor.ees_call("second", request_id, sqlite.query(
+                [actor.ees_call("second", request_id, effect.sqlite_query(
                     "catalog", "SELECT MIN(score) AS score FROM items", []
                 ))],
             ),
@@ -265,15 +265,15 @@ fn run_actor_rejects_duplicate_call_ids_and_reply_with_active_calls() {
             format!(
                 r#"import "std/actor" as actor;
 import "std/entry" as entry;
-import "std/sqlite-query" as sqlite;
+import "std/ees" as effect;
 def config: entry.ContextConfig = {{sources: [], envs: [], args: 'False}};
-def ees: entry.Ees = {{vars: {{}}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]}};
+def ees: effect.Config = {{vars: {{}}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]}};
 type State = struct {{}};
 export def run = entry.run(config, ees, fn(ctx) {{
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {{
         match event {{
             'Request(request) => {{
-                let query = sqlite.query("catalog", "SELECT 1", []);
+                let query = effect.sqlite_query("catalog", "SELECT 1", []);
                 (state, {effects})
             }},
             'EesReply(_) => fail!("unexpected EES reply"),
@@ -309,11 +309,11 @@ fn ees_variables_are_declared_required_and_fully_matched() {
         cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
 import "std/entry" as entry;
-import "std/sqlite-query" as sqlite;
+import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-def ees: entry.Ees = {
+def ees: effect.Config = {
     vars: {"tenant": "[a-z][a-z0-9-]{0,7}"},
-    models: [sqlite.model("catalog", "user-data:{tenant}/catalog.sqlite")],
+    models: [effect.sqlite_model("catalog", "user-data:{tenant}/catalog.sqlite")],
 };
 
 type State = struct {};
@@ -373,9 +373,9 @@ fn serve_with_sqlite_query_actor_correlates_concurrent_calls() {
         r#"import "std/actor" as actor;
 import "std/array" as array;
 import "std/entry" as entry;
-import "std/sqlite-query" as sqlite;
+import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-def ees: entry.Ees = {vars: {}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]};
+def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 
 type State = struct {pending: Array(String)};
 export def serve = entry.serve(config, ees, fn(ctx) {
@@ -383,12 +383,13 @@ export def serve = entry.serve(config, ees, fn(ctx) {
         match event {
             'Request(request) => {
                 let query = match request.input {
-            'String(_) => sqlite.query("catalog", "SELECT missing FROM absent", []),
-                    _ => sqlite.query(
+                    'String(_) => effect.sqlite_query("catalog", "SELECT missing FROM absent", []),
+                    'Int(value) => effect.sqlite_query(
                         "catalog",
                         "SELECT score FROM items WHERE score > ? ORDER BY score",
-                        [request.input],
+                        ['Int(value)],
                     ),
+                    _ => fail!("expected an Int or String request"),
                 };
                 (
                     {pending: array.push(state.pending, request.id)},
@@ -469,11 +470,11 @@ fn application_imos_actor_with_package_name_stays_in_its_bound_root() {
         r#"import "std/actor" as actor;
 import "std/dict" as dict;
 import "std/entry" as entry;
-import "std/imos" as imos;
+import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: ["plan"], envs: [], args: 'False};
-def ees: entry.Ees = {
+def ees: effect.Config = {
     vars: {},
-    models: [imos.model("telora-packages", "user-cache:store", "user-data:home")],
+    models: [effect.imos_model("telora-packages", "user-cache:store", "user-data:home")],
 };
 
 type State = enum {'Ready, 'Waiting};
@@ -489,7 +490,7 @@ export def run = entry.run(config, ees, fn(ctx) {
                 [actor.ees_call(
                     "install",
                     request.id,
-                    imos.install_shared("telora-packages", plan),
+                    effect.install_shared("telora-packages", plan),
                 )],
             ),
             ('Waiting, 'EesReply(reply)) => match reply.result {
@@ -541,10 +542,9 @@ fn application_cannot_address_the_package_actor_without_its_own_binding() {
         cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
 import "std/entry" as entry;
-import "std/imos" as imos;
-import "std/sqlite-query" as sqlite;
+import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-def ees: entry.Ees = {vars: {}, models: [sqlite.model("catalog", "user-data:catalog.sqlite")]};
+def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = struct {};
 export def run = entry.run(config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
@@ -554,7 +554,7 @@ export def run = entry.run(config, ees, fn(ctx) {
                 [actor.ees_call(
                     "install",
                     request.id,
-                    imos.install_shared("telora-packages", 'None),
+                    effect.install_shared("telora-packages", 'None),
                 )],
             ),
             'EesReply(reply) => (state, [actor.reply(reply.request_id, 'None)]),

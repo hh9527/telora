@@ -167,10 +167,14 @@ fn plan_enum(
     };
     let mut names = BTreeMap::new();
     let mut planned = Vec::with_capacity(variants.len());
+    let mut untagged_unit = None;
     for (internal_name, variant) in variants {
-        if untagged && variant.payload.is_none() {
+        if untagged
+            && variant.payload.is_none()
+            && untagged_unit.replace(internal_name).is_some()
+        {
             return Err(CodecFailure::new(
-                format!("{path}.{internal_name}: untagged variants require payloads"),
+                format!("{path}: untagged Enum may contain at most one unit variant"),
                 data,
                 variant.rule,
             ));

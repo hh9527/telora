@@ -25,10 +25,11 @@ fn run_and_check_select_logical_roots_from_cwd() {
         cwd.join("src/app.telora"),
         r#"import "@src/lib" {output};
 import "std/actor" as actor;
+import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {output: String, completed: Bool};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let initial: State = {output, completed: 'False};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {

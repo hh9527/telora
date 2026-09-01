@@ -5,9 +5,9 @@ use crate::value::{
 };
 
 pub(crate) const PRELUDE_MODULE: &str = "std/prelude";
+pub(crate) const PRIVATE_CODEC_MODULE: &str = "std/_codec";
 pub(crate) const ARRAY_MODULE: &str = "std/array";
 pub(crate) const DICT_MODULE: &str = "std/dict";
-pub(crate) const BUILD_MODULE: &str = "std/build";
 pub(crate) const EXEC_MODULE: &str = "std/rt-types/exec";
 pub(crate) const ARGV_MODULE: &str = "std/argv";
 pub(crate) const CODEC_MODULE: &str = "std/codec";
@@ -32,17 +32,15 @@ pub(crate) const EES_MODULE: &str = "std/ees";
 pub(crate) const ACTOR_MODULE: &str = "std/actor";
 pub(crate) const ENTRY_MODULE: &str = "std/entry";
 pub(crate) const PRIVATE_ENTRY_MODULE: &str = "std/_entry";
-pub(crate) const IMOS_MODULE: &str = "std/imos";
-pub(crate) const SQLITE_QUERY_MODULE: &str = "std/sqlite-query";
-pub(crate) const DEFAULT_ENTRY_MODULE: &str = "std/_entry-default";
-pub(crate) const SERVE_ENTRY_MODULE: &str = "std/_entry-serve";
+pub(crate) const RUN_ENTRY_MODE: &str = "run";
+pub(crate) const SERVE_ENTRY_MODE: &str = "serve";
 
-pub(crate) fn default_entry_source() -> &'static str {
-    include_str!("../modules/std/entry/default.telora")
+pub(crate) fn run_entry_source() -> &'static str {
+    include_str!("../modules/std/_entry/run.telora")
 }
 
 pub(crate) fn serve_entry_source() -> &'static str {
-    include_str!("../modules/std/entry/serve.telora")
+    include_str!("../modules/std/_entry/serve.telora")
 }
 
 pub(crate) struct BuiltinModuleSpec {
@@ -54,6 +52,12 @@ pub(crate) struct BuiltinModuleSpec {
 
 pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
     let mut specs = vec![
+        BuiltinModuleSpec {
+            native_id: 4,
+            name: PRIVATE_CODEC_MODULE,
+            source: include_str!("../modules/std/_codec.telora"),
+            functions: vec![],
+        },
         BuiltinModuleSpec {
             native_id: 27,
             name: EES_MODULE,
@@ -67,15 +71,6 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             functions: vec![],
         },
         BuiltinModuleSpec {
-            native_id: 31,
-            name: PRIVATE_ENTRY_MODULE,
-            source: include_str!("../modules/std/_entry.telora"),
-            functions: vec![(
-                "state_type",
-                NativeFunction::new("std/_entry.state_type", 1, crate::types::native_value_type),
-            )],
-        },
-        BuiltinModuleSpec {
             native_id: 32,
             name: ENTRY_MODULE,
             source: include_str!("../modules/std/entry.telora"),
@@ -85,24 +80,18 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             native_id: 26,
             name: EDGE_RUNTIME_MODULE,
             source: include_str!("../modules/std/_rt.telora"),
-            functions: vec![(
-                "call_with_diagnostics",
-                NativeFunction::core_runtime(
-                    crate::value::CoreRuntimeFunction::CallWithDiagnostics,
+            functions: vec![
+                (
+                    "call_with_diagnostics",
+                    NativeFunction::core_runtime(
+                        crate::value::CoreRuntimeFunction::CallWithDiagnostics,
+                    ),
                 ),
-            )],
-        },
-        BuiltinModuleSpec {
-            native_id: 28,
-            name: IMOS_MODULE,
-            source: include_str!("../modules/std/imos.telora"),
-            functions: vec![],
-        },
-        BuiltinModuleSpec {
-            native_id: 29,
-            name: SQLITE_QUERY_MODULE,
-            source: include_str!("../modules/std/sqlite-query.telora"),
-            functions: vec![],
+                (
+                    "state_type",
+                    NativeFunction::new("std/_rt.state_type", 1, crate::types::native_value_type),
+                ),
+            ],
         },
         BuiltinModuleSpec {
             native_id: 25,
@@ -408,12 +397,6 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             )],
         },
         BuiltinModuleSpec {
-            native_id: 11,
-            name: BUILD_MODULE,
-            source: include_str!("../modules/std/build.telora"),
-            functions: vec![],
-        },
-        BuiltinModuleSpec {
             native_id: 13,
             name: CODEC_MODULE,
             source: include_str!("../modules/std/codec.telora"),
@@ -652,6 +635,7 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
     // stable and are independent of this installation sequence.
     specs.sort_by_key(|spec| match spec.name {
         TYPE_PROPERTY_MODULE => 0,
+        PRIVATE_CODEC_MODULE => 1,
         VALUE_MODULE => 1,
         EQ_MODULE => 2,
         DYN_MODULE => 3,
@@ -663,6 +647,10 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
         FMT_MODULE => 9,
         CODEC_MODULE => 10,
         JSON_MODULE => 11,
+        EES_MODULE => 12,
+        ACTOR_MODULE => 13,
+        EDGE_RUNTIME_MODULE => 14,
+        ENTRY_MODULE => 15,
         _ => 12,
     });
     specs

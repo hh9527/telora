@@ -156,10 +156,11 @@ fn run_selector_uses_the_manifest_discovery_start() {
     fs::write(
         other.join("src/app.telora"),
         r#"import "std/actor" as actor;
+import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'Int(9))]),

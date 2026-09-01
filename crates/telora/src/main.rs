@@ -573,7 +573,7 @@ struct ApplicationArgs {
     /// Provide a named Value source: NAME=PATH or NAME=(file|stdin)+(json|yaml|toml)://PATH.
     #[arg(long = "source", value_name = "NAME=SOURCE", value_parser = parse_named_source)]
     sources: Vec<NamedSource>,
-    /// Bind a variable declared by the selected entry.Ees value: NAME=VALUE.
+    /// Bind a variable declared by the selected ees.Config value: NAME=VALUE.
     #[arg(long = "ees-var", value_name = "NAME=VALUE", value_parser = parse_named_ees_var)]
     ees_vars: Vec<NamedEesVar>,
     #[arg(last = true, value_name = "ARG")]
@@ -765,11 +765,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
             .enable_all()
             .build()
             .map_err(|error| format!("cannot start the run Host: {error}"))?
-            .block_on(run_command(
-                context,
-                "std/_entry-default",
-                arguments.application,
-            )),
+            .block_on(run_command(context, "run", arguments.application)),
         Command::Serve(arguments) => {
             if arguments.bind != "stdio://" {
                 return Err(format!(
@@ -781,11 +777,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
                 .enable_all()
                 .build()
                 .map_err(|error| format!("cannot start the serve Host: {error}"))?
-                .block_on(run_command(
-                    context,
-                    "std/_entry-serve",
-                    arguments.application,
-                ))
+                .block_on(run_command(context, "serve", arguments.application))
         }
         Command::Ees(_) => unreachable!("EES returns before workspace context discovery"),
         Command::Lock => package_host::lock(&context)
@@ -807,7 +799,7 @@ async fn run_command(
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
     let prepared = package_host::prepare(&context)?;
-    if entry == "std/_entry-serve"
+    if entry == "serve"
         && entry_sources
             .locators
             .values()

@@ -1,9 +1,70 @@
-import "std/value" {Value};
+import "std/codec" as codec;
+import "std/dict" as dict;
+import "std/value" {ScalarValue, Value};
 
 type Request = Tuple([String, String, Value]);
+
+type Model = struct {
+    kind: String,
+    name: String,
+    config: Value,
+};
+
+type Config = struct {
+    vars: Dict(String),
+    models: Array(Model),
+};
 
 def request: Fn(String, String, Value) -> Request = fn(actor, operation, input) {
     (actor, operation, input)
 };
 
-export { Request, request };
+def model: Fn(String, String, Value) -> Model = fn(kind, name, config) {
+    {kind, name, config}
+};
+
+def none: Config = {vars: {}, models: []};
+
+def sqlite_model: Fn(String, String) -> Model = fn(name, path) {
+    model("sqlite-query", name, 'Object({path: 'String(path)}))
+};
+
+def sqlite_query: Fn(String, String, Array(ScalarValue)) -> Request = fn(actor, sql, bindings) {
+    request(
+        actor,
+        "Query",
+        match codec.encode(codec.Value, {sql, bindings}) {
+            'Ok(value) => value,
+            'Err(error) => fail!(codec.format_error(error)),
+        },
+    )
+};
+
+def imos_model: Fn(String, String, String) -> Model = fn(name, store, home) {
+    model(
+        "imos",
+        name,
+        'Object({store: 'String(store), home: 'String(home)}),
+    )
+};
+
+def install_shared: Fn(String, Value) -> Request = fn(actor, plan) {
+    request(
+        actor,
+        "InstallShared",
+        'Object(dict.map_values({plan}, fn(value) { value })),
+    )
+};
+
+export {
+    Request,
+    Model,
+    Config,
+    request,
+    model,
+    none,
+    sqlite_model,
+    sqlite_query,
+    imos_model,
+    install_shared,
+};

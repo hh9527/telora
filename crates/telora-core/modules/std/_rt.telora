@@ -1,5 +1,5 @@
 import "std/value" {Value};
-import "std/entry" as entry;
+import "std/ees" as ees;
 
 type Diagnostic = BlameError;
 
@@ -20,8 +20,14 @@ type Platform = struct {
 type Env = struct {
     args: Array(String),
     ees: Dict(String),
+    mode: EntryMode,
     platform: Platform,
     sources: Dict(DataSrc),
+};
+
+type EntryMode = enum {
+    'Run,
+    'Serve,
 };
 
 type DataFormat = enum {
@@ -50,7 +56,7 @@ type Stdin = enum {
 type SystemCaps = struct {
     data_srcs: Dict(DataSrc),
     ees: Dict(String),
-    ees_models: Array(entry.EesModel),
+    ees_models: Array(ees.Model),
     ees_vars: Dict(String),
     text_srcs: Dict(TextSrc),
     vars: Array(String),
@@ -93,11 +99,14 @@ type SystemEffect = enum {
     'Exit(Int),
 };
 
+native state_type: for(State) Fn(State) -> TypeOf(State);
+
 export {
     Diagnostic,
     with_diagnostics,
     Platform,
     Env,
+    EntryMode,
     DataFormat,
     DataSrc,
     TextSrc,
@@ -109,4 +118,5 @@ export {
     EesReply,
     SystemEvent,
     SystemEffect,
+    state_type,
 };

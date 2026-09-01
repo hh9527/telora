@@ -32,11 +32,12 @@ hello/
 ```telora
 # src/app.telora；# 引入行注释
 import "std/actor" as actor;
+import "std/ees" as ees;
 import "std/entry" as entry;
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'String("hello, telora"))]),
@@ -383,6 +384,9 @@ type Value = enum {
     'LocalDateTime(String), 'OffsetDateTime(String),
 };
 ```
+
+`std/value.ScalarValue` 是带 untagged codec 的标量子集，包含 null、Bool、Int、Float 和
+String。参数化查询用它表达 bindings，codec 会直接产生对应的 JSON scalar。
 
 `std/json` 负责 JSON 文本和 schema，`std/codec` 在 Value 与有类型值之间转换：
 

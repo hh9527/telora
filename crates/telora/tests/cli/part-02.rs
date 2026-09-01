@@ -29,6 +29,7 @@ fn run_context_admits_declared_sources_env_and_args() {
         r#"import "std/actor" as actor;
 import "std/array" as array;
 import "std/dict" as dict;
+import "std/ees" as ees;
 import "std/entry" as entry;
 
 type State = struct {answer: Int};
@@ -37,7 +38,7 @@ def config: entry.ContextConfig = {
     envs: ["TELORA_CONTEXT_TEST"],
     args: 'True,
 };
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let source_ok = match dict.get(ctx.sources, "request") {
         'Some('Int(value)) => value == 7,
         _ => 'False,
@@ -85,10 +86,11 @@ fn run_context_rejects_undeclared_inputs() {
     fs::write(
         cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
+import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'None)]),
@@ -133,10 +135,11 @@ fn serve_stdio_reuses_one_typed_state() {
     fs::write(
         cwd.join("src/app.telora"),
         r#"import "std/actor" as actor;
+import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {next: Int};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def serve = entry.serve(config, entry.no_ees, fn(ctx) {
+export def serve = entry.serve(config, ees.none, fn(ctx) {
     let initial: State = {next: 1};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {

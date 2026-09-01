@@ -920,6 +920,23 @@ type Value = enum {
 };
 ```
 
+`ScalarValue` 表达可直接穿过标量协议边界的闭合子集，并以 untagged codec 映射为
+JSON scalar：
+
+```telora
+type ScalarValue = enum {
+    'None,
+    'Bool(Bool),
+    'Int(Int),
+    'Float(Float),
+    'String(String),
+};
+```
+
+`'None`、`'Bool(true)`、数值和字符串分别编码为 JSON null、boolean、number 和 string。
+参数化查询使用 `Array(ScalarValue)` 表达 bindings；数据库 component 再把逻辑标量适配为
+后端的物理参数类型。
+
 每个递归子节点都携带同一个 canonical `Value` TypeId，因此可以用闭合 `match`
 穷尽处理。它是规范化后的语义数据，不是 lossless AST：不保留注释、anchor/alias
 身份、原始标量拼写或 table 拼写，也不暴露 VM 的 meta/runtime layout。
@@ -1358,8 +1375,10 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 普通 module 用 `std/entry` 构造工具 wrapper。应用以具体 State 类型编写：
 
 ```telora
+import "std/ees" as ees;
+
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, entry.no_ees, fn(ctx) {
+export def run = entry.run(config, ees.none, fn(ctx) {
     let initial: State = ...;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = ...;
     (initial, reduce)
@@ -1384,23 +1403,23 @@ Effect = EesCall {id, request_id, request}
 EES call 可以同时 pending，reply 通过显式 ID 关联并可按完成顺序输出。重复的活动 call
 ID、未知 request、存在活动 call 时提前 Reply，以及同一请求重复 Reply 都是协议错误。
 
-`entry.Ees` 声明完整 actor 集合。Host 据此构造 application EES service：
+`ees.Config` 声明完整 actor 集合。Host 据此构造 application EES service：
 
 ```telora
-def ees: entry.Ees = {
+def ees_config: ees.Config = {
     vars: {"tenant": "[a-z][a-z0-9-]{0,31}"},
     models: [
-        imos.model(
+        ees.imos_model(
             "materializer",
             "user-cache:imos/{tenant}",
             "user-data:materialized/{tenant}",
         ),
-        sqlite.model("catalog", "user-data:catalog/{tenant}/db.sqlite"),
+        ees.sqlite_model("catalog", "user-data:catalog/{tenant}/db.sqlite"),
     ],
 };
 ```
 
-actor name 在所有 component 间唯一。`entry.Ees.vars` 的 Dict key 是变量名，value 是自动
+actor name 在所有 component 间唯一。`ees.Config.vars` 的 Dict key 是变量名，value 是自动
 进行整串匹配的正则表达式。
 每个声明变量都必须被 locator 使用并通过 `--ees-var NAME=VALUE` 恰好绑定一次；未知、缺失、
 重复、格式不匹配以及含路径分隔符的值都失败。EES 声明不改变 reducer 接口；Host 校验
@@ -1409,8 +1428,8 @@ model 名称、kind 和配置完全一致。
 `std/ees.Request` 是 `(model, operation, input)` 的 component-neutral 普通数据。
 应用用 `actor.ees_call(id, request_id, request)` 发出调用；Host 异步执行并把结果作为
 `actor.EesReply` 重新送入 reducer。多步调用所需的阶段与关联信息保存在显式 State 中。
-`std/imos.install_shared` 和
-`std/sqlite-query.query` 只构造 component-neutral request，不执行 I/O。资源 locator
+`std/ees.install_shared` 和 `std/ees.sqlite_query` 只构造 component-neutral request，
+不执行 I/O。资源 locator
 使用 `user-data:`、`user-cache:`、`user-config:` 或 `user-state:`，冒号后是规范化
 相对路径。component adapter 优先使用对应的 `XDG_DATA_HOME`、`XDG_CACHE_HOME`、
 `XDG_CONFIG_HOME`、`XDG_STATE_HOME`；缺失时分别回退到 `$HOME/.local/share`、

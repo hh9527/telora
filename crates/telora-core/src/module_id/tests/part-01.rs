@@ -51,7 +51,7 @@
                 ("std/string".to_owned(), 1),
                 ("std/_rt".to_owned(), 2),
                 ("std/_host".to_owned(), 3),
-                ("std/_entry-default".to_owned(), 4),
+                ("std/_entry".to_owned(), 4),
             ],
         )
         .unwrap();
@@ -146,7 +146,7 @@
             ],
         );
 
-        let entry = ModuleCName::builtin("std/_entry-default");
+        let entry = ModuleCName::builtin("std/_entry");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_builtins([
@@ -247,7 +247,7 @@
             &[("app", "app", &["parser"]), ("dependency", "parser", &[])],
         );
 
-        let entry = ModuleCName::builtin("std/_entry-default");
+        let entry = ModuleCName::builtin("std/_entry");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
             .with_builtins([("std/_rt".to_owned(), 26)])
@@ -279,7 +279,7 @@
                 .id,
             dependency.id
         );
-        assert_eq!(entry.to_string(), "std/_entry-default");
+        assert_eq!(entry.to_string(), "std/_entry");
         assert_eq!(
             resolver
                 .resolve_import(&entry, "app/bin/tool")
@@ -339,10 +339,10 @@
         );
 
         let main = app.join("src/bin/main.telora");
-        let selected_entry = ModuleCName::builtin("std/_entry-default");
+        let selected_entry = ModuleCName::builtin("std/_entry");
         let resolver = ModuleResolver::for_root(&main)
             .unwrap()
-            .with_builtins([("std/_entry-default".to_owned(), 1)])
+            .with_builtins([("std/_entry".to_owned(), 1)])
             .with_entry_context(selected_entry.clone());
         let library = ModuleCName::Source {
             owner: "app".into(),
@@ -358,7 +358,7 @@
             "dep/entry/tool"
         );
         assert!(matches!(
-            resolver.resolve_import(&library, "std/_entry-default"),
+            resolver.resolve_import(&library, "std/_entry"),
             Err(ResolveModuleError::PrivateModuleAccess(_))
         ));
         assert_eq!(
@@ -382,7 +382,7 @@
 
         let catalog = ModuleResolver::catalog_from_cwd(
             &app,
-            [("std/_entry-default".to_owned(), 1)],
+            [("std/_entry".to_owned(), 1)],
         )
         .unwrap();
         assert_eq!(

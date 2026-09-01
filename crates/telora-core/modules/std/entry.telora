@@ -1,4 +1,4 @@
-import "std/_entry" as private;
+import "std/_rt" as rt;
 import "std/actor" as actor;
 import "std/ees" as ees;
 import "std/value" {Value};
@@ -15,17 +15,6 @@ type Context = struct {
     args: Array(String),
 };
 
-type EesModel = struct {
-    kind: String,
-    name: String,
-    config: Value,
-};
-
-type Ees = struct {
-    vars: Dict(String),
-    models: Array(EesModel),
-};
-
 type Eval = struct {
     config: ContextConfig,
     evaluate: Fn(Context) -> Value,
@@ -33,13 +22,13 @@ type Eval = struct {
 
 type Run(State) = struct {
     config: ContextConfig,
-    ees: Ees,
+    ees: ees.Config,
     start: Fn(Context) -> actor.Service,
 };
 
 type Serve(State) = struct {
     config: ContextConfig,
-    ees: Ees,
+    ees: ees.Config,
     start: Fn(Context) -> actor.Service,
 };
 
@@ -50,7 +39,7 @@ def main: Fn(ContextConfig, Fn(Context) -> Value) -> Eval = fn(config, evaluate)
 def run: for(State)
     Fn(
         ContextConfig,
-        Ees,
+        ees.Config,
         Fn(Context) -> Tuple([
             State,
             Fn(State, actor.Event) -> actor.Transition(State),
@@ -62,7 +51,7 @@ def run: for(State)
             ees: ees_config,
             start: fn(ctx) {
                 let prepared = prepare(ctx);
-                actor.service(private.state_type(prepared.0), prepared.0, prepared.1)
+                actor.service(rt.state_type(prepared.0), prepared.0, prepared.1)
             },
         }
     };
@@ -70,7 +59,7 @@ def run: for(State)
 def serve: for(State)
     Fn(
         ContextConfig,
-        Ees,
+        ees.Config,
         Fn(Context) -> Tuple([
             State,
             Fn(State, actor.Event) -> actor.Transition(State),
@@ -82,28 +71,18 @@ def serve: for(State)
             ees: ees_config,
             start: fn(ctx) {
                 let prepared = prepare(ctx);
-                actor.service(private.state_type(prepared.0), prepared.0, prepared.1)
+                actor.service(rt.state_type(prepared.0), prepared.0, prepared.1)
             },
         }
     };
 
-def no_ees: Ees = {vars: {}, models: []};
-
-def model: Fn(String, String, Value) -> EesModel = fn(kind, name, config) {
-    {kind, name, config}
-};
-
 export {
     ContextConfig,
     Context,
-    EesModel,
-    Ees,
     Eval,
     Run,
     Serve,
     main,
     run,
     serve,
-    no_ees,
-    model,
 };

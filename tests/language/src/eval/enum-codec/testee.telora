@@ -2,7 +2,7 @@ import "std/codec" as codec;
 import "std/json" as json;
 import "std/result" as results;
 import "std/string" as string;
-import "std/value" {Value};
+import "std/value" {ScalarValue, Value};
 import "@src/support" {bool_value};
 
 @json.rename_all('CamelCase)
@@ -14,6 +14,8 @@ type FixtureEvent = enum {
 type FixtureUser = struct {name: String};
 @json.untagged
 type FixtureScalar = enum {'Text(String), 'Count(Int)};
+@json.untagged
+type NullableScalar = enum {'Null, 'Text(String), 'Count(Int), 'Flag(Bool)};
 type FixtureEnvelope = struct {event: FixtureEvent};
 type Choice = enum {'None, 'Number(Int)};
 @json.untagged
@@ -32,6 +34,17 @@ def verified = {
     let encoded_fatal = codec.encode(codec.Value, fatal) |> results.unwrap;
     let encoded_nested = codec.encode(codec.Value, nested) |> results.unwrap;
     let encoded_count = codec.encode(codec.Value, count) |> results.unwrap;
+    let encoded_null = codec.encode(codec.Value, 'Null.ty!(NullableScalar)) |> results.unwrap;
+    let decoded_null = codec.decode(NullableScalar, 'None) |> results.unwrap;
+    let encoded_flag = codec.encode(codec.Value, 'Flag('True).ty!(NullableScalar)) |> results.unwrap;
+    let standard_scalars: Array(ScalarValue) = [
+        'None,
+        'Bool('True),
+        'Int(3),
+        'Float(3.5),
+        'String("abc"),
+    ];
+    let encoded_standard = codec.encode(codec.Value, standard_scalars) |> results.unwrap;
     let no_match = codec.decode(
         FixtureScalar,
         codec.encode(codec.Value, []) |> results.unwrap,
@@ -71,6 +84,16 @@ def verified = {
         && encoded_nested == 'Object({event: 'Object({userJoined: 'Object({name: 'String("Lin")})})})
         && text == 'Text("hello")
         && encoded_count == 'Int(3)
+        && encoded_null == 'None
+        && decoded_null == 'Null.ty!(NullableScalar)
+        && encoded_flag == 'True
+        && encoded_standard == 'Array([
+            'None,
+            'True,
+            'Int(3),
+            'Float(3.5),
+            'String("abc"),
+        ])
 };
 
 export def result: Value = bool_value(verified);

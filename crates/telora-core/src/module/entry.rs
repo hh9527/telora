@@ -394,6 +394,7 @@ fn validate_entry_interface(
         ("os".into(), TypeDescriptor::String),
     ]));
     let data_format = unit_enum(&["Json", "Toml", "Yaml"]);
+    let entry_mode = unit_enum(&["Run", "Serve"]);
     let data_source = TypeDescriptor::Struct(BTreeMap::from([
         (
             "default".into(),
@@ -414,6 +415,7 @@ fn validate_entry_interface(
             "ees".into(),
             TypeDescriptor::Dict(Box::new(TypeDescriptor::String)),
         ),
+        ("mode".into(), entry_mode),
         ("platform".into(), platform_type),
         (
             "sources".into(),
@@ -568,6 +570,7 @@ fn make_entry_env(
     arguments: &[String],
     sources: &EntryDataSources,
     ees: &BTreeMap<String, String>,
+    mode: &str,
 ) -> Val {
     let arguments = arguments
         .iter()
@@ -604,11 +607,13 @@ fn make_entry_env(
         .map(|(name, kind)| (name.as_str(), runtime_string(heap, main, kind)))
         .collect();
     let ees = runtime_record(heap, ees);
+    let mode = runtime_atom(heap, main, mode);
     runtime_record(
         heap,
         vec![
             ("args", arguments),
             ("ees", ees),
+            ("mode", mode),
             ("platform", platform),
             ("sources", sources),
         ],
@@ -726,7 +731,7 @@ fn parse_system_caps(value: crate::ValueRef<'_>) -> Result<SystemCaps, ModuleErr
     let models = protocol_ref(caps.get("ees_models").unwrap());
     let length = models
         .sequence_len()
-        .ok_or_else(|| ModuleError::new("SystemCaps.ees_models must be Array(EesModel)"))?;
+        .ok_or_else(|| ModuleError::new("SystemCaps.ees_models must be Array(ees.Model)"))?;
     let mut ees_models = Vec::with_capacity(length);
     for index in 0..length {
         let path = format!("SystemCaps.ees_models[{index}]");

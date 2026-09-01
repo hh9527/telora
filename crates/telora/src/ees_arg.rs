@@ -149,7 +149,7 @@ fn validate_bindings(
     for binding in bindings {
         let pattern = patterns.get(&binding.name).ok_or_else(|| {
             format!(
-                "EES variable {:?} is not declared by the selected entry.Ees value",
+                "EES variable {:?} is not declared by the selected ees.Config value",
                 binding.name
             )
         })?;

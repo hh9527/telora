@@ -332,14 +332,14 @@ impl Engine {
         host: &mut dyn RunHost,
     ) -> Result<RunOutcome, ModuleError> {
         let resolver = pending.inner.resolver.clone();
-        let (entry_id, entry_source) = if entry_selector == DEFAULT_ENTRY_MODULE {
+        let (entry_id, entry_source) = if entry_selector == RUN_ENTRY_MODE {
             (
-                ModuleCName::builtin("std/_entry-default"),
-                default_entry_source().to_owned(),
+                ModuleCName::builtin(PRIVATE_ENTRY_MODULE),
+                run_entry_source().to_owned(),
             )
-        } else if entry_selector == SERVE_ENTRY_MODULE {
+        } else if entry_selector == SERVE_ENTRY_MODE {
             (
-                ModuleCName::builtin("std/_entry-serve"),
+                ModuleCName::builtin(PRIVATE_ENTRY_MODULE),
                 serve_entry_source().to_owned(),
             )
         } else {
@@ -432,7 +432,7 @@ impl Engine {
                 "application export {export:?} must not be polymorphic"
             )));
         }
-        let wrapper_name = if entry_selector == SERVE_ENTRY_MODULE {
+        let wrapper_name = if entry_selector == SERVE_ENTRY_MODE {
             "Serve"
         } else {
             "Run"
@@ -521,6 +521,11 @@ impl Engine {
             entry_args,
             entry_sources,
             &host_ees,
+            if entry_selector == SERVE_ENTRY_MODE {
+                "Serve"
+            } else {
+                "Run"
+            },
         );
         let configured = invoke_world_member_in(
             &entry.runtime.main.heap,

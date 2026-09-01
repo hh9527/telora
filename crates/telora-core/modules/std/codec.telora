@@ -1,13 +1,8 @@
-import "std/value" { Value };
+import "std/_codec" {JsonRenameAll, JsonUntagged};
+import "std/value" {Value};
 import "std/regex" { ParseBy };
 import "std/string" { DecodeByParse, EncodeByDisplay };
 import "std/fmt" { DisplayBy };
-
-@property('Type)
-type JsonRenameAll = struct { case: Any };
-
-@property('Type)
-type JsonUntagged = struct {};
 
 type Properties = struct {
     parse_by: Type,
