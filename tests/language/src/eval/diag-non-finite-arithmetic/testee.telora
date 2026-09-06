@@ -1,3 +1,0 @@
-import "std/value" {Value};
-
-export def result: Value = 'Float(0.0 / 0.0);

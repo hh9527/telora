@@ -1,0 +1,43 @@
+import "std/test" as test;
+import "std/dyn" as dyn;
+import "std/fmt" as fmt;
+import "std/regex" as regex;
+import "std/string" as string;
+
+type User = struct {value: Int};
+type Choice = enum {'Some(Int), 'None};
+
+export def array_bounds = test.should_fail_with(fn() { [1][1] }, "OutOfRange");
+export def non_finite_arithmetic = test.should_fail_with(fn() { 0.0 / 0.0 }, "NonFiniteFloat");
+export def dynamic_projection = test.should_fail_with(fn() {
+    let value: Any = 1;
+    value[0]
+}, "expected Array");
+export def unwrap = test.should_fail_with(fn() {
+    let result: Result(Int, String) = 'Err("required");
+    result.unwrap!()
+}, "required");
+export def must_ok = test.should_fail_with(fn() {
+    let reject: Fn(Int, String) -> Result(Int, String) = fn(left, right) { 'Err("rejected") };
+    reject.must_ok!(1, "two")
+}, "rejected");
+export def reflection_field_index = test.should_fail_with(fn() {
+    let user: User = {value: 1};
+    dyn.get_field_value(dyn.pack(User, user), 1)
+}, "field index 1 is out of range");
+export def reflection_variant_index = test.should_fail_with(fn() {
+    let choice: Choice = 'Some(9);
+    dyn.get_variant_payload(dyn.pack(Choice, choice), 0)
+}, "variant index is 1, not 0");
+export def regex_syntax = test.should_fail_with(fn() {
+    regex.is_match(regex.compile(r"("), "x")
+}, "invalid regular expression");
+export def string_margin = test.should_fail_with(fn() {
+    string.trim_margin("x", "")
+}, "margin marker must not be empty");
+export def string_indent = test.should_fail_with(fn() {
+    string.indent("x", -1)
+}, "indentation width must be non-negative");
+export def fmt_fragments = test.should_fail_with(fn() {
+    fmt.render(fmt.concat(["missing tail"], [fmt.from_int(1)]))
+}, "strings.len == items.len + 1");
