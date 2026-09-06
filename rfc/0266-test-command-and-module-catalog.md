@@ -1,6 +1,10 @@
 # RFC 0266: Test Command and Test Module Catalog
 
 - Status: Accepted
+- Pending partial supersession: [RFC 0267](0267-deferred-tests-and-fixture-sources.md)
+  proposes replacing the module-evaluation-only `test` verdict and shared
+  check/test output contract. Catalog and import rules remain in force;
+  RFC 0267 is Proposed and does not yet supersede accepted behavior.
 
 ## Summary
 
