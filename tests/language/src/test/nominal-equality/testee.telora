@@ -1,0 +1,67 @@
+import "std/test" as test;
+import "std/eq" as eq;
+import "@src/test-support" {expect};
+import "@src/test/nominal-equality/provider" {Item};
+
+def item: Item = {value: 42};
+type Wrapped = enum {'Some(Array(Item)), 'None};
+
+export def direct = test.should_ok(fn() {
+    expect(item == {value: 42} && {value: 42} == item)
+});
+export def array_literal = test.should_ok(fn() {
+    expect([item] == [{value: 42}] && [{value: 42}] == [item])
+});
+export def array_annotated = test.should_ok(fn() {
+    let expected: Array(Item) = [{value: 42}];
+    expect([item] == expected && expected == [item])
+});
+export def tuple_literal = test.should_ok(fn() {
+    expect((item, 1) == ({value: 42}, 1) && ({value: 42}, 1) == (item, 1))
+});
+export def array_function = test.should_ok(fn() {
+    expect(eq.equal([item], [{value: 42}]) && eq.equal([{value: 42}], [item]))
+});
+export def inequality = test.should_ok(fn() {
+    expect(!([item] != [{value: 42}]) && !([{value: 42}] != [item])
+        && [item] != [{value: 43}] && [{value: 43}] != [item])
+});
+export def nested = test.should_ok(fn() {
+    expect([(item, [item])] == [({value: 42}, [{value: 42}])]
+        && [({value: 42}, [{value: 42}])] == [(item, [item])])
+});
+export def bidirectional = test.should_ok(fn() {
+    expect((item, {value: 42}) == ({value: 42}, item)
+        && ({value: 42}, item) == (item, {value: 42}))
+});
+export def fields = test.should_ok(fn() {
+    expect({entry: [item]} == {entry: [{value: 42}]}
+        && {entry: [{value: 42}]} == {entry: [item]})
+});
+export def dictionaries = test.should_ok(fn() {
+    let values: Dict(Item) = {entry: item};
+    expect(values == {entry: {value: 42}} && {entry: {value: 42}} == values)
+});
+export def tagged_payload = test.should_ok(fn() {
+    expect('Some([item]) == 'Some([{value: 42}])
+        && 'Some([{value: 42}]) == 'Some([item]))
+});
+export def existing_anonymous = test.should_ok(fn() {
+    let raw = {value: 42};
+    expect([item] != [raw] && [raw] != [item]
+        && (item, 1) != (raw, 1) && (raw, 1) != (item, 1))
+});
+export def dynamic_boundary = test.should_ok(fn() {
+    let dynamic: Any = item;
+    expect([dynamic] != [{value: 42}] && [{value: 42}] != [dynamic])
+});
+export def spreads = test.should_ok(fn() {
+    let raw = [{value: 42}];
+    expect([item] == [...[{value: 42}]] && [...[{value: 42}]] == [item]
+        && [item] != [...raw] && [...raw] != [item])
+});
+export def enum_payload = test.should_ok(fn() {
+    let wrapped: Wrapped = 'Some([item]);
+    expect([wrapped] == ['Some([{value: 42}])]
+        && ['Some([{value: 42}])] == [wrapped])
+});

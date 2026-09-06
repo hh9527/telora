@@ -175,6 +175,38 @@ impl<'a> GenericInference<'a> {
             })
     }
 
+    fn callee_is_equality(&self, callee: &Expr) -> bool {
+        if let ExprKind::TypeApply { callee, .. } = &callee.value {
+            return self.callee_is_equality(callee);
+        }
+        match &callee.value {
+            ExprKind::Field { receiver, field } => {
+                field.value == "equal"
+                    && matches!(&receiver.value, ExprKind::Variable(module)
+                        if self.external_interfaces.contains_key(&module.value))
+            }
+            ExprKind::Variable(name) if name.value == "equal" => self
+                .hir
+                .expression_ids_at(callee.location)
+                .filter_map(|id| self.hir.expression(id))
+                .filter_map(|expression| expression.reference)
+                .filter_map(|id| self.hir.reference(id))
+                .any(|reference| match reference.resolution {
+                    HirResolution::Definition(id) => self.hir.definition(id).is_some_and(
+                        |definition| {
+                            matches!(
+                                definition.kind,
+                                HirDefinitionKind::Import | HirDefinitionKind::Native
+                            )
+                        },
+                    ),
+                    HirResolution::External => true,
+                    HirResolution::Unresolved => false,
+                }),
+            _ => false,
+        }
+    }
+
     fn infer_inner(
         &mut self,
         expression: &Expr,
@@ -567,13 +599,16 @@ impl<'a> GenericInference<'a> {
                         if self.declared_identity(&evidence).is_some() {
                             self.infer(literal, environment, Some(&evidence))?;
                         } else {
-                            let literal = self.infer(literal, environment, None)?;
+                            self.infer(literal, environment, None)?;
+                            let literal = self.contextualize_authored_literal(literal, &evidence)?;
                             self.unify_equality(&evidence, &literal)?;
                         }
                     } else {
-                        let left = self.infer(left, environment, None)?;
-                        let right = self.infer(right, environment, None)?;
-                        self.unify_equality(&left, &right)?;
+                        self.infer(left, environment, None)?;
+                        let right_type = self.infer(right, environment, None)?;
+                        let left_type = self.contextualize_authored_literal(left, &right_type)?;
+                        let right_type = self.contextualize_authored_literal(right, &left_type)?;
+                        self.unify_equality(&left_type, &right_type)?;
                     }
                     normalized_bool_descriptor()
                 }
@@ -661,6 +696,7 @@ impl<'a> GenericInference<'a> {
                     result?
                 } else {
                 let callee_has_runtime_boundary = self.callee_has_runtime_boundary(callee);
+                let callee_is_equality = self.callee_is_equality(callee);
                 if self.is_builtin_tuple(callee)
                     && let [argument] = arguments.as_slice()
                     && let ExprKind::Array(items) = &argument.value
@@ -798,6 +834,35 @@ impl<'a> GenericInference<'a> {
                                 self.unify(&argument_type, parameter)?;
                             } else {
                                 self.check(&argument_type, parameter)?;
+                            }
+                        }
+                        if callee_is_equality {
+                            for (argument, parameter) in arguments.iter().zip(&parameters) {
+                                let parameter = self.resolve(parameter);
+                                self.contextualize_authored_literal(argument, &parameter)?;
+                            }
+                            for (index, parameter) in parameters.iter().enumerate() {
+                                let parameter = self.resolve(parameter);
+                                for (other_index, other_parameter) in parameters.iter().enumerate() {
+                                    if index == other_index
+                                        || parameter != self.resolve(other_parameter)
+                                    {
+                                        continue;
+                                    }
+                                    let other_type = self.resolve(
+                                        &self.records[&arguments[other_index].location],
+                                    );
+                                    self.contextualize_authored_literal(
+                                        &arguments[index],
+                                        &other_type,
+                                    )?;
+                                }
+                            }
+                            for (argument, parameter) in arguments.iter().zip(&parameters) {
+                                let parameter = self.resolve(parameter);
+                                let argument_type =
+                                    self.contextualize_authored_literal(argument, &parameter)?;
+                                self.check(&argument_type, &parameter)?;
                             }
                         }
                         self.materialize_field_requirements(&TypeDescriptor::Tuple(
@@ -1308,4 +1373,120 @@ impl<'a> GenericInference<'a> {
         Ok(inferred)
     }
 
+    // Both operands have been inferred. Only authored constructors receive context;
+    // revisiting arbitrary expressions here could rebrand an existing anonymous value.
+    fn contextualize_authored_literal(
+        &mut self,
+        expression: &Expr,
+        expected: &TypeDescriptor,
+    ) -> Result<TypeDescriptor, String> {
+        let actual = self.resolve(&self.records[&expression.location]);
+        if self.declared_identity(&actual).is_some() {
+            return Ok(actual);
+        }
+        let expected = self.expose_named(expected);
+        if let TypeDescriptor::Declared(declared) = &expected {
+            if !expression_constructs_declared_value(expression) {
+                return Ok(actual);
+            }
+            let structural = self.contextualize_authored_literal(expression, &declared.body)?;
+            self.check(&structural, &declared.body)?;
+            self.records.insert(expression.location, expected.clone());
+            return Ok(expected);
+        }
+        let contextualized = match (&expression.value, &expected) {
+            (ExprKind::Array(items), TypeDescriptor::Array(item_type)) => {
+                let mut types = Vec::new();
+                for item in items {
+                    let ty = if let ExprKind::Spread(operand) = &item.value {
+                        let spread = self.contextualize_authored_literal(operand, &expected)?;
+                        let TypeDescriptor::Array(ty) = spread else {
+                            return Ok(actual);
+                        };
+                        *ty
+                    } else {
+                        self.contextualize_authored_literal(item, item_type)?
+                    };
+                    types.push(ty);
+                }
+                TypeDescriptor::Array(Box::new(if types.is_empty() {
+                    item_type.as_ref().clone()
+                } else {
+                    join_all_types(types)
+                }))
+            }
+            (ExprKind::Tuple(items), TypeDescriptor::Tuple(types)) if items.len() == types.len() => {
+                TypeDescriptor::Tuple(
+                    items.iter().zip(types).map(|(item, ty)| {
+                        self.contextualize_authored_literal(item, ty)
+                    }).collect::<Result<_, _>>()?,
+                )
+            }
+            (ExprKind::Dict(fields), TypeDescriptor::Struct(types)) => {
+                let mut result = BTreeMap::new();
+                for field in fields {
+                    let Some(name) = &field.value.name else {
+                        return Ok(actual);
+                    };
+                    let Some(ty) = types.get(&name.value) else {
+                        return Ok(actual);
+                    };
+                    result.insert(
+                        name.value.clone(),
+                        self.contextualize_authored_literal(&field.value.value, ty)?,
+                    );
+                }
+                TypeDescriptor::Struct(result)
+            }
+            (ExprKind::Dict(fields), TypeDescriptor::Dict(item_type)) => {
+                let mut types = Vec::new();
+                for field in fields {
+                    let ty = if let ExprKind::Spread(operand) = &field.value.value.value {
+                        let spread = self.contextualize_authored_literal(operand, &expected)?;
+                        let TypeDescriptor::Dict(ty) = spread else {
+                            return Ok(actual);
+                        };
+                        *ty
+                    } else {
+                        self.contextualize_authored_literal(&field.value.value, item_type)?
+                    };
+                    types.push(ty);
+                }
+                TypeDescriptor::Dict(Box::new(if types.is_empty() {
+                    item_type.as_ref().clone()
+                } else {
+                    join_all_types(types)
+                }))
+            }
+            (ExprKind::Call { callee, arguments }, _)
+                if matches!(callee.value, ExprKind::Atom(_)) && arguments.len() == 1 =>
+            {
+                let TypeDescriptor::Tagged { tag, .. } = &actual else {
+                    return Ok(actual);
+                };
+                let payload_type = match &expected {
+                    TypeDescriptor::Tagged { tag: expected_tag, payload } if tag == expected_tag => {
+                        Some(payload.as_ref())
+                    }
+                    TypeDescriptor::Enum(variants) => {
+                        variants.get(tag.name()).and_then(|ty| ty.as_deref())
+                    }
+                    _ => None,
+                };
+                let Some(payload_type) = payload_type else {
+                    return Ok(actual);
+                };
+                TypeDescriptor::Tagged {
+                    tag: tag.clone(),
+                    payload: Box::new(
+                        self.contextualize_authored_literal(&arguments[0], payload_type)?,
+                    ),
+                }
+            }
+            _ => return Ok(actual),
+        };
+        self.records
+            .insert(expression.location, contextualized.clone());
+        Ok(contextualized)
+    }
 }

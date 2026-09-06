@@ -222,7 +222,12 @@ Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。�
 普通标量和结构值支持 `==` 和 `!=`，其签名均要求两个操作数具有同一静态语义类型
 `T`；已知类型或形状不兼容时在前端报错，不把类型错误解释为 False。若一侧具有
 exact nominal identity，另一侧是 dict、Atom 或 Tagged 字面量，该字面量从具名值
-获得同一名义类型上下文，与操作数顺序无关。复合值按结构比较，但两个具名值还必须
+获得同一名义类型上下文，与操作数顺序无关。上下文沿 Array 元素、Tuple 对应位置、
+dict 字段和值、同 tag 的 Tagged payload 递归传播，例如 `[item] == [{value: 42}]`
+中的字段字面量可从 `item` 获得名义类型；不同位置的上下文可分别来自两个操作数。
+传播只作用于当前表达式中的字面量构造（包括 spread 中直接书写的字面量），不为
+已构造的匿名变量或函数返回值重新赋予名义身份，也不从 Any/Union 边界猜测身份。
+相同规则适用于 `std/eq.equal`，包括两个参数交换后的情况。复合值按结构比较，但两个具名值还必须
 具有相同的 canonical TypeId；函数按不透明函数身份比较，而不是比较代码或闭包捕获
 内容。显式 `Any`、Union 等动态边界允许同一静态类型在运行时携带不同 variant，
 此时不同 meta 或不同名义 identity 返回 False。只有一侧携带 exact nominal witness
