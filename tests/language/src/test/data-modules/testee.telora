@@ -1,10 +1,10 @@
-import "./user.json" {data as user_data};
-import "./config.toml" {data as toml_data};
-import "./config.yaml" {data as yaml_data};
+import "@src/eval/data-modules/user.json" {data as user_data};
+import "@src/eval/data-modules/config.toml" {data as toml_data};
+import "@src/eval/data-modules/config.yaml" {data as yaml_data};
 import "std/codec" as codec;
 import "std/result" as results;
-import "std/value" {Value};
-import "@src/support" {bool_value};
+import "std/test" as test;
+import "@src/test-support" {expect};
 
 type User = struct {name: String, age: Int};
 type Date = enum {
@@ -26,17 +26,26 @@ type YamlConfig = struct {
     legacy: String,
 };
 
-export def result: Value = {
+export def json_data = test.should_ok(fn() {
     let user = codec.decode(User, user_data) |> results.unwrap;
+    expect(user == {name: "Ada", age: 36})
+});
+
+export def toml_data_case = test.should_ok(fn() {
     let config = codec.decode(Config, toml_data) |> results.unwrap;
-    let yaml = codec.decode(YamlConfig, yaml_data) |> results.unwrap;
-    bool_value(
-        user == {name: "Ada", age: 36}
-            && config.released == 'LocalDate("2026-08-04")
+    let expected_tools: Array(Tool) = [{name: "telora"}, {name: "rustc"}];
+    expect(
+        config.released == 'LocalDate("2026-08-04")
             && config.environment.PATH == "/bin"
-            && config.tools == [{name: "telora"}, {name: "rustc"}]
-            && yaml.name == "Telora"
+            && config.tools == expected_tools
+    )
+});
+
+export def yaml_data_case = test.should_ok(fn() {
+    let yaml = codec.decode(YamlConfig, yaml_data) |> results.unwrap;
+    expect(
+        yaml.name == "Telora"
             && yaml.features == ["static data", "provenance"]
             && yaml.legacy == "yes"
     )
-};
+});

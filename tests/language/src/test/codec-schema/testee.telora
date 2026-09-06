@@ -1,0 +1,64 @@
+import "std/codec" as codec;
+import "std/dict" as dict;
+import "std/json" as json;
+import "std/result" as results;
+import "std/string" as string;
+import "std/toml" as toml;
+import "std/yaml" as yaml;
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+type User = struct {name: String, age: Int};
+type Model = struct {
+    users: Array(User),
+    labels: Dict(String),
+    selected: Option(User),
+};
+type Node = struct {value: Int, children: Array(Node)};
+
+export def verified_case = test.should_ok(fn() {
+    let user: User = {name: "Ada", age: 36};
+    let model: Model = {
+        users: [user],
+        labels: {role: "admin"},
+        selected: 'Some(user),
+    };
+    let node: Node = {value: 1, children: [{value: 2, children: []}]};
+    let encoded_user = codec.encode(codec.Value, user) |> results.unwrap;
+    let encoded_model = codec.encode(codec.Value, model) |> results.unwrap;
+    let encoded_node = codec.encode(codec.Value, node) |> results.unwrap;
+    let decoded_user = codec.decode(User, encoded_user) |> results.unwrap;
+    let decoded_model = codec.decode(Model, encoded_model) |> results.unwrap;
+    let decoded_node = codec.decode(Node, encoded_node) |> results.unwrap;
+    let model_schema = json.schema(Model);
+    let node_schema = json.schema(Node);
+    let model_schema_text = codec.encode(codec.Value, model_schema)
+        |> results.unwrap
+        |> json.stringify;
+    let node_schema_text = codec.encode(codec.Value, node_schema)
+        |> results.unwrap
+        |> json.stringify;
+    let parsed_json = json.parse("{\"name\":\"Ada\",\"age\":36}") |> results.unwrap;
+    let parsed_toml = toml.parse("name = \"Ada\"\nage = 36\n") |> results.unwrap;
+    let parsed_yaml = yaml.parse("name: Ada\nage: 36\n") |> results.unwrap;
+    let verified = decoded_user == user
+        && decoded_model == model
+        && decoded_node == node
+        && codec.decode(User, parsed_json) == 'Ok(user)
+        && codec.decode(User, parsed_toml) == 'Ok(user)
+        && codec.decode(User, parsed_yaml) == 'Ok(user)
+        && !results.is_ok(codec.decode(User, 'Object({name: 'String("Ada")})))
+        && !results.is_ok(codec.decode(User, 'Object({
+            name: 'String("Ada"),
+            age: 'String("old"),
+        })))
+        && dict.keys(model.labels) == ["role"]
+        && string.contains(model_schema_text, "properties")
+        && string.contains(model_schema_text, "users")
+        && string.contains(node_schema_text, "$defs")
+        && string.contains(node_schema_text, "$ref")
+        && json.stringify(encoded_user) == "{\"age\":36,\"name\":\"Ada\"}"
+        && (json.stringify_pretty(2))(encoded_user)
+            == "{\n  \"age\": 36,\n  \"name\": \"Ada\"\n}";
+    expect(verified)
+});

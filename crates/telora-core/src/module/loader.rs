@@ -730,42 +730,7 @@ impl ModuleLoader {
         })?;
         install_type_family_roots(&mut external_roots, &analysis);
         let source_file = self.sources.get(source_id);
-        let mut runtime_program = program.clone();
-        if let ExprKind::Dict(fields) = &mut runtime_program.value.body.value.result.value {
-            for published in &analysis.module_interface.trait_implementations {
-                let source = analysis
-                    .trait_implementations
-                    .iter()
-                    .find(|implementation| implementation.id == published.id)
-                    .expect("published trait implementation has an analysis source");
-                let location = runtime_program.value.body.value.result.location;
-                fields.push(located(
-                    DictFieldKind {
-                        decorators: Vec::new(),
-                        name: Some(located(published.dictionary.clone(), location)),
-                        value: located(
-                            ExprKind::Variable(located(source.dictionary.clone(), location)),
-                            location,
-                        ),
-                    },
-                    location,
-                ));
-            }
-            for evidence in &analysis.module_interface.type_properties {
-                let location = runtime_program.value.body.value.result.location;
-                fields.push(located(
-                    DictFieldKind {
-                        decorators: Vec::new(),
-                        name: Some(located(evidence.root.clone(), location)),
-                        value: located(
-                            ExprKind::Variable(located(evidence.root.clone(), location)),
-                            location,
-                        ),
-                    },
-                    location,
-                ));
-            }
-        }
+        let runtime_program = runtime_program_with_evidence(&program, &analysis);
         let mut promoted_types = HashSet::new();
         let mut erased_metadata_bindings = HashSet::new();
         if let Some(metadata) = metadata_compilation_plan(&program) {

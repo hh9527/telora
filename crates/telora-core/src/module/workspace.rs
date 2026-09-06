@@ -1,3 +1,43 @@
+fn runtime_program_with_evidence(program: &Program, analysis: &crate::Analysis) -> Program {
+    let mut runtime_program = program.clone();
+    if let ExprKind::Dict(fields) = &mut runtime_program.value.body.value.result.value {
+        for published in &analysis.module_interface.trait_implementations {
+            let source = analysis
+                .trait_implementations
+                .iter()
+                .find(|implementation| implementation.id == published.id)
+                .expect("published trait implementation has an analysis source");
+            let location = runtime_program.value.body.value.result.location;
+            fields.push(located(
+                DictFieldKind {
+                    decorators: Vec::new(),
+                    name: Some(located(published.dictionary.clone(), location)),
+                    value: located(
+                        ExprKind::Variable(located(source.dictionary.clone(), location)),
+                        location,
+                    ),
+                },
+                location,
+            ));
+        }
+        for evidence in &analysis.module_interface.type_properties {
+            let location = runtime_program.value.body.value.result.location;
+            fields.push(located(
+                DictFieldKind {
+                    decorators: Vec::new(),
+                    name: Some(located(evidence.root.clone(), location)),
+                    value: located(
+                        ExprKind::Variable(located(evidence.root.clone(), location)),
+                        location,
+                    ),
+                },
+                location,
+            ));
+        }
+    }
+    runtime_program
+}
+
 struct WorkspaceBuilder<'a> {
     engine: &'a Engine,
     resolver: ModuleResolver,
@@ -16,6 +56,38 @@ struct WorkspaceBuilder<'a> {
 }
 
 impl WorkspaceBuilder<'_> {
+    fn install_evidence_roots(
+        &self,
+        root: PersistentValue,
+        interface: &ModuleInterface,
+        external_roots: &mut HashMap<String, PersistentValue>,
+        diagnostics: &mut Vec<Diagnostic>,
+        location: crate::Loc,
+    ) {
+        for name in interface
+            .trait_implementations
+            .iter()
+            .map(|implementation| &implementation.dictionary)
+            .chain(
+                interface
+                    .type_properties
+                    .iter()
+                    .map(|evidence| &evidence.root),
+            )
+        {
+            match root.export_get(&self.main.heap, name) {
+                Ok(Some(value)) => {
+                    external_roots.entry(name.clone()).or_insert(value);
+                }
+                Ok(None) => diagnostics.push(Diagnostic::error(
+                    format!("module is missing evidence root {name:?}"),
+                    location,
+                )),
+                Err(error) => diagnostics.push(Diagnostic::error(error.to_string(), location)),
+            }
+        }
+    }
+
     fn load_telora<'a>(
         &'a mut self,
         module: ResolvedModule,
@@ -162,6 +234,13 @@ impl WorkspaceBuilder<'_> {
                         namespace: !open && imported_name.is_none(),
                     });
                     if let Some(module) = self.builtin_modules.get(&target) {
+                        self.install_evidence_roots(
+                            module.root,
+                            &module.interface,
+                            &mut external_roots,
+                            &mut diagnostics,
+                            location,
+                        );
                         if open {
                             match workspace_open_import_exports(
                                 &target_module.id,
@@ -218,6 +297,18 @@ impl WorkspaceBuilder<'_> {
                     }
                 };
                 if let Some(root) = root {
+                    let interface = self
+                        .interfaces
+                        .get(&target_module.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    self.install_evidence_roots(
+                        root,
+                        &interface,
+                        &mut external_roots,
+                        &mut diagnostics,
+                        location,
+                    );
                     if open {
                         let interface = self
                             .interfaces
@@ -284,6 +375,13 @@ impl WorkspaceBuilder<'_> {
                 && let Some(module) = self.builtin_modules.get(PRELUDE_MODULE)
             {
                 let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
+                self.install_evidence_roots(
+                    module.root,
+                    &module.interface,
+                    &mut external_roots,
+                    &mut diagnostics,
+                    parsed.recovered.location,
+                );
                 if let Ok(exports) = workspace_open_import_exports(
                     &provider,
                     &module.interface,
@@ -604,7 +702,7 @@ impl WorkspaceBuilder<'_> {
             .unwrap_or_default();
         let function = match compile_program_with_promoted_types_and_static_funcs(
             source,
-            program,
+            &runtime_program_with_evidence(program, &analysis),
             &analysis,
             &promoted_types,
             &erased_bindings,

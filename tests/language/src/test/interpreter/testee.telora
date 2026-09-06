@@ -1,6 +1,6 @@
 import "std/dyn" as dyn;
-import "std/value" {Value};
-import "@src/support" {bool_value};
+import "std/test" as test;
+import "@src/test-support" {expect};
 
 def int_equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) {
     match dyn.check_int(left) {
@@ -24,17 +24,17 @@ def consume_string: Fn(Dyn) -> Bool = fn(value) {
 def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 
-def first_int = first(Int);
-def repeated_int = first(Int);
-def first_string = first(String);
-def second_int = second(Int);
-
-def verified = equal@[Int](Int)(1, 1)
-    && !equal@[Int](Int)(1, 2)
-    && equal(Int)(2, 2)
-    && first_int == repeated_int
-    && !first_int(1)
-    && first_string("text")
-    && first_int != second_int;
-
-export def result: Value = bool_value(verified);
+export def verified_case = test.should_ok(fn() {
+    let first_int = first(Int);
+    let repeated_int = first(Int);
+    let first_string = first(String);
+    let second_int = second(Int);
+    let verified = equal@[Int](Int)(1, 1)
+        && !equal@[Int](Int)(1, 2)
+        && equal(Int)(2, 2)
+        && first_int == repeated_int
+        && !first_int(1)
+        && first_string("text")
+        && first_int != second_int;
+    expect(verified)
+});

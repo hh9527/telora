@@ -1,2 +1,0 @@
-import "@src/eval/enum-codec/check" {check};
-export {check};
