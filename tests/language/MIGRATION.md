@@ -131,6 +131,9 @@ contract. These are implementation invariants, not duplicate language examples.
 | `sha256`, `regex` | algorithm vectors and native numeric-plan boundaries |
 
 `bounded_generic_calls_forward_hidden_trait_evidence` remains as a Rust test
-because the equivalent public package currently encounters an internal trait
-implementation binding while loading. It must move only after that public path
-is valid evidence.
+for the standalone compiler's scalar interpolation fallback, which does not
+load `std/fmt.Display` evidence. `test/trait-evidence` separately covers the
+public module path with real Display evidence: direct and explicit generic
+calls, generic forwarding, returned closures, imports, and reexports. Its
+interpolation stays inside impl methods so ordinary definitions cannot mask
+missing runtime dependencies (issue #153).

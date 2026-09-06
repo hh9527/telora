@@ -221,7 +221,11 @@ fn bind_pattern(pattern: &Pattern, bound: &mut HashSet<String>) {
 
 fn collect_runtime_names_block(block: &Block, names: &mut HashSet<String>) {
     for binding in &block.value.bindings {
-        if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def) {
+        // Impl methods can capture hidden runtime evidence introduced by elaboration.
+        if matches!(
+            binding.value.kind,
+            BindingKind::Let | BindingKind::Def | BindingKind::Impl
+        ) {
             collect_runtime_names(&binding.value.value, names);
         }
     }

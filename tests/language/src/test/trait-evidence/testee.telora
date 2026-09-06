@@ -1,0 +1,57 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+import "@src/test/trait-evidence/provider" as provider;
+import "@src/test/trait-evidence/facade" as facade;
+import "@src/test/trait-evidence/facade" {
+    Item,
+    forward as imported_forward,
+    renderer as imported_renderer,
+};
+
+trait Render { render: Fn(Self) -> String };
+# Keep interpolation inside impls: an ordinary def can mask missing evidence.
+impl Render for Int { render: fn(value) { `int=\{value}` } };
+type Plain = struct {text: String};
+impl Render for Plain { render: fn(value) { value.text } };
+
+def render: for(T: Render) Fn(T) -> String = fn(value) {
+    Render.render(value)
+};
+def forward: for(T: Render) Fn(T) -> String = fn(value) {
+    render(value)
+};
+def renderer: for(T: Render) Fn(T) -> Fn() -> String = fn(value) {
+    fn() { Render.render(value) }
+};
+
+export def direct_call = test.should_ok(fn() {
+    expect(Render.render(42) == "int=42")
+});
+export def explicit_type_argument = test.should_ok(fn() {
+    expect(render@[Int](7) == "int=7")
+});
+export def generic_forwarding = test.should_ok(fn() {
+    expect(forward(42) == "int=42")
+});
+export def returned_closure = test.should_ok(fn() {
+    let render_value = renderer(42);
+    expect(render_value() == "int=42")
+});
+export def plain_method = test.should_ok(fn() {
+    let value: Plain = {text: "plain"};
+    expect(Render.render(value) == "plain")
+});
+export def namespace_import = test.should_ok(fn() {
+    let item: provider.Item = {value: 42};
+    expect(provider.Render.render(item) == "item=42")
+});
+export def reexported_evidence = test.should_ok(fn() {
+    let item: Item = {value: 7};
+    expect(facade.Render.render(item) == "item=7"
+        && imported_forward@[Item](item) == "item=7")
+});
+export def reexported_closure = test.should_ok(fn() {
+    let item: Item = {value: 42};
+    let render_value = imported_renderer(item);
+    expect(render_value() == "item=42")
+});
