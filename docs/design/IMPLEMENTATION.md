@@ -107,9 +107,20 @@ Package preparation 构造私有 `telora-packages` IMOS Service。`run/serve` �
 把终态转为一个关联 `EesReply` event。Engine 与 RunHost 都按 `SystemCaps.ees` 校验 actor name。
 
 `telora-crate.json` 的 `modules` 是 `src/` module 的权威清单。清单项在准备阶段映射并
-canonicalize 到物理文件；未列出的文件不会进入 catalog。`tests/*` 只在 Host 选择测试
-根时加入当前图。`telora check` 在准备后扫描 `src/`，为未声明文件输出 warning，但不
-改变 resolver 输入。
+canonicalize 到物理文件；未列出的文件不会进入 catalog。`telora check` 在准备后扫描
+`src/`，为未声明文件输出 warning，但不改变 resolver 输入。
+
+选择测试根时，`ModuleResolver` 在图发现前通过 `module_id/test_catalog.rs` 递归建立
+当前 crate 的 `tests/**` 清单，以 `Arc` 在本次 resolver 的副本间共享。清单包含所有
+合法的 Telora/静态数据文件，拒绝 symlink，但不解析源码内容。顶层和嵌套测试都使用
+`ModuleCName::Test`，relative、`@test/` 和 canonical import 统一查该清单，并检查
+importer 必须是当前 crate 的测试模块。选中根的回边也交给统一 cycle 检测。
+
+CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
+`Engine::recover_with_resolver`，避免一个调用重复扫描测试清单。graph discovery
+仍只预扫描选中根的可达依赖，并在求值前完成 import/export 和 slot 分配。
+未引用测试的语法或运行时失败不进入本次结果。测试清单不扩展 source manifest、lock
+或普通 module catalog，也不会在求值时接纳新增文件。
 
 `ModuleResolver` 消费已经准备好的 crate source 清单。`builtin_list()` 先登记 builtin
 vendor 的 crate，resolver 随后登记当前 crate 和 manifest dependencies；
@@ -327,7 +338,7 @@ Entry 属于 `std` crate，可以访问 `std/_...` 协议模块。只有内置 `
 应用不直接读取 open world。wrapper 声明 capabilities；实际文件、环境、stdin 和 EES
 调用由 CLI `RunHost` 执行。module graph 在应用求值前封闭。
 
-CLI 的公开命令有 `eval`、`eval-with`、`run`、`serve`、`lock`、`check`、`query`（别名
+CLI 的公开命令有 `eval`、`eval-with`、`run`、`serve`、`lock`、`check`、`test`、`query`（别名
 `q`）和 `lsp`。`eval` 选择一个 module 的 `Value` 导出；`eval-with` 选择一个
 `entry.Eval`。两条 pure eval 路径直接执行 module 与普通调用，不初始化 reducer loop、
 RunHost 或应用 EES。
@@ -338,7 +349,9 @@ wrapper 的初始化函数返回具体 State 和 reducer；标准 Entry 边界�
 并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
 `EesCall` 映射成 component-neutral SystemEffect，将相关 Host reply 映射回 `EesReply`；
 是否声明 EES model 不改变 reducer 接口。
-`check`、`query` 和 `lsp` 当前是
+`test NAME` 与 `check @test/NAME` 共享诊断求值和结果判定，分别输出 `telora.test/v1`
+和 `telora.check/v1`；不调用导出函数，不要求 Value 或 Entry wrapper。
+`check`、`test`、`query` 和 `lsp` 当前是
 Host 固定工具路径，不通过用户 Entry ABI。
 
 ## 10. 维护不变量与验证入口

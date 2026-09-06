@@ -282,17 +282,34 @@ import "@src/config/defaults.json" {data as defaults};
 
 ## Test Root
 
-测试文件位于 crate 的 `tests/`，由 Host 以 `@test/NAME` 选择：
+测试文件位于 crate 的 `tests/`，使用 `telora test NAME` 选择一个入口，也可以继续用
+`telora check @test/NAME`：
 
 ```text
 @test/compiler -> tests/compiler.telora
+@test/parser/expressions -> tests/parser/expressions.telora
 ```
 
-当前 test root 只支持 `tests/` 下的单个文件，不支持嵌套目录，也不进入
-`telora-crate.json.modules`。test 使用 `@src/...` 导入所属 crate 的普通模块；test 中的
-相对 import 不构成 crate module 依赖。
+选中测试时，Host 递归枚举当前 crate 的 `tests/`，为所有 Telora、JSON、YAML 和 TOML
+文件建立本次调用的固定清单。它不写入 `telora-crate.json.modules` 或 lock，也不加入
+普通 `query modules` 的结果。符号链接（包括 `tests/` 根目录）不允许进入测试清单。
+其他后缀文件被忽略；未引用模块的源码不会被解析或求值。
+`tests/x.telora` 与已声明的 `src/tests/x.telora` 会产生相同的 canonical name，
+测试准备阶段会拒绝这种命名冲突。
+
+测试通过 `@src/...` 导入所属 crate 已声明的普通模块，通过 `@test/...`、
+`<crate>/tests/...` 或相对路径导入测试模块。顶层测试和子目录辅助模块可以相互导入，
+所有合法拼写保持同一模块身份。相对路径不能越出测试清单；源码模块和其他 crate
+不能反向访问测试模块。循环依赖仍产生错误。
+
+清单中的文件不会自动执行。Host 只从选中根发现完整可达图，再初始化和 best-effort
+求值。被导入测试的错误会使本次测试失败；未引用测试的语法或求值错误不会影响本次
+结果。入口必须是非 private 的 Telora 模块，名称不带 `.telora`，可以包含子目录。
+当前必须显式指定一个名称，不提供无参数批量发现。
 
 ```bash
+telora test compiler
+telora test parser/expressions
 telora check @test/compiler
 ```
 
@@ -327,7 +344,7 @@ workspace config、member manifest 或远程基线发生变化后运行：
 telora lock
 ```
 
-`eval`、`eval-with`、`run`、`serve`、`check`、`query` 和 LSP 都要求 lock 存在且与当前
+`eval`、`eval-with`、`run`、`serve`、`test`、`check`、`query` 和 LSP 都要求 lock 存在且与当前
 config、manifest 和远程物化结果一致。发现陈旧 lock 时，命令会要求刷新，不会隐式
 改写它。
 

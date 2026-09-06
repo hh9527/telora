@@ -1,6 +1,6 @@
 # RFC 0266: Test Command and Test Module Catalog
 
-- Status: Proposed
+- Status: Accepted
 
 ## Summary
 
@@ -120,6 +120,9 @@ Within the current crate's test modules:
 
 Telora selectors omit `.telora`; static data selectors retain their suffixes.
 All accepted spellings of a module share one identity and initialization.
+Catalog preparation rejects a test identity that conflicts with a declared
+source module, such as `tests/x.telora` and `src/tests/x.telora`, rather than
+assigning two module identities the same public canonical name.
 
 ```telora
 # tests/t1.telora
@@ -259,5 +262,15 @@ The implementation must demonstrate:
 11. No application effects run, no new modules are admitted during evaluation,
     and existing quota and publication failures still prevent success.
 
-These are implementation acceptance requirements, not claims of completed
-validation for this proposal.
+## Implementation and Validation
+
+Implemented in `module_id/test_catalog.rs`, the test-aware `ModuleResolver`,
+`Engine::recover_with_resolver`, and the CLI's shared check/test path. Resolver
+tests cover catalog membership, identities, visibility, nested roots, symlinks,
+source-name conflicts and strict cycle rejection. CLI tests cover module
+composition, recovery cycles, static-data provenance, one-time diamond
+initialization, unreachable errors, member context, query/check compatibility,
+argument validation and diagnostic output.
+
+`cargo test --workspace` passed all 351 tests, including the language acceptance
+suite. Builds and tests used debug profiles; no release binary was built.

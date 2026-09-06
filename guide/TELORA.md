@@ -934,7 +934,11 @@ fallback。`validate` 等 prelude 名不是保留字，本地 binding 可以正�
 `import "std/prelude" { validate as builtin_validate };`。
 
 `src/` 下的文件由 crate module 清单发布；`tests/` 下的入口由 Host 以 `@test/...`
-选择。模块既可以使用显式源码根路径，也可以使用相对路径：
+选择，`telora test NAME` 是对应的测试命令。测试支持子目录，选中入口时 Host 建立
+整个 `tests/` 的临时清单，只预扫描和求值可达模块。测试通过 `@test/...` 或相对路径
+互相导入（包括顶层测试），通过 `@src/...` 导入源码；源码不能反向依赖测试，循环
+import 仍被拒绝。测试不自动调用导出函数，失败通过现有 failure API 表达。
+模块既可以使用显式源码根路径，也可以使用相对路径：
 
 ```telora
 # src/app.telora

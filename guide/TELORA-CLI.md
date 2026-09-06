@@ -12,7 +12,7 @@ canonical crate name、模块清单和直接依赖名称；workspace 根的 `tel
 
 Telora 从当前目录向上查找最近的 `telora-config.json`，因此命令可以从 workspace 内
 任意目录执行。`-C` 可以显式改变查找的起始目录。`telora lock` 是唯一写入 lock 的
-命令；`eval`、`eval-with`、`run`、`serve`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
+命令；`eval`、`eval-with`、`run`、`serve`、`test`、`check`、`query` 和 LSP 要求 lock 已存在且与配置一致。
 命令参数使用稳定逻辑模块 ID，不使用物理文件名：
 
 ```text
@@ -23,6 +23,8 @@ telora -C examples/my-crate run @src/app:run --source request=stdin+json://
 telora -C examples/my-crate run @src/app:run --ees-var tenant=production
 telora -C examples/my-crate serve @src/app:serve --bind stdio://
 telora -C examples/my-crate check @test/compiler
+telora -C examples/my-crate test compiler
+telora -C examples/my-crate test parser/expressions
 telora -C examples/my-crate query modules
 telora -C examples/my-crate query at @src/app
 telora -C examples/my-crate query at @src/compiler -k type,let,def,import
@@ -46,6 +48,21 @@ export def lowering_case = do {
 ```
 
 多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
+
+`test NAME` 选择当前 crate 的 `tests/NAME.telora`，复用 `check` 的 best-effort 求值。
+`NAME` 不带后缀，可以包含子目录；不接受绝对路径、`..`、通配符或 export selector。
+当前只支持显式选择一个测试。Host 先准备整个 `tests/` 的模块清单，再解析和求值从
+该入口可达的模块；测试模块可以相互 import，源码不能反向 import 测试。完整规则见
+[`WORKSPACE.md`](WORKSPACE.md#test-root)。
+
+测试在模块初始化中通过 `fail!` 等现有 API 表达失败，不自动调用导出函数，也不把
+`'False` 当作失败。stdout 使用 `telora.test/v1`，字段与 `telora.check/v1` 相同：先
+输出 diagnostic，求值完成后输出一个 summary。有 error 时退出码为 1，否则为 0，
+warning 不影响成功。参数错误沿用 clap；准备失败在 stderr 输出 `telora.error/v1`，
+没有求值 summary。该命令不进入 reducer 或应用 EES 调度。
+
+`check @test/NAME` 使用相同清单和求值行为，保留 `telora.check/v1`；显式的
+`query at/exports @test/NAME` 同样支持嵌套测试与测试依赖。
 
 - `eval module:name` 要求公开导出 `name: Value`，直接求值并编码为 JSON。
   `eval-with` 要求导出 `entry.Eval`。其 `entry.ContextConfig` 声明 source、环境变量和

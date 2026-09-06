@@ -870,10 +870,12 @@ impl Engine {
         self.recover_with_resolver(resolver)
     }
 
-    fn recover_with_resolver(
+    /// Recover one graph using the caller's already prepared module catalog.
+    pub fn recover_with_resolver(
         &self,
         resolver: ModuleResolver,
     ) -> Result<WorkspaceSnapshot, ModuleError> {
+        let resolver = resolver.with_builtins(builtin_list());
         let root_module = resolver
             .selected_root()
             .map_err(|error| ModuleError::new(error.to_string()))?;

@@ -313,7 +313,7 @@
     }
 
     #[test]
-    fn special_roots_are_host_selected_files_only_and_not_ordinary_imports() {
+    fn test_roots_allow_nested_selection_but_stay_out_of_production_catalogs() {
         let temporary = std::env::temp_dir().join(format!(
             "telora-special-root-test-{}",
             std::process::id()
@@ -374,10 +374,11 @@
             "app/bin/main"
         );
 
-        assert!(matches!(
-            ModuleResolver::from_cwd(&app, "@test/nested/query"),
-            Err(ResolveModuleError::InvalidImport(message)) if message.contains("files only")
-        ));
+        let test = ModuleResolver::from_cwd(&app, "@test/nested/query").unwrap();
+        assert_eq!(
+            test.selected_root().unwrap().id.to_string(),
+            "app/tests/nested/query"
+        );
         assert!(ModuleResolver::for_root(&app.join("src/entry/nested/tool.telora")).is_ok());
 
         let catalog = ModuleResolver::catalog_from_cwd(
@@ -436,7 +437,7 @@
         ));
         assert!(matches!(
             ModuleResolver::from_cwd(&app, "@test/escape"),
-            Err(ResolveModuleError::CrateEscape(_))
+            Err(ResolveModuleError::InvalidImport(message)) if message.contains("symlinks")
         ));
         std::fs::remove_dir_all(temporary).unwrap();
     }

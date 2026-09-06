@@ -551,6 +551,8 @@ enum Command {
     Lock,
     /// Check a module with best-effort evaluation and emit JSONL diagnostics.
     Check(CheckArgs),
+    /// Evaluate one test module using the current crate's test catalog.
+    Test(TestArgs),
     /// Query module and semantic facts as JSONL.
     #[command(visible_alias = "q")]
     Query(QueryArgs),
@@ -603,6 +605,26 @@ struct CheckArgs {
     /// Canonical module selector, such as @src/lib, @test/compiler, or std/string.
     #[arg(value_name = "MODULE_ID")]
     module_id: String,
+}
+
+#[derive(Args)]
+struct TestArgs {
+    /// Path below tests/, without .telora (for example parser/expressions).
+    #[arg(value_name = "NAME", value_parser = parse_test_name)]
+    name: String,
+}
+
+fn parse_test_name(value: &str) -> Result<String, String> {
+    if value.is_empty()
+        || value.contains(['\\', ':', '@', '*', '?', '[', ']'])
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || std::path::Path::new(value).extension().is_some()
+    {
+        return Err("expected a normalized test name below tests/, without a file suffix".into());
+    }
+    Ok(value.to_owned())
 }
 
 #[derive(Args)]
@@ -782,7 +804,14 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
         Command::Ees(_) => unreachable!("EES returns before workspace context discovery"),
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(path.to_string_lossy())).map(|()| 0)),
-        Command::Check(arguments) => check_command(context, arguments),
+        Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
+        Command::Test(arguments) => check_command(
+            context,
+            CheckArgs {
+                module_id: format!("@test/{}", arguments.name),
+            },
+            "telora.test/v1",
+        ),
         Command::Query(arguments) => query_command(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),
     }
@@ -868,15 +897,17 @@ fn command_context(context: Option<PathBuf>) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot determine context: {error}"))
 }
 
-fn check_command(context: PathBuf, arguments: CheckArgs) -> Result<i32, String> {
+fn check_command(context: PathBuf, arguments: CheckArgs, schema: &str) -> Result<i32, String> {
     let prepared = package_host::prepare(&context)?;
-    let module_name =
+    let resolver =
         ModuleResolver::from_workspace(Arc::clone(&prepared), &context, &arguments.module_id)
-            .and_then(|resolver| resolver.selected_root())
-            .map(|module| module.id.to_string())
             .map_err(|error| error.to_string())?;
+    let module_name = resolver
+        .selected_root()
+        .map(|module| module.id.to_string())
+        .map_err(|error| error.to_string())?;
     let workspace = engine()
-        .recover_workspace_id_in_workspace(Arc::clone(&prepared), context, &arguments.module_id)
+        .recover_with_resolver(resolver)
         .map_err(|error| error.to_string())?;
     for (crate_name, _) in prepared.crates() {
         for undeclared in prepared
@@ -884,7 +915,7 @@ fn check_command(context: PathBuf, arguments: CheckArgs) -> Result<i32, String> 
             .map_err(|error| error.to_string())?
         {
             emit(json!({
-                "schema": "telora.check/v1",
+                "schema": schema,
                 "module": module_name,
                 "record": "diagnostic",
                 "severity": "warning",
@@ -923,7 +954,7 @@ fn check_command(context: PathBuf, arguments: CheckArgs) -> Result<i32, String> 
             })
             .collect::<Vec<_>>();
         emit(json!({
-            "schema": "telora.check/v1",
+            "schema": schema,
             "module": module_name,
             "record": "diagnostic",
             "severity": severity,
@@ -934,7 +965,7 @@ fn check_command(context: PathBuf, arguments: CheckArgs) -> Result<i32, String> 
     }
     let failed = has_error_diagnostic;
     emit(json!({
-        "schema": "telora.check/v1",
+        "schema": schema,
         "module": module_name,
         "record": "summary",
         "status": if failed { "error" } else { "ok" },
@@ -1021,26 +1052,23 @@ fn query_command(context: PathBuf, arguments: QueryArgs) -> Result<i32, String> 
     } else {
         Some(package_host::prepare(&context)?)
     };
-    let canonical_module_id = if module_id.starts_with("std/") {
-        module_id.clone()
+    let mut canonical_module_id = module_id.clone();
+    let workspace = if let Some(prepared) = prepared {
+        ModuleResolver::from_workspace(prepared, &context, &module_id)
+            .map_err(|error| error.to_string())
+            .and_then(|resolver| {
+                canonical_module_id = resolver
+                    .selected_root()
+                    .map(|module| module.id.to_string())
+                    .map_err(|error| error.to_string())?;
+                engine()
+                    .recover_with_resolver(resolver)
+                    .map_err(|error| error.to_string())
+            })
     } else {
-        ModuleResolver::from_workspace(
-            Arc::clone(prepared.as_ref().expect("crate query is prepared")),
-            &context,
-            &module_id,
-        )
-        .and_then(|resolver| resolver.selected_root())
-        .map(|module| module.id.to_string())
-        .unwrap_or_else(|_| module_id.clone())
-    };
-    let workspace = if module_id.starts_with("std/") {
-        engine().recover_builtin_workspace(&module_id)
-    } else {
-        engine().recover_workspace_id_in_workspace(
-            prepared.expect("crate query is prepared"),
-            context,
-            &module_id,
-        )
+        engine()
+            .recover_builtin_workspace(&module_id)
+            .map_err(|error| error.to_string())
     };
     let workspace = match workspace {
         Ok(workspace) => workspace,

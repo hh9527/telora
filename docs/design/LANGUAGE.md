@@ -826,7 +826,7 @@ identity 和 provenance；不包装、重求值或重建 binding。Namespace bin
 Telora crate 使用 `src/` 和 `tests/`。Host 从当前工作目录向上查找最近的
 `telora-config.json`，并从 workspace 的 `telora-crate.json` 得到稳定 crate 身份、
 权威模块清单和直接依赖。`src/` 中的目录没有执行身份；工具对普通 module export 的
-名义类型进行验收。测试由 Host 以 `@test/<name>` 选择。
+名义类型进行验收。测试由 Host 以 `@test/<name>` 选择，`telora test <name>` 使用同一身份。
 
 逻辑 ID 到 crate 内物理位置的映射为：
 
@@ -837,12 +837,21 @@ Telora crate 使用 `src/` 和 `tests/`。Host 从当前工作目录向上查找
 dependency/x    -> <dependency-crate>/src/x.telora -> dependency/x
 ```
 
-`src/` module 可使用 `./`、`../` 或 `@src/` 导入同 crate module。test 只有被 Host
-选中时才进入图，并以 `@src/` 导入 crate source。依赖公开其清单中的 public module。
+`src/` module 可使用 `./`、`../` 或 `@src/` 导入同 crate module。Host 选择测试根时，
+先为当前 crate 的整个 `tests/` 建立固定模块清单，再从选中根发现可达图。测试根可以
+位于子目录；顶层测试和辅助模块均可通过相对路径、`@test/` 或 `<crate>/tests/` 相互
+导入，通过 `@src/` 导入已声明的 crate source。源码模块与其他 crate 不能访问测试
+模块。依赖公开其清单中的 public module。
+
+测试清单包含 Telora 和受支持的静态数据模块，不写入 manifest 或 lock，不扩展普通
+production catalog。枚举顺序确定，符号链接（包括 tests 根）被拒绝，其他文件类型被
+忽略。若 `tests/x.telora` 与已声明的 `src/tests/x.telora` 产生相同 canonical name，
+测试准备阶段拒绝该冲突。清单成员不自动成为执行根，未引用文件不解析、不求值；
+枚举或路径校验失败仍属于准备错误。清单固定不意味着 Host 提供原子文件内容快照。
 
 `@src/` 以 importing module 所属 crate 为准，因此依赖模块中的 `@src/` 仍指向该依赖
-自己的 source root。`./` 和 `../` 只表示 source module 或 dependency module 内部、
-相对于 importing module 逻辑目录的导入。Package import 的首段选择固定依赖，
+自己的 source root。`./` 和 `../` 表示相对于 importing module 逻辑目录的导入，
+测试内部的相对路径不能越出测试清单。Package import 的首段选择固定依赖，
 `std/...` identity 来自 Telora 内置 crate。上述解析均在模块初始化前完成。
 
 模块 import graph 不允许初始化 cycle。递归函数和递归 TypeMetadata 在单个模块及
@@ -877,7 +886,7 @@ tarball，再把准备好的 immutable crate-root map 交给 resolver。resolver
 
 `telora-crate.json` 的 `modules` 只接受 `@src/...` selector，并且是 `src/` module 的
 权威集合。未声明文件不可 import；`telora check` 会为存在但未声明的 source 或静态
-数据文件产生 warning。`tests/*` 由 Host 选择，不进入该清单。
+数据文件产生 warning。`tests/**` 属于测试调用的独立清单，不进入 source manifest。
 
 resolver 按顺序查询 vendor：builtin vendor 在先，当前发布 `std/*`；prepared
 workspace 建立的 configured vendor 在后。vendor 以 crate 为选择颗粒；一旦
@@ -1288,6 +1297,7 @@ Plan 没有语言级权限。一个值即使静态类型为应用定义的 `Exec
 
 ```text
 telora [-C <context>] check <module>
+telora [-C <context>] test <name>
 telora [-C <context>] eval <module:export>
 telora [-C <context>] eval-with <module:export> [--source <name>=<source>]... [-- <arg>...]
 telora [-C <context>] run <module:export> [--best-effort] [--source <name>=<source>]... [--ees-var <name>=<value>]... [-- <arg>...]
@@ -1301,7 +1311,7 @@ telora lsp
 
 Clap 拥有 help、version 和命令行参数校验，其输出是面向人的文本。命令通过参数校验后，
 Telora Host 在 stdout 和 stderr 上只产生 JSON 或 JSONL。成功的 `eval` 输出一个 JSON
-Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`query`、`run` 和
+Value；`dbg!` 和命令错误在 stderr 输出 JSONL record。`check`、`test`、`query`、`run` 和
 `serve` 输出各自的 JSONL 协议，`lock` 输出生成的 lock path JSON String。进程退出码
 独立表达命令是否成功。
 
@@ -1319,6 +1329,15 @@ run context 相同，但 canonical source path 使用 `@eval-ctx/<name>`。物�
 `run` 和 `serve` 从 CWD 向上发现最近的 manifest，解析 `MODULE:EXPORT`，执行普通模块，
 再按 wrapper 的名义类型验收 export。`run` 要求 `entry.Run(State)`；`serve` 要求
 `entry.Serve(State)`。`-C` 指定 manifest discovery 的起始目录，该目录不必就是 crate root。
+
+`test <name>` 选择 `tests/<name>.telora`，名称必须是无后缀的规范相对路径；不接受
+绝对路径、parent traversal 或 export selector。当前只支持显式选择一个 Telora 根，
+private 文件不能作为根。它复用 `check` 的 best-effort 求值与诊断字段，使用
+`telora.test/v1`。求值完成后输出一个 summary；有 error 时退出 1，无 error 时退出 0。
+准备错误沿用 stderr 的 `telora.error/v1`，不伪造求值 summary。测试不自动调用导出
+函数，也不把 `'False` 当作断言失败；模块必须通过现有诊断或 failure API 表达拒绝。
+被导入测试的错误属于当前结果。此命令不运行 reducer 或应用 EES，不改变循环初始化
+的拒绝规则。`check @test/...` 与显式测试 query 使用相同清单和模块身份。
 
 其他命令的 `<module>` 是 `@src/...`、`@test/...`、依赖模块 ID，或
 公开 `std/...` 模块 ID，不是物理文件名。`query exports std/string` 与
@@ -1566,7 +1585,7 @@ String chunk。CLI 在 terminal effect 前缓冲它们；协议失败不暴露�
 上限；无队列事件且无活动 EES 调用时判定无进展。每次 reducer 调用仍受普通 VM quota
 约束。
 
-`check`、`query` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
+`check`、`test`、`query` 和 `lsp` 当前仍是 Host 固定命令路径，尚未通过 run Entry ABI。它们
 把目标当作 module。`check` 给出严格 module load/compile verdict，但不等价于一次
 `run`：它不选择 application output，也不承诺执行期成功。`query` 和 LSP 可以使用
 recovery snapshot 展示仍有证据的语义事实。
