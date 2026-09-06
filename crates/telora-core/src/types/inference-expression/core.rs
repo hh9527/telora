@@ -175,38 +175,6 @@ impl<'a> GenericInference<'a> {
             })
     }
 
-    fn callee_is_equality(&self, callee: &Expr) -> bool {
-        if let ExprKind::TypeApply { callee, .. } = &callee.value {
-            return self.callee_is_equality(callee);
-        }
-        match &callee.value {
-            ExprKind::Field { receiver, field } => {
-                field.value == "equal"
-                    && matches!(&receiver.value, ExprKind::Variable(module)
-                        if self.external_interfaces.contains_key(&module.value))
-            }
-            ExprKind::Variable(name) if name.value == "equal" => self
-                .hir
-                .expression_ids_at(callee.location)
-                .filter_map(|id| self.hir.expression(id))
-                .filter_map(|expression| expression.reference)
-                .filter_map(|id| self.hir.reference(id))
-                .any(|reference| match reference.resolution {
-                    HirResolution::Definition(id) => self.hir.definition(id).is_some_and(
-                        |definition| {
-                            matches!(
-                                definition.kind,
-                                HirDefinitionKind::Import | HirDefinitionKind::Native
-                            )
-                        },
-                    ),
-                    HirResolution::External => true,
-                    HirResolution::Unresolved => false,
-                }),
-            _ => false,
-        }
-    }
-
     fn infer_inner(
         &mut self,
         expression: &Expr,
@@ -696,7 +664,6 @@ impl<'a> GenericInference<'a> {
                     result?
                 } else {
                 let callee_has_runtime_boundary = self.callee_has_runtime_boundary(callee);
-                let callee_is_equality = self.callee_is_equality(callee);
                 if self.is_builtin_tuple(callee)
                     && let [argument] = arguments.as_slice()
                     && let ExprKind::Array(items) = &argument.value
@@ -795,6 +762,9 @@ impl<'a> GenericInference<'a> {
                         }
                         let mut partial_tagged_evidence = false;
                         let mut unresolved_argument_evidence = false;
+                        // Macro-generated arguments can share a source location, so retain
+                        // each inference result rather than rereading the location map.
+                        let mut argument_types = vec![TypeDescriptor::Never; arguments.len()];
                         let mut argument_order = (0..arguments.len()).collect::<Vec<_>>();
                         argument_order.sort_by_key(|index| match &arguments[*index].value {
                             _ if self.explicit_scheme(&arguments[*index]).is_some() => 0,
@@ -821,6 +791,7 @@ impl<'a> GenericInference<'a> {
                                     inference_expected,
                                 )?
                             };
+                            argument_types[index] = argument_type.clone();
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.resolve(&argument_type));
                             partial_tagged_evidence |= matches!(
@@ -836,34 +807,26 @@ impl<'a> GenericInference<'a> {
                                 self.check(&argument_type, parameter)?;
                             }
                         }
-                        if callee_is_equality {
-                            for (argument, parameter) in arguments.iter().zip(&parameters) {
-                                let parameter = self.resolve(parameter);
-                                self.contextualize_authored_literal(argument, &parameter)?;
-                            }
-                            for (index, parameter) in parameters.iter().enumerate() {
-                                let parameter = self.resolve(parameter);
-                                for (other_index, other_parameter) in parameters.iter().enumerate() {
-                                    if index == other_index
-                                        || parameter != self.resolve(other_parameter)
-                                    {
-                                        continue;
-                                    }
-                                    let other_type = self.resolve(
-                                        &self.records[&arguments[other_index].location],
-                                    );
-                                    self.contextualize_authored_literal(
-                                        &arguments[index],
-                                        &other_type,
-                                    )?;
-                                }
-                            }
-                            for (argument, parameter) in arguments.iter().zip(&parameters) {
-                                let parameter = self.resolve(parameter);
-                                let argument_type =
-                                    self.contextualize_authored_literal(argument, &parameter)?;
-                                self.check(&argument_type, &parameter)?;
-                            }
+                        // Keep the instantiated parameter variables: equal resolved types
+                        // do not imply that two parameters share a generic constraint.
+                        for ((argument, actual), parameter) in arguments
+                            .iter()
+                            .zip(&argument_types)
+                            .zip(&parameters)
+                        {
+                            let actual = if matches!(
+                                argument.value,
+                                ExprKind::Array(_) | ExprKind::Tuple(_)
+                            ) || expression_constructs_declared_value(argument)
+                            {
+                                self.contextualize_authored_literal(argument, actual)?
+                            } else {
+                                actual.clone()
+                            };
+                            self.refine_argument_nominal_context(parameter, &actual)?;
+                        }
+                        for (argument, parameter) in arguments.iter().zip(&parameters) {
+                            self.contextualize_authored_literal(argument, parameter)?;
                         }
                         self.materialize_field_requirements(&TypeDescriptor::Tuple(
                             parameters.clone(),
@@ -988,7 +951,10 @@ impl<'a> GenericInference<'a> {
                 result_annotation,
                 body,
             } => {
-                let expected = match expected.map(|ty| self.resolve(ty)) {
+                let expected = match expected.map(|ty| match ty {
+                    TypeDescriptor::Function { .. } => ty.clone(),
+                    _ => self.resolve(ty),
+                }) {
                     Some(TypeDescriptor::Function {
                         parameters: expected_parameters,
                         result,

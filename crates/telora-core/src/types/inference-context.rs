@@ -218,6 +218,11 @@ impl<'a> GenericInference<'a> {
                 self.check(value, &expected)?;
             }
             self.check(&tail, &expected)?;
+            let mut values = boundary.values;
+            values.push(tail);
+            if let Some(actual) = common_type(values) {
+                self.refine_argument_nominal_context(&expected, &actual)?;
+            }
             return Ok(expected);
         }
         let mut values = boundary.values;

@@ -1,10 +1,17 @@
 import "std/test" as test;
 import "std/eq" as eq;
+import "std/eq" {equal as same};
 import "@src/test-support" {expect};
 import "@src/test/nominal-equality/provider" {Item};
 
 def item: Item = {value: 42};
 type Wrapped = enum {'Some(Array(Item)), 'None};
+type Mixed = union('None, [Item, Int]);
+def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
+def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
+def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
+def choose_dynamic: Fn(Any, Any) -> Any = fn(left, right) { left };
+def choose_with_factory: for(T) Fn(Array(T), Fn() -> T) -> Array(T) = fn(left, factory) { left };
 
 export def direct = test.should_ok(fn() {
     expect(item == {value: 42} && {value: 42} == item)
@@ -64,4 +71,35 @@ export def enum_payload = test.should_ok(fn() {
     let wrapped: Wrapped = 'Some([item]);
     expect([wrapped] == ['Some([{value: 42}])]
         && ['Some([{value: 42}])] == [wrapped])
+});
+export def renamed_equality = test.should_ok(fn() {
+    expect(same([{value: 42}], [item]) && same([item], [{value: 42}]))
+});
+export def generic_shared_parameter = test.should_ok(fn() {
+    expect(choose([{value: 42}], [item]) == [item]
+        && choose([item], [{value: 42}]) == [item])
+});
+export def generic_nested_parameter = test.should_ok(fn() {
+    expect(choose_array([{value: 42}], item) == [item]
+        && choose_array([item], {value: 42}) == [item])
+});
+export def generic_independent_parameters = test.should_ok(fn() {
+    expect(choose_independent([{value: 42}], [item]) != [item]
+        && choose_dynamic([{value: 42}], [item]) != [item])
+});
+export def generic_existing_value = test.should_ok(fn() {
+    let raw = [{value: 42}];
+    expect(choose(raw, [item]) != [item]
+        && choose_array(raw, item) != [item])
+});
+export def generic_callback_evidence = test.should_ok(fn() {
+    expect(choose_with_factory([{value: 42}], fn() { item }) == [item])
+});
+export def generic_nested_tuple = test.should_ok(fn() {
+    expect(choose((item, {value: 42}), ({value: 42}, item)) == (item, item))
+});
+export def generic_union_boundary = test.should_ok(fn() {
+    let mixed: Mixed = 1;
+    expect(choose([mixed], [1]) == [1]
+        && choose_array([mixed], 1) == [1])
 });

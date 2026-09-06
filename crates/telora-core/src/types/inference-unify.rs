@@ -385,6 +385,88 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    // Refine only existing inference variables. Concrete contracts and dynamic
+    // boundaries stay intact; the returned shape carries evidence to an enclosing variable.
+    fn refine_argument_nominal_context(
+        &mut self,
+        parameter: &TypeDescriptor,
+        actual: &TypeDescriptor,
+    ) -> Result<TypeDescriptor, String> {
+        if let TypeDescriptor::Inference(variable) = parameter {
+            let Some(bound) = self.substitutions.get(variable).cloned() else {
+                return Ok(parameter.clone());
+            };
+            let refined = self.refine_argument_nominal_context(&bound, actual)?;
+            if refined != bound {
+                self.substitutions.insert(*variable, refined.clone());
+            }
+            return Ok(refined);
+        }
+        let actual = self.expose_named(actual);
+        match (parameter, &actual) {
+            (TypeDescriptor::Any | TypeDescriptor::Union(_), _) => Ok(parameter.clone()),
+            (_, TypeDescriptor::Declared(declared)) => {
+                self.check(parameter, &actual)?;
+                if self.declared_identity(parameter).is_some() {
+                    Ok(parameter.clone())
+                } else {
+                    self.check(parameter, &declared.body)?;
+                    Ok(actual)
+                }
+            }
+            (TypeDescriptor::Array(left), TypeDescriptor::Array(right)) => Ok(
+                TypeDescriptor::Array(Box::new(self.refine_argument_nominal_context(left, right)?)),
+            ),
+            (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => Ok(
+                TypeDescriptor::Dict(Box::new(self.refine_argument_nominal_context(left, right)?)),
+            ),
+            (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => Ok(
+                TypeDescriptor::TypeOf(Box::new(self.refine_argument_nominal_context(left, right)?)),
+            ),
+            (
+                TypeDescriptor::Function { parameters: left, result: left_result },
+                TypeDescriptor::Function { parameters: right, result: right_result },
+            ) if left.len() == right.len() => {
+                Ok(TypeDescriptor::Function {
+                    parameters: left
+                        .iter()
+                        .zip(right)
+                        .map(|(left, right)| self.refine_argument_nominal_context(left, right))
+                        .collect::<Result<_, _>>()?,
+                    result: Box::new(
+                        self.refine_argument_nominal_context(left_result, right_result)?,
+                    ),
+                })
+            }
+            (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right)) if left.len() == right.len() => {
+                Ok(TypeDescriptor::Tuple(
+                    left.iter().zip(right)
+                        .map(|(left, right)| self.refine_argument_nominal_context(left, right))
+                        .collect::<Result<_, _>>()?,
+                ))
+            }
+            (TypeDescriptor::Struct(left), TypeDescriptor::Struct(right))
+                if left.keys().eq(right.keys()) =>
+            {
+                Ok(TypeDescriptor::Struct(
+                    left.iter().map(|(name, left)| {
+                        Ok((name.clone(), self.refine_argument_nominal_context(left, &right[name])?))
+                    }).collect::<Result<_, String>>()?,
+                ))
+            }
+            (
+                TypeDescriptor::Tagged { tag: left_tag, payload: left },
+                TypeDescriptor::Tagged { tag: right_tag, payload: right },
+            ) if left_tag == right_tag => {
+                Ok(TypeDescriptor::Tagged {
+                    tag: left_tag.clone(),
+                    payload: Box::new(self.refine_argument_nominal_context(left, right)?),
+                })
+            }
+            _ => Ok(parameter.clone()),
+        }
+    }
+
     fn unify_equality(
         &mut self,
         left: &TypeDescriptor,
