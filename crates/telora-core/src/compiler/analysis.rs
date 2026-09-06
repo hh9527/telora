@@ -32,7 +32,17 @@ pub(crate) fn function_contract_arity(contract: &Expr) -> Option<u32> {
 
 fn free_block(block: &Block, bound: &mut HashSet<String>, free: &mut BTreeSet<String>) {
     for binding in &block.value.bindings {
-        if matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native) {
+        // Function defs have block-wide slots, including inferred recursive defs.
+        // Match the predeclaration rule used by compile_block_inner.
+        let function_def = binding.value.kind == BindingKind::Def
+            && (binding
+                .value
+                .annotation
+                .as_ref()
+                .and_then(function_contract_arity)
+                .is_some()
+                || matches!(binding.value.value.value, ExprKind::Closure { .. }));
+        if matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native) || function_def {
             bound.insert(binding.value.name.value.clone());
         }
     }
@@ -352,4 +362,3 @@ fn frontend_error(source_name: &str, message: impl Into<String>) -> FrontendErro
         message,
     )
 }
-

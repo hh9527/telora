@@ -41,3 +41,8 @@ export def string_indent = test.should_fail_with(fn() {
 export def fmt_fragments = test.should_fail_with(fn() {
     fmt.render(fmt.concat(["missing tail"], [fmt.from_int(1)]))
 }, "strings.len == items.len + 1");
+
+export def dynamic_match = test.should_fail_with(fn() {
+    let select: Fn(Any) -> Int = fn(value) { match value { 'Some => 1 } };
+    select('None)
+}, "no match arm accepted the value");
