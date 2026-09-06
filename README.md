@@ -237,7 +237,7 @@ telora run <module:name>   向一个 entry.Run(State) 投递请求
 telora serve <module:name> 通过 stdio JSONL 驱动一个 entry.Serve(State)
 telora lock                物化 package source 并原子刷新 workspace lock
 telora check <module-id>   以 best-effort 策略检查并求值模块导出
-telora test <name>         选择 tests/<name>.telora，求值其可达测试依赖图
+telora test <name>         初始化 tests/<name>.telora，执行其直接导出的 Test
 telora query ...           以 JSONL 查询模块和语义事实；别名 q
 telora lsp                 启动语言服务器
 ```
@@ -269,8 +269,10 @@ JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协
 
 `test parser/expressions` 支持嵌套测试入口。Host 为当前 crate 的整个 `tests/` 建立
 临时模块清单，测试模块可以互相 import，但只求值从选中入口可达的模块。源码不能
-反向 import 测试。测试用现有 failure API 表达失败，结果以 `telora.test/v1` JSONL
-输出；不自动调用导出函数，也不执行未引用的测试。
+反向 import 测试。入口直接导出 `std/test.should_ok(fn() { ... })`、`should_fail`
+或 `should_fail_with` 构造的 Test，支持 `with_fixtures` 批量生成用例。结果以
+`telora.test/v2` JSONL 输出逐用例结果和汇总；`check` 不执行 Test。详见
+[CLI 指南](guide/TELORA-CLI.md)。
 
 ## 资源限制
 

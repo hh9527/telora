@@ -374,10 +374,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
 
     let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in &program.value.body.value.bindings {
-        if matches!(
-            binding.value.kind,
-            BindingKind::Type | BindingKind::Trait | BindingKind::NativeType
-        ) {
+        if binding.value.kind == BindingKind::NativeType {
+            let name = &binding.value.name.value;
+            let root = external_roots.get(name).ok_or_else(|| {
+                frontend_error(source_name, format!("native type {name} has not been linked"))
+            })?;
+            let descriptor = evaluator
+                .decode_type(root.runtime(), "Type")
+                .map_err(|message| frontend_error(source_name, message))?;
+            tool_values.insert(name.clone(), root.runtime());
+            let witness = TypeDescriptor::TypeOf(Box::new(descriptor.clone()));
+            declared_types.insert(name.clone(), descriptor);
+            static_environment.insert(name.clone(), witness.clone());
+            binding_types.insert(name.clone(), witness);
+            continue;
+        }
+        if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             tool_values.insert(binding.value.name.value.clone(), any_metadata);
             static_environment.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
             binding_types.insert(binding.value.name.value.clone(), TypeDescriptor::Type);

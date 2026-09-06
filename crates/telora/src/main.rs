@@ -21,6 +21,7 @@ mod ees_arg;
 mod ees_cli;
 mod eval_cli;
 mod source_arg;
+mod test_cli;
 use ees_arg::{NamedEesVar, collect_ees_models, parse_named_ees_var};
 use ees_cli::EesArgs;
 use eval_cli::{EvalArgs, EvalWithArgs};
@@ -551,7 +552,7 @@ enum Command {
     Lock,
     /// Check a module with best-effort evaluation and emit JSONL diagnostics.
     Check(CheckArgs),
-    /// Evaluate one test module using the current crate's test catalog.
+    /// Initialize one test module and execute its directly exported Test values.
     Test(TestArgs),
     /// Query module and semantic facts as JSONL.
     #[command(visible_alias = "q")]
@@ -805,13 +806,7 @@ fn run_cli(cli: Cli) -> Result<i32, String> {
         Command::Lock => package_host::lock(&context)
             .and_then(|path| emit(json!(path.to_string_lossy())).map(|()| 0)),
         Command::Check(arguments) => check_command(context, arguments, "telora.check/v1"),
-        Command::Test(arguments) => check_command(
-            context,
-            CheckArgs {
-                module_id: format!("@test/{}", arguments.name),
-            },
-            "telora.test/v1",
-        ),
+        Command::Test(arguments) => test_cli::run(context, &arguments.name),
         Command::Query(arguments) => query_command(context, arguments),
         Command::Lsp => lsp_command(context).map(|()| 0),
     }

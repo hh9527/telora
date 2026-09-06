@@ -1,0 +1,11 @@
+import "std/test" as test;
+
+export def a_false = test.should_ok(fn() { 'False });
+export def b_error_value = test.should_ok(fn() { 'Err("ordinary return") });
+export def c_failure = test.should_fail(fn() { fail!("expected failure") });
+export def d_message = test.should_fail_with(fn() { fail!("specific message") }, "specific");
+export def e_opaque = test.should_ok(fn() { test.should_fail(fn() { 1 }) });
+export def helper: Fn() -> Int = fn() { fail!("must remain uncalled") };
+export def ignored = [test.should_fail(fn() { 1 })];
+export def erased: Any = test.should_fail(fn() { 1 });
+export def lookalike = { kind: "should_ok", thunk: fn() { fail!("not a Test") } };

@@ -1,0 +1,3 @@
+import "std/test" as test;
+export def not_run = test.should_ok(fn() { fail!("must not run during check") });
+export def not_read = test.with_fixtures(["missing.json"], fn(value) { fail!("must not invoke factory", value) });

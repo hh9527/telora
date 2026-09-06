@@ -1,0 +1,33 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" { Value };
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(records)) => {
+            let cases = array.filter(records, fn(record) { support.string_field_equals(record, "record", "case") });
+            let field: Fn(Int, String) -> Option(Value) = fn(index, name) {
+                match array.get(cases, index) { 'Some(value) => support.record_field(value, name), _ => 'None }
+            };
+            let has_source = array.any(records, fn(record) {
+                match support.record_field(record, "labels") {
+                    'Some('Array(labels)) => array.any(labels, fn(label) {
+                        support.string_field_equals(label, "source", "@test-ctx/language-tests%2Ftests%2Fnested%2Ftestee/first/0/0")
+                    }),
+                    _ => 'False,
+                }
+            });
+            let path0: Value = 'Array(['Int(0), 'Int(0)]);
+            let path1: Value = 'Array(['Int(1), 'Int(0)]);
+            let second: Value = 'String("second");
+            let third: Value = 'String("third");
+            if support.exit_code(actual) == 'Some(1) && array.length(cases) == 6
+                && field(0, "fixtures") == 'Some(path0)
+                && field(1, "fixtures") == 'Some(path1)
+                && field(2, "test") == 'Some(second)
+                && field(4, "test") == 'Some(third)
+                && has_source { 'True } else { 'False }
+        },
+        _ => 'False,
+    }
+};

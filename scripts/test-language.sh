@@ -20,6 +20,10 @@ fi
 rm -rf "$build_root"
 mkdir -p "$workspace/src/generated" "$actual_root"
 cp -R "$source_root/src/." "$workspace/src/"
+if [[ -d "$workspace/src/test" ]]; then
+    mkdir -p "$workspace/tests"
+    cp -R "$workspace/src/test/." "$workspace/tests/"
+fi
 
 mapfile -t testees < <(find "$workspace/src" -type f -name testee.telora | sort)
 if [[ ${#testees[@]} -eq 0 ]]; then
@@ -179,6 +183,10 @@ for case_id in "${cases[@]}"; do
 
         set +e
         case "$mode" in
+            test)
+                "$telora_bin" -C "$workspace" test "${case_id#test/}/testee" \
+                    >"$raw_stdout" 2>"$raw_stderr"
+                ;;
             eval)
                 "$telora_bin" -C "$workspace" eval "@src/$case_id/testee:result" \
                     >"$raw_stdout" 2>"$raw_stderr"

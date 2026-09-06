@@ -11,7 +11,7 @@ fn test_command_composes_top_level_and_nested_modules_without_running_unreachabl
         ("tests/t2.telora", "export def value = 2;"),
         (
             "tests/helpers/common.telora",
-            "import \"../t2\" as t2; export def value = t2.value;",
+            "import \"../t2\" as t2; import \"std/test\" as test; export def value = t2.value; export def check = test.should_ok(fn() { value });",
         ),
         ("tests/broken.telora", "export def broken = ;"),
         (
@@ -20,10 +20,11 @@ fn test_command_composes_top_level_and_nested_modules_without_running_unreachabl
         ),
         (
             "tests/t1.telora",
-            r#"import "@src/model" as model;
+            r#"import "std/test" as test;
+import "@src/model" as model;
 import "./helpers/common" as common;
 import "fixture/tests/t2" as t2;
-export def check = if model.value + common.value == 42 && t2.value == 2 { 'True } else { fail!("wrong answer") };
+export def check = test.should_ok(fn() { if model.value + common.value == 42 && t2.value == 2 { 'True } else { fail!("wrong answer") } });
 export def ordinary_false = 'False;
 export def not_invoked: Fn() -> Int = fn() { fail!("must not invoke exports") };
 "#,
@@ -43,10 +44,11 @@ export def not_invoked: Fn() -> Int = fn() { fail!("must not invoke exports") };
     );
     assert!(output.stderr.is_empty());
     let records = jsonl(&output.stdout);
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0]["schema"], "telora.test/v1");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["schema"], "telora.test/v2");
     assert_eq!(records[0]["module"], "fixture/tests/t1");
-    assert_eq!(records[0]["status"], "ok");
+    assert_eq!(records[0]["status"], "passed");
+    assert_eq!(records[1]["status"], "ok");
     assert_eq!(fs::read(cwd.join("telora-crate.json")).unwrap(), manifest);
     assert_eq!(fs::read(cwd.join("telora-lock.json")).unwrap(), lock);
     let check = telora(&cwd).args(["check", "@test/t1"]).output().unwrap();
@@ -171,12 +173,13 @@ fn test_command_static_data_and_diamond_imports_preserve_provenance_and_identity
         "import \"@test/common\" as common; export def value = common.value;",
     )
     .unwrap();
-    fs::write(cwd.join("tests/t1.telora"), r#"import "./left" as left;
+    fs::write(cwd.join("tests/t1.telora"), r#"import "std/test" as test;
+import "./left" as left;
 import "./right" as right;
 import "./data/input.json" { data as j };
 import "./data/input.yaml" { data as y };
 import "./data/input.toml" { data as t };
-export def check = if j == y && y == t && left.value == right.value { 'True } else { fail!("mismatch", j) };
+export def check = test.should_ok(fn() { if j == y && y == t && left.value == right.value { 'True } else { fail!("mismatch", j) } });
 "#).unwrap();
     let output = test_command(&cwd, "t1");
     assert!(
@@ -255,7 +258,7 @@ fn test_command_rejects_invalid_roots_and_source_to_test_imports() {
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(jsonl(&output.stdout).last().unwrap()["status"], "error");
     }
-    fs::write(cwd.join("tests/t1.telora"), "def reject: Fn() -> Result(Int, String) = fn() { 'Err(\"notice\") }; def checked = reject.should_ok!(); export def value = 1;").unwrap();
+    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { 'Err(\"notice\") }; def checked = reject.should_ok!(); export def value = test.should_ok(fn() { 1 });").unwrap();
     let output = test_command(&cwd, "t1");
     assert!(output.status.success());
     assert!(
@@ -299,7 +302,7 @@ fn test_command_uses_member_context_and_declared_dependencies() {
         "import \"dep/lib\" as dep; export def value = dep.value;",
     )
     .unwrap();
-    fs::write(cwd.join("member/tests/nested/t1.telora"), "import \"@src/lib\" as lib; export def check = if lib.value == 42 { 'True } else { fail!(\"wrong dependency\") };").unwrap();
+    fs::write(cwd.join("member/tests/nested/t1.telora"), "import \"std/test\" as test; import \"@src/lib\" as lib; export def check = test.should_ok(fn() { if lib.value == 42 { 'True } else { fail!(\"wrong dependency\") } });").unwrap();
     let spec = telora_core::WorkspaceSpec::discover(&cwd).unwrap();
     let lock = spec
         .generate_lock(&std::collections::BTreeMap::new())

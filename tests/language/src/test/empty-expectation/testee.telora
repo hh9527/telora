@@ -1,0 +1,2 @@
+import "std/test" as test;
+export def invalid = test.should_fail_with(fn() { 1 }, "");

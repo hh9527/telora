@@ -305,7 +305,11 @@ import "@src/config/defaults.json" {data as defaults};
 清单中的文件不会自动执行。Host 只从选中根发现完整可达图，再初始化和 best-effort
 求值。被导入测试的错误会使本次测试失败；未引用测试的语法或求值错误不会影响本次
 结果。入口必须是非 private 的 Telora 模块，名称不带 `.telora`，可以包含子目录。
-当前必须显式指定一个名称，不提供无参数批量发现。
+当前必须显式指定一个名称，不提供无参数批量发现。初始化无错误后，`test` 按公开
+导出名执行入口直接导出的 `std/test.Test`；普通导入不执行依赖模块的 Test。
+`check` 和 query 不执行 Test。fixture 由 Host 作为数据源准备，不形成 import 边；
+其路径相对构造 `with_fixtures` 的模块，并限制在该模块所属 crate 内。
+API、失败规则和输出协议见 [CLI 指南](TELORA-CLI.md)。
 
 ```bash
 telora test compiler

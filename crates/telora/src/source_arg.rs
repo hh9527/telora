@@ -9,6 +9,14 @@ pub(crate) struct NamedSource {
     source: SystemDataSource,
 }
 
+pub(crate) fn parse_fixture_source(value: &str) -> Result<SystemDataSource, String> {
+    let source = parse_named_source(&format!("fixture={value}"))?.source;
+    if is_stdin_source(&source.src) {
+        return Err("fixtures require local file sources".into());
+    }
+    Ok(source)
+}
+
 pub(crate) struct CollectedEntrySources {
     pub(crate) entry: EntryDataSources,
     pub(crate) locators: BTreeMap<String, String>,
@@ -156,7 +164,7 @@ pub(crate) fn collect_eval_sources(
     Ok(collected)
 }
 
-fn read_limited(reader: impl Read, max_bytes: usize, description: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn read_limited(reader: impl Read, max_bytes: usize, description: &str) -> Result<Vec<u8>, String> {
     let max_read = u64::try_from(max_bytes)
         .unwrap_or(u64::MAX)
         .saturating_add(1);

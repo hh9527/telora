@@ -349,8 +349,19 @@ wrapper 的初始化函数返回具体 State 和 reducer；标准 Entry 边界�
 并保存一个接受 `(Dyn, Event)` 的 reducer wrapper。Entry 将 application
 `EesCall` 映射成 component-neutral SystemEffect，将相关 Host reply 映射回 `EesReply`；
 是否声明 EES model 不改变 reducer 接口。
-`test NAME` 与 `check @test/NAME` 共享诊断求值和结果判定，分别输出 `telora.test/v1`
-和 `telora.check/v1`；不调用导出函数，不要求 Value 或 Entry wrapper。
+`test NAME` 复用 WorkspaceBuilder 检查和初始化图，再从根接口选择精确 Test 导出，
+以 `telora.test/v2` 报告独立用例。`check @test/NAME` 保留 `telora.check/v1`，
+不执行 Test。Test 的 opaque 载荷保存描述和构造位置，闭包引用放在受 World collector
+追踪的槽中；复制和类型元数据图遍历均包含这些槽。native 类型在签名求值前进入
+工具环境，保持 Test 等 native 类型的精确签名。
+每次 thunk/factory 调用使用严格 VM 和独立 WorkWorld，共享一个 QuotaAccount。
+调用结束后提取局部诊断，可恢复的预期失败不进入外层错误集合；终止错误中止 runner。
+动态子 Test 保留活跃 WorkWorld；兄弟 factory 从父 Test 根复制引用图。
+Host 负责 fixture 文件定位和限量读取，core 复用数据计划验证、DataLimits 和 sourced
+Value 物化。每组先准备全部直接输入，缓存同一路径的读取，随后深度优先执行。
+默认展开节点上限 10,000、嵌套深度 64、累计 fixture 保留预算 256 MiB；预算计入
+源码、每个逻辑节点 64 字节及 payload，数据物化也扣除共享 session allocation。
+fixture 来源为 `@test-ctx/`，没有 ModuleId 或 import 边，物理定位只经过 Host 边界。
 `check`、`test`、`query` 和 `lsp` 当前是
 Host 固定工具路径，不通过用户 Entry ABI。
 

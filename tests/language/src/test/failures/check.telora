@@ -1,0 +1,32 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" { Value };
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(records)) => {
+            let has: Fn(String, String) -> Bool = fn(message, phase) {
+                array.any(records, fn(record) {
+                    support.string_field_equals(record, "message", message)
+                        && support.string_field_equals(record, "phase", phase)
+                })
+            };
+            let summaries = array.filter(records, fn(record) { support.string_field_equals(record, "record", "summary") });
+            match array.get(summaries, 0) {
+                'Some('Object(summary)) => if support.exit_code(actual) == 'Some(1)
+                    && array.length(summaries) == 1 && summary.total == 'Int(7)
+                    && summary.passed == 'Int(2) && summary.failed == 'Int(5)
+                    && summary.aborted == 'False
+                    && has("ACTUAL", "execution") && has("factory failure", "factory")
+                    && has("no fixtures", "discovery")
+                    && !array.any(records, fn(record) { support.string_field_equals(record, "message", "caught") })
+                    && array.any(records, fn(record) {
+                        support.string_field_equals(record, "severity", "warning")
+                            && support.string_field_equals(record, "test", "a")
+                    }) { 'True } else { 'False },
+                _ => 'False,
+            }
+        },
+        _ => 'False,
+    }
+};

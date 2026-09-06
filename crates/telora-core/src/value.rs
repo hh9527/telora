@@ -193,6 +193,8 @@ pub struct OpaqueValue {
     native_type: NativeType,
     payload: Arc<OpaquePayload>,
     equal: fn(&OpaquePayload, &OpaquePayload) -> bool,
+    // Runtime references must live here, never inside the untraced Any payload.
+    pub(crate) traced: Box<[crate::heap::Val]>,
 }
 
 impl OpaqueValue {
@@ -203,6 +205,7 @@ impl OpaqueValue {
         Self {
             native_type,
             payload: Arc::new(payload),
+            traced: Box::new([]),
             equal: |left, right| {
                 left.downcast_ref::<T>()
                     .zip(right.downcast_ref::<T>())
@@ -218,6 +221,7 @@ impl OpaqueValue {
         Self {
             native_type,
             payload: Arc::new(payload),
+            traced: Box::new([]),
             equal: |left, right| std::ptr::eq(left, right),
         }
     }

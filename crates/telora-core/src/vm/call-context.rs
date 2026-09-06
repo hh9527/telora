@@ -15,6 +15,95 @@ pub struct CallContext<'vm, 'stack> {
 pub(crate) struct OpaqueAllocationReservation(());
 
 impl<'vm, 'stack> CallContext<'vm, 'stack> {
+    pub(crate) fn make_test(&mut self, kind: crate::module::TestKind) -> Result<(), NativeError> {
+        use crate::module::TestKind;
+        let native_type = self
+            .value(self.upvalue(0)?)?
+            .as_native_type()
+            .cloned()
+            .ok_or_else(|| NativeError::new("Test native type is not linked"))?;
+        let mut payload_bytes = 0usize;
+        let source_count = if kind == TestKind::Fixtures {
+            let values = self.value(self.argument(0)?)?;
+            let count = values
+                .sequence_len()
+                .ok_or_else(|| NativeError::new("expected Array(String)"))?;
+            for index in 0..count {
+                let length = values
+                    .sequence_get(index)
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| NativeError::new("expected fixture source String"))?
+                    .as_str()
+                    .len();
+                payload_bytes = payload_bytes.checked_add(length).ok_or_else(|| {
+                    NativeError::allocation_limit("fixture source list size overflowed")
+                })?;
+            }
+            count
+        } else {
+            0
+        };
+        if kind == TestKind::ShouldFailWith {
+            let length = self
+                .value(self.argument(1)?)?
+                .as_str()
+                .ok_or_else(|| NativeError::new("expected String"))?
+                .as_str()
+                .len();
+            if length == 0 {
+                return Err(NativeError::new(
+                    "should_fail_with requires a nonempty expectation",
+                ));
+            }
+            payload_bytes = length;
+        }
+        self.charge_allocation(payload_bytes)?;
+        self.charge_sequence(source_count.saturating_add(2))?;
+        let mut sources = Vec::with_capacity(source_count);
+        let expected = if kind == TestKind::ShouldFailWith {
+            let value = self
+                .value(self.argument(1)?)?
+                .as_str()
+                .ok_or_else(|| NativeError::new("expected String"))?
+                .as_str()
+                .to_owned();
+            Some(value)
+        } else {
+            None
+        };
+        if kind == TestKind::Fixtures {
+            let values = self.value(self.argument(0)?)?;
+            let length = values
+                .sequence_len()
+                .ok_or_else(|| NativeError::new("expected Array(String)"))?;
+            for index in 0..length {
+                sources.push(
+                    values
+                        .sequence_get(index)
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| NativeError::new("expected fixture source String"))?
+                        .as_str()
+                        .to_owned(),
+                );
+            }
+        }
+        let callable =
+            self.owned(self.argument(if kind == TestKind::Fixtures { 1 } else { 0 })?)?;
+        let description = crate::module::TestDescription {
+            kind,
+            expected,
+            sources,
+            origin: self.call_site,
+        };
+        let mut value = crate::OpaqueValue::new_identity(native_type, description);
+        value.traced = vec![callable].into_boxed_slice();
+        let handle = self.current.allocate(Object::Opaque(value));
+        self.set(
+            self.result(),
+            Val::unknown(DecodedValue::Opaque(handle)).with_loc(self.call_site),
+        )
+    }
+
     fn new(
         current: &'vm mut Heap,
         background: Option<&'vm Heap>,

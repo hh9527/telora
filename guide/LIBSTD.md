@@ -39,6 +39,7 @@ blame 的 failure，具体契约可通过 `telora query exports` 查看。
 - `std/fmt`：`Display` trait、`Fmt` 值、基础格式项和 `@fmt.display_by` 模板。
 - `std/path`：纯字符串的路径连接、规范化、父路径和文件名操作，不访问文件系统。
 - `std/hash`：SHA-256 一次性摘要和增量摘要状态。
+- `std/test`：延迟 Test、正常/预期失败断言与 Host fixture 分组，由 `telora test` 执行。
 
 名义 struct 可以用 Display 模板获得统一的格式与插值能力：
 

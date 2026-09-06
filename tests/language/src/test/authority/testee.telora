@@ -1,0 +1,5 @@
+import "std/test" as test;
+export def missing = test.with_fixtures(
+    ["absent.json", "stdin+json://", "https://example.test/a.json", "/tmp/a.json", "../../../../escape.json"],
+    fn(value) { test.should_fail(fn() { value }) },
+);

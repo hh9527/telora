@@ -1,0 +1,25 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" { Value };
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(records)) => {
+            let cases = array.filter(records, fn(record) { support.string_field_equals(record, "record", "case") });
+            let summaries = array.filter(records, fn(record) { support.string_field_equals(record, "record", "summary") });
+            match array.get(summaries, 0) {
+                'Some('Object(summary)) => if support.exit_code(actual) == 'Some(1)
+                    && array.length(cases) == 5 && array.length(summaries) == 1
+                    && summary.passed == 'Int(4) && summary.failed == 'Int(1)
+                    && summary.aborted == 'False
+                    && array.all(array.enumerate(cases), fn(pair) {
+                        let (index, record) = pair;
+                        let expected: Value = 'Array(['Int(index)]);
+                        support.record_field(record, "fixtures") == 'Some(expected)
+                    }) { 'True } else { 'False },
+                _ => 'False,
+            }
+        },
+        _ => 'False,
+    }
+};

@@ -53,6 +53,37 @@ pub(crate) struct BuiltinModuleSpec {
 pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
     let mut specs = vec![
         BuiltinModuleSpec {
+            native_id: 33,
+            name: "std/test",
+            source: include_str!("../modules/std/test.telora"),
+            functions: vec![
+                (
+                    "should_ok",
+                    NativeFunction::new_with_native_type("std/test.should_ok", 1, 0, |cx| {
+                        cx.make_test(crate::module::TestKind::ShouldOk)
+                    }),
+                ),
+                (
+                    "should_fail",
+                    NativeFunction::new_with_native_type("std/test.should_fail", 1, 0, |cx| {
+                        cx.make_test(crate::module::TestKind::ShouldFail)
+                    }),
+                ),
+                (
+                    "should_fail_with",
+                    NativeFunction::new_with_native_type("std/test.should_fail_with", 2, 0, |cx| {
+                        cx.make_test(crate::module::TestKind::ShouldFailWith)
+                    }),
+                ),
+                (
+                    "with_fixtures",
+                    NativeFunction::new_with_native_type("std/test.with_fixtures", 2, 0, |cx| {
+                        cx.make_test(crate::module::TestKind::Fixtures)
+                    }),
+                ),
+            ],
+        },
+        BuiltinModuleSpec {
             native_id: 4,
             name: PRIVATE_CODEC_MODULE,
             source: include_str!("../modules/std/_codec.telora"),

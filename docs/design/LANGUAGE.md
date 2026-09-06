@@ -1332,11 +1332,22 @@ run context 相同，但 canonical source path 使用 `@eval-ctx/<name>`。物�
 
 `test <name>` 选择 `tests/<name>.telora`，名称必须是无后缀的规范相对路径；不接受
 绝对路径、parent traversal 或 export selector。当前只支持显式选择一个 Telora 根，
-private 文件不能作为根。它复用 `check` 的 best-effort 求值与诊断字段，使用
-`telora.test/v1`。求值完成后输出一个 summary；有 error 时退出 1，无 error 时退出 0。
-准备错误沿用 stderr 的 `telora.error/v1`，不伪造求值 summary。测试不自动调用导出
-函数，也不把 `'False` 当作断言失败；模块必须通过现有诊断或 failure API 表达拒绝。
-被导入测试的错误属于当前结果。此命令不运行 reducer 或应用 EES，不改变循环初始化
+private 文件不能作为根。它先使用既有诊断恢复流程检查和初始化完整可达图；有错误时
+不执行用例。随后按 UTF-8 公开导出名执行入口直接导出的精确 `std/test.Test`，
+普通导入不执行依赖模块的 Test，显式重导出按公开别名执行，容器/Dyn/Any 不参与发现。
+`Test` 是标准库拥有的不透明名义类型。`should_ok`、`should_fail`、`should_fail_with`
+保存零参数 thunk；正常返回（包括 False/Err）满足 should_ok，可恢复执行失败满足
+should_fail，should_fail_with 还检查非空、区分大小写的主消息子串。预期失败在
+用例内消费，warning 保留；终止错误不能被消费，模块初始化错误也不能被捕获。
+`with_fixtures(Array(String), Fn(Value) -> Test)` 构造可嵌套组，Host 在 factory 前
+准备整组直接输入。fixture 是非模块数据源，相对实际构造模块、限制在声明 crate
+内；空组、准备失败和 factory 失败均明确报告，不由子 should_fail 捕获。
+构造 Test、check 和 query 均不执行 thunk/factory 或获取 fixture。
+输出为 `telora.test/v2` 的 diagnostic、case 和 summary；诊断保留规则与数据来源，
+用例身份是入口模块、导出名、fixture 索引数组。成功要求至少一个通过用例且无失败；
+可恢复失败后继续，中止错误设置 aborted 并停止，不产生未启动用例记录。
+准备错误沿用 stderr 的 `telora.error/v1`，不伪造求值 summary。
+此命令不运行 reducer 或应用 EES，不改变循环初始化
 的拒绝规则。`check @test/...` 与显式测试 query 使用相同清单和模块身份。
 
 其他命令的 `<module>` 是 `@src/...`、`@test/...`、依赖模块 ID，或

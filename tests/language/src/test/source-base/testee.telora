@@ -1,0 +1,2 @@
+import "@src/fixture-helper/module" { make };
+export def source_relative = make();

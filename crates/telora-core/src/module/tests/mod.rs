@@ -20,3 +20,4 @@ include!("part-06.rs");
 include!("part-07.rs");
 include!("part-08.rs");
 include!("part-09.rs");
+include!("deferred_tests.rs");

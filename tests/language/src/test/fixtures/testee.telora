@@ -1,0 +1,8 @@
+import "std/test" as test;
+
+export def cases = test.with_fixtures(
+    ["a.json", "bad.json", "b.yaml", "c.toml", "a.json"],
+    fn(value) {
+        test.should_fail_with(fn() { fail!("fixture subject", value) }, "fixture subject")
+    },
+);

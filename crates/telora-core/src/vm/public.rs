@@ -95,7 +95,7 @@ impl QuotaAccount {
         self.quota.stack_slots.min(MAX_STACK_SLOTS)
     }
 
-    fn charge_allocation(&mut self, bytes: u64) -> Result<(), ()> {
+    pub(crate) fn charge_allocation(&mut self, bytes: u64) -> Result<(), ()> {
         let requested = self
             .requested_allocation_bytes
             .checked_add(bytes)
@@ -286,6 +286,22 @@ impl fmt::Display for ExecutionWorld {
 }
 
 impl<'a> ValueRef<'a> {
+    pub(crate) fn test_description(self) -> Option<(&'a crate::module::TestDescription, Val)> {
+        let DecodedValue::Opaque(handle) = self.value.value() else {
+            return None;
+        };
+        let Object::Opaque(value) = self.view.object(handle).ok()? else {
+            return None;
+        };
+        if value.native_type().id() != crate::module::TEST_NATIVE_TYPE {
+            return None;
+        }
+        Some((
+            value.downcast_ref(value.native_type())?,
+            *value.traced.first()?,
+        ))
+    }
+
     pub(crate) fn runtime(self) -> Val {
         self.value
     }

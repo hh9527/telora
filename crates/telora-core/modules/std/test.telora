@@ -1,0 +1,10 @@
+import "std/value" { Value };
+
+native type Test @0;
+
+native should_ok: for(A) Fn(Fn() -> A) -> Test;
+native should_fail: for(A) Fn(Fn() -> A) -> Test;
+native should_fail_with: for(A) Fn(Fn() -> A, String) -> Test;
+native with_fixtures: Fn(Array(String), Fn(Value) -> Test) -> Test;
+
+export { Test, should_ok, should_fail, should_fail_with, with_fixtures };

@@ -937,7 +937,10 @@ fallback。`validate` 等 prelude 名不是保留字，本地 binding 可以正�
 选择，`telora test NAME` 是对应的测试命令。测试支持子目录，选中入口时 Host 建立
 整个 `tests/` 的临时清单，只预扫描和求值可达模块。测试通过 `@test/...` 或相对路径
 互相导入（包括顶层测试），通过 `@src/...` 导入源码；源码不能反向依赖测试，循环
-import 仍被拒绝。测试不自动调用导出函数，失败通过现有 failure API 表达。
+import 仍被拒绝。`test` 初始化完成后执行入口直接公开导出的 `std/test.Test`。
+`should_ok`、`should_fail`、`should_fail_with` 保存 thunk，`with_fixtures` 保存
+数据源和返回 Test 的 factory；构造时不执行，不读取 fixture。普通导出函数仍是
+helper。完整规则见 [CLI 指南](TELORA-CLI.md)。
 模块既可以使用显式源码根路径，也可以使用相对路径：
 
 ```telora

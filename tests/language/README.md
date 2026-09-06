@@ -11,6 +11,9 @@ The mode selects the public Telora command used to observe the testee:
 - `query`: query the testee's exports;
 - `query-at`: query the testee's top-level semantic facts, including recovery;
 - `check`: check the testee and collect diagnostics.
+- `test`: run direct `std/test.Test` exports. The runner copies `src/test/`
+  into the generated workspace's `tests/`, preserving fixture and helper paths.
+  A checker can inspect intentionally failed cases and the v2 summary.
 
 Run the suite after building Telora:
 

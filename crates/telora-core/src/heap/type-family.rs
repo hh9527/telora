@@ -121,7 +121,8 @@ fn bound_type_replacements(
             }
             Object::ByteCodeProto { values, .. } => values.to_vec(),
             Object::OpenFunc => return Err(HeapError("function ref is not sealed")),
-            Object::Reserved | Object::Bytes(_) | Object::Opaque(_) => Vec::new(),
+            Object::Opaque(value) => value.traced.to_vec(),
+            Object::Reserved | Object::Bytes(_) => Vec::new(),
         };
         for child in children {
             if let Some(child_handle) = runtime_object_handle(child.value()) {
@@ -167,4 +168,3 @@ fn runtime_object_handle(value: DecodedValue) -> Option<Handle> {
         | DecodedValue::FuncRef(_) => None,
     }
 }
-

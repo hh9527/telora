@@ -1,0 +1,16 @@
+import "std/test" as test;
+
+export def make: Fn() -> test.Test = fn() {
+    test.with_fixtures(["input.json", "input.json"], fn(outer) {
+        test.with_fixtures(["file+json://input.json"], fn(inner) {
+            test.should_ok(fn() {
+                match inner {
+                    'Object(fields) => fail!("field failure", fields.n),
+                    _ => fail!("wrong shape", outer),
+                }
+            })
+        })
+    })
+};
+export def group = make();
+export def unselected = test.should_fail(fn() { 1 });

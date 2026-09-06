@@ -236,7 +236,15 @@ impl PendingCopy {
                 return Err(HeapError("cannot copy an uninitialized object"));
             }
             Object::Bytes(value) => Object::Bytes(value.clone()),
-            Object::Opaque(value) => Object::Opaque(value.clone()),
+            Object::Opaque(value) => {
+                let mut value = value.clone();
+                value.traced = value
+                    .traced
+                    .iter()
+                    .map(|value| self.copy_value(target, source, *value))
+                    .collect::<Result<_, _>>()?;
+                Object::Opaque(value)
+            }
             Object::DeclaredType {
                 id,
                 name,
@@ -639,7 +647,8 @@ fn object_contains_disallowed(
                     RuntimePrototype::Native(_) => false,
                 })
         }
-        Object::Bytes(_) | Object::Opaque(_) => false,
+        Object::Opaque(value) => value.traced.iter().any(|value| value_foreign(*value)),
+        Object::Bytes(_) => false,
     }
 }
 

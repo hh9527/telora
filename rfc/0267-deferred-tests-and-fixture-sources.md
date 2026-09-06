@@ -1,9 +1,14 @@
 # RFC 0267: Deferred Tests and Host-Prepared Fixture Sources
 
-- Status: Proposed
+- Status: Accepted
+- Tracking: [#151](https://github.com/hh9527/telora/issues/151)
 - Builds on: RFC 0266
-- Proposed supersession: RFC 0266's module-evaluation-only `test` verdict and
+- Partial supersession: RFC 0266's module-evaluation-only `test` verdict and
   shared check/test output contract. Its test catalog and import rules remain.
+- Implemented limits: 10,000 expanded Test/failed-fixture nodes, 64 nested
+  groups, and a 256 MiB cumulative fixture admission budget. The budget counts
+  source bytes, 64 bytes per logical data node, and decoded payload bytes;
+  fixture materialization also charges the shared session allocation account.
 
 ## Summary
 
@@ -437,5 +442,8 @@ compiler-error expectations, arbitrary source compilation or test-time IO APIs.
     evaluation, consistent counters and correct exits for success, failures,
     warnings, empty discovery and terminal aborts. No application effects run.
 
-These are proposed acceptance requirements. No implementation or validation is
-claimed by this document.
+Acceptance coverage is maintained as pure Telora testees and checkers under
+`tests/language/src/test/`, with lazy check/query cases in the corresponding
+mode directories. `scripts/test-language.sh` runs the new `test` mode without
+recompiling Rust. Focused Rust tests cover Host preparation order, duplicate
+reads, shared execution quota, and aggregate/expansion limits.
