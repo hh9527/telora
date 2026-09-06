@@ -12,13 +12,16 @@ def before_string = fn(value) { value < "z" };
 def invert_bool: Fn(Bool) -> Bool = fn(value) { !value };
 def invert_int: Fn(Int) -> Int = fn(value) { !value };
 
-def branch_left = if 'True { 1 } else { "x" };
-def branch_right = if 'True { "x" } else { 1 };
-def branch_nested = if 'True { if 'False { 1 } else { "x" } } else { 1 };
-def branch_three = if 'True { if 'False { 1 } else { "x" } } else { 1.0 };
+type Scalar = enum {'Integer(Int), 'Text(String)};
+def branch_left: Scalar = if 'True { 'Integer(1) } else { 'Text("x") };
+def branch_right: Scalar = if 'True { 'Text("x") } else { 'Integer(1) };
+def branch_nested = (if 'True { if 'False { 'Integer(1) } else { 'Text("x") } } else { 'Integer(1) }).ty!(Scalar);
+def branch_three = (if 'True { if 'False { 'Integer(1) } else { 'Text("x") } } else { 'Integer(2) }).ty!(Scalar);
 def metadata_branch = if 'True { Int } else { String };
 
-def choose_record = fn(flag) {
+type RecordKind = enum {'Full, 'Empty, 'First, 'Second, 'Third, 'Ints, 'Strings};
+type Record = struct {kind: RecordKind, path: Array(Int)};
+def choose_record: Fn(Bool) -> Record = fn(flag) {
     if flag {
         {kind: 'Full, path: [1]}
     } else {
@@ -26,7 +29,7 @@ def choose_record = fn(flag) {
     }
 };
 
-def choose_match = fn(value) {
+def choose_match: Fn(Int) -> Record = fn(value) {
     match value {
         0 => {kind: 'First, path: []},
         1 => {kind: 'Second, path: [1]},
@@ -38,11 +41,11 @@ def choose_nested = fn(flag) {
     if flag { 'Some(({path: []},)) } else { 'Some(({path: [1]},)) }
 };
 
-def choose_conflict = fn(value) {
+def choose_conflict: Fn(Int) -> Record = fn(value) {
     match value {
         0 => {kind: 'Empty, path: []},
         1 => {kind: 'Ints, path: [1]},
-        2 => {kind: 'Strings, path: ["x"]},
+        2 => {kind: 'Strings, path: [2]},
     }
 };
 
@@ -73,17 +76,17 @@ def polymorphic_identity = fn(value) { value };
 def polymorphic_keep = fn(left: Int, right) { (left, right) };
 def nested_constraints = fn(left) { fn(right) { left + right + 1 } };
 
-def array_union = [1, "x"];
+def array_union: Array(Scalar) = ['Integer(1), 'Text("x")];
 def array_dynamic: Array(Any) = [1, "x"];
 def dict_union = {
-    let ints: Dict(Int) = {a: 1};
-    let strings: Dict(String) = {b: "x"};
+    let ints: Dict(Scalar) = {a: 'Integer(1)};
+    let strings: Dict(Scalar) = {b: 'Text("x")};
     {...ints, ...strings}
 };
 def field_projection = {
     let record = {value: 1};
     let dictionary: Dict(String) = {value: "x"};
-    let alternative = if 'True { {value: 1} } else { {value: "x"} };
+    let alternative = if 'True { {value: 1} } else { {value: 2} };
     let dynamic: Any = record;
     (record.value, dictionary.value, alternative.value, dynamic.value)
 };

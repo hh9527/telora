@@ -311,8 +311,8 @@ impl<'a> GenericInference<'a> {
             {
                 Ok(())
             }
-            (TypeDescriptor::Union(variants), expected @ TypeDescriptor::Enum(_))
-            | (expected @ TypeDescriptor::Enum(_), TypeDescriptor::Union(variants)) => {
+            (TypeDescriptor::PendingAlternatives(variants), expected @ TypeDescriptor::Enum(_))
+            | (expected @ TypeDescriptor::Enum(_), TypeDescriptor::PendingAlternatives(variants)) => {
                 for variant in variants {
                     self.unify(variant, expected)?;
                 }
@@ -331,7 +331,7 @@ impl<'a> GenericInference<'a> {
                 )
             }
             (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right))
-            | (TypeDescriptor::Union(left), TypeDescriptor::Union(right))
+            | (TypeDescriptor::PendingAlternatives(left), TypeDescriptor::PendingAlternatives(right))
                 if left.len() == right.len() =>
             {
                 for (left, right) in left.iter().zip(right) {
@@ -404,7 +404,7 @@ impl<'a> GenericInference<'a> {
         }
         let actual = self.expose_named(actual);
         match (parameter, &actual) {
-            (TypeDescriptor::Any | TypeDescriptor::Union(_), _) => Ok(parameter.clone()),
+            (TypeDescriptor::Any | TypeDescriptor::PendingAlternatives(_), _) => Ok(parameter.clone()),
             (_, TypeDescriptor::Declared(declared)) => {
                 self.check(parameter, &actual)?;
                 if self.declared_identity(parameter).is_some() {
@@ -534,7 +534,7 @@ impl<'a> GenericInference<'a> {
                 variants.push((tag.name().to_owned(), Some(*payload)));
                 true
             }
-            TypeDescriptor::Union(items) => items
+            TypeDescriptor::PendingAlternatives(items) => items
                 .iter()
                 .all(|item| self.collect_narrow_enum_variants(item, variants)),
             _ => false,
@@ -747,7 +747,7 @@ impl<'a> GenericInference<'a> {
             return self.bind_inference_variable(variable, &evidence);
         }
         if contains_type_variable(&actual)
-            && let TypeDescriptor::Union(variants) = &expected
+            && let TypeDescriptor::PendingAlternatives(variants) = &expected
         {
             let candidates = variants
                 .iter()
@@ -759,7 +759,7 @@ impl<'a> GenericInference<'a> {
         }
         match (&actual, &expected) {
             (TypeDescriptor::Atom(_), TypeDescriptor::AtomValue) => return Ok(()),
-            (TypeDescriptor::Union(variants), TypeDescriptor::Enum(_)) => {
+            (TypeDescriptor::PendingAlternatives(variants), TypeDescriptor::Enum(_)) => {
                 for variant in variants {
                     self.check(variant, &expected)?;
                 }
@@ -874,7 +874,7 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Tagged { payload, .. } => {
                 self.default_inference_variables_to_any(&payload);
             }
-            TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
                 for item in items {
                     self.default_inference_variables_to_any(&item);
                 }
@@ -940,7 +940,7 @@ impl<'a> GenericInference<'a> {
                 .cloned()
                 .ok_or_else(|| format!("Struct has no field {field:?}")),
             TypeDescriptor::Dict(item) => Ok(*item),
-            TypeDescriptor::Union(variants) => variants
+            TypeDescriptor::PendingAlternatives(variants) => variants
                 .iter()
                 .map(|variant| self.project_field(variant, field))
                 .collect::<Result<Vec<_>, _>>()
@@ -988,11 +988,11 @@ impl<'a> GenericInference<'a> {
                     items.len()
                 )
             }),
-            TypeDescriptor::Union(variants) => variants
+            TypeDescriptor::PendingAlternatives(variants) => variants
                 .iter()
                 .map(|variant| self.project_tuple(variant, index))
                 .collect::<Result<Vec<_>, _>>()
-                .map(canonical_union),
+                .map(pending_alternatives),
             TypeDescriptor::Never => Ok(TypeDescriptor::Never),
             TypeDescriptor::Any => Ok(TypeDescriptor::Any),
             descriptor => Err(format!(

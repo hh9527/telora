@@ -1,0 +1,38 @@
+import "std/test" as test;
+import "std/json" as json;
+import "std/value" {Value};
+import "@src/test-support" {expect};
+
+type Scalar = enum {'Integer(Int), 'Text(String)};
+@json.untagged
+type Wire = enum {'Integer(Int), 'Text(String)};
+def invoke: for(T) Fn(Fn() -> T) -> T = fn(factory) { factory() };
+
+export def ascribed_branch = test.should_ok(fn() {
+    let value = (if 'True { 'Some(42) } else { 'None }).ty!(Option(Int));
+    expect(value == 'Some(42))
+});
+export def generic_context = test.should_ok(fn() {
+    let value = invoke@[Option(Int)](fn() {
+        if 'True { 'Some(42) } else { 'None }
+    });
+    expect(value == 'Some(42))
+});
+export def nested_context = test.should_ok(fn() {
+    let values = (if 'True {
+        ['Integer(42), 'Text("text")]
+    } else { [] }).ty!(Array(Scalar));
+    expect(values == ['Integer(42), 'Text("text")].ty!(Array(Scalar)))
+});
+export def untagged_codec = test.should_ok(fn() {
+    match json.decode(Wire, "42") {
+        'Ok(decoded) => expect(decoded == 'Integer(42)),
+        'Err(_) => fail!("decode failed"),
+    }
+});
+export def heterogeneous_data = test.should_ok(fn() {
+    match json.parse("[1, \"text\"]") {
+        'Ok(parsed) => expect(parsed == 'Array(['Int(1), 'String("text")].ty!(Array(Value)))),
+        'Err(_) => fail!("parse failed"),
+    }
+});

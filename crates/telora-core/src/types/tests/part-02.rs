@@ -22,13 +22,9 @@
     }
     #[test]
     fn branch_joins_are_canonical_pure_and_order_independent() {
-        let left = analyze_with_natives("if 'True { 1 } else { \"x\" }", &[]).unwrap();
-        let right = analyze_with_natives("if 'True { \"x\" } else { 1 }", &[]).unwrap();
-        assert_eq!(
-            left.display(left.result_type),
-            right.display(right.result_type)
-        );
-        assert_eq!(left.display(left.result_type), "Int | String");
+        for source in ["if 'True { 1 } else { \"x\" }", "if 'True { \"x\" } else { 1 }"] {
+            assert!(analyze_with_natives(source, &[]).err().unwrap().to_string().contains("no common type"));
+        }
 
         let metadata = analyze_with_natives("if 'True { Int } else { String }", &[]).unwrap();
         let reversed = analyze_with_natives("if 'True { String } else { Int }", &[]).unwrap();
@@ -39,11 +35,11 @@
             "if 'True { if 'False { 1 } else { \"x\" } } else { 1 }",
             &[],
         )
-        .unwrap();
-        assert_eq!(nested.display(nested.result_type), "Int | String");
+        .err().unwrap();
+        assert!(nested.to_string().contains("no common type"));
 
         let delayed = analyze_with_natives(
-            "def choose = fn(flag, value) {\
+            "def choose: Fn(Bool, Int) -> Int = fn(flag, value) {\
                  if flag { value } else { 1 }\
              }; let selected = choose('True, 2); choose",
             &[],
@@ -51,7 +47,7 @@
         .unwrap();
         assert_eq!(
             delayed.display(delayed.result_type),
-            "Fn(enum {False, True}, Any) -> Any | Int"
+            "Fn(enum {False, True}, Int) -> Int"
         );
 
         let dynamic =
@@ -62,11 +58,6 @@
     #[test]
     fn adversarial_branch_joins_are_pure_symmetric_and_canonical() {
         for (left, right, expected) in [
-            (
-                "if 'True { if 'False { 1 } else { \"x\" } } else { 1.0 }",
-                "if 'True { 1.0 } else { if 'False { \"x\" } else { 1 } }",
-                "Float | Int | String",
-            ),
             (
                 "let dynamic: Any = 1; if 'True { dynamic } else { \"x\" }",
                 "let dynamic: Any = 1; if 'True { \"x\" } else { dynamic }",
@@ -89,11 +80,8 @@
              (select('True, \"x\"), select('False, 2.0))",
             &[],
         )
-        .unwrap();
-        assert_eq!(
-            no_leak.display(no_leak.result_type),
-            "(Int | String, Float | Int)"
-        );
+        .err().unwrap();
+        assert!(no_leak.to_string().contains("no common type"));
     }
 
     #[test]

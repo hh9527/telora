@@ -32,7 +32,7 @@ pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor
             type_identity_contains_bound_parameter(item)
         }
         TypeDescriptor::Tagged { payload, .. } => type_identity_contains_bound_parameter(payload),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(type_identity_contains_bound_parameter)
         }
         TypeDescriptor::Struct(fields) => {
@@ -77,7 +77,7 @@ pub(crate) fn type_identity_is_symbolic(descriptor: &TypeDescriptor) -> bool {
             type_identity_is_symbolic(item)
         }
         TypeDescriptor::Tagged { payload, .. } => type_identity_is_symbolic(payload),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(type_identity_is_symbolic)
         }
         TypeDescriptor::Struct(fields) => fields.values().any(type_identity_is_symbolic),
@@ -148,8 +148,8 @@ pub(crate) fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescripto
                 })
                 .collect(),
         ),
-        TypeDescriptor::Union(variants) => {
-            TypeDescriptor::Union(variants.iter().map(erase_type_variables).collect())
+        TypeDescriptor::PendingAlternatives(variants) => {
+            TypeDescriptor::PendingAlternatives(variants.iter().map(erase_type_variables).collect())
         }
         TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
             parameters: parameters.iter().map(erase_type_variables).collect(),
@@ -161,6 +161,26 @@ pub(crate) fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescripto
 
 fn join_all_types(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     types.into_iter().fold(TypeDescriptor::Never, join_types)
+}
+
+fn contains_pending_alternatives(ty: &TypeDescriptor) -> bool {
+    match ty {
+        TypeDescriptor::PendingAlternatives(_) => true,
+        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item)
+        | TypeDescriptor::TypeOf(item) | TypeDescriptor::Tagged { payload: item, .. } => {
+            contains_pending_alternatives(item)
+        }
+        TypeDescriptor::Tuple(items) => items.iter().any(contains_pending_alternatives),
+        TypeDescriptor::Struct(fields) => fields.values().any(contains_pending_alternatives),
+        TypeDescriptor::Enum(variants) => variants.values().flatten()
+            .any(|ty| contains_pending_alternatives(ty)),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters.iter().any(contains_pending_alternatives)
+                || contains_pending_alternatives(result)
+        }
+        TypeDescriptor::Declared(declared) => contains_pending_alternatives(&declared.body),
+        _ => false,
+    }
 }
 
 fn potentially_assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
@@ -223,14 +243,14 @@ fn join_types(left: TypeDescriptor, right: TypeDescriptor) -> TypeDescriptor {
     match (left_to_right, right_to_left) {
         (true, false) => right,
         (false, true) => left,
-        _ => canonical_union(vec![left, right]),
+        _ => pending_alternatives(vec![left, right]),
     }
 }
 
-fn canonical_union(types: Vec<TypeDescriptor>) -> TypeDescriptor {
+fn pending_alternatives(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     fn flatten(ty: TypeDescriptor, flattened: &mut Vec<TypeDescriptor>) {
         match ty {
-            TypeDescriptor::Union(variants) => {
+            TypeDescriptor::PendingAlternatives(variants) => {
                 for variant in variants {
                     flatten(variant, flattened);
                 }
@@ -256,8 +276,8 @@ fn canonical_union(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     flattened.dedup();
     match flattened.len() {
         0 => TypeDescriptor::Never,
-        1 => flattened.pop().expect("one canonical Union member"),
-        _ => TypeDescriptor::Union(flattened),
+        1 => flattened.pop().expect("one remaining candidate"),
+        _ => TypeDescriptor::PendingAlternatives(flattened),
     }
 }
 
@@ -285,7 +305,7 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
                         })
                 })
         }
-        (TypeDescriptor::Union(variants), expected @ TypeDescriptor::Enum(_)) => {
+        (TypeDescriptor::PendingAlternatives(variants), expected @ TypeDescriptor::Enum(_)) => {
             variants.iter().all(|variant| assignable(variant, expected))
         }
         (actual, TypeDescriptor::Enum(variants)) => variants.iter().any(|(name, payload)| {
@@ -294,13 +314,13 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
         (TypeDescriptor::Enum(variants), expected) => variants.iter().all(|(name, payload)| {
             assignable(&enum_variant_type(name, payload.as_deref()), expected)
         }),
-        (TypeDescriptor::Union(actual), TypeDescriptor::Union(expected)) => actual
+        (TypeDescriptor::PendingAlternatives(actual), TypeDescriptor::PendingAlternatives(expected)) => actual
             .iter()
             .all(|actual| expected.iter().any(|expected| assignable(actual, expected))),
-        (actual, TypeDescriptor::Union(variants)) => {
+        (actual, TypeDescriptor::PendingAlternatives(variants)) => {
             variants.iter().any(|variant| assignable(actual, variant))
         }
-        (TypeDescriptor::Union(variants), expected) => {
+        (TypeDescriptor::PendingAlternatives(variants), expected) => {
             variants.iter().all(|variant| assignable(variant, expected))
         }
         (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected)) => {
@@ -394,8 +414,8 @@ pub(crate) fn erase_declared_identity(descriptor: &TypeDescriptor) -> TypeDescri
                 })
                 .collect(),
         ),
-        TypeDescriptor::Union(variants) => {
-            TypeDescriptor::Union(variants.iter().map(erase_declared_identity).collect())
+        TypeDescriptor::PendingAlternatives(variants) => {
+            TypeDescriptor::PendingAlternatives(variants.iter().map(erase_declared_identity).collect())
         }
         TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
             parameters: parameters.iter().map(erase_declared_identity).collect(),

@@ -195,7 +195,8 @@ pub enum TypeDescriptor {
     Tuple(Vec<TypeDescriptor>),
     Struct(BTreeMap<String, TypeDescriptor>),
     Enum(BTreeMap<String, Option<Box<TypeDescriptor>>>),
-    Union(Vec<TypeDescriptor>),
+    /// Temporary inference candidates, never a published or runtime type.
+    PendingAlternatives(Vec<TypeDescriptor>),
     Function {
         parameters: Vec<TypeDescriptor>,
         result: Box<TypeDescriptor>,
@@ -235,7 +236,7 @@ pub(crate) enum TypeExprId {
     Tuple(Box<[TypeExprId]>),
     Struct(Box<[(String, TypeExprId)]>),
     Enum(Box<[(String, Option<TypeExprId>)]>),
-    Union(Box<[TypeExprId]>),
+    PendingAlternatives(Box<[TypeExprId]>),
     Function {
         parameters: Box<[TypeExprId]>,
         result: Box<TypeExprId>,
@@ -301,7 +302,7 @@ impl TypeExprId {
                     .collect::<Vec<_>>()
                     .into(),
             ),
-            TypeDescriptor::Union(variants) => Self::Union(
+            TypeDescriptor::PendingAlternatives(variants) => Self::PendingAlternatives(
                 variants
                     .iter()
                     .map(Self::from_descriptor)
@@ -381,7 +382,7 @@ impl TypeDescriptor {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Self::Union(variants) => variants
+            Self::PendingAlternatives(variants) => variants
                 .iter()
                 .map(Self::display_name)
                 .collect::<Vec<_>>()
@@ -466,7 +467,7 @@ fn display_scheme_descriptor(
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        TypeDescriptor::Union(variants) => variants
+        TypeDescriptor::PendingAlternatives(variants) => variants
             .iter()
             .map(|variant| display_scheme_descriptor(variant, names))
             .collect::<Vec<_>>()

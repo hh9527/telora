@@ -992,8 +992,8 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
         "TypeOf" => Ok(vec![get("instance")?]),
         "Array" | "Dict" => Ok(vec![get("item")?]),
         "Tagged" => Ok(vec![get("payload")?]),
-        "Tuple" | "Union" => {
-            let field = if kind == "Tuple" { "items" } else { "variants" };
+        "Tuple" => {
+            let field = "items";
             let DecodedValue::Array(items) = get(field)?.value() else {
                 return Err(format!("{kind}.{field} must be an Array"));
             };

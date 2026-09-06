@@ -1,83 +1,3 @@
-#[allow(clippy::too_many_arguments)]
-fn run_core_union_model(
-    variants: Val,
-    return_target: ReturnTarget,
-    function: &BytecodeFunction,
-    pc: usize,
-    current: &mut Heap,
-    background: &Heap,
-    account: &mut QuotaAccount,
-) -> Result<VmAction, RuntimeError> {
-    let DecodedValue::Array(handle) = variants.value() else {
-        let view = HeapView {
-            current,
-            background: Some(background),
-        };
-        return Err(runtime_type_error(
-            "variants Array",
-            &variants,
-            &view,
-            function,
-            pc,
-        ));
-    };
-    let view = HeapView {
-        current,
-        background: Some(background),
-    };
-    let variants = view
-        .sequence(handle, false)
-        .map_err(|heap_error| core_dict_heap_error(heap_error, function, pc))?
-        .to_vec();
-    if variants.is_empty() {
-        return Err(error(
-            RuntimeErrorKind::TypeMismatch,
-            "union requires at least one variant",
-            function,
-            pc,
-        ));
-    }
-    let mut normalized = Vec::with_capacity(variants.len());
-    for (index, variant) in variants.into_iter().enumerate() {
-        let path = format!("variants[{index}]");
-        if !matches!(variant.value(), DecodedValue::TypeSlot(_)) {
-            decode_runtime_type_at(variant, &path, current, background)
-                .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        }
-        normalized.push(variant);
-    }
-    charge_allocation(
-        account,
-        logical_value_bytes(normalized.len())
-            .map_err(|native_error| allocation_error(native_error.message, function, pc))?,
-        function,
-        pc,
-    )?;
-    let variants = Val::new(
-        DecodedValue::Array(current.allocate(Object::Array(normalized.into()))),
-        instruction_location(function, pc),
-    );
-    let value = allocate_core_dict(
-        vec![
-            (
-                "kind".into(),
-                Val::new(
-                    DecodedValue::Atom(current.intern("Union")),
-                    instruction_location(function, pc),
-                ),
-            ),
-            ("variants".into(), variants),
-        ],
-        function,
-        pc,
-        current,
-        account,
-    )?;
-    Ok(VmAction::Return {
-        value,
-        return_target,
-    })
-}
 
 #[allow(clippy::too_many_arguments)]
 fn run_core_builtin_type(
@@ -242,7 +162,6 @@ enum CodecKind {
     Tuple(Vec<CodecType>),
     Struct(BTreeMap<String, CodecType>),
     Enum(BTreeMap<String, CodecEnumVariant>),
-    Union(Vec<CodecType>),
     Function,
 }
 

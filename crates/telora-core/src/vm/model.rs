@@ -10,21 +10,9 @@ fn run_core_model(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     validate_model_context(arguments[0], function, pc, current, background)?;
-    if operation == CoreModelFunction::Union {
-        return run_core_union_model(
-            arguments[1],
-            return_target,
-            function,
-            pc,
-            current,
-            background,
-            account,
-        );
-    }
     let member_name = match operation {
         CoreModelFunction::Struct => "fields",
         CoreModelFunction::Enum => "variants",
-        CoreModelFunction::Union => unreachable!("Union handled above"),
     };
     let entries = core_dict_entries(
         arguments[1],
@@ -81,7 +69,6 @@ fn run_core_model(
                     )?;
                 }
             }
-            CoreModelFunction::Union => unreachable!("Union handled above"),
         }
         normalized.push((name, member));
     }
@@ -90,7 +77,6 @@ fn run_core_model(
     let kind_name = match operation {
         CoreModelFunction::Struct => "Struct",
         CoreModelFunction::Enum => "Enum",
-        CoreModelFunction::Union => unreachable!("Union handled above"),
     };
     let value = allocate_core_dict(
         BTreeMap::from([

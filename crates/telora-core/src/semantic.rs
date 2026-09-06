@@ -265,7 +265,6 @@ pub enum WorkspaceTypeNode {
     Tuple(Vec<WorkspaceTypeId>),
     Struct(BTreeMap<String, WorkspaceTypeId>),
     Enum(BTreeMap<String, Option<WorkspaceTypeId>>),
-    Union(Vec<WorkspaceTypeId>),
     Function {
         parameters: Vec<WorkspaceTypeId>,
         result: WorkspaceTypeId,
@@ -387,11 +386,6 @@ impl WorkspaceTypeGraph {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            WorkspaceTypeNode::Union(items) => items
-                .iter()
-                .map(|item| self.display_with(*item, active))
-                .collect::<Vec<_>>()
-                .join(" | "),
             WorkspaceTypeNode::Function { parameters, result } => format!(
                 "Fn({}) -> {}",
                 parameters
@@ -1411,12 +1405,7 @@ fn merge_type_node(
                 .map(|(name, child)| (name.clone(), child.map(|child| map(child, target, mapped))))
                 .collect(),
         ),
-        TypeNode::Union(children) => WorkspaceTypeNode::Union(
-            children
-                .iter()
-                .map(|child| map(*child, target, mapped))
-                .collect(),
-        ),
+        TypeNode::PendingAlternatives(_) => WorkspaceTypeNode::Pending,
         TypeNode::Function { parameters, result } => WorkspaceTypeNode::Function {
             parameters: parameters
                 .iter()

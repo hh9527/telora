@@ -110,7 +110,7 @@ fn assert_codec_graph_ready(
                 visit(item, current, background, visited)
             }
             CodecKind::Tagged { payload, .. } => visit(payload, current, background, visited),
-            CodecKind::Tuple(items) | CodecKind::Union(items) => items
+            CodecKind::Tuple(items) => items
                 .iter()
                 .try_for_each(|item| visit(item, current, background, visited)),
             CodecKind::Struct(fields) => fields
@@ -184,6 +184,7 @@ fn decode_runtime_type_at(
         .and_then(|kind| view.atom_text(kind).ok().flatten())
         .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
     let kind = match kind.as_str() {
+        "Union" => return Err(format!("{path}: Union has been removed; use an explicit enum")),
         "Bound" => CodecKind::Any,
         "Named" => CodecKind::Any,
         "Any" => CodecKind::Any,
@@ -246,8 +247,8 @@ fn decode_runtime_type_at(
                 )?),
             }
         }
-        "Tuple" | "Union" => {
-            let field = if kind == "Tuple" { "items" } else { "variants" };
+        "Tuple" => {
+            let field = "items";
             let items = view
                 .dict_get_text(handle, field)
                 .map_err(|error| error.to_string())?
@@ -271,11 +272,7 @@ fn decode_runtime_type_at(
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            if kind == "Tuple" {
-                CodecKind::Tuple(decoded)
-            } else {
-                CodecKind::Union(decoded)
-            }
+            CodecKind::Tuple(decoded)
         }
         "Struct" => {
             let fields = view
@@ -375,22 +372,7 @@ fn option_item(schema: &CodecType) -> Option<&CodecType> {
         }
         return None;
     }
-    let CodecKind::Union(variants) = &schema.kind else {
-        return None;
-    };
-    if variants.len() != 2 {
-        return None;
-    }
-    let none = variants
-        .iter()
-        .any(|variant| matches!(&variant.kind, CodecKind::Atom(tag) if tag == "None"));
-    let some = variants.iter().find_map(|variant| {
-        let CodecKind::Tagged { tag, payload } = &variant.kind else {
-            return None;
-        };
-        (tag == "Some").then_some(payload.as_ref())
-    });
-    none.then_some(some).flatten()
+    None
 }
 
 fn is_bool_enum(variants: &BTreeMap<String, CodecEnumVariant>) -> bool {

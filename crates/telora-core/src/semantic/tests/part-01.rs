@@ -1,24 +1,24 @@
     #[test]
-    fn type_members_follow_refs_and_reject_cycles_any_and_unions() {
+    fn type_members_follow_refs_and_reject_cycles_any_and_enums() {
         let mut types = WorkspaceTypeGraph::default();
         let int = WorkspaceTypeId(0);
         let structure = WorkspaceTypeId(1);
         let reference = WorkspaceTypeId(2);
         let cycle = WorkspaceTypeId(3);
         let any = WorkspaceTypeId(4);
-        let union = WorkspaceTypeId(5);
+        let enumeration = WorkspaceTypeId(5);
         types.nodes = vec![
             WorkspaceTypeNode::Int,
             WorkspaceTypeNode::Struct(BTreeMap::from([("field".to_owned(), int)])),
             WorkspaceTypeNode::Ref(structure),
             WorkspaceTypeNode::Ref(cycle),
             WorkspaceTypeNode::Any,
-            WorkspaceTypeNode::Union(vec![structure]),
+            WorkspaceTypeNode::Enum(BTreeMap::from([("Node".into(), Some(structure))])),
         ];
         assert_eq!(types.members_of(reference)[0].name, "field");
         assert!(types.members_of(cycle).is_empty());
         assert!(types.members_of(any).is_empty());
-        assert!(types.members_of(union).is_empty());
+        assert!(types.members_of(enumeration).is_empty());
     }
 
     #[test]

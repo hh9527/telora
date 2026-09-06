@@ -88,13 +88,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         );
     }
     prelude.insert(
-        "union".into(),
-        function(
-            vec![TypeDescriptor::Any, TypeDescriptor::Any],
-            metadata.clone(),
-        ),
-    );
-    prelude.insert(
         "Option".into(),
         function(vec![metadata.clone()], metadata.clone()),
     );
@@ -207,7 +200,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["PropertyAttr", "union", "validate"]
+    let expected = ["PropertyAttr", "validate"]
         .into_iter()
         .collect::<BTreeSet<_>>();
     let actual = interface
@@ -216,7 +209,7 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("std/prelude must export exactly PropertyAttr, union, and validate".into());
+        return Err("std/prelude must export exactly PropertyAttr and validate".into());
     }
     let bootstrap = core_prelude_schemes();
     let expected_validate = &bootstrap["validate"];
@@ -527,6 +520,9 @@ fn decode_type_ref_with_visiting(
         .dict_get("kind")
         .and_then(ValueRef::as_atom)
         .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
+    if kind.as_str() == "Union" {
+        return Err(format!("{path}: Union has been removed; use an explicit enum"));
+    }
     let require = |expected: &[&str]| -> Result<(), String> {
         if fields.iter().copied().eq(expected.iter().copied()) {
             Ok(())
@@ -650,13 +646,9 @@ fn decode_type_ref_with_visiting(
                 )?),
             }
         }
-        "Tuple" | "Union" => {
-            let field = if kind == "Tuple" { "items" } else { "variants" };
-            if kind == "Tuple" {
-                require(&["items", "kind"])?;
-            } else {
-                require(&["kind", "variants"])?;
-            }
+        "Tuple" => {
+            let field = "items";
+            require(&["items", "kind"])?;
             let sequence = value
                 .dict_get(field)
                 .ok_or_else(|| format!("{path}.{field} is missing"))?;
@@ -673,14 +665,7 @@ fn decode_type_ref_with_visiting(
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            if kind == "Union" && values.is_empty() {
-                return Err(format!("{path}.variants must not be empty"));
-            }
-            if kind == "Tuple" {
-                TypeDescriptor::Tuple(values)
-            } else {
-                TypeDescriptor::Union(values)
-            }
+            TypeDescriptor::Tuple(values)
         }
         "Struct" => {
             require(&["fields", "kind"])?;
@@ -925,16 +910,7 @@ fn validate_value_ref(
                 None => Err(format!("{path} has unknown Enum variant '{tag}")),
             }
         }
-        TypeDescriptor::Union(variants) => {
-            if variants
-                .iter()
-                .any(|variant| validate_value_ref(variant, value, path).is_ok())
-            {
-                Ok(())
-            } else {
-                Err(format!("{path} does not match any Union variant"))
-            }
-        }
+        TypeDescriptor::PendingAlternatives(_) => Err(format!("{path}: unresolved common type")),
         TypeDescriptor::Function { parameters, .. }
             if value.function_arity() == Some(parameters.len()) =>
         {
@@ -987,7 +963,7 @@ fn collect_declared_bodies(
         | TypeDescriptor::Array(inner)
         | TypeDescriptor::Dict(inner) => visit(inner, bodies, visiting),
         TypeDescriptor::Tagged { payload, .. } => visit(payload, bodies, visiting),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             for item in items {
                 visit(item, bodies, visiting);
             }

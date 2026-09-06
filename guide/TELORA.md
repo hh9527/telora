@@ -109,7 +109,7 @@ left >= right
 而不是返回 False。普通复合值保持结构相等语义，两个具名 struct/enum 值还要求
 相同的名义类型。dict、Atom 或 Tagged 字面量可以从另一侧获得 exact nominal
 context，例如 `wrapper == 'Box("x")` 和 `'Box("x") == wrapper`；不需要先单独
-标注字面量。显式 Any 或 Union 边界内的不同运行时 variant 可以比较并返回 False。
+标注字面量。同一 enum 契约或显式 Any 边界内的不同运行时 variant 可以比较并返回 False。
 有序比较只接受类型相同的
 `Int`、`Float` 或 `String` 操作数；不存在混合数值强制转换。String 按其内部
 UTF-8 字节序列精确地进行字典序比较，不做规范化，不使用 locale 规则、大小写
@@ -197,14 +197,9 @@ array.fold([1, 2, 3], {flag: 'False, items: []}, fn(state, item) {
 })
 ```
 
-当回调分支返回多个结构对应的 Struct variant 时，它们的 union 会保留字段间
-关系。seed 会根据唯一兼容的 variant 完成推断；无关 Atom 或存在歧义的完成方式
-仍然报错。
-
-由闭包初始化且没有标注的局部绑定，可以从后续泛型调用中获得预期函数类型。
-闭包分支产生的 variant union 在每个 variant 和 payload 均兼容时，会细化为
-预期的封闭 enum。例如，`'None | 'Some(String)` 会细化为 `Option(String)`。
-未知 variant 和不兼容 payload 仍然报错。
+回调分支需要共同类型。使用返回类型注解、`.ty!(Option(String))` 或调用的显式
+`@[Ty]`，可以为不同 variant 提供完整的 enum 契约。编译器按此契约检查每个分支
+和 payload，并要求字段的类型具有唯一的补全方式。
 
 Telora 在拓宽结果之前合并分支证据：泛型代码中的 `if` 若为同一个预期 enum
 结果贡献不同的窄 variant，会先 join 它们，再拓宽为该 enum。例如，有类型的
@@ -606,7 +601,7 @@ let handlers: Array(Handler) = [
 元素顺序不影响检查结果；真正不兼容的字段会在对应元素处报告类型冲突。同样的原则
 适用于其他高阶 family 的记录字面量。只有缺少共同的 Array expected
 type，或记录需要先在数组之外分别构造时，才给完整记录或具名构建函数添加 concrete
-family 契约。巨大 union 错误应首先检查是否缺少这个公共期望类型。
+family 契约。共同类型错误应首先检查是否缺少这个公共期望类型。
 
 ### 声明 enum 的直接 expected context
 

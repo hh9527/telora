@@ -263,12 +263,13 @@
         fs::write(
             &path,
             r#"import "std/json" as json;
-               json.schema(union('None, [Int, Array(String), {kind: 'Tuple, items: [Int, String]}]))"#,
+               type Shape = enum {'Number(Int), 'Strings(Array(String)), 'Pair(Tuple([Int, String]))};
+               json.schema(Shape)"#,
         )
         .unwrap();
         let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
         let output = module.execute(100_000).unwrap().to_string();
-        assert!(output.contains("anyOf"));
+        assert!(output.contains("oneOf"));
         assert!(output.contains("prefixItems"));
         assert!(output.contains("items"));
 

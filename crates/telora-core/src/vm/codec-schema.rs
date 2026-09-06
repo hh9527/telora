@@ -391,29 +391,6 @@ fn generate_json_schema_node(
                 loc,
             ))
         }
-        CodecKind::Union(variants) => Ok(schema_dict(
-            vec![(
-                "anyOf",
-                CodecNode::Array(
-                    variants
-                        .iter()
-                        .map(|variant| {
-                            generate_json_schema_node(
-                                variant,
-                                properties,
-                                data,
-                                current,
-                                background,
-                                links,
-                                definitions,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    loc,
-                ),
-            )],
-            loc,
-        )),
         CodecKind::Bytes | CodecKind::Opaque | CodecKind::Function => Err(CodecFailure::new(
             format!(
                 "Type {} has no JSON Schema mapping",
@@ -476,7 +453,6 @@ fn codec_type_name(schema: &CodecType) -> &'static str {
             let _ = variants;
             "Enum"
         }
-        CodecKind::Union(_) => "Union",
         CodecKind::Function => "Func",
     }
 }

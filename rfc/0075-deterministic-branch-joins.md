@@ -1,6 +1,8 @@
 # RFC 0075: Deterministic branch joins
 
 - Status: Implemented
+- Partial supersession: RFC 0268 removes the public untagged Union fallback;
+  incompatible branches require a common type context. Order independence remains.
 - Depends on: RFC 0052, RFC 0070, RFC 0071, RFC 0073, RFC 0074
 
 ## Summary

@@ -1,0 +1,1 @@
+export type Removed = union('None, [Int, String]);

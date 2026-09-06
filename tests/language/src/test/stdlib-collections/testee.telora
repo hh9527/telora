@@ -6,7 +6,7 @@ import "std/string" as string;
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-type Scalar = union('None, [Int, String]);
+type Scalar = enum {'Integer(Int), 'Text(String)};
 
 export def arrays_ok = test.should_ok(fn() {
     let arrays_ok = {
@@ -108,8 +108,8 @@ unchanged", "|") == "a\nb\nunchanged"
 });
 
 export def equality_ok = test.should_ok(fn() {
-    let scalar_left: Scalar = 1;
-    let scalar_right: Scalar = "1";
+    let scalar_left: Scalar = 'Integer(1);
+    let scalar_right: Scalar = 'Text("1");
     let identity = fn(value) { value };
     let equality_ok = eq.equal(1, 1)
         && eq.equal([{a: 1}], [{a: 1}])

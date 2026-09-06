@@ -1878,6 +1878,20 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ));
         }
     }
+    let mut completed_expressions = inference.records.iter().collect::<Vec<_>>();
+    completed_expressions.sort_by_key(|(location, _)| location.range().start);
+    for (location, ty) in completed_expressions {
+        let resolved = inference.resolve(ty);
+        if contains_pending_alternatives(&resolved) {
+            return Err(FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error(
+                    format!("no common type for {}; supply explicit context with .ty!(Ty) or @[Ty]", resolved.display_name()),
+                    *location,
+                ),
+            ));
+        }
+    }
     expression_descriptors.extend(
         inference
             .records

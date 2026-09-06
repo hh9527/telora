@@ -1171,6 +1171,18 @@ impl<'a> GenericInference<'a> {
             ExprKind::Match { value, arms } => {
                 let value_type = self.infer(value, environment, None)?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
+                // These parser-generated intrinsics have an Option contract; this
+                // is not enum synthesis for user-authored match expressions.
+                let intrinsic_option = arms.first().is_some_and(|arm| {
+                    matches!(&arm.value.pattern.value,
+                        crate::ast::PatternKind::Tagged { payload, .. }
+                        if matches!(&payload.value, crate::ast::PatternKind::Binding(name)
+                            if name.value.starts_with("$should_ok:")
+                                || name.value.starts_with("$try_unwrap:")))
+                });
+                let intrinsic_expected = intrinsic_option.then(|| result_parts(&resolved_value_type))
+                    .flatten().map(|(success, _)| option_descriptor(success.clone()));
+                let expected = expected.or(intrinsic_expected.as_ref());
                 let mut arm_types = Vec::with_capacity(arms.len());
                 let mut arm_evidence = Vec::new();
                 let mut covered_variants = BTreeSet::new();
@@ -1316,7 +1328,9 @@ impl<'a> GenericInference<'a> {
                             });
                     }
                 }
-                if let Some(first) = arm_types.first().cloned() {
+                if let Some(expected) = expected.filter(|ty| !contains_type_variable(&self.resolve(ty))) {
+                    self.resolve(expected)
+                } else if let Some(first) = arm_types.first().cloned() {
                     arm_types
                         .into_iter()
                         .skip(1)
@@ -1334,7 +1348,12 @@ impl<'a> GenericInference<'a> {
         {
             self.check(&inferred, expected)?;
         }
-        let inferred = self.resolve(&inferred);
+        let inferred = match expected.map(|ty| self.resolve(ty)) {
+            Some(expected) if contains_pending_alternatives(&inferred)
+                && !contains_pending_alternatives(&expected)
+                && !contains_type_variable(&expected) => expected,
+            _ => self.resolve(&inferred),
+        };
         self.records.insert(expression.location, inferred.clone());
         Ok(inferred)
     }

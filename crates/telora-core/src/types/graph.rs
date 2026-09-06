@@ -43,7 +43,7 @@ pub enum TypeNode {
     Tuple(Vec<AnalysisTypeId>),
     Struct(BTreeMap<String, AnalysisTypeId>),
     Enum(BTreeMap<String, Option<AnalysisTypeId>>),
-    Union(Vec<AnalysisTypeId>),
+    PendingAlternatives(Vec<AnalysisTypeId>),
     Function {
         parameters: Vec<AnalysisTypeId>,
         result: AnalysisTypeId,
@@ -249,13 +249,7 @@ impl TypeGraph {
                         .collect::<Result<Vec<_>, _>>()?;
                     Ok(store.intern_structural(TypeShape::Enum(variants.into())))
                 }
-                TypeNode::Union(variants) => {
-                    let variants = variants
-                        .iter()
-                        .map(|variant| visit(graph, *variant, store, canonical, visiting))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(store.intern_structural(TypeShape::Union(variants.into())))
-                }
+                TypeNode::PendingAlternatives(_) => Err("no common type; supply explicit type context".into()),
                 TypeNode::Function { parameters, result } => {
                     let parameters = parameters
                         .iter()
@@ -419,7 +413,7 @@ impl TypeGraph {
                     })
                     .collect(),
             ),
-            TypeDescriptor::Union(variants) => TypeNode::Union(
+            TypeDescriptor::PendingAlternatives(variants) => TypeNode::PendingAlternatives(
                 variants
                     .iter()
                     .map(|item| self.intern_descriptor(item))
@@ -521,7 +515,7 @@ impl TypeGraph {
                         })
                         .collect::<Result<_, String>>()?,
                 ),
-                TypeNode::Union(items) => TypeDescriptor::Union(
+                TypeNode::PendingAlternatives(items) => TypeDescriptor::PendingAlternatives(
                     items
                         .iter()
                         .map(|item| build(graph, *item, visiting))
@@ -632,6 +626,9 @@ impl TypeGraph {
             .dict_get("kind")
             .and_then(ValueRef::as_atom)
             .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
+        if kind.as_str() == "Union" {
+            return Err(format!("{path}: Union has been removed; use an explicit enum"));
+        }
         let require = |expected: &[&str]| {
             fields
                 .iter()
@@ -744,13 +741,9 @@ impl TypeGraph {
                     payload,
                 }
             }
-            "Tuple" | "Union" => {
-                let field = if kind == "Tuple" { "items" } else { "variants" };
-                require(if kind == "Tuple" {
-                    &["items", "kind"]
-                } else {
-                    &["kind", "variants"]
-                })?;
+            "Tuple" => {
+                let field = "items";
+                require(&["items", "kind"])?;
                 let sequence = value.dict_get(field).expect("field exists");
                 if sequence.kind() != ValueKind::Array {
                     return Err(format!("{path}.{field} must be an Array"));
@@ -763,14 +756,7 @@ impl TypeGraph {
                         links,
                     )?);
                 }
-                if kind == "Union" && values.is_empty() {
-                    return Err(format!("{path}.variants must not be empty"));
-                }
-                if kind == "Tuple" {
-                    TypeNode::Tuple(values)
-                } else {
-                    TypeNode::Union(values)
-                }
+                TypeNode::Tuple(values)
             }
             "Struct" => {
                 require(&["fields", "kind"])?;
@@ -900,7 +886,7 @@ impl TypeGraph {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            TypeNode::Union(variants) => variants
+            TypeNode::PendingAlternatives(variants) => variants
                 .iter()
                 .map(|item| self.display_with(*item, active))
                 .collect::<Vec<_>>()
@@ -979,10 +965,10 @@ impl TypeGraph {
                         })
                     })
             }
-            (TypeNode::Union(a), _) => a
+            (TypeNode::PendingAlternatives(a), _) => a
                 .iter()
                 .all(|a| self.assignable_with(*a, expected, visited)),
-            (_, TypeNode::Union(e)) => e.iter().any(|e| self.assignable_with(actual, *e, visited)),
+            (_, TypeNode::PendingAlternatives(e)) => e.iter().any(|e| self.assignable_with(actual, *e, visited)),
             (
                 TypeNode::Function {
                     parameters: ap,

@@ -155,7 +155,8 @@ impl Heap {
                         ],
                     )
                 }
-                T::Tuple(items) | T::Union(items) => {
+                T::PendingAlternatives(_) => return Err(HeapError("unresolved common type")),
+                T::Tuple(items) => {
                     let items = items
                         .iter()
                         .map(|item| build(heap, background, item, declared))
@@ -163,11 +164,7 @@ impl Heap {
                     let items = Val::unknown(DecodedValue::Array(
                         heap.allocate(Object::Array(items.into_boxed_slice())),
                     ));
-                    let (name, field) = if matches!(descriptor, T::Tuple(_)) {
-                        ("Tuple", "items")
-                    } else {
-                        ("Union", "variants")
-                    };
+                    let (name, field) = ("Tuple", "items");
                     let kind = atom(heap, name);
                     record(heap, [("kind".into(), kind), (field.into(), items)])
                 }

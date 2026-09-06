@@ -6,7 +6,6 @@ import "@src/test/nominal-equality/provider" {Item};
 
 def item: Item = {value: 42};
 type Wrapped = enum {'Some(Array(Item)), 'None};
-type Mixed = union('None, [Item, Int]);
 def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
 def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
 def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
@@ -97,9 +96,4 @@ export def generic_callback_evidence = test.should_ok(fn() {
 });
 export def generic_nested_tuple = test.should_ok(fn() {
     expect(choose((item, {value: 42}), ({value: 42}, item)) == (item, item))
-});
-export def generic_union_boundary = test.should_ok(fn() {
-    let mixed: Mixed = 1;
-    expect(choose([mixed], [1]) == [1]
-        && choose_array([mixed], 1) == [1])
 });

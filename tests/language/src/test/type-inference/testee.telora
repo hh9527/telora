@@ -120,7 +120,7 @@ export def mutually_recursive_types = test.should_ok(fn() {
 
 export def inferred_option_callback = test.should_ok(fn() {
     expect({
-        let build = fn(value) {
+        let build: Fn(Int) -> Option(String) = fn(value) {
             if value > 0 { 'Some("ok") } else { 'None }
         };
         option_apply(1, build) == 'Some("ok")

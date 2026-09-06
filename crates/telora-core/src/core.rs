@@ -1,6 +1,6 @@
 use crate::value::{
     CoreArrayFunction, CoreCodecFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
-    CoreHashFunction, CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction,
+    CoreHashFunction, CoreJsonFunction, CorePathFunction, CoreResultFunction,
     CoreStringFunction, CoreTypeDescFunction, NativeFunction,
 };
 
@@ -545,10 +545,6 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             name: PRELUDE_MODULE,
             source: include_str!("../modules/std/prelude.telora"),
             functions: vec![
-                (
-                    "union",
-                    NativeFunction::core_model(CoreModelFunction::Union),
-                ),
                 (
                     "validate",
                     NativeFunction::new("validate", 2, crate::types::native_validate),

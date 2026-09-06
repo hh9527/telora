@@ -418,7 +418,7 @@ fn is_unknown(matched: &TypeDescriptor) -> bool {
             | TypeDescriptor::Never
             | TypeDescriptor::Bound(_)
             | TypeDescriptor::Inference(_)
-            | TypeDescriptor::Union(_)
+            | TypeDescriptor::PendingAlternatives(_)
     )
 }
 

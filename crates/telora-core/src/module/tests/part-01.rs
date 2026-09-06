@@ -186,7 +186,7 @@
         fs::write(
             directory.join("main.telora"),
             r#"def identity: Fn(Any) -> Any = fn(value) { value };
-               def data = { text: "line\nnext", items: [1, 'Ok, (2,)] };
+               def data = { text: "line\nnext", items: [1, 'Ok, (2,)].ty!(Array(Any)) };
                def observed = dbg!(data, "loaded\nvalue");
                def seen_identity = dbg!(identity);
                def seen_value = dbg!(observed);

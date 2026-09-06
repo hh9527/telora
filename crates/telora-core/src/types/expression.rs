@@ -118,10 +118,7 @@ fn infer_expr_with(
             | BinaryOperator::GreaterThan
             | BinaryOperator::GreaterThanOrEqual
             | BinaryOperator::Equal
-            | BinaryOperator::NotEqual => TypeDescriptor::Union(vec![
-                TypeDescriptor::Atom(Atom::builtin(BuiltinAtom::True)),
-                TypeDescriptor::Atom(Atom::builtin(BuiltinAtom::False)),
-            ]),
+            | BinaryOperator::NotEqual => normalized_bool_descriptor(),
             _ => {
                 let left = infer_expr_with(left, environment, record);
                 let right = infer_expr_with(right, environment, record);
@@ -236,7 +233,7 @@ fn infer_expr_with(
             else_branch,
         } => {
             infer_expr_with(condition, environment, record);
-            canonical_union(vec![
+            pending_alternatives(vec![
                 infer_block_with(then_branch, environment, record),
                 infer_block_with(else_branch, environment, record),
             ])
@@ -265,7 +262,7 @@ fn infer_expr_with(
         }
         ExprKind::Match { value, arms } => {
             infer_expr_with(value, environment, record);
-            canonical_union(
+            pending_alternatives(
                 arms.iter()
                     .map(|arm| {
                         let mut arm_environment = environment.clone();
@@ -574,7 +571,7 @@ fn substitute_bound_parameters(
                 })
                 .collect(),
         ),
-        TypeDescriptor::Union(variants) => canonical_union(
+        TypeDescriptor::PendingAlternatives(variants) => pending_alternatives(
             variants
                 .iter()
                 .map(|variant| substitute_bound_parameters(variant, replacements))

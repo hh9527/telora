@@ -298,14 +298,12 @@
 
         let chained =
             analyze_with_natives("if 'False { 1 } else if 'True { \"x\" } else { 2.0 }", &[])
-                .unwrap();
+                .err().unwrap();
         let explicit_nested = analyze_with_natives(
             "if 'False { 1 } else { if 'True { \"x\" } else { 2.0 } }",
             &[],
         )
-        .unwrap();
-        assert_eq!(
-            chained.display(chained.result_type),
-            explicit_nested.display(explicit_nested.result_type)
-        );
+        .err().unwrap();
+        assert!(chained.to_string().contains("no common type"));
+        assert!(explicit_nested.to_string().contains("no common type"));
     }

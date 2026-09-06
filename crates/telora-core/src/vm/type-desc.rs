@@ -63,7 +63,6 @@ fn run_core_type_desc(
                     "Tuple",
                     "Struct",
                     "Enum",
-                    "Union",
                     "Func",
                     "Bound",
                     "Named",

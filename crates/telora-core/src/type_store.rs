@@ -84,7 +84,6 @@ pub(crate) enum TypeShape {
     Tuple(Box<[TypeId]>),
     Struct(Box<[(String, TypeId)]>),
     Enum(Box<[(String, Option<TypeId>)]>),
-    Union(Box<[TypeId]>),
     Function {
         parameters: Box<[TypeId]>,
         result: TypeId,
@@ -298,13 +297,7 @@ impl TypeStore {
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(self.intern_structural(TypeShape::Enum(variants.into())))
             }
-            TypeDescriptor::Union(variants) => {
-                let variants = variants
-                    .iter()
-                    .map(|variant| self.intern_descriptor_with_names(variant, names))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(self.intern_structural(TypeShape::Union(variants.into())))
-            }
+            TypeDescriptor::PendingAlternatives(_) => Err("no common type; supply explicit type context".into()),
             TypeDescriptor::Function { parameters, result } => {
                 let parameters = parameters
                     .iter()

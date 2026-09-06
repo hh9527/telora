@@ -365,31 +365,6 @@ fn transform_codec(
             current,
             background,
         ),
-        CodecKind::Union(variants) => {
-            let mut errors = Vec::new();
-            for variant in variants {
-                match transform_codec(
-                    variant,
-                    properties,
-                    value,
-                    direction,
-                    path,
-                    current,
-                    background,
-                ) {
-                    Ok(node) => return Ok(node),
-                    Err(failure) => errors.push(failure.message),
-                }
-            }
-            Err(CodecFailure::new(
-                format!(
-                    "{path}: value matches no Union variant ({})",
-                    errors.join("; ")
-                ),
-                value,
-                schema.rule,
-            ))
-        }
         CodecKind::Enum(variants) if is_bool_enum(variants) => {
             if matches!(
                 value.value(),

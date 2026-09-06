@@ -706,14 +706,14 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Inference(variable) if variables.contains(variable) => {
                 approximations.get(variable).cloned()
             }
-            TypeDescriptor::Union(variants) => {
+            TypeDescriptor::PendingAlternatives(variants) => {
                 let resolved = variants
                     .iter()
                     .filter_map(|variant| {
                         self.recursive_approximation(variant, variables, approximations)
                     })
                     .collect::<Vec<_>>();
-                (!resolved.is_empty()).then(|| canonical_union(resolved))
+                (!resolved.is_empty()).then(|| pending_alternatives(resolved))
             }
             descriptor => {
                 let resolved = self.resolve(descriptor);
@@ -814,7 +814,7 @@ impl<'a> GenericInference<'a> {
                 }
                 TypeDescriptor::Enum(instantiated)
             }
-            TypeDescriptor::Union(variants) => TypeDescriptor::Union(
+            TypeDescriptor::PendingAlternatives(variants) => TypeDescriptor::PendingAlternatives(
                 variants
                     .iter()
                     .map(|variant| self.instantiate_with(variant, variables))
@@ -882,12 +882,12 @@ impl<'a> GenericInference<'a> {
                 }
                 TypeDescriptor::Enum(resolved)
             }
-            TypeDescriptor::Union(variants) => {
+            TypeDescriptor::PendingAlternatives(variants) => {
                 let variants = variants
                     .iter()
                     .map(|variant| self.resolve(variant))
                     .collect::<Vec<_>>();
-                canonical_union(variants)
+                pending_alternatives(variants)
             }
             TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
                 parameters: parameters
@@ -915,7 +915,7 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Dict(item) => self.occurs(variable, &item),
             TypeDescriptor::TypeOf(instance) => self.occurs(variable, &instance),
             TypeDescriptor::Tagged { payload, .. } => self.occurs(variable, &payload),
-            TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+            TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
                 items.iter().any(|item| self.occurs(variable, item))
             }
             TypeDescriptor::Struct(fields) => {

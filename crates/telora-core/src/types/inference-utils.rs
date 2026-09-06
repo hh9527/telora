@@ -20,7 +20,7 @@ fn collect_inference_variables(
             }
             collect_inference_variables(&declared.body, variables);
         }
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             for item in items {
                 collect_inference_variables(item, variables);
             }
@@ -122,7 +122,7 @@ fn replace_inference_variables(
                 })
                 .collect(),
         ),
-        TypeDescriptor::Union(items) => TypeDescriptor::Union(
+        TypeDescriptor::PendingAlternatives(items) => TypeDescriptor::PendingAlternatives(
             items
                 .iter()
                 .map(|item| replace_inference_variables(item, replacements))
@@ -212,7 +212,7 @@ fn rename_named_types(
                 })
                 .collect(),
         ),
-        TypeDescriptor::Union(items) => TypeDescriptor::Union(
+        TypeDescriptor::PendingAlternatives(items) => TypeDescriptor::PendingAlternatives(
             items
                 .iter()
                 .map(|item| rename_named_types(item, names))
@@ -250,7 +250,7 @@ fn collect_named_names(descriptor: &TypeDescriptor, names: &mut HashMap<String, 
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => collect_named_names(item, names),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             for item in items {
                 collect_named_names(item, names);
             }
@@ -294,7 +294,7 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
             }
             collect_bound_parameters(&declared.body, parameters);
         }
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             for item in items {
                 collect_bound_parameters(item, parameters);
             }
@@ -335,6 +335,9 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
 }
 
 fn validate_publishable_scheme(scheme: &TypeScheme) -> Result<(), String> {
+    if contains_pending_alternatives(&scheme.body) {
+        return Err("no common type; supply explicit type context".into());
+    }
     if contains_type_variable(&scheme.body) {
         return Err(format!(
             "body contains unresolved {}",
@@ -447,7 +450,7 @@ fn bind_inference_variables(
                 })
                 .collect(),
         ),
-        TypeDescriptor::Union(items) => TypeDescriptor::Union(
+        TypeDescriptor::PendingAlternatives(items) => TypeDescriptor::PendingAlternatives(
             items
                 .iter()
                 .map(|item| bind_inference_variables(item, replacements))
@@ -486,7 +489,7 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
         TypeDescriptor::Dict(item) => contains_type_variable(item),
         TypeDescriptor::TypeOf(instance) => contains_type_variable(instance),
         TypeDescriptor::Tagged { payload, .. } => contains_type_variable(payload),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(contains_type_variable)
         }
         TypeDescriptor::Struct(fields) => fields.values().any(contains_type_variable),
@@ -513,7 +516,7 @@ fn contains_exposed_type_variable(ty: &TypeDescriptor) -> bool {
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_exposed_type_variable(item),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(contains_exposed_type_variable)
         }
         TypeDescriptor::Struct(fields) => fields.values().any(contains_exposed_type_variable),
@@ -540,7 +543,7 @@ pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_named_type(item),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(contains_named_type)
         }
         TypeDescriptor::Struct(fields) => fields.values().any(contains_named_type),
@@ -599,7 +602,7 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Opaque(_)
         | TypeDescriptor::Atom(_)
         | TypeDescriptor::Enum(_)
-        | TypeDescriptor::Union(_)
+        | TypeDescriptor::PendingAlternatives(_)
         | TypeDescriptor::Function { .. }
         | TypeDescriptor::Bound(_)
         | TypeDescriptor::Inference(_) => false,
@@ -615,7 +618,7 @@ fn contains_any_descriptor(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Array(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_any_descriptor(item),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(contains_any_descriptor)
         }
         TypeDescriptor::Struct(fields) => fields.values().any(contains_any_descriptor),
@@ -679,7 +682,7 @@ fn narrows_any(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
             },
         ) => narrows_any(actual, expected),
         (TypeDescriptor::Tuple(actual), TypeDescriptor::Tuple(expected))
-        | (TypeDescriptor::Union(actual), TypeDescriptor::Union(expected))
+        | (TypeDescriptor::PendingAlternatives(actual), TypeDescriptor::PendingAlternatives(expected))
             if actual.len() == expected.len() =>
         {
             actual
@@ -966,7 +969,7 @@ fn contains_inference_variable_at_or_after(ty: &TypeDescriptor, first: u32) -> b
         TypeDescriptor::Tagged { payload, .. } => {
             contains_inference_variable_at_or_after(payload, first)
         }
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => items
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => items
             .iter()
             .any(|item| contains_inference_variable_at_or_after(item, first)),
         TypeDescriptor::Struct(fields) => fields
@@ -998,7 +1001,7 @@ fn contains_any_inference_variable(
         TypeDescriptor::Tagged { payload, .. } => {
             contains_any_inference_variable(payload, variables)
         }
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => items
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => items
             .iter()
             .any(|item| contains_any_inference_variable(item, variables)),
         TypeDescriptor::Struct(fields) => fields
@@ -1025,7 +1028,7 @@ fn contains_metatype(ty: &TypeDescriptor) -> bool {
         TypeDescriptor::Array(item) => contains_metatype(item),
         TypeDescriptor::Dict(item) => contains_metatype(item),
         TypeDescriptor::Tagged { payload, .. } => contains_metatype(payload),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::Union(items) => {
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
             items.iter().any(contains_metatype)
         }
         TypeDescriptor::Struct(fields) => fields.values().any(contains_metatype),

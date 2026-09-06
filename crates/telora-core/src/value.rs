@@ -364,7 +364,6 @@ pub(crate) enum CorePathFunction {
 pub(crate) enum CoreModelFunction {
     Struct,
     Enum,
-    Union,
 }
 
 impl CoreModelFunction {
@@ -372,7 +371,6 @@ impl CoreModelFunction {
         match self {
             Self::Struct => "\0telora_struct",
             Self::Enum => "\0telora_enum",
-            Self::Union => "union",
         }
     }
 

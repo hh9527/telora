@@ -1,5 +1,2 @@
-type Item = struct {value: Int};
-type Mixed = union('None, [Item, Int]);
-def choose: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
-def mixed: Mixed = 1;
-export def should_error = choose([{value: 42}], mixed);
+def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
+export def should_error = choose([1, "one"], [1]);

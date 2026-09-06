@@ -2,7 +2,7 @@ type TypeDescKind = enum {
     'Any, 'Never, 'Type, 'TypeOf,
     'Int, 'Float, 'String, 'Bytes,
     'Atom, 'Array, 'Dict, 'Tagged,
-    'Tuple, 'Struct, 'Enum, 'Union,
+    'Tuple, 'Struct, 'Enum,
     'Func, 'Opaque, 'Bound, 'Dyn, 'Ref,
 };
 type FieldDesc = struct { index: Int, name: String, ty: Type };

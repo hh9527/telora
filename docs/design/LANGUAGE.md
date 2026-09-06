@@ -155,12 +155,14 @@ let second: Int = ids[1];
 索引执行等价于 `fail!("OutOfRange", array, index)` 的结构化失败；需要把缺失作为值
 处理时使用总操作 `array.get(array, index) -> Option(A)`。
 
-无 expected item type 的 Array 字面量对各元素类型做规范 join。不同的已知类型形成
-Union，例如 `[1, "one"]` 的类型是 `Array(Int | String)`；`Never` 不贡献可达元素
-类型，已有的 `Any` 则保持擦除。严格推断不会因为元素类型不同而自行制造 `Any`。
+无 expected item type 的 Array 字面量必须得到共同元素类型。`[1, "one"]` 会报错；
+位置不同的异质数据可用 Tuple，领域中的不同形态应显式包装为 enum。`Never` 不贡献
+可达元素类型，已有的显式 `Any` 保持擦除，但推断不会因为元素类型不同而自行制造 `Any`。
+无共同上下文的不同 enum variant 也会报错；可用 `.ty!(Ty)`、`func@[Ty](...)`
+或类型注解为完整表达式提供契约，不自动合成新的结构 enum。
 显式 `Array(T)` expected type 会向每个普通元素和 spread operand 下传 `T`。因此当
 `T` 是 concrete family 实例时，多个匿名记录元素中的 singleton Atom、闭包、窄
-Option variant 和空集合都按完整的共同契约检查，而不是先各自形成 variant union。
+Option variant 和空集合都按完整的共同契约检查。
 该检查与元素顺序无关；真正不兼容的字段在对应元素位置报告类型冲突。
 在 `if`、`if let` 或 `match` 的结构化分支结果中，同一 Array 或 Dict 元素位置的具体
 分支为无元素分支提供类型证据；该合并与分支顺序无关。若所有可达分支均无元素且
@@ -186,7 +188,7 @@ Record 的字段集合属于静态结构；`Dict(T)` 的 key 集合可以动态�
 同一静态类型。Dict 的无领域顺序观察和序列化采用规范顺序。
 
 字段投影保留静态证据：已知 Record/Struct 必须声明该字段，`Dict(T)` 的字段结果是
-T，Union receiver 的每个可达 variant 都必须允许投影并对结果做规范 join。已知的
+T。已知的
 非记录值和 `Dyn` 会产生静态诊断；只有 receiver 本来就是 `Any` 时，字段结果才是
 `Any`。暂未确定的 receiver 可以在同一个单态推断边界内积累字段 obligation，后续
 具体证据必须满足全部字段；这种 obligation 不会泛化或发布为开放 row constraint。
@@ -226,14 +228,14 @@ exact nominal identity，另一侧是 dict、Atom 或 Tagged 字面量，该字�
 dict 字段和值、同 tag 的 Tagged payload 递归传播，例如 `[item] == [{value: 42}]`
 中的字段字面量可从 `item` 获得名义类型；不同位置的上下文可分别来自两个操作数。
 传播只作用于当前表达式中的字面量构造（包括 spread 中直接书写的字面量），不为
-已构造的匿名变量或函数返回值重新赋予名义身份，也不从 Any/Union 边界猜测身份。
+已构造的匿名变量或函数返回值重新赋予名义身份，也不从 Any 边界猜测身份。
 函数调用通过共享的泛型类型变量传播同样的构造上下文。例如 `for(T) Fn(T, T)`
 和 `for(T) Fn(Array(T), T)` 均可从一个参数获得名义类型证据，为另一个参数中的
 字面量提供上下文；回调的返回值也可提供该证据。不同泛型变量不会因为解析后的
 类型相同而共享上下文。`std/eq.equal` 遵循这套通用规则，不依赖函数名称或导入别名。
 复合值按结构比较，但两个具名值还必须
 具有相同的 canonical TypeId；函数按不透明函数身份比较，而不是比较代码或闭包捕获
-内容。显式 `Any`、Union 等动态边界允许同一静态类型在运行时携带不同 variant，
+内容。显式 `Any` 边界和 enum 契约允许同一静态类型在运行时携带不同 variant，
 此时不同 meta 或不同名义 identity 返回 False。只有一侧携带 exact nominal witness
 时也返回 False，不会按 raw payload 猜测字面量来源。`!=` 是 `==` 的精确布尔补集。
 
@@ -404,7 +406,7 @@ Telora 使用结构化静态类型和双向检查。当前公开类型类别包�
 Int, Float, String, Bytes
 Atom 与 Tagged
 Array(A), Dict(A), Tuple([...])
-Struct, Enum, Union
+Struct, Enum
 Fn(...) -> ...
 Type, TypeOf(A), Dyn, opaque native type
 Any, Never
@@ -461,13 +463,10 @@ pair@[Int, _](1, "text")
 匿名 Struct 实参同样在完整调用上下文中检查。若 generic callback 的结果确定了共享
 Struct 类型，较早书写的 seed 中的 singleton Atom 字段和空 collection 字段按该结果
 检查并拓宽；例如 fold callback 返回 Bool 时，seed 的 `{flag: 'False, items: []}` 可
-参与 `{flag: Bool, items: Array(A)}`。若 callback 产生多个同形 Struct variant，联合
-保留字段之间的相关性，seed 只在唯一兼容 variant 中补全未定字段。不相关 Atom、字段
-shape 冲突和不唯一的补全仍是类型错误。
-由 closure 字面量初始化的未标注局部 binding 可以从后续 generic call 获得 expected
-function type。若 closure 分支产生的 variant union 完整映射到 expected 闭合 enum，
-各分支参与 enum payload 推断，例如 `'None | 'Some(String)` 可精化为
-`Option(String)`；未知 variant 或不兼容 payload 仍产生类型错误。
+参与 `{flag: Bool, items: Array(A)}`。若 callback 分支没有共同契约，必须显式提供
+完整返回类型；不相关 Atom、字段 shape 冲突和不唯一的补全仍是类型错误。
+closure 中不同 variant 的分支应通过返回类型注解、`.ty!(Option(String))` 或调用的
+显式泛型参数获得完整 enum 上下文。未知 variant 或不兼容 payload 仍产生类型错误。
 未标记的 `expression[index]` 只表示 Array 索引，不表示类型应用。
 
 显式 `def` 契约作为 rigid expected type 参与严格双向检查；这同时适用于 inline
@@ -1710,8 +1709,8 @@ payload 精化均属于当前语义。但推断不保证为任意一组分别构
 特别是，当同一个 Array 没有显式 item expected type，而元素同时包含不同 singleton
 Atom、不同 closure、不同 `Option` variant 或匿名 Struct 时，仅凭元素字面量可能
 无法主动找到预期的封闭 enum、函数契约或参数化 family。严格模式会报告冲突或未
-解决约束，不会把元素静默擦除为 `Any`。错误中出现较大的 variant union，通常表示
-缺少共同的 expected type，而不表示运行时存在动态 union。
+解决约束，并要求各元素满足共同类型。使用 `.ty!(Ty)` 或 `@[Ty]` 可以提供完整
+上下文；领域中的多种数据形态通过显式 enum 定义。
 
 在最小公共边界给 Array 提供具体契约即可把同一个 family 实例下传到匿名元素：
 

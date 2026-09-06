@@ -1,4 +1,13 @@
     #[test]
+    fn unresolved_candidates_cannot_acquire_runtime_identity() {
+        let mut store = TypeStore::default();
+        let pending = TypeDescriptor::PendingAlternatives(vec![
+            TypeDescriptor::Int, TypeDescriptor::String,
+        ]);
+        assert!(store.intern_descriptor(&pending).unwrap_err().contains("no common type"));
+    }
+
+    #[test]
     fn recursive_interning_returns_the_pending_identity_and_never_reuses_aborted_ids() {
         let mut store = TypeStore::default();
         let InternType::Reserved(first) = store.begin(constructor(1024), []) else {
