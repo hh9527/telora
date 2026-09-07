@@ -49,7 +49,7 @@
             ),
             (
                 "type Broken = enum { @bad(\"name\") }; export {Broken};",
-                &["missing Atom"],
+                &["missing Identifier"],
             ),
             (
                 "type Broken = enum { @bad(\"name\", 'Bad }; export {Broken};",

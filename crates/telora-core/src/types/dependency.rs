@@ -2360,9 +2360,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let mut pending_owner_roots = Vec::new();
     let mut declared_value_owners = HashMap::new();
-    let newtype_constructors = inference.newtype_constructors.clone();
+    let value_constructors = inference.value_constructors.clone();
     for (location, descriptor) in &expression_descriptors {
-        let descriptor = if newtype_constructors.contains(location)
+        let descriptor = if value_constructors.contains_key(location)
             && let TypeDescriptor::Function { result, .. } = descriptor
         {
             result.as_ref()
@@ -2428,6 +2428,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         dynamic_bindings: dynamic_bindings.clone(),
         type_family_values,
         declared_value_owners,
-        newtype_constructors,
+        value_constructors,
     })
 }

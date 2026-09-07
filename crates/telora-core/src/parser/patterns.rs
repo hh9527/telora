@@ -418,7 +418,9 @@ impl<'a> Lowerer<'a> {
                     .rule_children(node)
                     .filter(|child| self.rule(*child) == Some(Rule::EnumInitializerVariant))
                 {
-                    let tag_node = self.first_token(variant, Token::Atom)?;
+                    let tag_node = self.token_children(variant, Token::Identifier).next()
+                        .or_else(|| self.token_children(variant, Token::Atom).next())
+                        .ok_or_else(|| self.error(variant, "missing Identifier"))?;
                     let name = located(
                         self.text(tag_node).trim_start_matches('\'').to_owned(),
                         self.location(tag_node),

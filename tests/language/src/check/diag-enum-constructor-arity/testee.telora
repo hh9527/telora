@@ -1,0 +1,2 @@
+type Event = enum { Progress(Int), Finished };
+export def invalid = Event.Progress(1, 2);

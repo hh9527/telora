@@ -25,7 +25,13 @@ pub struct Analysis {
     pub(crate) dynamic_bindings: HashSet<String>,
     pub(crate) type_family_values: BTreeMap<String, TypeFamilyTemplate>,
     pub(crate) declared_value_owners: HashMap<crate::Location, String>,
-    pub(crate) newtype_constructors: HashSet<crate::Location>,
+    pub(crate) value_constructors: HashMap<crate::Location, ValueConstructor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ValueConstructor {
+    Newtype,
+    EnumMember { tag: String, has_payload: bool },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

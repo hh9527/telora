@@ -24,7 +24,7 @@ struct NestedEnvironment<'a> {
     type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
     declared_value_owners: &'a HashMap<Location, String>,
-    newtype_constructors: &'a HashSet<Location>,
+    value_constructors: &'a HashMap<Location, crate::types::ValueConstructor>,
 }
 
 #[derive(Debug)]
@@ -367,7 +367,7 @@ pub(crate) fn compile_expression_with_external_bindings(
     expression: &Expr,
     bindings: impl IntoIterator<Item = String>,
     declared_value_owners: HashMap<Location, String>,
-    newtype_constructors: HashSet<Location>,
+    value_constructors: HashMap<Location, crate::types::ValueConstructor>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {
     let bindings = bindings.into_iter().collect::<Vec<_>>();
@@ -394,7 +394,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
         declared_value_owners,
-        newtype_constructors,
+        value_constructors,
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };

@@ -13,9 +13,11 @@
   first-class use and declaration-resolved newtype patterns are implemented.
   Tool-stage callable construction shares strict inference evidence, including
   generic/imported constructors, helper functions, codec ownership and decorator
-  arguments. Named enum constructors and checks remain pending.
-- Validation: debug build and workspace tests pass for the tool-stage constructor
-  batch, including 300 language fixture groups. New behavior is tested in
+  arguments. Qualified enum value constructors, including generic members and
+  first-class use, are implemented. Member imports/exports, named enum patterns,
+  quoted-syntax removal and checks remain pending.
+- Validation: debug build and workspace tests pass for the qualified enum constructor
+  batch, including 307 language fixture groups. New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective
@@ -156,16 +158,39 @@ This replaces RFC 0273's deferred owner selection for authored constructors.
 Do not search all enums by tag spelling or let a return annotation select a
 different declaration for an already resolved name.
 
-Define member-qualified references and member imports alongside exports.
-Proposed qualified form is `Event.Progress`; validate its interaction with
-existing module and field selection. Specify whether member wildcard exports
-also introduce local bindings, how duplicates are diagnosed, and how import
-aliases preserve constructor identity. These are acceptance prerequisites.
+Members are qualified by the declaring type: `Event.Progress`, including
+module-qualified forms such as `events.Event.Progress`. An enum declaration
+does not introduce its members as unqualified bindings. A metadata variable
+holding the same Type value does not acquire member-constructor identity.
 
-Prelude exports supply Option and Result members. Inventory Bool, FoldControl,
-decorator-context enums and other builtin families and explicitly define their
-member exposure. Bootstrap code must use the same declaration identities as
-user modules without relying on the prelude to load itself.
+`import Event.*;` introduces the members into the current module. Selective
+member import uses `import Event.{Progress, Finished as Done};`. Existing
+module imports can import constructor names exported by another module.
+`export Event.*;` and `export Event.{Progress, Finished as Done};` both introduce
+local member bindings and export them. Repeated or conflicting local/public
+names are errors, including collisions with other enum families. Resolution
+retains the declaring family, member name and generic contract through imports
+and reexports; ordinary function aliases retain their function contract only.
+
+Generic member specialization uses `Option.Some@[Int]` and
+`Result.Ok@[Int, String]`. All family parameters remain part of that contract,
+including parameters absent from the selected payload. Contextual inference
+may determine them; an unresolved parameter is an error.
+
+Prelude exports supply `Bool.*`, `Option.*` and `Result.*`. FoldControl remains
+available as a type; its members use qualification or explicit member imports.
+Codec naming/configuration enums retain their own module/type namespaces.
+The intrinsic `@property` target categories use a bootstrap `PropertyTarget`
+enum with Type, StructType, EnumType, Field and Variant members, referenced as
+`PropertyTarget.Type` and so on. These names are not added unqualified to the
+prelude. Bootstrap code uses the same identities as user modules without
+relying on the prelude to load itself.
+
+The member-binding implementation must distinguish a module namespace from a
+selectively imported type even when the module alias and an exported type have
+the same spelling. A singleton export lookup is insufficient evidence of a
+type binding; this distinction belongs to binding provenance and is an
+acceptance check for member import/export integration.
 
 Remove quoted forms in declarations, expressions and patterns together.
 Migrate generated AST paths, embedded sources, language fixtures, examples,

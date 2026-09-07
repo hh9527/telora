@@ -218,6 +218,7 @@ impl<'a> GenericInference<'a> {
         if let Some(query) = &self.query {
             query.check().map_err(|error| error.to_string())?;
         }
+        self.value_constructors.remove(&expression.location);
         let inferred = match &expression.value {
             ExprKind::Variable(name) => match self.scheme(&name.value) {
                 Some(scheme) => self.instantiate(&scheme, expression.location),
@@ -668,7 +669,16 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(declared)
             }
             ExprKind::Field { receiver, field } => {
-                if let Some(scheme) = self
+                if self.declared_constructor_reference(receiver) {
+                    self.type_facet_locations.insert(receiver.location);
+                    let receiver_type = self.infer(receiver, environment, None)?;
+                    if let Some((ty, constructor)) = enum_member_type(&self.resolve(&receiver_type), &field.value)? {
+                        self.value_constructors.insert(expression.location, constructor);
+                        ty
+                    } else {
+                        self.project_field(&receiver_type, &field.value)?
+                    }
+                } else if let Some(scheme) = self
                         .namespace_interface(receiver)
                         .and_then(|interface| interface.exports.get(&field.value))
                         .cloned()
@@ -990,6 +1000,9 @@ impl<'a> GenericInference<'a> {
                             lexical_evidence: self.lexical_type_evidence.clone(),
                         });
                     }
+                }
+                if let Some(constructor) = self.value_constructors.get(&callee.location).cloned() {
+                    self.value_constructors.insert(expression.location, constructor);
                 }
                 substitute_bound_parameters(&scheme.body, &replacements)
             }
@@ -1392,10 +1405,9 @@ impl<'a> GenericInference<'a> {
             && !expected.is_some_and(|ty| expects_type_value(&self.resolve(ty)))
             && let Some(constructor) = newtype_constructor_type(&inferred)
         {
-            self.newtype_constructors.insert(expression.location);
+            self.value_constructors.insert(expression.location, ValueConstructor::Newtype);
             constructor
         } else {
-            self.newtype_constructors.remove(&expression.location);
             inferred
         };
         if let Some(expected) = expected

@@ -1,0 +1,2 @@
+import "@src/test/enum-constructors/model" as model, { Event as Status, Message as Packet };
+export { model, Status, Packet };

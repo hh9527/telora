@@ -21,20 +21,45 @@ pub(crate) fn apply_declared_type_arguments(
 }
 
 fn newtype_constructor_type(descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
-    let result = match descriptor {
-        TypeDescriptor::TypeOf(result) => result.as_ref(),
-        TypeDescriptor::Function { result, .. } => match result.as_ref() {
-            TypeDescriptor::TypeOf(result) => result.as_ref(),
-            _ => return None,
-        },
-        _ => return None,
-    };
+    let result = constructor_instance_type(descriptor)?;
     let TypeDescriptor::Declared(declared) = result else { return None; };
     let TypeDescriptor::Newtype(payload) = declared.body.as_ref() else { return None; };
     Some(TypeDescriptor::Function {
         parameters: vec![payload.as_ref().clone()],
         result: Box::new(result.clone()),
     })
+}
+
+fn constructor_instance_type(descriptor: &TypeDescriptor) -> Option<&TypeDescriptor> {
+    Some(match descriptor {
+        TypeDescriptor::TypeOf(result) => result.as_ref(),
+        TypeDescriptor::Function { result, .. } => match result.as_ref() {
+            TypeDescriptor::TypeOf(result) => result.as_ref(),
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+fn enum_member_type(
+    descriptor: &TypeDescriptor, tag: &str,
+) -> Result<Option<(TypeDescriptor, ValueConstructor)>, String> {
+    let Some(owner) = constructor_instance_type(descriptor) else { return Ok(None); };
+    let body = match owner {
+        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+        descriptor => descriptor,
+    };
+    let TypeDescriptor::Enum(variants) = body else { return Ok(None); };
+    let payload = variants.get(tag).ok_or_else(|| {
+        format!("enum {} has no member {tag:?}", owner.display_name())
+    })?;
+    let ty = match payload {
+        Some(payload) => TypeDescriptor::Function {
+            parameters: vec![payload.as_ref().clone()], result: Box::new(owner.clone()),
+        },
+        None => owner.clone(),
+    };
+    Ok(Some((ty, ValueConstructor::EnumMember { tag: tag.into(), has_payload: payload.is_some() })))
 }
 
 fn expects_type_value(expected: &TypeDescriptor) -> bool {

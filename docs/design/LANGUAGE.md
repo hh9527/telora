@@ -643,6 +643,13 @@ children 包含唯一的载荷类型；JSON codec 使用载荷表示并在成功
 `type Selected = Wrapped(Int).0;` 得到 Int 类型；工具函数和 decorator 参数
 可以构造、传递和读取 newtype 值，遵守同样的具名身份与类型上下文规则。
 
+enum 的成员名称提供值构造器。对于
+`type Event = enum { Progress(Int), Finished };`，`Event.Progress` 的类型是
+`Fn(Int) -> Event`，`Event.Finished` 的类型是 Event。解析到的声明确定成员所属
+enum；同形的另一个具名 enum 不改变该身份。泛型成员的契约保留所属类型族的
+所有参数，可使用 `Result.Ok@[Int, String]` 显式指定。缺少载荷或结果上下文中
+不能确定的泛型参数时，编译器要求补充类型证据。
+
 newtype 声明在值位置提供 `Fn(B) -> A` 构造器；`A(value)`、函数传递和显式
 泛型应用遵循普通函数契约。类型位置和预期 Type 的参数使用声明的类型用途。
 模块接口保留导出名称的类型声明身份，因此限定引用、导入别名和再导出都能保留

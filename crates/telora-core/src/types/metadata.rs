@@ -310,10 +310,13 @@ fn infer_tool_expression_evidence(
     let context = evaluator.inference_context.as_ref()?;
     if !context.named_types.values().any(|descriptor| {
         matches!(descriptor, TypeDescriptor::Declared(declared)
-            if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_)))
+            if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)))
     }) && !context.schemes.values()
         .chain(context.interfaces.values().flat_map(|interface| interface.exports.values()))
-        .any(|scheme| newtype_constructor_type(&scheme.body).is_some())
+        .any(|scheme| constructor_instance_type(&scheme.body).is_some_and(|owner| {
+            let body = match owner { TypeDescriptor::Declared(declared) => declared.body.as_ref(), ty => ty };
+            matches!(body, TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_))
+        }))
     {
         return None;
     }
@@ -363,7 +366,7 @@ fn infer_tool_expression_evidence(
     inference.infer(expression, &environment, expected).ok()?;
     let descriptors = inference.records.iter()
         .map(|(location, descriptor)| (*location, inference.resolve(descriptor))).collect();
-    Some(ToolExpressionEvidence { descriptors, newtype_constructors: inference.newtype_constructors })
+    Some(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors })
 }
 
 fn evaluate_tool_expression(
@@ -425,14 +428,14 @@ fn evaluate_tool_expression_with_debug(
     let evidence = infer_tool_expression_evidence(
         source_name, expression, bindings, expected, account, sources, evaluator,
     );
-    let newtype_constructors = evidence.as_ref()
-        .map(|evidence| evidence.newtype_constructors.clone()).unwrap_or_default();
+    let value_constructors = evidence.as_ref()
+        .map(|evidence| evidence.value_constructors.clone()).unwrap_or_default();
     let mut descriptors = expression_descriptors.cloned().unwrap_or_default();
     if let Some(evidence) = evidence { descriptors.extend(evidence.descriptors); }
     let mut bindings = bindings.clone();
     let mut declared_value_owners = HashMap::new();
     for (location, descriptor) in &descriptors {
-        let descriptor = if newtype_constructors.contains(location)
+        let descriptor = if value_constructors.contains_key(location)
             && let TypeDescriptor::Function { result, .. } = descriptor
         { result.as_ref() } else { descriptor };
         if location.source == expression.location.source
@@ -452,7 +455,7 @@ fn evaluate_tool_expression_with_debug(
         expression,
         bindings.keys().cloned(),
         declared_value_owners,
-        newtype_constructors,
+        value_constructors,
         sources.get(expression.location.source),
     )?;
     let externals = bindings

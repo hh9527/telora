@@ -1,7 +1,23 @@
 impl<'a> Compiler<'a> {
-    fn compile_newtype_constructor(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
+    fn compile_constructor_declaration(
+        &mut self, expression: &Expr, constructor: &crate::types::ValueConstructor,
+    ) -> Result<RegisterId, FrontendError> {
+        match (constructor, &expression.value) {
+            (crate::types::ValueConstructor::EnumMember { .. }, ExprKind::Field { receiver, .. }) => {
+                self.compile_expr(receiver)
+            }
+            (crate::types::ValueConstructor::EnumMember { .. }, ExprKind::TypeApply { callee, .. }) => {
+                self.compile_constructor_declaration(callee, constructor)
+            }
+            _ => self.compile_expr_unowned(expression),
+        }
+    }
+
+    fn compile_value_constructor(
+        &mut self, expression: &Expr, constructor: &crate::types::ValueConstructor,
+    ) -> Result<RegisterId, FrontendError> {
         // Evaluate the declaration reference even when its concrete owner is precomputed.
-        self.compile_expr_unowned(expression)?;
+        self.compile_constructor_declaration(expression, constructor)?;
         let owner = self.declared_value_owners.get(&expression.location).cloned();
         let mut captures = Vec::new();
         let mut registers = Vec::new();
@@ -11,7 +27,7 @@ impl<'a> Compiler<'a> {
             captures.push(owner);
             registers.push(register);
         }
-        let name = format!("{}::newtype{}", self.function_name, self.closure_index);
+        let name = format!("{}::constructor{}", self.function_name, self.closure_index);
         self.closure_index += 1;
         let mut nested = Self::nested(
             self.source_name,
@@ -23,11 +39,24 @@ impl<'a> Compiler<'a> {
                 type_slots: &HashSet::new(),
                 definitions: &HashSet::new(),
                 declared_value_owners: &HashMap::new(),
-                newtype_constructors: &HashSet::new(),
+                value_constructors: &HashMap::new(),
             },
         )?;
-        let payload = nested.allocate();
-        nested.emit(Operation::MakeTuple { dst: payload, items: vec![RegisterId(0)] }, expression.location);
+        let payload = match constructor {
+            crate::types::ValueConstructor::Newtype => {
+                let payload = nested.allocate();
+                nested.emit(Operation::MakeTuple { dst: payload, items: vec![RegisterId(0)] }, expression.location);
+                payload
+            }
+            crate::types::ValueConstructor::EnumMember { tag, has_payload: true } => {
+                let base = nested.load_constant(atom_constant(tag), expression.location);
+                let argument = nested.allocate();
+                nested.emit(Operation::Move { dst: argument, src: RegisterId(0) }, expression.location);
+                nested.emit(Operation::Call { base, argument_count: 1 }, expression.location);
+                base
+            }
+            crate::types::ValueConstructor::EnumMember { has_payload: false, .. } => unreachable!(),
+        };
         let result = if registers.is_empty() {
             payload
         } else {
@@ -166,7 +195,7 @@ impl<'a> Compiler<'a> {
                 type_slots: &captured_type_slots,
                 definitions: &captured_definitions,
                 declared_value_owners: &self.declared_value_owners,
-                newtype_constructors: &self.newtype_constructors,
+                value_constructors: &self.value_constructors,
             },
         )?;
         if let Some(constructor) = nominal_constructor {

@@ -1,0 +1,79 @@
+import "std/test" as test;
+import "std/codec" as codec;
+import "std/value" { Value };
+import "std/dyn" as dyn;
+import "@src/test/enum-constructors/model" as model;
+import "@src/test/enum-constructors/model" { Event as RemoteEvent, Message as Packet };
+import "@src/test/enum-constructors/bridge" as bridge;
+import "@src/test-support" { expect };
+
+type Event = enum { Progress(Int), Finished };
+type Message(T) = enum { Data(T), Empty };
+type EventConstructor = Fn(Int) -> Event;
+type TypeChoice = enum { Selected(Type), Empty };
+type Chosen = match TypeChoice.Selected(Int) {
+    'Selected(value) => value,
+    'Empty => String,
+};
+
+export def qualified = test.should_ok(fn() {
+    let progress = Event.Progress(42);
+    let finished = Event.Finished;
+    expect(match progress { 'Progress(value) => value == 42, 'Finished => 'False }
+        && match finished { 'Finished => 'True, 'Progress(_) => 'False })
+});
+
+export def tool_stage = test.should_ok(fn() {
+    let value: Chosen = 54;
+    expect(value == 54)
+});
+
+export def first_class = test.should_ok(fn() {
+    let make: Fn(Int) -> Event = Event.Progress;
+    expect(match make(43) { 'Progress(value) => value == 43, 'Finished => 'False })
+});
+
+export def generic = test.should_ok(fn() {
+    let inferred = Message.Data(44);
+    let explicit = Message.Data@[String]("ok");
+    let empty: Message(Int) = Message.Empty;
+    expect(match inferred { 'Data(value) => value == 44, 'Empty => 'False }
+        && match explicit { 'Data(value) => value == "ok", 'Empty => 'False }
+        && match empty { 'Empty => 'True, 'Data(_) => 'False })
+});
+
+export def builtin = test.should_ok(fn() {
+    let some = Option.Some(45);
+    let none: Option(Int) = Option.None;
+    let ok = Result.Ok@[Int, String](46);
+    expect(match some { 'Some(value) => value == 45, 'None => 'False }
+        && match none { 'None => 'True, 'Some(_) => 'False }
+        && match ok { 'Ok(value) => value == 46, 'Err(_) => 'False }
+        && Bool.True && !Bool.False)
+});
+
+export def ownership = test.should_ok(fn() {
+    let make = dyn.pack(EventConstructor, Event.Progress);
+    expect(codec.encode(Value, Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
+        && codec.encode(Value, Event.Finished) == Value.String("Finished")
+        && match dyn.project_with(EventConstructor, make) {
+            'Some(make) => codec.encode(Value, make(48)) == Value.Object({Progress: Value.Int(48)}),
+            'None => 'False,
+        })
+});
+
+export def imported = test.should_ok(fn() {
+    let a = model.Event.Progress(49);
+    let b = RemoteEvent.Progress(50);
+    let c = Packet.Data@[String]("ok");
+    let d = bridge.Status.Finished;
+    let e = bridge.Packet.Data(51);
+    let f = bridge.model.Event.Progress(52);
+    expect(codec.encode(Value, a) == Value.Object({Progress: Value.Int(49)})
+        && codec.encode(Value, b) == Value.Object({Progress: Value.Int(50)})
+        && codec.encode(Value, c) == Value.Object({Data: Value.String("ok")})
+        && codec.encode(Value, d) == Value.String("Finished")
+        && codec.encode(Value, e) == Value.Object({Data: Value.Int(51)})
+        && codec.encode(Value, f) == Value.Object({Progress: Value.Int(52)})
+        && codec.encode(Value, model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
+});

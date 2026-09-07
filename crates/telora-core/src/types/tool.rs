@@ -26,7 +26,7 @@ fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
 
 struct ToolExpressionEvidence {
     descriptors: HashMap<crate::Location, TypeDescriptor>,
-    newtype_constructors: HashSet<crate::Location>,
+    value_constructors: HashMap<crate::Location, ValueConstructor>,
 }
 
 impl ToolInferenceContext {

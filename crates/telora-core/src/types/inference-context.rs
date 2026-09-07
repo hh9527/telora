@@ -65,7 +65,7 @@ impl<'a> GenericInference<'a> {
             ordered_variables: HashSet::new(),
             field_requirements: HashMap::new(),
             enum_constructors: HashMap::new(),
-            newtype_constructors: HashSet::new(),
+            value_constructors: HashMap::new(),
             type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
             substitutions: HashMap::new(),
@@ -467,6 +467,21 @@ impl<'a> GenericInference<'a> {
     fn explicit_scheme(&self, callee: &Expr) -> Option<TypeScheme> {
         match &callee.value {
             ExprKind::Variable(name) => self.scheme(&name.value),
+            ExprKind::Field { receiver, field } if self.declared_constructor_reference(receiver) => {
+                let mut scheme = self.explicit_scheme(receiver)?;
+                let (body, _) = enum_member_type(&scheme.body, &field.value).ok()??;
+                scheme.body = body;
+                if scheme.parameters.is_empty() {
+                    let mut parameters = Vec::new();
+                    collect_bound_parameters(&scheme.body, &mut parameters);
+                    parameters.sort_unstable();
+                    parameters.dedup();
+                    scheme.parameters = parameters.into_iter().map(|id| TypeParameter {
+                        id, name: format!("T{}", id.0), location: receiver.location,
+                    }).collect();
+                }
+                Some(scheme)
+            }
             ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
                 .and_then(|interface| interface.exports.get(&field.value)).cloned(),
             _ => None,
@@ -476,6 +491,14 @@ impl<'a> GenericInference<'a> {
     fn declared_constructor_reference(&self, expression: &Expr) -> bool {
         match &expression.value {
             ExprKind::Variable(name) => {
+                if matches!(name.value.as_str(), "Bool" | "Option" | "Result" | "FoldControl")
+                    && !self.external_interfaces.contains_key(&name.value)
+                    && self.hir.references().iter().any(|reference|
+                        reference.location == name.location && reference.name == name.value
+                            && reference.resolution == HirResolution::External)
+                {
+                    return true;
+                }
                 if let Some(reference) = self.hir.references().iter()
                     .find(|reference| reference.location == name.location && reference.name == name.value)
                     && let HirResolution::Definition(id) = reference.resolution

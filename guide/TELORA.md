@@ -288,6 +288,14 @@ JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 `type Wrapped = struct(Type); type Selected = Wrapped(Int).0;` 中 Selected
 表示 Int。类型上下文决定声明的类型用途，值上下文提供构造器函数。
 
+enum 成员通过类型名称引用：`type Event = enum { Progress(Int), Finished };`
+声明后，`Event.Progress(1)` 构造带载荷的值，`Event.Finished` 表示无载荷的值。
+`Event.Progress` 本身具有 `Fn(Int) -> Event` 契约，可以作为函数传递。
+泛型成员支持上下文推断与显式参数，例如 `Option.Some(1)` 和
+`Result.Ok@[Int, String](1)`；无载荷成员同样需要完整的类型证据，
+例如 `let empty: Option(Int) = Option.None;`。限定名称确定所属 enum，
+import/reexport 的类型别名保持这个身份。
+
 ```telora
 type Entity = enum {
     'Ticket,
