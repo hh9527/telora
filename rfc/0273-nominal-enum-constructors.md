@@ -1,10 +1,14 @@
 # RFC 0273: Nominal Enum Constructors
 
-- Status: Draft
+- Status: Accepted
 - Tracking: [#160](https://github.com/hh9527/telora/issues/160)
 - Branch: `feat/0273-nominal-enum-constructors`
 - Baseline: `0982e92`
-- Implementation: Not started. The inventory below comes from source inspection.
+- Implementation: In progress. Contextual constructors retain complete built-in
+  enum contracts; quoted payload constructors accept explicit function contracts.
+  Debug build and workspace tests pass, including 271 language fixture groups.
+  Standalone type removal and unresolved-owner obligations remain outstanding.
+  The inventory below describes the baseline.
 - Scope: Remove standalone Atom/Tagged static types. Preserve source syntax,
   runtime value representation, bytecode representation and Val provenance.
 
@@ -68,9 +72,9 @@ not select a family. An absent variant supplies no evidence for its unused type
 argument; existing explicit polymorphic contracts and bottom-type rules must be
 distinguished from an arbitrary choice of a missing type argument.
 
-Pending decision: whether context-free `'True` and `'False` default to Bool or
-require context like other variants. A default, if selected, is a specified
-built-in rule applied after contextual evidence, not declaration-name guessing.
+Context-free `'True` and `'False` require context like other variants. Conditions,
+guards and Boolean operators supply Bool context. No spelling-based default is
+introduced. An explicitly constructed Bool is written `'True.ty!(Bool)`.
 
 ### Constructors as Functions
 

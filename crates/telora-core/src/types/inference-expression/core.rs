@@ -182,6 +182,15 @@ impl<'a> GenericInference<'a> {
         }
         result.map(|inferred| {
             let Some(declared) = expected_declared else {
+                if let Some(expected) = expected.map(|ty| self.resolve(ty))
+                    && ((constructs_declared_value
+                        && matches!(expected, TypeDescriptor::Enum(_)))
+                        || (matches!(expression.value, ExprKind::Atom(_))
+                            && matches!(expected, TypeDescriptor::Function { .. })))
+                {
+                    self.records.insert(expression.location, expected.clone());
+                    return expected;
+                }
                 return inferred;
             };
             if self
@@ -229,7 +238,33 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::String
             }
             ExprKind::Bytes(_) => TypeDescriptor::Bytes,
-            ExprKind::Atom(name) => TypeDescriptor::Atom(atom_from_name(name)),
+            ExprKind::Atom(name) => {
+                if let Some(function @ TypeDescriptor::Function { .. }) =
+                    expected.map(|ty| self.resolve(ty))
+                {
+                    let TypeDescriptor::Function { parameters, result } = &function else {
+                        unreachable!()
+                    };
+                    let result = self.expose_named(result);
+                    let result = match &result {
+                        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+                        result => result,
+                    };
+                    let TypeDescriptor::Enum(variants) = result else {
+                        return Err("enum constructor function requires an enum result".into());
+                    };
+                    let Some(Some(payload)) = variants.get(name) else {
+                        return Err(format!("enum has no payload variant '{name}"));
+                    };
+                    let [parameter] = parameters.as_slice() else {
+                        return Err("enum constructor function requires exactly one parameter".into());
+                    };
+                    self.check(parameter, payload)?;
+                    function
+                } else {
+                    TypeDescriptor::Atom(atom_from_name(name))
+                }
+            }
             ExprKind::Array(items) => {
                 let item_expected = match expected.map(|ty| self.resolve(ty)) {
                     Some(TypeDescriptor::Array(item))
