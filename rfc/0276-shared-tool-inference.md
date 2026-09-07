@@ -1,10 +1,12 @@
 # RFC 0276: Shared Tool Inference and Static Property Evidence
 
-- Status: In progress on local branch `perf/shared-tool-inference`; shared-slot
-  solver, resolved definition inputs and graph publication implemented;
-  tool-boundary audit and main integration pending.
+- Status: Implementation verified on local branch `perf/shared-tool-inference`;
+  local main integration pending.
 - Baseline: 58f0b8c, after RFC 0274.
 - Related: RFC 0260, RFC 0274, RFC 0275.
+
+The progress notes below retain intermediate results and limitations. The final
+audit at the end describes the completed implementation and current boundaries.
 
 ## Motivation
 
@@ -191,7 +193,7 @@ change must preserve occurs checks, per-use generic instantiation, lexical
 generalization boundaries, trait obligations and rejection of unresolved
 inference variables at publication. It is not implemented by this optimization.
 
-## Follow-up: Slot-Based Inference (In Progress)
+## Follow-up: Slot-Based Inference
 
 The next solver representation uses a dense vector of small Copy nodes:
 
@@ -492,3 +494,66 @@ slots avoid repeatedly importing the same binding descriptor at its references.
 The final audit still found a whole-environment snapshot around property value
 evaluation; its temporary previous-property binding semantics must be preserved
 when removing that snapshot before main integration.
+
+### Scoped Property Inputs
+
+Property value evaluation now borrows the static environment and overlays its
+previous-property binding. The tool context temporarily replaces only free
+inputs referenced by the call (including nested annotation inputs), retaining
+old values in a small undo list. It restores those inputs before propagating a
+provider error. Unreferenced module bindings are not copied or replaced.
+
+A focused test uses 1024 unrelated bindings and verifies that only four free
+inputs are saved, nested overrides restore in order, absent inputs are hidden,
+new inputs disappear on restoration, and closure parameters are not mistaken
+for external inputs. This removes the per-property whole-environment snapshot;
+the once-per-module owned tool context remains a phase boundary, not a branch
+or per-expression inference-environment copy.
+
+## Final Audit
+
+- Solver storage is an 8-byte Copy node array, 12-byte constructor rows and
+  4-byte argument edges. Tests prove late binding through proxies, conflict
+  propagation, deep iterative unification and structural coalescing.
+- Branches share slots. Resolved HIR definitions index the binding array;
+  generic calls allocate separate parameter slots. Tests cover shadowing,
+  decl/def aliases, recursive contracts and independent generic instances.
+- Ordinary expression records contain slots. Structural and ordinary nominal
+  bodies publish directly into the final graph, with validation preventing
+  unresolved/conflicted slots from becoming public types. Public identity
+  arguments, schemes, runtime owner metadata and specialized Unchecked /
+  pending-alternative normalization retain descriptor boundary APIs. They do
+  not require branch-environment copies or per-expression whole-type trees.
+- Property contracts provide static HasProperty evidence before provider value
+  evaluation. Construction-check ordering from main is retained. Scoped
+  property inputs restore before provider errors are returned. The workspace
+  acceptance tests exercise these successful and failing workflows.
+- The full workspace suite passed with 308 core tests and 41 CLI tests,
+  including language acceptance. The release build and diff checks passed.
+  Temporary inference instrumentation is absent.
+- Fresh origin/main is 915ffe4, already an ancestor of the optimization branch.
+  Local main integration is the remaining delivery step; nothing is pushed.
+
+Release scaling measurements use the 915ffe4 baseline binary, identical inputs,
+one warmup and three sequential samples per case (median seconds):
+
+| Workload | Main 915ffe4 | Optimized |
+| --- | ---: | ---: |
+| One constant | 0.255 | 0.136 |
+| 400 functions | 1.145 | 0.219 |
+| 400 types | 1.900 | 0.340 |
+| 400-element array | 0.259 | 0.135 |
+| 400 forward type dependencies | 9.367 | 0.208 |
+| 400 repeated type-family applications | 1.843 | 0.281 |
+
+Reproduce with `python3 scripts/measure-tool-inference.py BASELINE_BINARY
+OPTIMIZED_BINARY --sizes 400 --samples 3 --workloads constant functions types
+array forward-types repeated-family`.
+
+The final ontology query samples took 4.41 s and 4.36 s, with peak RSS 302000 KB
+and 301872 KB (exit 0). The preserved main baseline was 197.05 s / 607824 KB;
+these query measurements are individual samples, not medians. The query uses
+`-C /home/h00629578/ws/lab-ws/lab-ontology/ontology check @test/query`. The original
+relative `-C ../lab-ws/lab-ontology/ontology` spelling fails workspace membership
+validation before inference on both 915ffe4 and the optimized build. That
+separate path-validation issue is unchanged by this optimization.

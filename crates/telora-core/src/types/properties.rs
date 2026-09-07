@@ -334,7 +334,7 @@ fn evaluate_property_decorator(
         ));
     }
 
-    let mut environment = static_environment.clone();
+    let mut environment = ScopedTypeEnvironment::new(static_environment);
     environment.insert(
         PROPERTY_PREVIOUS_BINDING.into(),
         option_descriptor(property_descriptor.clone()),
@@ -359,7 +359,7 @@ fn evaluate_property_decorator(
     let previous = evaluator.previous_property_value(previous);
     values.insert(PROPERTY_PREVIOUS_BINDING.into(), previous);
     let previous_environment = evaluator.inference_context.as_mut()
-        .map(|context| std::mem::replace(&mut context.environment, environment));
+        .map(|context| context.scope_environment_inputs(&call, &environment));
     let property = evaluate_typed_tool_expression_silent(
         source_name,
         &call,
@@ -373,7 +373,7 @@ fn evaluate_property_decorator(
     if let Some(environment) = previous_environment
         && let Some(context) = &mut evaluator.inference_context
     {
-        context.environment = environment;
+        context.restore_environment_inputs(environment);
     }
     let property = property?;
     if property.type_id() != Some(property_type) {

@@ -48,6 +48,33 @@ struct ToolExpressionEvidence {
 }
 
 impl ToolInferenceContext {
+    fn scope_environment_inputs(
+        &mut self,
+        expression: &Expr,
+        environment: &dyn TypeEnvironment,
+    ) -> Vec<(String, Option<TypeDescriptor>)> {
+        let inputs = HirProgram::resolve_expression(expression, Vec::new());
+        let names = inputs.references().iter()
+            .filter(|reference| !matches!(reference.resolution, HirResolution::Definition(_)))
+            .map(|reference| reference.name.as_str()).collect::<BTreeSet<_>>();
+        names.into_iter().map(|name| {
+            let previous = match environment.get(name) {
+                Some(descriptor) => self.environment.insert(name.to_owned(), descriptor.clone()),
+                None => self.environment.remove(name),
+            };
+            (name.to_owned(), previous)
+        }).collect()
+    }
+
+    fn restore_environment_inputs(&mut self, previous: Vec<(String, Option<TypeDescriptor>)>) {
+        for (name, descriptor) in previous {
+            match descriptor {
+                Some(descriptor) => { self.environment.insert(name, descriptor); }
+                None => { self.environment.remove(&name); }
+            }
+        }
+    }
+
     fn new(
         hir: HirProgram,
         interfaces: BTreeMap<String, ModuleInterface>,

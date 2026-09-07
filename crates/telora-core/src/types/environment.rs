@@ -66,6 +66,43 @@ mod environment_tests {
     use super::*;
 
     #[test]
+    fn tool_input_overrides_are_sparse_nested_and_restore_missing_bindings() {
+        let mut context = ToolInferenceContext::new(
+            HirProgram::default(), BTreeMap::new(), HashMap::new(), HashMap::new(),
+            BTreeMap::new(), true, HashSet::new(),
+        );
+        for index in 0..1024 {
+            context.environment.insert(format!("unused{index}"), TypeDescriptor::Int);
+        }
+        context.environment.insert("changed".into(), TypeDescriptor::Int);
+        context.environment.insert("missing".into(), TypeDescriptor::String);
+        context.environment.insert("Annotation".into(), TypeDescriptor::Type);
+        let original = context.environment.clone();
+        let program = crate::parser::parse("tool-inputs.telora",
+            "fn(local: Annotation) { (local, changed, missing, added) }").unwrap();
+        let replacement = HashMap::from([
+            ("changed".into(), TypeDescriptor::Float),
+            ("added".into(), TypeDescriptor::Bytes),
+            ("Annotation".into(), TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Int))),
+        ]);
+        let previous = context.scope_environment_inputs(&program.value.body.value.result, &replacement);
+        assert_eq!(previous.len(), 4);
+        assert_eq!(context.environment["changed"], TypeDescriptor::Float);
+        assert_eq!(context.environment["added"], TypeDescriptor::Bytes);
+        assert!(!context.environment.contains_key("missing"));
+        assert!(!context.environment.contains_key("local"));
+        let inner = crate::parser::parse("tool-inner.telora", "changed").unwrap();
+        let previous_inner = context.scope_environment_inputs(&inner.value.body.value.result,
+            &HashMap::from([("changed".into(), TypeDescriptor::String)]));
+        assert_eq!(previous_inner.len(), 1);
+        assert_eq!(context.environment["changed"], TypeDescriptor::String);
+        context.restore_environment_inputs(previous_inner);
+        assert_eq!(context.environment["changed"], TypeDescriptor::Float);
+        context.restore_environment_inputs(previous);
+        assert_eq!(context.environment, original);
+    }
+
+    #[test]
     fn nested_scopes_borrow_and_shadow_without_changing_parents() {
         let base = HashMap::from([
             ("value".to_owned(), TypeDescriptor::Int),
