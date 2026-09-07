@@ -14,8 +14,9 @@
   codec bridge enforce nested checks and preserve input-string provenance.
   Tool-stage construction prepares checks and their forward value dependencies
   before metadata and binding evaluation; pending checks block construction.
-  The final dynamic-boundary, recursion and cross-module acceptance audit remains pending.
-- Validation: debug build and workspace tests pass; 367 language fixture groups
+  Generic calls retain resolved parameter context for unchecked conversion.
+  The final generic-conversion and recursive-module acceptance audit remains pending.
+- Validation: debug build and workspace tests pass; 368 language fixture groups
   pass, including opaque access rejection, intrinsic argument contracts, deferred
   error construction, warnings returning None, cross-module subject origins,
   unchecked identity and fields, generic conversion, Dyn isolation, check signature
@@ -24,6 +25,9 @@
   checked cast rejection, same-type cast invocation counts, parsing checks,
   text-bridge untagged trials, cross-module parsed-field provenance, early and
   source-order tool construction rejection and forward checker dependencies.
+  Reexported generic constructors, codec/Dyn boundaries and unchanged schema/wire
+  contracts are covered. Direct and untagged recursive checks preserve fuel,
+  stack, allocation and call-depth limits in a dedicated quota harness.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
   codec field constraints; see the compatibility analysis below.
@@ -246,3 +250,22 @@ substitution, imports, reexports and module graph cycles.
   as migration guides. New behavioral tests primarily use `.telora`.
 - Debug builds and workspace tests pass. Report evidence in Chinese on #168;
   close the issue only after its full implementation scope is complete.
+
+### Evidence Under Review
+
+| Requirement | Current evidence |
+| --- | --- |
+| Direct struct, newtype, variant, merge and projection checks | `test/construction-check` |
+| Generic constructors across imports and reexports, callback construction | `test/construction-boundaries` |
+| Checked/unchecked identity and Dyn separation | `test/unchecked`, `test/construction-boundaries`, TypeStore representation test |
+| Nested checked cast conversion | `test/cast-construction-check` |
+| Codec trials and explicit checker failure | `test/codec-construction-check` |
+| Parsing, text bridge and original string provenance | `test/parse-construction-check`, `test/parse-check-provenance` |
+| Metadata and source-order tool construction | `check/diag-check-early-construction`, `check/diag-check-tool-construction`, `check/check-tool-dependencies` |
+| No repeated checks during copy, cast, encoding, schema and Dyn roundtrip | `test/construction-check-once` |
+| Stable schema and wire output after adding a check | `test/construction-boundaries` |
+| Recursive construction resource limits, including untagged trials | `module/tests/construction.rs`, with the program in `fixtures/construction-recursion.telora` |
+
+This evidence does not yet close acceptance. Remaining review includes unchecked
+conversion with unresolved generic parameters and recursive module publication,
+followed by the requested performance analysis after the functional commit/push.

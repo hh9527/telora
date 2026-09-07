@@ -869,7 +869,7 @@ impl<'a> GenericInference<'a> {
                             let parameter = &parameters[index];
                             let inference_expected = if index == 1 && model_fields.is_some() {
                                 model_fields.as_ref()
-                            } else if contains_exposed_type_variable(parameter)
+                            } else if contains_exposed_type_variable(&self.resolve(parameter))
                                 && matches!(argument.value, ExprKind::Variable(_))
                                 && !expects_type_value(&self.resolve(parameter))
                             {
