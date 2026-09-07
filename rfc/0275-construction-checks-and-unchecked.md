@@ -1,6 +1,8 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
-- Status: Implemented on `feat/0168-construction-checks`; performance review follows functional acceptance.
+- Status: Completed on `feat/0168-construction-checks`; functional acceptance and performance review are complete. Integration into main remains a separate decision.
+- Completion: functional implementation `e60feed`; performance evidence `56108e6`.
+  Follow-up optimizations are tracked in [#170](https://github.com/hh9527/telora/issues/170).
 - Implementation: `std/blame.BlameError` is an opaque native type. The blame,
   raise and warn intrinsics are implemented. Dyn returns preserve erased-value
   origins across call boundaries. Codec and JSON/TOML/YAML now return the same
@@ -191,7 +193,7 @@ uses Some(BlameError). Quota exhaustion is not a candidate mismatch.
 Issue 143 proposes independent decode/encode field constraints that preserve
 field types and wire shape. This RFC is intended to supersede that proposal
 through construction invariants, rather than implement its original API verbatim.
-The issue remains open until this replacement is implemented and accepted.
+The replacement is implemented and accepted; #143 is superseded by this construction protocol.
 
 A struct check can validate its fields without changing their declared types;
 a checked newtype can provide a reusable constrained field type with transparent
@@ -256,7 +258,7 @@ module initialization.
 - Debug builds and workspace tests pass. Report evidence in Chinese on #168;
   close the issue only after its full implementation scope is complete.
 
-### Evidence Under Review
+### Acceptance Evidence
 
 | Requirement | Current evidence |
 | --- | --- |
@@ -277,5 +279,7 @@ only a primitive, inferred local closures, and recursive rebuilds across importe
 and reexported interfaces. These paths carry runtime type witnesses even when the
 function result does not reveal the constructed type. Empty generic inputs retain
 an uninhabited witness for undetermined parameters; published generic bindings
-retain their quantified contracts. Performance analysis follows the complete
-functional commit/push.
+retain their quantified contracts. Performance analysis was completed after the
+functional commit/push; the measured baselines and profiling report are recorded
+in `crates/telora/tests/fixtures/performance/type-structure/PERFORMANCE-2026-09-08.md`.
+Performance optimizations are follow-up work under #170.
