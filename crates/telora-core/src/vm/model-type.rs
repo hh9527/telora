@@ -171,6 +171,19 @@ struct CodecEnumVariant {
 
 #[derive(Clone, Debug)]
 enum CodecNode {
+    Decode {
+        schema: Box<CodecType>,
+        properties: CodecProperties,
+        value: Val,
+        path: String,
+        input: Option<Val>,
+    },
+    Trials {
+        variants: Vec<Self>,
+        input: Val,
+        path: String,
+    },
+    Reject(CodecFailure),
     Existing(Val),
     SemanticValue {
         owner: Val,

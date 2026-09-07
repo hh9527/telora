@@ -412,7 +412,8 @@ impl Vm {
                                     })?;
                                 if let Some(action) = construction_check_action(
                                     owner, value, type_id,
-                                    ReturnTarget::Register { destination: *dst, call_site: None },
+                                    || ReturnTarget::Register { destination: *dst, call_site: None },
+                                    false,
                                     Arc::clone(&function_arc), pc, &mut current, background, account,
                                 )? {
                                     frames.last_mut().expect("construction frame").pc += 1;

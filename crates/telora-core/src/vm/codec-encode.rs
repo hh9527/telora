@@ -139,7 +139,8 @@ fn first_prepared_display(node: &CodecNode) -> Option<(Val, Val, Val)> {
         CodecNode::Dict(fields, _) => fields
             .iter()
             .find_map(|(_, value)| first_prepared_display(value)),
-        CodecNode::Existing(_)
+        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
+        | CodecNode::Existing(_)
         | CodecNode::Atom(_, _)
         | CodecNode::NamedAtom(_, _)
         | CodecNode::String(_, _) => None,
@@ -173,7 +174,8 @@ fn replace_first_prepared_display(node: &mut CodecNode, text: String) -> bool {
             };
             replace_first_prepared_display(value, text)
         }
-        CodecNode::Existing(_)
+        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
+        | CodecNode::Existing(_)
         | CodecNode::Atom(_, _)
         | CodecNode::NamedAtom(_, _)
         | CodecNode::String(_, _) => false,
@@ -452,7 +454,10 @@ fn finish_decode_result(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let (tag, payload) = match result {
-        Ok(node) => (BuiltinAtom::Ok, node),
+        Ok(node) => return drive_codec_decode(CodecDecodeState {
+            tasks: vec![DecodeTask::Node(node)], values: Vec::new(), rejection: None,
+            input, return_target, call_function: Arc::new(function.clone()), call_pc: pc,
+        }, current, background, account),
         Err(failure) => {
             let value = failure.input.unwrap_or(input);
             let bytes = logical_value_bytes(4)

@@ -21,6 +21,12 @@ fn transform_codec_with_input(
     background: &Heap,
     input: Option<Val>,
 ) -> Result<CodecNode, CodecFailure> {
+    if matches!(direction, CodecDirection::Decode) {
+        return Ok(CodecNode::Decode {
+            schema: Box::new(schema.clone()), properties: *properties,
+            value, path: path.to_owned(), input,
+        });
+    }
     transform_codec_inner(schema, properties, value, direction, path, current, background, input)
         .map_err(|mut failure| {
             if failure.input.is_none() {

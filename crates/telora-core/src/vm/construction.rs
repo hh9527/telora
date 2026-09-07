@@ -1,5 +1,6 @@
 #[derive(Debug)]
 struct ConstructionContinuation {
+    return_result: bool,
     candidate: Val,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
@@ -13,7 +14,7 @@ impl NativeContinuation for ConstructionContinuation {
 
     fn resume(
         self: Box<Self>, value: Val, current: &mut Heap, background: &Heap,
-        _account: &mut QuotaAccount,
+        account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
         let view = HeapView { current, background: Some(background) };
         let function = &self.call_function;
@@ -21,6 +22,10 @@ impl NativeContinuation for ConstructionContinuation {
         propagate_data_failures(&[value], &view, function, pc)?;
         let result = ValueRef { value, view };
         if result.as_atom().is_some_and(|tag| tag == "None") {
+            if self.return_result {
+                return finish_codec_payload(BuiltinAtom::Ok, CodecNode::Existing(self.candidate),
+                    self.candidate, self.return_target, function, pc, current, background, account);
+            }
             return Ok(VmAction::Return { value: self.candidate, return_target: self.return_target });
         }
         if let Some((tag, blame)) = result.tagged_parts()
@@ -29,6 +34,10 @@ impl NativeContinuation for ConstructionContinuation {
             && let Ok(Object::Opaque(blame_value)) = view.object(handle)
             && let Some(message) = blame_value.downcast_ref::<String>(&crate::core::blame_native_type())
         {
+            if self.return_result {
+                return finish_codec_payload(BuiltinAtom::Err, CodecNode::Existing(blame.runtime()),
+                    self.candidate, self.return_target, function, pc, current, background, account);
+            }
             let mut failure = error(RuntimeErrorKind::RaisedBlame, message.clone(), function, pc);
             failure.set_contextual_locations(
                 blame_value.traced.iter().filter_map(|value| value.loc()),
@@ -49,7 +58,7 @@ impl NativeContinuation for ConstructionContinuation {
 
 #[allow(clippy::too_many_arguments)]
 fn construction_check_action(
-    owner: Val, value: Val, target: crate::TypeId, return_target: ReturnTarget,
+    owner: Val, value: Val, target: crate::TypeId, return_target: impl FnOnce() -> ReturnTarget, return_result: bool,
     call_function: Arc<BytecodeFunction>, pc: usize,
     current: &mut Heap, background: &Heap, account: &mut QuotaAccount,
 ) -> Result<Option<VmAction>, RuntimeError> {
@@ -97,7 +106,8 @@ fn construction_check_action(
     charge_allocation(account, logical_value_bytes(current.allocation_count().saturating_sub(metadata_start).saturating_add(4))
         .map_err(|err| allocation_error(err.message, function, pc))?, function, pc)?;
     let continuation = ConstructionContinuation {
-        candidate: value.with_type_id(target), return_target,
+        return_result,
+        candidate: value.with_type_id(target), return_target: return_target(),
         call_function: Arc::clone(&call_function), call_pc: pc,
         trace_frame: RuntimeFrame { function: "@check".into(), instruction: pc,
             origin: function.origin_at(pc) },
