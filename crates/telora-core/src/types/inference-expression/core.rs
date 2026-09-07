@@ -2,7 +2,7 @@ impl<'a> GenericInference<'a> {
     fn infer_tuple_items(
         &mut self,
         items: &[Expr],
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         expected: Option<&[TypeDescriptor]>,
     ) -> Result<Vec<TypeDescriptor>, String> {
         let mut types = Vec::new();
@@ -43,7 +43,7 @@ impl<'a> GenericInference<'a> {
         &mut self,
         receiver: &Expr,
         fields: &[(crate::ast::Identifier, crate::ast::Identifier)],
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
     ) -> Result<BTreeMap<String, TypeDescriptor>, String> {
         let source = self.infer(receiver, environment, None)?;
         let source = self
@@ -67,7 +67,7 @@ impl<'a> GenericInference<'a> {
     fn infer_struct_update(
         &mut self,
         expression: &Expr,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         target: &BTreeMap<String, TypeDescriptor>,
     ) -> Result<(), String> {
         let mut contributed = BTreeMap::new();
@@ -144,7 +144,7 @@ impl<'a> GenericInference<'a> {
     fn infer(
         &mut self,
         expression: &Expr,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         let constructs_declared_value = expression_constructs_declared_value(expression);
@@ -212,7 +212,7 @@ impl<'a> GenericInference<'a> {
     fn infer_inner(
         &mut self,
         expression: &Expr,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         if let Some(query) = &self.query {
@@ -1033,7 +1033,7 @@ impl<'a> GenericInference<'a> {
                     }
                     _ => None,
                 };
-                let mut closure_environment = environment.clone();
+                let mut closure_environment = ScopedTypeEnvironment::new(environment);
                 let mut parameter_types = Vec::with_capacity(parameters.len());
                 for (index, parameter) in parameters.iter().enumerate() {
                     let surrounding = expected
@@ -1161,7 +1161,7 @@ impl<'a> GenericInference<'a> {
                         .entry(problem.location)
                         .or_insert(problem.message);
                 }
-                let mut then_environment = environment.clone();
+                let mut then_environment = ScopedTypeEnvironment::new(environment);
                 self.scheme_scopes.push(HashMap::new());
                 for binding in analysis.bindings {
                     let binding_type = self.require_pattern_binding(&binding)?;
@@ -1217,7 +1217,7 @@ impl<'a> GenericInference<'a> {
                         self.resolve(&else_type).display_name()
                     ));
                 }
-                let mut body_environment = environment.clone();
+                let mut body_environment = ScopedTypeEnvironment::new(environment);
                 self.scheme_scopes.push(HashMap::new());
                 for binding in analysis.bindings {
                     let binding_type = self.require_pattern_binding(&binding)?;
@@ -1256,16 +1256,19 @@ impl<'a> GenericInference<'a> {
                     if let Some(query) = &self.query {
                         query.check().map_err(|error| error.to_string())?;
                     }
-                    let (mut arm_environment, arm_expected, evidence) = if let Some(expected) =
+                    let (freshened_environment, arm_expected, evidence) = if let Some(expected) =
                         expected
                         && contains_type_variable(&self.resolve(expected))
                     {
                         let (expected, environment, evidence) =
                             self.freshen_join_context(expected, environment);
-                        (environment, Some(expected), Some(evidence))
+                        (Some(environment), Some(expected), Some(evidence))
                     } else {
-                        (environment.clone(), None, None)
+                        (None, None, None)
                     };
+                    let mut arm_environment = ScopedTypeEnvironment::new(
+                        freshened_environment.as_ref().map_or(environment, |environment| environment),
+                    );
                     let analysis =
                         crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                     if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible

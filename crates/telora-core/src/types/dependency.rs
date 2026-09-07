@@ -1752,7 +1752,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
         let mut initializer_environment = None;
         if is_delayed && binding.value.kind == BindingKind::Def && !is_recursive {
-            let mut environment = checked_environment.clone();
+            let mut environment = ScopedTypeEnvironment::new(&checked_environment);
             environment.remove(&binding.value.name.value);
             initializer_environment = Some(environment);
         } else if matches!(
@@ -1761,7 +1761,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         )
             && !binding.value.type_parameters.is_empty()
         {
-            let mut environment = checked_environment.clone();
+            let mut environment = ScopedTypeEnvironment::new(&checked_environment);
             for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
                 environment.insert(
                     parameter.value.clone(),
@@ -1774,7 +1774,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
         let environment = initializer_environment
             .as_ref()
-            .unwrap_or(&checked_environment);
+            .map_or(&checked_environment as &dyn TypeEnvironment, |environment| environment);
         let lexical_evidence_start = binding_schemes
             .get(&binding.value.name.value)
             .cloned()

@@ -85,3 +85,38 @@ module analysis remain separate. Metadata-computing helpers still require tool
 evaluation and local inference. Property planning retains the existing explicit
 provider return-contract requirement. Shared type-DAG traversal is not globally
 memoized. These changes do not establish a speedup for every workload.
+
+## Follow-up: Scoped Type Environments
+
+Strict inference and provisional type projection now borrow their parent
+environment when entering closures, blocks and pattern branches. Local bindings
+use a small Vec searched from the end; missing local type information explicitly
+hides the outer binding instead of falling back to it. Rebinding changes only
+the current scope, and dropping a scope leaves its parent unchanged.
+
+The module environment remains a HashMap. Match joins that freshen inference
+variables still construct a transformed environment: that operation changes
+visible descriptors, unlike ordinary lexical scope entry. Large individual
+local scopes may eventually need an index; the common small-scope path does
+not allocate a hash table. Local scheme stacks are unchanged.
+
+Unit tests cover borrowed descriptor identity, nested shadowing, removal and
+reinsertion, and visiting each visible binding exactly once.
+
+The workspace suite passes with 271 core tests and the language acceptance
+fixtures. Release builds were compared with the existing benchmark runner,
+`--sizes 400 1600 --samples 3`, after builds and tests finished. Median seconds:
+
+| Workload | Before scoped environments | HashMap local scopes | Vec local scopes |
+| --- | ---: | ---: | ---: |
+| One Int constant | 0.146 | 0.134 | 0.133 |
+| 400 Int functions | 0.399 | 0.226 | 0.230 |
+| 1600 Int functions | 3.232 | 0.774 | 0.767 |
+| 400 independent structs | 0.524 | 0.511 | 0.517 |
+| 1600 independent structs | 3.868 | 3.850 | 3.870 |
+| 1600-element array | 0.152 | 0.141 | 0.139 |
+
+Eliminating full environment copies accounts for the substantial function
+speedup. These samples do not show a clear additional speedup from Vec versus
+HashMap local scopes. Independent type-declaration scaling remains unchanged;
+dependency indexing and partial/full analysis reuse are outside this follow-up.

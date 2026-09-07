@@ -97,7 +97,7 @@ impl<'a> GenericInference<'a> {
         &mut self,
         pattern: &crate::ast::Pattern,
         matched: &TypeDescriptor,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
     ) -> Result<crate::ast::Pattern, String> {
         use crate::ast::PatternKind;
         if let PatternKind::Binding(name) = &pattern.value
@@ -617,7 +617,7 @@ impl<'a> GenericInference<'a> {
     fn freshen_join_context(
         &mut self,
         expected: &TypeDescriptor,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
     ) -> (
         TypeDescriptor,
         HashMap<String, TypeDescriptor>,
@@ -645,16 +645,12 @@ impl<'a> GenericInference<'a> {
             })
             .collect::<HashMap<_, _>>();
         let expected = replace_inference_variables(&expected, &replacements);
-        let environment = environment
-            .iter()
-            .map(|(name, descriptor)| {
-                (
-                    name.clone(),
-                    replace_inference_variables(&self.resolve(descriptor), &replacements),
-                )
-            })
-            .collect();
-        (expected, environment, replacements)
+        let mut freshened = HashMap::new();
+        environment.visit(&mut |name, descriptor| {
+            freshened.insert(name.to_owned(),
+                replace_inference_variables(&self.resolve(descriptor), &replacements));
+        });
+        (expected, freshened, replacements)
     }
 
     fn merge_join_evidence(

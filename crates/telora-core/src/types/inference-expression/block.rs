@@ -16,7 +16,7 @@ impl<'a> GenericInference<'a> {
     fn infer_block(
         &mut self,
         block: &Block,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         self.scheme_scopes.push(HashMap::new());
@@ -28,10 +28,10 @@ impl<'a> GenericInference<'a> {
     fn infer_block_scoped(
         &mut self,
         block: &Block,
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
-        let mut environment = environment.clone();
+        let mut environment = ScopedTypeEnvironment::new(environment);
         let declared_contracts = block
             .value
             .bindings

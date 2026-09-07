@@ -1,6 +1,6 @@
 fn infer_expr_recorded(
     expression: &Expr,
-    environment: &HashMap<String, TypeDescriptor>,
+    environment: &dyn TypeEnvironment,
     facts: &mut HashMap<crate::Location, TypeDescriptor>,
 ) -> Option<TypeDescriptor> {
     infer_expr_with(expression, environment, &mut |location, descriptor| {
@@ -12,7 +12,7 @@ fn infer_expr_recorded(
 // Missing evidence is not a type and cannot justify a compatibility decision.
 fn infer_expr_with(
     expression: &Expr,
-    environment: &HashMap<String, TypeDescriptor>,
+    environment: &dyn TypeEnvironment,
     record: &mut impl FnMut(crate::Location, &TypeDescriptor),
 ) -> Option<TypeDescriptor> {
     let inferred = match &expression.value {
@@ -194,7 +194,7 @@ fn infer_expr_with(
         }
         ExprKind::Interpreter { elaboration, .. } => infer_expr_with(elaboration, environment, record),
         ExprKind::Closure { parameters, result_annotation, body } => {
-            let mut closure_environment = environment.clone();
+            let mut closure_environment = ScopedTypeEnvironment::new(environment);
             let parameters = parameters.iter().map(|parameter| {
                 let ty = parameter.annotation.as_ref().and_then(|annotation| {
                     match infer_expr_with(annotation, environment, record) {
@@ -218,7 +218,7 @@ fn infer_expr_with(
         }
         ExprKind::IfLet { pattern, value, then_branch, else_branch } => {
             infer_expr_with(value, environment, record);
-            let mut then_environment = environment.clone();
+            let mut then_environment = ScopedTypeEnvironment::new(environment);
             clear_pattern_types(pattern, &mut then_environment);
             let left = infer_block_with(then_branch, &then_environment, record);
             let right = infer_block_with(else_branch, environment, record);
@@ -227,14 +227,14 @@ fn infer_expr_with(
         ExprKind::LetElse { pattern, value, else_branch, body } => {
             infer_expr_with(value, environment, record);
             infer_block_with(else_branch, environment, record);
-            let mut body_environment = environment.clone();
+            let mut body_environment = ScopedTypeEnvironment::new(environment);
             clear_pattern_types(pattern, &mut body_environment);
             infer_block_with(body, &body_environment, record)
         }
         ExprKind::Match { value, arms } => {
             infer_expr_with(value, environment, record);
             let arms = arms.iter().map(|arm| {
-                let mut arm_environment = environment.clone();
+                let mut arm_environment = ScopedTypeEnvironment::new(environment);
                 clear_pattern_types(&arm.value.pattern, &mut arm_environment);
                 if let Some(guard) = &arm.value.guard { infer_expr_with(guard, &arm_environment, record); }
                 infer_expr_with(&arm.value.value, &arm_environment, record)
@@ -246,17 +246,17 @@ fn infer_expr_with(
     inferred
 }
 
-fn set_projected_type(environment: &mut HashMap<String, TypeDescriptor>, name: &str, ty: Option<TypeDescriptor>) {
+fn set_projected_type(environment: &mut dyn MutableTypeEnvironment, name: &str, ty: Option<TypeDescriptor>) {
     if let Some(ty) = ty { environment.insert(name.to_owned(), ty); }
     else { environment.remove(name); }
 }
 
 fn infer_block_with(
     block: &Block,
-    environment: &HashMap<String, TypeDescriptor>,
+    environment: &dyn TypeEnvironment,
     record: &mut impl FnMut(crate::Location, &TypeDescriptor),
 ) -> Option<TypeDescriptor> {
-    let mut environment = environment.clone();
+    let mut environment = ScopedTypeEnvironment::new(environment);
     for binding in &block.value.bindings {
         environment.remove(&binding.value.name.value);
     }
@@ -270,7 +270,7 @@ fn infer_block_with(
     infer_expr_with(&block.value.result, &environment, record)
 }
 
-fn clear_pattern_types(pattern: &Pattern, environment: &mut HashMap<String, TypeDescriptor>) {
+fn clear_pattern_types(pattern: &Pattern, environment: &mut dyn MutableTypeEnvironment) {
     match &pattern.value {
         crate::ast::PatternKind::Binding(name) => { environment.remove(&name.value); }
         crate::ast::PatternKind::Tagged { payload, .. } | crate::ast::PatternKind::Constructor { payload: Some(payload), .. } => clear_pattern_types(payload, environment),

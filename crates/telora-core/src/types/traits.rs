@@ -624,7 +624,7 @@ impl GenericInference<'_> {
         &mut self,
         callee: &Expr,
         arguments: &[Expr],
-        environment: &HashMap<String, TypeDescriptor>,
+        environment: &dyn TypeEnvironment,
         expected: Option<&TypeDescriptor>,
     ) -> Option<Result<TypeDescriptor, String>> {
         let (trait_id, trait_name, member) = self.trait_member_reference(callee)?;

@@ -160,6 +160,9 @@ builtin ABI source 同样使用 `std/...` canonical name，不通过 synthetic s
 Tool expression inference 共享模块的 scheme 与 declared body 输入，只解码表达式
 实际引用的外部值；每次查询的 substitution 与诊断仍独立。普通函数体由模块推导
 检查，只有类型计算、注解等 tool root 的传递依赖才提前求值。
+严格推导与前置类型投影的局部环境借用父环境，以 `Vec` 保存局部覆盖并反向查找，
+不复制模块绑定。未知局部类型用显式遮蔽记录表示，避免意外回退到同名外部绑定。
+模块级环境仍使用 HashMap；match 分支需要 freshen 推导变量时保留独立的变换环境。
 Property provider 的返回 contract 在模块推导前登记静态 evidence 和未来的 runtime
 binding，不依赖 payload 求值；模块静态检查通过后才物化 property records，失败则
 阻止发布。Decorator 引用不构成类型骨架的调度依赖。
