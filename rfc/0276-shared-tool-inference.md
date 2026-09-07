@@ -295,6 +295,25 @@ the release build succeeded. Expression records and publication still use
 descriptor-facing interfaces; those remaining graph/descriptor conversions must
 be removed before treating the requested global-slot optimization as complete.
 
+### Integration With Updated Main
+
+The optimization branch now includes main's `915ffe4` (RFC 0275) through merge
+`94555da`. Construction checks retain their runtime type witnesses and tool-stage
+elaboration. Prepared construction evidence is reused instead of inferring the
+same expression again, and tool bindings use borrowed scopes. HIR distinguishes
+construction-check arguments from deferred property roots: a construction check
+must be available before constructing its target. Static property evidence skips
+`@check`, and slot-backed identity lookup preserves `Unchecked` idempotence.
+
+The merged version passed `cargo test --workspace` (286 core tests plus language
+acceptance) and `cargo build --release`. An independent release build of main
+`915ffe4` ran the absolute-path ontology query in 197.05 s with peak RSS 607824 KB;
+the merged optimization branch took 12.12 s with peak RSS 603724 KB, then 11.89 s
+with peak RSS 603556 KB on a repeat run. All exited successfully. These are
+sequential measurements, not medians, and must
+not be mixed with the older-main measurements above. The final merge back into
+main remains pending completion of the remaining solver-interface migration.
+
 The requested relative workspace path currently fails workspace membership
 validation; measurements use the equivalent absolute ontology workspace path.
 Remaining work includes the descriptor-facing inference interfaces and fully
