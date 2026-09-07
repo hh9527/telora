@@ -12,6 +12,7 @@ pub(crate) fn elaborate_program(
     not_families: &HashMap<Location, NotFamily>,
     trait_member_evidence: &HashMap<Location, ResolvedEvidence>,
     generic_call_evidence: &HashMap<Location, Vec<ResolvedEvidence>>,
+    generic_function_arities: &HashMap<Location, usize>,
     interpolation_evidence: &HashMap<Location, ResolvedEvidence>,
     generic_evidence_parameters: &HashMap<Location, Vec<String>>,
     generic_dictionary_factories: &HashMap<Location, Vec<String>>,
@@ -21,6 +22,7 @@ pub(crate) fn elaborate_program(
         not_families,
         trait_member_evidence,
         generic_call_evidence,
+        generic_function_arities,
         interpolation_evidence,
         generic_evidence_parameters,
         generic_dictionary_factories,
@@ -34,10 +36,47 @@ struct Elaborator<'a> {
     not_families: &'a HashMap<Location, NotFamily>,
     trait_member_evidence: &'a HashMap<Location, ResolvedEvidence>,
     generic_call_evidence: &'a HashMap<Location, Vec<ResolvedEvidence>>,
+    generic_function_arities: &'a HashMap<Location, usize>,
     interpolation_evidence: &'a HashMap<Location, ResolvedEvidence>,
     generic_evidence_parameters: &'a HashMap<Location, Vec<String>>,
     generic_dictionary_factories: &'a HashMap<Location, Vec<String>>,
     next: u32,
+}
+
+pub(crate) fn elaborate_tool_expression(
+    expression: &mut Expr,
+    calls: &HashMap<Location, Vec<ResolvedEvidence>>,
+    arities: &HashMap<Location, usize>,
+    parameters: &HashMap<Location, Vec<String>>,
+    families: &HashMap<Location, PropagationFamily>,
+    not_families: &HashMap<Location, NotFamily>,
+    members: &HashMap<Location, ResolvedEvidence>,
+    interpolations: &HashMap<Location, ResolvedEvidence>,
+) {
+    let mut elaborator = Elaborator {
+        families,
+        not_families,
+        trait_member_evidence: members,
+        generic_call_evidence: calls,
+        generic_function_arities: arities,
+        interpolation_evidence: interpolations,
+        generic_evidence_parameters: parameters,
+        generic_dictionary_factories: &HashMap::new(),
+        next: 0,
+    };
+    elaborator.expression(expression);
+    if let Some(evidence) = parameters.get(&expression.location) {
+        if !matches!(expression.value, ExprKind::Closure { .. })
+            && let Some(arity) = arities.get(&expression.location)
+        {
+            elaborator.wrap_generic_alias(expression, *arity);
+        }
+        if let ExprKind::Closure { parameters, .. } = &mut expression.value {
+        parameters.splice(0..0, evidence.iter().map(|name| ClosureParameter {
+            name: located(name.clone(), expression.location), annotation: None,
+        }));
+        }
+    }
 }
 
 impl Elaborator<'_> {
@@ -72,8 +111,13 @@ impl Elaborator<'_> {
             if let Some(evidence) = self
                 .generic_evidence_parameters
                 .get(&binding.value.value.location)
-                && let ExprKind::Closure { parameters, .. } = &mut binding.value.value.value
             {
+                if !matches!(binding.value.value.value, ExprKind::Closure { .. })
+                    && let Some(arity) = self.generic_function_arities.get(&binding.value.value.location)
+                {
+                    self.wrap_generic_alias(&mut binding.value.value, *arity);
+                }
+                if let ExprKind::Closure { parameters, .. } = &mut binding.value.value.value {
                 parameters.splice(
                     0..0,
                     evidence.iter().map(|name| ClosureParameter {
@@ -81,6 +125,7 @@ impl Elaborator<'_> {
                         annotation: None,
                     }),
                 );
+                }
             }
             if let Some(parameters) = self
                 .generic_dictionary_factories
@@ -112,6 +157,10 @@ impl Elaborator<'_> {
     }
 
     fn expression(&mut self, expression: &mut Expr) {
+        self.expression_mode(expression, false);
+    }
+
+    fn expression_mode(&mut self, expression: &mut Expr, direct_callee: bool) {
         match &mut expression.value {
             ExprKind::InterpolatedString(parts) => {
                 for part in parts {
@@ -230,7 +279,7 @@ impl Elaborator<'_> {
                 self.expression(value);
             }
             ExprKind::Call { callee, arguments } => {
-                self.expression(callee);
+                self.expression_mode(callee, true);
                 for argument in arguments.iter_mut() {
                     self.expression(argument);
                 }
@@ -380,6 +429,57 @@ impl Elaborator<'_> {
             | ExprKind::Atom(_)
             | ExprKind::Variable(_) => {}
         }
+        if !direct_callee
+            && let Some(evidence) = self.generic_call_evidence.get(&expression.location)
+            && let Some(arity) = self.generic_function_arities.get(&expression.location)
+            && !evidence.is_empty()
+        {
+            expression.value = self.bind_generic_evidence(expression.clone(), evidence, *arity);
+        }
+    }
+
+    fn wrap_generic_alias(&mut self, expression: &mut Expr, arity: usize) {
+        let location = expression.location;
+        let mut synthetic = location;
+        synthetic.start = synthetic.end;
+        let index = self.next;
+        self.next += 1;
+        let name = |position| format!("\0generic-alias:{index}:{position}");
+        let arguments = (0..arity).map(|position| located(ExprKind::Variable(located(name(position), synthetic)), synthetic)).collect();
+        let result = located(ExprKind::Call { callee: Box::new(expression.clone()), arguments }, synthetic);
+        expression.value = ExprKind::Closure {
+            parameters: (0..arity).map(|position| ClosureParameter { name: located(name(position), synthetic), annotation: None }).collect(),
+            result_annotation: None,
+            body: located(BlockKind { bindings: Vec::new(), result: Box::new(result) }, location),
+        };
+    }
+
+    fn bind_generic_evidence(&mut self, callee: Expr, evidence: &[ResolvedEvidence], arity: usize) -> ExprKind {
+        let location = callee.location;
+        let index = self.next;
+        self.next += 1;
+        let name = |part: &str, position: usize| format!("\0generic:{index}:{part}:{position}");
+        let variable = |name: String| located(ExprKind::Variable(located(name, location)), location);
+        let binding = |name: String, value: Expr| located(BindingData {
+            decorators: Vec::new(), kind: BindingKind::Let, declared_initializer: None,
+            imported_name: None, name: located(name, location), type_parameters: Vec::new(),
+            type_parameter_bounds: Vec::new(), annotation: None, value,
+        }, location);
+        let mut bindings = vec![binding(name("callee", 0), callee)];
+        for (position, item) in evidence.iter().enumerate() {
+            bindings.push(binding(name("evidence", position), Self::evidence_expression(item, location)));
+        }
+        let arguments = (0..evidence.len()).map(|position| variable(name("evidence", position)))
+            .chain((0..arity).map(|position| variable(name("argument", position)))).collect();
+        let body = located(BlockKind { bindings: Vec::new(), result: Box::new(located(ExprKind::Call {
+            callee: Box::new(variable(name("callee", 0))), arguments,
+        }, location)) }, location);
+        let parameters = (0..arity).map(|position| ClosureParameter {
+            name: located(name("argument", position), location), annotation: None,
+        }).collect();
+        ExprKind::Block(located(BlockKind { bindings, result: Box::new(located(ExprKind::Closure {
+            parameters, result_annotation: None, body,
+        }, location)) }, location))
     }
 
     fn propagation(

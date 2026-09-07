@@ -23,7 +23,7 @@ struct NestedEnvironment<'a> {
     captures: &'a [String],
     type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
-    declared_value_owners: &'a HashMap<Location, String>,
+    declared_value_owners: &'a HashMap<Location, crate::types::ResolvedEvidence>,
     value_constructors: &'a HashMap<Location, crate::types::ValueConstructor>,
 }
 
@@ -233,12 +233,22 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
         matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
             || !erased_bindings.contains(&binding.value.name.value)
     });
+    let generic_function_arities = analysis.hir.expressions().iter().filter_map(|expression| {
+        if !analysis.generic_call_evidence.contains_key(&expression.location)
+            && !analysis.generic_evidence_parameters.contains_key(&expression.location) { return None; }
+        let ty = analysis.expression_types.get(&expression.id)?;
+        match analysis.types.node(*ty) {
+            crate::types::TypeNode::Function { parameters, .. } => Some((expression.location, parameters.len())),
+            _ => None,
+        }
+    }).collect();
     crate::elaboration::elaborate_program(
         &mut program,
         &analysis.propagation_families,
         &analysis.not_families,
         &analysis.trait_member_evidence,
         &analysis.generic_call_evidence,
+        &generic_function_arities,
         &analysis.interpolation_evidence,
         &analysis.generic_evidence_parameters,
         &analysis.generic_dictionary_factories,
@@ -367,7 +377,7 @@ pub(crate) fn compile_expression_with_external_bindings(
     function_name: &str,
     expression: &Expr,
     bindings: impl IntoIterator<Item = String>,
-    declared_value_owners: HashMap<Location, String>,
+    declared_value_owners: HashMap<Location, crate::types::ResolvedEvidence>,
     value_constructors: HashMap<Location, crate::types::ValueConstructor>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {

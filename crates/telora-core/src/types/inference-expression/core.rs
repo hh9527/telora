@@ -877,7 +877,11 @@ impl<'a> GenericInference<'a> {
                             } else {
                                 Some(parameter)
                             };
-                            let argument_type = self.infer(argument, environment, inference_expected)?;
+                            let mut argument_type = self.infer(argument, environment, inference_expected)?;
+                            if let Some(converted) = self.unchecked_conversion_type(&argument_type, parameter)? {
+                                self.records.insert(argument.location, converted.clone());
+                                argument_type = converted;
+                            }
                             argument_types[index] = argument_type.clone();
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.resolve(&argument_type));
@@ -999,6 +1003,7 @@ impl<'a> GenericInference<'a> {
                 for constraint in &scheme.constraints {
                     if let Some(target) = replacements.get(&constraint.parameter) {
                         let capability = match &constraint.capability {
+                            TypeCapability::RuntimeType => TypeCapability::RuntimeType,
                             TypeCapability::Trait { id, name } => TypeCapability::Trait {
                                 id: *id,
                                 name: name.clone(),
@@ -1429,16 +1434,9 @@ impl<'a> GenericInference<'a> {
         } else {
             inferred
         };
-        let inferred = if let Some(target) = expected.map(|ty| self.expose_named(ty))
-            && let TypeDescriptor::Declared(candidate) = self.resolve(&inferred)
-            && candidate.id.constructor() == unchecked_type_constructor()
-            && self.declared_identity(&candidate.id.arguments()[0]).is_some_and(|origin| {
-                self.declared_identity(&target).is_some_and(|target| origin == target)
-            })
-        {
-            target
-        } else {
-            inferred
+        let inferred = match expected {
+            Some(target) => self.unchecked_conversion_type(&inferred, target)?.unwrap_or(inferred),
+            None => inferred,
         };
         if let Some(expected) = expected
             && !(self.recursive_body_inference_depth > 0
@@ -1454,6 +1452,25 @@ impl<'a> GenericInference<'a> {
         };
         self.records.insert(expression.location, inferred.clone());
         Ok(inferred)
+    }
+
+    fn unchecked_conversion_type(
+        &mut self, actual: &TypeDescriptor, expected: &TypeDescriptor,
+    ) -> Result<Option<TypeDescriptor>, String> {
+        match actual {
+            TypeDescriptor::Declared(candidate) if candidate.id.constructor() == unchecked_type_constructor() => {},
+            TypeDescriptor::Named(_) | TypeDescriptor::Inference(_) => {},
+            _ => return Ok(None),
+        }
+        let TypeDescriptor::Declared(candidate) = self.expose_named(actual) else { return Ok(None); };
+        if candidate.id.constructor() != unchecked_type_constructor() { return Ok(None); }
+        let target = self.expose_named(expected);
+        let Some(target_id) = self.declared_identity(&target) else { return Ok(None); };
+        let source = &candidate.id.arguments()[0];
+        let Some(source_id) = self.declared_identity(source) else { return Ok(None); };
+        if source_id.constructor() != target_id.constructor() { return Ok(None); }
+        self.unify(source, &target)?;
+        Ok(Some(self.resolve(&target)))
     }
 
     // Both operands have been inferred. Only authored constructors receive context;

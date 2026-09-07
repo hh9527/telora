@@ -29,6 +29,15 @@ fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
 struct ToolExpressionEvidence {
     descriptors: HashMap<crate::Location, TypeDescriptor>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
+    calls: HashMap<crate::Location, Vec<ResolvedEvidence>>,
+    runtime_types: BTreeMap<String, TypeDescriptor>,
+    parameters: HashMap<crate::Location, Vec<String>>,
+    lexical_types: HashMap<TypeParameterId, String>,
+    inferred_scopes: HashMap<crate::Location, Vec<LexicalTypeEvidence>>,
+    families: HashMap<crate::Location, PropagationFamily>,
+    not_families: HashMap<crate::Location, NotFamily>,
+    members: HashMap<crate::Location, ResolvedEvidence>,
+    interpolations: HashMap<crate::Location, ResolvedEvidence>,
 }
 
 impl ToolInferenceContext {

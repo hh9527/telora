@@ -1,10 +1,11 @@
     #[test]
     fn emits_contiguous_call_windows_and_structural_tail_calls() {
+        // 泛型调用的首个实参是隐藏类型见证，尾调用窗口仍须连续。
         let tail = compile_source("test", "let id = fn(x) { x }; id(1)").unwrap();
         assert!(matches!(
             tail.instructions().last(),
             Some(crate::Opcode::TailCall {
-                argument_count: 1,
+                argument_count: 2,
                 ..
             })
         ));
@@ -14,7 +15,7 @@
         assert!(non_tail.instructions().iter().any(|instruction| matches!(
             instruction,
             crate::Opcode::Call {
-                argument_count: 1,
+                argument_count: 2,
                 ..
             }
         )));

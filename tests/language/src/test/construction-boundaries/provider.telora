@@ -26,4 +26,9 @@ type Choice(T) = enum {
 })
 type Countdown = struct(Int);
 
-export {Box, Counted, Choice, Countdown};
+def consume: for(T) Fn(T) -> Int = fn(value) {
+    let candidate: Box(T) = {value, count: 0};
+    candidate.count
+};
+
+export {Box, Counted, Choice, Countdown, consume};

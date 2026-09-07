@@ -44,6 +44,7 @@ impl TypeScheme {
             let constraints = self
                 .constraints
                 .iter()
+                .filter(|item| !matches!(item.capability, TypeCapability::RuntimeType))
                 .fold(BTreeMap::<TypeParameterId, Vec<String>>::new(), |mut result, item| {
                     result
                         .entry(item.parameter)

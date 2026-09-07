@@ -7,6 +7,9 @@ pub struct TypeConstraint {
 
 #[derive(Clone, Debug)]
 pub enum TypeCapability {
+    /// 编译器内部传递的类型见证，不引入表面约束语法。
+    #[doc(hidden)]
+    RuntimeType,
     Trait { id: crate::TraitId, name: String },
     Property(TypeDescriptor),
 }
@@ -14,6 +17,7 @@ pub enum TypeCapability {
 impl PartialEq for TypeCapability {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::RuntimeType, Self::RuntimeType) => true,
             (Self::Trait { id: left, .. }, Self::Trait { id: right, .. }) => left == right,
             (Self::Property(left), Self::Property(right)) => left == right,
             _ => false,
@@ -26,6 +30,7 @@ impl Eq for TypeCapability {}
 impl TypeCapability {
     fn display_name(&self) -> String {
         match self {
+            Self::RuntimeType => "Type".into(),
             Self::Trait { name, .. } => name.clone(),
             Self::Property(property) => format!("Property({})", property.display_name()),
         }
@@ -166,11 +171,16 @@ pub(crate) struct ResolvedEvidence {
 }
 
 impl ResolvedEvidence {
-    fn root(binding: String) -> Self {
+    pub(crate) fn root(binding: String) -> Self {
         Self {
             binding,
             arguments: Vec::new(),
         }
+    }
+
+    pub(crate) fn collect_bindings(&self, bindings: &mut BTreeSet<String>) {
+        bindings.insert(self.binding.clone());
+        for argument in &self.arguments { argument.collect_bindings(bindings); }
     }
 }
 
@@ -427,6 +437,14 @@ impl GenericInference<'_> {
         ResolvedEvidence::root(binding)
     }
 
+    fn runtime_parameter_evidence(
+        &mut self, target: TypeDescriptor, location: crate::Location, index: usize,
+    ) -> ResolvedEvidence {
+        let binding = format!("\0type_argument:{}:{}:{}", location.start, location.end, index);
+        self.runtime_type_evidence.entry(binding.clone()).or_insert(target);
+        ResolvedEvidence::root(binding)
+    }
+
     fn push_lexical_evidence(&mut self, binding: &str, scheme: &TypeScheme) -> usize {
         let start = self.lexical_type_evidence.len();
         self.lexical_type_evidence.extend(
@@ -517,6 +535,7 @@ impl GenericInference<'_> {
                 .map(|target| self.resolve(target))
                 .ok_or_else(|| "blanket impl constraint target is not determined".to_owned())?;
             let evidence = match &constraint.capability {
+                TypeCapability::RuntimeType => self.runtime_parameter_evidence(target.clone(), location, arguments.len()),
                 TypeCapability::Trait { id, name } => {
                     if let Some(binding) = self.lexical_trait_evidence(*id, &target) {
                         ResolvedEvidence::root(binding)
@@ -725,6 +744,7 @@ impl GenericInference<'_> {
                     return false;
                 };
                 match &constraint.capability {
+                    TypeCapability::RuntimeType => true,
                     TypeCapability::Trait { id, .. } => self
                         .trait_candidate(*id, argument)
                         .ok()
@@ -767,11 +787,23 @@ impl GenericInference<'_> {
     fn finish_type_constraints(&mut self) -> Result<(), (crate::Location, String)> {
         let pending = std::mem::take(&mut self.pending_type_constraints);
         for constraint in pending {
-            let target = self.resolve(&constraint.target);
+            let mut target = self.resolve(&constraint.target);
             if contains_type_variable(&target) {
-                continue;
+                if constraint.capability != TypeCapability::RuntimeType
+                    || self.type_facet_locations.contains(&constraint.location) {
+                    continue;
+                }
+                let mut variables = Vec::new();
+                collect_inference_variables(&target, &mut variables);
+                let mut bound = Vec::new();
+                collect_bound_parameters(&target, &mut bound);
+                let first = bound.iter().map(|parameter| parameter.0 + 1).max().unwrap_or(0);
+                let replacements = variables.into_iter().enumerate().map(|(index, variable)| (variable, TypeParameterId(first + index as u32))).collect::<HashMap<_, _>>();
+                target = bind_inference_variables(&target, &replacements);
+                target = substitute_bound_parameters(&target, &replacements.values().map(|parameter| (*parameter, TypeDescriptor::Never)).collect());
             }
             let capability = match &constraint.capability {
+                TypeCapability::RuntimeType => TypeCapability::RuntimeType,
                 TypeCapability::Trait { id, name } => TypeCapability::Trait {
                     id: *id,
                     name: name.clone(),
@@ -791,6 +823,28 @@ impl GenericInference<'_> {
                 continue;
             }
             match &capability {
+                TypeCapability::RuntimeType => {
+                    let index = self.resolved_call_evidence.get(&constraint.location).map_or(0, Vec::len);
+                    let mut parameters = Vec::new();
+                    collect_bound_parameters(&target, &mut parameters);
+                    parameters.sort_by_key(|parameter| parameter.0);
+                    parameters.dedup();
+                    let mut arguments = Vec::new();
+                    let mut replacements = HashMap::new();
+                    for (index, parameter) in parameters.iter().enumerate() {
+                        let witness = constraint.lexical_evidence.iter().find(|evidence| {
+                            evidence.capability == TypeCapability::RuntimeType
+                                && evidence.target == TypeDescriptor::Bound(*parameter)
+                        }).ok_or_else(|| (constraint.location,
+                            "runtime type parameter has no lexical witness".to_owned()))?;
+                        arguments.push(ResolvedEvidence::root(witness.name.clone()));
+                        replacements.insert(*parameter, TypeDescriptor::Bound(TypeParameterId(index as u32)));
+                    }
+                    let target = substitute_bound_parameters(&target, &replacements);
+                    let mut evidence = self.runtime_parameter_evidence(target, constraint.location, index);
+                    evidence.arguments = arguments;
+                    self.resolved_call_evidence.entry(constraint.location).or_default().push(evidence);
+                }
                 TypeCapability::Trait { id, name } => {
                     let (implementation, replacements) = self
                         .trait_candidate(*id, &target)

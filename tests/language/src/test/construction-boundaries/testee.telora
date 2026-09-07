@@ -3,10 +3,40 @@ import "std/json" as json;
 import "std/codec" as codec;
 import "std/dyn" as dyn;
 import "std/array" as array;
-import "./reexport" {Box, Counted, Choice, Countdown};
+import "./reexport" {Box, Counted, Choice, Countdown, consume};
 import "@src/test-support" {expect};
 
 type Plain = struct {value: String, count: Int};
+export def generic_body_rejection = test.should_fail_with(fn() { consume("hi") }, "count below minimum");
+def inferred_consume = fn(value) { consume(value) };
+export def inferred_body_rejection = test.should_fail_with(fn() {
+    inferred_consume("hi")
+}, "count below minimum");
+export def local_body_rejection = test.should_fail_with(fn() {
+    let run = fn(value) { consume(value) };
+    run("hi")
+}, "count below minimum");
+export def local_construction_rejection = test.should_fail_with(fn() {
+    let run = fn(value) { Counted({value, count: 0}).0.count };
+    run("hi")
+}, "count below minimum");
+def read: for(T) Fn(Box(T)) -> T = fn(value) { value.value };
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+
+export def inferred_candidate = test.should_ok(fn() {
+    let candidate: Unchecked(Box(String)) = {value: "hi", count: 2};
+    let value = read(candidate);
+    expect(value == "hi")
+});
+export def inferred_candidate_rejected = test.should_fail_with(fn() {
+    let candidate: Unchecked(Box(String)) = {value: "hi", count: 0};
+    read(candidate)
+}, "count below minimum");
+export def unconstrained_identity = test.should_ok(fn() {
+    let candidate: Unchecked(Box(String)) = {value: "hi", count: 0};
+    let copy = identity(candidate);
+    expect(dyn.project_with(Box(String), dyn.pack(Unchecked(Box(String)), copy)) == None)
+});
 
 export def wire_contract = test.should_ok(fn() {
     let checked: Box(String) = {value: "hi", count: 2};

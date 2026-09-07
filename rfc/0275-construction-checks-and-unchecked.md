@@ -1,6 +1,6 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
-- Status: Accepted core contracts; implementation in progress.
+- Status: Implemented on `feat/0168-construction-checks`; performance review follows functional acceptance.
 - Implementation: `std/blame.BlameError` is an opaque native type. The blame,
   raise and warn intrinsics are implemented. Dyn returns preserve erased-value
   origins across call boundaries. Codec and JSON/TOML/YAML now return the same
@@ -15,8 +15,11 @@
   Tool-stage construction prepares checks and their forward value dependencies
   before metadata and binding evaluation; pending checks block construction.
   Generic calls retain resolved parameter context for unchecked conversion.
-  The final generic-conversion and recursive-module acceptance audit remains pending.
-- Validation: debug build and workspace tests pass; 368 language fixture groups
+  Explicit and inferred generic functions carry internal runtime type witnesses;
+  symbolic construction owners specialize inside function bodies, including local
+  closures, constructor aliases, imports and recursive rebuilds. Tool evaluation
+  uses the same evidence convention. Reused nominal metadata preserves rule origins.
+- Validation: debug build and workspace tests pass; 369 language fixture groups
   pass, including opaque access rejection, intrinsic argument contracts, deferred
   error construction, warnings returning None, cross-module subject origins,
   unchecked identity and fields, generic conversion, Dyn isolation, check signature
@@ -230,7 +233,9 @@ the causes and measurements before deciding on optimizations.
 Use the repository's existing declaration identity, typed-property scheduling,
 constructor evidence and Val provenance mechanisms where they satisfy the
 contract. Additional metadata must preserve canonical identity through generic
-substitution, imports, reexports and module graph cycles.
+substitution, imports, reexports and recursive type graphs. Module initialization
+cycles retain the language's existing rejection; this RFC does not enable cyclic
+module initialization.
 
 ## Acceptance
 
@@ -257,6 +262,7 @@ substitution, imports, reexports and module graph cycles.
 | --- | --- |
 | Direct struct, newtype, variant, merge and projection checks | `test/construction-check` |
 | Generic constructors across imports and reexports, callback construction | `test/construction-boundaries` |
+| Generic body checks, inferred local closures, recursive nominal ownership | `test/construction-boundaries`, `test/checked-recursive-types` |
 | Checked/unchecked identity and Dyn separation | `test/unchecked`, `test/construction-boundaries`, TypeStore representation test |
 | Nested checked cast conversion | `test/cast-construction-check` |
 | Codec trials and explicit checker failure | `test/codec-construction-check` |
@@ -266,6 +272,10 @@ substitution, imports, reexports and module graph cycles.
 | Stable schema and wire output after adding a check | `test/construction-boundaries` |
 | Recursive construction resource limits, including untagged trials | `module/tests/construction.rs`, with the program in `fixtures/construction-recursion.telora` |
 
-This evidence does not yet close acceptance. Remaining review includes unchecked
-conversion with unresolved generic parameters and recursive module publication,
-followed by the requested performance analysis after the functional commit/push.
+The generic-body audit covers functions that construct a checked value and return
+only a primitive, inferred local closures, and recursive rebuilds across imported
+and reexported interfaces. These paths carry runtime type witnesses even when the
+function result does not reveal the constructed type. Empty generic inputs retain
+an uninhabited witness for undetermined parameters; published generic bindings
+retain their quantified contracts. Performance analysis follows the complete
+functional commit/push.

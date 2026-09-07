@@ -102,6 +102,15 @@ impl Heap {
                     if let Some(existing) = declared.get(&value.id) {
                         return Ok(*existing);
                     }
+                    // 类型见证复用已封闭的元数据，保留字段类型的原始规则位置。
+                    if let Ok(type_id) = heap.canonical_declared_type_id(&value.id)
+                        && let Some(existing) = heap.declared_types.get(&type_id)
+                            .or_else(|| background?.declared_types.get(&type_id)).copied()
+                        && let DecodedValue::DeclaredType(handle) = existing.value()
+                        && matches!((HeapView { current: heap, background }).object(handle)?, Object::DeclaredType { sealed: true, .. })
+                    {
+                        return Ok(existing);
+                    }
                     let placeholder = build(heap, background, &T::Named(value.name.clone()), declared)?;
                     let owner = heap.reserve_type_metadata(
                         value.id.clone(),
