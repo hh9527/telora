@@ -163,6 +163,20 @@
             TypeDescriptor::Array(Box::new(TypeDescriptor::Int)),
             TypeDescriptor::Array(Box::new(TypeDescriptor::Int)),
         ]));
+        let source = sources.add("record.telora", "{z: [1], a: (2, 3)}");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let ty = inference.infer(&program.value.body.value.result, &HashMap::new(), None).unwrap();
+        let TypeDescriptor::Inference(record) = ty else { panic!("record result must be a slot"); };
+        let id = inference.variables.known(record).unwrap();
+        let InferenceConstructor::Struct(names) = inference.variables.constructor(id) else {
+            panic!("expected record constructor");
+        };
+        assert_eq!(names.as_ref(), &["a".to_owned(), "z".to_owned()]);
+        let children = inference.variables.arguments(id);
+        assert!(matches!(inference.variables.constructor(inference.variables.known(children[0]).unwrap()),
+            InferenceConstructor::Tuple));
+        assert!(matches!(inference.variables.constructor(inference.variables.known(children[1]).unwrap()),
+            InferenceConstructor::Array));
     }
 
     #[test]

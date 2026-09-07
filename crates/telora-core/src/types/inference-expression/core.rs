@@ -352,7 +352,8 @@ impl<'a> GenericInference<'a> {
                         self.merge_structural_join_evidence(&dictionaries)?;
                         join_all_types(item_types.iter().map(|ty| self.normalize(ty)).collect())
                     };
-                    TypeDescriptor::Dict(Box::new(item))
+                    let item = self.variables.structure_edge(item);
+                    TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Dict, &[item]))
                 } else {
                     if let Some(TypeDescriptor::Dict(item)) = expected.map(|ty| self.normalize(ty)) {
                         for field in fields {
@@ -369,35 +370,28 @@ impl<'a> GenericInference<'a> {
                                     )
                                 })?;
                         }
-                        TypeDescriptor::Dict(item)
+                        let item = self.variables.structure_edge(*item);
+                        TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Dict, &[item]))
                     } else {
                         let expected_fields = match expected.map(|ty| self.normalize(ty)) {
                             Some(TypeDescriptor::Struct(fields)) => fields,
                             _ => BTreeMap::new(),
                         };
-                        TypeDescriptor::Struct(
-                            fields
-                                .iter()
-                                .map(|field| {
-                                    let name = field
-                                        .value
-                                        .name
-                                        .as_ref()
-                                        .expect("ordinary Dict field has a name")
-                                        .value
-                                        .clone();
-                                    Ok((
-                                        name.clone(),
-                                        self.infer(
-                                            &field.value.value,
-                                            environment,
-                                            expected_fields.get(&name),
-                                        )
-                                        .map_err(|message| format!("field {name}: {message}"))?,
-                                    ))
-                                })
-                                .collect::<Result<_, String>>()?,
-                        )
+                        let fields = fields
+                            .iter()
+                            .map(|field| {
+                                let name = field.value.name.as_ref()
+                                    .expect("ordinary Dict field has a name").value.clone();
+                                let field_type = self.infer(
+                                    &field.value.value, environment, expected_fields.get(&name),
+                                ).map_err(|message| format!("field {name}: {message}"))?;
+                                Ok((name, self.variables.structure_edge(field_type)))
+                            })
+                            .collect::<Result<BTreeMap<_, _>, String>>()?;
+                        let (names, arguments): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
+                        TypeDescriptor::Inference(self.variables.structure_node(
+                            InferenceConstructor::Struct(names.into()), &arguments,
+                        ))
                     }
                 }
             }

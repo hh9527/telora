@@ -361,3 +361,11 @@ release build succeeded. Two sequential release query samples took 12.51 s and
 12.11 s / 602556 KB sample, this is an intermediate migration cost, not a net
 performance improvement. Remaining descriptor-producing expression families
 must be migrated and measured before final integration.
+
+Ordinary struct and Dict expressions subsequently migrated to direct constructor
+rows as well, retaining canonical field ordering and child slot identity.
+Workspace tests (291 core tests plus language acceptance) and the release build
+passed. The release query took 12.78 s with peak RSS 658832 KB (single sample,
+exit 0). This still does not recover the pre-migration memory baseline; further
+work must address remaining mixed representations, including function
+instantiation and publication, rather than claim a completed optimization.
