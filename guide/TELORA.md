@@ -324,6 +324,20 @@ let result = Success@[Int, String](2);
 中的其他绑定不同；重命名可以区分不同 enum 的同名成员。其他模块可以通过
 普通模块导入取得公开的成员名称，后续 reexport 保留其声明身份。
 
+在 `match`、`if let` 和 `let else` 的模式中，导入的无载荷成员直接写名称：
+
+```telora
+import Option.{Some, None};
+match result {
+    Some(value) => value,
+    None => fallback,
+}
+```
+
+名称解析依据成员的声明来源，不区分首字母大小写。无载荷成员模式参与穷尽性
+检查；带载荷成员须写载荷模式。普通名称可以引入模式变量，普通值别名不取得
+成员模式身份。`let name = value;` 建立普通变量绑定，可以遮蔽外层名称。
+
 ```telora
 type Entity = enum {
     'Ticket,

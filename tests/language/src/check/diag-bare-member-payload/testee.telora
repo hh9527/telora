@@ -1,0 +1,4 @@
+import Option.{Some};
+export def read: Fn(Option(Int)) -> Int = fn(value) {
+    match value { Some => 1, Option.None => 0 }
+};

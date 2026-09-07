@@ -794,8 +794,9 @@ fn expression_references_names(
     }
 }
 
-pub(crate) fn program_references_name(program: &Program, name: &str) -> bool {
-    HirProgram::resolve(program, Vec::<String>::new())
+pub(crate) fn program_references_name(program: &Program, name: &str, member_candidate: bool) -> bool {
+    HirProgram::resolve_with_member_constructors(program, Vec::<String>::new(),
+        if member_candidate { HashSet::from([name.to_owned()]) } else { HashSet::new() })
         .references()
         .iter()
         .any(|reference| {
@@ -856,8 +857,10 @@ fn validate_export_references<'a, T>(
 pub(crate) fn recovered_reference_locations(
     program: &crate::parser::RecoveredProgram,
     name: &str,
+    member_candidate: bool,
 ) -> Vec<crate::source::Location> {
-    HirProgram::resolve_recovered(program, Vec::<String>::new())
+    HirProgram::resolve_recovered_with_member_constructors(program, Vec::<String>::new(),
+        if member_candidate { HashSet::from([name.to_owned()]) } else { HashSet::new() })
         .references()
         .iter()
         .filter(|reference| {

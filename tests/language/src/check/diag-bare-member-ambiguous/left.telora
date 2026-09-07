@@ -1,0 +1,2 @@
+type A = enum { End };
+export A.{End};

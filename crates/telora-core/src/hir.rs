@@ -82,13 +82,23 @@ pub struct HirProgram {
     definitions: Vec<HirDefinition>,
     references: Vec<HirReference>,
     expressions: Vec<HirExpression>,
+    member_patterns: HashSet<Location>,
 }
 
 impl HirProgram {
     pub fn resolve(program: &Program, external_names: impl IntoIterator<Item = String>) -> Self {
+        Self::resolve_with_member_constructors(program, external_names, HashSet::new())
+    }
+
+    pub(crate) fn resolve_with_member_constructors(
+        program: &Program,
+        external_names: impl IntoIterator<Item = String>,
+        external_member_names: HashSet<String>,
+    ) -> Self {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names,
             expression_stack: Vec::new(),
             static_expressions: true,
         };
@@ -98,6 +108,10 @@ impl HirProgram {
         resolver.hir
     }
 
+    pub(crate) fn is_member_pattern(&self, location: Location) -> bool {
+        self.member_patterns.contains(&location)
+    }
+
     pub fn resolve_expression(
         expression: &Expr,
         external_names: impl IntoIterator<Item = String>,
@@ -105,6 +119,7 @@ impl HirProgram {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names: HashSet::new(),
             expression_stack: Vec::new(),
             static_expressions: true,
         };
@@ -120,6 +135,7 @@ impl HirProgram {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names: HashSet::new(),
             expression_stack: Vec::new(),
             static_expressions: false,
         };
@@ -132,9 +148,18 @@ impl HirProgram {
         program: &RecoveredProgram,
         external_names: impl IntoIterator<Item = String>,
     ) -> Self {
+        Self::resolve_recovered_with_member_constructors(program, external_names, HashSet::new())
+    }
+
+    pub(crate) fn resolve_recovered_with_member_constructors(
+        program: &RecoveredProgram,
+        external_names: impl IntoIterator<Item = String>,
+        external_member_names: HashSet<String>,
+    ) -> Self {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names,
             expression_stack: Vec::new(),
             static_expressions: true,
         };
@@ -251,6 +276,7 @@ type Scope = HashMap<String, HirDefinitionId>;
 struct Resolver {
     hir: HirProgram,
     external_names: HashSet<String>,
+    external_member_names: HashSet<String>,
     expression_stack: Vec<HirExpressionId>,
     static_expressions: bool,
 }
@@ -721,6 +747,7 @@ impl Resolver {
     fn index_pattern(&mut self, pattern: &Pattern, scope: &mut Scope) {
         match &pattern.value {
             PatternKind::Binding(name) => {
+                if self.hir.is_member_pattern(name.location) { return; }
                 self.define_name(
                     &name.value,
                     HirDefinitionKind::Pattern,
@@ -746,6 +773,21 @@ impl Resolver {
 
     fn index_pattern_constructors(&mut self, pattern: &Pattern, scopes: &mut Vec<Scope>) {
         match &pattern.value {
+            PatternKind::Binding(name) => {
+                let member = resolve_name(scopes, &name.value).map_or_else(
+                    || self.external_member_names.contains(&name.value),
+                    |id| {
+                        let definition = &self.hir.definitions[id.index()];
+                        definition.member_import.is_some()
+                            || definition.kind == HirDefinitionKind::Import
+                                && self.external_member_names.contains(&name.value)
+                    },
+                );
+                if member {
+                    self.hir.member_patterns.insert(name.location);
+                    self.index_expr(&crate::ast::located(ExprKind::Variable(name.clone()), name.location), scopes);
+                }
+            }
             PatternKind::Constructor { constructor, payload } => {
                 self.index_expr(constructor, scopes);
                 if let Some(payload) = payload { self.index_pattern_constructors(payload, scopes); }

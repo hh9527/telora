@@ -226,7 +226,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .map(|binding| binding.value.name.value.as_str())
         .collect::<HashSet<_>>();
-    let hir = HirProgram::resolve(
+    let hir = HirProgram::resolve_with_member_constructors(
         program,
         prelude
             .types
@@ -235,6 +235,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .chain(external_roots.keys())
             .cloned()
             .collect::<Vec<_>>(),
+        external_interfaces.iter().filter(|(name, interface)|
+            interface.value_binding.as_deref() == Some(name.as_str())
+                && interface.member_constructors.contains_key(*name))
+            .map(|(name, _)| name.clone()).collect(),
     );
     let prelude_value_names = prelude
         .types

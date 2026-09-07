@@ -444,7 +444,8 @@ impl WorkspaceBuilder<'_> {
                         .map(|candidate| candidate.provider.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    for location in recovered_reference_locations(&parsed.recovered, &name) {
+                    for location in recovered_reference_locations(&parsed.recovered, &name,
+                        candidates.iter().any(|candidate| candidate.member_constructor.is_some())) {
                         diagnostics.push(Diagnostic::error(
                             format!("open import name {name:?} is ambiguous between {providers}"),
                             location,

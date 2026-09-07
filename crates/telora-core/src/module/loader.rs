@@ -651,7 +651,7 @@ impl ModuleLoader {
             candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
             candidates.dedup_by(|left, right| left.provider == right.provider);
             if candidates.len() > 1 {
-                if program_references_name(&program, &name) {
+                if program_references_name(&program, &name, candidates.iter().any(|candidate| candidate.member_constructor.is_some())) {
                     let providers = candidates
                         .iter()
                         .map(|candidate| candidate.provider.to_string())

@@ -1,6 +1,6 @@
 # RFC 0274: Unified Constructors and Construction Checks
 
-- Status: Draft; stage one is implemented, stages two and three remain pending.
+- Status: Draft; stage one is implemented, stage two is in progress, stage three is pending.
 - Tracking: [#161](https://github.com/hh9527/telora/issues/161)
 - Branch: `feat/0161-unified-constructors`
 - Baseline: `83bb8a6`
@@ -20,10 +20,12 @@
   exhaustiveness analysis, including tool-stage patterns. Selective member
   imports/exports retain declaration origin and the complete generic contract
   through module imports and reexports. Imported payload member patterns work.
-  Wildcard member selectors, bare unit member patterns, quoted-syntax removal
-  and checks remain pending.
-- Validation: debug build, workspace tests and 320 language fixture groups pass
-  for selective member bindings, including lexical provenance after shadowing.
+  Bare unit member patterns resolve imported declaration origin in match, if-let
+  and let-else, including tool-stage and cross-module use. Prelude member exports,
+  quoted-syntax removal and checks remain pending.
+  Wildcard member selectors are deferred; this delivery uses explicit member lists.
+- Validation: bare member patterns passed debug build, workspace tests and
+  325 language fixture groups, including member-only ambiguity resolution.
   New behavior is tested in
   `.telora`; no release binary was built.
 
@@ -150,8 +152,8 @@ the outer declared identity, including when the payload is itself nominal.
 ```telora
 type Event = enum { Progress(Int), Finished };
 
-export Option.*;
-export Result.*;
+export Option.{Some, None};
+export Result.{Ok, Err};
 
 let result = Ok(1);
 ```
@@ -170,12 +172,24 @@ module-qualified forms such as `events.Event.Progress`. An enum declaration
 does not introduce its members as unqualified bindings. A metadata variable
 holding the same Type value does not acquire member-constructor identity.
 
-`import Event.*;` introduces the members into the current module. Selective
-member import uses `import Event.{Progress, Finished as Done};`. Existing
+Wildcard member selectors are deferred from this delivery. The module graph
+requires a discoverable export list before initializing source modules, so
+providers list their public members explicitly, such as
+`export Result.{Ok, Err};`. Consumers use the existing module import selectors.
+
+A future `import Event.*;` registers the members as name-resolution candidates. It does
+not expand to eager import/definition bindings or by itself load or initialize
+the provider module. Actual references select candidates and retain their
+declaration origin. Apply the same candidate model to wildcard member exports;
+the public member candidates must remain discoverable without evaluating all
+member values. Selective member import uses
+`import Event.{Progress, Finished as Done};`. Existing
 module imports can import constructor names exported by another module.
-`export Event.*;` and `export Event.{Progress, Finished as Done};` both introduce
-local member bindings and export them. Repeated or conflicting local/public
-names are errors, including collisions with other enum families. Resolution
+`export Event.{Progress, Finished as Done};` introduces local member bindings
+and exports them. Repeated or conflicting explicit local/public names are
+errors, including collisions with other enum families. Wildcard candidates
+follow name resolution rather than introducing all of those explicit bindings.
+Resolution
 retains the declaring family, member name and generic contract through imports
 and reexports; ordinary function aliases retain their function contract only.
 
@@ -184,7 +198,8 @@ Generic member specialization uses `Option.Some@[Int]` and
 including parameters absent from the selected payload. Contextual inference
 may determine them; an unresolved parameter is an error.
 
-Prelude exports supply `Bool.*`, `Option.*` and `Result.*`. FoldControl remains
+Prelude exports explicitly supply `Bool.{True, False}`, `Option.{Some, None}`
+and `Result.{Ok, Err}`. FoldControl remains
 available as a type; its members use qualification or explicit member imports.
 Codec naming/configuration enums retain their own module/type namespaces.
 The intrinsic `@property` target categories use a bootstrap `PropertyTarget`

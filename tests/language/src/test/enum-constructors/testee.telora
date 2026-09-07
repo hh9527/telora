@@ -16,15 +16,17 @@ type Envelope = struct { id: Id };
 type Outer = enum { Wrapped(Envelope), Empty };
 type Only = enum { Item(Int) };
 type TypeChoice = enum { Selected(Type), Empty };
-import TypeChoice.{Selected as Choose};
+type Lowercase = enum { done, pending };
+import Lowercase.{done, pending};
+import TypeChoice.{Selected as Choose, Empty as NoChoice};
 type Chosen = match Choose(Int) {
     Choose(value) => value,
-    TypeChoice.Empty => String,
+    NoChoice => String,
 };
 import Event.{Progress, Finished as Done};
 import Message.{Data, Empty};
 import Result.{Ok as Success, Err as Failure};
-import "@src/test/enum-constructors/model" { Progress as RemoteProgress };
+import "@src/test/enum-constructors/model" { Progress as RemoteProgress, Done as RemoteDone, Empty as RemoteEmpty };
 import bridge.Packet.{Data as ForwardData};
 def shadowed = match Progress(67) { Progress(shadowed) => shadowed, Event.Finished => 0 };
 
@@ -41,17 +43,17 @@ export def member_imports = test.should_ok(fn() {
     let local_int = LocalSome(66);
     let local_string = LocalSome@[String]("local");
     let make: Fn(Int) -> Packet(Int) = Make;
-    expect(shadowed == 67 && match a { Progress(value) => value == 61, Event.Finished => Bool.False }
-        && match b { Data(value) => value == 62, Message.Empty => Bool.False }
-        && match c { Data(value) => value == "ok", Message.Empty => Bool.False }
-        && match d { Message.Empty => Bool.True, Message.Data(_) => Bool.False }
+    expect(shadowed == 67 && match a { Progress(value) => value == 61, Done => Bool.False }
+        && match b { Data(value) => value == 62, Empty => Bool.False }
+        && match c { Data(value) => value == "ok", Empty => Bool.False }
+        && match d { Empty => Bool.True, Message.Data(_) => Bool.False }
         && match e { Success(value) => value == 63, Failure(_) => Bool.False }
         && match f { Success(_) => Bool.False, Failure(value) => value == "bad" }
         && match g { bridge.Make(value) => value == 64, model.Empty => Bool.False }
         && match h { ForwardData(value) => value == "forward", model.Empty => Bool.False }
-        && match RemoteProgress(65) { RemoteProgress(value) => value == 65, model.Done => Bool.False }
+        && match RemoteProgress(65) { RemoteProgress(value) => value == 65, RemoteDone => Bool.False }
         && match Done { Event.Finished => Bool.True, Progress(_) => Bool.False }
-        && match bridge.Done { model.Done => Bool.True, RemoteProgress(_) => Bool.False })
+        && match bridge.Done { OpenDone => Bool.True, RemoteProgress(_) => Bool.False })
     && expect(match local_int { LocalSome(value) => value == 66, Option.None => Bool.False }
         && match local_string { LocalSome(value) => value == "local", Option.None => Bool.False }
         && match make(68) { Make(value) => value == 68, model.Empty => Bool.False })
@@ -62,6 +64,32 @@ export def member_lexical_origin = test.should_ok(fn() {
     let Event = 0;
     let result = match MakeLocal(69) { MakeLocal(value) => value, _ => 0 };
     expect(Event == 0 && result == 69)
+});
+
+export def bare_member_patterns = test.should_ok(fn() {
+    import Option.{Some, None};
+    let none: Option(Int) = None;
+    let only_empty: Fn(Option(Int)) -> Bool = fn(value) {
+        let None = value else { return Bool.False; };
+        Bool.True
+    };
+    let rebuilt: Fn(Option(Int)) -> Option(Int) = fn(value) {
+        match value { None => Some(70), Some(_) => None }
+    };
+    let nested = match (none, Some(71)) { (None, Some(value)) => value, _ => 0 };
+    let unit = if let None = none { 72 } else { 0 };
+    let conditional = if Bool.True { 73 } else { 0 };
+    let lower = match done { done => Bool.True, pending => Bool.False };
+    let local = do {
+        let None = 0;
+        match 74 { None => None }
+    };
+    let alias: Option(Int) = None;
+    let captured = match Some(75) { alias => match alias { Some(value) => value, None => 0 } };
+    expect(only_empty(none) && !only_empty(Some(1)) && nested == 71 && unit == 72
+        && conditional == 73 && local == 74 && captured == 75 && lower
+        && match rebuilt(none) { Some(value) => value == 70, None => Bool.False }
+        && match RemoteEmpty@[Int] { RemoteEmpty => Bool.True, ForwardData(_) => Bool.False })
 });
 
 export def qualified = test.should_ok(fn() {

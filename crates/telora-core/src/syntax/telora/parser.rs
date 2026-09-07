@@ -77,17 +77,25 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     fn predicate_binding_4(&self) -> bool {
         if self.current != Token::Let
             || !(matches!(self.peek(1), Token::Atom | Token::LParen | Token::LBrace)
-                || (self.peek(1) == Token::Identifier && matches!(self.peek(2), Token::LParen | Token::Dot)))
+                || self.peek(1) == Token::Identifier)
         {
             return false;
         }
         let mut lookahead = 2usize;
+        let mut depth = 0usize;
+        let mut conditionals = 0usize;
         loop {
             match self.peek(lookahead) {
-                Token::Else => return true,
-                Token::Semicolon | Token::EOF => return false,
-                _ => lookahead += 1,
+                Token::EOF => return false,
+                Token::LParen | Token::LBrace | Token::LBracket => depth += 1,
+                Token::RParen | Token::RBrace | Token::RBracket => depth = depth.saturating_sub(1),
+                Token::If if depth == 0 => conditionals += 1,
+                Token::Else if depth == 0 && conditionals == 0 => return true,
+                Token::Else if depth == 0 => conditionals -= 1,
+                Token::Semicolon if depth == 0 => return false,
+                _ => {}
             }
+            lookahead += 1;
         }
     }
     fn predicate_binding_5(&self) -> bool {

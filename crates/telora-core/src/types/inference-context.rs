@@ -94,6 +94,14 @@ impl<'a> GenericInference<'a> {
         environment: &HashMap<String, TypeDescriptor>,
     ) -> Result<crate::ast::Pattern, String> {
         use crate::ast::PatternKind;
+        if let PatternKind::Binding(name) = &pattern.value
+            && self.hir.is_member_pattern(name.location)
+        {
+            return self.infer_pattern_constructors(&crate::ast::located(PatternKind::Constructor {
+                constructor: Box::new(crate::ast::located(ExprKind::Variable(name.clone()), name.location)),
+                payload: None,
+            }, pattern.location), matched, environment);
+        }
         if let PatternKind::Constructor { constructor, payload } = &pattern.value {
             self.failure_location = Some(constructor.location);
             let ty = self.infer(constructor, environment, None)?;

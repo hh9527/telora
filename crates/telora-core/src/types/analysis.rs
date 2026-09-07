@@ -206,7 +206,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     let source_name = sources.get(source_id).name.to_string();
     let module_id = crate::ModuleId::ANONYMOUS;
     let prelude = BootstrapPrelude::new();
-    let hir = HirProgram::resolve_recovered(
+    let hir = HirProgram::resolve_recovered_with_member_constructors(
         recovered,
         prelude
             .schemes
@@ -215,6 +215,10 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .chain(external_roots.keys())
             .cloned()
             .collect::<Vec<_>>(),
+        control.external_interfaces.iter().filter(|(name, interface)|
+            interface.value_binding.as_deref() == Some(name.as_str())
+                && interface.member_constructors.contains_key(*name))
+            .map(|(name, _)| name.clone()).collect(),
     );
     let bindings = type_definition_bindings(&hir, &recovered.bindings);
     let declared_initializer_slots = recovered
