@@ -581,7 +581,7 @@ impl<'a> GenericInference<'a> {
                         kind: EnumInferenceFailureKind::IllegalVariant,
                         expected_name: expected_name.clone(),
                     },
-                    format!("variant '{tag} is not part of {expected_name}"),
+                    format!("variant {tag} is not part of {expected_name}"),
                 ));
             }
         }
@@ -589,8 +589,8 @@ impl<'a> GenericInference<'a> {
             let expected_payload = &expected_variants[tag];
             let mismatch = match (actual_payload, expected_payload) {
                 (None, None) => None,
-                (None, Some(_)) => Some(format!("variant '{tag} requires a payload")),
-                (Some(_), None) => Some(format!("variant '{tag} does not accept a payload")),
+                (None, Some(_)) => Some(format!("variant {tag} requires a payload")),
+                (Some(_), None) => Some(format!("variant {tag} does not accept a payload")),
                 (Some(actual), Some(expected)) => {
                     let actual = erase_declared_identity(actual);
                     let expected = erase_declared_identity(expected);
@@ -599,7 +599,7 @@ impl<'a> GenericInference<'a> {
                         let expected_leaf = type_at_path(&expected, &path).unwrap_or(&expected);
                         let path = display_type_path(&path);
                         format!(
-                            "variant '{tag} payload is incompatible with {expected_name}{path}: expected {}, found {}",
+                            "variant {tag} payload is incompatible with {expected_name}{path}: expected {}, found {}",
                             expected_leaf.display_name(),
                             actual_leaf.display_name()
                         )
@@ -618,7 +618,7 @@ impl<'a> GenericInference<'a> {
         }
         let variants = actual_variants
             .iter()
-            .map(|(tag, _)| format!("'{tag}"))
+            .map(|(tag, _)| tag.clone())
             .collect::<Vec<_>>()
             .join(" | ");
         let noun = if actual_variants.len() == 1 {
@@ -1059,7 +1059,7 @@ impl<'a> GenericInference<'a> {
                     kind: EnumInferenceFailureKind::IllegalVariant,
                     expected_name: expected_name.clone(),
                 },
-                format!("variant '{tag} is not part of {expected_name}"),
+                format!("variant {tag} is not part of {expected_name}"),
             ));
         }
         let type_failure = inner_message.contains("cannot unify")
@@ -1072,7 +1072,7 @@ impl<'a> GenericInference<'a> {
                     expected_name: expected_name.clone(),
                 },
                 format!(
-                    "variant '{tag} payload is incompatible with {expected_name}: {inner_message}"
+                    "variant {tag} payload is incompatible with {expected_name}: {inner_message}"
                 ),
             )
         })

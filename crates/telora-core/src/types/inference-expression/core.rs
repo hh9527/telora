@@ -1314,7 +1314,7 @@ impl<'a> GenericInference<'a> {
                                 "unreachable match arm; prior arms cover {}",
                                 redundant_variants
                                     .iter()
-                                    .map(|variant| format!("'{variant}"))
+                                    .map(|variant| variant.clone())
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )
@@ -1380,9 +1380,9 @@ impl<'a> GenericInference<'a> {
                         .filter(|(name, _)| !covered_variants.contains(*name))
                         .map(|(name, payload)| {
                             if payload.is_some() {
-                                format!("'{name}(_)")
+                                format!("{name}(_)")
                             } else {
-                                format!("'{name}")
+                                name.clone()
                             }
                         })
                         .collect::<Vec<_>>();

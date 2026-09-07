@@ -1,1 +1,1 @@
-cover 'Some
+cover Some

@@ -837,8 +837,8 @@ fn validate_value_ref(
             if let Some(tag) = value.as_atom() {
                 return match variants.get(tag.as_str()) {
                     Some(None) => Ok(()),
-                    Some(Some(_)) => Err(format!("{path} variant '{tag} requires a payload")),
-                    None => Err(format!("{path} has unknown Enum variant '{tag}")),
+                    Some(Some(_)) => Err(format!("{path} variant {tag} requires a payload")),
+                    None => Err(format!("{path} has unknown Enum variant {tag}")),
                 };
             }
             let Some((tag_value, payload_value)) = value.tagged_parts() else {
@@ -851,8 +851,8 @@ fn validate_value_ref(
                 Some(Some(payload)) => {
                     validate_value_ref(payload, payload_value, &format!("{path}.{tag}"))
                 }
-                Some(None) => Err(format!("{path} variant '{tag} does not accept a payload")),
-                None => Err(format!("{path} has unknown Enum variant '{tag}")),
+                Some(None) => Err(format!("{path} variant {tag} does not accept a payload")),
+                None => Err(format!("{path} has unknown Enum variant {tag}")),
             }
         }
         TypeDescriptor::PendingAlternatives(_) => Err(format!("{path}: unresolved common type")),

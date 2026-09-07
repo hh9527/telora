@@ -378,7 +378,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Atom(tag) if tag.name() == "None" => {
                     match expected.map(|ty| self.resolve(ty)) {
                         Some(ref expected @ TypeDescriptor::Enum(ref variants)) if option_parts(variants).is_some() => Ok(expected.clone()),
-                        _ => Err("Option propagation boundary ending in 'None needs an expected Option success type".into()),
+                        _ => Err("Option propagation boundary ending in None needs an expected Option success type".into()),
                     }
                 }
                 _ => Err(format!(
@@ -418,7 +418,7 @@ impl<'a> GenericInference<'a> {
                                 self.check(&payload, &boundary_error)?;
                                 Ok(expected.clone())
                             }
-                            _ => Err("Result propagation boundary ending in 'Err(_) needs an expected Result success type".into()),
+                            _ => Err("Result propagation boundary ending in Err(_) needs an expected Result success type".into()),
                         }
                     }
                     _ => Err(format!("Result propagation requires a Result-shaped boundary result, found {}", resolved.display_name())),

@@ -41,8 +41,11 @@
   declarations, expressions and patterns. Compiler-generated Atom/Tagged nodes
   remain private implementation representations. Guides and design documents
   describe named members and family parameter inference, including qualified
-  actor, Value and ScalarValue examples. Diagnostic wording migration and
-  construction checks remain pending.
+  actor, Value and ScalarValue examples. Match coverage, enum payload and
+  standard-library diagnostics use current member spellings. A remaining
+  tool-stage diagnostic gap discards unknown-member inference failures before
+  evaluation; stage two acceptance must close that gap. Construction checks
+  remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
 - Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
   including computed markers, aliases, nominal rejection and marker arity.
