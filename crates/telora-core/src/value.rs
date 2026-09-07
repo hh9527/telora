@@ -338,6 +338,7 @@ pub(crate) enum CoreDictFunction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreStringFunction {
+    Parse,
     Length,
     Join,
     JoinLines,
@@ -646,6 +647,7 @@ impl CoreDictFunction {
 impl CoreStringFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
+            Self::Parse => "std/string.parse_with",
             Self::Length => "std/string.length",
             Self::Join => "std/string.join",
             Self::JoinLines => "std/string.join_lines",
@@ -671,7 +673,7 @@ impl CoreStringFunction {
             | Self::Contains
             | Self::Indent
             | Self::TrimMargin => 2,
-            Self::Replace => 3,
+            Self::Replace | Self::Parse => 3,
         }
     }
 }

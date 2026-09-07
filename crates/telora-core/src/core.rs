@@ -391,7 +391,7 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                 ),
                 (
                     "parse_with",
-                    NativeFunction::new("std/string.parse_with", 3, crate::regex::native_parse),
+                    NativeFunction::core_string(CoreStringFunction::Parse),
                 ),
             ],
         },

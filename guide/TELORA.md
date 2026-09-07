@@ -620,6 +620,10 @@ Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Va
 校验返回 `Some(error)` 时，解码返回 `Err(error)`。untagged 解码将这种拒绝视为
 分支不匹配，要求恰好一个分支成功；校验函数主动 `fail!` 则中止执行。
 编码已经校验的值不会重复执行构造校验。
+`string.parse(T, text)` 将文本解析为 T，语法解析失败返回 `Err(ParseError)`，
+成功解析的候选值及其嵌套字段经过构造校验，校验拒绝产生失败诊断。
+使用 `@string.decode_by_parse` 的 codec 文本桥接也执行这些校验，拒绝时返回
+`Err(BlameError)`，可以参与 untagged 分支试探。解析字段的来源是输入字符串。
 静态数据模块保留每个子节点的位置。字符串解析产生的节点保留输入字符串的来源，
 解析消息中的行列描述字符串内容；这些行列不作为 Telora 源码内的偏移。
 

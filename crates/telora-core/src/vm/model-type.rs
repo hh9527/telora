@@ -171,6 +171,7 @@ struct CodecEnumVariant {
 
 #[derive(Clone, Debug)]
 enum CodecNode {
+    Refined { owner: Val, payload: Box<Self> },
     Decode {
         schema: Box<CodecType>,
         properties: CodecProperties,

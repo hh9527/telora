@@ -17,6 +17,7 @@ enum DecodeBuild {
 
 #[derive(Debug)]
 enum DecodeTask {
+    RefineTop { owner: Val },
     Refine { descriptor: crate::types::TypeDescriptor, value: Val },
     Node(CodecNode),
     Build { kind: DecodeBuild, count: usize, loc: Option<crate::Loc> },
@@ -133,6 +134,18 @@ fn drive_codec_decode(
         };
         consume_fuel(account, function, pc)?;
         match task {
+            DecodeTask::Node(CodecNode::Refined { owner, payload }) => {
+                state.tasks.push(DecodeTask::RefineTop { owner });
+                state.tasks.push(DecodeTask::Node(*payload));
+            }
+            DecodeTask::RefineTop { owner } => {
+                let descriptor = crate::types::decode_type_ref(ValueRef {
+                    value: owner, view: HeapView { current, background: Some(background) },
+                }, "construction target")
+                    .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+                let value = state.values.pop().expect("refinement payload");
+                state.tasks.push(DecodeTask::Refine { descriptor, value });
+            }
             DecodeTask::Refine { descriptor, value } => {
                 expand_cast_refinement(&mut state, descriptor, value, current, background, account)?;
             }

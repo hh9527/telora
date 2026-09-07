@@ -139,7 +139,7 @@ fn first_prepared_display(node: &CodecNode) -> Option<(Val, Val, Val)> {
         CodecNode::Dict(fields, _) => fields
             .iter()
             .find_map(|(_, value)| first_prepared_display(value)),
-        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
         | CodecNode::Existing(_)
         | CodecNode::Atom(_, _)
         | CodecNode::NamedAtom(_, _)
@@ -174,7 +174,7 @@ fn replace_first_prepared_display(node: &mut CodecNode, text: String) -> bool {
             };
             replace_first_prepared_display(value, text)
         }
-        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
         | CodecNode::Existing(_)
         | CodecNode::Atom(_, _)
         | CodecNode::NamedAtom(_, _)

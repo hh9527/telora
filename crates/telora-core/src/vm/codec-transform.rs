@@ -80,7 +80,9 @@ fn transform_codec_inner(
                             )
                         })?;
                     crate::regex::parse_value(metadata, source.as_str(), properties.parse_by)
-                        .map(|parsed| parsed_codec_node(parsed, value.loc()))
+                        .map(|parsed| CodecNode::Refined {
+                            owner, payload: Box::new(parsed_codec_node(parsed, value.loc())),
+                        })
                         .map_err(|message| {
                             CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
                         })

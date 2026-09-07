@@ -464,7 +464,7 @@ fn codec_node_bytes(
 ) -> Result<u64, NativeError> {
     match node {
         CodecNode::Existing(_) | CodecNode::Atom(_, _) => Ok(0),
-        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_) =>
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_) =>
             Err(NativeError::new("codec contains unfinished decoding")),
         CodecNode::PreparedDisplay { .. } => Err(NativeError::new(
             "codec output contains an unresolved prepared display",
@@ -515,7 +515,7 @@ fn semantic_codec_wrapper_bytes(
 
     let tagged_bytes = logical_value_bytes(2)?;
     match node {
-        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_) =>
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_) =>
             Err(NativeError::new("semantic Value contains unfinished decoding")),
         CodecNode::Existing(value) => {
             semantic_value_wrapper_bytes(current, Some(background), *value)
@@ -575,7 +575,7 @@ fn semantic_codec_wrapper_bytes(
 
 fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap) -> Val {
     match node {
-        CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_) =>
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_) =>
             unreachable!("decoding tasks must finish before materialization"),
         CodecNode::Existing(value) => value,
         CodecNode::SemanticValue { owner, raw } => {
