@@ -73,6 +73,7 @@ pub struct ModuleInterface {
     // A selected value has a binding name; a module namespace does not.
     pub(crate) value_binding: Option<String>,
     pub(crate) type_declarations: BTreeSet<String>,
+    pub(crate) member_constructors: BTreeMap<String, ValueConstructor>,
     pub exports: BTreeMap<String, TypeScheme>,
     pub namespaces: BTreeMap<String, ModuleInterface>,
     pub concrete_types: BTreeMap<String, TypeDescriptor>,
@@ -97,6 +98,7 @@ impl ModuleInterface {
         Self {
             value_binding: self.value_binding.clone(),
             type_declarations: self.type_declarations.clone(),
+            member_constructors: self.member_constructors.clone(),
             namespaces: self.namespaces.iter()
                 .map(|(name, interface)| (name.clone(), interface.qualified(&format!("{namespace}.{name}"))))
                 .collect(),

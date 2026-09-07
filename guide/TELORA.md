@@ -309,6 +309,21 @@ match event {
 无载荷成员直接使用成员名称。它们可以用于嵌套模式、`if let` 和 `let else`。
 模式构造器由声明身份确定；保存构造函数的普通函数绑定仅用于调用。
 
+选择性成员导入为成员建立本地名称；成员导出同时建立本地名称和公开名称：
+
+```telora
+import Event.{Progress, Finished as Done};
+export Result.{Ok as Success, Err as Failure};
+
+let progress = Progress(1);
+let result = Success@[Int, String](2);
+```
+
+成员名称保留所属声明和完整泛型参数。带载荷的成员名称可以用于调用、作为函数
+传递和写在模式中，例如 `Progress(value)`。成员导入产生的名称须与同一作用域
+中的其他绑定不同；重命名可以区分不同 enum 的同名成员。其他模块可以通过
+普通模块导入取得公开的成员名称，后续 reexport 保留其声明身份。
+
 ```telora
 type Entity = enum {
     'Ticket,

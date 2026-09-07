@@ -1,3 +1,5 @@
 export type Event = enum { Progress(Int), Finished };
 export type Message(T) = enum { Data(T), Empty };
 export def progress: Fn(Int) -> Event = Event.Progress;
+export Event.{Progress, Finished as Done};
+export Message.{Data, Empty};

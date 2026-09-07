@@ -226,6 +226,7 @@
                     ModuleInterface {
                         value_binding: Some("host".into()),
                         type_declarations: BTreeSet::new(),
+                        member_constructors: BTreeMap::new(),
                         namespaces: BTreeMap::new(),
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),

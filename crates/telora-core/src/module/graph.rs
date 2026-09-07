@@ -947,6 +947,9 @@ fn select_import_root(
         selected,
         ModuleInterface {
             value_binding: Some(local.to_owned()),
+            member_constructors: interface.member_constructors.get(&exported.value)
+                .cloned().map(|constructor| BTreeMap::from([(local.to_owned(), constructor)]))
+                .unwrap_or_default(),
             type_declarations: if interface.type_declarations.contains(&exported.value) {
                 BTreeSet::from([local.to_owned()])
             } else {

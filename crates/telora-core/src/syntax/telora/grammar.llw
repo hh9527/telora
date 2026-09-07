@@ -19,7 +19,7 @@ start program;
 program: body;
 body: (?1 binding)* [expression];
 binding^: ?5 export_statement | ?4 let_else_binding | ?3 let_pattern_binding | let_binding | decl_binding | def_binding | ?1 native_type_binding | ?2 native_binding | type_binding | trait_binding | impl_binding | import_binding;
-export_statement: 'export' (let_binding | def_binding | type_binding | trait_binding | export_items ';');
+export_statement: 'export' (let_binding | def_binding | type_binding | trait_binding | export_items ';' | member_selector ';');
 export_items: '{' export_item (?1 ',' export_item)* [','] '}';
 export_item: Identifier ['as' Identifier];
 let_binding: 'let' Identifier [':' expression] '=' expression ';';
@@ -43,7 +43,8 @@ trait_binding: 'trait' Identifier '{' [trait_member (?1 ',' trait_member)* [',']
 trait_member: Identifier ':' contract;
 impl_binding: 'impl' [type_parameters] contract 'for' contract '{' [impl_member (?1 ',' impl_member)* [',']] '}' ';';
 impl_member: Identifier ':' expression;
-import_binding: 'import' string_literal import_selector ';';
+import_binding: 'import' (string_literal import_selector | member_selector) ';';
+member_selector: Identifier (?1 '.' Identifier)* '.' import_items;
 import_selector: 'as' Identifier [',' ('*' | import_items)] | '*' | import_items;
 import_items: '{' import_item (?1 ',' import_item)* [','] '}';
 import_item: Identifier ['as' Identifier];

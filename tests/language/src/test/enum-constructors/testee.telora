@@ -5,6 +5,7 @@ import "std/dyn" as dyn;
 import "@src/test/enum-constructors/model" as model;
 import "@src/test/enum-constructors/model" { Event as RemoteEvent, Message as Packet };
 import "@src/test/enum-constructors/bridge" as bridge;
+import "@src/test/enum-constructors/bridge" *;
 import "@src/test-support" { expect };
 
 type Event = enum { Progress(Int), Finished };
@@ -15,10 +16,53 @@ type Envelope = struct { id: Id };
 type Outer = enum { Wrapped(Envelope), Empty };
 type Only = enum { Item(Int) };
 type TypeChoice = enum { Selected(Type), Empty };
-type Chosen = match TypeChoice.Selected(Int) {
-    TypeChoice.Selected(value) => value,
+import TypeChoice.{Selected as Choose};
+type Chosen = match Choose(Int) {
+    Choose(value) => value,
     TypeChoice.Empty => String,
 };
+import Event.{Progress, Finished as Done};
+import Message.{Data, Empty};
+import Result.{Ok as Success, Err as Failure};
+import "@src/test/enum-constructors/model" { Progress as RemoteProgress };
+import bridge.Packet.{Data as ForwardData};
+def shadowed = match Progress(67) { Progress(shadowed) => shadowed, Event.Finished => 0 };
+
+export def member_imports = test.should_ok(fn() {
+    import Option.{Some as LocalSome};
+    let a = Progress(61);
+    let b = Data(62);
+    let c = Data@[String]("ok");
+    let d: Message(Int) = Empty;
+    let e = Success@[Int, String](63);
+    let f: Result(Int, String) = Failure("bad");
+    let g = bridge.Make@[Int](64);
+    let h = ForwardData("forward");
+    let local_int = LocalSome(66);
+    let local_string = LocalSome@[String]("local");
+    let make: Fn(Int) -> Packet(Int) = Make;
+    expect(shadowed == 67 && match a { Progress(value) => value == 61, Event.Finished => Bool.False }
+        && match b { Data(value) => value == 62, Message.Empty => Bool.False }
+        && match c { Data(value) => value == "ok", Message.Empty => Bool.False }
+        && match d { Message.Empty => Bool.True, Message.Data(_) => Bool.False }
+        && match e { Success(value) => value == 63, Failure(_) => Bool.False }
+        && match f { Success(_) => Bool.False, Failure(value) => value == "bad" }
+        && match g { bridge.Make(value) => value == 64, model.Empty => Bool.False }
+        && match h { ForwardData(value) => value == "forward", model.Empty => Bool.False }
+        && match RemoteProgress(65) { RemoteProgress(value) => value == 65, model.Done => Bool.False }
+        && match Done { Event.Finished => Bool.True, Progress(_) => Bool.False }
+        && match bridge.Done { model.Done => Bool.True, RemoteProgress(_) => Bool.False })
+    && expect(match local_int { LocalSome(value) => value == 66, Option.None => Bool.False }
+        && match local_string { LocalSome(value) => value == "local", Option.None => Bool.False }
+        && match make(68) { Make(value) => value == 68, model.Empty => Bool.False })
+});
+
+export def member_lexical_origin = test.should_ok(fn() {
+    import Event.{Progress as MakeLocal};
+    let Event = 0;
+    let result = match MakeLocal(69) { MakeLocal(value) => value, _ => 0 };
+    expect(Event == 0 && result == 69)
+});
 
 export def qualified = test.should_ok(fn() {
     let progress = Event.Progress(42);

@@ -1,0 +1,5 @@
+type A = enum { Item(Int) };
+type B = enum { Item(Int) };
+import A.{Item};
+import B.{Item};
+export def value = Item(1);

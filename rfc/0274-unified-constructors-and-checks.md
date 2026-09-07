@@ -17,10 +17,14 @@
   first-class use, are implemented. Module namespaces and selected values now
   carry explicit binding provenance, including same-name module/type aliases.
   Qualified enum patterns validate nominal ownership before nested payload and
-  exhaustiveness analysis, including tool-stage patterns. Member imports/exports,
-  unqualified member patterns, quoted-syntax removal and checks remain pending.
-- Validation: debug build, workspace tests and 314 language fixture groups pass
-  for qualified enum patterns. New behavior is tested in
+  exhaustiveness analysis, including tool-stage patterns. Selective member
+  imports/exports retain declaration origin and the complete generic contract
+  through module imports and reexports. Imported payload member patterns work.
+  Wildcard member selectors, bare unit member patterns, quoted-syntax removal
+  and checks remain pending.
+- Validation: debug build, workspace tests and 320 language fixture groups pass
+  for selective member bindings, including lexical provenance after shadowing.
+  New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective

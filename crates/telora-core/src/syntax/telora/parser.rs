@@ -93,6 +93,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     fn predicate_binding_5(&self) -> bool {
         self.current == Token::Export
     }
+    fn predicate_member_selector_1(&self) -> bool {
+        self.current == Token::Dot && self.peek(1) == Token::Identifier
+    }
     fn predicate_primary_1(&self) -> bool {
         self.peek(1) != Token::RParen
     }

@@ -58,6 +58,7 @@ pub struct HirDefinition {
     pub type_parameters: Vec<HirTypeParameter>,
     pub top_level: bool,
     pub value: Option<HirExpressionId>,
+    pub(crate) member_import: Option<Expr>,
 }
 
 #[derive(Clone, Debug)]
@@ -270,6 +271,8 @@ impl Resolver {
             BindingKind::NativeType => HirDefinitionKind::NativeType,
         };
         let id = self.define_name(name, kind, binding.value.name.location, scope, top_level);
+        self.hir.definitions[id.index()].member_import = binding.value.is_member_import()
+            .then(|| binding.value.value.clone());
         self.hir.definitions[id.index()].type_parameters = binding
             .value
             .type_parameters
@@ -300,6 +303,7 @@ impl Resolver {
             type_parameters: Vec::new(),
             top_level,
             value: None,
+            member_import: None,
         });
         scope.insert(name.into(), id);
         id

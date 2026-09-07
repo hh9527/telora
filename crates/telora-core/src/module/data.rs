@@ -15,6 +15,7 @@ struct ModuleArtifact {
 #[derive(Clone)]
 struct OpenImportCandidate {
     type_declaration: bool,
+    member_constructor: Option<crate::types::ValueConstructor>,
     namespace: Option<ModuleInterface>,
     provider: ModuleCName,
     root: PersistentValue,
@@ -31,6 +32,7 @@ struct OpenImportCandidate {
 #[derive(Clone)]
 struct WorkspaceOpenImportCandidate {
     type_declaration: bool,
+    member_constructor: Option<crate::types::ValueConstructor>,
     namespace: Option<ModuleInterface>,
     provider: ModuleCName,
     scheme: Option<crate::types::TypeScheme>,
@@ -65,6 +67,7 @@ fn workspace_open_import_exports(
                 name.clone(),
                 WorkspaceOpenImportCandidate {
                     type_declaration: interface.type_declarations.contains(name),
+                    member_constructor: interface.member_constructors.get(name).cloned(),
                     namespace: interface.namespaces.get(name).cloned(),
                     provider: provider.clone(),
                     scheme: scheme.cloned(),
@@ -104,6 +107,7 @@ fn open_import_exports(
                 name.clone(),
                 OpenImportCandidate {
                     type_declaration: interface.type_declarations.contains(name),
+                    member_constructor: interface.member_constructors.get(name).cloned(),
                     namespace: interface.namespaces.get(name).cloned(),
                     provider: provider.clone(),
                     root,
@@ -229,6 +233,7 @@ fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
     ModuleInterface {
         value_binding: None,
         type_declarations: BTreeSet::new(),
+        member_constructors: BTreeMap::new(),
         namespaces: BTreeMap::new(),
         exports: BTreeMap::from([(
             "data".into(),

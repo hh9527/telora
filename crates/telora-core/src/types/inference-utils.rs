@@ -779,35 +779,12 @@ fn expression_references_names(
                     bound,
                 )
         }
-        ExprKind::IfLet {
-            value,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            expression_references_names(value, names, bound)
-                || expression_references_names(&then_branch.value.result, names, bound)
-                || expression_references_names(&else_branch.value.result, names, bound)
-        }
-        ExprKind::LetElse {
-            value,
-            else_branch,
-            body,
-            ..
-        } => {
-            expression_references_names(value, names, bound)
-                || expression_references_names(&else_branch.value.result, names, bound)
-                || expression_references_names(&body.value.result, names, bound)
-        }
-        ExprKind::Match { value, arms } => {
-            expression_references_names(value, names, bound)
-                || arms.iter().any(|arm| {
-                    arm.value
-                        .guard
-                        .as_ref()
-                        .is_some_and(|guard| expression_references_names(guard, names, bound))
-                        || expression_references_names(&arm.value.value, names, bound)
-                })
+        ExprKind::IfLet { .. } | ExprKind::LetElse { .. } | ExprKind::Match { .. } => {
+            // HIR distinguishes constructor references from bindings introduced by patterns.
+            HirProgram::resolve_expression(expression, names.iter().cloned())
+                .references().iter().any(|reference|
+                    reference.resolution == HirResolution::External
+                        && names.contains(&reference.name) && !bound.contains(&reference.name))
         }
         ExprKind::Int(_)
         | ExprKind::Float(_)

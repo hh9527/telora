@@ -489,7 +489,10 @@ impl<'a> GenericInference<'a> {
 
     fn explicit_scheme(&self, callee: &Expr) -> Option<TypeScheme> {
         match &callee.value {
-            ExprKind::Variable(name) => self.scheme(&name.value),
+            ExprKind::Variable(name) => self.member_import_definition(name)
+                .and_then(|definition| self.inferred_schemes.get(&definition.location).cloned()
+                    .or_else(|| self.explicit_scheme(definition.member_import.as_ref()?)))
+                .or_else(|| self.scheme(&name.value)),
             ExprKind::Field { receiver, field } if self.declared_constructor_reference(receiver) => {
                 let mut scheme = self.explicit_scheme(receiver)?;
                 let (body, _) = enum_member_type(&scheme.body, &field.value).ok()??;
@@ -509,6 +512,55 @@ impl<'a> GenericInference<'a> {
                 .and_then(|interface| interface.exports.get(&field.value)).cloned(),
             _ => None,
         }
+    }
+
+    fn member_import_definition(&self, name: &crate::ast::Identifier) -> Option<&crate::hir::HirDefinition> {
+        let reference = self.hir.references().iter()
+            .find(|reference| reference.location == name.location && reference.name == name.value)?;
+        let HirResolution::Definition(id) = reference.resolution else { return None; };
+        self.hir.definition(id).filter(|definition| definition.member_import.is_some())
+    }
+
+    fn member_constructor_reference(&self, expression: &Expr) -> Option<ValueConstructor> {
+        match &expression.value {
+            ExprKind::Variable(name) => {
+                if let Some(import) = self.member_import_definition(name).and_then(|definition| definition.member_import.as_ref()) {
+                    return self.value_constructors.get(&import.location).cloned()
+                        .or_else(|| self.member_constructor_reference(import));
+                }
+                if self.hir.references().iter().any(|reference|
+                    reference.location == name.location && reference.name == name.value
+                        && matches!(reference.resolution, HirResolution::Definition(id)
+                            if self.hir.definition(id).is_some_and(|definition| definition.kind != HirDefinitionKind::Import)))
+                {
+                    return None;
+                }
+                self.external_interfaces.get(&name.value)
+                    .filter(|interface| interface.value_binding.as_deref() == Some(name.value.as_str()))
+                    .and_then(|interface| interface.member_constructors.get(&name.value)).cloned()
+            }
+            ExprKind::Field { receiver, field } if self.declared_constructor_reference(receiver) => {
+                let scheme = self.explicit_scheme(receiver)?;
+                enum_member_type(&scheme.body, &field.value).ok().flatten().map(|(_, constructor)| constructor)
+            }
+            ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
+                .and_then(|interface| interface.member_constructors.get(&field.value)).cloned(),
+            ExprKind::TypeApply { callee, .. } => self.member_constructor_reference(callee),
+            _ => None,
+        }
+    }
+
+    fn member_import_scheme(&mut self, binding: &crate::ast::BindingData, inferred: &TypeDescriptor) -> Result<TypeScheme, String> {
+        if !matches!(&binding.value.value, ExprKind::Field { receiver, .. }
+            if self.declared_constructor_reference(receiver))
+            || self.member_constructor_reference(&binding.value).is_none()
+        {
+            return Err("member import requires an enum declaration member".into());
+        }
+        let scheme = self.explicit_scheme(&binding.value)
+            .ok_or_else(|| "member import has no declaration contract".to_owned())?;
+        self.unify(inferred, &scheme.body)?;
+        Ok(scheme)
     }
 
     fn declared_constructor_reference(&self, expression: &Expr) -> bool {

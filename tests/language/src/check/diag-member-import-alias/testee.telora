@@ -1,0 +1,4 @@
+type A = enum { Item(Int) };
+def alias = A;
+import alias.{Item};
+export def value = Item(1);

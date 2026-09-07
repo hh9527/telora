@@ -220,7 +220,7 @@ impl<'a> GenericInference<'a> {
         }
         self.value_constructors.remove(&expression.location);
         let inferred = match &expression.value {
-            ExprKind::Variable(name) => match self.scheme(&name.value) {
+            ExprKind::Variable(name) => match self.explicit_scheme(expression) {
                 Some(scheme) => self.instantiate(&scheme, expression.location),
                 None => environment.get(&name.value).cloned()
                     .ok_or_else(|| format!("unknown binding {:?}", name.value))?,
@@ -1401,6 +1401,9 @@ impl<'a> GenericInference<'a> {
                 }
             }
         };
+        if let Some(constructor) = self.member_constructor_reference(expression) {
+            self.value_constructors.insert(expression.location, constructor);
+        }
         let inferred = if matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. } | ExprKind::TypeApply { .. })
             && self.declared_constructor_reference(expression)
             && !self.type_facet_locations.contains(&expression.location)

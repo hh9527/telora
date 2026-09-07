@@ -1753,7 +1753,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
             binding.value.kind,
             BindingKind::Let | BindingKind::Def | BindingKind::Impl
         ) {
-            let inferred_scheme = if binding.value.kind == BindingKind::Let
+            let inferred_scheme = if binding.value.is_member_import() {
+                Some(inference.member_import_scheme(&binding.value, &inferred)
+                    .map_err(|message| FrontendError::from_diagnostic(sources,
+                        Diagnostic::error(message, binding.value.value.location)))?)
+            } else if binding.value.kind == BindingKind::Let
                 && binding.value.annotation.is_none()
                 && binding.value.type_parameters.is_empty()
                 && matches!(binding.value.value.value, ExprKind::Closure { .. })
@@ -2103,6 +2107,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
     };
     let module_interface = ModuleInterface {
         value_binding: None,
+        member_constructors: match &program.value.body.value.result.value {
+            ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
+                Some((field.value.name.as_ref()?.value.clone(),
+                    inference.member_constructor_reference(&field.value.value)?))
+            }).collect(),
+            _ => BTreeMap::new(),
+        },
         type_declarations: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
                 inference.declared_constructor_reference(&field.value.value)

@@ -672,6 +672,8 @@ impl ModuleLoader {
                 candidate.namespace.unwrap_or_else(|| ModuleInterface {
                     value_binding: Some(name.clone()),
                     type_declarations: if candidate.type_declaration { BTreeSet::from([name.clone()]) } else { BTreeSet::new() },
+                    member_constructors: candidate.member_constructor.clone()
+                        .map(|constructor| BTreeMap::from([(name.clone(), constructor)])).unwrap_or_default(),
                     namespaces: BTreeMap::new(),
                     exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
                     concrete_types: candidate.concrete_types,

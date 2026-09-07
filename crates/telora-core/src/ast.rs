@@ -42,6 +42,12 @@ pub struct BindingData {
     pub value: Expr,
 }
 
+impl BindingData {
+    pub fn is_member_import(&self) -> bool {
+        self.kind == BindingKind::Def && self.imported_name.is_some()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeclaredInitializerKind {
     Struct,
