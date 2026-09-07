@@ -1,6 +1,8 @@
-# RFC 0274: Unified Constructors and Construction Checks
+# RFC 0274: Unified Constructors
 
-- Status: Draft; stage one is implemented, stage two is in progress, stage three is pending.
+- Status: Implemented on the tracking branch. Construction checks and
+  `Unchecked(T)` are carried by [RFC 0275](0275-construction-checks-and-unchecked.md),
+  under the same tracking issue. Integration into main remains a separate decision.
 - Tracking: [#161](https://github.com/hh9527/telora/issues/161)
 - Branch: `feat/0161-unified-constructors`
 - Baseline: `83bb8a6`
@@ -42,10 +44,10 @@
   remain private implementation representations. Guides and design documents
   describe named members and family parameter inference, including qualified
   actor, Value and ScalarValue examples. Match coverage, enum payload and
-  standard-library diagnostics use current member spellings. A remaining
-  tool-stage diagnostic gap discards unknown-member inference failures before
-  evaluation; stage two acceptance must close that gap. Construction checks
-  remain pending.
+  standard-library diagnostics use current member spellings. Typed tool-stage
+  evaluation preserves constructor inference failures as source diagnostics;
+  incremental type initialization can still defer incomplete evidence.
+  Construction checks are specified separately in RFC 0275.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
 - Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
   including computed markers, aliases, nominal rejection and marker arity.
@@ -65,6 +67,9 @@
   fixture groups, including rejection of quoted declarations, values and patterns.
   Eight extracted documentation examples passed module checking; local binding
   snippets were exposed as module definitions for that check.
+  Typed tool-stage inference diagnostics passed debug build, 269 core tests,
+  342 language fixture groups and workspace tests. An unknown enum member in
+  a decorator now reports its static member error before VM evaluation.
   New behavior is tested in
   `.telora`; no release binary was built.
 
@@ -72,19 +77,17 @@
 
 Make newtype and enum payload constructors declaration-provided functions.
 Resolve constructor identity through names, and infer generic arguments through
-ordinary contextual inference. Subsequently enforce declaration-bound checks
-at every construction boundary.
+ordinary contextual inference. Declaration-bound construction checks are
+specified in RFC 0275 and continue to be tracked by #161.
 
 Implement in this order:
 
 1. Newtype declarations, construction, first-class constructors and patterns.
 2. Named enum constructors, member exports and removal of quoted tag syntax.
-3. `Unchecked(T)` and `@check(func)`.
 
-Each stage needs its own acceptance gate. Open questions in stage three do not
-prevent work on stage one. This draft records proposed contracts, not existing
-language behavior; unresolved decisions below must be settled before dependent
-implementation is accepted.
+Each stage has its own acceptance gate. The original third stage,
+`Unchecked(T)` and `@check(func)`, has moved to RFC 0275 so that its design,
+implementation and acceptance can be reviewed independently.
 
 ## Existing Implementation
 
@@ -286,46 +289,11 @@ cycles, prelude bootstrap, higher-order constructors, unit variants, patterns
 and complete-call generic evidence. Ordinary function aliases do not become
 pattern constructors merely because their return types are enums.
 
-## Stage Three: Construction Checks
+## Construction Checks Follow-Up
 
-Members remain public. `@check(func)` binds validation to a declaration rather
-than relying on callers to invoke a trait method. Support named-field structs,
-newtype structs and individual enum variants. Whole-enum checks are deferred.
-
-`Unchecked(T)` is a distinct, builtin type derived from the representation of T.
-It removes only the outer check guarantee. A field declared as another checked
-type remains a valid value of that field type. Escaping an unchecked value does
-not produce a checked T; there is no unchecked implicit conversion to T.
-
-Construction evaluates and type-checks inputs, invokes the bound check, and only
-then publishes a value of the target type. Compiler-controlled successful
-construction performs the final wrapping.
-
-Settle the following before implementation:
-
-- Whether newtype checks receive the payload directly or Unchecked(T), and the
-  exact access/pattern API of the unchecked representation.
-- Variant checks receive payload evidence without introducing standalone
-  variant types. Unit-variant checking and supported T domains need definition.
-- The concrete check error contract; `Option(Error)` is a design placeholder,
-  not an established standard-library type.
-- Ordinary construction failure diagnostics and conversion of check failures
-  into codec DecodeError with the original input Value.
-- Check registration and execution phases, recursive types and termination
-  behavior when checks construct further values.
-- Reflection, generic metadata and codec handling of check functions.
-
-Every creation path must enforce the same check: callable constructors,
-contextual struct literals, merge-update and codec decoding. Projection into
-a target struct is also construction. Passing, reading or copying an existing
-checked value does not repeat its check.
-
-Each merge-update produces a checked result. Therefore a chain checks each
-intermediate result; optimization cannot remove observable failures. A single
-patch containing several fields validates their combined result once.
-
-Unchecked metadata or Dyn projection must not permit bypassing validation.
-Decoding checked types must validate even though members are public.
+RFC 0275 carries `@check(func)` and `Unchecked(T)`, including all previously
+listed construction boundaries, provenance guarantees and open design questions.
+Completing this RFC does not close #161; that issue also tracks RFC 0275.
 
 ## Delivery and Verification
 
