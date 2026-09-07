@@ -548,10 +548,23 @@ impl<'a> Compiler<'a> {
                     self.compile_pattern(pattern, element, failures, bindings)?;
                 }
             }
-            PatternKind::Constructor { payload, .. } => {
-                let element = self.allocate();
-                self.emit(Operation::GetTuple { dst: element, tuple: value, index: 0 }, pattern.location);
-                self.compile_pattern(payload, element, failures, bindings)?;
+            PatternKind::Constructor { constructor, payload } => {
+                match self.value_constructors.get(&constructor.location).cloned() {
+                    Some(crate::types::ValueConstructor::EnumMember { tag, .. }) => {
+                        let canonical = located(match payload {
+                            Some(payload) => PatternKind::Tagged { tag, payload: payload.clone() },
+                            None => PatternKind::Atom(tag),
+                        }, pattern.location);
+                        self.compile_pattern(&canonical, value, failures, bindings)?;
+                    }
+                    Some(crate::types::ValueConstructor::Newtype) => {
+                        let payload = payload.as_ref().expect("checked newtype pattern has a payload");
+                        let element = self.allocate();
+                        self.emit(Operation::GetTuple { dst: element, tuple: value, index: 0 }, pattern.location);
+                        self.compile_pattern(payload, element, failures, bindings)?;
+                    }
+                    None => return Err(self.error_at(pattern.location, "constructor pattern has no declaration evidence")),
+                }
             }
             PatternKind::Struct(fields) => {
                 let condition = self.allocate();

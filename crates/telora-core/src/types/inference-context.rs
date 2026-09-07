@@ -92,50 +92,72 @@ impl<'a> GenericInference<'a> {
         pattern: &crate::ast::Pattern,
         matched: &TypeDescriptor,
         environment: &HashMap<String, TypeDescriptor>,
-    ) -> Result<(), String> {
+    ) -> Result<crate::ast::Pattern, String> {
         use crate::ast::PatternKind;
         if let PatternKind::Constructor { constructor, payload } = &pattern.value {
             self.failure_location = Some(constructor.location);
-            if !self.declared_constructor_reference(constructor) {
-                return Err("constructor pattern requires a type declaration".into());
-            }
             let ty = self.infer(constructor, environment, None)?;
-            let TypeDescriptor::Function { parameters, result } = self.resolve(&ty) else {
-                return Err("constructor pattern requires a newtype constructor".into());
+            let kind = self.value_constructors.get(&constructor.location).cloned()
+                .ok_or_else(|| "constructor pattern requires a type declaration".to_owned())?;
+            let resolved = self.resolve(&ty);
+            let has_payload = !matches!(kind, ValueConstructor::EnumMember { has_payload: false, .. });
+            let (owner, payload_type) = if has_payload {
+                let TypeDescriptor::Function { parameters, result } = resolved else {
+                    return Err("constructor pattern requires a constructor function".into());
+                };
+                (result.as_ref().clone(), parameters.into_iter().next())
+            } else {
+                (resolved, None)
             };
-            if parameters.len() != 1
-                || !matches!(self.expose_pattern_type(&result), TypeDescriptor::Newtype(_))
-            {
-                return Err("constructor pattern requires a newtype constructor".into());
+            self.unify(matched, &owner)?;
+            if payload.is_some() != has_payload {
+                return Err(if has_payload {
+                    "constructor pattern requires a payload pattern".into()
+                } else {
+                    "unit enum member does not accept a payload pattern".into()
+                });
             }
-            self.unify(matched, &result)?;
             self.failure_location = None;
-            return self.infer_pattern_constructors(payload, &self.resolve(&parameters[0]), environment);
+            let payload = match (payload, payload_type) {
+                (Some(payload), Some(ty)) => Some(Box::new(self.infer_pattern_constructors(
+                    payload, &self.resolve(&ty), environment,
+                )?)),
+                _ => None,
+            };
+            let value = match kind {
+                ValueConstructor::Newtype => PatternKind::Constructor { constructor: constructor.clone(), payload },
+                ValueConstructor::EnumMember { tag, .. } => match payload {
+                    Some(payload) => PatternKind::Tagged { tag, payload },
+                    None => PatternKind::Atom(tag),
+                },
+            };
+            return Ok(crate::ast::located(value, pattern.location));
         }
-        match (&pattern.value, self.expose_pattern_type(matched)) {
+        let mut canonical = pattern.clone();
+        match (&mut canonical.value, self.expose_pattern_type(matched)) {
             (PatternKind::Tuple(items), TypeDescriptor::Tuple(types)) => {
-                for (item, ty) in items.iter().zip(types.iter()) {
-                    self.infer_pattern_constructors(item, ty, environment)?;
+                for (item, ty) in items.iter_mut().zip(types.iter()) {
+                    *item = self.infer_pattern_constructors(item, ty, environment)?;
                 }
             }
             (PatternKind::Struct(fields), TypeDescriptor::Struct(types)) => {
                 for field in fields {
                     if let Some(ty) = types.get(&field.name.value) {
-                        self.infer_pattern_constructors(&field.pattern, ty, environment)?;
+                        field.pattern = self.infer_pattern_constructors(&field.pattern, ty, environment)?;
                     }
                 }
             }
             (PatternKind::Tagged { tag, payload }, TypeDescriptor::Enum(variants)) => {
                 if let Some(Some(ty)) = variants.get(tag) {
-                    self.infer_pattern_constructors(payload, ty, environment)?;
+                    **payload = self.infer_pattern_constructors(payload, ty, environment)?;
                 }
             }
             (PatternKind::Tagged { payload, .. }, TypeDescriptor::Tagged { payload: ty, .. }) => {
-                self.infer_pattern_constructors(payload, &ty, environment)?;
+                **payload = self.infer_pattern_constructors(payload, &ty, environment)?;
             }
             _ => {}
         }
-        Ok(())
+        Ok(canonical)
     }
 
     fn require_pattern_binding(&mut self, binding: &crate::pattern::PatternBinding) -> Result<TypeDescriptor, String> {

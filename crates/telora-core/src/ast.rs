@@ -254,7 +254,7 @@ pub enum PatternKind {
     String(String),
     Atom(String),
     Tagged { tag: String, payload: Box<Pattern> },
-    Constructor { constructor: Box<Expr>, payload: Box<Pattern> },
+    Constructor { constructor: Box<Expr>, payload: Option<Box<Pattern>> },
     Tuple(Vec<Pattern>),
     Struct(Vec<StructPatternField>),
 }

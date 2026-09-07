@@ -730,7 +730,7 @@ impl Resolver {
                     self.index_pattern(item, scope);
                 }
             }
-            PatternKind::Tagged { payload, .. } | PatternKind::Constructor { payload, .. } => self.index_pattern(payload, scope),
+            PatternKind::Tagged { payload, .. } | PatternKind::Constructor { payload: Some(payload), .. } => self.index_pattern(payload, scope),
             PatternKind::Struct(fields) => {
                 for field in fields {
                     self.index_pattern(&field.pattern, scope);
@@ -744,7 +744,7 @@ impl Resolver {
         match &pattern.value {
             PatternKind::Constructor { constructor, payload } => {
                 self.index_expr(constructor, scopes);
-                self.index_pattern_constructors(payload, scopes);
+                if let Some(payload) = payload { self.index_pattern_constructors(payload, scopes); }
             }
             PatternKind::Tagged { payload, .. } => self.index_pattern_constructors(payload, scopes),
             PatternKind::Tuple(items) => {

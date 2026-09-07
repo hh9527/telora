@@ -1,0 +1,2 @@
+type Event = enum { Progress(Int), Finished };
+export def invalid = match Event.Progress(1) { Event.Progress(value) => value };

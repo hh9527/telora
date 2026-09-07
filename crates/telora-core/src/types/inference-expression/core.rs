@@ -1132,7 +1132,8 @@ impl<'a> GenericInference<'a> {
                 else_branch,
             } => {
                 let value_type = self.infer(value, environment, None)?;
-                self.infer_pattern_constructors(pattern, &value_type, environment)?;
+                let canonical_pattern = self.infer_pattern_constructors(pattern, &value_type, environment)?;
+                let pattern = &canonical_pattern;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
                 let analysis = crate::pattern::analyze_pattern(pattern, &self.resolve(&value_type));
                 if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
@@ -1176,7 +1177,8 @@ impl<'a> GenericInference<'a> {
                 body,
             } => {
                 let value_type = self.infer(value, environment, None)?;
-                self.infer_pattern_constructors(pattern, &value_type, environment)?;
+                let canonical_pattern = self.infer_pattern_constructors(pattern, &value_type, environment)?;
+                let pattern = &canonical_pattern;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
                 let analysis = crate::pattern::analyze_pattern(pattern, &self.resolve(&value_type));
                 if analysis.irrefutable {
@@ -1223,9 +1225,9 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Match { value, arms } => {
                 let value_type = self.infer(value, environment, None)?;
-                for arm in arms {
-                    self.infer_pattern_constructors(&arm.value.pattern, &value_type, environment)?;
-                }
+                let patterns = arms.iter().map(|arm|
+                    self.infer_pattern_constructors(&arm.value.pattern, &value_type, environment)
+                ).collect::<Result<Vec<_>, _>>()?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
                 // These parser-generated intrinsics have an Option contract; this
                 // is not enum synthesis for user-authored match expressions.
@@ -1243,7 +1245,7 @@ impl<'a> GenericInference<'a> {
                 let mut arm_evidence = Vec::new();
                 let mut covered_variants = BTreeSet::new();
                 let mut all_values_covered = false;
-                for arm in arms {
+                for (arm, pattern) in arms.iter().zip(&patterns) {
                     if let Some(query) = &self.query {
                         query.check().map_err(|error| error.to_string())?;
                     }
@@ -1258,13 +1260,13 @@ impl<'a> GenericInference<'a> {
                         (environment.clone(), None, None)
                     };
                     let analysis =
-                        crate::pattern::analyze_pattern(&arm.value.pattern, &resolved_value_type);
+                        crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                     if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                         && !arm.value.irrefutable_required
                         && analysis.problems.is_empty()
                     {
                         let location = crate::pattern::first_incompatible_location(
-                            &arm.value.pattern,
+                            pattern,
                             &resolved_value_type,
                         )
                         .unwrap_or(arm.value.pattern.location);
@@ -1277,7 +1279,7 @@ impl<'a> GenericInference<'a> {
                     }
                     if arm.value.irrefutable_required && !analysis.irrefutable {
                         let location = crate::pattern::first_refutable_location(
-                            &arm.value.pattern,
+                            pattern,
                             &resolved_value_type,
                         )
                         .unwrap_or(arm.value.pattern.location);

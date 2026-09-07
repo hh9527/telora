@@ -86,13 +86,15 @@ impl<'a> Lowerer<'a> {
                         receiver: Box::new(constructor), field,
                     }, location);
                 }
-                let open = self.first_token(node, Token::LParen)?;
-                let payload = self.children(node).find(|child| self.is_pattern(*child)
-                    && self.cst.span(*child).start >= self.cst.span(open).end)
-                    .ok_or_else(|| self.error(node, "constructor pattern has no payload"))?;
+                let payload = if let Some(open) = self.token_children(node, Token::LParen).next() {
+                    let payload = self.children(node).find(|child| self.is_pattern(*child)
+                        && self.cst.span(*child).start >= self.cst.span(open).end)
+                        .ok_or_else(|| self.error(node, "constructor pattern has no payload"))?;
+                    Some(Box::new(self.pattern(payload)?))
+                } else { None };
                 PatternKind::Constructor {
                     constructor: Box::new(constructor),
-                    payload: Box::new(self.pattern(payload)?),
+                    payload,
                 }
             }
             Rule::IdentifierPattern => {

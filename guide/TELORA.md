@@ -296,6 +296,19 @@ enum 成员通过类型名称引用：`type Event = enum { Progress(Int), Finish
 例如 `let empty: Option(Int) = Option.None;`。限定名称确定所属 enum，
 import/reexport 的类型别名保持这个身份。
 
+模式同样可以使用限定成员名称：
+
+```telora
+match event {
+    Event.Progress(value) => value,
+    Event.Finished => 0,
+}
+```
+
+限定模式检查所属声明与被匹配值的类型一致；带载荷成员要求载荷模式，
+无载荷成员直接使用成员名称。它们可以用于嵌套模式、`if let` 和 `let else`。
+模式构造器由声明身份确定；保存构造函数的普通函数绑定仅用于调用。
+
 ```telora
 type Entity = enum {
     'Ticket,

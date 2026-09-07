@@ -142,7 +142,7 @@ pattern:
 | '(' [pattern (?1 ',' pattern)* [',']] ')' @tuple_pattern
 | '{' [struct_pattern_field (?3 ',' struct_pattern_field)* [',']] '}' @struct_pattern
 ;
-constructor_pattern: Identifier ('.' Identifier)* '(' pattern ')';
+constructor_pattern: Identifier ('.' Identifier)* ['(' pattern ')'];
 struct_pattern_field: Identifier [':' pattern];
 string_literal: DoubleQuote string_text_part* DoubleQuote | RawString;
 concat_expression: Backtick string_part* Backtick;

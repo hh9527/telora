@@ -10,17 +10,21 @@ import "@src/test-support" { expect };
 type Event = enum { Progress(Int), Finished };
 type Message(T) = enum { Data(T), Empty };
 type EventConstructor = Fn(Int) -> Event;
+type Id = struct(Int);
+type Envelope = struct { id: Id };
+type Outer = enum { Wrapped(Envelope), Empty };
+type Only = enum { Item(Int) };
 type TypeChoice = enum { Selected(Type), Empty };
 type Chosen = match TypeChoice.Selected(Int) {
-    'Selected(value) => value,
-    'Empty => String,
+    TypeChoice.Selected(value) => value,
+    TypeChoice.Empty => String,
 };
 
 export def qualified = test.should_ok(fn() {
     let progress = Event.Progress(42);
     let finished = Event.Finished;
-    expect(match progress { 'Progress(value) => value == 42, 'Finished => 'False }
-        && match finished { 'Finished => 'True, 'Progress(_) => 'False })
+    expect(match progress { Event.Progress(value) => value == 42, Event.Finished => Bool.False }
+        && match finished { Event.Finished => Bool.True, Event.Progress(_) => Bool.False })
 });
 
 export def tool_stage = test.should_ok(fn() {
@@ -30,25 +34,25 @@ export def tool_stage = test.should_ok(fn() {
 
 export def first_class = test.should_ok(fn() {
     let make: Fn(Int) -> Event = Event.Progress;
-    expect(match make(43) { 'Progress(value) => value == 43, 'Finished => 'False })
+    expect(match make(43) { Event.Progress(value) => value == 43, Event.Finished => Bool.False })
 });
 
 export def generic = test.should_ok(fn() {
     let inferred = Message.Data(44);
     let explicit = Message.Data@[String]("ok");
     let empty: Message(Int) = Message.Empty;
-    expect(match inferred { 'Data(value) => value == 44, 'Empty => 'False }
-        && match explicit { 'Data(value) => value == "ok", 'Empty => 'False }
-        && match empty { 'Empty => 'True, 'Data(_) => 'False })
+    expect(match inferred { Message.Data(value) => value == 44, Message.Empty => Bool.False }
+        && match explicit { Message.Data(value) => value == "ok", Message.Empty => Bool.False }
+        && match empty { Message.Empty => Bool.True, Message.Data(_) => Bool.False })
 });
 
 export def builtin = test.should_ok(fn() {
     let some = Option.Some(45);
     let none: Option(Int) = Option.None;
     let ok = Result.Ok@[Int, String](46);
-    expect(match some { 'Some(value) => value == 45, 'None => 'False }
-        && match none { 'None => 'True, 'Some(_) => 'False }
-        && match ok { 'Ok(value) => value == 46, 'Err(_) => 'False }
+    expect(match some { Option.Some(value) => value == 45, Option.None => Bool.False }
+        && match none { Option.None => Bool.True, Option.Some(_) => Bool.False }
+        && match ok { Result.Ok(value) => value == 46, Result.Err(_) => Bool.False }
         && Bool.True && !Bool.False)
 });
 
@@ -57,8 +61,8 @@ export def ownership = test.should_ok(fn() {
     expect(codec.encode(Value, Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
         && codec.encode(Value, Event.Finished) == Value.String("Finished")
         && match dyn.project_with(EventConstructor, make) {
-            'Some(make) => codec.encode(Value, make(48)) == Value.Object({Progress: Value.Int(48)}),
-            'None => 'False,
+            Option.Some(make) => codec.encode(Value, make(48)) == Value.Object({Progress: Value.Int(48)}),
+            Option.None => Bool.False,
         })
 });
 
@@ -76,4 +80,28 @@ export def imported = test.should_ok(fn() {
         && codec.encode(Value, e) == Value.Object({Data: Value.Int(51)})
         && codec.encode(Value, f) == Value.Object({Progress: Value.Int(52)})
         && codec.encode(Value, model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
+});
+
+export def patterns = test.should_ok(fn() {
+    let Only.Item(value) = Only.Item(55);
+    let nested = match Outer.Wrapped({id: Id(56)}) {
+        Outer.Wrapped({id: Id(inner)}) => inner,
+        Outer.Empty => 0,
+    };
+    let extract: Fn(Event) -> Int = fn(event) {
+        let Event.Progress(progress) = event else { return 0; };
+        progress
+    };
+    let unit = if let Event.Finished = Event.Finished { 57 } else { 0 };
+    let guarded = match Event.Progress(58) {
+        Event.Progress(value) if value == 0 => 0,
+        Event.Progress(value) => value,
+        Event.Finished => 0,
+    };
+    let imported = match model.Event.Progress(59) {
+        RemoteEvent.Progress(value) => value,
+        bridge.Status.Finished => 0,
+    };
+    expect(value == 55 && nested == 56 && unit == 57 && guarded == 58
+        && imported == 59 && extract(Event.Progress(60)) == 60 && extract(Event.Finished) == 0)
 });

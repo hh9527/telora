@@ -16,10 +16,11 @@
   arguments. Qualified enum value constructors, including generic members and
   first-class use, are implemented. Module namespaces and selected values now
   carry explicit binding provenance, including same-name module/type aliases.
-  Member imports/exports, named enum patterns,
-  quoted-syntax removal and checks remain pending.
-- Validation: debug build and workspace tests pass for the binding-provenance
-  batch, including 308 language fixture groups. New behavior is tested in
+  Qualified enum patterns validate nominal ownership before nested payload and
+  exhaustiveness analysis, including tool-stage patterns. Member imports/exports,
+  unqualified member patterns, quoted-syntax removal and checks remain pending.
+- Validation: debug build, workspace tests and 314 language fixture groups pass
+  for qualified enum patterns. New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective
