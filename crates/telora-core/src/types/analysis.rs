@@ -174,6 +174,7 @@ pub(crate) fn analyze_partial_types_recovered(
         PartialAnalysisControl {
             unavailable_imports,
             external_schemes: &BTreeMap::new(),
+            external_interfaces: &BTreeMap::new(),
             query: None,
         },
     )
@@ -182,6 +183,7 @@ pub(crate) fn analyze_partial_types_recovered(
 pub(crate) struct PartialAnalysisControl<'a> {
     pub unavailable_imports: &'a HashSet<String>,
     pub external_schemes: &'a BTreeMap<String, TypeScheme>,
+    pub external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     pub query: Option<&'a crate::query::QueryContext>,
 }
 
@@ -255,6 +257,28 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     let mut types = TypeGraph::default();
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
     let mut evaluator = ToolEvaluator::new(Arc::clone(&debug_sink), tool_heap);
+    let interfaces = control.external_interfaces.iter()
+        .map(|(name, interface)| (name.clone(), interface.qualified(name)))
+        .collect::<BTreeMap<_, _>>();
+    let mut environment = prelude.types.clone();
+    let mut schemes = prelude.schemes.clone();
+    schemes.extend(control.external_schemes.iter().map(|(name, scheme)| (name.clone(), scheme.clone())));
+    for (name, root) in external_roots {
+        if let Some(descriptor) = imported_static_descriptor(
+            ValueRef::persistent(*root, evaluator.main), interfaces.get(name), name,
+        ) {
+            environment.insert(name.clone(), descriptor);
+        }
+    }
+    evaluator.inference_context = Some(ToolInferenceContext {
+        hir: hir.clone(),
+        named_types: interfaces.values().flat_map(|interface| interface.concrete_types.clone()).collect(),
+        interfaces,
+        environment,
+        schemes,
+        builtin_tuple_available: !external_roots.contains_key("Tuple"),
+        dyn_namespaces: imported_dyn_namespaces(&recovered.bindings),
+    });
     let mut tool_values = evaluator
         .install_bootstrap()
         .expect("core prelude values can enter the tool Main world");
@@ -487,6 +511,10 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         (projected, family_value)
                     };
                     let id = types.intern_descriptor(&definition_descriptor);
+                    if let Some(context) = &mut evaluator.inference_context {
+                        context.publish_type(&binding.value.name.value, &definition_descriptor,
+                            definition_schemes.get(&node.definition));
+                    }
                     tool_values.insert(binding.value.name.value.clone(), published_value);
                     facts.insert(node.definition, SemanticFact::known(id));
                 }
@@ -559,6 +587,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                     Ok(built) => {
                         let descriptor = built.scheme.body.clone();
                         let id = types.intern_descriptor(&descriptor);
+                        if let Some(context) = &mut evaluator.inference_context {
+                            context.publish_type(&binding.value.name.value, &descriptor, Some(&built.scheme));
+                        }
                         definition_schemes.insert(definition, built.scheme);
                         tool_values.insert(binding.value.name.value.clone(), built.family_value);
                         facts.insert(definition, SemanticFact::known(id));
@@ -642,6 +673,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         let binding = bindings[definition];
                         let name = &binding.value.name.value;
                         facts.insert(*definition, SemanticFact::known(roots[name]));
+                        if let Some(context) = &mut evaluator.inference_context {
+                            context.publish_type(name, &descriptors[name], None);
+                        }
                         tool_values.insert(name.clone(), values[name]);
                     }
                 } else {

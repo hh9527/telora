@@ -284,6 +284,10 @@ JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 模式可以嵌套，支持泛型和模块限定名称，例如 `Box(UserId(value))` 与
 `model.UserId(value)`。模式中的构造器名称引用类型声明；载荷保留自己的类型。
 
+类型计算和 decorator 参数也可以使用构造器。例如
+`type Wrapped = struct(Type); type Selected = Wrapped(Int).0;` 中 Selected
+表示 Int。类型上下文决定声明的类型用途，值上下文提供构造器函数。
+
 ```telora
 type Entity = enum {
     'Ticket,

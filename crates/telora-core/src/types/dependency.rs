@@ -419,6 +419,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
+    evaluator.inference_context = Some(ToolInferenceContext {
+        hir: hir.clone(),
+        interfaces: qualified_external_interfaces.clone(),
+        environment: static_environment.clone(),
+        schemes: binding_schemes.clone(),
+        named_types: imported_named_types.clone(),
+        builtin_tuple_available: !external_roots.contains_key("Tuple"),
+        dyn_namespaces: imported_dyn_namespaces(&program.value.body.value.bindings),
+    });
     let type_definitions = type_bindings.keys().copied().collect::<HashSet<_>>();
     let type_dependencies = type_dependency_graph(&hir, &type_definitions);
     for node in &type_dependencies.nodes {
@@ -455,18 +464,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .filter(|(_, binding)| !binding.value.type_parameters.is_empty())
         .map(|(definition, _)| *definition)
         .collect::<Vec<_>>();
-    let family_dependents = type_definitions
-        .iter()
-        .copied()
-        .filter(|definition| {
-            family_definitions.iter().any(|family| {
-                *definition == *family
-                    || dependency_reaches(&type_dependencies, *definition, *family)
-            })
-        })
-        .collect::<Vec<_>>();
     let mut scheduled_types = BTreeSet::new();
-    let mut frontier = family_dependents;
+    let mut frontier = family_definitions;
     let helper_dependent_types = type_definitions
         .iter()
         .copied()
@@ -514,6 +513,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     while !pending_types.is_empty() {
         let mut progressed = false;
         for definition in pending_types.iter().copied().collect::<Vec<_>>() {
+            evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
             let node = type_dependencies
                 .nodes
                 .iter()
@@ -910,6 +910,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
 
+    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
     let mut definition_contracts = HashMap::new();
     let mut declaration_locations = HashMap::new();
     let mut definition_counts = HashMap::<String, usize>::new();
@@ -1075,6 +1076,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     for binding in &program.value.body.value.bindings {
+        evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
         let inferred_expression = infer_expr_recorded(
             &binding.value.value,
             &static_environment,
@@ -1264,6 +1266,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     &binding.value.value,
                     &tool_values,
                     &expression_descriptors,
+                    binding.value.annotation.as_ref().and_then(|_| binding_types.get(&binding.value.name.value)),
                     account,
                     sources,
                     &mut evaluator,
@@ -1286,6 +1289,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     &binding.value.value,
                     &tool_values,
                     &expression_descriptors,
+                    definition_contracts.get(name),
                     account,
                     sources,
                     &mut evaluator,
@@ -1324,6 +1328,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
 
+    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
     let local_type_properties = evaluate_declared_properties(
         source_name,
         program,
@@ -1406,16 +1411,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     )?;
     let mut named_types = imported_named_types;
     named_types.extend(declared_types.clone());
-    let dyn_namespaces = program
-        .value
-        .body
-        .value
-        .bindings
-        .iter()
-        .filter(|&binding| binding.value.kind == BindingKind::Import
-                && binding.value.imported_name.is_none()
-                && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/dyn")).map(|binding| binding.value.name.value.clone())
-        .collect::<HashSet<_>>();
+    let dyn_namespaces = imported_dyn_namespaces(&program.value.body.value.bindings);
     let display_trait = program
         .value
         .body

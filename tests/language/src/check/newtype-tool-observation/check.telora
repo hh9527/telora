@@ -1,0 +1,8 @@
+import "@src/support" as support;
+import "std/value" { Value };
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    support.bool_value(support.exit_code(actual) == 'Some(0)
+        && support.stream_length(actual, "stderr") == 'Some(1)
+        && support.stream_contains_string_field(actual, "stderr", "message", "newtype annotation"))
+};

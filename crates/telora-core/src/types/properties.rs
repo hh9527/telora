@@ -351,15 +351,24 @@ fn evaluate_property_decorator(
     let mut values = tool_values.clone();
     let previous = evaluator.previous_property_value(previous);
     values.insert(PROPERTY_PREVIOUS_BINDING.into(), previous);
+    let previous_environment = evaluator.inference_context.as_mut()
+        .map(|context| std::mem::replace(&mut context.environment, environment));
     let property = evaluate_typed_tool_expression_silent(
         source_name,
         &call,
         &values,
         &descriptors,
+        Some(&property_descriptor),
         account,
         sources,
         evaluator,
-    )?;
+    );
+    if let Some(environment) = previous_environment
+        && let Some(context) = &mut evaluator.inference_context
+    {
+        context.environment = environment;
+    }
+    let property = property?;
     if property.type_id() != Some(property_type) {
         return Err(FrontendError::from_diagnostic(
             sources,

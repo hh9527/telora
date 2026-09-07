@@ -297,6 +297,75 @@ fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) ->
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn infer_tool_expression_evidence(
+    source_name: &str,
+    expression: &Expr,
+    bindings: &BTreeMap<String, Val>,
+    expected: Option<&TypeDescriptor>,
+    account: &mut QuotaAccount,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator,
+) -> Option<ToolExpressionEvidence> {
+    let context = evaluator.inference_context.as_ref()?;
+    if !context.named_types.values().any(|descriptor| {
+        matches!(descriptor, TypeDescriptor::Declared(declared)
+            if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_)))
+    }) && !context.schemes.values()
+        .chain(context.interfaces.values().flat_map(|interface| interface.exports.values()))
+        .any(|scheme| newtype_constructor_type(&scheme.body).is_some())
+    {
+        return None;
+    }
+    let mut annotations = HashMap::new();
+    evaluator.inference_depth += 1;
+    let annotation_result = collect_nested_annotation_types(
+        source_name, expression, bindings, account, sources, evaluator, &mut annotations,
+    );
+    evaluator.inference_depth -= 1;
+    annotation_result.ok()?;
+    let context = evaluator.inference_context.as_ref()?;
+    let mut environment = context.environment.clone();
+    let mut schemes = context.schemes.clone();
+    // Bound type parameters supplied by the metadata scheduler are lexical
+    // evidence, just like the parameters supplied to the final inference pass.
+    for (name, value) in bindings {
+        if let Some(scheme) = context.interfaces.get(name)
+            .and_then(|interface| interface.exports.get(name))
+        {
+            schemes.insert(name.clone(), scheme.clone());
+        }
+        if let Ok(descriptor) = evaluator.decode_type(*value, "Type") {
+            environment.insert(name.clone(), TypeDescriptor::TypeOf(Box::new(descriptor)));
+        } else if let Some(interface) = context.interfaces.get(name)
+            && let Some(descriptor) = imported_static_descriptor(
+                ValueRef::work(*value, &evaluator.work, evaluator.main), Some(interface), name,
+            )
+        {
+            environment.insert(name.clone(), descriptor);
+        }
+    }
+    let implementations = context.interfaces.values()
+        .flat_map(|interface| interface.trait_implementations.clone()).collect::<Vec<_>>();
+    let properties = context.interfaces.values()
+        .flat_map(|interface| interface.type_properties.clone()).collect::<Vec<_>>();
+    let traits = context.interfaces.values()
+        .flat_map(|interface| interface.traits.clone()).collect::<BTreeMap<_, _>>();
+    let display_trait = context.interfaces.values().find_map(|interface| interface.display_trait)
+        .map(|id| (id, "std/fmt.Display".to_owned()));
+    let mut inference = GenericInference::new(
+        &schemes, &context.hir, &context.interfaces, &context.named_types,
+        &annotations, &implementations, &properties, &traits, display_trait,
+        &context.dyn_namespaces, context.builtin_tuple_available, account.query_context(),
+    );
+    // Metadata is evaluated incrementally; incomplete declarations are checked
+    // by the final pass. Only successful inference contributes compiler evidence.
+    inference.infer(expression, &environment, expected).ok()?;
+    let descriptors = inference.records.iter()
+        .map(|(location, descriptor)| (*location, inference.resolve(descriptor))).collect();
+    Some(ToolExpressionEvidence { descriptors, newtype_constructors: inference.newtype_constructors })
+}
+
 fn evaluate_tool_expression(
     source_name: &str,
     expression: &Expr,
@@ -310,6 +379,7 @@ fn evaluate_tool_expression(
         expression,
         bindings,
         None,
+        Some(&TypeDescriptor::Type),
         account,
         sources,
         evaluator,
@@ -322,6 +392,7 @@ fn evaluate_typed_tool_expression_silent(
     expression: &Expr,
     bindings: &BTreeMap<String, Val>,
     expression_descriptors: &HashMap<crate::Location, TypeDescriptor>,
+    expected: Option<&TypeDescriptor>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
@@ -331,6 +402,7 @@ fn evaluate_typed_tool_expression_silent(
         expression,
         bindings,
         Some(expression_descriptors),
+        expected,
         account,
         sources,
         evaluator,
@@ -344,23 +416,30 @@ fn evaluate_tool_expression_with_debug(
     expression: &Expr,
     bindings: &BTreeMap<String, Val>,
     expression_descriptors: Option<&HashMap<crate::Location, TypeDescriptor>>,
+    expected: Option<&TypeDescriptor>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
     observed: bool,
 ) -> Result<Val, FrontendError> {
+    let evidence = infer_tool_expression_evidence(
+        source_name, expression, bindings, expected, account, sources, evaluator,
+    );
+    let newtype_constructors = evidence.as_ref()
+        .map(|evidence| evidence.newtype_constructors.clone()).unwrap_or_default();
+    let mut descriptors = expression_descriptors.cloned().unwrap_or_default();
+    if let Some(evidence) = evidence { descriptors.extend(evidence.descriptors); }
     let mut bindings = bindings.clone();
     let mut declared_value_owners = HashMap::new();
-    if let Some(expression_descriptors) = expression_descriptors {
-        for (location, descriptor) in
-            expression_descriptors
-                .iter()
-                .filter(|(location, descriptor)| {
-                    expression.location.start <= location.start
-                        && location.end <= expression.location.end
-                        && matches!(descriptor, TypeDescriptor::Declared(_))
-                        && !type_identity_is_symbolic(descriptor)
-                })
+    for (location, descriptor) in &descriptors {
+        let descriptor = if newtype_constructors.contains(location)
+            && let TypeDescriptor::Function { result, .. } = descriptor
+        { result.as_ref() } else { descriptor };
+        if location.source == expression.location.source
+            && expression.location.start <= location.start
+            && location.end <= expression.location.end
+            && matches!(descriptor, TypeDescriptor::Declared(_))
+            && !type_identity_is_symbolic(descriptor)
         {
             let key = crate::compiler::declared_owner_link_key(*location);
             bindings.insert(key.clone(), evaluator.descriptor(descriptor)?);
@@ -373,6 +452,7 @@ fn evaluate_tool_expression_with_debug(
         expression,
         bindings.keys().cloned(),
         declared_value_owners,
+        newtype_constructors,
         sources.get(expression.location.source),
     )?;
     let externals = bindings
@@ -380,7 +460,7 @@ fn evaluate_tool_expression_with_debug(
         .map(|(name, value)| (name.clone(), *value))
         .collect::<HashMap<_, _>>();
     let work = std::mem::replace(&mut evaluator.work, Heap::work_for(evaluator.main));
-    let vm = if observed {
+    let vm = if observed && evaluator.inference_depth == 0 {
         &mut evaluator.observed_vm
     } else {
         &mut evaluator.silent_vm

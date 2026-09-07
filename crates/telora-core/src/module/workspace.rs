@@ -506,6 +506,7 @@ impl WorkspaceBuilder<'_> {
                 PartialAnalysisControl {
                     unavailable_imports: &unavailable_imports,
                     external_schemes: &external_schemes,
+                    external_interfaces: &external_interfaces,
                     query: self.query,
                 },
             );

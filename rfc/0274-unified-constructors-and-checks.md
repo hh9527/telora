@@ -1,6 +1,6 @@
 # RFC 0274: Unified Constructors and Construction Checks
 
-- Status: Draft; stage-one representation implementation is in progress.
+- Status: Draft; stage one is implemented, stages two and three remain pending.
 - Tracking: [#161](https://github.com/hh9527/telora/issues/161)
 - Branch: `feat/0161-unified-constructors`
 - Baseline: `83bb8a6`
@@ -11,9 +11,11 @@
   `.0` access, payload codecs, schema and Dyn tuple observation are implemented
   on the branch. Runtime callable constructors, generic application and
   first-class use and declaration-resolved newtype patterns are implemented.
-  Tool-stage callable construction, named enum constructors and checks remain pending.
-- Validation: debug build and workspace tests pass for the constructor pattern
-  batch, including 296 language fixture groups. New behavior is tested in
+  Tool-stage callable construction shares strict inference evidence, including
+  generic/imported constructors, helper functions, codec ownership and decorator
+  arguments. Named enum constructors and checks remain pending.
+- Validation: debug build and workspace tests pass for the tool-stage constructor
+  batch, including 300 language fixture groups. New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective
@@ -98,8 +100,9 @@ module interfaces retain declaration identity; arbitrary Type-valued bindings
 and ordinary functions returning Type do not acquire a constructor facet.
 Synthesized module exports preserve declarations and their generic contracts.
 Runtime selection does not inspect argument values or constructor spelling.
-Tool-stage construction still needs the same inference evidence propagated to
-its expression compiler before this stage can be declared complete.
+Tool-stage construction propagates the same inference evidence to its expression
+compiler. Incremental metadata evaluation uses currently resolved declarations
+and contracts; final inference remains the authority for the complete program.
 
 Imports, exports and aliases must preserve the two facets of the declaration;
 they must not manufacture duplicate nominal identities. Duplicate source names

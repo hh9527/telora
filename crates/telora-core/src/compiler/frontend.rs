@@ -367,6 +367,7 @@ pub(crate) fn compile_expression_with_external_bindings(
     expression: &Expr,
     bindings: impl IntoIterator<Item = String>,
     declared_value_owners: HashMap<Location, String>,
+    newtype_constructors: HashSet<Location>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {
     let bindings = bindings.into_iter().collect::<Vec<_>>();
@@ -393,7 +394,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
         declared_value_owners,
-        newtype_constructors: HashSet::new(),
+        newtype_constructors,
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
