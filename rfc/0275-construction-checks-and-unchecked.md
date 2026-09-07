@@ -2,6 +2,8 @@
 
 - Status: Draft; design questions below must be resolved before dependent implementation.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
+- Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
+  codec field constraints; see the compatibility analysis below.
 - Branch: `feat/0161-unified-constructors`
 - Depends on: [RFC 0274](0274-unified-constructors-and-checks.md).
 - Related: RFC 0237, RFC 0248, RFC 0258, RFC 0259, RFC 0269, RFC 0270, RFC 0271.
@@ -100,6 +102,40 @@ a separate RFC does not silently decide them.
    new one must remain distinguishable.
 
 ## Implementation Plan
+
+### Relationship to Issue 143
+
+Issue 143 proposes independent decode/encode field constraints that preserve
+field types and wire shape. This RFC is intended to supersede that proposal
+through construction invariants, rather than implement its original API verbatim.
+The issue remains open until this replacement is implemented and accepted.
+
+A struct check can validate its fields without changing their declared types;
+a checked newtype can provide a reusable constrained field type with transparent
+payload encoding. Both approaches must preserve the successful value and codec
+schema shape when only a validation rule is added.
+
+Unlike #143, ordinary language construction also validates candidates. Encoding
+an already checked value does not repeat its check. Independent decode-only and
+encode-only policies are not implied by construction invariants and are not part
+of this replacement. Any continuing need for direction-specific wire policies
+must be treated separately before closing #143 as superseded.
+
+Carry forward #143's requirements for checker signature diagnostics, original
+field provenance, atomic failure without partial object publication, consistent
+shared codec behavior, and stable check-function identity across module/heap
+publication and codec plan reuse. Returning a message for a cross-field check
+does not itself identify a failing field: the error contract must settle how to
+associate that rejection with the original field Value and retain a structured
+reference suitable for the future documentation support tracked by #138.
+
+Acceptance must demonstrate unchanged successful values and schema shape,
+rejection of invalid decoded and directly constructed candidates, preserved
+field provenance, and valid-value encoding without repeated checks. Record the
+semantic replacement explicitly when closing #143; do not claim that its
+independent directional constraint API was implemented.
+
+### Delivery Sequence
 
 First settle the above contracts and add focused language examples for their
 observable results. Then implement unchecked identity and observation, followed
