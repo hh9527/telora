@@ -185,8 +185,8 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"def identity: Fn(Int) -> Int = fn(value) { value }; type State = enum {'Ok};
-               def data = { text: "line\nnext", items: (1, 'Ok.ty!(State), (2,)) };
+            r#"def identity: Fn(Int) -> Int = fn(value) { value }; type State = enum {Ok};
+               def data = { text: "line\nnext", items: (1, State.Ok, (2,)) };
                def observed = dbg!(data, "loaded\nvalue");
                def seen_identity = dbg!(identity);
                def seen_value = dbg!(observed);

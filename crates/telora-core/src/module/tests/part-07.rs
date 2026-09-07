@@ -209,8 +209,8 @@ def transform: Fn(Int) -> Int = fn(item) {
     if item == 2 { fail!("two", item) } else { item + 10 }
 };
 export def output = match array.get(array.map([1, 2, 3], transform), 0) {
-    'Some(value) => value,
-    'None => 0,
+    Some(value) => value,
+    None => 0,
 };"#,
         )
         .unwrap();
@@ -444,24 +444,24 @@ export def output = (compared, selected);"#,
                import "std/value" { Value };
                def classify: Fn(Value) -> String = fn(value) {
                    match value {
-                       'None => "None",
-                       'True => "True",
-                       'False => "False",
-                       'Int(_) => "Int",
-                       'Float(_) => "Float",
-                       'String(_) => "String",
-                       'Bytes(_) => "Bytes",
-                       'Array(_) => "Array",
-                       'Object(_) => "Object",
-                       'LocalDate(_) => "LocalDate",
-                       'LocalTime(_) => "LocalTime",
-                       'LocalDateTime(_) => "LocalDateTime",
-                       'OffsetDateTime(_) => "OffsetDateTime",
+                       Value.None => "None",
+                       Value.True => "True",
+                       Value.False => "False",
+                       Value.Int(_) => "Int",
+                       Value.Float(_) => "Float",
+                       Value.String(_) => "String",
+                       Value.Bytes(_) => "Bytes",
+                       Value.Array(_) => "Array",
+                       Value.Object(_) => "Object",
+                       Value.LocalDate(_) => "LocalDate",
+                       Value.LocalTime(_) => "LocalTime",
+                       Value.LocalDateTime(_) => "LocalDateTime",
+                       Value.OffsetDateTime(_) => "OffsetDateTime",
                    }
                };
-               def json: Dict(Value) = match json_data {'Object(fields) => fields, _ => {}};
-               def yaml: Dict(Value) = match yaml_data {'Object(fields) => fields, _ => {}};
-               def toml: Dict(Value) = match toml_data {'Object(fields) => fields, _ => {}};
+               def json: Dict(Value) = match json_data {Value.Object(fields) => fields, _ => {}};
+               def yaml: Dict(Value) = match yaml_data {Value.Object(fields) => fields, _ => {}};
+               def toml: Dict(Value) = match toml_data {Value.Object(fields) => fields, _ => {}};
                def encoded_identity = codec.encode(Value, json_data);
                def decoded_identity = codec.decode(Value, encoded_identity) |> result.unwrap;
                export def output = {
@@ -622,7 +622,7 @@ export def output = (compared, selected);"#,
         for source in [
             r#"import "std/json" as json; json.parse("")"#,
             r#"import "std/json" as json; json.decode(Int, "\"wrong\"")"#,
-            r#"import "std/codec" as codec; codec.decode(Int, 'String("wrong"))"#,
+            r#"import "std/codec" as codec; codec.decode(Int, codec.Value.String("wrong"))"#,
         ] {
             fs::write(&main, source).unwrap();
             let failed_decode = load_module(&main, BTreeMap::new(), 100_000).unwrap();

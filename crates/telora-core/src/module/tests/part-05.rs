@@ -136,8 +136,8 @@
             r#"import "std/dyn" as dyn;
                def consume: Fn(Dyn) -> Bool = fn(value) {
                    match dyn.project_with(String, value) {
-                       'Some(_) => 'True,
-                       'None => 'False,
+                       Some(_) => True,
+                       None => False,
                    }
                };
                def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume);
@@ -263,7 +263,7 @@
         fs::write(
             &path,
             r#"import "std/json" as json;
-               type Shape = enum {'Number(Int), 'Strings(Array(String)), 'Pair(Tuple([Int, String]))};
+               type Shape = enum {Number(Int), Strings(Array(String)), Pair(Tuple([Int, String]))};
                json.stringify(json.schema(Shape))"#,
         )
         .unwrap();
@@ -335,7 +335,7 @@
                    children: [{value: 2, children: []}],
                })) |> result.unwrap;
                let pair = codec.decode(Types.Left, codec.encode(codec.Value, {
-                   right: {left: 'None.ty!(Option(Types.Left))},
+                   right: {left: None.ty!(Option(Types.Left))},
                })) |> result.unwrap;
                {
                    node: node,
@@ -372,8 +372,8 @@
                import "std/codec" as codec;
                import "std/result" as result;
                match codec.decode(Types.Node, data) {
-                   'Ok(value) => value,
-                   'Err(error) => fail!(error.message, error.value),
+                   Ok(value) => value,
+                   Err(error) => fail!(error.message, error.value),
                }"#,
         )
         .unwrap();

@@ -4,11 +4,11 @@
             "hir.telora",
             "decl loop: Fn(Int) -> Int;\
              def loop = fn(n) { if n < 1 { n } else { loop(n - 1) } };\
-             let f = fn(x) { let x = x; match ('Ok, x) { ('Ok, y) => y, _ => ext } };\
+             let f = fn(x) { let x = x; match (Bool.True, x) { (Bool.True, y) => y, _ => ext } };\
              f(loop(2))",
         )
         .unwrap();
-        let hir = HirProgram::resolve(&program, ["Func".into(), "Int".into(), "ext".into()]);
+        let hir = HirProgram::resolve(&program, ["Func".into(), "Int".into(), "Bool".into(), "ext".into()]);
         let unresolved = hir
             .unresolved()
             .map(|reference| reference.name.as_str())

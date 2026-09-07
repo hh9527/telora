@@ -4,7 +4,7 @@ fn eval_reads_a_value_export_without_an_entry() {
     fs::write(
         cwd.join("src/pure.telora"),
         r#"import "std/value" {Value};
-export def answer: Value = 'Object({"kind": 'String("pure"), "value": 'Int(42)});"#,
+export def answer: Value = Value.Object({"kind": Value.String("pure"), "value": Value.Int(42)});"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -36,18 +36,18 @@ import "std/value" {Value};
 def config: entry.ContextConfig = {
     sources: ["request"],
     envs: ["TELORA_EVAL_TEST"],
-    args: 'True,
+    args: True,
 };
 export def evaluate = entry.main(config, fn(ctx) {
     let env_ok = match dict.get(ctx.env, "TELORA_EVAL_TEST") {
-        'Some(value) => value == "visible",
-        'None => 'False,
+        Some(value) => value == "visible",
+        None => False,
     };
-    let args_ok = array.length(ctx.args) == 2 && array.get(ctx.args, 1) == 'Some("two");
+    let args_ok = array.length(ctx.args) == 2 && array.get(ctx.args, 1) == Some("two");
     if env_ok && args_ok {
         match dict.get(ctx.sources, "request") {
-            'Some(value) => value,
-            'None => fail!("missing request"),
+            Some(value) => value,
+            None => fail!("missing request"),
         }
     } else {
         fail!("invalid eval context", ctx)
@@ -106,7 +106,7 @@ fn eval_contracts_require_value_results() {
         cwd.join("src/pure.telora"),
         r#"import "std/value" {Value};
 export def raw = 42;
-export def wrong: Fn(Int) -> Value = fn(value) { 'Int(value) };"#,
+export def wrong: Fn(Int) -> Value = fn(value) { Value.Int(value) };"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -155,16 +155,16 @@ fn run_selector_uses_the_manifest_discovery_start() {
     let other = fixture();
     fs::write(
         other.join("src/app.telora"),
-        r#"import "std/actor" as actor;
+        r#"import "std/actor" as actor; import "std/value" {Value};
 import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {};
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 export def run = entry.run(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
-            'Request(request) => (state, [actor.reply(request.id, 'Int(9))]),
-            'EesReply(_) => fail!("unexpected EES reply"),
+            actor.Event.Request(request) => (state, [actor.reply(request.id, Value.Int(9))]),
+            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
         }
     };
     ({}, reduce)

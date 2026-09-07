@@ -28,8 +28,8 @@
                });
                let indexed: Dict(Node) = {root: root, leaf: leaf};
                let mapped_dict: Dict(Node) = dict.map_values(indexed, identity);
-               let maybe: Option(Node) = option.map('Some(root), identity);
-               let outcome: NodeResult = result.map('Ok(root), identity);
+               let maybe: Option(Node) = option.map(Some(root), identity);
+               let outcome: NodeResult = result.map(Ok(root), identity);
                let packed = dyn.pack(Node, root);
                let decoded: Node = codec.decode(
                    Node,
@@ -104,13 +104,13 @@
             directory.join("types.telora"),
             r#"type IntValue = struct {value: Int};
                type StringValue = struct {value: String};
-               type Val = enum {'Int(IntValue), 'Str(StringValue)};
+               type Val = enum {Int(IntValue), Str(StringValue)};
                type BinaryNode = struct {left: Expr, right: Expr};
                type ColumnRef = struct {alias: String, column: String};
                type Expr = enum {
-                   'Value(Val),
-                   'Add(BinaryNode),
-                   'Column(ColumnRef),
+                   Value(Val),
+                   Add(BinaryNode),
+                   Column(ColumnRef),
                };
                type Mapping = struct {predicate: Expr};
                type Relation(M) = struct {mapping: M};
@@ -127,13 +127,13 @@
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               type Entity = enum {'Order};
+               type Entity = enum {Order};
                type Use = types.RelationUse(Entity);
                let relation: Use = {
-                   entity: 'Order,
-                   relation: {mapping: {predicate: 'Add({
-                       left: 'Value('Int({value: 1})),
-                       right: 'Column({alias: "t", column: "id"}),
+                   entity: Entity.Order,
+                   relation: {mapping: {predicate: types.Expr.Add({
+                       left: types.Expr.Value(types.Val.Int({value: 1})),
+                       right: types.Expr.Column({alias: "t", column: "id"}),
                    })}},
                };
                 {
@@ -159,7 +159,7 @@
         fs::write(
             directory.join("types.telora"),
             r#"type Call = struct {args: Array(Expr)};
-               type Expr = enum {'Int(Int), 'Call(Call)};
+               type Expr = enum {Int(Int), Call(Call)};
                type Plan = struct {grouping: Array(Expr)};
                export {Expr, Plan};"#,
         )
@@ -170,8 +170,8 @@
                import "std/array" as array;
                def normalize_expr: Fn(types.Expr) -> types.Expr = fn(expr) {
                    match expr {
-                       'Int(value) => 'Int(value),
-                       'Call(call) => 'Call({
+                       types.Expr.Int(value) => types.Expr.Int(value),
+                       types.Expr.Call(call) => types.Expr.Call({
                            args: array.map(call.args, normalize_expr),
                        }),
                    }
@@ -189,9 +189,9 @@
                import "std/codec" as codec;
                import "std/result" as result;
                import "std/value" {Value};
-               let expr: types.Expr = 'Call({args: [
-                   'Call({args: ['Int(1)]}),
-                   'Int(2),
+               let expr: types.Expr = types.Expr.Call({args: [
+                   types.Expr.Call({args: [types.Expr.Int(1)]}),
+                   types.Expr.Int(2),
                ]});
                let produced: types.Plan = creator.make_plan(expr);
                let direct: types.Plan = {grouping: [expr]};
@@ -219,7 +219,7 @@
             directory.join("types.telora"),
             r#"import "std/codec" as codec;
                type Binary = struct {left: Expr, right: Expr};
-               type Expr = enum {'Lit(Int), 'Add(Binary)};
+               type Expr = enum {Lit(Int), Add(Binary)};
                type Payload(A, B, C, D, E, F, G) = struct {
                    a: A, b: B, c: C, d: D, e: E, f: F, g: G,
                };
@@ -240,11 +240,11 @@
                let rejection: types.Rejection = {
                    a: 1,
                    b: "two",
-                   c: 'True,
+                   c: True,
                    d: 4.0,
-                   e: 'Add({left: 'Lit(5), right: 'Lit(6)}),
+                   e: types.Expr.Add({left: types.Expr.Lit(5), right: types.Expr.Lit(6)}),
                    f: [7],
-                   g: 'Some("eight"),
+                   g: Some("eight"),
                };
                types.encode_rejection(rejection)
                    |> json.stringify"#,
@@ -262,11 +262,11 @@
                types.encode_rejection({
                    a: "wrong",
                    b: "two",
-                   c: 'True,
+                   c: True,
                    d: 4.0,
-                   e: 'Lit(5),
+                   e: types.Expr.Lit(5),
                    f: [7],
-                   g: 'None,
+                   g: None,
                })"#,
         )
         .unwrap();
@@ -283,15 +283,15 @@
         fs::write(
             directory.join("expr.telora"),
             r#"type Binary = struct {left: Expr, right: Expr};
-               type Expr = enum {'Lit(Int), 'Add(Binary)};
-               def lit: Fn(Int) -> Expr = fn(value) { 'Lit(value) };
+               type Expr = enum {Lit(Int), Add(Binary)};
+               def lit: Fn(Int) -> Expr = fn(value) { Expr.Lit(value) };
                def add: Fn(Expr, Expr) -> Expr = fn(left, right) {
-                   'Add({left, right})
+                   Expr.Add({left, right})
                };
                def depth: Fn(Expr) -> Int = fn(expr) {
                    match expr {
-                       'Lit(_) => 1,
-                       'Add({left, right}) => 1 + depth(left) + depth(right),
+                       Expr.Lit(_) => 1,
+                       Expr.Add({left, right}) => 1 + depth(left) + depth(right),
                    }
                };
                export {Binary, Expr, lit, add, depth};"#,
@@ -305,10 +305,10 @@
                import "std/type-desc" as desc;
                def has_ref = fn(ty, fuel) {
                    if fuel < 1 {
-                       'False
+                       False
                    } else {
-                       if desc.kind(ty) == 'Ref {
-                           'True
+                       if desc.kind(ty) == desc.TypeDescKind.Ref {
+                           True
                        } else {
                            array.any(desc.children(ty), fn(child) {
                                has_ref(child, fuel - 1)

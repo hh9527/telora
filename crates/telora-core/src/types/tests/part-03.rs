@@ -5,7 +5,7 @@
             "type Box(A) = struct {value: A};\
              type Other(A) = struct {value: A};\
              type Phantom(A) = struct {value: Int};\
-             type Maybe(A) = enum {'None, 'Some(A)};\
+             type Maybe(A) = enum {None, Some(A)};\
              type IntBox = Box(Int);\
              type IntBoxAlias = Box(Int);\
              type Text = Box(String);\
@@ -271,7 +271,7 @@
             "recursive-expr.telora",
             "type CallNode = struct {args: Array(Expr)};\
              type BinNode = struct {left: Expr, right: Expr};\
-             type Expr = enum {'Literal(Int), 'Call(CallNode), 'Bin(BinNode)};\
+             type Expr = enum {Literal(Int), Call(CallNode), Bin(BinNode)};\
              type Plan(A) = struct {root: Expr, value: A};\
              def render: Fn(Expr) -> String = fn(expr) { \"ok\" };\
              def transform: for(A) Fn(Plan(A)) -> String = fn(plan) { render(plan.root) };\
@@ -330,7 +330,7 @@
     fn partial_type_evaluation_accepts_productive_recursive_families() {
         let partial = analyze_partial_types(
             "recursive-family.telora",
-            "type Expr(A) = enum {'Leaf(A), 'Call(Array(Expr(A)))}; 0",
+            "type Expr(A) = enum {Leaf(A), Call(Array(Expr(A)))}; 0",
             Quota::with_fuel(100),
         );
         let expression_family = partial

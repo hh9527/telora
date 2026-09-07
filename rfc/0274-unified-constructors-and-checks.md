@@ -35,7 +35,9 @@
   Branch joins combine enum payload and same-family generic argument evidence;
   return boundaries and collection joins share this propagation. Concrete
   evidence propagates until no further variables can be solved.
-  Quoted-syntax removal in the parser, embedded sources and remaining documentation,
+  Rust-embedded Telora sources now use named constructors and patterns throughout
+  core and CLI tests, while runtime display snapshots retain Atom/Tagged output.
+  Quoted-syntax removal in the parser and remaining documentation,
   and construction checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
 - Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
@@ -49,6 +51,9 @@
   migration passed debug build, workspace tests and 338 language fixture groups.
   The focused branch suite passed nine cases, including if-let and empty spreads;
   export queries confirm Result(String, Int) for both match-arm orders.
+  The Rust-embedded source migration passed workspace tests, including core,
+  CLI and language acceptance tests. Diagnostic provenance assertions continue
+  to verify both original data and authored failure locations.
   New behavior is tested in
   `.telora`; no release binary was built.
 

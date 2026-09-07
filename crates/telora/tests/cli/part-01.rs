@@ -24,20 +24,20 @@ fn run_and_check_select_logical_roots_from_cwd() {
     fs::write(
         cwd.join("src/app.telora"),
         r#"import "@src/lib" {output};
-import "std/actor" as actor;
+import "std/actor" as actor; import "std/value" {Value};
 import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {output: String, completed: Bool};
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 export def run = entry.run(State, config, ees.none, fn(ctx) {
-    let initial: State = {output, completed: 'False};
+    let initial: State = {output, completed: False};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
-            'Request(request) => (
-                {output: state.output, completed: 'True},
-                [actor.reply(request.id, 'String(state.output))],
+            actor.Event.Request(request) => (
+                {output: state.output, completed: True},
+                [actor.reply(request.id, Value.String(state.output))],
             ),
-            'EesReply(_) => fail!("unexpected EES reply"),
+            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
         }
     };
     (initial, reduce)
@@ -252,12 +252,12 @@ fn check_suppresses_parser_recovery_fallout_but_keeps_independent_errors() {
     let cases: &[(&str, &str, &[&str])] = &[
         (
             "one-root",
-            "export def broken = match 'A { 'A 1, _ => 2 };",
+            "export def broken = match A { A 1, _ => 2 };",
             &["missing FatArrow"],
         ),
         (
             "two-roots",
-            "export def first = (1 + 2; export def second = match 'A { 'A 1, _ => 2 };",
+            "export def first = (1 + 2; export def second = match A { A 1, _ => 2 };",
             &[
                 "invalid syntax, expected one of: ',', ')'",
                 "missing FatArrow",
@@ -293,7 +293,7 @@ fn check_accepts_a_complete_module_with_warnings() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/warning.telora"),
-        "def reject: Fn() -> Result(Int, String) = fn() { 'Err(\"notice\") }; def checked = reject.should_ok!(); export def output = 1;",
+        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject.should_ok!(); export def output = 1;",
     )
     .unwrap();
     let check = telora(&cwd)
@@ -324,7 +324,7 @@ fn eval_writes_contextual_debug_as_stderr_jsonl() {
         r#"import "std/value" {Value};
 def var = 3;
 def observed = var.dbg!("observed");
-export def answer: Value = 'Int(observed);"#,
+export def answer: Value = Value.Int(observed);"#,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -355,7 +355,7 @@ fn check_keeps_recursive_type_metadata_inside_the_semantic_boundary() {
     fs::write(
         cwd.join("src/recursive.telora"),
         r#"type CallExpr = struct { args: Array(Expr) };
-type Expr = enum { 'Call(CallExpr), 'Text(String) };
+type Expr = enum { Call(CallExpr), Text(String) };
 def identity: Fn(Expr) -> Expr = fn(value) { value };
 export { CallExpr, Expr, identity };"#,
     )
@@ -543,7 +543,7 @@ fn query_namespace_imports_reference_exact_module_interfaces() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/types.telora"),
-        "type CallExpr = struct {args: Array(Expr)};\ntype Expr = enum {'Text(String), 'Call(CallExpr)};\ntype Box(A) = struct {value: A};\nexport {CallExpr, Expr, Box};\n",
+        "type CallExpr = struct {args: Array(Expr)};\ntype Expr = enum {Text(String), Call(CallExpr)};\ntype Box(A) = struct {value: A};\nexport {CallExpr, Expr, Box};\n",
     )
     .unwrap();
     fs::write(

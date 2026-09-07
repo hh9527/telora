@@ -17,8 +17,8 @@
                        fn(target, previous) {
                            let run: Fn(Dyn) -> String = fn(value) {
                                let name = match dyn.get_field_value(value, 0) |> dyn.check_string {
-                                   'Some(name) => name,
-                                   'None => fail!("prepared field is not String", value),
+                                   Some(name) => name,
+                                   None => fail!("prepared field is not String", value),
                                };
                                let field_count = type_desc.fields(target) |> array.length;
                                `\{prefix}:\{field_count}:\{name}`
@@ -105,8 +105,8 @@
             &main,
             source(
                 r#"match type_property.get_type_prop(Endpoint, fmt.DisplayBy) {
-        'Some(property) => property.display(dyn.pack(Endpoint, endpoint)),
-        'None => fail!("missing DisplayBy", Endpoint),
+        Some(property) => property.display(dyn.pack(Endpoint, endpoint)),
+        None => fail!("missing DisplayBy", Endpoint),
     }"#,
             ),
         )
@@ -267,9 +267,9 @@ fn privileged_diagnostic_snapshots_preserve_labels_and_nested_scope_order() {
 import "std/_rt" as rt;
 import "std/array" as array;
 def check: Fn(Bool) -> Bool = fn(condition) {
-    if condition { 'True } else { fail!("snapshot assertion failed") }
+    if condition { True } else { fail!("snapshot assertion failed") }
 };
-def warn: Fn(String) -> Result(Int, String) = fn(message) { 'Err(message) };
+def warn: Fn(String) -> Result(Int, String) = fn(message) { Err(message) };
 def message: Fn() -> String = fn() {
     let warning = warn.should_ok!("message evaluated");
     "rejected"
@@ -281,42 +281,42 @@ def subject: Fn() -> Int = fn() {
 export def once = match rt.with_diagnostics@[Int, Int](fn(value) {
     fail!(message(), subject(), "text", fn(item: Int) { item })
 })(0) {
-    'Err(reports) => check(array.length(reports) == 3
+    Err(reports) => check(array.length(reports) == 3
         && reports[0].message == "message evaluated"
         && reports[1].message == "subject evaluated"
         && reports[2].message == "rejected"),
-    'Ok(_) => fail!("expected failure"),
+    Ok(_) => fail!("expected failure"),
 };
 export def success = match rt.with_diagnostics(fn(value: Int) {
     let warning = warn.should_ok!("successful warning");
     value + 1
 })(7) {
-    'Ok(observed) => {
+    Ok(observed) => {
         let checked = check(observed.0 == 8);
         let checked = check(array.length(observed.1) == 1);
-        let checked = check(observed.1[0].severity == 'Warning);
+        let checked = check(observed.1[0].severity == rt.Severity.Warning);
         check(observed.1[0].message == "successful warning")
     },
-    'Err(_) => fail!("expected successful capture"),
+    Err(_) => fail!("expected successful capture"),
 };
 export def observed = rt.with_diagnostics@[Int, Int](fn(value: Int) {
     let warning = warn.should_ok!("before");
     let inner = rt.with_diagnostics@[Int, Int](fn(item: Int) { fail!("inside", item) })(value);
     let message = match inner {
-        'Err(reports) => reports[0].message,
-        'Ok(_) => "unexpected",
+        Err(reports) => reports[0].message,
+        Ok(_) => "unexpected",
     };
     let checked = check(message == "inside");
     let warning = warn.should_ok!(message);
     fail!("after", value)
 })(7);
 export def checked = match observed {
-    'Err(reports) => {
+    Err(reports) => {
         let checked = check(array.length(reports) == 3);
-        let checked = check(reports[0].severity == 'Warning);
+        let checked = check(reports[0].severity == rt.Severity.Warning);
         let checked = check(reports[0].message == "before");
         let checked = check(reports[1].message == "inside");
-        let checked = check(reports[2].severity == 'Error);
+        let checked = check(reports[2].severity == rt.Severity.Error);
         let checked = check(reports[2].message == "after");
         let checked = check(array.length(reports[2].labels) > 0);
         let label = reports[2].labels[0];
@@ -324,7 +324,7 @@ export def checked = match observed {
         let checked = check(label.location.end > label.location.start);
         reports[2].labels
     },
-    'Ok(_) => fail!("expected diagnostic failure"),
+    Ok(_) => fail!("expected diagnostic failure"),
 };
 "#;
     let selected = prepare_selected_entry(

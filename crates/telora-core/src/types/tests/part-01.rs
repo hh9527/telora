@@ -297,10 +297,10 @@
         assert_eq!(dynamic.display(dynamic.result_type), "Int");
 
         let chained =
-            analyze_with_natives("if 'False { 1 } else if 'True { \"x\" } else { 2.0 }", &[])
+            analyze_with_natives("if Bool.False { 1 } else if Bool.True { \"x\" } else { 2.0 }", &[])
                 .err().unwrap();
         let explicit_nested = analyze_with_natives(
-            "if 'False { 1 } else { if 'True { \"x\" } else { 2.0 } }",
+            "if Bool.False { 1 } else { if Bool.True { \"x\" } else { 2.0 } }",
             &[],
         )
         .err().unwrap();
