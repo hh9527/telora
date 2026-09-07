@@ -187,3 +187,117 @@ shallow representative lookup from final descriptor materialization. Such a
 change must preserve occurs checks, per-use generic instantiation, lexical
 generalization boundaries, trait obligations and rejection of unresolved
 inference variables at publication. It is not implemented by this optimization.
+
+## Follow-up: Slot-Based Inference (In Progress)
+
+The next solver representation uses a dense vector of small Copy nodes:
+
+```rust
+enum InferenceNode {
+    Unknown,
+    ProxyTo(InferenceVariableId),
+    Known(InferenceTypeId),
+    Conflicted,
+}
+```
+
+`Known` identifies an inference-time type structure, not necessarily a completed
+runtime TypeId. Its table entry describes a constructor and argument edges;
+those edges may reference unknown or proxy slots. Thus Array(?element) has a
+known structure before its element is solved. Equal slots share a representative
+with iterative path compression. Solving an argument does not reconstruct its
+parent structures. Array-scanning normalization passes can shorten edges before
+publication; unresolved and conflicted slots must not become runtime TypeIds.
+Generic parameters retain their lexical quantification scope.
+
+Compatibility is not equality. In particular, Never may satisfy an expected
+type without becoming equal to it. Structural projection and nominal adaptation
+also must not create equality edges merely because a check succeeds. Conflict
+details live outside the POD node; aliases observe the representative's first
+conflict, and failed slots cannot subsequently be rebound as successful types.
+
+The working implementation currently has dense proxy nodes, shallow head
+inspection, an iterative occurs check, conflict tracking and deferred expression
+normalization. Structural descriptor children are lowered to stable slot edges,
+with a separate inference type table; their IDs are deliberately distinct from
+runtime TypeIds. A final graph pass coalesces structural constructors whose
+argument slots have become equal.
+This includes partially known structures, not only fully concrete types.
+Nominal completion and lexical parameters are excluded from this structural
+coalescing pass. The descriptor-facing solver interfaces and repeated recursive
+materialization still need replacement with graph operations. This intermediate
+state is not the completed optimization.
+
+The type table now stores 12-byte Copy rows consisting of a constructor ID,
+argument start, and argument count. Argument edges are 4-byte slot IDs in a
+separate dense vector. Constructor metadata is interned independently; nominal
+arguments and bodies are edges too, not descriptor trees in the type row.
+Shared authored declaration bodies are imported once by Arc identity. Lazy
+descriptor views remain only as compatibility adapters for older consumers.
+
+Known matching structural slots unify using an explicit integer work stack.
+Occurs checks, conflict propagation, structural equality, and coalescing traverse
+the flat edges directly. Coalescing uses an iterative postorder followed by a
+single constructor/root-argument interning pass, avoiding one whole-array scan
+per depth for forward-allocated structures. Tests cover 16384-level unification
+and forward-edge normalization and assert that these operations do not create
+descriptor views. Never compatibility remains separate from equality.
+
+The descriptor adapter caches normalized nominal bodies by stable type-row ID
+and solver revision. Every binding, alias, and conflict mutation advances that
+revision; cached bodies cannot outlive new inference evidence. This avoids
+repeated materialization during publication while descriptor-facing consumers
+are being migrated. A regression test checks both Arc sharing within a revision
+and invalidation after solving an unknown body argument.
+
+### Real Query Bottleneck
+
+The ontology `@test/query` workload initially took 48.52 s in release mode.
+The proxy representation alone measured 47.40 s, so it did not explain the
+dominant regression. Opt-in instrumentation subsequently measured 0.58 s in
+descriptor normalization and 0.016 s in unification, compared with 35.3 s in
+expression inference (these categories overlap and must not be summed).
+
+HIR now prepares definition dependencies once after resolution, and reference
+location lookup uses the already sorted reference array. Those changes remove
+repeated searches but did not materially reduce this workload's runtime.
+
+Exclusive expression measurements localized 34.09 s to `if` inference. Branch
+freshening was replacing a few inference variables by recursively copying every
+visible binding, including unrelated nominal type bodies. An intermediate version
+borrowed the parent environment and overlaid only affected bindings.
+That instrumented release workload fell from 48.15 s to 16.46 s; `if`
+exclusive time fell to 3.18 s. These are sequential single samples, not medians.
+Peak RSS did not improve (approximately 743 MB before, 769 MB after).
+
+Branch freshening is now removed entirely: `if` and `match` use the same outer
+slots, and scoped environments contain only actual local bindings. The old
+environment traversal API, variable replacement walker, and replacement-evidence
+merge are deleted. Complete expected types still provide branch context;
+incomplete result contexts are checked after joining branch results, rather than
+letting the first branch fix a common result slot. Structural join evidence and
+compatibility remain distinct from slot equality. A sibling-scope regression
+test checks shared binding identity and visibility of a late slot solution.
+Temporary timing instrumentation has been removed from inference hot paths.
+
+After removing branch freshening, the uninstrumented release query completed in
+12.98 s and 13.39 s in two sequential runs (exit status 0), with peak RSS of
+742844 KB and 769116 KB respectively. This is about 3.6-3.7 times faster than
+the original 48.52 s sample, without a demonstrated memory improvement.
+The final `cargo test --workspace` run passed, including 278 core tests and the
+language acceptance fixtures; `cargo build --release` also succeeded.
+
+The subsequent flat-table migration measured 15.91 s and 15.48 s in two
+sequential release runs, with peak RSS 754276 KB and 754888 KB (exit status 0).
+It is not an end-to-end speedup over the no-copy branch version. The final
+workspace run passed 283 core tests and all language acceptance fixtures, and
+the release build succeeded. Expression records and publication still use
+descriptor-facing interfaces; those remaining graph/descriptor conversions must
+be removed before treating the requested global-slot optimization as complete.
+
+The requested relative workspace path currently fails workspace membership
+validation; measurements use the equivalent absolute ontology workspace path.
+Remaining work includes the descriptor-facing inference interfaces and fully
+consuming resolved IDs through lowering rather than recovering them from AST
+locations. The performance improvement does not imply a completed HIR-to-LIR
+pipeline migration.

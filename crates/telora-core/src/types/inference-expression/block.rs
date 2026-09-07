@@ -67,7 +67,7 @@ impl<'a> GenericInference<'a> {
             {
                 continue;
             }
-            let first_owned_variable = self.next_variable;
+            let first_owned_variable = self.variables.next_id();
             if let Some(skeleton) = self.recursive_closure_skeleton(&binding.value.value) {
                 environment.insert(binding.value.name.value.clone(), skeleton.clone());
                 self.set_local_scheme(binding.value.name.value.clone(), None);
@@ -122,7 +122,7 @@ impl<'a> GenericInference<'a> {
                 .iter()
                 .find(|binding| binding.value.name.location == *location)
                 .expect("component binding exists");
-            let first_owned_variable = self.next_variable;
+            let first_owned_variable = self.variables.next_id();
             self.delayed_initializer_depth += 1;
             let inferred = self.infer(&binding.value.value, &environment, None);
             self.delayed_initializer_depth -= 1;
@@ -134,7 +134,7 @@ impl<'a> GenericInference<'a> {
             )?;
             let descriptor = scheme
                 .as_ref()
-                .map_or_else(|| self.resolve(&inferred), |scheme| scheme.body.clone());
+                .map_or_else(|| self.normalize(&inferred), |scheme| scheme.body.clone());
             environment.insert(binding.value.name.value.clone(), descriptor);
             self.set_local_scheme(binding.value.name.value.clone(), scheme.clone());
             if let Some(scheme) = scheme {
@@ -195,7 +195,7 @@ impl<'a> GenericInference<'a> {
                 && matches!(binding.value.kind, BindingKind::Let | BindingKind::Def);
             let first_owned_variable = recursive_skeletons
                 .get(&binding.value.name.value)
-                .map_or(self.next_variable, |(_, first)| *first);
+                .map_or(self.variables.next_id(), |(_, first)| *first);
             if is_delayed {
                 self.delayed_initializer_depth += 1;
             }
@@ -273,7 +273,7 @@ impl<'a> GenericInference<'a> {
             if let Some(query) = &self.query {
                 query.check().map_err(|error| error.to_string())?;
             }
-            let resolved = self.resolve(&descriptor);
+            let resolved = self.normalize(&descriptor);
             if contains_inference_variable_at_or_after(&resolved, first_owned_variable) {
                 return Err(format!(
                     "cannot infer monomorphic binding {name:?}: unresolved {}",
@@ -281,6 +281,6 @@ impl<'a> GenericInference<'a> {
                 ));
             }
         }
-        Ok(self.resolve(&result))
+        Ok(self.normalize(&result))
     }
 }

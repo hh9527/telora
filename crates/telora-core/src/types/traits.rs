@@ -360,8 +360,13 @@ impl GenericInference<'_> {
         target: TypeDescriptor,
         location: crate::Location,
     ) -> Result<(), String> {
-        let target = self.resolve(&target);
-        if contains_type_variable(&target) {
+        let was_inferred = contains_type_variable(&target);
+        let target = self.normalize(&target);
+        let mut bound_parameters = Vec::new();
+        if was_inferred || self.display_trait.is_none() {
+            collect_bound_parameters(&target, &mut bound_parameters);
+        }
+        if contains_type_variable(&target) || !bound_parameters.is_empty() {
             self.pending_interpolations.push((target, location));
             return Ok(());
         }
@@ -452,13 +457,13 @@ impl GenericInference<'_> {
         trait_id: crate::TraitId,
         target: &TypeDescriptor,
     ) -> Option<String> {
-        let target = self.resolve(target);
+        let target = self.normalize(target);
         self.lexical_type_evidence.iter().rev().find_map(|evidence| {
             matches!(
                 &evidence.capability,
                 TypeCapability::Trait { id, .. } if *id == trait_id
             )
-            .then(|| (self.resolve(&evidence.target) == target).then(|| evidence.name.clone()))
+            .then(|| (self.normalize(&evidence.target) == target).then(|| evidence.name.clone()))
             .flatten()
         })
     }
@@ -468,13 +473,13 @@ impl GenericInference<'_> {
         property: &TypeDescriptor,
         target: &TypeDescriptor,
     ) -> Option<String> {
-        let target = self.resolve(target);
+        let target = self.normalize(target);
         self.lexical_type_evidence.iter().rev().find_map(|evidence| {
             matches!(
                 &evidence.capability,
                 TypeCapability::Property(candidate) if candidate == property
             )
-            .then(|| (self.resolve(&evidence.target) == target).then(|| evidence.name.clone()))
+            .then(|| (self.normalize(&evidence.target) == target).then(|| evidence.name.clone()))
             .flatten()
         })
     }
@@ -484,9 +489,9 @@ impl GenericInference<'_> {
         property: &TypeDescriptor,
         target: &TypeDescriptor,
     ) -> Option<String> {
-        let target = self.resolve(target);
+        let target = self.normalize(target);
         self.type_properties.iter().find_map(|evidence| {
-            (self.resolve(&evidence.target) == target && evidence.property == *property)
+            (self.normalize(&evidence.target) == target && evidence.property == *property)
                 .then(|| evidence.root.clone())
         })
     }
@@ -506,7 +511,7 @@ impl GenericInference<'_> {
                 format!("blanket impl parameter {} is not determined", parameter.name)
             })?;
             arguments.push(self.runtime_type_evidence(
-                self.resolve(target),
+                self.normalize(target),
                 location,
                 index,
             ));
@@ -514,7 +519,7 @@ impl GenericInference<'_> {
         for constraint in &implementation.constraints {
             let target = replacements
                 .get(&constraint.parameter)
-                .map(|target| self.resolve(target))
+                .map(|target| self.normalize(target))
                 .ok_or_else(|| "blanket impl constraint target is not determined".to_owned())?;
             let evidence = match &constraint.capability {
                 TypeCapability::Trait { id, name } => {
@@ -645,7 +650,7 @@ impl GenericInference<'_> {
                         .ok_or_else(|| {
                             format!(
                                 "type {} does not implement {trait_name}",
-                                self.resolve(&target).display_name()
+                                self.normalize(&target).display_name()
                             )
                         })?;
                     let implementation = implementation.clone();
@@ -680,7 +685,7 @@ impl GenericInference<'_> {
             }
             self.resolved_trait_members
                 .insert(callee.location, dictionary);
-            Ok(self.resolve(&result))
+            Ok(self.normalize(&result))
         })())
     }
 
@@ -692,7 +697,7 @@ impl GenericInference<'_> {
         Option<(&'a TraitImplementation, HashMap<TypeParameterId, TypeDescriptor>)>,
         String,
     > {
-        let target = self.resolve(target);
+        let target = self.normalize(target);
         if contains_type_variable(&target) {
             return Err(format!(
                 "cannot resolve trait constraint for {}",
@@ -712,8 +717,8 @@ impl GenericInference<'_> {
                     true
                 }
                 pattern => {
-                    self.resolve(pattern) == target
-                        || (matches!(self.resolve(pattern), TypeDescriptor::AtomValue)
+                    self.normalize(pattern) == target
+                        || (matches!(self.normalize(pattern), TypeDescriptor::AtomValue)
                             && matches!(target, TypeDescriptor::Atom(_)))
                 }
             };
@@ -767,7 +772,7 @@ impl GenericInference<'_> {
     fn finish_type_constraints(&mut self) -> Result<(), (crate::Location, String)> {
         let pending = std::mem::take(&mut self.pending_type_constraints);
         for constraint in pending {
-            let target = self.resolve(&constraint.target);
+            let target = self.normalize(&constraint.target);
             if contains_type_variable(&target) {
                 continue;
             }
@@ -777,12 +782,12 @@ impl GenericInference<'_> {
                     name: name.clone(),
                 },
                 TypeCapability::Property(property) => {
-                    TypeCapability::Property(self.resolve(property))
+                    TypeCapability::Property(self.normalize(property))
                 }
             };
             if let Some(evidence) = constraint.lexical_evidence.iter().find(|evidence| {
                 evidence.capability == capability
-                    && self.resolve(&evidence.target) == target
+                    && self.normalize(&evidence.target) == target
             }) {
                 self.resolved_call_evidence
                     .entry(constraint.location)
@@ -826,7 +831,7 @@ impl GenericInference<'_> {
                                 constraint.location,
                                 format!(
                                     "type {} has no published Property({}) evidence",
-                                    self.resolve(&constraint.target).display_name(),
+                                    self.normalize(&constraint.target).display_name(),
                                     property.display_name()
                                 ),
                             )

@@ -80,6 +80,7 @@ pub struct HirExpression {
 #[derive(Clone, Debug, Default)]
 pub struct HirProgram {
     definitions: Vec<HirDefinition>,
+    definition_dependencies: Vec<Vec<HirDefinitionId>>,
     references: Vec<HirReference>,
     expressions: Vec<HirExpression>,
     expression_children: Vec<Vec<HirExpressionId>>,
@@ -184,12 +185,27 @@ impl HirProgram {
         self.definitions.get(id.index())
     }
 
+    pub(crate) fn definition_dependencies(&self, id: HirDefinitionId) -> &[HirDefinitionId] {
+        &self.definition_dependencies[id.index()]
+    }
+
     pub fn references(&self) -> &[HirReference] {
         &self.references
     }
 
     pub fn reference(&self, id: HirReferenceId) -> Option<&HirReference> {
         self.references.get(id.index())
+    }
+
+    pub(crate) fn reference_at(&self, location: Location, name: &str) -> Option<&HirReference> {
+        let key = (location.source, location.start, location.end);
+        let start = self.references.partition_point(|reference| {
+            let location = reference.location;
+            (location.source, location.start, location.end) < key
+        });
+        self.references[start..].iter()
+            .take_while(|reference| reference.location == location)
+            .find(|reference| reference.name == name)
     }
 
     pub fn expressions(&self) -> &[HirExpression] {
@@ -292,6 +308,28 @@ impl HirProgram {
             if let Some(parent) = expression.parent {
                 self.expression_children[parent.index()].push(expression.id);
             }
+        }
+        let mut owners = vec![Vec::new(); self.expressions.len()];
+        for definition in &self.definitions {
+            if let Some(value) = definition.value {
+                owners[value.index()].push(definition.id);
+            }
+        }
+        self.definition_dependencies = vec![Vec::new(); self.definitions.len()];
+        for expression in &self.expressions {
+            let Some(reference) = expression.reference else { continue; };
+            let HirResolution::Definition(target) = self.references[reference.index()].resolution else { continue; };
+            let mut current = Some(expression.id);
+            while let Some(id) = current {
+                for owner in &owners[id.index()] {
+                    self.definition_dependencies[owner.index()].push(target);
+                }
+                current = self.expressions[id.index()].parent;
+            }
+        }
+        for dependencies in &mut self.definition_dependencies {
+            dependencies.sort_unstable();
+            dependencies.dedup();
         }
     }
 }

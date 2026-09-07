@@ -1,6 +1,5 @@
 trait TypeEnvironment {
     fn get(&self, name: &str) -> Option<&TypeDescriptor>;
-    fn visit(&self, visitor: &mut dyn FnMut(&str, &TypeDescriptor));
 }
 
 trait MutableTypeEnvironment: TypeEnvironment {
@@ -10,10 +9,6 @@ trait MutableTypeEnvironment: TypeEnvironment {
 
 impl TypeEnvironment for HashMap<String, TypeDescriptor> {
     fn get(&self, name: &str) -> Option<&TypeDescriptor> { HashMap::get(self, name) }
-
-    fn visit(&self, visitor: &mut dyn FnMut(&str, &TypeDescriptor)) {
-        for (name, descriptor) in self { visitor(name, descriptor); }
-    }
 }
 
 impl MutableTypeEnvironment for HashMap<String, TypeDescriptor> {
@@ -56,15 +51,6 @@ impl TypeEnvironment for ScopedTypeEnvironment<'_> {
             None => self.parent.get(name),
         }
     }
-
-    fn visit(&self, visitor: &mut dyn FnMut(&str, &TypeDescriptor)) {
-        self.parent.visit(&mut |name, descriptor| {
-            if self.local(name).is_none() { visitor(name, descriptor); }
-        });
-        for (name, descriptor) in &self.bindings {
-            if let Some(descriptor) = descriptor { visitor(name, descriptor); }
-        }
-    }
 }
 
 impl MutableTypeEnvironment for ScopedTypeEnvironment<'_> {
@@ -102,25 +88,22 @@ mod environment_tests {
     }
 
     #[test]
-    fn visiting_exposes_each_visible_binding_once() {
-        let base = HashMap::from([
-            ("hidden".to_owned(), TypeDescriptor::Int),
-            ("shadowed".to_owned(), TypeDescriptor::Int),
-            ("inherited".to_owned(), TypeDescriptor::String),
-        ]);
-        let mut scope = ScopedTypeEnvironment::new(&base);
-        scope.remove("hidden");
-        scope.insert("shadowed".into(), TypeDescriptor::Float);
-        let mut child = ScopedTypeEnvironment::new(&scope);
-        child.insert("local".into(), TypeDescriptor::Int);
-        let mut visible = HashMap::new();
-        child.visit(&mut |name, descriptor| {
-            assert!(visible.insert(name.to_owned(), descriptor.clone()).is_none());
-        });
-        assert_eq!(visible, HashMap::from([
-            ("shadowed".to_owned(), TypeDescriptor::Float),
-            ("inherited".to_owned(), TypeDescriptor::String),
-            ("local".to_owned(), TypeDescriptor::Int),
-        ]));
+    fn sibling_scopes_share_slots_and_observe_late_solutions() {
+        let mut variables = InferenceVariables::default();
+        let slot = variables.fresh();
+        let base = HashMap::from([("value".to_owned(), TypeDescriptor::Inference(slot))]);
+        let left = ScopedTypeEnvironment::new(&base);
+        let right = ScopedTypeEnvironment::new(&base);
+        assert!(left.bindings.is_empty());
+        assert!(right.bindings.is_empty());
+        assert!(std::ptr::eq(left.get("value").unwrap(), right.get("value").unwrap()));
+        variables.set(slot, TypeDescriptor::Int);
+        for scope in [&left, &right] {
+            let Some(TypeDescriptor::Inference(id)) = scope.get("value") else {
+                panic!("inherited binding must retain its slot");
+            };
+            assert_eq!(*id, slot);
+            assert_eq!(variables.binding(*id), Some(&TypeDescriptor::Int));
+        }
     }
 }

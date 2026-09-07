@@ -62,7 +62,6 @@ impl<'a> GenericInference<'a> {
             dyn_namespaces,
             builtin_tuple_available,
             query,
-            next_variable: 0,
             closure_inference_depth: 0,
             delayed_initializer_depth: 0,
             recursive_body_inference_depth: 0,
@@ -74,7 +73,7 @@ impl<'a> GenericInference<'a> {
             value_constructors: HashMap::new(),
             type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
-            substitutions: HashMap::new(),
+            variables: InferenceVariables::default(),
             records: HashMap::new(),
             pattern_diagnostics: BTreeMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -113,7 +112,7 @@ impl<'a> GenericInference<'a> {
             let ty = self.infer(constructor, environment, None)?;
             let kind = self.value_constructors.get(&constructor.location).cloned()
                 .ok_or_else(|| "constructor pattern requires a type declaration".to_owned())?;
-            let resolved = self.resolve(&ty);
+            let resolved = self.normalize(&ty);
             let has_payload = !matches!(kind, ValueConstructor::EnumMember { has_payload: false, .. });
             let (owner, payload_type) = if has_payload {
                 let TypeDescriptor::Function { parameters, result } = resolved else {
@@ -134,7 +133,7 @@ impl<'a> GenericInference<'a> {
             self.failure_location = None;
             let payload = match (payload, payload_type) {
                 (Some(payload), Some(ty)) => Some(Box::new(self.infer_pattern_constructors(
-                    payload, &self.resolve(&ty), environment,
+                    payload, &self.normalize(&ty), environment,
                 )?)),
                 _ => None,
             };
@@ -243,16 +242,20 @@ impl<'a> GenericInference<'a> {
         let TypeDescriptor::Declared(declared) = current else {
             return None;
         };
-        let body = self.declared_body(declared);
+        let body = if matches!(declared.body.as_ref(), TypeDescriptor::Never) {
+            self.declared_bodies.get(&declared.id).unwrap_or(&declared.body)
+        } else {
+            &declared.body
+        };
         Some(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: declared.id.clone(),
             name: declared.name.clone(),
-            body: Arc::new(body.clone()),
+            body: Arc::clone(body),
         }))
     }
 
     fn expose_named(&self, ty: &TypeDescriptor) -> TypeDescriptor {
-        let mut current = self.resolve(ty);
+        let mut current = self.normalize(ty);
         let mut visited = HashSet::new();
         while let TypeDescriptor::Named(name) = &current {
             if !visited.insert(name.clone()) {
@@ -261,7 +264,7 @@ impl<'a> GenericInference<'a> {
             let Some(target) = self.named_type(name) else {
                 break;
             };
-            current = self.resolve(target);
+            current = self.normalize(target);
         }
         if let Some(completed) = self.complete_declared(&current) {
             current = completed;
@@ -305,8 +308,8 @@ impl<'a> GenericInference<'a> {
                     .named_type(name)
                     .and_then(|ty| find(inference, ty, named, variables)),
                 TypeDescriptor::Inference(variable) if variables.insert(*variable) => inference
-                    .substitutions
-                    .get(variable)
+                    .variables
+                    .binding(*variable)
                     .and_then(|ty| find(inference, ty, named, variables)),
                 _ => None,
             }
@@ -335,7 +338,7 @@ impl<'a> GenericInference<'a> {
         let mut values = boundary.values;
         values.push(tail);
         self.merge_structural_join_evidence(&values)?;
-        Ok(join_all_types(values.iter().map(|value| self.resolve(value)).collect()))
+        Ok(join_all_types(values.iter().map(|value| self.normalize(value)).collect()))
     }
 
     fn record_propagation(&mut self, requirement: PropagationRequirement) -> Result<(), String> {
@@ -366,14 +369,14 @@ impl<'a> GenericInference<'a> {
         let Some(requirement) = requirement else {
             return Ok(result);
         };
-        let resolved = self.resolve(&result);
+        let resolved = self.normalize(&result);
         match requirement {
             PropagationRequirement::Option => match resolved {
                 TypeDescriptor::Inference(_) | TypeDescriptor::PendingAlternatives(_) => {
                     let success = self.fresh_variable();
                     let target = option_descriptor(success);
                     self.check(&resolved, &target)?;
-                    Ok(self.resolve(&target))
+                    Ok(self.normalize(&target))
                 }
                 TypeDescriptor::Enum(ref variants) if option_parts(variants).is_some() => {
                     Ok(resolved)
@@ -382,7 +385,7 @@ impl<'a> GenericInference<'a> {
                     Ok(option_descriptor(*payload))
                 }
                 TypeDescriptor::Atom(tag) if tag.name() == "None" => {
-                    match expected.map(|ty| self.resolve(ty)) {
+                    match expected.map(|ty| self.normalize(ty)) {
                         Some(ref expected @ TypeDescriptor::Enum(ref variants)) if option_parts(variants).is_some() => Ok(expected.clone()),
                         _ => Err("Option propagation boundary ending in None needs an expected Option success type".into()),
                     }
@@ -393,7 +396,7 @@ impl<'a> GenericInference<'a> {
                 )),
             },
             PropagationRequirement::Result(errors) => {
-                let expected = expected.map(|ty| self.resolve(ty));
+                let expected = expected.map(|ty| self.normalize(ty));
                 let boundary_error = expected
                     .as_ref()
                     .and_then(result_parts)
@@ -408,7 +411,7 @@ impl<'a> GenericInference<'a> {
                         let success = self.fresh_variable();
                         let target = result_descriptor(success, boundary_error);
                         self.check(&resolved, &target)?;
-                        Ok(self.resolve(&target))
+                        Ok(self.normalize(&target))
                     }
                     TypeDescriptor::Enum(ref variants) if result_parts(&TypeDescriptor::Enum(variants.clone())).is_some() => {
                         let (_, result_error) = result_parts(&resolved).expect("checked Result shape");
@@ -445,8 +448,7 @@ impl<'a> GenericInference<'a> {
             .chain(implicit_parameters);
         let mut variables: HashMap<TypeParameterId, InferenceVariableId> = parameters
             .map(|parameter| {
-                let variable = InferenceVariableId(self.next_variable);
-                self.next_variable += 1;
+                let variable = self.variables.fresh();
                 (parameter, variable)
             })
             .collect();
@@ -530,8 +532,7 @@ impl<'a> GenericInference<'a> {
     }
 
     fn member_import_definition(&self, name: &crate::ast::Identifier) -> Option<&crate::hir::HirDefinition> {
-        let reference = self.hir.references().iter()
-            .find(|reference| reference.location == name.location && reference.name == name.value)?;
+        let reference = self.hir.reference_at(name.location, &name.value)?;
         let HirResolution::Definition(id) = reference.resolution else { return None; };
         self.hir.definition(id).filter(|definition| definition.member_import.is_some())
     }
@@ -543,9 +544,8 @@ impl<'a> GenericInference<'a> {
                     return self.value_constructors.get(&import.location).cloned()
                         .or_else(|| self.member_constructor_reference(import));
                 }
-                if self.hir.references().iter().any(|reference|
-                    reference.location == name.location && reference.name == name.value
-                        && matches!(reference.resolution, HirResolution::Definition(id)
+                if self.hir.reference_at(name.location, &name.value).is_some_and(|reference|
+                    matches!(reference.resolution, HirResolution::Definition(id)
                             if self.hir.definition(id).is_some_and(|definition| definition.kind != HirDefinitionKind::Import)))
                 {
                     return None;
@@ -583,14 +583,12 @@ impl<'a> GenericInference<'a> {
             ExprKind::Variable(name) => {
                 if matches!(name.value.as_str(), "Bool" | "Option" | "Result" | "FoldControl" | "PropertyTarget")
                     && !self.external_interfaces.contains_key(&name.value)
-                    && self.hir.references().iter().any(|reference|
-                        reference.location == name.location && reference.name == name.value
-                            && reference.resolution == HirResolution::External)
+                    && self.hir.reference_at(name.location, &name.value).is_some_and(|reference|
+                        reference.resolution == HirResolution::External)
                 {
                     return true;
                 }
-                if let Some(reference) = self.hir.references().iter()
-                    .find(|reference| reference.location == name.location && reference.name == name.value)
+                if let Some(reference) = self.hir.reference_at(name.location, &name.value)
                     && let HirResolution::Definition(id) = reference.resolution
                     && let Some(definition) = self.hir.definition(id)
                     && definition.kind != HirDefinitionKind::Import
@@ -609,84 +607,8 @@ impl<'a> GenericInference<'a> {
     }
 
     fn fresh_variable(&mut self) -> TypeDescriptor {
-        let variable = InferenceVariableId(self.next_variable);
-        self.next_variable += 1;
+        let variable = self.variables.fresh();
         TypeDescriptor::Inference(variable)
-    }
-
-    fn freshen_join_context(
-        &mut self,
-        expected: &TypeDescriptor,
-        environment: &dyn TypeEnvironment,
-    ) -> (
-        TypeDescriptor,
-        HashMap<String, TypeDescriptor>,
-        HashMap<InferenceVariableId, InferenceVariableId>,
-    ) {
-        let expected = self.resolve(expected);
-        let mut variables = Vec::new();
-        collect_inference_variables(&expected, &mut variables);
-        let replacements = variables
-            .into_iter()
-            .map(|variable| {
-                let TypeDescriptor::Inference(fresh) = self.fresh_variable() else {
-                    unreachable!("fresh variable descriptor")
-                };
-                if self.numeric_variables.contains(&variable) {
-                    self.numeric_variables.insert(fresh);
-                }
-                if self.not_variables.contains(&variable) {
-                    self.not_variables.insert(fresh);
-                }
-                if self.ordered_variables.contains(&variable) {
-                    self.ordered_variables.insert(fresh);
-                }
-                (variable, fresh)
-            })
-            .collect::<HashMap<_, _>>();
-        let expected = replace_inference_variables(&expected, &replacements);
-        let mut freshened = HashMap::new();
-        environment.visit(&mut |name, descriptor| {
-            freshened.insert(name.to_owned(),
-                replace_inference_variables(&self.resolve(descriptor), &replacements));
-        });
-        (expected, freshened, replacements)
-    }
-
-    fn merge_join_evidence(
-        &mut self,
-        branches: &[HashMap<InferenceVariableId, InferenceVariableId>],
-    ) -> Result<(), String> {
-        let Some(first) = branches.first() else {
-            return Ok(());
-        };
-        let originals = first.keys().copied().collect::<Vec<_>>();
-        for original in originals {
-            let mut evidence = Vec::new();
-            for branch in branches {
-                let Some(fresh) = branch.get(&original) else {
-                    continue;
-                };
-                let resolved = self.resolve(&TypeDescriptor::Inference(*fresh));
-                if !contains_type_variable(&resolved) {
-                    evidence.push(resolved);
-                }
-            }
-            if !evidence.is_empty() {
-                let joined = join_all_types(evidence);
-                self.check(&joined, &TypeDescriptor::Inference(original))?;
-                let merged = self.resolve(&TypeDescriptor::Inference(original));
-                for branch in branches {
-                    let Some(fresh) = branch.get(&original) else {
-                        continue;
-                    };
-                    if contains_type_variable(&self.resolve(&TypeDescriptor::Inference(*fresh))) {
-                        self.check(&merged, &TypeDescriptor::Inference(*fresh))?;
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     fn merge_structural_join_evidence(
@@ -785,7 +707,7 @@ impl<'a> GenericInference<'a> {
         loop {
             let resolved = branches
                 .iter()
-                .map(|branch| self.resolve(branch))
+                .map(|branch| self.normalize(branch))
                 .collect::<Vec<_>>();
             let mut collected = HashMap::new();
             let enum_owners = self.enum_constructors.keys().copied().collect();
@@ -816,7 +738,7 @@ impl<'a> GenericInference<'a> {
         first_owned_variable: u32,
         location: crate::Location,
     ) -> Result<Option<TypeScheme>, String> {
-        let descriptor = self.resolve(descriptor);
+        let descriptor = self.normalize(descriptor);
         let mut variables = Vec::new();
         collect_inference_variables(&descriptor, &mut variables);
         variables.retain(|variable| variable.0 >= first_owned_variable);
@@ -859,11 +781,8 @@ impl<'a> GenericInference<'a> {
                 location,
             })
             .collect();
-        for descriptor in self.records.values_mut() {
-            *descriptor = bind_inference_variables(descriptor, &replacements);
-        }
-        for descriptor in self.pattern_binding_types.values_mut() {
-            *descriptor = bind_inference_variables(descriptor, &replacements);
+        for (variable, parameter) in &replacements {
+            self.variables.set(*variable, TypeDescriptor::Bound(*parameter));
         }
         Ok(Some(TypeScheme {
             parameters,
@@ -876,7 +795,7 @@ impl<'a> GenericInference<'a> {
         self.placeholder_obligations[start..]
             .iter()
             .find_map(|(variable, location, parameter)| {
-                contains_type_variable(&self.resolve(&TypeDescriptor::Inference(*variable))).then(
+                contains_type_variable(&self.normalize(&TypeDescriptor::Inference(*variable))).then(
                     || {
                         (
                             *location,
@@ -948,7 +867,7 @@ impl<'a> GenericInference<'a> {
                 (!resolved.is_empty()).then(|| pending_alternatives(resolved))
             }
             descriptor => {
-                let resolved = self.resolve(descriptor);
+                let resolved = self.normalize(descriptor);
                 (!contains_any_inference_variable(&resolved, variables)).then_some(resolved)
             }
         }
@@ -1066,46 +985,40 @@ impl<'a> GenericInference<'a> {
         }
     }
 
-    fn resolve(&self, ty: &TypeDescriptor) -> TypeDescriptor {
+    fn normalize(&self, ty: &TypeDescriptor) -> TypeDescriptor {
         match ty {
-            TypeDescriptor::Inference(variable) => self
-                .substitutions
-                .get(variable)
-                .map_or_else(|| ty.clone(), |ty| self.resolve(ty)),
+            TypeDescriptor::Inference(variable) => self.variables.binding(*variable)
+                .map_or_else(|| TypeDescriptor::Inference(self.variables.root(*variable)), |ty| self.normalize(ty)),
             TypeDescriptor::Declared(declared) => {
                 let arguments = declared
                     .id
                     .arguments()
                     .iter()
-                    .map(|argument| self.resolve(argument))
+                    .map(|argument| self.normalize(argument))
                     .collect::<Vec<_>>();
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),
-                    body: if arguments.is_empty() {
-                        Arc::clone(&declared.body)
-                    } else {
-                        Arc::new(self.resolve(&declared.body))
-                    },
+                    body: self.normalize_body(&declared.body),
                 })
             }
-            TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
-            TypeDescriptor::Newtype(item) => TypeDescriptor::Newtype(Box::new(self.resolve(item))),
-            TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(self.resolve(item))),
+            TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.normalize(item))),
+            TypeDescriptor::Newtype(item) => TypeDescriptor::Newtype(Box::new(self.normalize(item))),
+            TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(self.normalize(item))),
             TypeDescriptor::TypeOf(instance) => {
-                TypeDescriptor::TypeOf(Box::new(self.resolve(instance)))
+                TypeDescriptor::TypeOf(Box::new(self.normalize(instance)))
             }
             TypeDescriptor::Tagged { tag, payload } => TypeDescriptor::Tagged {
                 tag: tag.clone(),
-                payload: Box::new(self.resolve(payload)),
+                payload: Box::new(self.normalize(payload)),
             },
             TypeDescriptor::Tuple(items) => {
-                TypeDescriptor::Tuple(items.iter().map(|item| self.resolve(item)).collect())
+                TypeDescriptor::Tuple(items.iter().map(|item| self.normalize(item)).collect())
             }
             TypeDescriptor::Struct(fields) => {
                 let mut resolved = fields.clone();
                 for (source, target) in fields.values().zip(resolved.values_mut()) {
-                    *target = self.resolve(source);
+                    *target = self.normalize(source);
                 }
                 TypeDescriptor::Struct(resolved)
             }
@@ -1114,61 +1027,84 @@ impl<'a> GenericInference<'a> {
                 for (source, target) in variants.values().zip(resolved.values_mut()) {
                     *target = source
                         .as_ref()
-                        .map(|payload| Box::new(self.resolve(payload)));
+                        .map(|payload| Box::new(self.normalize(payload)));
                 }
                 TypeDescriptor::Enum(resolved)
             }
             TypeDescriptor::PendingAlternatives(variants) => {
                 let variants = variants
                     .iter()
-                    .map(|variant| self.resolve(variant))
+                    .map(|variant| self.normalize(variant))
                     .collect::<Vec<_>>();
                 pending_alternatives(variants)
             }
             TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
                 parameters: parameters
                     .iter()
-                    .map(|parameter| self.resolve(parameter))
+                    .map(|parameter| self.normalize(parameter))
                     .collect(),
-                result: Box::new(self.resolve(result)),
+                result: Box::new(self.normalize(result)),
             },
             ty => ty.clone(),
         }
     }
 
-    fn occurs(&self, variable: InferenceVariableId, ty: &TypeDescriptor) -> bool {
-        match self.resolve(ty) {
-            TypeDescriptor::Inference(candidate) => candidate == variable,
-            TypeDescriptor::Declared(declared) => {
-                declared
-                    .id
-                    .arguments()
-                    .iter()
-                    .any(|argument| self.occurs(variable, argument))
-                    || self.occurs(variable, &declared.body)
-            }
-            TypeDescriptor::Array(item) => self.occurs(variable, &item),
-            TypeDescriptor::Newtype(item) => self.occurs(variable, &item),
-            TypeDescriptor::Dict(item) => self.occurs(variable, &item),
-            TypeDescriptor::TypeOf(instance) => self.occurs(variable, &instance),
-            TypeDescriptor::Tagged { payload, .. } => self.occurs(variable, &payload),
-            TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
-                items.iter().any(|item| self.occurs(variable, item))
-            }
-            TypeDescriptor::Struct(fields) => {
-                fields.values().any(|field| self.occurs(variable, field))
-            }
-            TypeDescriptor::Enum(variants) => variants
-                .values()
-                .flatten()
-                .any(|payload| self.occurs(variable, payload)),
-            TypeDescriptor::Function { parameters, result } => {
-                parameters
-                    .iter()
-                    .any(|parameter| self.occurs(variable, parameter))
-                    || self.occurs(variable, &result)
-            }
-            _ => false,
+    fn normalize_body(&self, body: &Arc<TypeDescriptor>) -> Arc<TypeDescriptor> {
+        let id = self.variables.descriptor_view_ids.borrow().get(&Arc::as_ptr(body)).copied();
+        if let Some(id) = id
+            && let Some((revision, normalized)) = &*self.variables.normalized_bodies[id.0 as usize].borrow()
+            && *revision == self.variables.revision
+        {
+            return Arc::clone(normalized);
         }
+        let normalized = if contains_type_variable(body) {
+            Arc::new(self.normalize(body))
+        } else {
+            Arc::clone(body)
+        };
+        if let Some(id) = id {
+            *self.variables.normalized_bodies[id.0 as usize].borrow_mut() =
+                Some((self.variables.revision, Arc::clone(&normalized)));
+        }
+        normalized
+    }
+
+    fn occurs(&self, variable: InferenceVariableId, ty: &TypeDescriptor) -> bool {
+        let variable = self.variables.root(variable);
+        let mut pending = vec![ty];
+        let mut slots = Vec::new();
+        let mut visited = HashSet::new();
+        while let Some(ty) = pending.pop() {
+            match ty {
+                TypeDescriptor::Inference(candidate) => {
+                    slots.push(*candidate);
+                }
+                TypeDescriptor::Declared(declared) => {
+                    pending.extend(declared.id.arguments());
+                    pending.push(&declared.body);
+                }
+                TypeDescriptor::Array(item) | TypeDescriptor::Newtype(item)
+                | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item)
+                | TypeDescriptor::Tagged { payload: item, .. } => pending.push(item),
+                TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => pending.extend(items),
+                TypeDescriptor::Struct(fields) => pending.extend(fields.values()),
+                TypeDescriptor::Enum(variants) => pending.extend(variants.values().filter_map(Option::as_deref)),
+                TypeDescriptor::Function { parameters, result } => {
+                    pending.extend(parameters);
+                    pending.push(result);
+                }
+                _ => {}
+            }
+        }
+        while let Some(candidate) = slots.pop() {
+            let candidate = self.variables.root(candidate);
+            if candidate == variable { return true; }
+            if visited.insert(candidate)
+                && let Some(id) = self.variables.known(candidate)
+            {
+                slots.extend_from_slice(self.variables.arguments(id));
+            }
+        }
+        false
     }
 }

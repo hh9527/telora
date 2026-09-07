@@ -85,6 +85,37 @@
     }
 
     #[test]
+    fn deep_slot_unification_uses_graph_edges_without_descriptor_views() {
+        let schemes = HashMap::new();
+        let hir = HirProgram::default();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        let item1 = inference.variables.fresh();
+        let item2 = inference.variables.fresh();
+        let (mut left, mut right) = (item1, item2);
+        for _ in 0..16384 {
+            left = inference.variables.structure_edge(TypeDescriptor::Array(Box::new(TypeDescriptor::Inference(left))));
+            right = inference.variables.structure_edge(TypeDescriptor::Array(Box::new(TypeDescriptor::Inference(right))));
+        }
+        inference.unify(&TypeDescriptor::Inference(left), &TypeDescriptor::Inference(right)).unwrap();
+        assert_eq!(inference.variables.root(left), inference.variables.root(right));
+        assert_eq!(inference.variables.root(item1), inference.variables.root(item2));
+        assert!(inference.variables.descriptor_views.iter().all(|view| view.get().is_none()));
+        assert!(inference.occurs(item1, &TypeDescriptor::Inference(left)));
+        assert!(inference.variables.descriptor_views.iter().all(|view| view.get().is_none()));
+        inference.variables.record_conflict(&TypeDescriptor::Inference(item1), "deep conflict");
+        assert!(inference.variables.ensure_consistent(&TypeDescriptor::Inference(left)).is_err());
+        assert!(inference.variables.ensure_consistent(&TypeDescriptor::Inference(right)).is_err());
+    }
+
+    #[test]
     fn generic_native_schemes_are_data_and_occurs_checks_reject_infinite_types() {
         let analysis = analyze_with_natives(
             "native identity: for(A) Fn(A) -> A; {identity: identity}",
@@ -122,7 +153,11 @@
             None,
             None,
         );
-        let variable = TypeDescriptor::Inference(InferenceVariableId(0));
+        let variable = inference.fresh_variable();
+        let inner = inference.fresh_variable();
+        inference.unify(&variable, &inner).unwrap();
+        assert_eq!(inference.normalize(&inner), variable,
+            "captured variables must retain their outer allocation scope");
         assert!(
             inference
                 .unify(
@@ -132,6 +167,50 @@
                 .unwrap_err()
                 .contains("infinite type")
         );
+        let array = inference.fresh_variable();
+        let element = inference.fresh_variable();
+        let alias = inference.fresh_variable();
+        inference.unify(&array, &TypeDescriptor::Array(Box::new(element.clone()))).unwrap();
+        inference.unify(&element, &alias).unwrap();
+        inference.unify(&alias, &TypeDescriptor::String).unwrap();
+        assert_eq!(inference.normalize(&array), TypeDescriptor::Array(Box::new(TypeDescriptor::String)));
+        assert_eq!(inference.normalize(&element), TypeDescriptor::String);
+        let body_item = inference.variables.fresh();
+        let nominal = inference.variables.structure_edge(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 42),
+            name: "CachedBody".into(),
+            body: Arc::new(TypeDescriptor::Array(Box::new(TypeDescriptor::Inference(body_item)))),
+        }));
+        let normalize_nominal = |inference: &GenericInference<'_>| {
+            let TypeDescriptor::Declared(declared) = inference.normalize(&TypeDescriptor::Inference(nominal)) else {
+                panic!("nominal descriptor expected");
+            };
+            declared.body
+        };
+        let before = normalize_nominal(&inference);
+        assert!(contains_type_variable(&before));
+        assert!(Arc::ptr_eq(&before, &normalize_nominal(&inference)));
+        inference.bind_inference_variable(body_item, &TypeDescriptor::Int).unwrap();
+        let after = normalize_nominal(&inference);
+        assert_eq!(*after, TypeDescriptor::Array(Box::new(TypeDescriptor::Int)));
+        assert!(!Arc::ptr_eq(&before, &after));
+        assert!(Arc::ptr_eq(&after, &normalize_nominal(&inference)));
+        let cyclic = inference.fresh_variable();
+        let item = inference.fresh_variable();
+        let item_alias = inference.fresh_variable();
+        inference.unify(&cyclic, &TypeDescriptor::Array(Box::new(item.clone()))).unwrap();
+        inference.unify(&item, &item_alias).unwrap();
+        let conflict = inference.unify(&item_alias, &cyclic).unwrap_err();
+        assert!(conflict.contains("infinite type"));
+        assert_eq!(inference.unify(&item, &TypeDescriptor::Int).unwrap_err(), conflict);
+
+        let bottom = inference.fresh_variable();
+        let integer = inference.fresh_variable();
+        inference.unify(&bottom, &TypeDescriptor::Never).unwrap();
+        inference.unify(&integer, &TypeDescriptor::Int).unwrap();
+        inference.unify(&bottom, &integer).unwrap();
+        assert_eq!(inference.normalize(&bottom), TypeDescriptor::Never);
+        assert_eq!(inference.normalize(&integer), TypeDescriptor::Int);
     }
 
     #[test]

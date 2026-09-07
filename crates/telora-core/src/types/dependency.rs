@@ -1470,7 +1470,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         {
             continue;
         }
-        let first_owned_variable = inference.next_variable;
+        let first_owned_variable = inference.variables.next_id();
         if let Some(skeleton) = inference.recursive_closure_skeleton(&binding.value.value) {
             checked_environment.insert(binding.value.name.value.clone(), skeleton.clone());
             inference.set_local_scheme(binding.value.name.value.clone(), None);
@@ -1546,7 +1546,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .iter()
             .find(|binding| binding.value.name.location == *location)
             .expect("component binding exists");
-        let first_owned_variable = inference.next_variable;
+        let first_owned_variable = inference.variables.next_id();
         inference.delayed_initializer_depth += 1;
         let inferred = inference.infer(&binding.value.value, &checked_environment, None);
         inference.delayed_initializer_depth -= 1;
@@ -1571,7 +1571,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 )
             })?;
         let descriptor = scheme.as_ref().map_or_else(
-            || inference.resolve(&inferred),
+            || inference.normalize(&inferred),
             |scheme| scheme.body.clone(),
         );
         checked_environment.insert(binding.value.name.value.clone(), descriptor.clone());
@@ -1668,7 +1668,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             && !definition_contracts.contains_key(&binding.value.name.value);
         let first_owned_variable = recursive_skeletons
             .get(&binding.value.name.value)
-            .map_or(inference.next_variable, |(_, first)| *first);
+            .map_or(inference.variables.next_id(), |(_, first)| *first);
         if is_delayed {
             inference.delayed_initializer_depth += 1;
         }
@@ -1859,7 +1859,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 )
             })?;
         }
-        let resolved = inference.resolve(&descriptor);
+        let resolved = inference.normalize(&descriptor);
         if contains_inference_variable_at_or_after(&resolved, first_owned_variable) {
             return Err(FrontendError::from_diagnostic(
                 sources,
@@ -1873,10 +1873,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ));
         }
     }
-    let mut completed_expressions = inference.records.iter().collect::<Vec<_>>();
+    inference.variables.canonicalize_slots();
+    let mut completed_expressions = inference.records.iter()
+        .map(|(location, ty)| (*location, inference.normalize(ty))).collect::<Vec<_>>();
     completed_expressions.sort_by_key(|(location, _)| location.range().start);
-    for (location, ty) in completed_expressions {
-        let resolved = inference.resolve(ty);
+    for (location, resolved) in &completed_expressions {
         if contains_standalone_sum(&resolved) {
             return Err(FrontendError::from_diagnostic(
                 sources,
@@ -1893,18 +1894,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
             ));
         }
     }
-    expression_descriptors.extend(
-        inference
-            .records
-            .iter()
-            .map(|(location, ty)| (*location, inference.resolve(ty))),
-    );
+    expression_descriptors.extend(completed_expressions);
     inference.top_level_inferred_schemes = inference
         .top_level_inferred_schemes
         .iter()
         .map(|(name, scheme)| {
             let mut scheme = scheme.clone();
-            scheme.body = inference.resolve(&scheme.body);
+            scheme.body = inference.normalize(&scheme.body);
             (name.clone(), scheme)
         })
         .collect();
@@ -1913,7 +1909,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .iter()
         .map(|(location, scheme)| {
             let mut scheme = scheme.clone();
-            scheme.body = inference.resolve(&scheme.body);
+            scheme.body = inference.normalize(&scheme.body);
             (*location, scheme)
         })
         .collect();
@@ -1939,11 +1935,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 .or_insert_with(|| TypeScheme {
                     parameters: Vec::new(),
                     constraints: Vec::new(),
-                    body: inference.resolve(descriptor),
+                    body: inference.normalize(descriptor),
                 });
         }
     }
-    let mut resolved_result = inference.resolve(&result_type);
+    let mut resolved_result = inference.normalize(&result_type);
     // Exported callable values retain their quantified contracts, rather than an
     // unconstrained instantiation created while checking the export expression.
     match (&program.value.body.value.result.value, &mut resolved_result) {
@@ -1975,7 +1971,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         body: resolved_result.clone(),
     })).filter(|scheme| validate_publishable_scheme(scheme).is_ok());
     for (name, descriptor) in &binding_types {
-        let resolved = inference.resolve(descriptor);
+        let resolved = inference.normalize(descriptor);
         if contains_standalone_sum(&resolved) {
             return Err(frontend_error(source_name, format!(
                 "binding {name:?} has no resolved enum owner",
@@ -2001,7 +1997,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let interface_binding_types = binding_types
         .iter()
-        .map(|(name, descriptor)| (name.clone(), inference.resolve(descriptor)))
+        .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor)))
         .collect::<BTreeMap<_, _>>();
     let mut types = TypeGraph::default();
     let declared_type_names = declared_types.keys().cloned().collect::<Vec<_>>();
@@ -2013,7 +2009,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let binding_types: BTreeMap<String, AnalysisTypeId> = binding_types
         .into_iter()
         .map(|(name, descriptor)| {
-            let descriptor = inference.resolve(&descriptor);
+            let descriptor = inference.normalize(&descriptor);
             (name, types.intern_descriptor(&descriptor))
         })
         .collect();
@@ -2038,7 +2034,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             inference
                 .pattern_binding_types
                 .get(&definition.location)
-                .and_then(|descriptor| types.intern_resolved_descriptor(&inference.resolve(descriptor)))
+                .and_then(|descriptor| types.intern_resolved_descriptor(&inference.normalize(descriptor)))
                 .map(|ty| (definition.id, ty))
         })
         .collect::<HashMap<_, _>>();
@@ -2156,7 +2152,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                                 .map(|body| TypeScheme {
                                     parameters: Vec::new(),
                                     constraints: Vec::new(),
-                                    body: inference.resolve(body),
+                                    body: inference.normalize(body),
                                 })
                         })
                         .and_then(|scheme| {
@@ -2327,7 +2323,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let names = runtime_type_evidence.keys().cloned().collect::<Vec<_>>();
         let mut values = Vec::new();
         for (name, descriptor) in runtime_type_evidence {
-            values.push((name, evaluator.descriptor(&descriptor)?));
+            values.push((name, evaluator.descriptor(&inference.normalize(&descriptor))?));
         }
         let root = evaluator.persist_table(values)?;
         for name in names {

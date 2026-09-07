@@ -23,7 +23,6 @@ struct GenericInference<'a> {
     dyn_namespaces: &'a HashSet<String>,
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
-    next_variable: u32,
     closure_inference_depth: usize,
     delayed_initializer_depth: usize,
     recursive_body_inference_depth: usize,
@@ -33,7 +32,7 @@ struct GenericInference<'a> {
     field_requirements: HashMap<InferenceVariableId, BTreeMap<String, TypeDescriptor>>,
     enum_constructors: HashMap<InferenceVariableId, Vec<EnumConstructorObligation>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
-    substitutions: HashMap<InferenceVariableId, TypeDescriptor>,
+    variables: InferenceVariables,
     records: HashMap<crate::Location, TypeDescriptor>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
     type_facet_locations: HashSet<crate::Location>,
@@ -125,43 +124,11 @@ fn definition_component_plan(block: &Block, hir: &HirProgram) -> DefinitionCompo
         .enumerate()
         .map(|(index, (definition, _))| (*definition, index))
         .collect::<HashMap<_, _>>();
-    let direct_dependencies = hir
-        .definitions()
-        .iter()
-        .filter_map(|definition| {
-            let root = definition.value?;
-            let mut dependencies = Vec::new();
-            for expression in hir.expressions() {
-                let Some(reference) = expression.reference.and_then(|id| hir.reference(id)) else {
-                    continue;
-                };
-                let HirResolution::Definition(target) = reference.resolution else {
-                    continue;
-                };
-                let mut owner = Some(expression.id);
-                while let Some(current) = owner {
-                    if current == root {
-                        if !dependencies.contains(&target) {
-                            dependencies.push(target);
-                        }
-                        break;
-                    }
-                    owner = hir
-                        .expression(current)
-                        .and_then(|expression| expression.parent);
-                }
-            }
-            dependencies.sort_unstable();
-            Some((definition.id, dependencies))
-        })
-        .collect::<HashMap<_, _>>();
     let mut edges = vec![Vec::new(); candidates.len()];
     let mut indirect_edge_sources = HashSet::new();
     for (index, (definition, _)) in candidates.iter().enumerate() {
-        let mut pending = direct_dependencies
-            .get(definition)
-            .into_iter()
-            .flatten()
+        let mut pending = hir.definition_dependencies(*definition)
+            .iter()
             .map(|dependency| (*dependency, false))
             .collect::<Vec<_>>();
         let mut visited = HashSet::new();
@@ -178,9 +145,8 @@ fn definition_component_plan(block: &Block, hir: &HirProgram) -> DefinitionCompo
                 }
                 continue;
             }
-            if let Some(dependencies) = direct_dependencies.get(&target) {
-                pending.extend(dependencies.iter().map(|dependency| (*dependency, true)));
-            }
+            pending.extend(hir.definition_dependencies(target).iter()
+                .map(|dependency| (*dependency, true)));
         }
         edges[index].sort_unstable();
     }

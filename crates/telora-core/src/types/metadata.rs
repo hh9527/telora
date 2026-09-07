@@ -367,7 +367,7 @@ fn infer_tool_expression_evidence(
     // inference pass; typed tool expressions require successful evidence.
     inference.infer(expression, &environment, expected)?;
     let descriptors = inference.records.iter()
-        .map(|(location, descriptor)| (*location, inference.resolve(descriptor))).collect();
+        .map(|(location, descriptor)| (*location, inference.normalize(descriptor))).collect();
     Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors })
 }
 

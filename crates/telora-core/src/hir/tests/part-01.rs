@@ -14,6 +14,28 @@
             .map(|reference| reference.name.as_str())
             .collect::<Vec<_>>();
         assert!(unresolved.is_empty(), "{unresolved:?}");
+        for reference in hir.references() {
+            let expected = hir.references().iter().find(|candidate|
+                candidate.location == reference.location && candidate.name == reference.name).unwrap();
+            assert_eq!(hir.reference_at(reference.location, &reference.name).unwrap().id, expected.id);
+        }
+        for definition in hir.definitions() {
+            let mut expected = Vec::new();
+            if let Some(root) = definition.value {
+                for expression in hir.expressions() {
+                    let Some(reference) = expression.reference.and_then(|id| hir.reference(id)) else { continue; };
+                    let HirResolution::Definition(target) = reference.resolution else { continue; };
+                    let mut current = Some(expression.id);
+                    while let Some(id) = current {
+                        if id == root { expected.push(target); break; }
+                        current = hir.expression(id).and_then(|expression| expression.parent);
+                    }
+                }
+            }
+            expected.sort_unstable();
+            expected.dedup();
+            assert_eq!(hir.definition_dependencies(definition.id), expected);
+        }
         let loop_definition = hir
             .definitions()
             .iter()

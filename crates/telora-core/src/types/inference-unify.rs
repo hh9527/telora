@@ -1,6 +1,6 @@
 impl<'a> GenericInference<'a> {
     fn require_numeric(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
-        match self.resolve(ty) {
+        match self.normalize(ty) {
             TypeDescriptor::Inference(variable) => {
                 self.numeric_variables.insert(variable);
                 Ok(())
@@ -16,7 +16,7 @@ impl<'a> GenericInference<'a> {
     }
 
     fn require_not_operand(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
-        match self.resolve(ty) {
+        match self.normalize(ty) {
             TypeDescriptor::Inference(variable) => {
                 if self.enum_constructors.contains_key(&variable) {
                     return self.bind_inference_variable(variable, &normalized_bool_descriptor());
@@ -39,7 +39,7 @@ impl<'a> GenericInference<'a> {
     }
 
     fn require_ordered(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
-        match self.resolve(ty) {
+        match self.normalize(ty) {
             TypeDescriptor::Inference(variable) => {
                 self.ordered_variables.insert(variable);
                 Ok(())
@@ -60,7 +60,19 @@ impl<'a> GenericInference<'a> {
         variable: InferenceVariableId,
         ty: &TypeDescriptor,
     ) -> Result<(), String> {
-        let ty = self.resolve(ty);
+        let variable = self.variables.root(variable);
+        self.variables.ensure_consistent(&TypeDescriptor::Inference(variable))?;
+        self.variables.ensure_consistent(ty)?;
+        let proxy_target = match ty {
+            TypeDescriptor::Inference(target) => Some(self.variables.root(*target)),
+            _ => None,
+        };
+        let head = self.variables.head(ty);
+        let ty = &*head;
+        if *ty == TypeDescriptor::Inference(variable) { return Ok(()); }
+        if let Some(existing) = self.variables.binding(variable).cloned() {
+            return self.unify(&existing, ty);
+        }
         if self.occurs(variable, &ty) {
             return Err(format!("infinite type for ?{}", variable.0));
         }
@@ -148,13 +160,94 @@ impl<'a> GenericInference<'a> {
                 }
             }
         }
-        self.substitutions.insert(variable, ty);
+        self.variables.set(variable, proxy_target.map_or_else(|| ty.clone(), TypeDescriptor::Inference));
         Ok(())
+    }
+
+    fn unify_variable_pair(&mut self, left: InferenceVariableId, right: InferenceVariableId) -> Result<(), String> {
+        let mut pending = vec![(left, right, false)];
+        while let Some((left, right, finish)) = pending.pop() {
+            if let Some(query) = &self.query { query.check().map_err(|error| error.to_string())?; }
+            let left = self.variables.root(left);
+            let right = self.variables.root(right);
+            self.variables.ensure_consistent(&TypeDescriptor::Inference(left))?;
+            self.variables.ensure_consistent(&TypeDescriptor::Inference(right))?;
+            if left == right { continue; }
+            if let (Some(a), Some(b)) = (self.variables.known(left), self.variables.known(right))
+                && self.variables.types[a.0 as usize].constructor == self.variables.types[b.0 as usize].constructor
+                && !matches!(self.variables.constructor(a), InferenceConstructor::Declared { .. }
+                    | InferenceConstructor::Named(_))
+                && self.variables.arguments(a).len() == self.variables.arguments(b).len()
+            {
+                let (a, b) = (self.variables.arguments(a), self.variables.arguments(b));
+                if finish {
+                    if a.iter().zip(b).all(|(a, b)| self.variables.root(*a) == self.variables.root(*b)) {
+                        self.merge_equal_variables(left, right);
+                    }
+                } else {
+                    pending.push((left, right, true));
+                    pending.extend(a.iter().zip(b).rev().map(|(a, b)| (*a, *b, false)));
+                }
+                continue;
+            }
+            if let Err(message) = self.unify_variable_pair_compatibility(left, right) {
+                self.variables.record_conflict(&TypeDescriptor::Inference(left), &message);
+                self.variables.record_conflict(&TypeDescriptor::Inference(right), &message);
+                return Err(message);
+            }
+        }
+        Ok(())
+    }
+
+    fn merge_equal_variables(&mut self, left: InferenceVariableId, right: InferenceVariableId) {
+        let (source, target) = if left.0 < right.0 { (right, left) } else { (left, right) };
+        for variables in [&mut self.numeric_variables, &mut self.not_variables, &mut self.ordered_variables] {
+            if variables.remove(&source) { variables.insert(target); }
+        }
+        self.variables.set(source, TypeDescriptor::Inference(target));
+    }
+
+    fn unify_variable_pair_compatibility(&mut self, left: InferenceVariableId, right: InferenceVariableId) -> Result<(), String> {
+        let left = self.variables.root(left);
+        let right = self.variables.root(right);
+        if left == right { return Ok(()); }
+        match (self.variables.bound(left), self.variables.bound(right)) {
+            (None, None) => {
+                let (source, target) = if left.0 < right.0 { (right, left) } else { (left, right) };
+                self.bind_inference_variable(source, &TypeDescriptor::Inference(target))
+            },
+            (None, _) => self.bind_inference_variable(left, &TypeDescriptor::Inference(right)),
+            (_, None) => self.bind_inference_variable(right, &TypeDescriptor::Inference(left)),
+            (Some(left_type), Some(right_type)) => {
+                self.unify(&left_type, &right_type)?;
+                // Compatibility (notably Never and structural projection) is
+                // weaker than equality and must not create a proxy edge.
+                if !self.variables.same_slots(left, right) {
+                    return Ok(());
+                }
+                self.merge_equal_variables(left, right);
+                Ok(())
+            }
+        }
     }
 
     fn unify(&mut self, left: &TypeDescriptor, right: &TypeDescriptor) -> Result<(), String> {
         if let Some(query) = &self.query {
             query.check().map_err(|error| error.to_string())?;
+        }
+        self.variables.ensure_consistent(left)?;
+        self.variables.ensure_consistent(right)?;
+        let result = self.unify_consistent(left, right);
+        if let Err(message) = &result {
+            self.variables.record_conflict(left, message);
+            self.variables.record_conflict(right, message);
+        }
+        result
+    }
+
+    fn unify_consistent(&mut self, left: &TypeDescriptor, right: &TypeDescriptor) -> Result<(), String> {
+        if let (TypeDescriptor::Inference(left), TypeDescriptor::Inference(right)) = (left, right) {
+            return self.unify_variable_pair(*left, *right);
         }
         let completed_left = self.complete_declared(left);
         let completed_right = self.complete_declared(right);
@@ -164,10 +257,15 @@ impl<'a> GenericInference<'a> {
             return Ok(());
         }
         if let TypeDescriptor::Inference(variable) = left
-            && let Some(existing) = self.substitutions.get(variable).cloned()
+            && let Some(existing) = self.variables.binding(*variable).cloned()
             && self.declared_identity(right).is_some()
         {
             if matches!(existing, TypeDescriptor::Inference(_)) {
+                return self.unify(&existing, right);
+            }
+            if let Some(existing_id) = self.declared_identity(&existing)
+                && self.declared_identity(right).is_some_and(|id| !existing_id.has_same_head(&id))
+            {
                 return self.unify(&existing, right);
             }
             let compatibility = match right {
@@ -175,14 +273,19 @@ impl<'a> GenericInference<'a> {
                 _ => right,
             };
             self.check(&existing, compatibility)?;
-            self.substitutions.insert(*variable, right.clone());
+            self.variables.set(*variable, right.clone());
             return Ok(());
         }
         if let TypeDescriptor::Inference(variable) = right
-            && let Some(existing) = self.substitutions.get(variable).cloned()
+            && let Some(existing) = self.variables.binding(*variable).cloned()
             && self.declared_identity(left).is_some()
         {
             if matches!(existing, TypeDescriptor::Inference(_)) {
+                return self.unify(left, &existing);
+            }
+            if let Some(existing_id) = self.declared_identity(&existing)
+                && self.declared_identity(left).is_some_and(|id| !existing_id.has_same_head(&id))
+            {
                 return self.unify(left, &existing);
             }
             let compatibility = match left {
@@ -190,7 +293,7 @@ impl<'a> GenericInference<'a> {
                 _ => left,
             };
             self.check(&existing, compatibility)?;
-            self.substitutions.insert(*variable, left.clone());
+            self.variables.set(*variable, left.clone());
             return Ok(());
         }
         if let (Some(left), Some(right)) =
@@ -206,31 +309,33 @@ impl<'a> GenericInference<'a> {
         if let (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) = (left, right) {
             return self.unify(left, right);
         }
-        let left = self.resolve(left);
-        let right = self.resolve(right);
-        match (&left, &right) {
+        let left_head = self.variables.head(left);
+        let right_head = self.variables.head(right);
+        let left = &*left_head;
+        let right = &*right_head;
+        match (left, right) {
             (TypeDescriptor::Declared(declared), other)
                 if !matches!(other, TypeDescriptor::Declared(_))
-                    && declared.body.as_ref() == other =>
+                    && self.variables.same_type(&declared.body, other) =>
             {
                 return Ok(());
             }
             (other, TypeDescriptor::Declared(declared))
                 if !matches!(other, TypeDescriptor::Declared(_))
-                    && other == declared.body.as_ref() =>
+                    && self.variables.same_type(other, &declared.body) =>
             {
                 return Ok(());
             }
             _ => {}
         }
-        if let (TypeDescriptor::Struct(fields), TypeDescriptor::Dict(item)) = (&left, &right) {
+        if let (TypeDescriptor::Struct(fields), TypeDescriptor::Dict(item)) = (left, right) {
             for field in fields.values() {
                 self.unify(field, item)?;
             }
             return Ok(());
         }
         if matches!(
-            (&left, &right),
+            (left, right),
             (TypeDescriptor::Dict(_), TypeDescriptor::Struct(_))
         ) {
             return Err(format!(
@@ -251,7 +356,7 @@ impl<'a> GenericInference<'a> {
         {
             return Ok(());
         }
-        match (&left, &right) {
+        match (left, right) {
             (TypeDescriptor::Inference(left), TypeDescriptor::Inference(right))
                 if left == right =>
             {
@@ -379,8 +484,8 @@ impl<'a> GenericInference<'a> {
             _ if left == right => Ok(()),
             _ => Err(format!(
                 "cannot unify {} with {}",
-                left.display_name(),
-                right.display_name()
+                self.normalize(left).display_name(),
+                self.normalize(right).display_name()
             )),
         }
     }
@@ -393,12 +498,12 @@ impl<'a> GenericInference<'a> {
         actual: &TypeDescriptor,
     ) -> Result<TypeDescriptor, String> {
         if let TypeDescriptor::Inference(variable) = parameter {
-            let Some(bound) = self.substitutions.get(variable).cloned() else {
+            let Some(bound) = self.variables.binding(*variable).cloned() else {
                 return Ok(parameter.clone());
             };
             let refined = self.refine_argument_nominal_context(&bound, actual)?;
             if refined != bound {
-                self.substitutions.insert(*variable, refined.clone());
+                self.variables.set(*variable, refined.clone());
             }
             return Ok(refined);
         }
@@ -488,8 +593,8 @@ impl<'a> GenericInference<'a> {
         left: &TypeDescriptor,
         right: &TypeDescriptor,
     ) -> Result<(), String> {
-        let left = self.resolve(left);
-        let right = self.resolve(right);
+        let left = self.normalize(left);
+        let right = self.normalize(right);
         if left == right {
             return Ok(());
         }
@@ -636,6 +741,17 @@ impl<'a> GenericInference<'a> {
     }
 
     fn check(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
+        self.variables.ensure_consistent(actual)?;
+        self.variables.ensure_consistent(expected)?;
+        let result = self.check_consistent(actual, expected);
+        if let Err(message) = &result {
+            self.variables.record_conflict(actual, message);
+            self.variables.record_conflict(expected, message);
+        }
+        result
+    }
+
+    fn check_consistent(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
         let completed_actual = self.complete_declared(actual);
         let completed_expected = self.complete_declared(expected);
         let actual = completed_actual.as_ref().unwrap_or(actual);
@@ -654,13 +770,13 @@ impl<'a> GenericInference<'a> {
         match (actual, expected) {
             (TypeDescriptor::Declared(declared), other)
                 if !matches!(other, TypeDescriptor::Declared(_))
-                    && declared.body.as_ref() == other =>
+                    && self.variables.same_type(&declared.body, other) =>
             {
                 return Ok(());
             }
             (other, TypeDescriptor::Declared(declared))
                 if !matches!(other, TypeDescriptor::Declared(_))
-                    && other == declared.body.as_ref() =>
+                    && self.variables.same_type(other, &declared.body) =>
             {
                 return Ok(());
             }
@@ -751,8 +867,13 @@ impl<'a> GenericInference<'a> {
             self.checking_named_pairs.remove(&pair);
             return result;
         }
-        let actual = self.expose_named(actual);
-        let expected = self.expose_named(expected);
+        let actual_head = self.variables.head(actual);
+        let expected_head = self.variables.head(expected);
+        let actual = &*actual_head;
+        let expected = &*expected_head;
+        if matches!(actual, TypeDescriptor::Named(_)) || matches!(expected, TypeDescriptor::Named(_)) {
+            return self.check(actual, expected);
+        }
         if matches!(actual, TypeDescriptor::Never) {
             return Ok(());
         }
@@ -760,7 +881,7 @@ impl<'a> GenericInference<'a> {
             && contains_runtime_never_leaf(&actual)
         {
             let evidence = self.freshen_runtime_never_leaves(&actual);
-            return self.bind_inference_variable(variable, &evidence);
+            return self.bind_inference_variable(*variable, &evidence);
         }
         if contains_type_variable(&actual)
             && let TypeDescriptor::PendingAlternatives(variants) = &expected
@@ -773,7 +894,7 @@ impl<'a> GenericInference<'a> {
                 return self.check(&actual, candidate);
             }
         }
-        match (&actual, &expected) {
+        match (actual, expected) {
             (TypeDescriptor::Atom(_), TypeDescriptor::AtomValue) => return Ok(()),
             (TypeDescriptor::PendingAlternatives(variants), TypeDescriptor::Enum(_)) => {
                 for variant in variants {
@@ -1002,7 +1123,7 @@ impl<'a> GenericInference<'a> {
         descriptor: &TypeDescriptor,
     ) -> Result<(), String> {
         let mut variables = Vec::new();
-        collect_inference_variables(&self.resolve(descriptor), &mut variables);
+        collect_inference_variables(&self.normalize(descriptor), &mut variables);
         variables.sort_unstable();
         variables.dedup();
         for variable in variables {
