@@ -32,7 +32,6 @@ impl<'a> ToolEvaluator<'a> {
             ("Float", TypeDescriptor::Float),
             ("String", TypeDescriptor::String),
             ("Bytes", TypeDescriptor::Bytes),
-            ("Atom", TypeDescriptor::AtomValue),
         ] {
             values.insert(name.into(), self.descriptor(&descriptor)?);
         }
@@ -51,7 +50,6 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("Array", 1, native_array_type),
             NativeFunction::new("Dict", 1, native_dict_type),
             NativeFunction::new("TypeOf", 1, native_type_of_type),
-            NativeFunction::new("Tagged", 2, native_tagged_type),
             NativeFunction::new("Tuple", 1, native_tuple_type),
             NativeFunction::new("Func", 2, native_function_type),
             NativeFunction::new("\0telora_cast", 2, native_checked_cast),

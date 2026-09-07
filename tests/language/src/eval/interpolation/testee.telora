@@ -1,11 +1,17 @@
 import "std/value" { Value };
+import "std/fmt" as fmt;
+
+type State = enum { 'Ok };
+impl fmt.Display for State {
+    display: fn(value) { match value { 'Ok => fmt.from_string("Ok") } },
+};
 
 def name = "Ada";
 def count = 3;
 def ratio = 3.0;
 def small = 1.25e-3;
 def zero = -0.0;
-def state = 'Ok;
+def state: State = 'Ok;
 
 export def result: Value = 'Object({
     rendered: 'String(`hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`),

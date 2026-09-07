@@ -35,7 +35,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("Float", TypeDescriptor::Float),
         ("String", TypeDescriptor::String),
         ("Bytes", TypeDescriptor::Bytes),
-        ("Atom", TypeDescriptor::AtomValue),
         ("Bool", normalized_bool_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
@@ -51,13 +50,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
     prelude.insert(
         "TypeOf".into(),
         function(vec![metadata.clone()], metadata.clone()),
-    );
-    prelude.insert(
-        "Tagged".into(),
-        function(
-            vec![TypeDescriptor::AtomValue, metadata.clone()],
-            metadata.clone(),
-        ),
     );
     prelude.insert(
         "Tuple".into(),
@@ -301,19 +293,6 @@ fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
         validate_native_type(value)?;
     }
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
-}
-
-fn native_tagged_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let tag = context.argument(0)?;
-    if context.value(tag)?.as_atom().is_none() {
-        return Err(NativeError::new("Tagged expects an Atom tag"));
-    }
-    let payload = context.argument(1)?;
-    let value = context.value(payload)?;
-    if !value.is_hidden_type_slot() {
-        validate_native_type(value)?;
-    }
-    write_native_type_record(context, "Tagged", &[("tag", tag), ("payload", payload)])
 }
 
 fn native_tuple_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {

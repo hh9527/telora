@@ -21,7 +21,6 @@ native prepare: Fn(String) -> Tuple([Array(String), Array(String)]);
 native from_string: Fn(String) -> Fmt;
 native from_int: Fn(Int) -> Fmt;
 native from_float: Fn(Float) -> Fmt;
-native from_atom: Fn(Atom) -> Fmt;
 native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
 native render: Fn(Fmt) -> String;
 
@@ -46,13 +45,6 @@ def project_float: Fn(Dyn) -> Fmt = fn(value) {
     }
 };
 
-def project_atom: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(Atom, value) {
-        'Some(value) => from_atom(value),
-        'None => fail!("prepared Display expected Atom", value),
-    }
-};
-
 decl display_for: Fn(Type) -> Fn(Dyn) -> Fmt;
 def display_for = fn(target) {
     let target_kind = type_desc.kind(target);
@@ -67,7 +59,6 @@ def display_for = fn(target) {
         'String => project_string,
         'Int => project_int,
         'Float => project_float,
-        'Atom => project_atom,
         _ => match target_kind {
             'Ref => match type_property.get_type_prop(target, DisplayBy) {
                 'Some(property) => property.display,
@@ -120,7 +111,6 @@ trait Display {
 impl Display for String { display: from_string };
 impl Display for Int { display: from_int };
 impl Display for Float { display: from_float };
-impl Display for Atom { display: from_atom };
 
 impl(T: Property(DisplayBy)) Display for T {
     display: fn(value) { display(T, value) },
@@ -133,7 +123,6 @@ export {
     concat,
     display,
     display_by,
-    from_atom,
     from_float,
     from_int,
     from_string,

@@ -65,9 +65,7 @@ r#"a "quoted" value"#      # 带 delimiter 的 raw String
 'Ready                     # Atom
 ```
 
-`Atom` 是覆盖所有无 payload 符号的内建宽类型，并具有稳定的内建 TypeId；每个
-Atom 字面量同时具有自己的 singleton 静态类型。singleton Atom 可赋给 `Atom`，反向
-收窄则需要显式检查。具名 enum 保留自己的 nominal TypeId，不等同于 `Atom`。
+具名 enum 保留自己的 nominal TypeId。variant 的名称和 payload 由 enum 声明定义。
 
 普通字符串支持 `\0`、`\n`、`\r`、`\t`、`\"`、`\\`、两位 ASCII `\xNN`、
 Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符串使用同一组
@@ -80,10 +78,10 @@ let greeting = `hello \{name}`;
 ```
 
 插值中的每个表达式都要求 `T: std/fmt.Display`，并在编译期降低为已选中
-dictionary 的 `display` 成员调用。String、Int、Float 和 Atom 由标准能力提供
+dictionary 的 `display` 成员调用。String、Int、Float 由标准能力提供
 显式实现；插值处需要已确定的类型及其 Display 实现，`Dyn` 必须先显式投影。具名 enum
 不会因运行时使用 Atom 表示而自动获得 `Display`。String 保持原文本，Int 使用
-十进制表示，Atom 省略前导 `'`。Float
+十进制表示。Float
 使用有限 binary64 的文本表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一
 binary64 值的最短十进制文本，不受 locale 影响。该表示保留负零的符号，但不保留
 整数值的小数点，例如 `3.0` 表示为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的
@@ -591,7 +589,7 @@ Evidence 携带已发布 property payload，implementation selection 不读取 p
 
 当前不存在 higher-rank type、用户定义或通用 subtyping、trait object、interface、
 associated type、default member、specialization、trait inheritance 或 higher-kinded
-type。singleton Atom 到内建宽类型 `Atom` 是固定的内建 widening 关系。
+type。
 
 ## 7. 类型元数据
 

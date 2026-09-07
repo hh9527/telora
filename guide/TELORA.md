@@ -842,15 +842,12 @@ Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符�
 代替 `\"`，并额外用 `\{...}` 表达插值。raw String 不处理 escape 或插值；正则、
 SQL 模板等包含大量反斜杠的文本优先使用 raw String，并按需增加 `#` delimiter。
 
-每个插值表达式都必须实现 `std/fmt.Display`；String、Int、Float 和 Atom 的实现
+每个插值表达式都必须实现 `std/fmt.Display`；String、Int、Float 的实现
 由标准能力提供。编译器静态选择 implementation，并把插值降低为普通 dictionary
 member 调用。`Dyn` 必须先显式投影，插值处需要已确定的类型及其 Display 实现。Bool 和其他
 具名 enum 不会因运行时使用 Atom 表示而自动获得 `Display`。Float 使用有限
 binary64 的稳定文本表示：最短、可往返、不受
 locale 影响；`3.0` 显示为 `3`，`-0.0` 显示为 `-0`，原始小数或指数拼写不会保留。
-
-`Atom` 是所有无 payload 符号的内建宽类型；`'Ready` 等字面量具有 singleton 类型，
-并可直接赋给 `Atom`。这条 widening 不会把 Bool 或用户具名 enum 擦除成 `Atom`。
 
 没有 `Display` implementation 的 Tagged、Struct、Array、Dict、Tuple、Dyn 或用户值
 不能插值。声明 enum 和 Tagged payload 可以先通过 `match` 得到明确文本；Array/Dict
