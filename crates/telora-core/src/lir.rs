@@ -96,6 +96,11 @@ pub enum Operation {
         left: RegisterId,
         right: RegisterId,
     },
+    StructUpdate {
+        dst: RegisterId,
+        left: RegisterId,
+        right: RegisterId,
+    },
     BitOr {
         dst: RegisterId,
         left: RegisterId,
@@ -445,6 +450,11 @@ fn lower_operation(
             right: register(right)?,
         },
         Operation::BitOr { dst, left, right } => Instruction::BitOr {
+            dst: register(dst)?,
+            left: register(left)?,
+            right: register(right)?,
+        },
+        Operation::StructUpdate { dst, left, right } => Instruction::StructUpdate {
             dst: register(dst)?,
             left: register(left)?,
             right: register(right)?,

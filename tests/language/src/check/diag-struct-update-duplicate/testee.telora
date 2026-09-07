@@ -1,2 +1,2 @@
 type A = struct {x: Int};
-export def result = { let a: A = {x: 1}; a & {x: 2, ...a, x: 3} };
+export def result = { let a: A = {x: 1}; a <~ {x: 2, ...a, x: 3} };

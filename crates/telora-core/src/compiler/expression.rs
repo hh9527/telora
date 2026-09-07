@@ -200,6 +200,7 @@ impl<'a> Compiler<'a> {
                     BinaryOperator::Equal => Operation::Equal { dst, left, right },
                     BinaryOperator::NotEqual => Operation::NotEqual { dst, left, right },
                     BinaryOperator::BitAnd => Operation::BitAnd { dst, left, right },
+                    BinaryOperator::StructUpdate => Operation::StructUpdate { dst, left, right },
                     BinaryOperator::BitOr => Operation::BitOr { dst, left, right },
                     BinaryOperator::BitXor => Operation::BitXor { dst, left, right },
                     BinaryOperator::And | BinaryOperator::Or => {

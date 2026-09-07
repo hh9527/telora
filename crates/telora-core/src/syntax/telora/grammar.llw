@@ -4,7 +4,7 @@ token SectionLParen='\\(' LParen='(' RParen=')' LBrace='{' RBrace='}' LBracket='
 token Comma=',' Colon=':' Semicolon=';' Ellipsis='...' Dot='.' At='@' Bang='!' Question='?';
 token Plus='+' Minus='-' Star='*' Slash='/' Percent='%' Less='<' LessEqual='<=' Greater='>' GreaterEqual='>=' EqualEqual='==' BangEqual='!=' Equal='=';
 token BitAnd='&' BitOr='|' BitXor='^' AndAnd='&&' OrOr='||';
-token Arrow='->' FatArrow='=>' Pipe='|>';
+token Arrow='->' FatArrow='=>' Pipe='|>' StructUpdate='<~';
 token Int='<integer>' Float='<float>' Bytes='<bytes>';
 token DoubleQuote='"' Backtick='`' RawString='<raw string>' StringText='<string text>' EscapeSequence='<escape>';
 token UnknownEscapeSequence='<unknown escape>' UnterminatedEscapeSequence='<unterminated escape>';
@@ -61,6 +61,7 @@ expression:
 | expression '&' expression @binary_expr
 | expression '^' expression @binary_expr
 | expression '|' expression @binary_expr
+| expression '<~' expression @binary_expr
 | expression ('<' | '<=' | '>' | '>=' | '==' | '!=') expression @binary_expr
 | expression '&&' expression @binary_expr
 | expression '||' expression @binary_expr

@@ -802,12 +802,7 @@ impl Vm {
                             }
                             Opcode::BitAnd { dst, left, right }
                             | Opcode::BitOr { dst, left, right }
-                            | Opcode::BitXor { dst, left, right }
-                                if !matches!(instruction, Opcode::BitAnd { .. })
-                                    || !matches!(
-                                        read_register(&registers, *left, function, pc)?.value(),
-                                        DecodedValue::Dict(_)
-                                    ) => {
+                            | Opcode::BitXor { dst, left, right } => {
                                 let operation = match instruction {
                                     Opcode::BitAnd { .. } => BitwiseOperation::And,
                                     Opcode::BitOr { .. } => BitwiseOperation::Or,
@@ -1171,12 +1166,12 @@ impl Vm {
                                 );
                                 write_register(&mut registers, *dst, dict, function, pc)?;
                             }
-                            Opcode::MergeDicts { dst, .. } | Opcode::BitAnd { dst, .. } => {
+                            Opcode::MergeDicts { dst, .. } | Opcode::StructUpdate { dst, .. } => {
                                 let (dicts, owner) = match instruction {
                                     Opcode::MergeDicts { dicts, .. } => {
                                         (read_many(&registers, dicts, function, pc)?, None)
                                     }
-                                    Opcode::BitAnd { left, right, .. } => {
+                                    Opcode::StructUpdate { left, right, .. } => {
                                         let base = *read_register(&registers, *left, function, pc)?;
                                         let patch = *read_register(&registers, *right, function, pc)?;
                                         (vec![base, patch], base.type_id())
@@ -1255,7 +1250,6 @@ impl Vm {
                                 let dict = owner.map_or(dict, |owner| dict.with_type_id(owner));
                                 write_register(&mut registers, *dst, dict, function, pc)?;
                             }
-                            Opcode::BitOr { .. } | Opcode::BitXor { .. } => unreachable!(),
                             Opcode::GetField { dst, dict, field } => {
                                 let (_, _, text_links, _) =
                                     view.bytecode(frame.prototype).map_err(|heap_error| {

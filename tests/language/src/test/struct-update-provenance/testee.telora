@@ -8,7 +8,7 @@ export def spread = test.should_ok(fn() {
     fail!("spread", provider.updated.replaced)
 });
 export def literal = test.should_ok(fn() {
-    let updated = provider.base & {replaced: provider.replacement};
+    let updated = provider.base <~ {replaced: provider.replacement};
     fail!("literal", updated.replaced)
 });
 export def container = test.should_ok(fn() {

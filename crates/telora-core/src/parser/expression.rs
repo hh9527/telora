@@ -277,6 +277,8 @@ impl<'a> Lowerer<'a> {
                     (BinaryOperator::GreaterThanOrEqual, operator)
                 } else if let Some(operator) = self.token_children(node, Token::BangEqual).next() {
                     (BinaryOperator::NotEqual, operator)
+                } else if let Some(operator) = self.token_children(node, Token::StructUpdate).next() {
+                    (BinaryOperator::StructUpdate, operator)
                 } else if let Some(operator) = self.token_children(node, Token::BitAnd).next() {
                     (BinaryOperator::BitAnd, operator)
                 } else if let Some(operator) = self.token_children(node, Token::BitOr).next() {

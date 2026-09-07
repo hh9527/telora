@@ -532,7 +532,7 @@ impl<'a> GenericInference<'a> {
                     }
                     normalized_bool_descriptor()
                 }
-                BinaryOperator::BitAnd => {
+                BinaryOperator::StructUpdate => {
                     let base = self.infer(left, environment, None)?;
                     let base = self.expose_named(&base);
                     if let TypeDescriptor::Declared(declared) = &base
@@ -541,12 +541,10 @@ impl<'a> GenericInference<'a> {
                         self.infer_struct_update(right, environment, fields)?;
                         base
                     } else {
-                        self.check(&base, &TypeDescriptor::Int)?;
-                        self.infer(right, environment, Some(&TypeDescriptor::Int))?;
-                        TypeDescriptor::Int
+                        return Err("struct update requires a named struct base".into());
                     }
                 }
-                BinaryOperator::BitOr | BinaryOperator::BitXor => {
+                BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::BitXor => {
                     if let Some(expected) = expected {
                         self.check(&TypeDescriptor::Int, expected)?;
                     }

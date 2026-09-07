@@ -2,4 +2,4 @@ type Base = struct {x: Int, label: String};
 type Patch = struct {label: String};
 def base: Base = {x: 1, label: "base"};
 def patch: Patch = {label: "patch"};
-export def updated = base & patch & {x: 2};
+export def updated = base <~ patch <~ {x: 2};

@@ -212,6 +212,7 @@ pub enum BinaryOperator {
     Equal,
     NotEqual,
     BitAnd,
+    StructUpdate,
     BitOr,
     BitXor,
     And,

@@ -1,2 +1,2 @@
 type A = struct {x: Int};
-export def result = { let a: A = {x: 1}; let patch: Dict(Int) = {x: 2}; a & {...patch} };
+export def result = { let a: A = {x: 1}; let patch: Dict(Int) = {x: 2}; a <~ {...patch} };

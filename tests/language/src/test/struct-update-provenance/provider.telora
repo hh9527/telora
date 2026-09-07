@@ -3,4 +3,4 @@ export type Patch = struct {replaced: Int};
 export def base: Base = {kept: 11, replaced: 12};
 export def patch: Patch = {replaced: 21};
 export def replacement = 31;
-export def updated = base & {...patch};
+export def updated = base <~ {...patch};

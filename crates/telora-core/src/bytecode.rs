@@ -107,6 +107,11 @@ pub enum Instruction {
         left: Register,
         right: Register,
     },
+    StructUpdate {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
     BitOr {
         dst: Register,
         left: Register,
@@ -325,6 +330,11 @@ pub enum Opcode {
         src: Register,
     },
     BitAnd {
+        dst: Register,
+        left: Register,
+        right: Register,
+    },
+    StructUpdate {
         dst: Register,
         left: Register,
         right: Register,
@@ -727,6 +737,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::LogicalNot { dst, src } => Opcode::LogicalNot { dst, src },
         Instruction::BitNot { dst, src } => Opcode::BitNot { dst, src },
         Instruction::BitAnd { dst, left, right } => Opcode::BitAnd { dst, left, right },
+        Instruction::StructUpdate { dst, left, right } => Opcode::StructUpdate { dst, left, right },
         Instruction::BitOr { dst, left, right } => Opcode::BitOr { dst, left, right },
         Instruction::BitXor { dst, left, right } => Opcode::BitXor { dst, left, right },
         Instruction::Equal { dst, left, right } => Opcode::Equal { dst, left, right },

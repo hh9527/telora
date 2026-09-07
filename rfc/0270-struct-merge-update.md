@@ -1,6 +1,10 @@
 # RFC 0270: Struct Merge-Update
 
 - Status: Accepted
+- Syntax amendment: Struct merge-update now uses `<~`, left-associative and
+  below integer bitwise operators but above comparisons. Integer `&` is
+  exclusively bitwise AND. The original design narrative below retains its
+  historical spelling; current language documentation describes `<~`.
 - Tracking: [#157](https://github.com/hh9527/telora/issues/157)
 - Scope: Nominal struct updates, including spreads inside update literals.
 - Implementation: Complete. Debug build and workspace tests passed; the final

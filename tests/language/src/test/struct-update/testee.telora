@@ -15,7 +15,7 @@ export def nominal_chain = test.should_ok(fn() {
     let base: Full = {x: 1, label: "base"};
     let label: Label = {label: "patch"};
     let count: Count = {x: 2};
-    let updated = base & label & count & {x: 3,};
+    let updated = base <~ label <~ count <~ {x: 3,};
     let checked: Full = updated;
     expect(checked.x == 3 && checked.label == "patch"
         && base.x == 1 && base.label == "base"
@@ -27,22 +27,22 @@ export def spread_order = test.should_ok(fn() {
     let base: Full = {x: 1, label: "base"};
     let count: Count = {x: 2};
     let wrong: WrongCount = {x: "overwritten"};
-    let first = base & {x: "overwritten", ...count};
-    let second = base & {...wrong, x: 3};
+    let first = base <~ {x: "overwritten", ...count};
+    let second = base <~ {...wrong, x: 3};
     expect(first.x == 2 && second.x == 3
-        && (base & {...count, ...count}).x == 2
-        && (base & {}).label == "base")
+        && (base <~ {...count, ...count}).x == 2
+        && (base <~ {}).label == "base")
 });
 
 export def contextual_fields = test.should_ok(fn() {
     let base: Parent = {child: {value: 1}, values: [1]};
-    let updated = base & {child: {value: 2}, values: []};
+    let updated = base <~ {child: {value: 2}, values: []};
     let child: Child = updated.child;
     expect(child.value == 2 && updated.values == [] && base.child.value == 1)
 });
 
 decl replace: for(A) Fn(Box(A), A) -> Box(A);
-def replace = fn(base, value) { base & {value: value} };
+def replace = fn(base, value) { base <~ {value: value} };
 
 export def generic_identity = test.should_ok(fn() {
     let base: Box(String) = {value: "base"};
@@ -55,8 +55,14 @@ export def integer_and = test.should_ok(fn() {
     expect((7 & 3 & 1) == 1 && (7 & 2) == 2)
 });
 
+export def update_precedence = test.should_ok(fn() {
+    let base: Full = {x: 1, label: "base"};
+    let expected: Full = {x: 3, label: "base"};
+    expect(base<~{x: 7 & 3}<~{} == expected)
+});
+
 export def overwritten_failure = test.should_fail_with(fn() {
     let base: Full = {x: 1, label: "base"};
     let count: Count = {x: 2};
-    base & {x: fail!("update evaluated"), ...count}
+    base <~ {x: fail!("update evaluated"), ...count}
 }, "update evaluated");

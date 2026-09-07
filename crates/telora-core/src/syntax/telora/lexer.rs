@@ -69,6 +69,7 @@ pub enum Token {
     BangEqual,
     Equal,
     BitAnd,
+    StructUpdate,
     BitOr,
     BitXor,
     AndAnd,
@@ -197,6 +198,8 @@ enum NormalToken {
     Equal,
     #[token("&")]
     BitAnd,
+    #[token("<~")]
+    StructUpdate,
     #[token("|")]
     BitOr,
     #[token("^")]
@@ -765,6 +768,7 @@ impl From<NormalToken> for Token {
             NormalToken::Arrow => Self::Arrow,
             NormalToken::Equal => Self::Equal,
             NormalToken::BitAnd => Self::BitAnd,
+            NormalToken::StructUpdate => Self::StructUpdate,
             NormalToken::BitOr => Self::BitOr,
             NormalToken::BitXor => Self::BitXor,
             NormalToken::AndAnd => Self::AndAnd,

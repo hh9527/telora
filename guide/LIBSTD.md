@@ -32,6 +32,11 @@ import "std/value" {Value, ScalarValue};
 集合函数不修改输入值。可能缺失的读取返回 Option；可能失败的计算返回 Result 或带
 blame 的 failure，具体契约可通过 `telora query exports` 查看。
 
+具名 struct 的局部更新使用语言运算符 `base <~ patch`，结果保持 base 的类型；
+更新字面量支持 `base <~ {field: value, ...patch}`。用法见
+[`Struct 合并更新`](TELORA.md#struct-合并更新)。`std/dict.merge` 则按 `Dict(A)`
+契约合并两个字典，同名键取右侧值。
+
 ## 文本与格式
 
 - `std/string`：String 的拆分、连接、查找、替换、缩进和解析 property。

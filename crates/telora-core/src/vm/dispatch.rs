@@ -16,6 +16,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         | Opcode::LogicalNot { dst, .. }
         | Opcode::BitNot { dst, .. }
         | Opcode::BitAnd { dst, .. }
+        | Opcode::StructUpdate { dst, .. }
         | Opcode::BitOr { dst, .. }
         | Opcode::BitXor { dst, .. }
         | Opcode::Equal { dst, .. }
