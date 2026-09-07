@@ -89,6 +89,14 @@ impl<'a> GenericInference<'a> {
         }
     }
 
+    fn record_type(&mut self, location: crate::Location, ty: TypeDescriptor) -> TypeDescriptor {
+        // Contextual conversion replaces this expression's edge, not the source
+        // variable's equality class.
+        let slot = self.variables.structure_edge(ty);
+        self.records.insert(location, slot);
+        TypeDescriptor::Inference(slot)
+    }
+
     fn take_failure_location(&mut self, fallback: crate::Location) -> crate::Location {
         self.failure_location.take().unwrap_or(fallback)
     }
@@ -107,6 +115,9 @@ impl<'a> GenericInference<'a> {
                 constructor: Box::new(crate::ast::located(ExprKind::Variable(name.clone()), name.location)),
                 payload: None,
             }, pattern.location), matched, environment);
+        }
+        if let PatternKind::Binding(name) = &pattern.value {
+            self.pattern_binding_types.insert(name.location, matched.clone());
         }
         if let PatternKind::Constructor { constructor, payload } = &pattern.value {
             self.failure_location = Some(constructor.location);
@@ -181,6 +192,14 @@ impl<'a> GenericInference<'a> {
         if let Some((location, message)) = self.pattern_diagnostics.first_key_value() {
             self.failure_location = Some(*location);
             return Err(message.clone());
+        }
+        // A constructor can establish a payload type even when the recursive
+        // descriptor seen by the shape analyzer contains only a nominal stub.
+        if let Some(ty) = self.pattern_binding_types.get(&binding.location) {
+            let ty = self.normalize(ty);
+            if !contains_type_variable(&ty) && !contains_pending_alternatives(&ty) {
+                return Ok(ty);
+            }
         }
         self.failure_location = Some(binding.location);
         Err(format!("cannot infer pattern binding {:?}; provide an explicit type context", binding.name))
@@ -885,6 +904,8 @@ impl<'a> GenericInference<'a> {
         variables: &HashSet<InferenceVariableId>,
         approximations: &HashMap<InferenceVariableId, TypeDescriptor>,
     ) -> Option<TypeDescriptor> {
+        let head = self.variables.head(descriptor);
+        let descriptor = &*head;
         match descriptor {
             TypeDescriptor::Inference(variable) if variables.contains(variable) => {
                 approximations.get(variable).cloned()
@@ -941,80 +962,7 @@ impl<'a> GenericInference<'a> {
         ty: &TypeDescriptor,
         variables: &mut HashMap<TypeParameterId, InferenceVariableId>,
     ) -> TypeDescriptor {
-        match ty {
-            TypeDescriptor::Bound(parameter) => variables
-                .get(parameter)
-                .map_or_else(|| ty.clone(), |fresh| TypeDescriptor::Inference(*fresh)),
-            TypeDescriptor::Declared(declared) => {
-                let arguments = declared
-                    .id
-                    .arguments()
-                    .iter()
-                    .map(|argument| self.instantiate_with(argument, variables))
-                    .collect::<Vec<_>>();
-                TypeDescriptor::Declared(DeclaredTypeDescriptor {
-                    id: declared.id.reapply(&arguments),
-                    name: declared.name.clone(),
-                    body: if arguments.is_empty() {
-                        Arc::clone(&declared.body)
-                    } else {
-                        Arc::new(self.instantiate_with(&declared.body, variables))
-                    },
-                })
-            }
-            TypeDescriptor::Array(item) => {
-                TypeDescriptor::Array(Box::new(self.instantiate_with(item, variables)))
-            }
-            TypeDescriptor::Newtype(item) => {
-                TypeDescriptor::Newtype(Box::new(self.instantiate_with(item, variables)))
-            }
-            TypeDescriptor::Dict(item) => {
-                TypeDescriptor::Dict(Box::new(self.instantiate_with(item, variables)))
-            }
-            TypeDescriptor::TypeOf(instance) => {
-                TypeDescriptor::TypeOf(Box::new(self.instantiate_with(instance, variables)))
-            }
-            TypeDescriptor::Tagged { tag, payload } => TypeDescriptor::Tagged {
-                tag: tag.clone(),
-                payload: Box::new(self.instantiate_with(payload, variables)),
-            },
-            TypeDescriptor::Tuple(items) => TypeDescriptor::Tuple(
-                items
-                    .iter()
-                    .map(|item| self.instantiate_with(item, variables))
-                    .collect(),
-            ),
-            TypeDescriptor::Struct(fields) => {
-                let mut instantiated = fields.clone();
-                for (source, target) in fields.values().zip(instantiated.values_mut()) {
-                    *target = self.instantiate_with(source, variables);
-                }
-                TypeDescriptor::Struct(instantiated)
-            }
-            TypeDescriptor::Enum(variants) => {
-                let mut instantiated = variants.clone();
-                for (source, target) in variants.values().zip(instantiated.values_mut()) {
-                    *target = source
-                        .as_ref()
-                        .map(|payload| Box::new(self.instantiate_with(payload, variables)));
-                }
-                TypeDescriptor::Enum(instantiated)
-            }
-            TypeDescriptor::PendingAlternatives(variants) => TypeDescriptor::PendingAlternatives(
-                variants
-                    .iter()
-                    .map(|variant| self.instantiate_with(variant, variables))
-                    .collect(),
-            ),
-            TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
-                parameters: parameters
-                    .iter()
-                    .map(|parameter| self.instantiate_with(parameter, variables))
-                    .collect(),
-                result: Box::new(self.instantiate_with(result, variables)),
-            },
-            ty => ty.clone(),
-        }
+        TypeDescriptor::Inference(self.variables.instantiate_descriptor(ty, variables))
     }
 
     fn normalize(&self, ty: &TypeDescriptor) -> TypeDescriptor {
@@ -1087,10 +1035,9 @@ impl<'a> GenericInference<'a> {
     fn normalize_body(&self, body: &Arc<TypeDescriptor>) -> Arc<TypeDescriptor> {
         let id = self.variables.descriptor_view_ids.borrow().get(&Arc::as_ptr(body)).copied();
         if let Some(id) = id
-            && let Some((revision, normalized)) = &*self.variables.normalized_bodies[id.0 as usize].borrow()
-            && *revision == self.variables.revision
+            && let Some(normalized) = self.variables.normalized_body(id)
         {
-            return Arc::clone(normalized);
+            return normalized;
         }
         let normalized = if contains_type_variable(body) {
             Arc::new(self.normalize(body))
@@ -1098,8 +1045,7 @@ impl<'a> GenericInference<'a> {
             Arc::clone(body)
         };
         if let Some(id) = id {
-            *self.variables.normalized_bodies[id.0 as usize].borrow_mut() =
-                Some((self.variables.revision, Arc::clone(&normalized)));
+            self.variables.cache_normalized_body(id, Arc::clone(&normalized));
         }
         normalized
     }

@@ -85,6 +85,61 @@
     }
 
     #[test]
+    fn constructor_pattern_evidence_requires_a_solved_type_and_preserves_errors() {
+        let schemes = HashMap::new();
+        let hir = HirProgram::default();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("pattern.telora", "payload");
+        let location = crate::Location::from_usize(source, 0..7).unwrap();
+        let binding = crate::pattern::PatternBinding { name: "payload".into(), location, ty: None };
+        let slot = inference.variables.fresh();
+        inference.pattern_binding_types.insert(location, TypeDescriptor::Inference(slot));
+        assert!(inference.require_pattern_binding(&binding).is_err());
+        inference.variables.set(slot, TypeDescriptor::Dict(Box::new(TypeDescriptor::Int)));
+        assert_eq!(inference.require_pattern_binding(&binding).unwrap(),
+            TypeDescriptor::Dict(Box::new(TypeDescriptor::Int)));
+        inference.pattern_diagnostics.insert(location, "incompatible pattern".into());
+        assert_eq!(inference.require_pattern_binding(&binding), Err("incompatible pattern".into()));
+    }
+
+    #[test]
+    fn expression_records_observe_late_solutions_without_rebinding_sources() {
+        let schemes = HashMap::new();
+        let hir = HirProgram::default();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("records.telora", "x");
+        let location = crate::Location::from_usize(source, 0..1).unwrap();
+        let slot = inference.variables.fresh();
+        inference.record_type(location, TypeDescriptor::Inference(slot));
+        assert_eq!(inference.records[&location], slot);
+        inference.variables.set(slot, TypeDescriptor::Int);
+        assert_eq!(inference.normalize(&TypeDescriptor::Inference(inference.records[&location])), TypeDescriptor::Int);
+        inference.record_type(location, unchecked_descriptor(TypeDescriptor::Int));
+        assert_ne!(inference.records[&location], slot);
+        assert_eq!(inference.normalize(&TypeDescriptor::Inference(slot)), TypeDescriptor::Int);
+        assert_eq!(inference.normalize(&TypeDescriptor::Inference(inference.records[&location])),
+            unchecked_descriptor(TypeDescriptor::Int));
+    }
+
+    #[test]
     fn slot_backed_empty_containers_freshen_evidence_without_rebinding_never() {
         let schemes = HashMap::new();
         let hir = HirProgram::default();
@@ -152,7 +207,7 @@
         let expression = &program.value.body.value.result;
         let ty = inference.infer(expression, &HashMap::new(), None).unwrap();
         let TypeDescriptor::Inference(tuple) = ty else { panic!("tuple result must be a slot"); };
-        assert_eq!(inference.records[&expression.location], ty);
+        assert_eq!(inference.records[&expression.location], tuple);
         let arguments = inference.variables.arguments(inference.variables.known(tuple).unwrap());
         assert_eq!(arguments.len(), 2);
         for argument in arguments {
@@ -177,6 +232,18 @@
             InferenceConstructor::Tuple));
         assert!(matches!(inference.variables.constructor(inference.variables.known(children[1]).unwrap()),
             InferenceConstructor::Array));
+        let source = sources.add("closure.telora", "fn(value) { (value, [value]) }");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let expression = &program.value.body.value.result;
+        let ty = inference.infer(expression, &HashMap::new(), None).unwrap();
+        let TypeDescriptor::Inference(function) = ty else { panic!("closure result must be a slot"); };
+        assert_eq!(inference.records[&expression.location], function);
+        let arguments = inference.variables.arguments(inference.variables.known(function).unwrap());
+        let parameter = arguments[0];
+        let result = inference.variables.arguments(inference.variables.known(arguments[1]).unwrap());
+        assert_eq!(inference.variables.root(result[0]), inference.variables.root(parameter));
+        let item = inference.variables.arguments(inference.variables.known(result[1]).unwrap())[0];
+        assert_eq!(inference.variables.root(item), inference.variables.root(parameter));
     }
 
     #[test]

@@ -34,7 +34,7 @@ struct GenericInference<'a> {
     enum_constructors: HashMap<InferenceVariableId, Vec<EnumConstructorObligation>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     variables: InferenceVariables,
-    records: HashMap<crate::Location, TypeDescriptor>,
+    records: HashMap<crate::Location, InferenceVariableId>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
     type_facet_locations: HashSet<crate::Location>,
     pattern_diagnostics: BTreeMap<crate::Location, String>,

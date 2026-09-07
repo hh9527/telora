@@ -37,8 +37,8 @@ impl InferenceVariables {
         let mut visited = HashSet::new();
         while let Some((left, right)) = pending.pop() {
             let (left, right) = (self.root(left), self.root(right));
-            if matches!(self.nodes[left.0 as usize].get(), InferenceNode::Conflicted)
-                || matches!(self.nodes[right.0 as usize].get(), InferenceNode::Conflicted)
+            if matches!(self.nodes[left.0 as usize].get(), InferenceNode::Conflicted(_))
+                || matches!(self.nodes[right.0 as usize].get(), InferenceNode::Conflicted(_))
             { return false; }
             if left == right || !visited.insert((left, right)) { continue; }
             let (Some(left), Some(right)) = (self.known(left), self.known(right)) else { return false; };
@@ -164,20 +164,22 @@ impl InferenceVariables {
         while let Some(variable) = pending.pop() {
             let root = self.root(variable);
             let previous = self.nodes[root.0 as usize].get();
-            if previous == InferenceNode::Conflicted { continue; }
+            if matches!(previous, InferenceNode::Conflicted(_)) { continue; }
             let Some(id) = self.known(root) else { continue; };
             let conflict = self.arguments(id).iter().find_map(|dependency| {
-                self.conflicts[self.root(*dependency).0 as usize].clone()
+                match self.nodes[self.root(*dependency).0 as usize].get() {
+                    InferenceNode::Conflicted(id) => Some(id),
+                    _ => None,
+                }
             });
-            let next = if let Some(message) = conflict {
-                self.conflicts[root.0 as usize] = Some(message);
-                InferenceNode::Conflicted
+            let next = if let Some(id) = conflict {
+                InferenceNode::Conflicted(id)
             } else {
                 previous
             };
             if next != previous {
                 self.nodes[root.0 as usize].set(next);
-                pending.extend(self.dependents[root.0 as usize].iter().copied());
+                pending.extend(self.dependent_variables(self.dependents[root.0 as usize]));
             }
         }
     }

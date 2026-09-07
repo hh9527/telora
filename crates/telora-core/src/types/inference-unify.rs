@@ -260,7 +260,7 @@ impl<'a> GenericInference<'a> {
             && let Some(existing) = self.variables.binding(*variable).cloned()
             && self.declared_identity(right).is_some()
         {
-            if matches!(existing, TypeDescriptor::Inference(_)) {
+            if matches!(existing, TypeDescriptor::Inference(_) | TypeDescriptor::Bound(_)) {
                 return self.unify(&existing, right);
             }
             if let Some(existing_id) = self.declared_identity(&existing)
@@ -280,7 +280,7 @@ impl<'a> GenericInference<'a> {
             && let Some(existing) = self.variables.binding(*variable).cloned()
             && self.declared_identity(left).is_some()
         {
-            if matches!(existing, TypeDescriptor::Inference(_)) {
+            if matches!(existing, TypeDescriptor::Inference(_) | TypeDescriptor::Bound(_)) {
                 return self.unify(left, &existing);
             }
             if let Some(existing_id) = self.declared_identity(&existing)

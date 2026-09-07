@@ -1545,7 +1545,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             },
         ) = (
             GenericInference::recursive_result_variable(skeleton),
-            inferred,
+            (*inference.variables.head(&inferred)).clone(),
         ) {
             inference
                 .recursive_equations
@@ -1902,7 +1902,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     inference.variables.canonicalize_slots();
     let mut completed_expressions = inference.records.iter()
-        .map(|(location, ty)| (*location, inference.normalize(ty))).collect::<Vec<_>>();
+        .map(|(location, slot)| (*location, inference.normalize(&TypeDescriptor::Inference(*slot)))).collect::<Vec<_>>();
     completed_expressions.sort_by_key(|(location, _)| location.range().start);
     for (location, resolved) in &completed_expressions {
         if contains_standalone_sum(&resolved) {

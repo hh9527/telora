@@ -369,3 +369,41 @@ passed. The release query took 12.78 s with peak RSS 658832 KB (single sample,
 exit 0). This still does not recover the pre-migration memory baseline; further
 work must address remaining mixed representations, including function
 instantiation and publication, rather than claim a completed optimization.
+
+### Slot-Producing Functions And Records
+
+Function instantiation now substitutes parameter slots directly into constructor
+rows, including shared nominal bodies within an instantiation. Closure results
+also use Function rows. Expression inference returns its recorded slot rather
+than returning a descriptor that its parent must import again. Expression records
+therefore contain slot IDs, while contextual conversions replace only the
+expression edge. Recursive result equations and constructor payload refinement
+shallowly expose known slots before inspecting their shape.
+
+The remaining per-node storage was compacted: `Conflicted(u32)` references a
+shared message table, reverse dependencies use flat integer links and O(1) list
+splicing on proxy merges, and normalized body caches allocate entries only on
+use. New nodes do not invalidate existing normalized bodies; binding, alias and
+conflict changes still advance the solver revision.
+
+An intermediate slot-record version took 22.29 s and 1247608 KB on the release
+query. Temporary arena statistics found one inference state with 1499197 slots,
+1203188 type rows and 138923 body imports. Concrete nominal bodies now reuse an
+import by resolved declaration identity and exact body-view equality. Unknown
+and bound parameters are excluded; different recursive views remain separate.
+This targets repeated imports caused by normalization returning different Arc
+addresses for the same body. Constructor pattern evidence is retained when a
+recursive nominal stub alone cannot reveal the payload shape to pattern analysis.
+Temporary instrumentation has been removed.
+
+Final publication still uses descriptor adapters, and inference still has
+name-facing environment interfaces. These remain migration work before main
+integration; compact storage alone does not complete those interfaces.
+
+The final workspace suite passed (298 core tests, 41 CLI tests including language
+acceptance), and the release build succeeded. Uninstrumented sequential query
+samples took 11.04 s and 11.17 s, with peak RSS 754916 KB and 755484 KB (exit 0).
+This reduces wall time from the previous 12.78 s sample, but does not recover its
+658832 KB memory baseline. These are samples, not medians. Rigid bound parameters
+retain nominal diagnostics, and nominal argument compatibility does not directly
+equate the actual value slot with a refinable instance parameter.

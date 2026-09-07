@@ -50,6 +50,108 @@ mod inference_table_tests {
     }
 
     #[test]
+    fn direct_instantiation_shares_parameters_but_isolates_calls() {
+        let mut arena = InferenceVariables::default();
+        let parameter = TypeParameterId(7);
+        let item = TypeDescriptor::Array(Box::new(TypeDescriptor::Bound(parameter)));
+        let template = TypeDescriptor::Function {
+            parameters: vec![item.clone()], result: Box::new(item),
+        };
+        let first = arena.fresh();
+        let second = arena.fresh();
+        let left = arena.instantiate_descriptor(&template, &HashMap::from([(parameter, first)]));
+        let right = arena.instantiate_descriptor(&template, &HashMap::from([(parameter, second)]));
+        for (function, item) in [(left, first), (right, second)] {
+            let children = arena.arguments(arena.known(function).unwrap());
+            assert_eq!(children.len(), 2);
+            for child in children {
+                assert_eq!(arena.arguments(arena.known(*child).unwrap()), &[item]);
+            }
+        }
+        assert!(!arena.same_slots(left, right));
+        arena.set(first, TypeDescriptor::Int);
+        assert!(arena.known(second).is_none());
+        arena.set(second, TypeDescriptor::String);
+        assert!(!arena.same_slots(left, right));
+        assert!(arena.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
+
+    #[test]
+    fn concrete_nominal_bodies_are_shared_by_identity_not_arc_address() {
+        let mut arena = InferenceVariables::default();
+        let make = |item| TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 93),
+            name: "Items".into(), body: Arc::new(TypeDescriptor::Array(Box::new(item))),
+        });
+        let left = arena.structure_edge(make(TypeDescriptor::Int));
+        let right = arena.structure_edge(make(TypeDescriptor::Int));
+        assert_eq!(arena.arguments(arena.known(left).unwrap()), arena.arguments(arena.known(right).unwrap()));
+        assert_eq!(arena.imported_bodies.len(), 1);
+        assert_eq!(arena.resolved_declared_bodies.len(), 1);
+        let unknown = arena.fresh();
+        let pending = arena.structure_edge(make(TypeDescriptor::Inference(unknown)));
+        assert_ne!(arena.arguments(arena.known(left).unwrap()), arena.arguments(arena.known(pending).unwrap()));
+        assert_eq!(arena.imported_bodies.len(), 2);
+        arena.structure_edge(make(TypeDescriptor::Bound(TypeParameterId(0))));
+        assert_eq!(arena.imported_bodies.len(), 3);
+        assert_eq!(arena.resolved_declared_bodies.len(), 1);
+        assert!(arena.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
+
+    #[test]
+    fn nominal_body_cache_preserves_recursive_view_completeness() {
+        let mut arena = InferenceVariables::default();
+        let make = |body| TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 95),
+            name: "Outer".into(),
+            body: Arc::new(TypeDescriptor::Array(Box::new(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                id: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 96),
+                name: "Inner".into(), body: Arc::new(body),
+            })))),
+        });
+        let partial = arena.structure_edge(make(TypeDescriptor::Never));
+        let complete = arena.structure_edge(make(TypeDescriptor::Struct(BTreeMap::from([
+            ("value".into(), TypeDescriptor::Int),
+        ]))));
+        let repeated = arena.structure_edge(make(TypeDescriptor::Struct(BTreeMap::from([
+            ("value".into(), TypeDescriptor::Int),
+        ]))));
+        assert_eq!(arena.arguments(arena.known(complete).unwrap()), arena.arguments(arena.known(repeated).unwrap()));
+        let inner_body = |slot| {
+            let array = arena.arguments(arena.known(slot).unwrap())[0];
+            let inner = arena.arguments(arena.known(array).unwrap())[0];
+            arena.arguments(arena.known(inner).unwrap())[0]
+        };
+        assert!(matches!(arena.constructor(arena.known(inner_body(partial)).unwrap()), InferenceConstructor::Never));
+        assert!(matches!(arena.constructor(arena.known(inner_body(complete)).unwrap()), InferenceConstructor::Struct(_)));
+    }
+
+    #[test]
+    fn normalization_cache_is_allocated_only_for_used_bodies() {
+        let mut arena = InferenceVariables::default();
+        let item = arena.fresh();
+        for _ in 0..1024 {
+            arena.structure_node(InferenceConstructor::Array, &[item]);
+        }
+        assert_eq!(arena.normalized_body_indices.len(), 1024);
+        assert!(arena.normalized_bodies.borrow().is_empty());
+        let id = InferenceTypeId(0);
+        arena.cache_normalized_body(id, Arc::new(TypeDescriptor::Int));
+        assert_eq!(arena.normalized_bodies.borrow().len(), 1);
+        assert_eq!(arena.normalized_body(id).as_deref(), Some(&TypeDescriptor::Int));
+        let revision = arena.revision;
+        arena.structure_edge(TypeDescriptor::Tuple(vec![TypeDescriptor::Int]));
+        arena.structure_node(InferenceConstructor::Array, &[item]);
+        assert_eq!(arena.revision, revision);
+        assert!(arena.normalized_body(id).is_some());
+        arena.set(item, TypeDescriptor::String);
+        assert!(arena.normalized_body(id).is_none());
+        arena.cache_normalized_body(id, Arc::new(TypeDescriptor::String));
+        assert_eq!(arena.normalized_bodies.borrow().len(), 1);
+        assert_eq!(arena.normalized_body(id).as_deref(), Some(&TypeDescriptor::String));
+    }
+
+    #[test]
     fn graph_operations_do_not_materialize_descriptor_views() {
         let mut arena = InferenceVariables::default();
         let item = arena.fresh();
@@ -187,15 +289,16 @@ impl InferenceVariables {
         self.arguments.extend_from_slice(arguments);
         self.types.push(InferenceType { constructor, arguments_start, arguments_len });
         self.descriptor_views.push(std::cell::OnceCell::new());
-        self.normalized_bodies.push(std::cell::RefCell::new(None));
+        self.normalized_body_indices.push(std::cell::Cell::new(u32::MAX));
         if arguments.is_empty() { self.leaf_types[constructor.0 as usize] = Some(id); }
         id
     }
 
     fn structure_edge(&mut self, ty: TypeDescriptor) -> InferenceVariableId {
         if let TypeDescriptor::Inference(slot) = ty { return slot; }
+        let id = self.lower_structure(ty);
         let slot = self.fresh();
-        self.set(slot, ty);
+        self.initialize_known(slot, id);
         slot
     }
 
@@ -206,7 +309,7 @@ impl InferenceVariables {
     ) -> InferenceVariableId {
         let id = self.push_type(constructor, arguments);
         let slot = self.fresh();
-        self.set_known(slot, id);
+        self.initialize_known(slot, id);
         slot
     }
 
@@ -220,7 +323,7 @@ impl InferenceVariables {
             TypeDescriptor::Declared(declared) => {
                 arguments.extend(declared.id.arguments().iter()
                     .map(|argument| self.structure_edge(argument.clone())));
-                arguments.push(self.import_body(declared.body));
+                arguments.push(self.import_declared_body(&declared));
                 C::Declared { head: declared.id.reapply(&[]), name: declared.name }
             }
             TypeDescriptor::Never => C::Never,
@@ -274,6 +377,108 @@ impl InferenceVariables {
         self.push_type(constructor, &arguments)
     }
 
+    fn instantiate_descriptor(
+        &mut self,
+        ty: &TypeDescriptor,
+        parameters: &HashMap<TypeParameterId, InferenceVariableId>,
+    ) -> InferenceVariableId {
+        self.instantiate_descriptor_with(ty, parameters, &mut HashMap::new())
+    }
+
+    fn instantiate_descriptor_with(
+        &mut self,
+        ty: &TypeDescriptor,
+        parameters: &HashMap<TypeParameterId, InferenceVariableId>,
+        bodies: &mut HashMap<*const TypeDescriptor, InferenceVariableId>,
+    ) -> InferenceVariableId {
+        use InferenceConstructor as C;
+        let mut arguments = Vec::new();
+        let constructor = match ty {
+            TypeDescriptor::Inference(slot) => return *slot,
+            TypeDescriptor::Bound(parameter) => {
+                if let Some(slot) = parameters.get(parameter) { return *slot; }
+                C::Bound(*parameter)
+            }
+            TypeDescriptor::Declared(declared) => {
+                for argument in declared.id.arguments() {
+                    arguments.push(self.instantiate_descriptor_with(argument, parameters, bodies));
+                }
+                let body = if arguments.is_empty() {
+                    self.import_declared_body(declared)
+                } else if let Some(slot) = bodies.get(&Arc::as_ptr(&declared.body)) {
+                    *slot
+                } else {
+                    let slot = self.instantiate_descriptor_with(&declared.body, parameters, bodies);
+                    bodies.insert(Arc::as_ptr(&declared.body), slot);
+                    slot
+                };
+                arguments.push(body);
+                C::Declared { head: declared.id.reapply(&[]), name: declared.name.clone() }
+            }
+            TypeDescriptor::Array(item) | TypeDescriptor::Dict(item)
+            | TypeDescriptor::Newtype(item) | TypeDescriptor::TypeOf(item)
+            | TypeDescriptor::Tagged { payload: item, .. } => {
+                arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                match ty {
+                    TypeDescriptor::Array(_) => C::Array,
+                    TypeDescriptor::Dict(_) => C::Dict,
+                    TypeDescriptor::Newtype(_) => C::Newtype,
+                    TypeDescriptor::TypeOf(_) => C::TypeOf,
+                    TypeDescriptor::Tagged { tag, .. } => C::Tagged(tag.clone()),
+                    _ => unreachable!(),
+                }
+            }
+            TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
+                for item in items {
+                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                }
+                if matches!(ty, TypeDescriptor::Tuple(_)) { C::Tuple } else { C::PendingAlternatives }
+            }
+            TypeDescriptor::Struct(fields) => {
+                for item in fields.values() {
+                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                }
+                C::Struct(fields.keys().cloned().collect())
+            }
+            TypeDescriptor::Enum(variants) => {
+                for item in variants.values().flatten() {
+                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                }
+                C::Enum(variants.iter().map(|(name, payload)| (name.clone(), payload.is_some())).collect())
+            }
+            TypeDescriptor::Function { parameters: inputs, result } => {
+                for item in inputs {
+                    arguments.push(self.instantiate_descriptor_with(item, parameters, bodies));
+                }
+                arguments.push(self.instantiate_descriptor_with(result, parameters, bodies));
+                C::Function
+            }
+            ty => return self.structure_edge(ty.clone()),
+        };
+        self.structure_node(constructor, &arguments)
+    }
+
+    fn import_declared_body(&mut self, declared: &DeclaredTypeDescriptor) -> InferenceVariableId {
+        // A complete nominal identity fixes its skeleton. Normalization may
+        // produce new Arc addresses for that same immutable body.
+        if !matches!(declared.body.as_ref(), TypeDescriptor::Never)
+            && !declared.id.arguments().iter().any(type_identity_is_symbolic)
+            && !contains_type_variable(&declared.body)
+            && !type_identity_contains_bound_parameter(&declared.body)
+        {
+            // Recursive descriptor adapters can expose different amounts of a
+            // skeleton; an incomplete view must not replace a complete one.
+            if let Some(views) = self.resolved_declared_bodies.get(&declared.id)
+                && let Some((_, slot)) = views.iter().find(|(body, _)| body == &declared.body)
+            { return *slot; }
+            let slot = self.import_body(Arc::clone(&declared.body));
+            self.resolved_declared_bodies.entry(declared.id.clone())
+                .or_default().push((Arc::clone(&declared.body), slot));
+            return slot;
+        }
+        self.import_body(Arc::clone(&declared.body))
+    }
+
     fn import_body(&mut self, body: Arc<TypeDescriptor>) -> InferenceVariableId {
         let address = Arc::as_ptr(&body);
         if let Some((_, slot)) = self.imported_bodies.get(&address) { return *slot; }
@@ -281,6 +486,27 @@ impl InferenceVariables {
         self.imported_bodies.insert(address, (Arc::clone(&body), slot));
         self.set(slot, body.as_ref().clone());
         slot
+    }
+
+    fn normalized_body(&self, id: InferenceTypeId) -> Option<Arc<TypeDescriptor>> {
+        let index = self.normalized_body_indices[id.0 as usize].get();
+        if index == u32::MAX { return None; }
+        let bodies = self.normalized_bodies.borrow();
+        let (revision, body) = &bodies[index as usize];
+        (*revision == self.revision).then(|| Arc::clone(body))
+    }
+
+    fn cache_normalized_body(&self, id: InferenceTypeId, body: Arc<TypeDescriptor>) {
+        let index = &self.normalized_body_indices[id.0 as usize];
+        let mut bodies = self.normalized_bodies.borrow_mut();
+        if index.get() == u32::MAX {
+            let next = u32::try_from(bodies.len()).expect("normalized body capacity exceeded");
+            assert_ne!(next, u32::MAX, "normalized body capacity exceeded");
+            bodies.push((self.revision, body));
+            index.set(next);
+        } else {
+            bodies[index.get() as usize] = (self.revision, body);
+        }
     }
 
     // Compatibility adapter for descriptor-facing consumers. Solver storage and

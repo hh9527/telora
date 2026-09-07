@@ -13,7 +13,7 @@ impl<'a> GenericInference<'a> {
                         &types_expected[types.len().min(types_expected.len())..]
                     });
                     let nested_types = self.infer_tuple_items(nested, environment, remaining)?;
-                    self.records.insert(
+                    self.record_type(
                         operand.location,
                         TypeDescriptor::Tuple(nested_types.clone()),
                     );
@@ -73,7 +73,7 @@ impl<'a> GenericInference<'a> {
         let mut contributed = BTreeMap::new();
         if let ExprKind::FieldProjection { receiver, fields } = &expression.value {
             contributed = self.infer_field_projection(receiver, fields, environment)?;
-            self.records.insert(
+            self.record_type(
                 expression.location,
                 TypeDescriptor::Struct(contributed.clone()),
             );
@@ -112,7 +112,7 @@ impl<'a> GenericInference<'a> {
                     contributed.extend(fields);
                 }
             }
-            self.records.insert(
+            self.record_type(
                 expression.location,
                 TypeDescriptor::Struct(contributed.clone()),
             );
@@ -187,8 +187,7 @@ impl<'a> GenericInference<'a> {
                         || (matches!(expression.value, ExprKind::Atom(_))
                             && matches!(expected, TypeDescriptor::Function { .. })))
                 {
-                    self.records.insert(expression.location, expected.clone());
-                    return expected;
+                    return self.record_type(expression.location, expected);
                 }
                 return inferred;
             };
@@ -202,8 +201,7 @@ impl<'a> GenericInference<'a> {
                 return inferred;
             }
             let declared = TypeDescriptor::Declared(declared);
-            self.records.insert(expression.location, declared.clone());
-            declared
+            self.record_type(expression.location, declared)
         })
     }
 
@@ -748,11 +746,10 @@ impl<'a> GenericInference<'a> {
                     if let Some(expected) = expected {
                         self.check(&owner, expected)?;
                     }
-                    self.records.insert(callee.location, TypeDescriptor::Function {
+                    self.record_type(callee.location, TypeDescriptor::Function {
                         parameters: vec![payload], result: Box::new(owner.clone()),
                     });
-                    self.records.insert(expression.location, owner.clone());
-                    return Ok(self.normalize(&owner));
+                    return Ok(self.record_type(expression.location, owner));
                 }
                 if let Some(result) =
                     self.infer_trait_call(callee, arguments, environment, expected)
@@ -775,7 +772,7 @@ impl<'a> GenericInference<'a> {
                         let item = self
                             .records
                             .get(&item.location)
-                            .map(|item| self.normalize(item))
+                            .map(|item| self.normalize(&TypeDescriptor::Inference(*item)))
                             .ok_or_else(|| "Tuple item has no inferred Type metadata".to_owned())?;
                         match item {
                             TypeDescriptor::TypeOf(item) => tuple_items.push(*item),
@@ -797,8 +794,7 @@ impl<'a> GenericInference<'a> {
                         self.check(&inferred, expected)?;
                     }
                     let inferred = self.normalize(&inferred);
-                    self.records.insert(expression.location, inferred.clone());
-                    return Ok(inferred);
+                    return Ok(self.record_type(expression.location, inferred));
                 }
                 let has_placeholder = matches!(
                     &callee.value,
@@ -876,14 +872,22 @@ impl<'a> GenericInference<'a> {
                             };
                             let mut argument_type = self.infer(argument, environment, inference_expected)?;
                             if let Some(converted) = self.unchecked_conversion_type(&argument_type, parameter)? {
-                                self.records.insert(argument.location, converted.clone());
+                                self.record_type(argument.location, converted.clone());
                                 argument_type = converted;
                             }
                             argument_types[index] = argument_type.clone();
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.normalize(&argument_type));
                             if contains_exposed_type_variable(parameter) {
-                                self.unify(&argument_type, parameter)?;
+                                // Nominal argument compatibility can refine an
+                                // instance parameter without equating the value's slot.
+                                let head = self.variables.head(&argument_type);
+                                let actual = if matches!(&*head, TypeDescriptor::Declared(_)) {
+                                    &*head
+                                } else {
+                                    &argument_type
+                                };
+                                self.unify(actual, parameter)?;
                             } else {
                                 self.check(&argument_type, parameter)?;
                             }
@@ -991,7 +995,7 @@ impl<'a> GenericInference<'a> {
                                 argument.location,
                                 parameter.name.clone(),
                             ));
-                            self.records.insert(argument.location, descriptor.clone());
+                            self.record_type(argument.location, descriptor.clone());
                             descriptor
                         }
                     };
@@ -1105,11 +1109,10 @@ impl<'a> GenericInference<'a> {
                     self.finish_propagation_boundary(result?, result_expected, requirement)?;
                 let inferred_result =
                     self.finish_return_boundary(inferred_result, return_boundary)?;
-                let function = TypeDescriptor::Function {
-                    parameters: parameter_types,
-                    result: Box::new(local_result.unwrap_or(inferred_result)),
-                };
-                function
+                let mut arguments = parameter_types.into_iter()
+                    .map(|parameter| self.variables.structure_edge(parameter)).collect::<Vec<_>>();
+                arguments.push(self.variables.structure_edge(local_result.unwrap_or(inferred_result)));
+                TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Function, &arguments))
             }
             ExprKind::Block(block) => self.infer_block(block, environment, expected)?,
             ExprKind::If {
@@ -1391,7 +1394,7 @@ impl<'a> GenericInference<'a> {
             && self.declared_constructor_reference(expression)
             && !self.type_facet_locations.contains(&expression.location)
             && !expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))
-            && let Some(constructor) = newtype_constructor_type(&inferred)
+            && let Some(constructor) = newtype_constructor_type(&self.normalize(&inferred))
         {
             self.value_constructors.insert(expression.location, ValueConstructor::Newtype);
             constructor
@@ -1414,8 +1417,7 @@ impl<'a> GenericInference<'a> {
                 && !contains_type_variable(&expected) => expected,
             _ => inferred,
         };
-        self.records.insert(expression.location, inferred.clone());
-        Ok(inferred)
+        Ok(self.record_type(expression.location, inferred))
     }
 
     fn unchecked_conversion_type(
@@ -1444,7 +1446,7 @@ impl<'a> GenericInference<'a> {
         expression: &Expr,
         expected: &TypeDescriptor,
     ) -> Result<TypeDescriptor, String> {
-        let actual = self.normalize(&self.records[&expression.location]);
+        let actual = self.normalize(&TypeDescriptor::Inference(self.records[&expression.location]));
         if let TypeDescriptor::Inference(variable) = &actual
             && self.enum_constructors.contains_key(variable)
         {
@@ -1470,12 +1472,12 @@ impl<'a> GenericInference<'a> {
                 && let Some((TypeDescriptor::Function { parameters, .. }, _)) =
                     enum_member_type(&TypeDescriptor::TypeOf(Box::new(expected)), &tag)?
                 && let Some(TypeDescriptor::Function { parameters: original, result }) =
-                    self.records.get(&callee.location).cloned()
+                    self.records.get(&callee.location).and_then(|slot| self.variables.binding(*slot)).cloned()
             {
                 let payload = self.contextualize_authored_literal(argument, &parameters[0])?;
                 self.refine_argument_nominal_context(&original[0], &payload)?;
                 let result = self.normalize(&result);
-                self.records.insert(expression.location, result.clone());
+                self.record_type(expression.location, result.clone());
                 return Ok(result);
             }
         }
@@ -1489,7 +1491,7 @@ impl<'a> GenericInference<'a> {
             }
             let structural = self.contextualize_authored_literal(expression, &declared.body)?;
             self.check(&structural, &declared.body)?;
-            self.records.insert(expression.location, expected.clone());
+            self.record_type(expression.location, expected.clone());
             return Ok(expected);
         }
         let contextualized = match (&expression.value, &expected) {
@@ -1518,7 +1520,7 @@ impl<'a> GenericInference<'a> {
                 for item in items {
                     if let ExprKind::Spread(operand) = &item.value {
                         let TypeDescriptor::Tuple(spread) =
-                            self.normalize(&self.records[&operand.location])
+                            self.normalize(&TypeDescriptor::Inference(self.records[&operand.location]))
                         else {
                             return Ok(actual);
                         };
@@ -1608,8 +1610,7 @@ impl<'a> GenericInference<'a> {
             }
             _ => return Ok(actual),
         };
-        self.records
-            .insert(expression.location, contextualized.clone());
+        self.record_type(expression.location, contextualized.clone());
         Ok(contextualized)
     }
 }

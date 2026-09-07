@@ -6,7 +6,22 @@ enum InferenceNode {
     Unknown,
     ProxyTo(InferenceVariableId),
     Known(InferenceTypeId),
-    Conflicted,
+    Conflicted(u32),
+}
+
+#[derive(Clone, Copy)]
+struct InferenceDependentList {
+    first: u32,
+    last: u32,
+}
+
+impl Default for InferenceDependentList {
+    fn default() -> Self { Self { first: u32::MAX, last: u32::MAX } }
+}
+
+struct InferenceDependent {
+    variable: InferenceVariableId,
+    next: u32,
 }
 
 #[cfg(test)]
@@ -18,6 +33,35 @@ mod inference_variable_tests {
         assert_eq!(std::mem::size_of::<InferenceNode>(), 8);
         assert_eq!(std::mem::size_of::<std::cell::Cell<InferenceNode>>(), 8);
         assert!(!std::mem::needs_drop::<InferenceNode>());
+        assert_eq!(std::mem::size_of::<InferenceDependentList>(), 8);
+        assert_eq!(std::mem::size_of::<InferenceDependent>(), 8);
+        assert!(!std::mem::needs_drop::<InferenceDependentList>());
+        assert!(!std::mem::needs_drop::<InferenceDependent>());
+    }
+
+    #[test]
+    fn proxy_merges_splice_flat_dependents_without_copying_edges() {
+        let mut variables = InferenceVariables::default();
+        let left = variables.fresh();
+        let right = variables.fresh();
+        let mut parents = Vec::new();
+        for item in [left, right] {
+            parents.push(variables.structure_node(InferenceConstructor::Array, &[item]));
+            parents.push(variables.structure_node(InferenceConstructor::Tuple, &[item]));
+        }
+        let edges = variables.dependent_edges.len();
+        variables.set(left, TypeDescriptor::Inference(right));
+        assert_eq!(variables.dependent_edges.len(), edges);
+        assert_eq!(variables.dependents[left.0 as usize].first, u32::MAX);
+        let mut dependents = variables.dependent_variables(variables.dependents[right.0 as usize]).collect::<Vec<_>>();
+        dependents.sort_unstable();
+        parents.sort_unstable();
+        assert_eq!(dependents, parents);
+        variables.record_conflict(&TypeDescriptor::Inference(right), "shared conflict");
+        for parent in parents {
+            assert_eq!(variables.ensure_consistent(&TypeDescriptor::Inference(parent)), Err("shared conflict".into()));
+        }
+        assert_eq!(variables.conflicts.len(), 1);
     }
 
     #[test]
@@ -65,10 +109,14 @@ mod inference_variable_tests {
         variables.set(same, TypeDescriptor::Array(Box::new(TypeDescriptor::Int)));
         let independent = variables.nodes[same.0 as usize].get();
         variables.record_conflict(&TypeDescriptor::Inference(item), "incompatible element");
-        assert_eq!(variables.nodes[array.0 as usize].get(), InferenceNode::Conflicted);
-        assert_eq!(variables.nodes[nested.0 as usize].get(), InferenceNode::Conflicted);
+        assert!(matches!(variables.nodes[array.0 as usize].get(), InferenceNode::Conflicted(_)));
+        assert_eq!(variables.nodes[array.0 as usize].get(), variables.nodes[nested.0 as usize].get());
         assert!(variables.binding(nested).is_none());
         assert_eq!(variables.nodes[same.0 as usize].get(), independent);
+        assert_eq!(variables.conflicts.len(), 1);
+        variables.record_conflict(&TypeDescriptor::Inference(nested), "later conflict");
+        assert_eq!(variables.conflicts.len(), 1);
+        assert_eq!(variables.ensure_consistent(&TypeDescriptor::Inference(nested)), Err("incompatible element".into()));
     }
 
     #[test]
@@ -104,11 +152,14 @@ struct InferenceVariables {
     leaf_types: Vec<Option<InferenceTypeId>>,
     descriptor_views: Vec<std::cell::OnceCell<Arc<TypeDescriptor>>>,
     descriptor_view_ids: std::cell::RefCell<HashMap<*const TypeDescriptor, InferenceTypeId>>,
-    normalized_bodies: Vec<std::cell::RefCell<Option<(u64, Arc<TypeDescriptor>)>>>,
+    normalized_body_indices: Vec<std::cell::Cell<u32>>,
+    normalized_bodies: std::cell::RefCell<Vec<(u64, Arc<TypeDescriptor>)>>,
     revision: u64,
     imported_bodies: HashMap<*const TypeDescriptor, (Arc<TypeDescriptor>, InferenceVariableId)>,
-    conflicts: Vec<Option<Arc<str>>>,
-    dependents: Vec<Vec<InferenceVariableId>>,
+    resolved_declared_bodies: HashMap<crate::value::DeclaredTypeId, Vec<(Arc<TypeDescriptor>, InferenceVariableId)>>,
+    conflicts: Vec<Arc<str>>,
+    dependents: Vec<InferenceDependentList>,
+    dependent_edges: Vec<InferenceDependent>,
 }
 
 // Borrow authored structures; only resolved variable bindings need shared ownership.
@@ -138,8 +189,7 @@ impl InferenceVariables {
     fn fresh(&mut self) -> InferenceVariableId {
         let id = InferenceVariableId(u32::try_from(self.nodes.len()).expect("inference variable capacity exceeded"));
         self.nodes.push(std::cell::Cell::new(InferenceNode::Unknown));
-        self.conflicts.push(None);
-        self.dependents.push(Vec::new());
+        self.dependents.push(InferenceDependentList::default());
         id
     }
 
@@ -167,8 +217,8 @@ impl InferenceVariables {
     fn ensure_consistent(&self, ty: &TypeDescriptor) -> Result<(), String> {
         if let TypeDescriptor::Inference(variable) = ty {
             let root = self.root(*variable);
-            if let Some(message) = &self.conflicts[root.0 as usize] {
-                return Err(message.to_string());
+            if let InferenceNode::Conflicted(id) = self.nodes[root.0 as usize].get() {
+                return Err(self.conflicts[id as usize].to_string());
             }
         }
         Ok(())
@@ -176,11 +226,13 @@ impl InferenceVariables {
 
     fn record_conflict(&mut self, ty: &TypeDescriptor, message: &str) {
         if let TypeDescriptor::Inference(variable) = ty {
-            self.advance_revision();
             let root = self.root(*variable);
-            self.nodes[root.0 as usize].set(InferenceNode::Conflicted);
-            self.conflicts[root.0 as usize].get_or_insert_with(|| Arc::from(message));
-            self.refresh(self.dependents[root.0 as usize].clone());
+            if matches!(self.nodes[root.0 as usize].get(), InferenceNode::Conflicted(_)) { return; }
+            self.advance_revision();
+            let id = u32::try_from(self.conflicts.len()).expect("inference conflict capacity exceeded");
+            self.conflicts.push(Arc::from(message));
+            self.nodes[root.0 as usize].set(InferenceNode::Conflicted(id));
+            self.refresh(self.dependent_variables(self.dependents[root.0 as usize]).collect());
         }
     }
 
@@ -203,7 +255,7 @@ impl InferenceVariables {
     // Callers unify structures and transfer obligations before changing a root.
     fn set(&mut self, variable: InferenceVariableId, ty: TypeDescriptor) {
         let root = self.root(variable);
-        assert_ne!(self.nodes[root.0 as usize].get(), InferenceNode::Conflicted,
+        assert!(!matches!(self.nodes[root.0 as usize].get(), InferenceNode::Conflicted(_)),
             "cannot overwrite a conflicted inference variable");
         if let TypeDescriptor::Inference(target) = ty {
             let target = self.root(target);
@@ -211,8 +263,8 @@ impl InferenceVariables {
                 self.advance_revision();
                 self.nodes[root.0 as usize].set(InferenceNode::ProxyTo(target));
                 let waiting = std::mem::take(&mut self.dependents[root.0 as usize]);
-                self.dependents[target.0 as usize].extend(waiting.iter().copied());
-                self.refresh(waiting);
+                self.extend_dependents(target, waiting);
+                self.refresh(self.dependent_variables(waiting).collect());
             }
         } else {
             let id = self.lower_structure(ty);
@@ -222,12 +274,16 @@ impl InferenceVariables {
 
     fn set_known(&mut self, root: InferenceVariableId, id: InferenceTypeId) {
         self.advance_revision();
+        self.initialize_known(root, id);
+    }
+
+    fn initialize_known(&mut self, root: InferenceVariableId, id: InferenceTypeId) {
         let mut dependencies = self.arguments(id).to_vec();
         dependencies.sort_unstable();
         dependencies.dedup();
         for dependency in dependencies {
             let dependency = self.root(dependency);
-            self.dependents[dependency.0 as usize].push(root);
+            self.add_dependent(dependency, root);
         }
         self.nodes[root.0 as usize].set(InferenceNode::Known(id));
         self.refresh(vec![root]);
@@ -235,5 +291,33 @@ impl InferenceVariables {
 
     fn advance_revision(&mut self) {
         self.revision = self.revision.checked_add(1).expect("inference revision capacity exceeded");
+    }
+
+    fn dependent_variables(&self, list: InferenceDependentList) -> impl Iterator<Item = InferenceVariableId> + '_ {
+        let mut current = list.first;
+        std::iter::from_fn(move || {
+            if current == u32::MAX { return None; }
+            let edge = &self.dependent_edges[current as usize];
+            current = if current == list.last { u32::MAX } else { edge.next };
+            Some(edge.variable)
+        })
+    }
+
+    fn add_dependent(&mut self, dependency: InferenceVariableId, variable: InferenceVariableId) {
+        let edge = u32::try_from(self.dependent_edges.len()).expect("inference dependency capacity exceeded");
+        assert_ne!(edge, u32::MAX, "inference dependency capacity exceeded");
+        self.dependent_edges.push(InferenceDependent { variable, next: u32::MAX });
+        self.extend_dependents(dependency, InferenceDependentList { first: edge, last: edge });
+    }
+
+    fn extend_dependents(&mut self, variable: InferenceVariableId, added: InferenceDependentList) {
+        if added.first == u32::MAX { return; }
+        let list = &mut self.dependents[variable.0 as usize];
+        if list.first == u32::MAX {
+            *list = added;
+        } else {
+            self.dependent_edges[list.last as usize].next = added.first;
+            list.last = added.last;
+        }
     }
 }

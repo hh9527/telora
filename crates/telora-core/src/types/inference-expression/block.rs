@@ -103,6 +103,7 @@ impl<'a> GenericInference<'a> {
             self.recursive_body_inference_depth -= 1;
             self.delayed_initializer_depth -= 1;
             let inferred = inferred?;
+            let inferred = (*self.variables.head(&inferred)).clone();
             if let (
                 Some(variable),
                 TypeDescriptor::Function {

@@ -394,7 +394,7 @@ fn infer_tool_expression_evidence(
         (*location, evidence.iter().map(|evidence| evidence.name.clone()).collect())
     }));
     let descriptors = inference.records.iter()
-        .map(|(location, descriptor)| (*location, inference.normalize(descriptor))).collect();
+        .map(|(location, slot)| (*location, inference.normalize(&TypeDescriptor::Inference(*slot)))).collect();
     let runtime_types = inference.runtime_type_evidence.iter()
         .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor))).collect();
     Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors,
