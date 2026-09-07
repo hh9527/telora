@@ -1429,6 +1429,17 @@ impl<'a> GenericInference<'a> {
         } else {
             inferred
         };
+        let inferred = if let Some(target) = expected.map(|ty| self.expose_named(ty))
+            && let TypeDescriptor::Declared(candidate) = self.resolve(&inferred)
+            && candidate.id.constructor() == unchecked_type_constructor()
+            && self.declared_identity(&candidate.id.arguments()[0]).is_some_and(|origin| {
+                self.declared_identity(&target).is_some_and(|target| origin == target)
+            })
+        {
+            target
+        } else {
+            inferred
+        };
         if let Some(expected) = expected
             && !(self.recursive_body_inference_depth > 0
                 && matches!(expression.value, ExprKind::Closure { .. }))

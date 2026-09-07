@@ -394,6 +394,18 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, value)
     }
 
+    pub(crate) fn make_unchecked_type(
+        &mut self,
+        id: crate::value::DeclaredTypeId,
+        argument: RegisterId,
+    ) -> Result<(), NativeError> {
+        let body = self.value(argument)?.declared_type_body()
+            .ok_or_else(|| NativeError::new("Unchecked expects declared type metadata"))?
+            .runtime();
+        self.set(self.result(), body)?;
+        self.make_declared_type_application(self.result(), id, "Unchecked", self.result(), &[argument])
+    }
+
     pub(crate) fn make_declared_type_application(
         &mut self,
         destination: RegisterId,

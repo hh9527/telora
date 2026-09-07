@@ -4,10 +4,13 @@
 - Implementation: `std/blame.BlameError` is an opaque native type. The blame,
   raise and warn intrinsics are implemented. Dyn returns preserve erased-value
   origins across call boundaries. Codec and JSON/TOML/YAML now return the same
-  opaque BlameError without an error type witness. Construction checks remain pending.
-- Validation: debug build and workspace tests pass; 348 language fixture groups
+  opaque BlameError without an error type witness. Unchecked(T) has distinct nominal
+  identity, typed fields, generic and imported instances, and direct contextual
+  conversion to T. Check registration and enforcement remain pending.
+- Validation: debug build and workspace tests pass; 354 language fixture groups
   pass, including opaque access rejection, intrinsic argument contracts, deferred
-  error construction, warnings returning None and cross-module subject origins.
+  error construction, warnings returning None, cross-module subject origins,
+  unchecked identity and fields, generic conversion, Dyn isolation and invalid targets.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
   codec field constraints; see the compatibility analysis below.

@@ -277,6 +277,16 @@ let result = match Some("hi") {
 
 ## Struct、enum 与模式
 
+`Unchecked(T)` 为具名字段 struct T 提供独立的候选值类型，保留 T 的字段类型
+和泛型参数。候选值可读取字段；需要 T 的上下文将候选值完成构造为 T。
+Dyn 保留候选值身份，不能把它直接投影成 T 或另一具名 struct 的候选值。
+
+```telora
+type Point = struct {x: Int, y: Int};
+let candidate: Unchecked(Point) = {x: 1, y: 2};
+let point: Point = candidate;
+```
+
 `type UserId = struct(Int);` 声明单元素具名 tuple（newtype）。`value.0` 读取
 内部的 Int；外层 UserId 与 Int 是不同类型。newtype 可以参数化，例如
 `type Box(T) = struct(T);`。载荷为具名类型时，`.0` 保留其具名身份。

@@ -237,6 +237,9 @@ impl<'a> GenericInference<'a> {
         let TypeDescriptor::Declared(declared) = current else {
             return None;
         };
+        if declared.id.constructor() == unchecked_type_constructor() {
+            return Some(self.resolve(current));
+        }
         let body = self.declared_body(declared);
         Some(TypeDescriptor::Declared(DeclaredTypeDescriptor {
             id: declared.id.clone(),
@@ -1077,6 +1080,9 @@ impl<'a> GenericInference<'a> {
                     .iter()
                     .map(|argument| self.resolve(argument))
                     .collect::<Vec<_>>();
+                if declared.id.constructor() == unchecked_type_constructor() {
+                    return unchecked_descriptor(arguments[0].clone());
+                }
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),

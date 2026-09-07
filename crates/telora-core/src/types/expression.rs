@@ -319,6 +319,9 @@ fn substitute_bound_parameters(
                 .iter()
                 .map(|argument| substitute_bound_parameters(argument, replacements))
                 .collect::<Vec<_>>();
+            if declared.id.constructor() == unchecked_type_constructor() {
+                return unchecked_descriptor(arguments[0].clone());
+            }
             TypeDescriptor::Declared(DeclaredTypeDescriptor {
                 id: declared.id.reapply(&arguments),
                 name: declared.name.clone(),

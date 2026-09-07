@@ -53,6 +53,10 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         function(vec![metadata.clone()], metadata.clone()),
     );
     prelude.insert(
+        "Unchecked".into(),
+        function(vec![metadata.clone()], metadata.clone()),
+    );
+    prelude.insert(
         "Tuple".into(),
         function(
             vec![TypeDescriptor::Array(Box::new(metadata.clone()))],
@@ -178,6 +182,13 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             scheme(function(
                 vec![witness(bound(0))],
                 witness(witness(bound(0))),
+            )),
+        ),
+        (
+            "Unchecked".into(),
+            scheme(function(
+                vec![witness(bound(0))],
+                witness(unchecked_descriptor(bound(0))),
             )),
         ),
         (
@@ -320,6 +331,41 @@ fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
         validate_native_type(value)?;
     }
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
+}
+
+fn native_unchecked_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let argument = context.argument(0)?;
+    let target = decode_native_type(context.value(argument)?)?;
+    let TypeDescriptor::Declared(declared) = &target else {
+        return Err(NativeError::new("Unchecked expects a named-field struct type"));
+    };
+    if !matches!(declared.body.as_ref(), TypeDescriptor::Struct(_))
+        || declared.id.constructor() == unchecked_type_constructor()
+    {
+        return Err(NativeError::new("Unchecked expects a named-field struct type"));
+    }
+    let constructor = unchecked_type_constructor();
+    let id = crate::value::DeclaredTypeId::applied(
+        constructor.module, constructor.local, &[target],
+    );
+    context.make_unchecked_type(id, argument)
+}
+
+pub(crate) fn unchecked_type_constructor() -> crate::TypeConstructorId {
+    crate::TypeConstructorId { module: crate::ModuleId::ANONYMOUS, local: 2 }
+}
+
+fn unchecked_descriptor(target: TypeDescriptor) -> TypeDescriptor {
+    let body = match &target {
+        TypeDescriptor::Declared(declared) => Arc::clone(&declared.body),
+        _ => Arc::new(TypeDescriptor::Struct(BTreeMap::new())),
+    };
+    let constructor = unchecked_type_constructor();
+    TypeDescriptor::Declared(DeclaredTypeDescriptor {
+        id: crate::value::DeclaredTypeId::applied(constructor.module, constructor.local, &[target]),
+        name: "Unchecked".into(),
+        body,
+    })
 }
 
 fn native_tuple_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {

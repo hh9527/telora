@@ -1,0 +1,2 @@
+type Choice = enum {A(Int), B};
+export type Candidate = Unchecked(Choice);

@@ -1,0 +1,8 @@
+export type Box(T) = struct {value: T};
+export def candidate: Unchecked(Box(Int)) = {value: 7};
+export def read: for(T) Fn(Unchecked(Box(T))) -> T = fn(candidate) {
+    candidate.value
+};
+export def finish: for(T) Fn(Unchecked(Box(T))) -> Box(T) = fn(candidate) {
+    candidate
+};
