@@ -1447,6 +1447,32 @@ impl<'a> GenericInference<'a> {
             }
             return Ok(self.resolve(&actual));
         }
+        // A named member fixes the enum owner, but its authored payload can still
+        // receive nominal context learned from the rest of the enclosing call.
+        if let ExprKind::Call { callee, arguments } = &expression.value
+            && let [argument] = arguments.as_slice()
+            && let Some(ValueConstructor::EnumMember { tag, has_payload: true }) =
+                self.value_constructors.get(&callee.location).cloned()
+        {
+            let expected = self.expose_named(expected);
+            let same_owner = match (self.declared_identity(&actual), self.declared_identity(&expected)) {
+                (Some(actual), Some(expected)) => actual.constructor() == expected.constructor(),
+                (None, None) => true,
+                _ => false,
+            };
+            if same_owner
+                && let Some((TypeDescriptor::Function { parameters, .. }, _)) =
+                    enum_member_type(&TypeDescriptor::TypeOf(Box::new(expected)), &tag)?
+                && let Some(TypeDescriptor::Function { parameters: original, result }) =
+                    self.records.get(&callee.location).cloned()
+            {
+                let payload = self.contextualize_authored_literal(argument, &parameters[0])?;
+                self.refine_argument_nominal_context(&original[0], &payload)?;
+                let result = self.resolve(&result);
+                self.records.insert(expression.location, result.clone());
+                return Ok(result);
+            }
+        }
         if self.declared_identity(&actual).is_some() {
             return Ok(actual);
         }

@@ -14,72 +14,72 @@ type Tree = struct(Option(Tree));
 
 export def reflection = test.should_ok(fn() {
     let body = match type_desc.resolve(UserId) {
-        'Ok(body) => body,
-        'Err(error) => fail!(error.message),
+        Ok(body) => body,
+        Err(error) => fail!(error.message),
     };
-    expect(type_desc.kind(UserId) == 'Ref
-        && type_desc.kind(body) == 'Newtype
+    expect(type_desc.kind(UserId) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(body) == type_desc.TypeDescKind.Newtype
         && type_desc.children(body) == [Int])
 });
 
 export def codec_roundtrip = test.should_ok(fn() {
     let id = match json.decode(UserId, "7") {
-        'Ok(value) => value,
-        'Err(error) => fail!(error.message),
+        Ok(value) => value,
+        Err(error) => fail!(error.message),
     };
-    expect(id.0 == 7 && codec.encode(Value, id) == 'Int(7)
-        && dyn.project_with(OtherId, dyn.pack(UserId, id)) == 'None)
+    expect(id.0 == 7 && codec.encode(Value, id) == Value.Int(7)
+        && dyn.project_with(OtherId, dyn.pack(UserId, id)) == None)
 });
 
 export def nested_payload_identity = test.should_ok(fn() {
     let nested = match json.decode(Nested, "8") {
-        'Ok(value) => value,
-        'Err(error) => fail!(error.message),
+        Ok(value) => value,
+        Err(error) => fail!(error.message),
     };
     let generic = match json.decode(Box(UserId), "9") {
-        'Ok(value) => value,
-        'Err(error) => fail!(error.message),
+        Ok(value) => value,
+        Err(error) => fail!(error.message),
     };
     let nested_id: UserId = nested.0;
     let generic_id: UserId = generic.0;
     expect(nested_id.0 == 8 && generic_id.0 == 9
-        && codec.encode(Value, nested) == 'Int(8)
-        && codec.encode(Value, generic) == 'Int(9))
+        && codec.encode(Value, nested) == Value.Int(8)
+        && codec.encode(Value, generic) == Value.Int(9))
 });
 
 export def recursive_metadata = test.should_ok(fn() {
     let tree = match json.decode(Tree, "null") {
-        'Ok(value) => value,
-        'Err(error) => fail!(error.message),
+        Ok(value) => value,
+        Err(error) => fail!(error.message),
     };
-    expect(codec.encode(Value, tree) == 'None)
+    expect(codec.encode(Value, tree) == Value.None)
 });
 
 export def decode_failure_input = test.should_ok(fn() {
     expect(match json.decode(UserId, "\"invalid\"") {
-        'Ok(_) => 'False,
-        'Err(error) => error.value == 'String("invalid"),
+        Ok(_) => False,
+        Err(error) => error.value == Value.String("invalid"),
     })
 });
 
 export def dynamic_payload = test.should_ok(fn() {
     let nested = match json.decode(Nested, "10") {
-        'Ok(value) => value,
-        'Err(error) => fail!(error.message),
+        Ok(value) => value,
+        Err(error) => fail!(error.message),
     };
     let items = match dyn.tuple_items(dyn.pack(Nested, nested)) {
-        'Ok(items) => items,
-        'Err(error) => fail!(error.message),
+        Ok(items) => items,
+        Err(error) => fail!(error.message),
     };
-    expect(dyn.project_with(UserId, items[0]) == 'Some(nested.0)
-        && dyn.project_with(Int, items[0]) == 'None)
+    expect(dyn.project_with(UserId, items[0]) == Some(nested.0)
+        && dyn.project_with(Int, items[0]) == None)
 });
 
 export def schema = test.should_ok(fn() {
     let recursive = json.schema(Tree);
     let expected = match json.parse(r##"{"$defs":{"Type0":{"type":"integer"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##) {
-        'Ok(value) => value,
-        'Err(error) => fail!(error.message),
+        Ok(value) => value,
+        Err(error) => fail!(error.message),
     };
     expect(json.schema(UserId) == expected)
 });

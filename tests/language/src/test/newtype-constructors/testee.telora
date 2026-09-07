@@ -25,7 +25,7 @@ def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
 
 export def direct = test.should_ok(fn() {
     let id = UserId(7);
-    expect(id.0 == 7 && codec.encode(Value, id) == 'Int(7))
+    expect(id.0 == 7 && codec.encode(Value, id) == Value.Int(7))
 });
 
 export def first_class = test.should_ok(fn() {
@@ -43,22 +43,22 @@ export def generic = test.should_ok(fn() {
 
 export def generic_forwarding = test.should_ok(fn() {
     let id = box(UserId(13));
-    expect(id.0.0 == 13 && codec.encode(Value, id) == 'Int(13))
+    expect(id.0.0 == 13 && codec.encode(Value, id) == Value.Int(13))
 });
 
 export def type_facet = test.should_ok(fn() {
     let metadata: Type = UserId;
     let boxed: Type = Box(Int);
     let family: Fn(Type) -> Type = Box;
-    expect(type_desc.kind(metadata) == 'Ref && type_desc.kind(boxed) == 'Ref
-        && type_desc.kind(family(Int)) == 'Ref)
+    expect(type_desc.kind(metadata) == type_desc.TypeDescKind.Ref && type_desc.kind(boxed) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(family(Int)) == type_desc.TypeDescKind.Ref)
 });
 
 export def constructor_dyn = test.should_ok(fn() {
     let packed = dyn.pack(IdConstructor, UserId);
     expect(match dyn.project_with(IdConstructor, packed) {
-        'Some(make) => make(14).0 == 14,
-        'None => 'False,
+        Some(make) => make(14).0 == 14,
+        None => False,
     })
 });
 
@@ -78,16 +78,16 @@ export def ordinary_metadata_function = test.should_ok(fn() {
     let local: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId };
     let local_metadata = local(1);
     let witness: TypeOf(UserId) = UserId;
-    expect(type_desc.kind(identity(metadata)) == 'Ref
-        && type_desc.kind(identity(local_metadata)) == 'Ref
-        && type_desc.kind(identity(witness)) == 'Ref
-        && type_desc.kind(identity(model.metadata)) == 'Ref)
+    expect(type_desc.kind(identity(metadata)) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(identity(local_metadata)) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(identity(witness)) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(identity(model.metadata)) == type_desc.TypeDescKind.Ref)
 });
 
 export def contextual_payload = test.should_ok(fn() {
     let item = WrappedItem({value: 19});
-    let option = Maybe('Some(20));
-    expect(item.0.value == 19 && option.0 == 'Some(20))
+    let option = Maybe(Some(20));
+    expect(item.0.value == 19 && option.0 == Some(20))
 });
 
 export def constructor_patterns = test.should_ok(fn() {
@@ -106,18 +106,18 @@ export def constructor_patterns = test.should_ok(fn() {
 
 export def pattern_control_flow = test.should_ok(fn() {
     let extract: Fn(Maybe) -> Int = fn(value) {
-        let Maybe('Some(item)) = value else { return 0; };
+        let Maybe(Some(item)) = value else { return 0; };
         item
     };
     let guarded = match Box(UserId(31)) {
         Box(UserId(value)) if value == 0 => 0,
         Box(UserId(value)) => value,
     };
-    let nested: Option(UserId) = 'Some(UserId(32));
+    let nested: Option(UserId) = Some(UserId(32));
     let from_enum = match nested {
-        'Some(UserId(value)) => value,
-        'None => 0,
+        Some(UserId(value)) => value,
+        None => 0,
     };
-    expect(extract(Maybe('Some(33))) == 33 && extract(Maybe('None)) == 0
+    expect(extract(Maybe(Some(33))) == 33 && extract(Maybe(None)) == 0
         && guarded == 31 && from_enum == 32)
 });

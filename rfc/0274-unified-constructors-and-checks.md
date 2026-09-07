@@ -27,6 +27,10 @@
   prelude fallbacks. Property markers accept typed tool-stage PropertyTarget
   expressions, including aliases and computed values, with nominal validation.
   Standard-library sources and examples use named enum members throughout.
+  Named member payloads receive late nominal context through the shared call
+  inference path, including nested builtin and declared generic enums. Existing
+  payload values retain their identities. Core behavioral fixtures use named
+  members, and providers explicitly export constructors of private enums.
   Quoted-syntax removal in the parser, remaining fixtures and documentation,
   and construction checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
@@ -34,6 +38,9 @@
   including computed markers, aliases, nominal rejection and marker arity.
   The standard-library syntax migration passed debug build and workspace tests;
   migrated application, reflection and analytics examples passed module checking.
+  Named-payload contextualization and migrated core fixtures passed workspace
+  tests and all 333 language fixture groups, with three additional `.telora`
+  regressions for nested, declared-generic and existing-value payloads.
   New behavior is tested in
   `.telora`; no release binary was built.
 

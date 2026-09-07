@@ -323,6 +323,8 @@ let result = Success@[Int, String](2);
 传递和写在模式中，例如 `Progress(value)`。成员导入产生的名称须与同一作用域
 中的其他绑定不同；重命名可以区分不同 enum 的同名成员。其他模块可以通过
 普通模块导入取得公开的成员名称，后续 reexport 保留其声明身份。
+类型可以保持模块私有，同时通过成员导出提供构造与模式匹配能力，例如
+`export Status.{Ready};`。调用方通过公开的成员名称引用该声明。
 
 在 `match`、`if let` 和 `let else` 的模式中，导入的无载荷成员直接写名称：
 
@@ -340,8 +342,8 @@ match result {
 
 ```telora
 type Entity = enum {
-    'Ticket,
-    'Agent,
+    Ticket,
+    Agent,
 };
 
 type Requirement = struct {
@@ -351,26 +353,26 @@ type Requirement = struct {
 ```
 
 Struct 和 enum 都是封闭的具名声明。不同声明即使结构相同也不是同一个类型；alias、
-import 和 reexport 保留原声明身份。字段使用 `.field`；enum 值使用 quoted variant
-语法。`struct` 和 `enum` 只用于 `type` 的直接初始化，不能作为普通函数调用；
-`@struct`、`@enum` 不是可用的兼容语法。
+import 和 reexport 保留原声明身份。字段使用 `.field`；enum 值使用声明提供的
+成员名称。`struct` 和 `enum` 用于 `type` 的直接初始化。
 
-每个 variant 构造都需要确定所属 enum。类型可以从注解、函数参数、返回契约或
-完整调用中的其他实参推断；也可以显式指定：
+成员名称确定所属 enum，泛型参数可以从注解、函数参数、返回契约或完整调用中的
+其他实参推断，也可以显式指定：
 
 ```telora
-let entity: Entity = 'Ticket;
-let explicit = 'Agent.ty!(Entity);
-let enabled = 'True.ty!(Bool);
-let some: Fn(Int) -> Option(Int) = 'Some;
+let entity = Entity.Ticket;
+let explicit = Entity.Agent.ty!(Entity);
+let enabled = True;
+let some: Fn(Int) -> Option(Int) = Some;
 let value = some(7);
 ```
 
-没有足够证据的 `let value = 'Ticket;` 会报错，要求提供 enum 上下文。Bool 的
-variant 也遵循这条规则；条件和布尔操作符本身提供 Bool 上下文。模式中的 variant
-根据被匹配值的 enum 检查，不能用模式名称猜测泛型参数的类型。
+尚未确定的泛型参数需要显式证据，例如 `None.ty!(Option(Int))`。
+模式中的成员按声明身份和被匹配值的类型检查。
 
-声明上下文中的记录或 tag 字面量会取得预期类型的声明身份。外部 JSON/TOML/YAML
+声明上下文中的记录字面量取得预期类型的声明身份。成员构造器的载荷也接收完整
+调用提供的上下文，例如 `Some([{value: 7}])` 可以从另一个 `Option(Array(Item))`
+实参取得内部记录的 `Item` 类型。外部 JSON/TOML/YAML
 数据可以在 `codec.decode` 这类有精确 witness 的解码边界取得
 身份。已经产生的匿名记录或另一个声明类型的值，不能只因结构相同而在后续标注、
 参数或返回值边界被重新标记；应在字面量的产生点给出声明契约。
@@ -379,7 +381,7 @@ variant 也遵循这条规则；条件和布尔操作符本身提供 Bool 上下
 
 ```telora
 let empty = [].ty!(Array(Int));       # 只协助静态推断，无运行时调用
-let truth = 'True.ty!(Bool);
+let truth = True.ty!(Bool);
 
 let user_result = raw.cast!(User);   # Result(User, String)
 

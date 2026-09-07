@@ -457,6 +457,19 @@ impl<'a> GenericInference<'a> {
                     }).collect::<Result<_, String>>()?,
                 ))
             }
+            (TypeDescriptor::Enum(left), TypeDescriptor::Enum(right))
+                if left.keys().eq(right.keys()) =>
+            {
+                Ok(TypeDescriptor::Enum(left.iter().map(|(name, left)| {
+                    let payload = match (left, &right[name]) {
+                        (Some(left), Some(right)) => Some(Box::new(
+                            self.refine_argument_nominal_context(left, right)?,
+                        )),
+                        _ => left.clone(),
+                    };
+                    Ok((name.clone(), payload))
+                }).collect::<Result<_, String>>()?))
+            }
             (
                 TypeDescriptor::Tagged { tag: left_tag, payload: left },
                 TypeDescriptor::Tagged { tag: right_tag, payload: right },

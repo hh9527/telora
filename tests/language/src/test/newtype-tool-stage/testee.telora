@@ -30,9 +30,9 @@ type FromImport = generic.Box@[Type](Int).0;
 type FromSelectiveImport = ImportedBox@[Type](String).0;
 type FromAlias = make(Int).0;
 type FromGenericAlias = make_generic@[Type](String).0;
-type FromCodec = if codec.encode(Value, Box@[Int](42)) == 'Int(42) { Int } else { String };
+type FromCodec = if codec.encode(Value, Box@[Int](42)) == Value.Int(42) { Int } else { String };
 type FromTypedLet = typed_make(Int).0;
-type FromAliasCodec = if codec.encode(Value, make_generic@[Int](42)) == 'Int(42) { Int } else { String };
+type FromAliasCodec = if codec.encode(Value, make_generic@[Int](42)) == Value.Int(42) { Int } else { String };
 type FromMetadataFunction = metadata_factory(Int);
 
 type Count = struct(Int);
@@ -54,8 +54,8 @@ export def direct = test.should_ok(fn() {
 
 export def decorator_argument = test.should_ok(fn() {
     expect(match property.get_type_prop(Annotated, Stamp) {
-        'Some(stamp) => stamp.value == 45,
-        'None => 'False,
+        Some(stamp) => stamp.value == 45,
+        None => False,
     })
 });
 

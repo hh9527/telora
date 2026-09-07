@@ -6,24 +6,24 @@ import "std/value" {ScalarValue};
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-@json.rename_all('CamelCase)
+@json.rename_all(json.RenameCase.CamelCase)
 type FixtureEvent = enum {
-    'Idle,
-    'UserJoined(FixtureUser),
-    'FatalError(String),
+    Idle,
+    UserJoined(FixtureUser),
+    FatalError(String),
 };
 type FixtureUser = struct {name: String};
 @json.untagged
-type FixtureScalar = enum {'Text(String), 'Count(Int)};
+type FixtureScalar = enum {Text(String), Count(Int)};
 @json.untagged
-type NullableScalar = enum {'Null, 'Text(String), 'Count(Int), 'Flag(Bool)};
+type NullableScalar = enum {Null, Text(String), Count(Int), Flag(Bool)};
 type FixtureEnvelope = struct {event: FixtureEvent};
-type Choice = enum {'None, 'Number(Int)};
-type WrongUnit = enum {'Other, 'Number};
-type WrongPayload = enum {'None(Int), 'Number(String)};
+type Choice = enum {None, Number(Int)};
+type WrongUnit = enum {Other, Number};
+type WrongPayload = enum {None(Int), Number(String)};
 @json.untagged
-type Ambiguous = enum {'OtherText(String), 'Text(String)};
-@json.rename_all('CamelCase)
+type Ambiguous = enum {OtherText(String), Text(String)};
+@json.rename_all(json.RenameCase.CamelCase)
 type FixtureModel = struct {
     user_id: Int,
     event: FixtureEvent,
@@ -32,21 +32,21 @@ type FixtureModel = struct {
 
 export def verified_case = test.should_ok(fn() {
     let verified = {
-        let fatal: FixtureEvent = 'FatalError("boom");
-        let nested: FixtureEnvelope = {event: 'UserJoined({name: "Lin"})};
-        let count: FixtureScalar = 'Count(3);
+        let fatal: FixtureEvent = FixtureEvent.FatalError("boom");
+        let nested: FixtureEnvelope = {event: FixtureEvent.UserJoined({name: "Lin"})};
+        let count: FixtureScalar = FixtureScalar.Count(3);
         let encoded_fatal = codec.encode(codec.Value, fatal);
         let encoded_nested = codec.encode(codec.Value, nested);
         let encoded_count = codec.encode(codec.Value, count);
-        let encoded_null = codec.encode(codec.Value, 'Null.ty!(NullableScalar));
-        let decoded_null = codec.decode(NullableScalar, 'None) |> results.unwrap;
-        let encoded_flag = codec.encode(codec.Value, 'Flag('True).ty!(NullableScalar));
+        let encoded_null = codec.encode(codec.Value, NullableScalar.Null);
+        let decoded_null = codec.decode(NullableScalar, codec.Value.None) |> results.unwrap;
+        let encoded_flag = codec.encode(codec.Value, NullableScalar.Flag(True));
         let standard_scalars: Array(ScalarValue) = [
-            'None,
-            'Bool('True),
-            'Int(3),
-            'Float(3.5),
-            'String("abc"),
+            ScalarValue.None,
+            ScalarValue.Bool(True),
+            ScalarValue.Int(3),
+            ScalarValue.Float(3.5),
+            ScalarValue.String("abc"),
         ];
         let encoded_standard = codec.encode(codec.Value, standard_scalars);
         let no_match = codec.decode(
@@ -74,31 +74,31 @@ export def verified_case = test.should_ok(fn() {
             codec.encode(codec.Value, "hello"),
         ) |> results.unwrap;
         let checks = [
-            expect(!results.is_ok('Other.ty!(WrongUnit).cast!(Choice))),
-            expect(!results.is_ok('Number.ty!(WrongUnit).cast!(Choice))),
-            expect(!results.is_ok('None(1).ty!(WrongPayload).cast!(Choice))),
-            expect(!results.is_ok('Number("one").ty!(WrongPayload).cast!(Choice))),
+            expect(!results.is_ok(WrongUnit.Other.cast!(Choice))),
+            expect(!results.is_ok(WrongUnit.Number.cast!(Choice))),
+            expect(!results.is_ok(WrongPayload.None(1).cast!(Choice))),
+            expect(!results.is_ok(WrongPayload.Number("one").cast!(Choice))),
             expect(!results.is_ok(no_match)),
             expect(!results.is_ok(ambiguous)),
             expect(string.contains(schema_text, "userId")),
             expect(string.contains(schema_text, "event")),
             expect(string.contains(schema_text, "scalar")),
-            expect(idle == 'Idle),
-            expect(joined == 'UserJoined({name: "Ada"})),
-            expect(encoded_fatal == 'Object({fatalError: 'String("boom")})),
-            expect(encoded_nested == 'Object({event: 'Object({userJoined: 'Object({name: 'String("Lin")})})})),
-            expect(text == 'Text("hello")),
-            expect(encoded_count == 'Int(3)),
-            expect(encoded_null == 'None),
-            expect(decoded_null == 'Null.ty!(NullableScalar)),
-            expect(encoded_flag == 'True),
+            expect(idle == FixtureEvent.Idle),
+            expect(joined == FixtureEvent.UserJoined({name: "Ada"})),
+            expect(encoded_fatal == codec.Value.Object({fatalError: codec.Value.String("boom")})),
+            expect(encoded_nested == codec.Value.Object({event: codec.Value.Object({userJoined: codec.Value.Object({name: codec.Value.String("Lin")})})})),
+            expect(text == FixtureScalar.Text("hello")),
+            expect(encoded_count == codec.Value.Int(3)),
+            expect(encoded_null == codec.Value.None),
+            expect(decoded_null == NullableScalar.Null),
+            expect(encoded_flag == codec.Value.True),
         ];
-        encoded_standard == 'Array([
-                'None,
-                'True,
-                'Int(3),
-                'Float(3.5),
-                'String("abc"),
+        encoded_standard == codec.Value.Array([
+                codec.Value.None,
+                codec.Value.True,
+                codec.Value.Int(3),
+                codec.Value.Float(3.5),
+                codec.Value.String("abc"),
             ])
     };
     expect(verified)
