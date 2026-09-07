@@ -273,6 +273,12 @@ Telora 合并分支证据：泛型代码中的 `if` 若为同一个预期 enum
 `type Box(T) = struct(T);`。载荷为具名类型时，`.0` 保留其具名身份。
 JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 
+值位置的类型声明名称提供构造器函数：`UserId(1)` 构造 UserId，
+`let make = UserId;` 可将构造器作为函数传递。`Box(1)` 推断载荷类型，
+`Box@[Int](1)` 显式指定类型参数。类型注解、Type 参数以及显式的 Type 值契约
+使用同一声明的类型用途，例如 `let ty: Type = UserId;`。import 和 reexport
+保留声明的这两个用途；普通 Type 变量与返回 Type 的函数保持其值契约。
+
 ```telora
 type Entity = enum {
     'Ticket,

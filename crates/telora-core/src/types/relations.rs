@@ -20,6 +20,31 @@ pub(crate) fn apply_declared_type_arguments(
     id.reapply(&applied)
 }
 
+fn newtype_constructor_type(descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
+    let result = match descriptor {
+        TypeDescriptor::TypeOf(result) => result.as_ref(),
+        TypeDescriptor::Function { result, .. } => match result.as_ref() {
+            TypeDescriptor::TypeOf(result) => result.as_ref(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let TypeDescriptor::Declared(declared) = result else { return None; };
+    let TypeDescriptor::Newtype(payload) = declared.body.as_ref() else { return None; };
+    Some(TypeDescriptor::Function {
+        parameters: vec![payload.as_ref().clone()],
+        result: Box::new(result.clone()),
+    })
+}
+
+fn expects_type_value(expected: &TypeDescriptor) -> bool {
+    match expected {
+        TypeDescriptor::Type | TypeDescriptor::TypeOf(_) => true,
+        TypeDescriptor::Function { result, .. } => expects_type_value(result),
+        _ => false,
+    }
+}
+
 pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Bound(_) => true,

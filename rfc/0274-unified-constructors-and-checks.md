@@ -9,10 +9,11 @@
   not authorize merging into main; integration is a separate decision.
 - Implementation: newtype declaration metadata, canonical identity, positional
   `.0` access, payload codecs, schema and Dyn tuple observation are implemented
-  on the branch. Callable constructors, constructor patterns, named enum
-  constructors and checks remain pending.
-- Validation: debug build and workspace tests pass for the representation
-  batch, including 288 language fixture groups. New behavior is tested in
+  on the branch. Runtime callable constructors, generic application and
+  first-class use are implemented. Constructor patterns, tool-stage callable
+  construction, named enum constructors and checks remain pending.
+- Validation: debug build and workspace tests pass for the runtime constructor
+  batch, including 291 language fixture groups. New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective
@@ -90,13 +91,15 @@ contracts resolve `Box(Int)` as a type application; value expressions resolve
 `Box(1)` as construction. Constructor generic specialization uses existing
 `@[Ty]` syntax.
 
-Before implementation, inventory explicit Type-valued expressions, decorator
-arguments, reflection arguments and generic type-family calls. These are not
-all syntactically type annotations. Define how their Type expectation selects
-the type facet without runtime argument inspection, spelling heuristics or
-order-dependent inference. An unconstrained bare newtype name in a value
-binding should denote its constructor; an explicit Type contract must still
-allow access to its type facet. Verify this proposal against the tool stage.
+Explicit Type expectations select the type facet, including reflection
+arguments and functions whose result contract is Type. An unconstrained bare
+newtype declaration name in a value binding denotes its constructor. HIR and
+module interfaces retain declaration identity; arbitrary Type-valued bindings
+and ordinary functions returning Type do not acquire a constructor facet.
+Synthesized module exports preserve declarations and their generic contracts.
+Runtime selection does not inspect argument values or constructor spelling.
+Tool-stage construction still needs the same inference evidence propagated to
+its expression compiler before this stage can be declared complete.
 
 Imports, exports and aliases must preserve the two facets of the declaration;
 they must not manufacture duplicate nominal identities. Duplicate source names

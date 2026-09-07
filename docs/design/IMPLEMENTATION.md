@@ -216,6 +216,11 @@ Newtype 在类型描述符、分析图和 canonical type store 中具有独立�
 Val，所以嵌套具名载荷的身份和位置不被外层构造覆盖。codec 对外使用载荷表示，
 decode 分别建立载荷容器与外层身份，encode 先验证外层身份再读取载荷。
 
+严格推断依据 HIR 声明和模块接口的 `type_declarations` 识别 newtype 名称，
+根据 Type 上下文选择类型用途或构造器用途。构造器表达式记录独立的位置集合，
+编译为单参数闭包，使用 `MakeTuple` 和可用的 `OwnDeclared` 类型证据。
+导出记录保留声明本身；普通函数的 TypeOf 返回契约不提供声明身份。
+
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
 

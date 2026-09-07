@@ -224,6 +224,7 @@
                 BTreeMap::from([(
                     "host".to_owned(),
                     ModuleInterface {
+                        type_declarations: BTreeSet::new(),
                         namespaces: BTreeMap::new(),
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),

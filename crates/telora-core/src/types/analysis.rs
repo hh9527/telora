@@ -25,6 +25,7 @@ pub struct Analysis {
     pub(crate) dynamic_bindings: HashSet<String>,
     pub(crate) type_family_values: BTreeMap<String, TypeFamilyTemplate>,
     pub(crate) declared_value_owners: HashMap<crate::Location, String>,
+    pub(crate) newtype_constructors: HashSet<crate::Location>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -35,6 +35,8 @@ struct GenericInference<'a> {
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     substitutions: HashMap<InferenceVariableId, TypeDescriptor>,
     records: HashMap<crate::Location, TypeDescriptor>,
+    newtype_constructors: HashSet<crate::Location>,
+    type_facet_locations: HashSet<crate::Location>,
     pattern_diagnostics: BTreeMap<crate::Location, String>,
     pattern_binding_types: HashMap<crate::Location, TypeDescriptor>,
     propagation_boundaries: Vec<Option<PropagationRequirement>>,

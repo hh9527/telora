@@ -24,6 +24,7 @@ struct NestedEnvironment<'a> {
     type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
     declared_value_owners: &'a HashMap<Location, String>,
+    newtype_constructors: &'a HashSet<Location>,
 }
 
 #[derive(Debug)]
@@ -392,6 +393,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
         declared_value_owners,
+        newtype_constructors: HashSet::new(),
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };

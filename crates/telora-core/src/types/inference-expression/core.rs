@@ -787,7 +787,7 @@ impl<'a> GenericInference<'a> {
                             .any(|argument| matches!(argument.value, TypeArgumentKind::Infer))
                 );
                 let model_fields = if matches!(&callee.value, ExprKind::Variable(name)
-                    if name.value == "\0telora_enum")
+                    if matches!(name.value.as_str(), "\0telora_enum" | "\0telora_struct" | "\0telora_newtype"))
                     && let Some(Expr { value: ExprKind::Dict(fields), .. }) = arguments.get(1)
                 {
                     Some(TypeDescriptor::Struct(fields.iter().filter_map(|field| {
@@ -802,6 +802,9 @@ impl<'a> GenericInference<'a> {
                 } else {
                     None
                 };
+                if expected.is_some_and(|ty| expects_type_value(&self.resolve(ty))) {
+                    self.type_facet_locations.insert(callee.location);
+                }
                 let callee = self.infer(callee, environment, None)?;
                 let resolved_callee = self.resolve(&callee);
                 let resolved_callee = if let TypeDescriptor::Inference(variable) = resolved_callee {
@@ -844,6 +847,7 @@ impl<'a> GenericInference<'a> {
                                 model_fields.as_ref()
                             } else if contains_exposed_type_variable(parameter)
                                 && matches!(argument.value, ExprKind::Variable(_))
+                                && !expects_type_value(&self.resolve(parameter))
                             {
                                 None
                             } else {
@@ -932,6 +936,11 @@ impl<'a> GenericInference<'a> {
                     ));
                 }
                 let pending_start = self.pending_type_constraints.len();
+                if self.type_facet_locations.contains(&expression.location)
+                    || expected.is_some_and(|ty| expects_type_value(&self.resolve(ty)))
+                {
+                    self.type_facet_locations.insert(callee.location);
+                }
                 self.infer(callee, environment, None)?;
                 self.pending_type_constraints.truncate(pending_start);
                 let type_expected = TypeDescriptor::Type;
@@ -1371,6 +1380,18 @@ impl<'a> GenericInference<'a> {
                     TypeDescriptor::Never
                 }
             }
+        };
+        let inferred = if matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. } | ExprKind::TypeApply { .. })
+            && self.declared_constructor_reference(expression)
+            && !self.type_facet_locations.contains(&expression.location)
+            && !expected.is_some_and(|ty| expects_type_value(&self.resolve(ty)))
+            && let Some(constructor) = newtype_constructor_type(&inferred)
+        {
+            self.newtype_constructors.insert(expression.location);
+            constructor
+        } else {
+            self.newtype_constructors.remove(&expression.location);
+            inferred
         };
         if let Some(expected) = expected
             && !(self.recursive_body_inference_depth > 0

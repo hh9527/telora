@@ -1,4 +1,50 @@
 impl<'a> Compiler<'a> {
+    fn compile_newtype_constructor(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
+        // Evaluate the declaration reference even when its concrete owner is precomputed.
+        self.compile_expr_unowned(expression)?;
+        let owner = self.declared_value_owners.get(&expression.location).cloned();
+        let mut captures = Vec::new();
+        let mut registers = Vec::new();
+        if let Some(owner) = owner {
+            let register = self.environment.get(&owner).copied()
+                .unwrap_or_else(|| self.load_external_constant(owner.clone(), expression.location));
+            captures.push(owner);
+            registers.push(register);
+        }
+        let name = format!("{}::newtype{}", self.function_name, self.closure_index);
+        self.closure_index += 1;
+        let mut nested = Self::nested(
+            self.source_name,
+            self.source_file,
+            name,
+            &[located("\0newtype-payload".into(), expression.location)],
+            NestedEnvironment {
+                captures: &captures,
+                type_slots: &HashSet::new(),
+                definitions: &HashSet::new(),
+                declared_value_owners: &HashMap::new(),
+                newtype_constructors: &HashSet::new(),
+            },
+        )?;
+        let payload = nested.allocate();
+        nested.emit(Operation::MakeTuple { dst: payload, items: vec![RegisterId(0)] }, expression.location);
+        let result = if registers.is_empty() {
+            payload
+        } else {
+            let result = nested.allocate();
+            nested.emit(Operation::OwnDeclared {
+                dst: result, owner: RegisterId(1), value: payload,
+            }, expression.location);
+            result
+        };
+        nested.emit(Operation::Return { src: result }, expression.location);
+        let dst = self.allocate();
+        self.emit(Operation::MakeClosure {
+            dst, function: Box::new(nested.finish_lir()), captures: registers,
+        }, expression.location);
+        Ok(dst)
+    }
+
     fn compile_closure(
         &mut self,
         parameters: &[Identifier],
@@ -120,6 +166,7 @@ impl<'a> Compiler<'a> {
                 type_slots: &captured_type_slots,
                 definitions: &captured_definitions,
                 declared_value_owners: &self.declared_value_owners,
+                newtype_constructors: &self.newtype_constructors,
             },
         )?;
         if let Some(constructor) = nominal_constructor {

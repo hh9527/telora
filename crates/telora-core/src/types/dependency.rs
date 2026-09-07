@@ -1812,6 +1812,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
             }
         }
     }
+    if !program.value.authored_result
+        && let ExprKind::Dict(fields) = &program.value.body.value.result.value
+    {
+        for field in fields {
+            inference.type_facet_locations.insert(field.value.value.location);
+        }
+    }
     let result_type = inference
         .infer(&program.value.body.value.result, &checked_environment, None)
         .map_err(|message| {
@@ -2101,6 +2108,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .find_map(|interface| interface.display_trait)
     };
     let module_interface = ModuleInterface {
+        type_declarations: match &program.value.body.value.result.value {
+            ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
+                inference.declared_constructor_reference(&field.value.value)
+                    .then(|| field.value.name.as_ref().map(|name| name.value.clone())).flatten()
+            }).collect(),
+            _ => BTreeSet::new(),
+        },
         namespaces: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
                 let ExprKind::Variable(binding) = &field.value.value.value else { return None; };
@@ -2350,9 +2364,18 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
     let mut pending_owner_roots = Vec::new();
     let mut declared_value_owners = HashMap::new();
-    for (location, descriptor) in expression_descriptors.iter().filter(|(_, descriptor)| {
-        matches!(descriptor, TypeDescriptor::Declared(_)) && !type_identity_is_symbolic(descriptor)
-    }) {
+    let newtype_constructors = inference.newtype_constructors.clone();
+    for (location, descriptor) in &expression_descriptors {
+        let descriptor = if newtype_constructors.contains(location)
+            && let TypeDescriptor::Function { result, .. } = descriptor
+        {
+            result.as_ref()
+        } else {
+            descriptor
+        };
+        if !matches!(descriptor, TypeDescriptor::Declared(_)) || type_identity_is_symbolic(descriptor) {
+            continue;
+        }
         let key = crate::compiler::declared_owner_link_key(*location);
         let value = evaluator.descriptor(descriptor)?;
         pending_owner_roots.push((key.clone(), value));
@@ -2409,5 +2432,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         dynamic_bindings: dynamic_bindings.clone(),
         type_family_values,
         declared_value_owners,
+        newtype_constructors,
     })
 }

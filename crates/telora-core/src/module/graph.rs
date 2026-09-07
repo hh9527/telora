@@ -946,6 +946,11 @@ fn select_import_root(
     Ok((
         selected,
         ModuleInterface {
+            type_declarations: if interface.type_declarations.contains(&exported.value) {
+                BTreeSet::from([local.to_owned()])
+            } else {
+                BTreeSet::new()
+            },
             namespaces: BTreeMap::new(),
             exports: BTreeMap::from([(local.to_owned(), scheme)]),
             concrete_types: interface.concrete_types,

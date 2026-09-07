@@ -65,6 +65,8 @@ impl<'a> GenericInference<'a> {
             ordered_variables: HashSet::new(),
             field_requirements: HashMap::new(),
             enum_constructors: HashMap::new(),
+            newtype_constructors: HashSet::new(),
+            type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
             substitutions: HashMap::new(),
             records: HashMap::new(),
@@ -417,6 +419,27 @@ impl<'a> GenericInference<'a> {
             ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
                 .and_then(|interface| interface.exports.get(&field.value)).cloned(),
             _ => None,
+        }
+    }
+
+    fn declared_constructor_reference(&self, expression: &Expr) -> bool {
+        match &expression.value {
+            ExprKind::Variable(name) => {
+                if let Some(reference) = self.hir.references().iter()
+                    .find(|reference| reference.location == name.location && reference.name == name.value)
+                    && let HirResolution::Definition(id) = reference.resolution
+                    && let Some(definition) = self.hir.definition(id)
+                    && definition.kind != HirDefinitionKind::Import
+                {
+                    return definition.kind == HirDefinitionKind::Type;
+                }
+                self.external_interfaces.get(&name.value)
+                    .is_some_and(|interface| interface.type_declarations.contains(&name.value))
+            }
+            ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
+                .is_some_and(|interface| interface.type_declarations.contains(&field.value)),
+            ExprKind::TypeApply { callee, .. } => self.declared_constructor_reference(callee),
+            _ => false,
         }
     }
 

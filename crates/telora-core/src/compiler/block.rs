@@ -19,6 +19,7 @@ struct Compiler<'a> {
     external_bindings: HashSet<String>,
     type_family_values: BTreeMap<String, crate::types::TypeFamilyTemplate>,
     declared_value_owners: HashMap<Location, String>,
+    newtype_constructors: HashSet<Location>,
     static_funcs: HashMap<String, crate::FuncId>,
     source_file: Option<&'a SourceFile>,
 }
@@ -88,6 +89,7 @@ impl<'a> Compiler<'a> {
             external_bindings: analysis.external_bindings.clone(),
             type_family_values: analysis.type_family_values.clone(),
             declared_value_owners: analysis.declared_value_owners.clone(),
+            newtype_constructors: analysis.newtype_constructors.clone(),
             static_funcs,
             source_file,
         };
@@ -142,6 +144,7 @@ impl<'a> Compiler<'a> {
             type_slots: captured_type_slots,
             definitions: captured_definitions,
             declared_value_owners,
+            newtype_constructors,
         } = nested_environment;
         let mut environment = HashMap::new();
         for (index, parameter) in parameters.iter().enumerate() {
@@ -201,6 +204,7 @@ impl<'a> Compiler<'a> {
             external_bindings: HashSet::new(),
             type_family_values: BTreeMap::new(),
             declared_value_owners: declared_value_owners.clone(),
+            newtype_constructors: newtype_constructors.clone(),
             static_funcs: HashMap::new(),
             source_file,
         })

@@ -669,6 +669,7 @@ impl ModuleLoader {
             external_interfaces.insert(
                 name.clone(),
                 candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                    type_declarations: if candidate.type_declaration { BTreeSet::from([name.clone()]) } else { BTreeSet::new() },
                     namespaces: BTreeMap::new(),
                     exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
                     concrete_types: candidate.concrete_types,

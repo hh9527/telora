@@ -1,5 +1,8 @@
 impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
+        if self.newtype_constructors.contains(&expression.location) {
+            return self.compile_newtype_constructor(expression);
+        }
         let payload = self.compile_expr_unowned(expression)?;
         let Some(owner) = self
             .declared_value_owners
