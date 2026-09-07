@@ -1,13 +1,13 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
 - Status: Draft; design questions below must be resolved before dependent implementation.
-- Tracking: [#161](https://github.com/hh9527/telora/issues/161)
+- Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Branch: `feat/0161-unified-constructors`
 - Depends on: [RFC 0274](0274-unified-constructors-and-checks.md).
 - Related: RFC 0237, RFC 0248, RFC 0258, RFC 0259, RFC 0269, RFC 0270, RFC 0271.
 - Origin: the construction-check stage of RFC 0274 is moved here at the user's
-  request. The tracking issue and delivery authorization remain unchanged.
-- Delivery: staged commits and pushes, with Chinese progress comments on #161.
+  request. RFC 0274 was completed under #161; this follow-up is tracked independently.
+- Delivery: staged commits and pushes, with Chinese progress comments on #168.
   Do not merge into main automatically. Do not build a release binary.
 
 ## Objective
@@ -126,5 +126,5 @@ substitution, imports, reexports and module graph cycles.
   preserves captured check functions and nominal identities.
 - Guides describe implemented behavior positively. Historical RFCs are not rewritten
   as migration guides. New behavioral tests primarily use `.telora`.
-- Debug builds and workspace tests pass. Report evidence in Chinese on #161;
+- Debug builds and workspace tests pass. Report evidence in Chinese on #168;
   close the issue only after its full implementation scope is complete.

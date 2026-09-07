@@ -2,7 +2,7 @@
 
 - Status: Implemented and merged into main. Construction checks and
   `Unchecked(T)` are carried by [RFC 0275](0275-construction-checks-and-unchecked.md),
-  under the same tracking issue; that follow-up remains a draft.
+  under [#168](https://github.com/hh9527/telora/issues/168); that follow-up remains a draft.
 - Tracking: [#161](https://github.com/hh9527/telora/issues/161)
 - Branch: `feat/0161-unified-constructors`
 - Baseline: `83bb8a6`
@@ -78,7 +78,7 @@
 Make newtype and enum payload constructors declaration-provided functions.
 Resolve constructor identity through names, and infer generic arguments through
 ordinary contextual inference. Declaration-bound construction checks are
-specified in RFC 0275 and continue to be tracked by #161.
+specified in RFC 0275 and tracked independently by #168.
 
 Implement in this order:
 
@@ -293,7 +293,7 @@ pattern constructors merely because their return types are enums.
 
 RFC 0275 carries `@check(func)` and `Unchecked(T)`, including all previously
 listed construction boundaries, provenance guarantees and open design questions.
-Completing this RFC does not close #161; that issue also tracks RFC 0275.
+This RFC completes #161. RFC 0275 is tracked independently by #168.
 
 ## Delivery and Verification
 
