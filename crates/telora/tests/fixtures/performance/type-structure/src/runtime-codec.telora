@@ -1,0 +1,12 @@
+import "std/value" {Value};
+import "std/json" as json;
+type Row = struct {value: Int};
+def run: Fn(Int, Int) -> Int = fn(n, total) {
+    if n == 0 { total } else {
+        let item = match json.decode(Row, "{\"value\":1}") {
+            Ok(value) => value, Err(_) => fail!("decode failed"),
+        };
+        run(n - 1, total + item.value)
+    }
+};
+export def result: Value = Value.Int(run(2000, 0));

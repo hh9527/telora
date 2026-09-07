@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "packages": {
+    "type-structure": {
+      "source": {
+        "workspace": ""
+      },
+      "modules": [
+        "@src/flat-functions",
+        "@src/nested-functions",
+        "@src/query-builder",
+        "@src/recursive-functions",
+        "@src/recursive-values-growing",
+        "@src/recursive-values-shallow",
+        "@src/runtime-checked",
+        "@src/runtime-codec",
+        "@src/runtime-generic",
+        "@src/runtime-generic-long",
+        "@src/runtime-integer",
+        "@src/runtime-plain",
+        "@src/runtime-plain-long",
+        "@src/startup"
+      ],
+      "dependencies": []
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "type-structure",
+  "modules": [
+    "@src/startup",
+    "@src/runtime-integer",
+    "@src/runtime-plain",
+    "@src/runtime-plain-long",
+    "@src/runtime-generic",
+    "@src/runtime-generic-long",
+    "@src/runtime-codec",
+    "@src/runtime-checked",
+    "@src/flat-functions",
+    "@src/nested-functions",
+    "@src/recursive-functions",
+    "@src/recursive-values-shallow",
+    "@src/recursive-values-growing",
+    "@src/query-builder"
+  ]
+}
