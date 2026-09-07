@@ -34,6 +34,8 @@ struct GenericInference<'a> {
     enum_constructors: HashMap<InferenceVariableId, Vec<EnumConstructorObligation>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     variables: InferenceVariables,
+    definition_bindings: Vec<Option<InferenceDefinition>>,
+    definition_schemes: Vec<TypeScheme>,
     records: HashMap<crate::Location, InferenceVariableId>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
     type_facet_locations: HashSet<crate::Location>,
@@ -47,6 +49,13 @@ struct GenericInference<'a> {
     failure_expected_location: Option<crate::Location>,
     enum_failure: Option<EnumInferenceFailure>,
     checking_named_pairs: HashSet<(String, String)>,
+}
+
+#[derive(Clone, Copy)]
+struct InferenceDefinition {
+    slot: InferenceVariableId,
+    // MAX denotes a monomorphic binding; other values index the sparse schemes.
+    scheme: u32,
 }
 
 #[derive(Clone)]

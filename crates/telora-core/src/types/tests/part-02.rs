@@ -1,4 +1,74 @@
     #[test]
+    fn resolved_local_bindings_use_slots_without_populating_name_scopes() {
+        let program = crate::parser::parse("resolved-local.telora", "let value = 0; { let value = 1; value }").unwrap();
+        let hir = HirProgram::resolve(&program, Vec::new());
+        let definition = hir.definitions().iter().find(|definition| !definition.top_level).unwrap();
+        assert_eq!(hir.definition_at(definition.location, &definition.name).unwrap().id, definition.id);
+        let reference = hir.references().iter().find(|reference|
+            reference.resolution == HirResolution::Definition(definition.id)).unwrap();
+        let name = crate::ast::located("value".to_owned(), reference.location);
+        let schemes = HashMap::new();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        let slot = inference.variables.fresh();
+        let mut environment = HashMap::from([("value".into(), TypeDescriptor::String)]);
+        inference.bind_local(&mut environment, definition.location, "value", TypeDescriptor::Inference(slot), None);
+        assert_eq!(inference.resolved_binding(&name).unwrap().slot, slot);
+        assert_eq!(environment["value"], TypeDescriptor::String);
+        assert!(inference.scheme_scopes.iter().all(HashMap::is_empty));
+        inference.variables.set(slot, TypeDescriptor::Int);
+        let expression = crate::ast::located(ExprKind::Variable(name), reference.location);
+        let inferred = inference.infer(&expression, &environment, None).unwrap();
+        assert_eq!(inference.normalize(&inferred), TypeDescriptor::Int);
+    }
+
+    #[test]
+    fn resolved_local_schemes_and_shadowed_bindings_are_independent() {
+        let analysis = analyze_with_natives(
+            "let identity = fn(value) { value };\
+             let result = {\
+                 let identity = fn(value) { value };\
+                 let left = { let value = identity(1); value };\
+                 let right = { let value = identity(\"x\"); value };\
+                 (left, right)\
+             }; result", &[],
+        ).unwrap();
+        assert_eq!(analysis.display(analysis.result_type), "(Int, String)");
+        let shadowed = analyze_with_natives(
+            "let identity = fn(value) { value }; { let identity = 7; identity }", &[],
+        ).unwrap();
+        assert_eq!(shadowed.display(shadowed.result_type), "Int");
+    }
+
+    #[test]
+    fn resolved_definition_locations_include_declared_implementation_aliases() {
+        let program = crate::parser::parse("definition-alias.telora",
+            "{ decl identity: Fn(Int) -> Int; def identity = fn(value) { value }; identity(1) }").unwrap();
+        let hir = HirProgram::resolve(&program, Vec::new());
+        let definition = hir.definitions().iter().find(|definition| definition.name == "identity").unwrap();
+        assert!(!definition.additional_locations.is_empty());
+        for location in std::iter::once(&definition.location).chain(&definition.additional_locations) {
+            assert_eq!(hir.definition_at(*location, "identity").unwrap().id, definition.id);
+        }
+    }
+
+    #[test]
+    fn resolved_duplicate_pattern_bindings_preserve_pattern_diagnostics() {
+        let error = analyze_with_natives(
+            "let user = {name: \"Ada\"}; match user { {name, name} => name }", &[],
+        ).err().unwrap().to_string();
+        assert!(error.contains("duplicate Struct pattern field"), "{error}");
+        assert!(!error.contains("unknown binding"), "{error}");
+    }
+
+    #[test]
     fn inferred_callable_schemes_publish_separately_from_call_instances() {
         let source = "let apply = fn(callback, value) { callback(value) };\
                       let result = apply(fn(value) { value + 1 }, 41);\

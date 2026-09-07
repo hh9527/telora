@@ -1465,7 +1465,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         None,
         account.query_context(),
     );
-    let mut checked_environment = static_environment.clone();
+    let mut checked_environment = ScopedTypeEnvironment::new(&static_environment);
+    for definition in hir.definitions().iter().filter(|definition| definition.top_level) {
+        if let Some(descriptor) = static_environment.get(&definition.name) {
+            inference.bind_local(&mut checked_environment, definition.location, &definition.name,
+                descriptor.clone(), binding_schemes.get(&definition.name).cloned());
+        }
+    }
     let type_metadata_expected = TypeDescriptor::Type;
     let mut delayed_bindings = Vec::new();
     let mut recursive_skeletons = HashMap::new();
@@ -1492,7 +1498,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let first_owned_variable = inference.variables.next_id();
         if let Some(skeleton) = inference.recursive_closure_skeleton(&binding.value.value) {
             checked_environment.insert(binding.value.name.value.clone(), skeleton.clone());
-            inference.set_local_scheme(binding.value.name.value.clone(), None);
+            inference.bind_local(&mut checked_environment, binding.value.name.location,
+                &binding.value.name.value, skeleton.clone(), None);
             recursive_skeletons.insert(
                 binding.value.name.value.clone(),
                 (skeleton.clone(), first_owned_variable),
@@ -1594,8 +1601,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             |scheme| scheme.body.clone(),
         );
         checked_environment.insert(binding.value.name.value.clone(), descriptor.clone());
+        inference.bind_local(&mut checked_environment, binding.value.name.location,
+            &binding.value.name.value, descriptor.clone(), scheme.clone());
         binding_types.insert(binding.value.name.value.clone(), descriptor);
-        inference.set_local_scheme(binding.value.name.value.clone(), scheme.clone());
         if let Some(scheme) = scheme {
             inference
                 .inferred_schemes
@@ -1626,7 +1634,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .get(&binding.value.name.value)
                     .and_then(ModuleInterface::binding_scheme)
                     .cloned();
-                inference.set_local_scheme(binding.value.name.value.clone(), scheme);
+                if let Some(descriptor) = checked_environment.get(&binding.value.name.value).cloned() {
+                    inference.bind_local(&mut checked_environment, binding.value.name.location,
+                        &binding.value.name.value, descriptor, scheme);
+                } else {
+                    inference.set_local_scheme(binding.value.name.value.clone(), scheme);
+                }
             }
             continue;
         }
@@ -1695,6 +1708,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         if is_delayed && binding.value.kind == BindingKind::Def && !is_recursive {
             let mut environment = ScopedTypeEnvironment::new(&checked_environment);
             environment.remove(&binding.value.name.value);
+            if let Some(definition) = hir.definition_at(binding.value.name.location, &binding.value.name.value) {
+                inference.definition_bindings[definition.id.index()] = None;
+            }
             initializer_environment = Some(environment);
         } else if matches!(
             binding.value.kind,
@@ -1796,14 +1812,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
             );
             checked_environment.insert(binding.value.name.value.clone(), checked.clone());
             binding_types.insert(binding.value.name.value.clone(), checked.clone());
-            if inferred_scheme.is_some()
+            let checked_scheme = if inferred_scheme.is_some()
                 || binding.value.kind == BindingKind::Let
                 || binding.value.annotation.is_none()
                     && !definition_contracts.contains_key(&binding.value.name.value)
             {
-                inference
-                    .set_local_scheme(binding.value.name.value.clone(), inferred_scheme.clone());
-            }
+                inferred_scheme.clone()
+            } else {
+                binding_schemes.get(&binding.value.name.value).cloned()
+            };
+            inference.bind_local(&mut checked_environment, binding.value.name.location,
+                &binding.value.name.value, checked.clone(), checked_scheme);
             if let Some(scheme) = &inferred_scheme {
                 inference
                     .inferred_schemes

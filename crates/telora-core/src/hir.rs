@@ -80,6 +80,7 @@ pub struct HirExpression {
 #[derive(Clone, Debug, Default)]
 pub struct HirProgram {
     definitions: Vec<HirDefinition>,
+    definition_locations: Vec<(Location, HirDefinitionId)>,
     definition_dependencies: Vec<Vec<HirDefinitionId>>,
     references: Vec<HirReference>,
     expressions: Vec<HirExpression>,
@@ -189,6 +190,16 @@ impl HirProgram {
         &self.definition_dependencies[id.index()]
     }
 
+    pub(crate) fn definition_at(&self, location: Location, name: &str) -> Option<&HirDefinition> {
+        let key = (location.source, location.start, location.end);
+        let start = self.definition_locations.partition_point(|(location, _)|
+            (location.source, location.start, location.end) < key);
+        self.definition_locations[start..].iter()
+            .take_while(|(candidate, _)| *candidate == location)
+            .map(|(_, id)| &self.definitions[id.index()])
+            .find(|definition| definition.name == name)
+    }
+
     pub fn references(&self) -> &[HirReference] {
         &self.references
     }
@@ -265,6 +276,11 @@ impl HirProgram {
                 *definition = definitions[definition.index()];
             }
         }
+        self.definition_locations = self.definitions.iter().flat_map(|definition|
+            std::iter::once(definition.location).chain(definition.additional_locations.iter().copied())
+                .map(|location| (location, definition.id))).collect();
+        self.definition_locations.sort_by_key(|(location, _)|
+            (location.source, location.start, location.end));
 
         self.references.sort_by_key(|reference| {
             (
@@ -835,6 +851,12 @@ impl Resolver {
         match &pattern.value {
             PatternKind::Binding(name) => {
                 if self.hir.is_member_pattern(name.location) { return; }
+                // Pattern analysis retains the first binding when diagnosing
+                // duplicates. References must resolve to that same definition.
+                if let Some(id) = scope.get(&name.value).copied() {
+                    self.hir.definitions[id.index()].additional_locations.push(name.location);
+                    return;
+                }
                 self.define_name(
                     &name.value,
                     HirDefinitionKind::Pattern,

@@ -44,12 +44,11 @@ impl<'a> GenericInference<'a> {
                     .as_ref()
                     .and_then(|annotation| self.local_annotations.get(&annotation.location))
                     .cloned()
-                    .map(|contract| (binding.value.name.value.clone(), contract))
+                    .map(|contract| (binding.value.name.value.clone(), (binding.value.name.location, contract)))
             })
             .collect::<HashMap<_, _>>();
-        for (name, contract) in &declared_contracts {
-            environment.insert(name.clone(), contract.clone());
-            self.set_local_scheme(name.clone(), None);
+        for (name, (location, contract)) in &declared_contracts {
+            self.bind_local(&mut environment, *location, name, contract.clone(), None);
         }
         let mut delayed = Vec::new();
         let mut recursive_skeletons = HashMap::new();
@@ -69,8 +68,7 @@ impl<'a> GenericInference<'a> {
             }
             let first_owned_variable = self.variables.next_id();
             if let Some(skeleton) = self.recursive_closure_skeleton(&binding.value.value) {
-                environment.insert(binding.value.name.value.clone(), skeleton.clone());
-                self.set_local_scheme(binding.value.name.value.clone(), None);
+                self.bind_local(&mut environment, binding.value.name.location, &binding.value.name.value, skeleton.clone(), None);
                 recursive_skeletons.insert(
                     binding.value.name.value.clone(),
                     (skeleton.clone(), first_owned_variable),
@@ -137,8 +135,7 @@ impl<'a> GenericInference<'a> {
             let descriptor = scheme
                 .as_ref()
                 .map_or_else(|| self.normalize(&inferred), |scheme| scheme.body.clone());
-            environment.insert(binding.value.name.value.clone(), descriptor);
-            self.set_local_scheme(binding.value.name.value.clone(), scheme.clone());
+            self.bind_local(&mut environment, binding.value.name.location, &binding.value.name.value, descriptor, scheme.clone());
             if let Some(scheme) = scheme {
                 self.inferred_schemes
                     .insert(binding.value.name.location, scheme);
@@ -171,6 +168,7 @@ impl<'a> GenericInference<'a> {
             let binding_expected = annotated_expected.or_else(|| {
                 declared_contracts
                     .get(&binding.value.name.value)
+                    .map(|(_, contract)| contract)
                     .or_else(|| {
                         recursive_skeletons
                             .get(&binding.value.name.value)
@@ -256,8 +254,7 @@ impl<'a> GenericInference<'a> {
                     || binding_expected.cloned().unwrap_or(inferred),
                     |scheme| scheme.body.clone(),
                 );
-                environment.insert(binding.value.name.value.clone(), descriptor.clone());
-                self.set_local_scheme(binding.value.name.value.clone(), inferred_scheme.clone());
+                self.bind_local(&mut environment, binding.value.name.location, &binding.value.name.value, descriptor.clone(), inferred_scheme.clone());
                 if let Some(scheme) = &inferred_scheme {
                     self.inferred_schemes
                         .insert(binding.value.name.location, scheme.clone());

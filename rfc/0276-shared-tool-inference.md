@@ -1,7 +1,8 @@
 # RFC 0276: Shared Tool Inference and Static Property Evidence
 
 - Status: In progress on local branch `perf/shared-tool-inference`; shared-slot
-  solver implemented, expression-interface migration and main integration pending.
+  solver, resolved definition inputs and graph publication implemented;
+  tool-boundary audit and main integration pending.
 - Baseline: 58f0b8c, after RFC 0274.
 - Related: RFC 0260, RFC 0274, RFC 0275.
 
@@ -454,3 +455,40 @@ acceptance), and the release build succeeded. Sequential query samples took
 the preceding 9.89 s / 9.74 s and 393428 KB / 394940 KB samples. These are not
 medians. A fresh fetch still places origin/main at 915ffe4, already an ancestor
 of the optimization branch; final local-main integration remains pending.
+
+### Resolved Definition Slots
+
+HIR now indexes both primary definition locations and additional declaration /
+implementation locations. Inference consumes the resolved HirDefinitionId using
+an array of POD binding records: each record points at a shared inference slot
+and optionally a sparse generic-scheme entry. Closure parameters, pattern
+bindings, local definitions and module definitions use this table. Monomorphic
+shadows cannot fall back to an outer generic scheme. Separate calls still
+instantiate distinct parameter slots; definition identity does not equate call
+instances.
+
+Resolved locals do not populate name environments or scheme-scope maps. Module
+metadata consumers retain a name-facing view backed by a borrowed static
+environment, replacing the previous whole-map clone. Unindexed tool inputs and
+external HIR references retain their existing name-facing boundary. AST callers
+locate HIR reference IDs by source location; they do not repeat lexical name
+resolution. Delayed unannotated definition initializers hide their prefilled
+entry until checked, preserving self-reference diagnostics.
+
+Tests cover lookup without populating name scopes, late slot solutions,
+independent shadowed bindings and generic calls, and decl/def location aliases.
+
+The first language acceptance run found one diagnostic regression: a duplicate
+pattern field had two HIR definitions, but pattern analysis retained only the
+first. Duplicate pattern declarations now add locations to that first ID,
+preserving the duplicate-field diagnostic instead of reporting an unknown name.
+A focused regression and the full workspace suite pass (307 core tests and
+41 CLI tests, including language acceptance). The release build succeeded.
+
+Sequential query samples took 4.50 s and 4.39 s with peak RSS 301804 KB and
+301952 KB (exit 0), compared with 8.13 s / 8.01 s and 379596 KB / 378968 KB
+before resolved definition slots. These are samples, not medians. Definition
+slots avoid repeatedly importing the same binding descriptor at its references.
+The final audit still found a whole-environment snapshot around property value
+evaluation; its temporary previous-property binding semantics must be preserved
+when removing that snapshot before main integration.

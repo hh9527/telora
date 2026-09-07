@@ -75,6 +75,8 @@ impl<'a> GenericInference<'a> {
             type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
             variables: InferenceVariables::default(),
+            definition_bindings: vec![None; hir.definitions().len()],
+            definition_schemes: Vec::new(),
             records: HashMap::new(),
             pattern_diagnostics: BTreeMap::new(),
             pattern_binding_types: HashMap::new(),
@@ -523,6 +525,43 @@ impl<'a> GenericInference<'a> {
             .insert(name, scheme);
     }
 
+    fn resolved_binding(&self, name: &crate::ast::Identifier) -> Option<InferenceDefinition> {
+        let reference = self.hir.reference_at(name.location, &name.value)?;
+        let HirResolution::Definition(id) = reference.resolution else { return None; };
+        self.definition_bindings[id.index()]
+    }
+
+    fn bind_local(
+        &mut self,
+        environment: &mut dyn MutableTypeEnvironment,
+        location: crate::Location,
+        name: &str,
+        descriptor: TypeDescriptor,
+        scheme: Option<TypeScheme>,
+    ) {
+        let Some(definition) = self.hir.definition_at(location, name) else {
+            environment.insert(name.to_owned(), descriptor);
+            self.set_local_scheme(name.to_owned(), scheme);
+            return;
+        };
+        let index = definition.id.index();
+        let slot = self.variables.structure_edge(descriptor);
+        let scheme = scheme.map_or(u32::MAX, |scheme| {
+            if let Some(previous) = self.definition_bindings[index]
+                && previous.scheme != u32::MAX
+            {
+                self.definition_schemes[previous.scheme as usize] = scheme;
+                previous.scheme
+            } else {
+                let id = u32::try_from(self.definition_schemes.len()).expect("inference scheme capacity exceeded");
+                assert_ne!(id, u32::MAX, "inference scheme capacity exceeded");
+                self.definition_schemes.push(scheme);
+                id
+            }
+        });
+        self.definition_bindings[index] = Some(InferenceDefinition { slot, scheme });
+    }
+
     fn namespace_interface(&self, expression: &Expr) -> Option<&ModuleInterface> {
         match &expression.value {
             ExprKind::Variable(name) => self.external_interfaces.get(&name.value)
@@ -534,10 +573,15 @@ impl<'a> GenericInference<'a> {
 
     fn explicit_scheme(&self, callee: &Expr) -> Option<TypeScheme> {
         match &callee.value {
-            ExprKind::Variable(name) => self.member_import_definition(name)
-                .and_then(|definition| self.inferred_schemes.get(&definition.location).cloned()
-                    .or_else(|| self.explicit_scheme(definition.member_import.as_ref()?)))
-                .or_else(|| self.scheme(&name.value)),
+            ExprKind::Variable(name) => {
+                if let Some(binding) = self.resolved_binding(name) {
+                    return (binding.scheme != u32::MAX).then(|| self.definition_schemes[binding.scheme as usize].clone());
+                }
+                self.member_import_definition(name)
+                    .and_then(|definition| self.inferred_schemes.get(&definition.location).cloned()
+                        .or_else(|| self.explicit_scheme(definition.member_import.as_ref()?)))
+                    .or_else(|| self.scheme(&name.value))
+            }
             ExprKind::Field { receiver, field } if self.declared_constructor_reference(receiver) => {
                 let mut scheme = self.explicit_scheme(receiver)?;
                 let (body, _) = enum_member_type(&scheme.body, &field.value).ok()??;

@@ -220,7 +220,8 @@ impl<'a> GenericInference<'a> {
         let inferred = match &expression.value {
             ExprKind::Variable(name) => match self.explicit_scheme(expression) {
                 Some(scheme) => self.instantiate(&scheme, expression.location),
-                None => environment.get(&name.value).cloned()
+                None => self.resolved_binding(name).map(|binding| TypeDescriptor::Inference(binding.slot))
+                    .or_else(|| environment.get(&name.value).cloned())
                     .ok_or_else(|| format!("unknown binding {:?}", name.value))?,
             },
             ExprKind::Int(_) => TypeDescriptor::Int,
@@ -1063,8 +1064,9 @@ impl<'a> GenericInference<'a> {
                         .unwrap_or_else(|| self.fresh_variable());
                     parameter_types.push(parameter_type);
                 }
+                self.scheme_scopes.push(HashMap::new());
                 for (parameter, ty) in parameters.iter().zip(&parameter_types) {
-                    closure_environment.insert(parameter.name.value.clone(), ty.clone());
+                    self.bind_local(&mut closure_environment, parameter.name.location, &parameter.name.value, ty.clone(), None);
                 }
                 let surrounding_result = (self.recursive_body_inference_depth == 0)
                     .then(|| expected.as_ref().map(|(_, result)| result.as_ref()))
@@ -1080,12 +1082,6 @@ impl<'a> GenericInference<'a> {
                 if inferring_unannotated {
                     self.closure_inference_depth += 1;
                 }
-                self.scheme_scopes.push(
-                    parameters
-                        .iter()
-                        .map(|parameter| (parameter.name.value.clone(), None))
-                        .collect(),
-                );
                 self.propagation_boundaries.push(None);
                 self.return_boundaries.push(Some(ReturnBoundary {
                     expected: result_expected.cloned(),
@@ -1165,8 +1161,7 @@ impl<'a> GenericInference<'a> {
                     let binding_type = self.require_pattern_binding(&binding)?;
                     self.pattern_binding_types
                         .insert(binding.location, binding_type.clone());
-                    self.set_local_scheme(binding.name.clone(), None);
-                    then_environment.insert(binding.name, binding_type);
+                    self.bind_local(&mut then_environment, binding.location, &binding.name, binding_type, None);
                 }
                 let then_type = self.infer_block(then_branch, &then_environment, expected);
                 self.scheme_scopes.pop();
@@ -1221,8 +1216,7 @@ impl<'a> GenericInference<'a> {
                     let binding_type = self.require_pattern_binding(&binding)?;
                     self.pattern_binding_types
                         .insert(binding.location, binding_type.clone());
-                    self.set_local_scheme(binding.name.clone(), None);
-                    body_environment.insert(binding.name, binding_type);
+                    self.bind_local(&mut body_environment, binding.location, &binding.name, binding_type, None);
                 }
                 let body_type = self.infer_block(body, &body_environment, expected);
                 self.scheme_scopes.pop();
@@ -1338,8 +1332,7 @@ impl<'a> GenericInference<'a> {
                         let binding_type = self.require_pattern_binding(&binding)?;
                         self.pattern_binding_types
                             .insert(binding.location, binding_type.clone());
-                        self.set_local_scheme(binding.name.clone(), None);
-                        arm_environment.insert(binding.name, binding_type);
+                        self.bind_local(&mut arm_environment, binding.location, &binding.name, binding_type, None);
                     }
                     if let Some(guard) = &arm.value.guard {
                         self.infer(guard, &arm_environment, Some(&normalized_bool_descriptor()))?;
