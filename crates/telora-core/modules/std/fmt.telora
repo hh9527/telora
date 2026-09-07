@@ -11,7 +11,7 @@ type DisplayTemplate = struct {
     fields: Array(String),
 };
 
-@property('Type)
+@property(PropertyTarget.Type)
 type DisplayBy = struct {
     template: DisplayTemplate,
     display: Fn(Dyn) -> Fmt,

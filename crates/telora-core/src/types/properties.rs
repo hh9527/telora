@@ -45,25 +45,32 @@ fn reserved_property_marker(decorator: &crate::ast::Decorator) -> bool {
 
 fn property_capability(
     decorator: &crate::ast::Decorator,
+    tool_values: &BTreeMap<String, Val>,
+    account: &mut QuotaAccount,
     sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator<'_>,
 ) -> Result<u32, FrontendError> {
     if !decorator.value.configured || decorator.value.arguments.len() != 1 {
         return Err(FrontendError::from_diagnostic(
             sources,
             Diagnostic::error(
-                "@property requires exactly one capability Atom",
+                "@property requires exactly one PropertyTarget value",
                 decorator.location,
             ),
         ));
     }
     let argument = &decorator.value.arguments[0];
-    let ExprKind::Atom(capability) = &argument.value else {
-        return Err(FrontendError::from_diagnostic(
-            sources,
-            Diagnostic::error("@property capability must be an Atom", argument.location),
-        ));
-    };
-    match capability.as_str() {
+    let expected = property_target_descriptor();
+    let source_name = sources.get(argument.location.source).name.to_string();
+    let evidence = infer_tool_expression_evidence(&source_name, argument, tool_values, Some(&expected), account, sources, evaluator)
+        .map_err(|message| FrontendError::from_diagnostic(sources,
+            Diagnostic::error(format!("@property requires PropertyTarget: {message}"), argument.location)))?;
+    let value = evaluate_typed_tool_expression_silent(&source_name, argument, tool_values,
+        &evidence.descriptors, Some(&expected), account, sources, evaluator)?;
+    let value = ValueRef::work(value, &evaluator.work, evaluator.main);
+    let capability = value.as_atom().ok_or_else(|| FrontendError::from_diagnostic(sources,
+        Diagnostic::error("@property must evaluate to a PropertyTarget value", argument.location)))?;
+    match capability.as_ref() {
         "Type" => Ok(PROPERTY_CAP_TYPE),
         "StructType" => Ok(PROPERTY_CAP_STRUCT_TYPE),
         "EnumType" => Ok(PROPERTY_CAP_ENUM_TYPE),
@@ -73,7 +80,7 @@ fn property_capability(
         _ => Err(FrontendError::from_diagnostic(
             sources,
             Diagnostic::error(
-                format!("unknown @property capability '{capability}"),
+                format!("unknown @property capability {capability:?}"),
                 argument.location,
             ),
         )),
@@ -493,6 +500,7 @@ fn establish_property_markers(
     program: &Program,
     tool_values: &BTreeMap<String, Val>,
     static_environment: &HashMap<String, TypeDescriptor>,
+    account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
 ) -> Result<
@@ -525,7 +533,7 @@ fn establish_property_markers(
             .expect("property carrier has a concrete Type descriptor");
         let mut capabilities = 0;
         for decorator in &markers {
-            capabilities |= property_capability(decorator, sources)?;
+            capabilities |= property_capability(decorator, tool_values, account, sources, evaluator)?;
         }
         let bootstrap =
             binding.value.name.value == "PropertyAttr" && evaluator.property_attr_type().is_none();
@@ -580,6 +588,7 @@ fn evaluate_declared_properties(
         program,
         tool_values,
         static_environment,
+        account,
         sources,
         evaluator,
     )?;

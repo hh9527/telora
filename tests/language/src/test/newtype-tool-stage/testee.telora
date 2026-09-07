@@ -36,7 +36,7 @@ type FromAliasCodec = if codec.encode(Value, make_generic@[Int](42)) == 'Int(42)
 type FromMetadataFunction = metadata_factory(Int);
 
 type Count = struct(Int);
-@property('Type)
+@property(PropertyTarget.Type)
 type Stamp = struct { value: Int };
 def stamp: Fn(Count) -> Fn(Type, Option(Stamp)) -> Stamp = fn(count) {
     fn(target, previous) {

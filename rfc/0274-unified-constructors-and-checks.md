@@ -24,10 +24,12 @@
   and let-else, including tool-stage and cross-module use. Prelude explicitly
   exports Bool, Option and Result members; standard-library bootstrap preserves
   their contracts and provenance, and authored imports take precedence over
-  prelude fallbacks. Quoted-syntax removal and checks remain pending.
+  prelude fallbacks. Property markers accept typed tool-stage PropertyTarget
+  expressions, including aliases and computed values, with nominal validation.
+  Quoted-syntax removal and checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
-- Validation: prelude member exports passed debug build, workspace tests and
-  329 language fixture groups, including fallback and reexport behavior.
+- Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
+  including computed markers, aliases, nominal rejection and marker arity.
   New behavior is tested in
   `.telora`; no release binary was built.
 
@@ -205,10 +207,16 @@ and `Result.{Ok, Err}`. FoldControl remains
 available as a type; its members use qualification or explicit member imports.
 Codec naming/configuration enums retain their own module/type namespaces.
 The intrinsic `@property` target categories use a bootstrap `PropertyTarget`
-enum with Type, StructType, EnumType, Field and Variant members, referenced as
+enum with Type, StructType, EnumType, Member, Field and Variant members, referenced as
 `PropertyTarget.Type` and so on. These names are not added unqualified to the
 prelude. Bootstrap code uses the same identities as user modules without
 relying on the prelude to load itself.
+
+PropertyTarget has a reserved nominal constructor identity, independent of the
+source module graph. Capability arguments are type-checked against that identity
+and evaluated in the tool stage, so aliases and computed PropertyTarget values
+are valid but same-shaped user enums are not capability values. Member preserves
+the existing combined field/variant capability.
 
 Implicit prelude candidates are fallbacks: authored bindings and authored
 module imports take precedence. Conflicting candidates from multiple authored

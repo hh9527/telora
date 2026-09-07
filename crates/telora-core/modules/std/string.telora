@@ -13,10 +13,10 @@ native trim_margin: Fn(String, String) -> String;
 import "std/regex" { ParseBy };
 import "std/type-desc" { TypeDesc };
 
-@property('Type)
+@property(PropertyTarget.Type)
 type DecodeByParse = struct {};
 
-@property('Type)
+@property(PropertyTarget.Type)
 type EncodeByDisplay = struct {};
 
 type ParseError = struct {message: String, value: String};

@@ -1,0 +1,3 @@
+@property(PropertyTarget.Type, PropertyTarget.Field)
+type Mark = struct { value: Int };
+export { Mark };

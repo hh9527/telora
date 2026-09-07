@@ -93,6 +93,7 @@ impl<'a> ToolEvaluator<'a> {
             ("Float", TypeDescriptor::Float),
             ("String", TypeDescriptor::String),
             ("Bytes", TypeDescriptor::Bytes),
+            ("PropertyTarget", property_target_descriptor()),
         ] {
             values.insert(name.into(), self.descriptor(&descriptor)?);
         }

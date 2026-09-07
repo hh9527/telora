@@ -613,7 +613,9 @@ canonical member index 和 property TypeId 安全存取。当前 JSON API 在类
 ### 自定义 typed property 与静态能力
 
 Property carrier 必须是无类型参数的具名 Struct/Enum，并用 `@property` 声明允许的
-owner。`Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant` 可以组合；
+owner。参数是内建具名枚举 `PropertyTarget` 的值，支持成员引用、别名和工具阶段
+可求值的表达式。其成员 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和
+`Variant` 可以通过多个 `@property` 标记组合；
 provider 接收 owner context 与同 key 的前一个值。多个同类型 decorator 按源码顺序
 fold，因此一个 property 可以由多个局部标注逐步构成：
 
@@ -624,10 +626,10 @@ import "std/type-desc" { TypeDesc };
 import "std/type-property" as property;
 import "std/type-property" { FieldPropertyCtx };
 
-@property('Field)
+@property(PropertyTarget.Field)
 type Labels = struct { values: Array(String) };
 
-@property('Type)
+@property(PropertyTarget.Type)
 type Summary = struct { first_field_labels: Array(String) };
 
 def label: Fn(String) -> Fn(FieldPropertyCtx, Option(Labels)) -> Labels = fn(value) {

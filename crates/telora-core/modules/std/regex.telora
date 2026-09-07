@@ -2,7 +2,7 @@ import "std/type-desc" { TypeDesc };
 
 native type Regex @0;
 
-@property('Type)
+@property(PropertyTarget.Type)
 type ParseBy = struct { regex: Regex };
 
 native compile: Fn(String) -> Regex;

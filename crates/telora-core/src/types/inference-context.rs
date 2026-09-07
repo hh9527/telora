@@ -574,7 +574,7 @@ impl<'a> GenericInference<'a> {
     fn declared_constructor_reference(&self, expression: &Expr) -> bool {
         match &expression.value {
             ExprKind::Variable(name) => {
-                if matches!(name.value.as_str(), "Bool" | "Option" | "Result" | "FoldControl")
+                if matches!(name.value.as_str(), "Bool" | "Option" | "Result" | "FoldControl" | "PropertyTarget")
                     && !self.external_interfaces.contains_key(&name.value)
                     && self.hir.references().iter().any(|reference|
                         reference.location == name.location && reference.name == name.value

@@ -36,6 +36,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("String", TypeDescriptor::String),
         ("Bytes", TypeDescriptor::Bytes),
         ("Bool", normalized_bool_descriptor()),
+        ("PropertyTarget", property_target_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
     }
@@ -136,6 +137,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
     };
     HashMap::from([
         ("Bool".into(), scheme(witness(normalized_bool_descriptor()))),
+        ("PropertyTarget".into(), scheme(witness(property_target_descriptor()))),
         (
             "\0telora_struct".into(),
             scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
@@ -278,6 +280,19 @@ fn normalized_bool_descriptor() -> TypeDescriptor {
         ("False".into(), None),
         ("True".into(), None),
     ]))
+}
+
+fn property_target_descriptor() -> TypeDescriptor {
+    // Source declarations use local IDs starting at FIRST_DYNAMIC_MODULE_LOCAL.
+    let id = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 1);
+    TypeDescriptor::Declared(DeclaredTypeDescriptor {
+        id,
+        name: "PropertyTarget".into(),
+        body: Arc::new(TypeDescriptor::Enum(
+            ["Type", "StructType", "EnumType", "Member", "Field", "Variant"]
+                .into_iter().map(|name| (name.to_owned(), None)).collect(),
+        )),
+    })
 }
 
 fn native_array_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {

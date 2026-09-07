@@ -684,7 +684,7 @@ Decorator 只适用于没有类型参数的具名 Struct/Enum 声明及其直接
 Property carrier 本身也必须是具名 Struct/Enum，并用内建 capability 标记：
 
 ```telora
-@property('Type)
+@property(PropertyTarget.Type)
 type DisplayBy = struct { template: String };
 
 def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(template) {
@@ -698,7 +698,8 @@ def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(
 type Endpoint = struct { host: String, port: Int };
 ```
 
-capability 包括 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant`；
+`@property` 接收一个工具阶段可求值的 `PropertyTarget` 表达式。
+这个内建具名枚举包括 `Type`、`StructType`、`EnumType`、`Member`、`Field` 和 `Variant`；
 `Type`/`Member` 分别覆盖两类 type/member owner，多个标记按位合并。系统先封闭
 `Endpoint` 的 TypeId、TypeMetadata 和 canonical member index，再执行 provider，并以
 `Ty(Endpoint, DisplayBy)` 发布结果。provider 从只读 context 计算 property value，

@@ -5,9 +5,9 @@ import "std/type-property" {FieldPropertyCtx, VariantPropertyCtx};
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-@property('Field)
+@property(PropertyTarget.Field)
 type Count = struct {value: Int};
-@property('Type)
+@property(PropertyTarget.Type)
 type Total = struct {value: Int};
 
 def count: Fn(Int) -> Fn(FieldPropertyCtx, Option(Count)) -> Count = fn(value) {
@@ -34,9 +34,9 @@ type User = struct {
     name: String,
 };
 
-@property('Type)
-@property('Field)
-@property('Variant)
+@property(PropertyTarget.Type)
+@property(PropertyTarget.Field)
+@property(PropertyTarget.Variant)
 type Mark = struct {value: Int};
 
 def type_mark: Fn(Int) -> Fn(Type, Option(Mark)) -> Mark = fn(value) {

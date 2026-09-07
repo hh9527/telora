@@ -10,7 +10,7 @@
                    import "std/dyn" as dyn;
                    import "std/type-desc" as type_desc;
 
-                   @property('Type)
+                   @property(PropertyTarget.Type)
                    type Prepared = struct { run: Fn(Dyn) -> String };
 
                    def prepare: Fn(String) -> Fn(Type, Option(Prepared)) -> Prepared = fn(prefix) {

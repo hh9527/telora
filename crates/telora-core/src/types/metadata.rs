@@ -305,8 +305,8 @@ fn infer_tool_expression_evidence(
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
-) -> Option<ToolExpressionEvidence> {
-    let context = evaluator.inference_context.as_ref()?;
+) -> Result<ToolExpressionEvidence, String> {
+    let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
     if !context.named_types.values().any(|descriptor| {
         matches!(descriptor, TypeDescriptor::Declared(declared)
             if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)))
@@ -317,7 +317,7 @@ fn infer_tool_expression_evidence(
             matches!(body, TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_))
         }))
     {
-        return None;
+        return Err("tool expression does not need constructor evidence".into());
     }
     let mut annotations = HashMap::new();
     evaluator.inference_depth += 1;
@@ -325,8 +325,8 @@ fn infer_tool_expression_evidence(
         source_name, expression, bindings, account, sources, evaluator, &mut annotations,
     );
     evaluator.inference_depth -= 1;
-    annotation_result.ok()?;
-    let context = evaluator.inference_context.as_ref()?;
+    annotation_result.map_err(|error| error.to_string())?;
+    let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
     let mut environment = context.environment.clone();
     let mut schemes = context.schemes.clone();
     // Bound type parameters supplied by the metadata scheduler are lexical
@@ -362,10 +362,10 @@ fn infer_tool_expression_evidence(
     );
     // Metadata is evaluated incrementally; incomplete declarations are checked
     // by the final pass. Only successful inference contributes compiler evidence.
-    inference.infer(expression, &environment, expected).ok()?;
+    inference.infer(expression, &environment, expected)?;
     let descriptors = inference.records.iter()
         .map(|(location, descriptor)| (*location, inference.resolve(descriptor))).collect();
-    Some(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors })
+    Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors })
 }
 
 fn evaluate_tool_expression(
@@ -426,7 +426,7 @@ fn evaluate_tool_expression_with_debug(
 ) -> Result<Val, FrontendError> {
     let evidence = infer_tool_expression_evidence(
         source_name, expression, bindings, expected, account, sources, evaluator,
-    );
+    ).ok();
     let value_constructors = evidence.as_ref()
         .map(|evidence| evidence.value_constructors.clone()).unwrap_or_default();
     let mut descriptors = expression_descriptors.cloned().unwrap_or_default();

@@ -1,9 +1,9 @@
 type RenameCase = enum {'CamelCase};
 
-@property('Type)
+@property(PropertyTarget.Type)
 type JsonRenameAll = struct {case: RenameCase};
 
-@property('Type)
+@property(PropertyTarget.Type)
 type JsonUntagged = struct {};
 
 def rename_all: Fn(RenameCase) -> Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(case) {

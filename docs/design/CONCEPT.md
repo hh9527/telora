@@ -334,8 +334,9 @@ property 的函数。目标的 TypeMetadata、TypeId 和 canonical member index 
 运行前已经封闭；provider 从只读 context 计算并返回 property value。类型骨架和
 property registry 是两个独立的数据域，协议与执行顺序保证目标的结构和身份稳定。
 Property carrier 必须是由
-`@property('Capability)` 标记的具体具名类型；capability 可以是 `Type`、
-`StructType`、`EnumType`、`Member`、`Field` 或 `Variant`，多个标记按位合并。
+`@property(PropertyTarget.Type)` 这类标记修饰的具体具名类型；参数是具名 enum
+`PropertyTarget` 的值，其成员为 `Type`、`StructType`、`EnumType`、`Member`、
+`Field` 和 `Variant`，多个标记按位合并。参数在工具阶段求值并检查类型身份。
 
 系统使用 `Ty(target, property)`、`Field(target, canonical_index, property)` 或
 `Variant(target, canonical_index, property)` 作为键并发布到 MainWorld。相同 key 的

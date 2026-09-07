@@ -1,4 +1,4 @@
-@property('Type)
+@property(PropertyTarget.Type)
 type PropertyAttr = struct { bits: Int };
 
 export { PropertyAttr };
