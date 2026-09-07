@@ -317,7 +317,10 @@ fn infer_tool_expression_evidence(
             matches!(body, TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_))
         }))
     {
-        return Err("tool expression does not need constructor evidence".into());
+        return Ok(ToolExpressionEvidence {
+            descriptors: HashMap::new(),
+            value_constructors: HashMap::new(),
+        });
     }
     let mut annotations = HashMap::new();
     evaluator.inference_depth += 1;
@@ -360,8 +363,8 @@ fn infer_tool_expression_evidence(
         &annotations, &implementations, &properties, &traits, display_trait,
         &context.dyn_namespaces, context.builtin_tuple_available, account.query_context(),
     );
-    // Metadata is evaluated incrementally; incomplete declarations are checked
-    // by the final pass. Only successful inference contributes compiler evidence.
+    // The caller decides whether incomplete metadata may defer a failed
+    // inference pass; typed tool expressions require successful evidence.
     inference.infer(expression, &environment, expected)?;
     let descriptors = inference.records.iter()
         .map(|(location, descriptor)| (*location, inference.resolve(descriptor))).collect();
@@ -424,9 +427,18 @@ fn evaluate_tool_expression_with_debug(
     evaluator: &mut ToolEvaluator,
     observed: bool,
 ) -> Result<Val, FrontendError> {
-    let evidence = infer_tool_expression_evidence(
+    let evidence = match infer_tool_expression_evidence(
         source_name, expression, bindings, expected, account, sources, evaluator,
-    ).ok();
+    ) {
+        Ok(evidence) => Some(evidence),
+        Err(message) if expression_descriptors.is_some() => {
+            return Err(FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error(message, expression.location),
+            ));
+        }
+        Err(_) => None,
+    };
     let value_constructors = evidence.as_ref()
         .map(|evidence| evidence.value_constructors.clone()).unwrap_or_default();
     let mut descriptors = expression_descriptors.cloned().unwrap_or_default();
