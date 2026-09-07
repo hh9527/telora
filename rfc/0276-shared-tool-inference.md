@@ -407,3 +407,27 @@ This reduces wall time from the previous 12.78 s sample, but does not recover it
 658832 KB memory baseline. These are samples, not medians. Rigid bound parameters
 retain nominal diagnostics, and nominal argument compatibility does not directly
 equate the actual value slot with a refinable instance parameter.
+
+### Direct Structural Publication
+
+Final structural expression types now publish iteratively from shared slots into
+the TypeGraph, with an array cache of final IDs and publication failures. Shared
+children are published once; ordinary expression descriptors are no longer
+materialized and retained for the entire module. Nominal descriptors needed by
+runtime owner bridges, exported scheme overrides, and the final result remain.
+Binding nominal identities are reserved before expression publication.
+
+Declared types and pending alternatives still normalize through the compatibility
+adapter. This preserves parent-before-body recursive nominal reservations,
+Unchecked normalization and alternative collapse. It is not yet direct nominal
+publication or a completed HIR-ID environment migration. Tests cover a 16384-deep
+structural graph without descriptor views, shared roots, unresolved/conflicted
+slots, combined publication failures, Bound parameters and nominal normalization
+equivalence.
+
+The release build succeeded. Two sequential query samples took 9.89 s and
+9.74 s, with peak RSS 393428 KB and 394940 KB (exit 0). Compared with the prior
+11.04-11.17 s / 754916-755484 KB samples, structural publication removes nearly
+half the peak resident memory and also reduces wall time. These remain samples,
+not medians. The workspace suite passed with 301 core tests and 41 CLI tests,
+including language acceptance.

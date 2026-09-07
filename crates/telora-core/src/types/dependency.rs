@@ -1901,27 +1901,50 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
     inference.variables.canonicalize_slots();
+    let mut types = TypeGraph::default();
+    let installed_named_types = types.install_named_descriptors(&named_types);
+    // Preserve binding-first nominal reservations before publishing expressions.
+    for descriptor in binding_types.values() {
+        let resolved = inference.normalize(descriptor);
+        types.intern_resolved_descriptor(&resolved);
+    }
+    let mut publication = InferencePublication::new(&inference.variables);
+    let mut published_expressions = HashMap::new();
     let mut completed_expressions = inference.records.iter()
-        .map(|(location, slot)| (*location, inference.normalize(&TypeDescriptor::Inference(*slot)))).collect::<Vec<_>>();
+        .map(|(location, slot)| (*location, *slot)).collect::<Vec<_>>();
     completed_expressions.sort_by_key(|(location, _)| location.range().start);
-    for (location, resolved) in &completed_expressions {
-        if contains_standalone_sum(&resolved) {
+    for (location, slot) in completed_expressions {
+        expression_descriptors.remove(&location);
+        let published = publication.publish(&mut types, slot,
+            |slot| inference.normalize(&TypeDescriptor::Inference(slot)));
+        let failure = published.err().unwrap_or_default();
+        if failure.contains(PublicationFailure::STANDALONE) {
             return Err(FrontendError::from_diagnostic(
                 sources,
-                Diagnostic::error("standalone Atom/Tagged is not a public expression type; use an enum", *location),
+                Diagnostic::error("standalone Atom/Tagged is not a public expression type; use an enum", location),
             ));
         }
-        if contains_pending_alternatives(&resolved) {
+        if failure.contains(PublicationFailure::ALTERNATIVES) {
+            let resolved = inference.normalize(&TypeDescriptor::Inference(slot));
             return Err(FrontendError::from_diagnostic(
                 sources,
                 Diagnostic::error(
                     format!("no common type for {}; supply explicit context with .ty!(Ty) or @[Ty]", resolved.display_name()),
-                    *location,
+                    location,
                 ),
             ));
         }
+        if let Ok(ty) = published { published_expressions.insert(location, ty); }
+        // Runtime owner bridges still consume nominal descriptors. Structural
+        // expression types live only in the final graph, not a second type tree.
+        if let Some(ty) = inference.variables.known(slot)
+            && (matches!(inference.variables.constructor(ty), InferenceConstructor::Declared { .. } | InferenceConstructor::PendingAlternatives)
+                || inference.value_constructors.contains_key(&location))
+        {
+            expression_descriptors.insert(location, inference.normalize(&TypeDescriptor::Inference(slot)));
+        }
     }
-    expression_descriptors.extend(completed_expressions);
+    drop(publication);
     inference.top_level_inferred_schemes = inference
         .top_level_inferred_schemes
         .iter()
@@ -2026,9 +2049,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .iter()
         .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor)))
         .collect::<BTreeMap<_, _>>();
-    let mut types = TypeGraph::default();
     let declared_type_names = declared_types.keys().cloned().collect::<Vec<_>>();
-    let installed_named_types = types.install_named_descriptors(&named_types);
     let declared_types = declared_type_names
         .into_iter()
         .map(|name| (name.clone(), installed_named_types[&name]))
@@ -2047,10 +2068,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .expressions()
         .iter()
         .filter_map(|expression| {
-            expression_descriptors
-                .get(&expression.location)
-                .and_then(|descriptor| types.intern_resolved_descriptor(descriptor))
-                .map(|ty| (expression.id, ty))
+            let ty = match expression_descriptors.get(&expression.location) {
+                Some(descriptor) => types.intern_resolved_descriptor(descriptor),
+                None => published_expressions.get(&expression.location).copied(),
+            };
+            ty.map(|ty| (expression.id, ty))
         })
         .collect();
     let pattern_definition_types = hir

@@ -50,6 +50,7 @@ include!("types/inference-state.rs");
 include!("types/inference-variables.rs");
 include!("types/inference-table.rs");
 include!("types/inference-structures.rs");
+include!("types/inference-publication.rs");
 include!("types/inference-context.rs");
 include!("types/inference-enum.rs");
 include!("types/inference-unify.rs");
