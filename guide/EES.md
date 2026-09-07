@@ -133,8 +133,8 @@ Host 请求以 `actor.Event` 进入 reducer：
 type Request = struct {id: String, input: Value};
 
 type Event = enum {
-    'Request(Request),
-    'EesReply(EesReply),
+    Request(Request),
+    EesReply(EesReply),
 };
 ```
 
@@ -176,10 +176,11 @@ ees.sqlite_model("catalog", "user-data:{tenant}/catalog.sqlite")
 查询请求为：
 
 ```telora
+import "std/value" {ScalarValue};
 ees.sqlite_query(
     "catalog",
     "SELECT name, score FROM items WHERE score > ? ORDER BY score DESC",
-    ['Int(1)],
+    [ScalarValue.Int(1)],
 )
 ```
 
@@ -193,8 +194,9 @@ component 返回 `std/value.Value`。查询成功值的结构由 SQLite Query co
 import "std/actor" as actor;
 import "std/ees" as ees;
 import "std/entry" as entry;
+import "std/value" {ScalarValue};
 
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 def effects: ees.Config = {
     vars: {"tenant": "[a-z][a-z0-9-]{0,31}"},
     models: [ees.sqlite_model(
@@ -203,31 +205,31 @@ def effects: ees.Config = {
     )],
 };
 
-type State = enum {'Ready, 'Waiting};
+type State = enum {Ready, Waiting};
 
 export def run = entry.run(State, config, effects, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
-            ('Ready, 'Request(request)) => (
-                'Waiting,
+            (State.Ready, actor.Event.Request(request)) => (
+                State.Waiting,
                 [actor.ees_call(
                     "query",
                     request.id,
                     ees.sqlite_query(
                         "catalog",
                         "SELECT name FROM items WHERE score > ? ORDER BY score DESC",
-                        ['Int(1)],
+                        [ScalarValue.Int(1)],
                     ),
                 )],
             ),
-            ('Waiting, 'EesReply(reply)) => match reply.result {
-                'Ok(value) => ('Ready, [actor.reply(reply.request_id, value)]),
-                'Err(message) => fail!("SQLite query failed", message),
+            (State.Waiting, actor.Event.EesReply(reply)) => match reply.result {
+                Ok(value) => (State.Ready, [actor.reply(reply.request_id, value)]),
+                Err(message) => fail!("SQLite query failed", message),
             },
             _ => fail!("unexpected actor event", state, event),
         }
     };
-    ('Ready, reduce)
+    (State.Ready, reduce)
 });
 ```
 
@@ -265,10 +267,10 @@ IMOS model 只处理应用发出的请求，不能发现或调用 package servic
 EES reply 是后续事件，因此多次调用通过 State 显式排序：
 
 ```text
-'Ready
-  --Request / EesCall("load")--> 'Loading(request_id)
-  --EesReply("load") / EesCall("save")--> 'Saving(request_id)
-  --EesReply("save") / Reply--> 'Ready
+Ready
+  --Request / EesCall("load")--> Loading(request_id)
+  --EesReply("load") / EesCall("save")--> Saving(request_id)
+  --EesReply("save") / Reply--> Ready
 ```
 
 State 应保存下一阶段需要的 request ID、业务数据和在途 effect ID。这样 reducer 的每次
@@ -276,7 +278,7 @@ State 应保存下一阶段需要的 request ID、业务数据和在途 effect I
 
 ## Failure 与回复
 
-EES component 的业务失败进入 `EesReply.result = 'Err(message)`。程序可以把它转换为
+EES component 的业务失败进入 `EesReply.result = Err(message)`。程序可以把它转换为
 领域 Value、继续其他阶段，或者用 `fail!` 产生带诊断的请求失败。
 
 `actor.reply(request_id, value)` 表达成功完成一个 Host 请求。`serve --bind stdio://`

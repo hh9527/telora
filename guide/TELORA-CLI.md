@@ -58,18 +58,19 @@ export def lowering_case = do {
 
 ```telora
 import "std/test" as test;
+import "std/value" {Value};
 
 export def accepts = test.should_ok(fn() { 1 + 1 });
 export def rejects = test.should_fail_with(fn() { fail!("expected rejection") }, "rejection");
 export def inputs = test.with_fixtures(["fixtures/a.json", "fixtures/b.yaml"], fn(value) {
     test.should_ok(fn() {
-        match value { 'Object(_) => 'True, _ => fail!("expected object", value) }
+        match value { Value.Object(_) => True, _ => fail!("expected object", value) }
     })
 });
 ```
 
 `should_ok`、`should_fail` 和 `should_fail_with` 保存零参数 thunk；构造时不执行。
-`should_ok` 接受任何正常返回值，包括 `'False` 和 `'Err(...)`。`should_fail` 要求
+`should_ok` 接受任何正常返回值，包括 `False` 和 `Err(...)`。`should_fail` 要求
 可恢复的执行失败；`should_fail_with` 还要求主错误消息包含非空、区分大小写的子串。
 通过的预期失败会被消费，warning 仍按用例报告；普通失败后继续执行其他用例。
 语法、类型、import 和模块初始化错误阻止全部用例执行。资源耗尽等终止错误会中止

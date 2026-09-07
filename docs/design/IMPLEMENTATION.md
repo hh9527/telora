@@ -275,10 +275,11 @@ member snapshot。整个声明的 effective heads 在失败检查后一次复制
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
 无限递归；函数和 opaque value 使用各自的不透明身份规则。来源位置不参与相等。
 
-enum 构造通过 inference variable 和独立的构造约束记录归属、variant 名称、payload
-证据及源码位置。绑定归属时检查完整 enum 契约，并把 payload 上下文传入直接构造的
-嵌套值。分支和完整调用复用既有证据合并机制；Option/Result 传播和布尔操作符也提供
-各自的闭合契约。未解约束不能泛型化，模块推断完成时必须全部解决。VM 继续使用
+具名 enum 构造器通过名称解析获得声明来源、variant 名称和完整泛型契约；
+`value_constructors` 按源码位置把构造器证据传递给编译阶段。调用上下文补全泛型
+参数，并把 payload 上下文传入直接构造的嵌套值。同一类型族的分支、返回值和
+集合元素共享参数证据合并，具体证据迭代传播至没有新增解，支持 enum 参数补全后
+继续确定空集合的元素类型。不同声明及冲突的具体参数保持类型错误。VM 使用
 Atom/Tagged 表示，复制 payload 的 Val 来源位置不变。
 
 底层表示描述符及工具阶段的 provisional constructor evidence 可以保留内部
@@ -409,7 +410,7 @@ Entry 属于 `std` crate，可以访问 `std/_...` 协议模块。只有内置 `
 3. 解析 `SystemCaps`，由 `RunHost.configure` 一次性确认 data/env/stdin 与 EES 诉求；
 4. Host 按 caps 读取并校验资源，由私有 runtime bridge 在 Entry WorkWorld 中构造
    `SystemResources`，再与 wrapper payload 一起传给 Initializer；
-5. 发送 `'Initialize` 及后续 stdin/EES event，每次调用 reducer；
+5. 发送 `Initialize` 及后续 stdin/EES event，每次调用 reducer；
 6. Host 先完整解析和审计一批 SystemEffect，再执行第一个 effect。
 
 应用不直接读取 open world。wrapper 声明 capabilities；实际文件、环境、stdin 和 EES

@@ -34,14 +34,15 @@ hello/
 import "std/actor" as actor;
 import "std/ees" as ees;
 import "std/entry" as entry;
+import "std/value" {Value};
 
 type State = struct {};
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 export def run = entry.run(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
-            'Request(request) => (state, [actor.reply(request.id, 'String("hello, telora"))]),
-            'EesReply(_) => fail!("unexpected EES reply"),
+            actor.Event.Request(request) => (state, [actor.reply(request.id, Value.String("hello, telora"))]),
+            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
         }
     };
     ({}, reduce)
@@ -71,7 +72,7 @@ telora query exports @src/app
 1e6                        # 带十进制指数的 Float
 "text"                     # String
 b"bytes"                   # Bytes
-'Ready                     # variant 构造，需要 enum 上下文
+BuildState.Ready           # BuildState 的无 payload variant
 True                       # Bool 的 True variant
 Some(1)                    # Option(Int) 的 Some variant
 (1, "one")                # Tuple 值
@@ -107,9 +108,10 @@ left >= right
 
 相等和不等要求两侧具有同一静态语义类型；已知类型或形状不兼容时会在前端报错，
 而不是返回 False。普通复合值保持结构相等语义，两个具名 struct/enum 值还要求
-相同的名义类型。dict 字面量或 variant 构造可以从另一侧获得 exact nominal
-context，例如 `wrapper == 'Box("x")` 和 `'Box("x") == wrapper`；不需要先单独
-标注字面量。同一 enum 契约内的不同运行时 variant 可以比较并返回 False。
+相同的名义类型。dict 字面量可以从另一侧获得具名类型上下文；具名 variant 构造
+可以从另一侧补全泛型参数和 payload 的类型上下文。构造器名称确定 enum 类型族，
+例如 `Wrapper.Box("x")` 始终构造 Wrapper 的 Box 成员。同一 enum 契约内的不同
+运行时 variant 可以比较并返回 False。
 有序比较只接受类型相同的
 `Int`、`Float` 或 `String` 操作数；不存在混合数值强制转换。String 按其内部
 UTF-8 字节序列精确地进行字典序比较，不做规范化，不使用 locale 规则、大小写
@@ -188,15 +190,16 @@ def update = fn(base: Foo, source: Source) {
 连续写 `else if`：
 
 ```telora
-if score >= 90 { 'Excellent }
-else if score >= 60 { 'Pass }
-else { 'Fail }
+type Grade = enum {Excellent, Pass, Fail};
+if score >= 90 { Grade.Excellent }
+else if score >= 60 { Grade.Pass }
+else { Grade.Fail }
 ```
 
 ```telora
 if ready { value }
-else if let 'Some(cached) = candidate { cached }
-else match fallback { 'Some(value) => value, 'None => default }
+else if let Some(cached) = candidate { cached }
+else match fallback { Some(value) => value, None => default }
 ```
 
 也可以直接把提前返回用作分支：
@@ -403,8 +406,8 @@ String parse、Int/Float 转换、`Value -> model`、rename/default/flatten 都�
 
 ```telora
 match result {
-    'Some(value) => value,
-    'None => fallback,
+    Some(value) => value,
+    None => fallback,
 }
 
 match pair {
@@ -450,11 +453,11 @@ Array 保留顺序。`find` 返回第一个匹配项，`filter` 保留输入顺�
 
 两种索引形式都使用从零开始的 Int 索引。`values[index]` 直接返回元素；索引为
 负数或越界时，以 `fail!("OutOfRange", values, index)` 失败。对于同样的缺失
-位置，`array.get` 返回 `'None`。`enumerate` 在保留来源顺序和重复项的同时，
+位置，`array.get` 返回 `None`。`enumerate` 在保留来源顺序和重复项的同时，
 把每一项与其从零开始的 Int 索引配对：
 
 ```telora
-array.get(["a", "b"], 1)       # 'Some("b")
+array.get(["a", "b"], 1)       # Some("b")
 ["a", "b"][1]                 # "b"
 array.enumerate(["a", "b"])   # [(0, "a"), (1, "b")]
 ```
@@ -483,7 +486,7 @@ Tuple 字面量支持 `...` 展开：
 
 ```telora
 let pair = (1, "hi");
-let values = (...pair, 'True.ty!(Bool), 3);
+let values = (...pair, True, 3);
 # values: Tuple([Int, String, Bool, Int])
 ```
 
@@ -519,15 +522,15 @@ family 在值位置也是普通的有类型元数据能力。family 必须接收
 
 ```telora
 type Build(Value) = struct {state: BuildState, value: Option(Value)};
-type BuildState = enum {'Ready, 'Pending};
+type BuildState = enum {Ready, Pending};
 ```
 
 名义 Struct/Enum family 可以用当前全部参数原序直接自递归：
 
 ```telora
 type Expr(Leaf) = enum {
-    'Leaf(Leaf),
-    'Call(Array(Expr(Leaf))),
+    Leaf(Leaf),
+    Call(Array(Expr(Leaf))),
 };
 ```
 
@@ -542,11 +545,11 @@ enum，表示归一化后的语义数据：
 
 ```telora
 type Value = enum {
-    'None, 'True, 'False,
-    'Int(Int), 'Float(Float), 'String(String), 'Bytes(Bytes),
-    'Array(Array(Value)), 'Object(Dict(Value)),
-    'LocalDate(String), 'LocalTime(String),
-    'LocalDateTime(String), 'OffsetDateTime(String),
+    None, True, False,
+    Int(Int), Float(Float), String(String), Bytes(Bytes),
+    Array(Array(Value)), Object(Dict(Value)),
+    LocalDate(String), LocalTime(String),
+    LocalDateTime(String), OffsetDateTime(String),
 };
 ```
 
@@ -599,7 +602,7 @@ Struct 和 enum 默认从同一份 TypeMetadata 派生 codec 与 JSON schema。`
 目前保留两个类型级 typed-property decorator：
 
 ```telora
-@json.rename_all('CamelCase)
+@json.rename_all(json.RenameCase.CamelCase)
 type Details = struct {
     order_id: String,
     note: Option(String),
@@ -607,12 +610,12 @@ type Details = struct {
 
 @json.untagged
 type Scalar = enum {
-    'Text(String),
-    'Count(Int),
+    Text(String),
+    Count(Int),
 };
 ```
 
-`rename_all` 接受 `RenameCase` enum，支持 `'CamelCase`。`json.schema` 返回 `Value`，
+`rename_all` 接受 `RenameCase` enum，支持 `json.RenameCase.CamelCase`。`json.schema` 返回 `Value`，
 可以直接交给 `json.stringify`。`rename_all` 和 `untagged` 产生具名 property，codec 和 schema 按目标 TypeId 与
 property TypeId 查询同一份 MainWorld 数据。字段和 variant property 按 owner TypeId、
 canonical member index 和 property TypeId 安全存取。当前 JSON API 在类型层提供
@@ -643,8 +646,8 @@ type Summary = struct { first_field_labels: Array(String) };
 def label: Fn(String) -> Fn(FieldPropertyCtx, Option(Labels)) -> Labels = fn(value) {
     fn(ctx, previous) {
         let values = match previous {
-            'Some(labels) => array.push(labels.values, value),
-            'None => [value],
+            Some(labels) => array.push(labels.values, value),
+            None => [value],
         };
         let result: Labels = { values };
         result
@@ -653,8 +656,8 @@ def label: Fn(String) -> Fn(FieldPropertyCtx, Option(Labels)) -> Labels = fn(val
 
 def summarize: Fn(TypeDesc, Option(Summary)) -> Summary = fn(target, previous) {
     let values = match property.get_field_prop(target, 0, Labels) {
-        'Some(labels) => labels.values,
-        'None => [],
+        Some(labels) => labels.values,
+        None => [],
     };
     let result: Summary = { first_field_labels: values };
     result
@@ -717,7 +720,7 @@ import "./config.toml" { data as config };
 
 JSON/TOML 拒绝越界 Int 和非有限 Float。YAML 只接受 String mapping key，拒绝
 custom tag，限制 alias 深度和展开量，并确定性展开 mapping merge；`!!binary`
-经过 canonical base64 校验后成为 `'Bytes(...)`。格式归一化保留 array index/object
+经过 canonical base64 校验后成为 `Value.Bytes(...)`。格式归一化保留 array index/object
 key 的来源路径，内部 Value wrapper 不增加路径层级。
 不要为了打印中间值而手写 `*_desc` 函数：公开结果需要稳定 JSON 形状时使用
 codec，需要临时观察任意局部值时使用 `dbg!`：
@@ -753,9 +756,9 @@ contextual intrinsic 糖：`value.dbg!("message")` 等价于
 因此可以直接按同一个 concrete family 检查：
 
 ```telora
-type EventId = enum {'Created, 'Updated};
+type EventId = enum {Created, Updated};
 type Event = struct {id: Int};
-type Decision = enum {'Accept, 'Reject};
+type Decision = enum {Accept, Reject};
 type HandlerDefinition(Id, Input, Output) = struct {
     id: Id,
     handle: Fn(Input) -> Output,
@@ -764,12 +767,12 @@ type Handler = HandlerDefinition(EventId, Event, Decision);
 
 let handlers: Array(Handler) = [
     {
-        id: 'Created,
-        handle: fn(event) { if event.id > 0 { 'Accept } else { 'Reject } },
+        id: EventId.Created,
+        handle: fn(event) { if event.id > 0 { Decision.Accept } else { Decision.Reject } },
     },
     {
-        id: 'Updated,
-        handle: fn(event) { if event.id == 0 { 'Reject } else { 'Accept } },
+        id: EventId.Updated,
+        handle: fn(event) { if event.id == 0 { Decision.Reject } else { Decision.Accept } },
     },
 ];
 ```
@@ -779,26 +782,28 @@ let handlers: Array(Handler) = [
 type，或记录需要先在数组之外分别构造时，才给完整记录或具名构建函数添加 concrete
 family 契约。共同类型错误应首先检查是否缺少这个公共期望类型。
 
-### 声明 enum 的直接 expected context
+### 具名 enum 构造与类型推断
 
-已经确定的声明 enum 契约会直接下传到 Array 元素、record 字段、函数参数和返回值、
-`if`/`match` 分支以及带函数类型标注的 closure。Expr、Operator、Val 等递归或非递归
-enum 应在构造边界提供一次完整契约：
+构造器名称确定 enum 类型族；类型上下文补全泛型参数和 payload 中的记录、闭包、
+空集合等信息。完整契约会下传到 Array 元素、record 字段、函数参数和返回值、
+`if`/`match` 分支以及带函数类型标注的 closure：
 
 ```telora
-def make_expr: Fn() -> Expr = fn() { 'Column({alias: "orders", column: "id"}) };
+def make_expr: Fn() -> Expr = fn() { Expr.Column({alias: "orders", column: "id"}) };
 
 def plan: Plan = do {
-    let expr: Expr = if use_all { 'All } else { 'Column({alias: "orders", column: "id"}) };
-    let operators: Array(Operator) = ['Filter(expr), 'Project([expr])];
+    let expr = if use_all { Expr.All } else { Expr.Column({alias: "orders", column: "id"}) };
+    let operators = [Operator.Filter(expr), Operator.Project([expr])];
     {expr, operators}
 };
 ```
 
-expected type 不穿过未标注 binding 反向解释它的定义。不要先写
-`def raw = 'Column(...);`，再依靠后续 `def expr: Expr = raw;` 为 `raw` 补身份；应在
-字面量、分支、closure 或集合的直接构造点标注 `Expr`。这也避免根据 tag 名全局猜测
-一个 nominal enum owner。未知 variant 和不兼容 payload 仍然是确定的类型错误。
+prelude 提供 `Bool.{True, False}`、`Option.{Some, None}` 和 `Result.{Ok, Err}`。
+同一类型族的分支和集合元素合并泛型参数证据，因此
+`match Some("hi") { Some(x) => Ok(x), None => Err(2) }` 得到
+`Result(String, Int)`，交换分支顺序结果相同。`None` 等没有提供全部参数证据的值
+可使用类型注解、`.ty!(Ty)` 或 `@[Ty]` 补全参数。未知成员、不同类型族和不兼容
+payload 都会产生类型错误。
 
 ### enum payload 不能是匿名 Struct 类型
 
@@ -807,13 +812,13 @@ Enum variant payload 是 TypeMetadata 表达式。`struct { ... }` 只允许作�
 
 ```telora
 # 不支持：struct 初始化器不能嵌入 enum payload
-# type Expr = enum {'Column(struct {alias: String, column: String})};
+# type Expr = enum {Column(struct {alias: String, column: String})};
 
 type ColumnRef = struct {alias: String, column: String};
-type Expr = enum {'Column(ColumnRef)};
+type Expr = enum {Column(ColumnRef)};
 
 # 值位置的匿名记录仍然合法
-let expr: Expr = 'Column({alias: "o", column: "id"});
+let expr: Expr = Expr.Column({alias: "o", column: "id"});
 ```
 
 ### Family 与递归具体类型
@@ -822,7 +827,7 @@ let expr: Expr = 'Column({alias: "o", column: "id"});
 Family 可以引用已经封闭的非参数化递归具体类型：
 
 ```telora
-type Expr = enum {'Literal(Value), 'Call(CallExpr)};
+type Expr = enum {Literal(Value), Call(CallExpr)};
 type CallExpr = struct {name: String, args: Array(Expr)};
 
 type Dialect(Context) = struct {
@@ -839,7 +844,7 @@ initializer 中用原参数自递归，但不能变换参数、形成 mutual/mix
 只在递归结构之外参数化使用它的 capability、renderer 或 dialect：
 
 ```telora
-type Expr = enum {'Literal(Value), 'Call(CallExpr)};
+type Expr = enum {Literal(Value), Call(CallExpr)};
 type CallExpr = struct {name: String, args: Array(Expr)};
 
 type Renderer(Context) = struct {
@@ -876,17 +881,17 @@ export { Snapshot, encode_snapshot };
 
 ### Bytes 没有默认 JSON 表示
 
-公共 Value 可以显式携带 `'Bytes(Bytes)`，YAML `!!binary` 也映射到该 variant；但
+公共 Value 可以显式携带 `Value.Bytes(bytes)`，YAML `!!binary` 也映射到该 variant；但
 JSON 没有原生 Bytes 类别，`json.stringify` 和 schema 不为 Bytes 选择隐式文本编码。
 包含裸 `Bytes` 的类型不能作为完整 JSON text/schema 边界。设计需要稳定 JSON
 codec/schema 的数据模型时，当前应从公共 `Val`、Model、Plan 和输出类型中排除 Bytes：
 
 ```telora
 type Val = enum {
-    'String(String),
-    'Int(Int),
-    'Float(Float),
-    'Bool(Bool),
+    String(String),
+    Int(Int),
+    Float(Float),
+    Bool(Bool),
 };
 ```
 
@@ -983,8 +988,8 @@ codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr �
 ```telora
 def check_capability: Fn(Subject) -> Result(Capability, String) = fn(subject) {
     match find_capability(subject) {
-        'Some(capability) => 'Ok(capability),
-        'None => 'Err("missing capability"),
+        Some(capability) => Ok(capability),
+        None => Err("missing capability"),
     }
 };
 
@@ -1023,7 +1028,7 @@ checker 可以接收零到多个参数，但不能省略 checker。checker 与�
 
 ```telora
 def reject_same: for(A) Fn(A, String) -> Result(A, String) =
-    fn(evidence, message) { 'Err(message) };
+    fn(evidence, message) { Err(message) };
 
 let ignored = reject_same.should_ok!(subject, "missing capability");
 ```

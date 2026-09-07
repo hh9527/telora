@@ -64,7 +64,8 @@ type Endpoint = struct {host: String, port: Int};
 - `std/toml`：把 TOML 文本解析为 Value。
 
 `Value` 是 source、Entry、EES 和 JSON 共享的数据边界。`ScalarValue` 的 untagged codec
-把 `'None`、`'Bool(...)`、`'Int(...)`、`'Float(...)`、`'String(...)` 分别编码为普通
+把 `ScalarValue.None`、`ScalarValue.Bool(...)`、`ScalarValue.Int(...)`、
+`ScalarValue.Float(...)`、`ScalarValue.String(...)` 分别编码为普通
 JSON null、boolean、number 和 string。
 
 通常先在格式模块中得到 Value，再用 `codec.decode(Target, value)` 进入业务名义类型；

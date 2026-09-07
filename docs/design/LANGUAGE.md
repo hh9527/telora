@@ -62,7 +62,7 @@ Telora 源文件通常以 `.telora` 结尾。`#` 引入行注释；文件开头�
 b"bytes"                   # Bytes
 r"raw text"                # raw String
 r#"a "quoted" value"#      # 带 delimiter 的 raw String
-'Ready                     # variant 构造，需要 enum 上下文
+BuildState.Ready           # BuildState 的无 payload variant
 ```
 
 具名 enum 保留自己的 nominal TypeId。variant 的名称和 payload 由 enum 声明定义。
@@ -120,8 +120,8 @@ String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字�
 Host-only 观察；codec/JSON 则是数据交换协议，三者
 都不能作为彼此的隐式替代。
 
-Bool 是闭合的内建 enum，其值为 `'True` 和 `'False`。条件、guard 和布尔操作符
-提供 Bool 上下文；独立构造使用 `'True.ty!(Bool)` 或显式类型注解。
+Bool 是闭合的内建 enum，其成员 `True` 和 `False` 由 prelude 提供。
+这些名称直接确定 Bool 类型，条件、guard 和布尔操作符接受 Bool 值。
 条件位置只接受 Bool，不进行 truthiness 转换。
 
 Float 是有限的 IEEE 754 binary64 值。字面量可以写成 `digits.digits`、
@@ -157,8 +157,9 @@ let second: Int = ids[1];
 无 expected item type 的 Array 字面量必须得到共同元素类型。`[1, "one"]` 会报错；
 位置不同的异质数据可用 Tuple，领域中的不同形态应显式包装为 enum。`Never` 不贡献
 可达元素类型。
-无共同上下文的不同 enum variant 也会报错；可用 `.ty!(Ty)`、`func@[Ty](...)`
-或类型注解为完整表达式提供契约，不自动合成新的结构 enum。
+同一 enum 类型族的成员合并泛型参数证据，例如 `[Ok("hi"), Err(2)]` 的类型为
+`Array(Result(String, Int))`。不同类型族或冲突的具体参数会报错；缺少证据的参数
+可用 `.ty!(Ty)`、`func@[Ty](...)` 或类型注解补全。
 显式 `Array(T)` expected type 会向每个普通元素和 spread operand 下传 `T`。因此当
 `T` 是 concrete family 实例时，多个匿名记录元素中的 variant 构造、闭包、
 Option variant 和空集合都按完整的共同契约检查。
@@ -177,7 +178,7 @@ let entry: Tuple([String, Int]) = ("port", 8080);
 显式元数据表达式和受限契约中一致；`Tuple(A, B)` 不是 Tuple 类型的另一种写法。
 
 Tuple 字面量的 spread 按位置拼接静态已知的 Tuple：
-`(...pair, 'True.ty!(Bool), 3)` 展开 pair 后追加 Bool 和 Int 元素。每个位置
+`(...pair, True, 3)` 展开 pair 后追加 Bool 和 Int 元素。每个位置
 保持独立类型，多个 spread 按书写顺序展开一层；空 Tuple 不贡献元素，普通
 tuple-valued 元素保持嵌套。Array、Dict、Dyn 和未知形状的类型变量不提供
 Tuple spread 所需的固定长度证据。
@@ -192,7 +193,7 @@ Tuple spread 所需的固定长度证据。
 Record 字面量与 `Dict(T)` 在运行时都使用 String key 的 Dict 表示，但静态意义不同：
 
 ```telora
-let user = {name: "Ada", active: 'True};
+let user = {name: "Ada", active: True};
 let labels: Dict(String) = {region: "east", tier: "gold"};
 ```
 
@@ -273,29 +274,33 @@ x 和 Y。源值须是静态字段集合已知的具名 Struct；源字段须存
 
 ### 3.2 Sum 值
 
-quoted variant 表达式构造目标 enum 的无 payload 或带 payload 值：
+具名成员提供 enum 的无 payload 值或带 payload 的构造函数：
 
 ```telora
-let absent: Option(Int) = 'None;
-let present: Option(Int) = 'Some(1);
-let success: Result(Int, String) = 'Ok(1);
-let failure: Result(Int, String) = 'Err("reason");
+let absent: Option(Int) = None;
+let present: Option(Int) = Some(1);
+let success: Result(Int, String) = Ok(1);
+let failure: Result(Int, String) = Err("reason");
 ```
 
 Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。类型元数据决定
 合法 tag、payload 形状及静态穷尽性。
 
-每个构造表达式都必须通过类型上下文或完整调用证据确定 enum 归属。无法确定时
-要求 `.ty!(Ty)` 或 `@[Ty]`；不按 variant 名称搜索声明，也不合成匿名 enum。
-推断中的待解构造约束不能进入泛型契约、模块接口或 Dyn witness。
-明确的 `Fn(Payload) -> Enum` 上下文也允许把 quoted payload variant 用作构造函数。
+名称确定 enum 类型族，类型上下文和调用证据补全泛型参数。成员使用
+`Event.Progress` 或模块限定的 `events.Event.Progress`；声明本身只绑定类型名。
+`import Event.{Progress, Finished as Done};` 选择成员并引入本地名称；
+`export Event.{Progress, Finished as Done};` 同时提供本地绑定与公开导出。
+prelude 提供 Bool、Option 和 Result 的成员。payload 构造器可作为函数传递，
+显式泛型特化使用 `Result.Ok@[Int, String]`，包含类型族的全部参数。
+同一类型族的分支、返回值和集合元素合并参数证据；仍未确定的参数需要显式契约。
+模块接口和 Dyn witness 使用完整类型。
 
 ### 3.3 相等性和顺序
 
 普通标量和结构值支持 `==` 和 `!=`，其签名均要求两个操作数具有同一静态语义类型
 `T`；已知类型或形状不兼容时在前端报错，不把类型错误解释为 False。若一侧具有
-exact nominal identity，另一侧是 dict 字面量或 variant 构造，该表达式从具名值
-获得同一名义类型上下文，与操作数顺序无关。上下文沿 Array 元素、Tuple 对应位置、
+exact nominal identity，另一侧的 dict 字面量获得该具名类型上下文；具名 variant
+构造获得同一类型族的参数和 payload 上下文，与操作数顺序无关。上下文沿 Array 元素、Tuple 对应位置、
 dict 字段和值、同 variant 的 payload 递归传播，例如 `[item] == [{value: 42}]`
 中的字段字面量可从 `item` 获得名义类型；不同位置的上下文可分别来自两个操作数。
 传播只作用于当前表达式中的字面量构造（包括 spread 中直接书写的字面量），不为
@@ -381,15 +386,16 @@ if enabled { "on" } else { "off" }
 block。因此 `else if` 可以连续使用：
 
 ```telora
-if score >= 90 { 'Excellent }
-else if score >= 60 { 'Pass }
-else { 'Fail }
+type Grade = enum {Excellent, Pass, Fail};
+if score >= 90 { Grade.Excellent }
+else if score >= 60 { Grade.Pass }
+else { Grade.Fail }
 ```
 
 ```telora
 if ready { value }
-else if let 'Some(cached) = candidate { cached }
-else match fallback { 'Some(value) => value, 'None => default }
+else if let Some(cached) = candidate { cached }
+else match fallback { Some(value) => value, None => default }
 ```
 
 提前返回同样可以直接作为 `else` 分支：
@@ -406,8 +412,8 @@ Pattern 可以匹配字面量、enum variant 及其 payload、Tuple 和 Struct �
 
 ```telora
 match result {
-    'Ok(value) => value,
-    'Err(message) => fail!(message, result),
+    Ok(value) => value,
+    Err(message) => fail!(message, result),
 }
 ```
 
@@ -417,9 +423,9 @@ Match arm 可以带 Bool guard。只有无 guard 且覆盖确定的 arm 才参�
 局部绑定还支持：
 
 ```telora
-if let 'Some(value) = candidate { value } else { fallback }
+if let Some(value) = candidate { value } else { fallback }
 
-let 'Some(value) = candidate else {
+let Some(value) = candidate else {
     return fallback;
 };
 ```
@@ -437,7 +443,7 @@ def parse_pair: Fn(String, String) -> Result(Tuple([Int, Int]), String) =
     fn(left, right) {
         let a = parse_int(left)?;
         let b = parse_int(right)?;
-        'Ok((a, b))
+        Ok((a, b))
     };
 ```
 
@@ -524,16 +530,17 @@ pair@[Int, _](1, "text")
 ```
 
 `_` 留下一个必须由完整调用上下文解决的参数。无法解决或证据冲突都会产生诊断。
-类型参数从完整调用收集证据；variant 构造等待同次调用的结构化或完整 enum
-实参确定其归属。调用按确定的 enum 检查 variant 及 payload；不相关 enum 或
-enum 之外的 variant 是类型错误。
+类型参数从完整调用收集证据；variant 构造的名称确定类型族，同次调用中的其他
+实参可以补全该类型族的参数和 payload 的类型上下文。调用按具名 enum 检查
+variant 及 payload；不相关 enum 或 enum 之外的 variant 是类型错误。
 匿名 Struct 实参同样在完整调用上下文中检查。若 generic callback 的结果确定了共享
 Struct 类型，较早书写的 seed 中的 variant 构造字段和空 collection 字段按该结果
-检查；例如 fold callback 返回 Bool 时，seed 的 `{flag: 'False, items: []}` 可
+检查；例如 fold callback 返回 Bool 时，seed 的 `{flag: False, items: []}` 可
 参与 `{flag: Bool, items: Array(A)}`。若 callback 分支没有共同契约，必须显式提供
 完整返回类型；不相关 variant、字段 shape 冲突和不唯一的补全仍是类型错误。
-closure 中不同 variant 的分支应通过返回类型注解、`.ty!(Option(String))` 或调用的
-显式泛型参数获得完整 enum 上下文。未知 variant 或不兼容 payload 仍产生类型错误。
+closure 中同一类型族的 variant 分支合并参数证据，例如 `Some("hi")` 和 `None`
+合并为 `Option(String)`。缺少证据时可通过返回类型注解、`.ty!(Option(String))`
+或调用的显式泛型参数补全。未知 variant 或不兼容 payload 仍产生类型错误。
 未标记的 `expression[index]` 只表示 Array 索引，不表示类型应用。
 
 显式 `def` 契约作为 rigid expected type 参与严格双向检查；这同时适用于 inline
@@ -609,7 +616,7 @@ TypeDesc   用户态解释器观察的擦除后 descriptor 视图
 
 `TypeDesc` 在这里表示公开观察模型，不是与 `Type` 并列的可构造静态类型。当前
 `std/type-desc` observer 接受 `Type` 值，并通过 kind、children 和 resolve 等操作
-暴露规范 descriptor 视图。声明类型以 `'Ref` 暴露，通过 `resolve` 获得其结构 descriptor；
+暴露规范 descriptor 视图。声明类型以 `TypeDescKind.Ref` 暴露，通过 `resolve` 获得其结构 descriptor；
 property 由独立的 property registry 按目标与 property 类型查询。
 
 内建元数据构造器也是普通 callable 值：
@@ -620,9 +627,9 @@ Func([Int, Int], Int)
 Option(String)
 ```
 
-规范函数元数据的公开 descriptor kind 是 `'Func`，其 `parameters` 是 TypeMetadata
+规范函数元数据的公开 descriptor kind 是 `TypeDescKind.Func`，其 `parameters` 是 TypeMetadata
 Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函数元数据的 kind
-观察均返回 `'Func`。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
+观察分别返回各自 kind enum 的 `Func` 成员。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
 
 类型 annotation、decorator property 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
 阶段与程序阶段共享函数语义、值模型、fuel 和失败规则；区别在于 Host 调用它们的
@@ -667,8 +674,8 @@ type User = struct {
 };
 
 type Status = enum {
-    'Pending,
-    'Failed(String),
+    Pending,
+    Failed(String),
 };
 ```
 
@@ -770,8 +777,8 @@ Family 声明可以捕获已经封闭的非参数化递归 concrete type，但�
 
 ```telora
 type Expr(A) = enum {
-    'Leaf(A),
-    'Call(Array(Expr(A))),
+    Leaf(A),
+    Call(Array(Expr(A))),
 };
 ```
 
@@ -837,7 +844,7 @@ metadata、解析 eDSL 并产生领域 closure 的准备逻辑仍由普通 tool-
 
 ```telora
 let empty = [].ty!(Array(Int));
-let truth = ty!('True, Bool);
+let truth = ty!(True, Bool);
 
 let checked = raw.cast!(User);             // Result(User, String)
 
@@ -1024,11 +1031,11 @@ import "./config.toml" { data as config };
 
 ```telora
 type Value = enum {
-    'None, 'True, 'False,
-    'Int(Int), 'Float(Float), 'String(String), 'Bytes(Bytes),
-    'Array(Array(Value)), 'Object(Dict(Value)),
-    'LocalDate(String), 'LocalTime(String),
-    'LocalDateTime(String), 'OffsetDateTime(String),
+    None, True, False,
+    Int(Int), Float(Float), String(String), Bytes(Bytes),
+    Array(Array(Value)), Object(Dict(Value)),
+    LocalDate(String), LocalTime(String),
+    LocalDateTime(String), OffsetDateTime(String),
 };
 ```
 
@@ -1037,15 +1044,15 @@ JSON scalar：
 
 ```telora
 type ScalarValue = enum {
-    'None,
-    'Bool(Bool),
-    'Int(Int),
-    'Float(Float),
-    'String(String),
+    None,
+    Bool(Bool),
+    Int(Int),
+    Float(Float),
+    String(String),
 };
 ```
 
-`'None`、`'Bool(true)`、数值和字符串分别编码为 JSON null、boolean、number 和 string。
+`ScalarValue.None`、`ScalarValue.Bool(True)`、数值和字符串成员分别编码为 JSON null、boolean、number 和 string。
 参数化查询使用 `Array(ScalarValue)` 表达 bindings；数据库 component 再把逻辑标量适配为
 后端的物理参数类型。
 
@@ -1193,8 +1200,8 @@ receiver.ident!(arguments...) == ident!(receiver, arguments...)
 
 ```telora
 match codec.decode(User, raw) {
-    'Ok(user) => user,
-    'Err(error) => fail!(error.message, error.value),
+    Ok(user) => user,
+    Err(error) => fail!(error.message, error.value),
 }
 ```
 
@@ -1522,7 +1529,7 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 ```telora
 import "std/ees" as ees;
 
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 export def run = entry.run(State, config, ees.none, fn(ctx) {
     let initial: State = ...;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = ...;
@@ -1668,8 +1675,8 @@ provenance 的 `Value` 和完整 `SystemResources`；静态 import 则在依赖�
 slot 建立后，直接把相同的 `Value` 物化到尚未封闭的 MainWorld。两条路径都不构造中间
 `DataWorld`，不把 Telora value 解码为 Host-owned 表示，也不在 Host 与 World 之间复制
 完成的数据图；`text_srcs` 保留文本和
-来源名。请求的数据文件不存在时，`default: 'Some(value)` 直接提供已经类型化的
-`Value`，不按 `fmt` 再解析；文本文件的默认值仍是 String。`'None` 表示缺失即失败，
+来源名。请求的数据文件不存在时，`default: Some(value)` 直接提供已经类型化的
+`Value`，不按 `fmt` 再解析；文本文件的默认值仍是 String。`None` 表示缺失即失败，
 其他 I/O 错误也始终失败。数据文件只要存在，解析失败就直接报错，不使用默认值。
 `vars` 是环境变量快照诉求：不存在的名字从 `SystemResources.vars` 省略，存在但不能
 表示为字符串的值会在 Main/initializer 运行前失败。
@@ -1827,12 +1834,12 @@ type Entry(Id, Value) = struct {
     value: Option(Value),
 };
 
-type EntryId = enum {'First, 'Second};
+type EntryId = enum {First, Second};
 type IntEntry = Entry(EntryId, Int);
 
 let entries: Array(IntEntry) = [
-    {id: 'First, value: 'Some(1)},
-    {id: 'Second, value: 'None},
+    {id: EntryId.First, value: Some(1)},
+    {id: EntryId.Second, value: None},
 ];
 ```
 
@@ -1848,17 +1855,17 @@ payload 位置；应先声明具名 Struct：
 
 ```telora
 # 非法：struct 初始化器不能嵌入 enum payload
-# type Expr = enum {'Column(struct {alias: String, column: String})};
+# type Expr = enum {Column(struct {alias: String, column: String})};
 
 type ColumnRef = struct {alias: String, column: String};
-type Expr = enum {'Column(ColumnRef)};
+type Expr = enum {Column(ColumnRef)};
 ```
 
 该限制只属于类型声明。构造 tagged value 时，payload 的匿名记录仍会按具名 Struct
 契约检查，因此下式合法：
 
 ```telora
-let expr: Expr = 'Column({alias: "orders", column: "id"});
+let expr: Expr = Expr.Column({alias: "orders", column: "id"});
 ```
 
 ### 14.3 Family 与递归类型
@@ -1870,7 +1877,7 @@ let expr: Expr = 'Column({alias: "orders", column: "id"});
 因此递归表达式类型可以直接进入函数和 family：
 
 ```telora
-type Expr = enum {'Literal(Value), 'Call(CallExpr)};
+type Expr = enum {Literal(Value), Call(CallExpr)};
 type CallExpr = struct {name: String, args: Array(Expr)};
 
 type Dialect(Context) = struct {
