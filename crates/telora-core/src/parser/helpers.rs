@@ -131,6 +131,7 @@ impl<'a> Lowerer<'a> {
                     | Rule::IntPattern
                     | Rule::StringPattern
                     | Rule::TaggedPattern
+                    | Rule::ConstructorPattern
                     | Rule::TuplePattern
                     | Rule::StructPattern
             )
@@ -348,4 +349,3 @@ impl<'a> Lowerer<'a> {
         Ok(output)
     }
 }
-

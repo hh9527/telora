@@ -1119,8 +1119,9 @@ impl<'a> GenericInference<'a> {
                 else_branch,
             } => {
                 let value_type = self.infer(value, environment, None)?;
+                self.infer_pattern_constructors(pattern, &value_type, environment)?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
-                let analysis = crate::pattern::analyze_pattern(pattern, &value_type);
+                let analysis = crate::pattern::analyze_pattern(pattern, &self.resolve(&value_type));
                 if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                     && analysis.problems.is_empty()
                 {
@@ -1162,8 +1163,9 @@ impl<'a> GenericInference<'a> {
                 body,
             } => {
                 let value_type = self.infer(value, environment, None)?;
+                self.infer_pattern_constructors(pattern, &value_type, environment)?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
-                let analysis = crate::pattern::analyze_pattern(pattern, &value_type);
+                let analysis = crate::pattern::analyze_pattern(pattern, &self.resolve(&value_type));
                 if analysis.irrefutable {
                     self.pattern_diagnostics
                         .entry(pattern.location)
@@ -1208,6 +1210,9 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Match { value, arms } => {
                 let value_type = self.infer(value, environment, None)?;
+                for arm in arms {
+                    self.infer_pattern_constructors(&arm.value.pattern, &value_type, environment)?;
+                }
                 let resolved_value_type = self.expose_pattern_type(&value_type);
                 // These parser-generated intrinsics have an Option contract; this
                 // is not enum synthesis for user-authored match expressions.

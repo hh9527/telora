@@ -1,0 +1,1 @@
+constructor pattern requires a type declaration

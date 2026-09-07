@@ -279,6 +279,11 @@ JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 使用同一声明的类型用途，例如 `let ty: Type = UserId;`。import 和 reexport
 保留声明的这两个用途；普通 Type 变量与返回 Type 的函数保持其值契约。
 
+构造器模式按声明解构 newtype：`let UserId(value) = id;` 读取载荷，
+`match id { UserId(0) => "zero", UserId(value) => "other" }` 按载荷匹配。
+模式可以嵌套，支持泛型和模块限定名称，例如 `Box(UserId(value))` 与
+`model.UserId(value)`。模式中的构造器名称引用类型声明；载荷保留自己的类型。
+
 ```telora
 type Entity = enum {
     'Ticket,

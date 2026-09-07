@@ -65,6 +65,9 @@ pub(crate) fn first_refutable_location(
         return None;
     }
     match (&pattern.value, matched) {
+        (PatternKind::Constructor { payload, .. }, TypeDescriptor::Newtype(inner)) => {
+            first_refutable_location(payload, inner).or(Some(pattern.location))
+        }
         (PatternKind::Tuple(items), TypeDescriptor::Tuple(matched_items))
             if items.len() == matched_items.len() =>
         {
@@ -119,6 +122,9 @@ pub(crate) fn first_incompatible_location(
         return None;
     }
     match (&pattern.value, matched) {
+        (PatternKind::Constructor { payload, .. }, TypeDescriptor::Newtype(inner)) => {
+            first_incompatible_location(payload, inner).or(Some(pattern.location))
+        }
         (PatternKind::Tuple(items), TypeDescriptor::Tuple(matched_items))
             if items.len() == matched_items.len() =>
         {
@@ -204,7 +210,7 @@ impl AnalysisContext {
                     });
                 }
             }
-            PatternKind::Tagged { payload, .. } => { self.analyze_optional(payload, None); }
+            PatternKind::Tagged { payload, .. } | PatternKind::Constructor { payload, .. } => { self.analyze_optional(payload, None); }
             PatternKind::Tuple(items) => {
                 for item in items { self.analyze_optional(item, None); }
             }
@@ -242,6 +248,15 @@ impl AnalysisContext {
                 self.catch_all(matched)
             }
             PatternKind::Int(_) => primitive_shape(matched, PrimitivePattern::Int),
+            PatternKind::Constructor { payload, .. } => {
+                if let TypeDescriptor::Newtype(inner) = matched {
+                    let payload = self.analyze(payload, inner);
+                    PatternShape::new(payload.compatibility, payload.irrefutable)
+                } else {
+                    self.analyze_optional(payload, None);
+                    PatternShape::new(PatternCompatibility::Incompatible, false)
+                }
+            }
             PatternKind::Float(_) => primitive_shape(matched, PrimitivePattern::Float),
             PatternKind::String(_) => primitive_shape(matched, PrimitivePattern::String),
             PatternKind::Atom(tag) => {

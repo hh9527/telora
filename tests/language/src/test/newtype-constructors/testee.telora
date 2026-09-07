@@ -18,6 +18,10 @@ def box: for(T) Fn(T) -> Box(T) = fn(value) { Box(value) };
 def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(make, value) { make(value) };
 def metadata_factory: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId };
 def identity: for(T) Fn(T) -> T = fn(value) { value };
+def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
+    let Box(payload) = value;
+    payload
+};
 
 export def direct = test.should_ok(fn() {
     let id = UserId(7);
@@ -84,4 +88,36 @@ export def contextual_payload = test.should_ok(fn() {
     let item = WrappedItem({value: 19});
     let option = Maybe('Some(20));
     expect(item.0.value == 19 && option.0 == 'Some(20))
+});
+
+export def constructor_patterns = test.should_ok(fn() {
+    let UserId(id) = UserId(24);
+    let Box(UserId(nested)) = Box(UserId(25));
+    let model.External(remote) = model.External(26);
+    let bridge.Id(reexported) = bridge.Id(27);
+    let selected = match UserId(28) {
+        UserId(0) => 0,
+        UserId(value) => value,
+    };
+    let conditional = if let UserId(29) = UserId(29) { 29 } else { 0 };
+    expect(id == 24 && nested == 25 && remote == 26 && reexported == 27
+        && selected == 28 && conditional == 29 && unbox(Box(30)) == 30)
+});
+
+export def pattern_control_flow = test.should_ok(fn() {
+    let extract: Fn(Maybe) -> Int = fn(value) {
+        let Maybe('Some(item)) = value else { return 0; };
+        item
+    };
+    let guarded = match Box(UserId(31)) {
+        Box(UserId(value)) if value == 0 => 0,
+        Box(UserId(value)) => value,
+    };
+    let nested: Option(UserId) = 'Some(UserId(32));
+    let from_enum = match nested {
+        'Some(UserId(value)) => value,
+        'None => 0,
+    };
+    expect(extract(Maybe('Some(33))) == 33 && extract(Maybe('None)) == 0
+        && guarded == 31 && from_enum == 32)
 });

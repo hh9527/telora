@@ -519,6 +519,11 @@ impl<'a> Compiler<'a> {
                     self.compile_pattern(pattern, element, failures, bindings)?;
                 }
             }
+            PatternKind::Constructor { payload, .. } => {
+                let element = self.allocate();
+                self.emit(Operation::GetTuple { dst: element, tuple: value, index: 0 }, pattern.location);
+                self.compile_pattern(payload, element, failures, bindings)?;
+            }
             PatternKind::Struct(fields) => {
                 let condition = self.allocate();
                 self.emit(

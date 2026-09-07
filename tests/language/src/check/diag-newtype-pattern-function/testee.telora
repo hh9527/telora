@@ -1,0 +1,3 @@
+type A = struct(Int);
+def make: Fn(Int) -> A = fn(value) { A(value) };
+export def invalid = match A(1) { make(value) => value };

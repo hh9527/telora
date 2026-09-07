@@ -273,7 +273,7 @@ fn infer_block_with(
 fn clear_pattern_types(pattern: &Pattern, environment: &mut HashMap<String, TypeDescriptor>) {
     match &pattern.value {
         crate::ast::PatternKind::Binding(name) => { environment.remove(&name.value); }
-        crate::ast::PatternKind::Tagged { payload, .. } => clear_pattern_types(payload, environment),
+        crate::ast::PatternKind::Tagged { payload, .. } | crate::ast::PatternKind::Constructor { payload, .. } => clear_pattern_types(payload, environment),
         crate::ast::PatternKind::Tuple(items) => {
             for item in items { clear_pattern_types(item, environment); }
         }

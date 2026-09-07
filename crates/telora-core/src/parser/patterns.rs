@@ -70,6 +70,31 @@ impl<'a> Lowerer<'a> {
             );
         }
         let inner = match rule {
+            Rule::ConstructorPattern => {
+                let mut names = self.token_children(node, Token::Identifier);
+                let first = self.identifier(names.next().expect("constructor has a name"));
+                let mut constructor = located(ExprKind::Variable(first.clone()), first.location);
+                for name in names {
+                    let field = self.identifier(name);
+                    let location = Location::new(
+                        constructor.location.source,
+                        crate::source::TextRange::from_usize(
+                            constructor.location.start as usize..field.location.end as usize,
+                        ).expect("constructor path is within a parsed source"),
+                    );
+                    constructor = located(ExprKind::Field {
+                        receiver: Box::new(constructor), field,
+                    }, location);
+                }
+                let open = self.first_token(node, Token::LParen)?;
+                let payload = self.children(node).find(|child| self.is_pattern(*child)
+                    && self.cst.span(*child).start >= self.cst.span(open).end)
+                    .ok_or_else(|| self.error(node, "constructor pattern has no payload"))?;
+                PatternKind::Constructor {
+                    constructor: Box::new(constructor),
+                    payload: Box::new(self.pattern(payload)?),
+                }
+            }
             Rule::IdentifierPattern => {
                 if self
                     .token_children(node, Token::Placeholder)

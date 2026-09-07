@@ -132,7 +132,8 @@ match_expr: 'match' expression '{' match_arm (?1 ',' match_arm)* [','] '}';
 return_expr: 'return' expression Semicolon @return_expr;
 match_arm: pattern ['if' expression] '=>' expression;
 pattern:
-  (Identifier | Placeholder) @identifier_pattern
+  ?4 constructor_pattern ^
+| (Identifier | Placeholder) @identifier_pattern
 | Int @int_pattern
 | Float @float_pattern
 | string_literal @string_pattern
@@ -141,6 +142,7 @@ pattern:
 | '(' [pattern (?1 ',' pattern)* [',']] ')' @tuple_pattern
 | '{' [struct_pattern_field (?3 ',' struct_pattern_field)* [',']] '}' @struct_pattern
 ;
+constructor_pattern: Identifier ('.' Identifier)* '(' pattern ')';
 struct_pattern_field: Identifier [':' pattern];
 string_literal: DoubleQuote string_text_part* DoubleQuote | RawString;
 concat_expression: Backtick string_part* Backtick;

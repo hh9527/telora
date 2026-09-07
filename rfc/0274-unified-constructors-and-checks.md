@@ -10,10 +10,10 @@
 - Implementation: newtype declaration metadata, canonical identity, positional
   `.0` access, payload codecs, schema and Dyn tuple observation are implemented
   on the branch. Runtime callable constructors, generic application and
-  first-class use are implemented. Constructor patterns, tool-stage callable
-  construction, named enum constructors and checks remain pending.
-- Validation: debug build and workspace tests pass for the runtime constructor
-  batch, including 291 language fixture groups. New behavior is tested in
+  first-class use and declaration-resolved newtype patterns are implemented.
+  Tool-stage callable construction, named enum constructors and checks remain pending.
+- Validation: debug build and workspace tests pass for the constructor pattern
+  batch, including 296 language fixture groups. New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective

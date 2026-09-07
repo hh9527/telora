@@ -660,6 +660,7 @@ impl Resolver {
             } => {
                 self.index_expr(value, scopes);
                 scopes.push(Scope::new());
+                self.index_pattern_constructors(pattern, scopes);
                 self.index_pattern(pattern, scopes.last_mut().expect("if let has a scope"));
                 self.index_block(then_branch, scopes, false);
                 scopes.pop();
@@ -675,6 +676,7 @@ impl Resolver {
                 self.index_expr(value, scopes);
                 self.index_block(else_branch, scopes, false);
                 scopes.push(Scope::new());
+                self.index_pattern_constructors(pattern, scopes);
                 self.index_pattern(pattern, scopes.last_mut().expect("let else has a scope"));
                 self.index_block(body, scopes, false);
                 scopes.pop();
@@ -700,6 +702,7 @@ impl Resolver {
 
     fn index_arm(&mut self, arm: &MatchArm, scopes: &mut Vec<Scope>) {
         scopes.push(Scope::new());
+        self.index_pattern_constructors(&arm.value.pattern, scopes);
         self.index_pattern(
             &arm.value.pattern,
             scopes.last_mut().expect("arm has a scope"),
@@ -727,11 +730,28 @@ impl Resolver {
                     self.index_pattern(item, scope);
                 }
             }
-            PatternKind::Tagged { payload, .. } => self.index_pattern(payload, scope),
+            PatternKind::Tagged { payload, .. } | PatternKind::Constructor { payload, .. } => self.index_pattern(payload, scope),
             PatternKind::Struct(fields) => {
                 for field in fields {
                     self.index_pattern(&field.pattern, scope);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn index_pattern_constructors(&mut self, pattern: &Pattern, scopes: &mut Vec<Scope>) {
+        match &pattern.value {
+            PatternKind::Constructor { constructor, payload } => {
+                self.index_expr(constructor, scopes);
+                self.index_pattern_constructors(payload, scopes);
+            }
+            PatternKind::Tagged { payload, .. } => self.index_pattern_constructors(payload, scopes),
+            PatternKind::Tuple(items) => {
+                for item in items { self.index_pattern_constructors(item, scopes); }
+            }
+            PatternKind::Struct(fields) => {
+                for field in fields { self.index_pattern_constructors(&field.pattern, scopes); }
             }
             _ => {}
         }
