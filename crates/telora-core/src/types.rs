@@ -44,6 +44,7 @@ include!("types/properties.rs");
 include!("types/prelude.rs");
 include!("types/inference-state.rs");
 include!("types/inference-context.rs");
+include!("types/inference-enum.rs");
 include!("types/inference-unify.rs");
 include!("types/inference-expression.rs");
 include!("types/inference-utils.rs");

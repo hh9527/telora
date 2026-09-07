@@ -126,7 +126,7 @@ def advance: Fn(State, actor.Event) -> Transition = fn(state, event) {
 export def config:
     Fn(rt.Env, MainType) -> Tuple([rt.SystemCaps, Initializer]) =
     fn(env, main) {
-        let _mode = if env.mode == 'Run { 'True } else {
+        let _mode: Bool = if env.mode == 'Run { 'True } else {
             fail!("run Entry policy requires Run mode")
         };
         let data_srcs = configure_sources(main.config.sources, env.sources);

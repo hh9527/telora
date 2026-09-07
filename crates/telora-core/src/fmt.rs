@@ -21,7 +21,6 @@ enum FmtNode {
     String(String),
     Int(i64),
     Float(u64),
-    Atom(String),
     Concat {
         strings: Vec<String>,
         items: Vec<Fmt>,
@@ -39,10 +38,6 @@ impl Fmt {
 
     fn float(value: f64) -> Self {
         Self(Arc::new(FmtNode::Float(value.to_bits())))
-    }
-
-    fn atom(value: String) -> Self {
-        Self(Arc::new(FmtNode::Atom(value)))
     }
 
     fn concat(strings: Vec<String>, items: Vec<Self>) -> Self {
@@ -126,7 +121,7 @@ fn measure_fmt(value: &Fmt) -> Result<usize, NativeError> {
             return Ok(*measurement);
         }
         let measurement = match value.0.as_ref() {
-            FmtNode::String(value) | FmtNode::Atom(value) => FmtMeasurement {
+            FmtNode::String(value) => FmtMeasurement {
                 bytes: value.len(),
                 height: 1,
             },
@@ -175,7 +170,7 @@ fn write_fmt(value: &Fmt, output: &mut String, depth: usize) -> Result<(), Nativ
         ));
     }
     match value.0.as_ref() {
-        FmtNode::String(value) | FmtNode::Atom(value) => output.push_str(value),
+        FmtNode::String(value) => output.push_str(value),
         FmtNode::Int(value) => write!(output, "{value}").expect("writing to String cannot fail"),
         FmtNode::Float(value) => {
             write!(output, "{}", f64::from_bits(*value)).expect("writing to String cannot fail")
@@ -556,26 +551,6 @@ pub(crate) fn native_from_float(context: &mut CallContext<'_, '_>) -> Result<(),
         .ok_or_else(|| NativeError::new("std/fmt.from_float expects Float"))?;
     let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(0)?)?;
     commit_fmt(context, native_type, Fmt::float(value), reservation)
-}
-
-pub(crate) fn native_from_atom(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let native_type = fmt_type(context)?;
-    let argument = context.argument(0)?;
-    let length = context
-        .value(argument)?
-        .unwrap_declared()
-        .and_then(ValueRef::as_atom)
-        .ok_or_else(|| NativeError::new("std/fmt.from_atom expects Atom"))?
-        .as_str()
-        .len();
-    let reservation = context.reserve_opaque_allocation(fmt_payload_bytes(length)?)?;
-    let text = context
-        .value(argument)?
-        .unwrap_declared()
-        .and_then(ValueRef::as_atom)
-        .expect("Atom argument was validated before reservation");
-    let value = copy_string(text.as_str())?;
-    commit_fmt(context, native_type, Fmt::atom(value), reservation)
 }
 
 pub(crate) fn native_concat(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {

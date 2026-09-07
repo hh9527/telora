@@ -36,7 +36,7 @@ export def check: Fn(Value) -> Value = fn(actual) {
         && has_type(actual, "metadata_branch", "Type")
         && has_type(actual, "choose_record", "Fn(enum {False, True}) -> Record")
         && has_type(actual, "choose_match", "Fn(Int) -> Record")
-        && has_type(actual, "choose_nested", "Fn(enum {False, True}) -> 'Some(({path: Array<Int>}))")
+        && has_type(actual, "choose_nested", "Fn(enum {False, True}) -> enum {None, Some((Path))}")
         && has_type(actual, "choose_conflict", "Fn(Int) -> Record")
         && has_type(actual, "add_partial", "Fn(Int, Int) -> Int")
         && has_type(actual, "add_result", "Fn(Int) -> Int")

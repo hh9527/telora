@@ -1,0 +1,1 @@
+export def value: Atom = 'Ready;

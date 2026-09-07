@@ -110,7 +110,6 @@ fn assert_codec_graph_ready(
             CodecKind::Array(item) | CodecKind::Dict(item) => {
                 visit(item, current, background, visited)
             }
-            CodecKind::Tagged { payload, .. } => visit(payload, current, background, visited),
             CodecKind::Tuple(items) => items
                 .iter()
                 .try_for_each(|item| visit(item, current, background, visited)),
@@ -130,7 +129,6 @@ fn assert_codec_graph_ready(
             | CodecKind::String
             | CodecKind::Bytes
             | CodecKind::Opaque
-            | CodecKind::Atom(_)
             | CodecKind::Function => Ok(()),
         }
     }
@@ -195,14 +193,7 @@ fn decode_runtime_type_at(
         "String" => CodecKind::String,
         "Bytes" => CodecKind::Bytes,
         "Opaque" => return Err(format!("{path} uses an unsupported opaque type")),
-        "Atom" => {
-            let tag = view
-                .dict_get_text(handle, "tag")
-                .map_err(|error| error.to_string())?
-                .and_then(|tag| view.atom_text(tag).ok().flatten())
-                .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            CodecKind::Atom(tag.as_str().to_owned())
-        }
+        "Atom" | "Tagged" => return Err(format!("{path}: standalone {kind} is not a supported type; use an enum")),
         "Array" => {
             let item = view
                 .dict_get_text(handle, "item")
@@ -226,26 +217,6 @@ fn decode_runtime_type_at(
                 current,
                 background,
             )?))
-        }
-        "Tagged" => {
-            let tag = view
-                .dict_get_text(handle, "tag")
-                .map_err(|error| error.to_string())?
-                .and_then(|tag| view.atom_text(tag).ok().flatten())
-                .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            let payload = view
-                .dict_get_text(handle, "payload")
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| format!("{path}.payload is missing"))?;
-            CodecKind::Tagged {
-                tag: tag.as_str().to_owned(),
-                payload: Box::new(decode_runtime_type_at(
-                    payload,
-                    &format!("{path}.payload"),
-                    current,
-                    background,
-                )?),
-            }
         }
         "Tuple" => {
             let field = "items";

@@ -609,15 +609,6 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                     ),
                 ),
                 (
-                    "from_atom",
-                    NativeFunction::new_with_native_type(
-                        "std/fmt.from_atom",
-                        1,
-                        1,
-                        crate::fmt::native_from_atom,
-                    ),
-                ),
-                (
                     "concat",
                     NativeFunction::new_with_native_type(
                         "std/fmt.concat",

@@ -1,7 +1,7 @@
 type TypeDescKind = enum {
     'Never, 'Type, 'TypeOf,
     'Int, 'Float, 'String, 'Bytes,
-    'Atom, 'Array, 'Dict, 'Tagged,
+    'Array, 'Dict,
     'Tuple, 'Struct, 'Enum,
     'Func, 'Opaque, 'Bound, 'Dyn, 'Ref,
 };

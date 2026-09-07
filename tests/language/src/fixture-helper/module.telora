@@ -2,7 +2,7 @@ import "std/test" as test;
 
 export def make: Fn() -> test.Test = fn() {
     test.with_fixtures(["input.json"], fn(value) {
-        test.should_ok(fn() {
+        test.should_ok(fn() -> Bool {
             match value { 'Int(42) => 'True, _ => fail!("wrong source base", value) }
         })
     })

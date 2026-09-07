@@ -62,12 +62,10 @@ Telora 源文件通常以 `.telora` 结尾。`#` 引入行注释；文件开头�
 b"bytes"                   # Bytes
 r"raw text"                # raw String
 r#"a "quoted" value"#      # 带 delimiter 的 raw String
-'Ready                     # Atom
+'Ready                     # variant 构造，需要 enum 上下文
 ```
 
-`Atom` 是覆盖所有无 payload 符号的内建宽类型，并具有稳定的内建 TypeId；每个
-Atom 字面量同时具有自己的 singleton 静态类型。singleton Atom 可赋给 `Atom`，反向
-收窄则需要显式检查。具名 enum 保留自己的 nominal TypeId，不等同于 `Atom`。
+具名 enum 保留自己的 nominal TypeId。variant 的名称和 payload 由 enum 声明定义。
 
 普通字符串支持 `\0`、`\n`、`\r`、`\t`、`\"`、`\\`、两位 ASCII `\xNN`、
 Unicode scalar `\u{...}` 和反斜杠换行后的显式续行。反引号字符串使用同一组
@@ -80,10 +78,10 @@ let greeting = `hello \{name}`;
 ```
 
 插值中的每个表达式都要求 `T: std/fmt.Display`，并在编译期降低为已选中
-dictionary 的 `display` 成员调用。String、Int、Float 和 Atom 由标准能力提供
+dictionary 的 `display` 成员调用。String、Int、Float 由标准能力提供
 显式实现；插值处需要已确定的类型及其 Display 实现，`Dyn` 必须先显式投影。具名 enum
 不会因运行时使用 Atom 表示而自动获得 `Display`。String 保持原文本，Int 使用
-十进制表示，Atom 省略前导 `'`。Float
+十进制表示。Float
 使用有限 binary64 的文本表示：与 Rust `f64` 的 `{}` 一致，选择能往返到同一
 binary64 值的最短十进制文本，不受 locale 影响。该表示保留负零的符号，但不保留
 整数值的小数点，例如 `3.0` 表示为 `3`，`-0.0` 表示为 `-0`。输出不保留字面量的
@@ -122,7 +120,8 @@ String、Int、Float 以及嵌套的 `DisplayBy` struct；它不动态调用字�
 Host-only 观察；codec/JSON 则是数据交换协议，三者
 都不能作为彼此的隐式替代。
 
-Bool 没有独立运行时类别。它是闭合的 Atom 类型，其值为 `'True` 和 `'False`。
+Bool 是闭合的内建 enum，其值为 `'True` 和 `'False`。条件、guard 和布尔操作符
+提供 Bool 上下文；独立构造使用 `'True.ty!(Bool)` 或显式类型注解。
 条件位置只接受 Bool，不进行 truthiness 转换。
 
 Float 是有限的 IEEE 754 binary64 值。字面量可以写成 `digits.digits`、
@@ -161,7 +160,7 @@ let second: Int = ids[1];
 无共同上下文的不同 enum variant 也会报错；可用 `.ty!(Ty)`、`func@[Ty](...)`
 或类型注解为完整表达式提供契约，不自动合成新的结构 enum。
 显式 `Array(T)` expected type 会向每个普通元素和 spread operand 下传 `T`。因此当
-`T` 是 concrete family 实例时，多个匿名记录元素中的 singleton Atom、闭包、窄
+`T` 是 concrete family 实例时，多个匿名记录元素中的 variant 构造、闭包、
 Option variant 和空集合都按完整的共同契约检查。
 该检查与元素顺序无关；真正不兼容的字段在对应元素位置报告类型冲突。
 在 `if`、`if let` 或 `match` 的结构化分支结果中，同一 Array 或 Dict 元素位置的具体
@@ -274,25 +273,30 @@ x 和 Y。源值须是静态字段集合已知的具名 Struct；源字段须存
 
 ### 3.2 Sum 值
 
-Atom 是无 payload 的符号。调用 Atom 构造带 payload 的 Tagged 值：
+quoted variant 表达式构造目标 enum 的无 payload 或带 payload 值：
 
 ```telora
-'None
-'Some(1)
-'Ok(value)
-'Err(error)
+let absent: Option(Int) = 'None;
+let present: Option(Int) = 'Some(1);
+let success: Result(Int, String) = 'Ok(1);
+let failure: Result(Int, String) = 'Err("reason");
 ```
 
 Option、Result、Bool 以及用户 enum 都建立在 Atom/Tagged 表示上。类型元数据决定
 合法 tag、payload 形状及静态穷尽性。
 
+每个构造表达式都必须通过类型上下文或完整调用证据确定 enum 归属。无法确定时
+要求 `.ty!(Ty)` 或 `@[Ty]`；不按 variant 名称搜索声明，也不合成匿名 enum。
+推断中的待解构造约束不能进入泛型契约、模块接口或 Dyn witness。
+明确的 `Fn(Payload) -> Enum` 上下文也允许把 quoted payload variant 用作构造函数。
+
 ### 3.3 相等性和顺序
 
 普通标量和结构值支持 `==` 和 `!=`，其签名均要求两个操作数具有同一静态语义类型
 `T`；已知类型或形状不兼容时在前端报错，不把类型错误解释为 False。若一侧具有
-exact nominal identity，另一侧是 dict、Atom 或 Tagged 字面量，该字面量从具名值
+exact nominal identity，另一侧是 dict 字面量或 variant 构造，该表达式从具名值
 获得同一名义类型上下文，与操作数顺序无关。上下文沿 Array 元素、Tuple 对应位置、
-dict 字段和值、同 tag 的 Tagged payload 递归传播，例如 `[item] == [{value: 42}]`
+dict 字段和值、同 variant 的 payload 递归传播，例如 `[item] == [{value: 42}]`
 中的字段字面量可从 `item` 获得名义类型；不同位置的上下文可分别来自两个操作数。
 传播只作用于当前表达式中的字面量构造（包括 spread 中直接书写的字面量），不为
 已构造的匿名变量或函数返回值重新赋予名义身份。
@@ -398,7 +402,7 @@ if ready { value } else return fallback;
 
 ### 4.1 模式匹配
 
-Pattern 可以匹配字面量、Atom、Tagged payload、Tuple 和 Struct 字段：
+Pattern 可以匹配字面量、enum variant 及其 payload、Tuple 和 Struct 字段：
 
 ```telora
 match result {
@@ -470,7 +474,6 @@ Telora 使用结构化静态类型和双向检查。当前公开类型类别包�
 
 ```text
 Int, Float, String, Bytes
-Atom 与 Tagged
 Array(A), Dict(A), Tuple([...])
 Struct, Enum
 Fn(...) -> ...
@@ -521,14 +524,14 @@ pair@[Int, _](1, "text")
 ```
 
 `_` 留下一个必须由完整调用上下文解决的参数。无法解决或证据冲突都会产生诊断。
-类型参数从完整调用收集证据；裸 closed Atom 实参不会在同次调用的结构化或完整 enum
-实参之前把共享参数固定为 singleton。若后者确定了包含该 Atom 的闭合 enum，调用采用
-该 enum；不相关 enum 或 enum 之外的 Atom 仍是类型错误。
+类型参数从完整调用收集证据；variant 构造等待同次调用的结构化或完整 enum
+实参确定其归属。调用按确定的 enum 检查 variant 及 payload；不相关 enum 或
+enum 之外的 variant 是类型错误。
 匿名 Struct 实参同样在完整调用上下文中检查。若 generic callback 的结果确定了共享
-Struct 类型，较早书写的 seed 中的 singleton Atom 字段和空 collection 字段按该结果
-检查并拓宽；例如 fold callback 返回 Bool 时，seed 的 `{flag: 'False, items: []}` 可
+Struct 类型，较早书写的 seed 中的 variant 构造字段和空 collection 字段按该结果
+检查；例如 fold callback 返回 Bool 时，seed 的 `{flag: 'False, items: []}` 可
 参与 `{flag: Bool, items: Array(A)}`。若 callback 分支没有共同契约，必须显式提供
-完整返回类型；不相关 Atom、字段 shape 冲突和不唯一的补全仍是类型错误。
+完整返回类型；不相关 variant、字段 shape 冲突和不唯一的补全仍是类型错误。
 closure 中不同 variant 的分支应通过返回类型注解、`.ty!(Option(String))` 或调用的
 显式泛型参数获得完整 enum 上下文。未知 variant 或不兼容 payload 仍产生类型错误。
 未标记的 `expression[index]` 只表示 Array 索引，不表示类型应用。
@@ -591,7 +594,7 @@ Evidence 携带已发布 property payload，implementation selection 不读取 p
 
 当前不存在 higher-rank type、用户定义或通用 subtyping、trait object、interface、
 associated type、default member、specialization、trait inheritance 或 higher-kinded
-type。singleton Atom 到内建宽类型 `Atom` 是固定的内建 widening 关系。
+type。
 
 ## 7. 类型元数据
 
@@ -819,7 +822,7 @@ let exact_sugar = dyn.project@[User](package);
 Dyn 中的值需要显式投影为具体类型。
 
 `cast!(expr, T)` 与 `expr.cast!(T)` 做表示不变的 checked refinement，并返回
-`Result(T, String)`。raw Dict/Atom 的完整表示符合 T 时可以安装 T 的 canonical witness；
+`Result(T, String)`。匿名 Dict 的完整表示符合目标 struct T 时可以安装 T 的 canonical witness；
 已经带有另一个名义 `TypeId` 的值即使结构相同也失败。cast 不解析 String、不做数值
 转换、不解包公共数据 sum、不应用 rename/default/flatten，也不重建业务数据图；这些
 行为属于 codec/translation。失败只返回 `Err(String)`，只有显式 `unwrap!`/`must_ok!`
@@ -1781,8 +1784,8 @@ Ontology、analytics、build、deployment 或 Agent workflow 目前都不是语�
 payload 精化均属于当前语义。但推断不保证为任意一组分别构造的窄值主动寻找一个
 公共的高层 family 实例。
 
-特别是，当同一个 Array 没有显式 item expected type，而元素同时包含不同 singleton
-Atom、不同 closure、不同 `Option` variant 或匿名 Struct 时，仅凭元素字面量可能
+特别是，当同一个 Array 没有显式 item expected type，而元素同时包含不同
+variant 构造、不同 closure 或匿名 Struct 时，仅凭元素字面量可能
 无法主动找到预期的封闭 enum、函数契约或参数化 family。严格模式会报告冲突或未
 解决约束，并要求各元素满足共同类型。使用 `.ty!(Ty)` 或 `@[Ty]` 可以提供完整
 上下文；领域中的多种数据形态通过显式 enum 定义。

@@ -244,7 +244,15 @@ impl AnalysisContext {
             PatternKind::Int(_) => primitive_shape(matched, PrimitivePattern::Int),
             PatternKind::Float(_) => primitive_shape(matched, PrimitivePattern::Float),
             PatternKind::String(_) => primitive_shape(matched, PrimitivePattern::String),
-            PatternKind::Atom(tag) => atom_shape(matched, tag),
+            PatternKind::Atom(tag) => {
+                if is_unknown(matched) && !matches!(matched, TypeDescriptor::Never) {
+                    self.problems.push(PatternProblem {
+                        location: pattern.location,
+                        message: "variant pattern requires a known enum context".into(),
+                    });
+                }
+                atom_shape(matched, tag)
+            }
             PatternKind::Tagged { tag, payload } => {
                 let (payload_type, outer_compatibility, only_variant) = match matched {
                     TypeDescriptor::Tagged {
@@ -276,6 +284,12 @@ impl AnalysisContext {
                         ),
                     },
                     matched if is_unknown(matched) => {
+                        if !matches!(matched, TypeDescriptor::Never) {
+                            self.problems.push(PatternProblem {
+                                location: pattern.location,
+                                message: "variant pattern requires a known enum context".into(),
+                            });
+                        }
                         (None, PatternCompatibility::Unknown, false)
                     }
                     _ => (

@@ -1,0 +1,1 @@
+export def value: Int = { let unused = ('Ready, 0); 1 };

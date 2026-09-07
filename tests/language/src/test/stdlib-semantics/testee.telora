@@ -68,7 +68,6 @@ export def format_fragments = test.should_ok(fn() {
         fmt.render(fmt.from_string("host")) == "host"
             && fmt.render(fmt.from_int(8080)) == "8080"
             && fmt.render(fmt.from_float(1.25)) == "1.25"
-            && fmt.render(fmt.from_atom('Ready)) == "Ready"
             && fmt.render(fmt.concat(
                 ["[", "]:", ""],
                 [fmt.from_string("api"), fmt.from_int(3)],
@@ -78,9 +77,9 @@ export def format_fragments = test.should_ok(fn() {
 
 export def codec_and_schema = test.should_ok(fn() {
     expect({
-        let boolean = codec.decode(Bool, codec.encode(codec.Value, 'True))
+        let boolean = codec.decode(Bool, codec.encode(codec.Value, 'True.ty!(Bool)))
             |> result.unwrap;
-        let none = codec.decode(Option(Int), codec.encode(codec.Value, 'None))
+        let none = codec.decode(Option(Int), codec.encode(codec.Value, 'None.ty!(Option(Int))))
             |> result.unwrap;
         let some = codec.decode(Option(Int), codec.encode(codec.Value, 3))
             |> result.unwrap;

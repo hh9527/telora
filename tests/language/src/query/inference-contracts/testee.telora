@@ -39,7 +39,8 @@ def choose_match: Fn(Int) -> Record = fn(value) {
     }
 };
 
-def choose_nested = fn(flag) {
+type Path = struct {path: Array(Int)};
+def choose_nested: Fn(Bool) -> Option(Tuple([Path])) = fn(flag) {
     if flag { 'Some(({path: []},)) } else { 'Some(({path: [1]},)) }
 };
 

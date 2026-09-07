@@ -701,35 +701,6 @@ fn dyn_tagged_parts(
         }
     };
     match kind {
-        "Atom" => {
-            let expected = view
-                .dict_get_text(type_handle, "tag")
-                .map_err(|error| error.to_string())?
-                .and_then(|tag| view.atom_text(tag).ok().flatten())
-                .ok_or_else(|| "Atom descriptor has no tag".to_owned())?;
-            if runtime.0 != expected.as_str() || runtime.1.is_some() {
-                return Err(format!("expected unit tag '{expected}"));
-            }
-            Ok((runtime.0, None))
-        }
-        "Tagged" => {
-            let expected = view
-                .dict_get_text(type_handle, "tag")
-                .map_err(|error| error.to_string())?
-                .and_then(|tag| view.atom_text(tag).ok().flatten())
-                .ok_or_else(|| "Tagged descriptor has no tag".to_owned())?;
-            if runtime.0 != expected.as_str() {
-                return Err(format!("expected tag '{expected}"));
-            }
-            let payload = runtime
-                .1
-                .ok_or_else(|| format!("tag '{expected} requires a payload"))?;
-            let payload_desc = view
-                .dict_get_text(type_handle, "payload")
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| "Tagged descriptor has no payload".to_owned())?;
-            Ok((runtime.0, Some((payload_desc, payload))))
-        }
         "Enum" => {
             let DecodedValue::Dict(variants) = view
                 .dict_get_text(type_handle, "variants")
@@ -975,7 +946,6 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
     match kind.as_str() {
         "TypeOf" => Ok(vec![get("instance")?]),
         "Array" | "Dict" => Ok(vec![get("item")?]),
-        "Tagged" => Ok(vec![get("payload")?]),
         "Tuple" => {
             let field = "items";
             let DecodedValue::Array(items) = get(field)?.value() else {
@@ -1017,7 +987,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
                 .collect()
         }
         "Never" | "Type" | "Dyn" | "Int" | "Float" | "String" | "Bytes" | "Opaque"
-        | "Atom" | "Func" | "Bound" | "Named" => Ok(Vec::new()),
+        | "Func" | "Bound" | "Named" => Ok(Vec::new()),
         other => Err(format!("unknown Type metadata kind '{other}")),
     }
 }

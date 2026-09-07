@@ -335,7 +335,7 @@
                    children: [{value: 2, children: []}],
                })) |> result.unwrap;
                let pair = codec.decode(Types.Left, codec.encode(codec.Value, {
-                   right: {left: 'None},
+                   right: {left: 'None.ty!(Option(Types.Left))},
                })) |> result.unwrap;
                {
                    node: node,

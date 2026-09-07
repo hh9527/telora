@@ -160,9 +160,7 @@ fn infer_value_ref_with(
             .opaque_native_type()
             .cloned()
             .map(TypeDescriptor::Opaque)?,
-        ValueKind::Atom => value
-            .as_atom()
-            .map(|atom| TypeDescriptor::Atom(atom_from_name(atom.as_str())))?,
+        ValueKind::Atom | ValueKind::Tagged => return None,
         ValueKind::Array => {
             let items = (0..value.sequence_len().unwrap_or_default())
                 .filter_map(|index| value.sequence_get(index))
@@ -171,14 +169,6 @@ fn infer_value_ref_with(
             let item = if items.is_empty() { TypeDescriptor::Never } else { common_type(items)? };
             TypeDescriptor::Array(Box::new(item))
         }
-        ValueKind::Tagged => value
-            .tagged_parts()
-            .and_then(|(tag, payload)| {
-                Some(TypeDescriptor::Tagged {
-                    tag: atom_from_name(tag.as_atom()?.as_str()),
-                    payload: Box::new(infer_value_ref_with(payload, visiting_type_slots)?),
-                })
-            })?,
         ValueKind::Tuple => TypeDescriptor::Tuple(
             (0..value.sequence_len().unwrap_or_default())
                 .filter_map(|index| value.sequence_get(index))

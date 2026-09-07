@@ -331,7 +331,32 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
     }
 }
 
+fn contains_standalone_sum(ty: &TypeDescriptor) -> bool {
+    match ty {
+        TypeDescriptor::AtomValue | TypeDescriptor::Atom(_) | TypeDescriptor::Tagged { .. } => true,
+        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+            contains_standalone_sum(item)
+        }
+        TypeDescriptor::Declared(declared) => {
+            declared.id.arguments().iter().any(contains_standalone_sum)
+                || contains_standalone_sum(&declared.body)
+        }
+        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
+            items.iter().any(contains_standalone_sum)
+        }
+        TypeDescriptor::Struct(fields) => fields.values().any(contains_standalone_sum),
+        TypeDescriptor::Enum(variants) => variants.values().flatten().any(|ty| contains_standalone_sum(ty)),
+        TypeDescriptor::Function { parameters, result } => {
+            parameters.iter().any(contains_standalone_sum) || contains_standalone_sum(result)
+        }
+        _ => false,
+    }
+}
+
 fn validate_publishable_scheme(scheme: &TypeScheme) -> Result<(), String> {
+    if contains_standalone_sum(&scheme.body) {
+        return Err("standalone Atom/Tagged is not a public type; use an enum".into());
+    }
     if contains_pending_alternatives(&scheme.body) {
         return Err("no common type; supply explicit type context".into());
     }
@@ -354,6 +379,9 @@ fn validate_publishable_scheme(scheme: &TypeScheme) -> Result<(), String> {
             ));
         }
         if let TypeCapability::Property(property) = &constraint.capability {
+            if contains_standalone_sum(property) {
+                return Err("standalone Atom/Tagged is not a public property type".into());
+            }
             if contains_type_variable(property) {
                 return Err(format!(
                     "property constraint contains unresolved {}",

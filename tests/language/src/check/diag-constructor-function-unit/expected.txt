@@ -1,0 +1,1 @@
+variant 'None does not accept a payload

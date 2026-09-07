@@ -35,7 +35,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("Float", TypeDescriptor::Float),
         ("String", TypeDescriptor::String),
         ("Bytes", TypeDescriptor::Bytes),
-        ("Atom", TypeDescriptor::AtomValue),
         ("Bool", normalized_bool_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
@@ -51,13 +50,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
     prelude.insert(
         "TypeOf".into(),
         function(vec![metadata.clone()], metadata.clone()),
-    );
-    prelude.insert(
-        "Tagged".into(),
-        function(
-            vec![TypeDescriptor::AtomValue, metadata.clone()],
-            metadata.clone(),
-        ),
     );
     prelude.insert(
         "Tuple".into(),
@@ -81,7 +73,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             name.into(),
             function(
                 vec![
-                    TypeDescriptor::Bound(TypeParameterId(0)),
+                    model_context_descriptor(),
                     TypeDescriptor::Bound(TypeParameterId(1)),
                 ],
                 metadata.clone(),
@@ -104,7 +96,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         "\0telora_warn".into(),
         function(
             vec![TypeDescriptor::String, TypeDescriptor::Bound(TypeParameterId(0))],
-            TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
+            option_descriptor(TypeDescriptor::Never),
         ),
     );
     prelude.insert(
@@ -145,11 +137,11 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
     HashMap::from([
         (
             "\0telora_struct".into(),
-            scheme(function(vec![bound(0), bound(1)], TypeDescriptor::Type)),
+            scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
             "\0telora_enum".into(),
-            scheme(function(vec![bound(0), bound(1)], TypeDescriptor::Type)),
+            scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
             "\0telora_pack_dyn".into(),
@@ -206,7 +198,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             "\0telora_warn".into(),
             scheme(function(
                 vec![TypeDescriptor::String, bound(0)],
-                TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
+                option_descriptor(TypeDescriptor::Never),
             )),
         ),
     ])
@@ -269,6 +261,13 @@ fn fold_control_descriptor(state: TypeDescriptor, result: TypeDescriptor) -> Typ
     ]))
 }
 
+fn model_context_descriptor() -> TypeDescriptor {
+    TypeDescriptor::Struct(BTreeMap::from([
+        ("kind".into(), TypeDescriptor::Enum(BTreeMap::from([("Type".into(), None)]))),
+        ("name".into(), TypeDescriptor::String),
+    ]))
+}
+
 fn normalized_bool_descriptor() -> TypeDescriptor {
     TypeDescriptor::Enum(BTreeMap::from([
         ("False".into(), None),
@@ -301,19 +300,6 @@ fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
         validate_native_type(value)?;
     }
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
-}
-
-fn native_tagged_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let tag = context.argument(0)?;
-    if context.value(tag)?.as_atom().is_none() {
-        return Err(NativeError::new("Tagged expects an Atom tag"));
-    }
-    let payload = context.argument(1)?;
-    let value = context.value(payload)?;
-    if !value.is_hidden_type_slot() {
-        validate_native_type(value)?;
-    }
-    write_native_type_record(context, "Tagged", &[("tag", tag), ("payload", payload)])
 }
 
 fn native_tuple_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -544,17 +530,7 @@ fn decode_type_ref_with_visiting(
             require(&["kind"])?;
             TypeDescriptor::Bytes
         }
-        "Atom" => {
-            if fields.iter().copied().eq(["kind"]) {
-                return Ok(TypeDescriptor::AtomValue);
-            }
-            require(&["kind", "tag"])?;
-            let tag = value
-                .dict_get("tag")
-                .and_then(ValueRef::as_atom)
-                .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            TypeDescriptor::Atom(atom_from_name(tag.as_str()))
-        }
+        "Atom" | "Tagged" => return Err(format!("{path}: standalone {kind} is not a supported type; use an enum")),
         "Array" => {
             require(&["item", "kind"])?;
             let item = value
@@ -578,25 +554,6 @@ fn decode_type_ref_with_visiting(
                 shallow_declared_types,
                 visiting_declared,
             )?))
-        }
-        "Tagged" => {
-            require(&["kind", "payload", "tag"])?;
-            let tag = value
-                .dict_get("tag")
-                .and_then(ValueRef::as_atom)
-                .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            let payload = value
-                .dict_get("payload")
-                .ok_or_else(|| format!("{path}.payload is missing"))?;
-            TypeDescriptor::Tagged {
-                tag: atom_from_name(tag.as_str()),
-                payload: Box::new(decode_type_ref_with_visiting(
-                    payload,
-                    &format!("{path}.payload"),
-                    shallow_declared_types,
-                    visiting_declared,
-                )?),
-            }
         }
         "Tuple" => {
             let field = "items";

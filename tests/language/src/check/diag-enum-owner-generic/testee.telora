@@ -1,0 +1,1 @@
+export def make: for(A) Fn() -> A = fn() { 'Ready };

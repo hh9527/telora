@@ -64,6 +64,7 @@ impl<'a> GenericInference<'a> {
             not_variables: HashSet::new(),
             ordered_variables: HashSet::new(),
             field_requirements: HashMap::new(),
+            enum_constructors: HashMap::new(),
             recursive_equations: HashMap::new(),
             substitutions: HashMap::new(),
             records: HashMap::new(),
@@ -278,6 +279,12 @@ impl<'a> GenericInference<'a> {
         let resolved = self.resolve(&result);
         match requirement {
             PropagationRequirement::Option => match resolved {
+                TypeDescriptor::Inference(_) | TypeDescriptor::PendingAlternatives(_) => {
+                    let success = self.fresh_variable();
+                    let target = option_descriptor(success);
+                    self.check(&resolved, &target)?;
+                    Ok(self.resolve(&target))
+                }
                 TypeDescriptor::Enum(ref variants) if option_parts(variants).is_some() => {
                     Ok(resolved)
                 }
@@ -307,6 +314,12 @@ impl<'a> GenericInference<'a> {
                     self.check(error, &boundary_error)?;
                 }
                 match resolved {
+                    TypeDescriptor::Inference(_) | TypeDescriptor::PendingAlternatives(_) => {
+                        let success = self.fresh_variable();
+                        let target = result_descriptor(success, boundary_error);
+                        self.check(&resolved, &target)?;
+                        Ok(self.resolve(&target))
+                    }
                     TypeDescriptor::Enum(ref variants) if result_parts(&TypeDescriptor::Enum(variants.clone())).is_some() => {
                         let (_, result_error) = result_parts(&resolved).expect("checked Result shape");
                         for error in &errors { self.check(error, result_error)?; }
@@ -501,9 +514,11 @@ impl<'a> GenericInference<'a> {
             evidence: &TypeDescriptor,
             collected: &mut HashMap<InferenceVariableId, Vec<TypeDescriptor>>,
             collection_element: bool,
+            enum_owners: &HashSet<InferenceVariableId>,
         ) {
             if let TypeDescriptor::Inference(variable) = unresolved {
-                if collection_element && !contains_type_variable(evidence) {
+                if (collection_element || enum_owners.contains(variable))
+                    && !contains_type_variable(evidence) {
                     collected
                         .entry(*variable)
                         .or_default()
@@ -514,10 +529,10 @@ impl<'a> GenericInference<'a> {
             match (unresolved, evidence) {
                 (TypeDescriptor::Array(left), TypeDescriptor::Array(right))
                 | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
-                    collect(left, right, collected, true);
+                    collect(left, right, collected, true, enum_owners);
                 }
                 (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
-                    collect(left, right, collected, collection_element);
+                    collect(left, right, collected, collection_element, enum_owners);
                 }
                 (
                     TypeDescriptor::Tagged {
@@ -529,20 +544,20 @@ impl<'a> GenericInference<'a> {
                         payload: right,
                     },
                 ) if left_tag == right_tag => {
-                    collect(left, right, collected, collection_element);
+                    collect(left, right, collected, collection_element, enum_owners);
                 }
                 (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right))
                     if left.len() == right.len() =>
                 {
                     for (left, right) in left.iter().zip(right) {
-                        collect(left, right, collected, collection_element);
+                        collect(left, right, collected, collection_element, enum_owners);
                     }
                 }
                 (TypeDescriptor::Struct(left), TypeDescriptor::Struct(right))
                     if left.keys().eq(right.keys()) =>
                 {
                     for (name, left) in left {
-                        collect(left, &right[name], collected, collection_element);
+                        collect(left, &right[name], collected, collection_element, enum_owners);
                     }
                 }
                 (TypeDescriptor::Enum(left), TypeDescriptor::Enum(right))
@@ -551,7 +566,7 @@ impl<'a> GenericInference<'a> {
                     for (name, left) in left {
                         if let (Some(left), Some(right)) = (left.as_deref(), right[name].as_deref())
                         {
-                            collect(left, right, collected, collection_element);
+                            collect(left, right, collected, collection_element, enum_owners);
                         }
                     }
                 }
@@ -566,9 +581,9 @@ impl<'a> GenericInference<'a> {
                     },
                 ) if left_parameters.len() == right_parameters.len() => {
                     for (left, right) in left_parameters.iter().zip(right_parameters) {
-                        collect(left, right, collected, collection_element);
+                        collect(left, right, collected, collection_element, enum_owners);
                     }
-                    collect(left_result, right_result, collected, collection_element);
+                    collect(left_result, right_result, collected, collection_element, enum_owners);
                 }
                 _ => {}
             }
@@ -579,10 +594,11 @@ impl<'a> GenericInference<'a> {
             .map(|branch| self.resolve(branch))
             .collect::<Vec<_>>();
         let mut collected = HashMap::new();
+        let enum_owners = self.enum_constructors.keys().copied().collect();
         for (index, branch) in resolved.iter().enumerate() {
             for evidence in resolved.iter().skip(index + 1) {
-                collect(branch, evidence, &mut collected, false);
-                collect(evidence, branch, &mut collected, false);
+                collect(branch, evidence, &mut collected, false, &enum_owners);
+                collect(evidence, branch, &mut collected, false, &enum_owners);
             }
         }
         for (variable, evidence) in collected {
@@ -607,7 +623,8 @@ impl<'a> GenericInference<'a> {
         variables.dedup();
         if variables
             .iter()
-            .any(|variable| self.field_requirements.contains_key(variable))
+            .any(|variable| self.field_requirements.contains_key(variable)
+                || self.enum_constructors.contains_key(variable))
         {
             return Ok(None);
         }

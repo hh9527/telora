@@ -242,7 +242,7 @@
         let never = TypeDescriptor::Never;
         round_trip(&never);
 
-        round_trip(&TypeDescriptor::AtomValue);
+        round_trip(&normalized_bool_descriptor());
 
         let witness = TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Array(Box::new(
             TypeDescriptor::Int,

@@ -7,4 +7,4 @@ export def c = test.should_fail(fn() { let warning = warn.should_ok!(); 1 });
 export def d = test.should_ok(fn() { fail!("uncaught") });
 export def e = test.with_fixtures(["value.json"], fn(value) { fail!("factory failure", value) });
 export def f = test.with_fixtures([], fn(value) { test.should_ok(fn() { value }) });
-export def z = test.should_ok(fn() { 'Err("ordinary return") });
+export def z = test.should_ok(fn() { 'Err("ordinary return").ty!(Result(Int, String)) });

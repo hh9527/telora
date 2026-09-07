@@ -1,0 +1,2 @@
+type State = enum {'Ready};
+export def value = `\{'Ready.ty!(State)}`;

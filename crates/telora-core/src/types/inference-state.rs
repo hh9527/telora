@@ -31,6 +31,7 @@ struct GenericInference<'a> {
     not_variables: HashSet<InferenceVariableId>,
     ordered_variables: HashSet<InferenceVariableId>,
     field_requirements: HashMap<InferenceVariableId, BTreeMap<String, TypeDescriptor>>,
+    enum_constructors: HashMap<InferenceVariableId, Vec<EnumConstructorObligation>>,
     recursive_equations: HashMap<InferenceVariableId, TypeDescriptor>,
     substitutions: HashMap<InferenceVariableId, TypeDescriptor>,
     records: HashMap<crate::Location, TypeDescriptor>,
@@ -44,6 +45,13 @@ struct GenericInference<'a> {
     failure_expected_location: Option<crate::Location>,
     enum_failure: Option<EnumInferenceFailure>,
     checking_named_pairs: HashSet<(String, String)>,
+}
+
+#[derive(Clone)]
+struct EnumConstructorObligation {
+    location: crate::Location,
+    tag: String,
+    payload: Option<(Option<Expr>, TypeDescriptor)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

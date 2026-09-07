@@ -81,6 +81,10 @@ JSON null、boolean、number 和 string。
 反射中的 member index 来自 `std/type-desc` 的 `FieldDesc` 或 `VariantDesc`。程序应传递
 这些已验证的 index，而不是根据布局自行猜测。
 
+`type-desc.kind` 描述静态类型；enum 使用 Enum 或具名引用 Ref，并通过 `variants`
+查询其分支。`dyn.kind` 描述底层值表示，所以 enum 值可以返回 Atom 或 Tagged。
+`dyn.desc` 保留装箱时的 enum 契约，投影使用明确的目标类型身份。
+
 ## 执行与效果
 
 - `std/entry`：构造 Host 可选择的 `Eval`、`Run(State)` 和 `Serve(State)` 值。

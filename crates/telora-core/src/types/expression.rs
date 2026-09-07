@@ -20,6 +20,8 @@ fn infer_expr_with(
         ExprKind::Float(_) => Some(TypeDescriptor::Float),
         ExprKind::String(_) => Some(TypeDescriptor::String),
         ExprKind::Bytes(_) => Some(TypeDescriptor::Bytes),
+        // Provisional constructor evidence lets tool-stage contracts reject bad
+        // variants before evaluation. Strict inference supplies the enum owner.
         ExprKind::Atom(name) => Some(TypeDescriptor::Atom(atom_from_name(name))),
         ExprKind::Variable(name) => environment.get(&name.value).cloned(),
         ExprKind::InterpolatedString(parts) => {
