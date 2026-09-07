@@ -20,7 +20,7 @@ type NullableScalar = enum {'Null, 'Text(String), 'Count(Int), 'Flag(Bool)};
 type FixtureEnvelope = struct {event: FixtureEvent};
 type Choice = enum {'None, 'Number(Int)};
 @json.untagged
-type Ambiguous = enum {'Anything(Any), 'Text(String)};
+type Ambiguous = enum {'OtherText(String), 'Text(String)};
 @json.rename_all('CamelCase)
 type FixtureModel = struct {
     user_id: Int,
@@ -33,12 +33,12 @@ export def verified_case = test.should_ok(fn() {
         let fatal: FixtureEvent = 'FatalError("boom");
         let nested: FixtureEnvelope = {event: 'UserJoined({name: "Lin"})};
         let count: FixtureScalar = 'Count(3);
-        let encoded_fatal = codec.encode(codec.Value, fatal) |> results.unwrap;
-        let encoded_nested = codec.encode(codec.Value, nested) |> results.unwrap;
-        let encoded_count = codec.encode(codec.Value, count) |> results.unwrap;
-        let encoded_null = codec.encode(codec.Value, 'Null.ty!(NullableScalar)) |> results.unwrap;
+        let encoded_fatal = codec.encode(codec.Value, fatal);
+        let encoded_nested = codec.encode(codec.Value, nested);
+        let encoded_count = codec.encode(codec.Value, count);
+        let encoded_null = codec.encode(codec.Value, 'Null.ty!(NullableScalar));
         let decoded_null = codec.decode(NullableScalar, 'None) |> results.unwrap;
-        let encoded_flag = codec.encode(codec.Value, 'Flag('True).ty!(NullableScalar)) |> results.unwrap;
+        let encoded_flag = codec.encode(codec.Value, 'Flag('True).ty!(NullableScalar));
         let standard_scalars: Array(ScalarValue) = [
             'None,
             'Bool('True),
@@ -46,50 +46,52 @@ export def verified_case = test.should_ok(fn() {
             'Float(3.5),
             'String("abc"),
         ];
-        let encoded_standard = codec.encode(codec.Value, standard_scalars) |> results.unwrap;
+        let encoded_standard = codec.encode(codec.Value, standard_scalars);
         let no_match = codec.decode(
             FixtureScalar,
-            codec.encode(codec.Value, []) |> results.unwrap,
+            codec.encode(codec.Value, []),
         );
         let ambiguous = codec.decode(
             Ambiguous,
-            codec.encode(codec.Value, "text") |> results.unwrap,
+            codec.encode(codec.Value, "text"),
         );
         let model_schema = json.schema(FixtureModel);
         let schema_text = json.stringify(
-            codec.encode(codec.Value, model_schema) |> results.unwrap,
+            codec.encode(codec.Value, model_schema),
         );
         let idle = codec.decode(
             FixtureEvent,
-            codec.encode(codec.Value, "idle") |> results.unwrap,
+            codec.encode(codec.Value, "idle"),
         ) |> results.unwrap;
         let joined = codec.decode(
             FixtureEvent,
-            codec.encode(codec.Value, {userJoined: {name: "Ada"}}) |> results.unwrap,
+            codec.encode(codec.Value, {userJoined: {name: "Ada"}}),
         ) |> results.unwrap;
         let text = codec.decode(
             FixtureScalar,
-            codec.encode(codec.Value, "hello") |> results.unwrap,
+            codec.encode(codec.Value, "hello"),
         ) |> results.unwrap;
-        !results.is_ok(validate(Choice, 'Other))
-            && !results.is_ok(validate(Choice, 'Number))
-            && !results.is_ok(validate(Choice, 'None(1)))
-            && !results.is_ok(validate(Choice, 'Number("one")))
-            && !results.is_ok(no_match)
-            && !results.is_ok(ambiguous)
-            && string.contains(schema_text, "userId")
-            && string.contains(schema_text, "event")
-            && string.contains(schema_text, "scalar")
-            && idle == 'Idle
-            && joined == 'UserJoined({name: "Ada"})
-            && encoded_fatal == 'Object({fatalError: 'String("boom")})
-            && encoded_nested == 'Object({event: 'Object({userJoined: 'Object({name: 'String("Lin")})})})
-            && text == 'Text("hello")
-            && encoded_count == 'Int(3)
-            && encoded_null == 'None
-            && decoded_null == 'Null.ty!(NullableScalar)
-            && encoded_flag == 'True
-            && encoded_standard == 'Array([
+        let checks = [
+            expect(!results.is_ok('Other.cast!(Choice))),
+            expect(!results.is_ok('Number.cast!(Choice))),
+            expect(!results.is_ok('None(1).cast!(Choice))),
+            expect(!results.is_ok('Number("one").cast!(Choice))),
+            expect(!results.is_ok(no_match)),
+            expect(!results.is_ok(ambiguous)),
+            expect(string.contains(schema_text, "userId")),
+            expect(string.contains(schema_text, "event")),
+            expect(string.contains(schema_text, "scalar")),
+            expect(idle == 'Idle),
+            expect(joined == 'UserJoined({name: "Ada"})),
+            expect(encoded_fatal == 'Object({fatalError: 'String("boom")})),
+            expect(encoded_nested == 'Object({event: 'Object({userJoined: 'Object({name: 'String("Lin")})})})),
+            expect(text == 'Text("hello")),
+            expect(encoded_count == 'Int(3)),
+            expect(encoded_null == 'None),
+            expect(decoded_null == 'Null.ty!(NullableScalar)),
+            expect(encoded_flag == 'True),
+        ];
+        encoded_standard == 'Array([
                 'None,
                 'True,
                 'Int(3),

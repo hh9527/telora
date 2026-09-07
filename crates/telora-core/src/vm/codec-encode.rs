@@ -50,16 +50,12 @@ fn continue_json_encode(
             background,
             account,
         ),
-        Err(failure) => finish_codec_result(
-            Err(failure),
-            diagnostic_input,
-            return_target,
-            &call_function,
-            call_pc,
-            current,
-            background,
-            account,
-        ),
+        Err(failure) => {
+            let mut runtime = error(RuntimeErrorKind::RaisedBlame, failure.message,
+                &call_function, call_pc);
+            runtime.set_locations(failure.data.loc(), failure.rule.loc());
+            Err(runtime)
+        }
     }
 }
 
@@ -76,9 +72,8 @@ fn continue_codec_displays(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let Some((function, descriptor, value)) = first_prepared_display(&node) else {
-        return finish_codec_result(
-            Ok(node),
-            diagnostic_input,
+        return finish_encode_value(
+            node,
             return_target,
             &call_function,
             call_pc,
@@ -424,9 +419,32 @@ fn transform_dynamic_encode(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_codec_result(
+fn finish_encode_value(
+    node: CodecNode,
+    return_target: ReturnTarget,
+    function: &BytecodeFunction,
+    pc: usize,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    let bytes = codec_node_bytes(&node, current, background)
+        .map_err(|native_error| match native_error.limit() {
+            Some(_) => allocation_error(native_error.message, function, pc),
+            None => error(RuntimeErrorKind::TypeMismatch, native_error.message, function, pc),
+        })?;
+    charge_allocation(account, bytes, function, pc)?;
+    Ok(VmAction::Return {
+        value: materialize_codec_node(node, current, background),
+        return_target,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_decode_result(
     result: Result<CodecNode, CodecFailure>,
     input: Val,
+    error_owner: Val,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -437,20 +455,32 @@ fn finish_codec_result(
     let (tag, payload) = match result {
         Ok(node) => (BuiltinAtom::Ok, node),
         Err(failure) => {
-            let loc = failure.data.loc();
-            (
-                BuiltinAtom::Err,
-                CodecNode::Dict(
-                    vec![
-                        ("message".into(), CodecNode::String(failure.message, loc)),
-                        ("data".into(), CodecNode::Existing(failure.data)),
-                        ("rule".into(), CodecNode::Existing(failure.rule)),
-                    ],
-                    loc,
-                ),
-            )
+            let value = failure.input.unwrap_or(input);
+            (BuiltinAtom::Err, CodecNode::Declared {
+                owner: error_owner,
+                payload: Box::new(CodecNode::Dict(vec![
+                    ("message".into(), CodecNode::String(failure.message, value.loc())),
+                    ("value".into(), CodecNode::Existing(value)),
+                ], value.loc())),
+                loc: value.loc(),
+            })
         }
     };
+    finish_codec_payload(tag, payload, input, return_target, function, pc, current, background, account)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_codec_payload(
+    tag: BuiltinAtom,
+    payload: CodecNode,
+    input: Val,
+    return_target: ReturnTarget,
+    function: &BytecodeFunction,
+    pc: usize,
+    current: &mut Heap,
+    background: &Heap,
+    account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
     let bytes = codec_node_bytes(&payload, current, background)
         .and_then(|bytes| {
             bytes

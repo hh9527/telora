@@ -632,7 +632,7 @@ impl GenericInference<'_> {
             let Some(first) = arguments.first() else {
                 return Err(format!("{trait_name}.{member} requires a Self argument"));
             };
-            let target = self.infer_authored_boundary(first, environment, None)?;
+            let target = self.infer(first, environment, None)?;
             let (dictionary, dictionary_type) =
                 if let Some(dictionary) = self.lexical_trait_evidence(trait_id, &target) {
                     let dictionary_type = self
@@ -673,7 +673,7 @@ impl GenericInference<'_> {
             }
             self.check(&target, &parameters[0])?;
             for (argument, parameter) in arguments.iter().skip(1).zip(parameters.iter().skip(1)) {
-                self.infer_authored_boundary(argument, environment, Some(parameter))?;
+                self.infer(argument, environment, Some(parameter))?;
             }
             if let Some(expected) = expected {
                 self.check(&result, expected)?;

@@ -25,13 +25,7 @@ fn run_core_runtime(
                     )
                 })?
                 .ok_or_else(|| {
-                    runtime_type_error(
-                        "Func",
-                        &arguments[0],
-                        &view,
-                        call_function,
-                        call_pc,
-                    )
+                    runtime_type_error("Func", &arguments[0], &view, call_function, call_pc)
                 })?;
             if arity != 1 {
                 return Err(error(
@@ -42,6 +36,12 @@ fn run_core_runtime(
                 ));
             }
             let continuation = DiagnosticContinuation {
+                types: DiagnosticTypes {
+                    diagnostic: arguments[2],
+                    severity: arguments[3],
+                    label: arguments[4],
+                    range: arguments[5],
+                },
                 diagnostic_start: account.diagnostics.len(),
                 return_target,
                 call_function: Arc::clone(call_function),
@@ -82,6 +82,7 @@ impl NativeContinuation for DiagnosticContinuation {
     ) -> Result<VmAction, RuntimeError> {
         let reports = take_scoped_diagnostics(
             self.diagnostic_start,
+            self.types,
             current,
             background,
             account,
@@ -119,29 +120,34 @@ impl NativeContinuation for DiagnosticContinuation {
     fn catch_recoverable(
         self: Box<Self>,
         error: RuntimeError,
-        raised: Option<Val>,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
         let mut reports = take_scoped_diagnostics(
             self.diagnostic_start,
+            self.types,
             current,
             background,
             account,
             &self.call_function,
             self.call_pc,
         )?;
-        reports.push(match raised {
-            Some(value) => value,
-            None => runtime_error_blame(
-                &error,
-                current,
-                account,
-                &self.call_function,
-                self.call_pc,
-            )?,
+        let diagnostic = error.diagnostic().unwrap_or_else(|| Diagnostic {
+            severity: crate::source::Severity::Error,
+            message: error.message.clone(),
+            labels: Vec::new(),
+            notes: Vec::new(),
         });
+        reports.push(diagnostic_snapshot(
+            &diagnostic,
+            self.types,
+            current,
+            background,
+            account,
+            &self.call_function,
+            self.call_pc,
+        )?);
         diagnosed_result(
             None,
             reports,
@@ -156,8 +162,9 @@ impl NativeContinuation for DiagnosticContinuation {
 
 fn take_scoped_diagnostics(
     start: usize,
+    types: DiagnosticTypes,
     current: &mut Heap,
-    _background: &Heap,
+    background: &Heap,
     account: &mut QuotaAccount,
     function: &BytecodeFunction,
     pc: usize,
@@ -165,89 +172,122 @@ fn take_scoped_diagnostics(
     let diagnostics = account.diagnostics.drain(start..).collect::<Vec<_>>();
     diagnostics
         .iter()
-        .map(|diagnostic| diagnostic_blame(diagnostic, current, account, function, pc))
+        .map(|diagnostic| {
+            diagnostic_snapshot(
+                diagnostic, types, current, background, account, function, pc,
+            )
+        })
         .collect()
 }
 
-fn diagnostic_blame(
+fn diagnostic_snapshot(
     diagnostic: &Diagnostic,
+    types: DiagnosticTypes,
     current: &mut Heap,
+    background: &Heap,
     account: &mut QuotaAccount,
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<Val, RuntimeError> {
-    let primary = diagnostic
+    let declared = |owner, payload| CodecNode::Declared {
+        owner,
+        payload: Box::new(payload),
+        loc: None,
+    };
+    let labels = diagnostic
         .labels
         .iter()
-        .find(|label| label.primary)
-        .map(|label| label.location);
-    let data = diagnostic
-        .labels
-        .iter()
-        .filter(|label| !label.primary)
-        .map(|label| Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)).with_loc(Some(label.location)))
-        .collect::<Vec<_>>();
-    make_blame(&diagnostic.message, primary, data, current, account, function, pc)
-}
-
-fn runtime_error_blame(
-    runtime: &RuntimeError,
-    current: &mut Heap,
-    account: &mut QuotaAccount,
-    function: &BytecodeFunction,
-    pc: usize,
-) -> Result<Val, RuntimeError> {
-    let data = runtime
-        .data_sources()
-        .iter()
-        .copied()
-        .map(|location| Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)).with_loc(Some(location)))
-        .collect::<Vec<_>>();
-    make_blame(
-        &runtime.message,
-        runtime.rule_location().or_else(|| runtime.origin().and_then(|origin| match origin {
-            Origin::Source(location) => Some(location),
-            Origin::Synthetic { derived_from } => derived_from,
-        })),
-        data,
-        current,
-        account,
-        function,
-        pc,
-    )
-}
-
-fn make_blame(
-    message: &str,
-    rule: Option<crate::Loc>,
-    data: Vec<Val>,
-    current: &mut Heap,
-    account: &mut QuotaAccount,
-    function: &BytecodeFunction,
-    pc: usize,
-) -> Result<Val, RuntimeError> {
-    let bytes = logical_value_bytes(data.len().saturating_add(5))
-        .and_then(|bytes| {
-            bytes
-                .checked_add(u64::try_from(message.len()).map_err(|_| {
-                    NativeError::allocation_limit("diagnostic message size overflowed")
-                })?)
-                .ok_or_else(|| NativeError::allocation_limit("diagnostic size overflowed"))
+        .map(|label| {
+            let location = label.location;
+            let source = account
+                .source_names
+                .get(&location.source)
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| format!("source:{}", location.source.get()));
+            let range = declared(
+                types.range,
+                CodecNode::Dict(
+                    vec![
+                        ("source".into(), CodecNode::String(source, None)),
+                        (
+                            "start".into(),
+                            CodecNode::Existing(Val::unknown(DecodedValue::Int(i64::from(
+                                location.start,
+                            )))),
+                        ),
+                        (
+                            "end".into(),
+                            CodecNode::Existing(Val::unknown(DecodedValue::Int(i64::from(
+                                location.end,
+                            )))),
+                        ),
+                    ],
+                    None,
+                ),
+            );
+            declared(
+                types.label,
+                CodecNode::Dict(
+                    vec![
+                        ("location".into(), range),
+                        (
+                            "message".into(),
+                            CodecNode::String(label.message.clone(), None),
+                        ),
+                        (
+                            "primary".into(),
+                            CodecNode::Atom(
+                                if label.primary {
+                                    BuiltinAtom::True
+                                } else {
+                                    BuiltinAtom::False
+                                },
+                                None,
+                            ),
+                        ),
+                    ],
+                    None,
+                ),
+            )
         })
+        .collect();
+    let severity = match diagnostic.severity {
+        crate::source::Severity::Error => "Error",
+        crate::source::Severity::Warning => "Warning",
+        crate::source::Severity::Info => "Info",
+    };
+    let node = declared(
+        types.diagnostic,
+        CodecNode::Dict(
+            vec![
+                (
+                    "severity".into(),
+                    declared(types.severity, CodecNode::NamedAtom(severity.into(), None)),
+                ),
+                (
+                    "message".into(),
+                    CodecNode::String(diagnostic.message.clone(), None),
+                ),
+                ("labels".into(), CodecNode::Array(labels, None)),
+                (
+                    "notes".into(),
+                    CodecNode::Array(
+                        diagnostic
+                            .notes
+                            .iter()
+                            .map(|note| CodecNode::String(note.clone(), None))
+                            .collect(),
+                        None,
+                    ),
+                ),
+            ],
+            None,
+        ),
+    );
+    let bytes = codec_node_bytes(&node, current, background)
         .map_err(|error| allocation_error(error.message, function, pc))?;
     charge_allocation(account, bytes, function, pc)?;
-    let data = Val::unknown(DecodedValue::Tuple(current.allocate(Object::Tuple(data.into()))));
-    let message = Val::unknown(current.string(None, message));
-    let rule = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)).with_loc(rule);
-    let names = ["data", "message", "rule"]
-        .into_iter()
-        .map(|name| current.intern(name))
-        .collect();
-    let shape = current.intern_shape(names);
-    Ok(Val::unknown(DecodedValue::Dict(current.allocate(Object::Dict {
-        shape,
-        values: vec![data, message, rule].into_boxed_slice(),
-    }))))
+    Ok(materialize_codec_node(node, current, background))
 }
 
 fn diagnosed_result(
@@ -259,11 +299,15 @@ fn diagnosed_result(
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<VmAction, RuntimeError> {
-    let value_count = reports.len().saturating_add(if value.is_some() { 4 } else { 2 });
+    let value_count = reports
+        .len()
+        .saturating_add(if value.is_some() { 4 } else { 2 });
     let bytes = logical_value_bytes(value_count)
         .map_err(|error| allocation_error(error.message, function, pc))?;
     charge_allocation(account, bytes, function, pc)?;
-    let reports = Val::unknown(DecodedValue::Array(current.allocate(Object::Array(reports.into()))));
+    let reports = Val::unknown(DecodedValue::Array(
+        current.allocate(Object::Array(reports.into())),
+    ));
     let (tag, payload) = match value {
         Some(value) => {
             let tuple = current.allocate(Object::Tuple(vec![value, reports].into()));

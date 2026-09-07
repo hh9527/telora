@@ -1,6 +1,7 @@
 # RFC 0119: Typed pattern analysis
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Missing subpattern type evidence is explicit absence, not Any.
 - Depends on: RFC 0118
 
 ## Summary

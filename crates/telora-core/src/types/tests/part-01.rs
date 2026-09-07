@@ -157,7 +157,7 @@
             .iter()
             .map(|(name, arity)| {
                 let value = work.native_closure(
-                    NativeFunction::new(name, *arity, native_validate),
+                    NativeFunction::new(name, *arity, native_checked_cast),
                     Vec::<Val>::new().into_boxed_slice(),
                 );
                 publish_root(&mut tool_heap, &work, value)
@@ -205,7 +205,7 @@
             || Val::unknown(crate::heap::DecodedValue::Int(1)),
             |arity| {
                 work.native_closure(
-                    NativeFunction::new("host", arity, native_validate),
+                    NativeFunction::new("host", arity, native_checked_cast),
                     Vec::<Val>::new().into_boxed_slice(),
                 )
             },
@@ -224,6 +224,7 @@
                 BTreeMap::from([(
                     "host".to_owned(),
                     ModuleInterface {
+                        namespaces: BTreeMap::new(),
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),
                         traits: BTreeMap::new(),
@@ -255,13 +256,9 @@
     }
 
     #[test]
-    fn host_bindings_distinguish_erased_dynamic_and_declared_interfaces() {
-        let erased = analyze_with_host_binding("host(1)", Some(1), false, None).unwrap();
-        assert_eq!(
-            erased.display(erased.binding_types["host"]),
-            "Fn(Any) -> Any"
-        );
-        assert_eq!(erased.display(erased.result_type), "Any");
+    fn host_bindings_require_interfaces_for_functions_and_retain_value_types() {
+        let missing = analyze_with_host_binding("host(1)", Some(1), false, None).err().unwrap();
+        assert!(missing.message.contains("requires an explicit type interface"));
 
         let mut interface_sources = SourceDatabase::default();
         let interface_source = interface_sources.add("host-interface", "");
@@ -293,8 +290,8 @@
         );
 
         let dynamic = analyze_with_host_binding("host", None, true, None).unwrap();
-        assert_eq!(dynamic.display(dynamic.binding_types["host"]), "Any");
-        assert_eq!(dynamic.display(dynamic.result_type), "Any");
+        assert_eq!(dynamic.display(dynamic.binding_types["host"]), "Int");
+        assert_eq!(dynamic.display(dynamic.result_type), "Int");
 
         let chained =
             analyze_with_natives("if 'False { 1 } else if 'True { \"x\" } else { 2.0 }", &[])

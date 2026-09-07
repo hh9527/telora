@@ -462,7 +462,7 @@ export def output = (compared, selected);"#,
                def json: Dict(Value) = match json_data {'Object(fields) => fields, _ => {}};
                def yaml: Dict(Value) = match yaml_data {'Object(fields) => fields, _ => {}};
                def toml: Dict(Value) = match toml_data {'Object(fields) => fields, _ => {}};
-               def encoded_identity = codec.encode(Value, json_data) |> result.unwrap;
+               def encoded_identity = codec.encode(Value, json_data);
                def decoded_identity = codec.decode(Value, encoded_identity) |> result.unwrap;
                export def output = {
                    json_module,
@@ -609,7 +609,7 @@ export def output = (compared, selected);"#,
             100_000,
         )
         .unwrap();
-        let encode_bytes = 10 * value_bytes;
+        let encode_bytes = 8 * value_bytes;
         let (result, requested) = execute_with_allocation(&encoded, encode_bytes);
         assert!(result.is_ok());
         assert_eq!(requested, encode_bytes);
@@ -619,6 +619,21 @@ export def output = (compared, selected);"#,
             crate::RuntimeErrorKind::AllocationQuotaExceeded
         );
 
+        for source in [
+            r#"import "std/json" as json; json.parse("")"#,
+            r#"import "std/json" as json; json.decode(Int, "\"wrong\"")"#,
+            r#"import "std/codec" as codec; codec.decode(Int, 'String("wrong"))"#,
+        ] {
+            fs::write(&main, source).unwrap();
+            let failed_decode = load_module(&main, BTreeMap::new(), 100_000).unwrap();
+            let (result, requested) = execute_with_allocation(&failed_decode, u64::MAX);
+            assert!(result.is_ok(), "a decode mismatch is an ordinary Result: {source}");
+            assert!(requested > 0);
+            assert!(execute_with_allocation(&failed_decode, requested).0.is_ok());
+            let (result, _) = execute_with_allocation(&failed_decode, requested - 1);
+            assert_eq!(result.unwrap_err().kind, crate::RuntimeErrorKind::AllocationQuotaExceeded,
+                "error materialization must propagate terminal allocation failure: {source}");
+        }
+
         fs::remove_dir_all(directory).unwrap();
     }
-

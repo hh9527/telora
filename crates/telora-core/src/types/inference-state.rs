@@ -20,7 +20,6 @@ struct GenericInference<'a> {
     named_types: &'a BTreeMap<String, TypeDescriptor>,
     declared_bodies: HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
     local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
-    authored_any_definitions: HashSet<crate::Location>,
     dyn_namespaces: &'a HashSet<String>,
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,

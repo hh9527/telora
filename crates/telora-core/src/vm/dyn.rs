@@ -308,7 +308,6 @@ fn run_core_dyn(
             let observation =
                 observe_dyn_structure(operation, descriptor, value, field.as_deref(), &view);
             finish_dyn_observation(
-                operation,
                 arguments[0],
                 observation,
                 return_target,
@@ -764,7 +763,6 @@ fn dyn_tagged_parts(
 
 #[allow(clippy::too_many_arguments)]
 fn finish_dyn_observation(
-    operation: CoreDynFunction,
     input: Val,
     observation: Result<DynObservation, String>,
     return_target: ReturnTarget,
@@ -888,11 +886,10 @@ fn finish_dyn_observation(
             )
         }
         Err(message) => {
-            let rule = operation.name().trim_start_matches("std/");
-            let bytes = logical_value_bytes(6)
+            let bytes = logical_value_bytes(2)
                 .and_then(|bytes| {
                     bytes
-                        .checked_add(u64::try_from(message.len() + rule.len()).unwrap_or(u64::MAX))
+                        .checked_add(u64::try_from(message.len()).unwrap_or(u64::MAX))
                         .ok_or_else(|| {
                             NativeError::allocation_limit("Dyn observer error size overflowed")
                         })
@@ -900,23 +897,10 @@ fn finish_dyn_observation(
                 .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
             charge_allocation(account, bytes, function, pc)?;
             let message = Val::new(current.string(Some(background), &message), input.loc());
-            let rule = Val::new(current.string(Some(background), rule), input.loc());
-            let fields = ["data", "message", "rule"]
-                .into_iter()
-                .map(|field| current.intern(field))
-                .collect();
-            let shape = current.intern_shape(fields);
-            let blame = Val::new(
-                DecodedValue::Dict(current.allocate(Object::Dict {
-                    shape,
-                    values: vec![input, message, rule].into(),
-                })),
-                input.loc(),
-            );
             Val::new(
                 DecodedValue::Tagged(current.allocate(Object::Tagged {
                     tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Err), input.loc()),
-                    payload: blame,
+                    payload: message,
                 })),
                 input.loc(),
             )
@@ -1032,7 +1016,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
                 })
                 .collect()
         }
-        "Any" | "Never" | "Type" | "Dyn" | "Int" | "Float" | "String" | "Bytes" | "Opaque"
+        "Never" | "Type" | "Dyn" | "Int" | "Float" | "String" | "Bytes" | "Opaque"
         | "Atom" | "Func" | "Bound" | "Named" => Ok(Vec::new()),
         other => Err(format!("unknown Type metadata kind '{other}")),
     }
@@ -1103,34 +1087,20 @@ fn type_desc_resolve_error(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let message = "type descriptor is not a recursive reference";
-    let rule = "type-desc.resolve";
-    let bytes = logical_value_bytes(6)
+    let bytes = logical_value_bytes(2)
         .and_then(|bytes| {
             bytes
-                .checked_add(u64::try_from(message.len() + rule.len()).unwrap_or(u64::MAX))
+                .checked_add(u64::try_from(message.len()).unwrap_or(u64::MAX))
                 .ok_or_else(|| NativeError::allocation_limit("TypeDesc error size overflowed"))
         })
         .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
     charge_allocation(account, bytes, function, pc)?;
     let message = Val::new(current.string(Some(background), message), input.loc());
-    let rule = Val::new(current.string(Some(background), rule), input.loc());
-    let fields = ["data", "message", "rule"]
-        .into_iter()
-        .map(|field| current.intern(field))
-        .collect();
-    let shape = current.intern_shape(fields);
-    let blame = Val::new(
-        DecodedValue::Dict(current.allocate(Object::Dict {
-            shape,
-            values: vec![input, message, rule].into(),
-        })),
-        input.loc(),
-    );
     Ok(VmAction::Return {
         value: Val::new(
             DecodedValue::Tagged(current.allocate(Object::Tagged {
                 tag: Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::Err), input.loc()),
-                payload: blame,
+                payload: message,
             })),
             input.loc(),
         ),

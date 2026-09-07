@@ -1,6 +1,7 @@
 # RFC 0092: Structural `Dyn` observers
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Observer errors are AccessError with the original Dyn input.
 - Depends on: RFC 0089 through RFC 0091
 - Tracking issue: https://github.com/hh9527/forma/issues/4
 

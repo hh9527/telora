@@ -1,6 +1,7 @@
 # RFC 0052: Unified bidirectional type checking
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Any assignment, compatibility and inference rules are removed.
 - Partial supersession: RFC 0268 removes public untagged Union types and their
   assignment rules. Bidirectional checking and contextual enum construction remain.
 - Depends on: RFC 0042, RFC 0048, RFC 0049, RFC 0050, RFC 0051

@@ -1,1 +1,1 @@
-export def invalid: Fn(Dyn) -> Any = fn(value) { value.missing };
+export def invalid: Fn(Dyn) -> Int = fn(value) { value.missing };

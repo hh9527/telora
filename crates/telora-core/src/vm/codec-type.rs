@@ -71,6 +71,7 @@ fn assert_codec_graph_ready(
         visited: &mut HashSet<Handle>,
     ) -> Result<(), CodecGraphError> {
         match &schema.kind {
+            CodecKind::Bound | CodecKind::Named => Err(CodecGraphError::Pending),
             CodecKind::TypeSlot(handle) => {
                 if !visited.insert(*handle) {
                     return Ok(());
@@ -122,8 +123,7 @@ fn assert_codec_graph_ready(
                 }
                 Ok(())
             }),
-            CodecKind::Any
-            | CodecKind::Type
+            CodecKind::Type
             | CodecKind::Dyn
             | CodecKind::Int
             | CodecKind::Float
@@ -185,9 +185,9 @@ fn decode_runtime_type_at(
         .ok_or_else(|| format!("{path}.kind must be an Atom"))?;
     let kind = match kind.as_str() {
         "Union" => return Err(format!("{path}: Union has been removed; use an explicit enum")),
-        "Bound" => CodecKind::Any,
-        "Named" => CodecKind::Any,
-        "Any" => CodecKind::Any,
+        "Bound" => CodecKind::Bound,
+        "Named" => CodecKind::Named,
+        "Any" => return Err(format!("{path}: Any is not a supported type")),
         "Type" => CodecKind::Type,
         "Dyn" => CodecKind::Dyn,
         "Int" => CodecKind::Int,

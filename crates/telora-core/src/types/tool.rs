@@ -27,14 +27,12 @@ impl<'a> ToolEvaluator<'a> {
         for (name, descriptor) in [
             ("Type", TypeDescriptor::Type),
             ("Dyn", TypeDescriptor::Dyn),
-            ("Any", TypeDescriptor::Any),
             ("Never", TypeDescriptor::Never),
             ("Int", TypeDescriptor::Int),
             ("Float", TypeDescriptor::Float),
             ("String", TypeDescriptor::String),
             ("Bytes", TypeDescriptor::Bytes),
             ("Atom", TypeDescriptor::AtomValue),
-            ("BlameError", blame_error_descriptor()),
         ] {
             values.insert(name.into(), self.descriptor(&descriptor)?);
         }
@@ -56,7 +54,6 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("Tagged", 2, native_tagged_type),
             NativeFunction::new("Tuple", 1, native_tuple_type),
             NativeFunction::new("Func", 2, native_function_type),
-            NativeFunction::new("validate", 2, native_validate),
             NativeFunction::new("\0telora_cast", 2, native_checked_cast),
             NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
         ] {
@@ -254,7 +251,7 @@ impl<'a> ToolEvaluator<'a> {
             constructor.id.local,
             &arguments,
         );
-        let placeholder = self.descriptor(&TypeDescriptor::Any)?;
+        let placeholder = self.descriptor(&TypeDescriptor::Named(constructor.name.clone()))?;
         let root = self
             .work
             .reserve_symbolic_type_ref(id, constructor.name.as_str(), placeholder)
@@ -674,15 +671,12 @@ fn collect_nested_annotation_types(
             debug_sink,
             annotations,
         )?,
-        ExprKind::Raise { error } => collect_nested_annotation_types(
-            source_name,
-            error,
-            bindings,
-            account,
-            sources,
-            debug_sink,
-            annotations,
-        )?,
+        ExprKind::Raise { message, subjects } => {
+            for value in std::iter::once(message.as_ref()).chain(subjects.iter()) {
+                collect_nested_annotation_types(source_name, value, bindings, account,
+                    sources, debug_sink, annotations)?;
+            }
+        },
         ExprKind::Debug { value, .. } => collect_nested_annotation_types(
             source_name,
             value,

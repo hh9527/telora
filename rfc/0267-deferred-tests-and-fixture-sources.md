@@ -1,6 +1,7 @@
 # RFC 0267: Deferred Tests and Host-Prepared Fixture Sources
 
 - Status: Accepted
+- Partial supersession by [RFC 0269](0269-remove-any.md): Discovery boundary fixtures use typed containers or explicit Dyn instead of Any erasure.
 - Tracking: [#151](https://github.com/hh9527/telora/issues/151)
 - Builds on: RFC 0266
 - Partial supersession: RFC 0266's module-evaluation-only `test` verdict and

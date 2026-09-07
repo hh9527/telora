@@ -150,7 +150,7 @@ Telora 在这里继承了部分 Scheme 基因，但选择了更窄的反射边�
 恢复为静态类型化能力时，使用受控的 contextual intrinsic：
 
 ```telora
-def my_show: for(A) Fn(TypeOf(A)) -> Fn(A) -> Result(String, BlameError)
+def my_show: for(A) Fn(TypeOf(A)) -> Fn(A) -> String
     = interpreter!(show_dyn);
 ```
 

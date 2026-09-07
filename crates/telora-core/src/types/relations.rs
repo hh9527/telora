@@ -51,7 +51,6 @@ pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor
         }
         TypeDescriptor::Named(_)
         | TypeDescriptor::Inference(_)
-        | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn
@@ -87,8 +86,7 @@ pub(crate) fn type_identity_is_symbolic(descriptor: &TypeDescriptor) -> bool {
         TypeDescriptor::Function { parameters, result } => {
             parameters.iter().any(type_identity_is_symbolic) || type_identity_is_symbolic(result)
         }
-        TypeDescriptor::Any
-        | TypeDescriptor::Never
+        TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn
         | TypeDescriptor::Int
@@ -101,63 +99,6 @@ pub(crate) fn type_identity_is_symbolic(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
-pub(crate) fn erase_type_variables(descriptor: &TypeDescriptor) -> TypeDescriptor {
-    match descriptor {
-        TypeDescriptor::Bound(_) | TypeDescriptor::Inference(_) => TypeDescriptor::Any,
-        TypeDescriptor::Declared(declared) => {
-            let arguments = declared
-                .id
-                .arguments()
-                .iter()
-                .map(erase_type_variables)
-                .collect::<Vec<_>>();
-            TypeDescriptor::Declared(DeclaredTypeDescriptor {
-                id: declared.id.reapply(&arguments),
-                name: declared.name.clone(),
-                body: Arc::new(erase_type_variables(&declared.body)),
-            })
-        }
-        TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(erase_type_variables(item))),
-        TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(erase_type_variables(item))),
-        TypeDescriptor::TypeOf(instance) => {
-            TypeDescriptor::TypeOf(Box::new(erase_type_variables(instance)))
-        }
-        TypeDescriptor::Tagged { tag, payload } => TypeDescriptor::Tagged {
-            tag: tag.clone(),
-            payload: Box::new(erase_type_variables(payload)),
-        },
-        TypeDescriptor::Tuple(items) => {
-            TypeDescriptor::Tuple(items.iter().map(erase_type_variables).collect())
-        }
-        TypeDescriptor::Struct(fields) => TypeDescriptor::Struct(
-            fields
-                .iter()
-                .map(|(name, field)| (name.clone(), erase_type_variables(field)))
-                .collect(),
-        ),
-        TypeDescriptor::Enum(variants) => TypeDescriptor::Enum(
-            variants
-                .iter()
-                .map(|(name, payload)| {
-                    (
-                        name.clone(),
-                        payload
-                            .as_ref()
-                            .map(|payload| Box::new(erase_type_variables(payload))),
-                    )
-                })
-                .collect(),
-        ),
-        TypeDescriptor::PendingAlternatives(variants) => {
-            TypeDescriptor::PendingAlternatives(variants.iter().map(erase_type_variables).collect())
-        }
-        TypeDescriptor::Function { parameters, result } => TypeDescriptor::Function {
-            parameters: parameters.iter().map(erase_type_variables).collect(),
-            result: Box::new(erase_type_variables(result)),
-        },
-        descriptor => descriptor.clone(),
-    }
-}
 
 fn join_all_types(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     types.into_iter().fold(TypeDescriptor::Never, join_types)
@@ -184,8 +125,8 @@ fn contains_pending_alternatives(ty: &TypeDescriptor) -> bool {
 }
 
 fn potentially_assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
-    if matches!(actual, TypeDescriptor::Inference(_) | TypeDescriptor::Any)
-        || matches!(expected, TypeDescriptor::Inference(_) | TypeDescriptor::Any)
+    if matches!(actual, TypeDescriptor::Inference(_))
+        || matches!(expected, TypeDescriptor::Inference(_))
     {
         return true;
     }
@@ -232,9 +173,6 @@ fn join_types(left: TypeDescriptor, right: TypeDescriptor) -> TypeDescriptor {
     if matches!(right, TypeDescriptor::Never) {
         return left;
     }
-    if matches!(left, TypeDescriptor::Any) || matches!(right, TypeDescriptor::Any) {
-        return TypeDescriptor::Any;
-    }
     if assignable(&left, &TypeDescriptor::Type) && assignable(&right, &TypeDescriptor::Type) {
         return TypeDescriptor::Type;
     }
@@ -263,9 +201,6 @@ fn pending_alternatives(types: Vec<TypeDescriptor>) -> TypeDescriptor {
     for ty in types {
         flatten(ty, &mut flattened);
     }
-    if flattened.iter().any(|ty| matches!(ty, TypeDescriptor::Any)) {
-        return TypeDescriptor::Any;
-    }
     if flattened
         .iter()
         .any(|ty| !matches!(ty, TypeDescriptor::Never))
@@ -284,7 +219,6 @@ fn pending_alternatives(types: Vec<TypeDescriptor>) -> TypeDescriptor {
 pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
     match (actual, expected) {
         (TypeDescriptor::Never, _) => true,
-        (TypeDescriptor::Any, _) | (_, TypeDescriptor::Any) => true,
         (TypeDescriptor::TypeOf(_), TypeDescriptor::Type) => true,
         (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
             assignable(actual, expected)
@@ -436,7 +370,6 @@ fn enum_variant_type(name: &str, payload: Option<&TypeDescriptor>) -> TypeDescri
 fn incompatibility_path(actual: &TypeDescriptor, expected: &TypeDescriptor) -> Option<ValuePath> {
     fn visit(actual: &TypeDescriptor, expected: &TypeDescriptor, path: &mut ValuePath) -> bool {
         match (actual, expected) {
-            (TypeDescriptor::Any, _) | (_, TypeDescriptor::Any) => false,
             (TypeDescriptor::Struct(actual), TypeDescriptor::Struct(expected)) => {
                 for (name, expected) in expected {
                     path.push(ValuePathSegment::Key(name.clone()));

@@ -32,23 +32,11 @@ impl<'a> GenericInference<'a> {
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         let mut environment = environment.clone();
-        for binding in &block.value.bindings {
-            if binding
-                .value
-                .annotation
-                .as_ref()
-                .and_then(|annotation| self.local_annotations.get(&annotation.location))
-                .is_some_and(contains_any_descriptor)
-            {
-                self.authored_any_definitions
-                    .insert(binding.value.name.location);
-            }
-        }
         let declared_contracts = block
             .value
             .bindings
             .iter()
-            .filter(|binding| binding.value.kind == BindingKind::Decl)
+            .filter(|binding| matches!(binding.value.kind, BindingKind::Decl | BindingKind::Def))
             .filter_map(|binding| {
                 binding
                     .value
@@ -102,13 +90,15 @@ impl<'a> GenericInference<'a> {
             let Some((skeleton, _)) = recursive_skeletons.get(&binding.value.name.value) else {
                 continue;
             };
+            if binding.value.kind != BindingKind::Def {
+                continue;
+            }
             self.delayed_initializer_depth += 1;
             self.recursive_body_inference_depth += 1;
-            let recursive_expected = Self::recursive_expected(skeleton);
             let inferred = self.infer(
                 &binding.value.value,
                 &environment,
-                Some(&recursive_expected),
+                Some(skeleton),
             );
             self.recursive_body_inference_depth -= 1;
             self.delayed_initializer_depth -= 1;
@@ -212,7 +202,7 @@ impl<'a> GenericInference<'a> {
             let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
                 self.infer(&binding.value.value, &environment, binding_expected)
             } else {
-                self.infer_authored_boundary(&binding.value.value, &environment, binding_expected)
+                self.infer(&binding.value.value, &environment, binding_expected)
             };
             if is_delayed {
                 self.delayed_initializer_depth -= 1;
@@ -276,7 +266,7 @@ impl<'a> GenericInference<'a> {
                 }
             }
         }
-        let result = self.infer_authored_boundary(&block.value.result, &environment, expected)?;
+        let result = self.infer(&block.value.result, &environment, expected)?;
         for (name, descriptor, first_owned_variable) in delayed {
             if let Some(query) = &self.query {
                 query.check().map_err(|error| error.to_string())?;

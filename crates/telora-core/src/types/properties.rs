@@ -132,7 +132,9 @@ fn decorator_property_descriptor(
     sources: &SourceDatabase,
 ) -> Result<TypeDescriptor, FrontendError> {
     let mut provider =
-        infer_expr_recorded(&decorator.value.callee, environment, &mut HashMap::new());
+        infer_expr_recorded(&decorator.value.callee, environment, &mut HashMap::new())
+            .ok_or_else(|| FrontendError::from_diagnostic(sources, Diagnostic::error(
+                "decorator requires an explicit provider contract", decorator.location)))?;
     if decorator.value.configured {
         let TypeDescriptor::Function { parameters, result } = provider else {
             return Err(FrontendError::from_diagnostic(
@@ -157,8 +159,16 @@ fn decorator_property_descriptor(
             ));
         }
         for (argument, expected) in decorator.value.arguments.iter().zip(&parameters) {
-            let actual = infer_expr_recorded(argument, environment, &mut HashMap::new());
-            if !contains_any_descriptor(&actual) && !assignable(&actual, expected) {
+            let Some(actual) = infer_expr_recorded(argument, environment, &mut HashMap::new()) else { continue; };
+            let contextual = match expected {
+                TypeDescriptor::Declared(declared)
+                    if is_declared_literal_construction(argument, expected) =>
+                {
+                    assignable(&actual, &declared.body)
+                }
+                _ => false,
+            };
+            if !assignable(&actual, expected) && !contextual {
                 return Err(FrontendError::from_diagnostic(
                     sources,
                     Diagnostic::error(
@@ -197,7 +207,7 @@ fn decorator_property_descriptor(
         TypeDescriptor::Declared(declared) => assignable(&expected_context, &declared.body),
         parameter => assignable(&expected_context, parameter),
     };
-    if !matches!(parameters[0], TypeDescriptor::Any) && !accepts_context {
+    if !accepts_context {
         return Err(FrontendError::from_diagnostic(
             sources,
             Diagnostic::error(
@@ -325,13 +335,13 @@ fn evaluate_property_decorator(
     let call = property_call(decorator, context, decorator.location);
     let mut descriptors = HashMap::new();
     let inferred = infer_expr_recorded(&call, &environment, &mut descriptors);
-    if inferred != property_descriptor {
+    if inferred.as_ref() != Some(&property_descriptor) {
         return Err(FrontendError::from_diagnostic(
             sources,
             Diagnostic::error(
                 format!(
                     "decorator call inferred {}, expected {}",
-                    inferred.display_name(),
+                    inferred.as_ref().map_or_else(|| "unavailable".to_owned(), TypeDescriptor::display_name),
                     property_descriptor.display_name()
                 ),
                 decorator.location,

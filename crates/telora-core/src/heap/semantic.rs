@@ -8,6 +8,29 @@ pub(crate) fn wrap_semantic_value(
     raw: Val,
     owner: Val,
 ) -> Result<Val, HeapError> {
+    wrap_semantic_value_with_origin(current, background, raw, owner, None)
+}
+
+pub(crate) fn wrap_parsed_semantic_value(
+    current: &mut Heap,
+    background: Option<&Heap>,
+    raw: Val,
+    owner: Val,
+    text: Val,
+) -> Result<Val, HeapError> {
+    // Parser-local spans do not identify files in the caller's source database.
+    // Every parsed node inherits the input text's existing provenance instead.
+    wrap_semantic_value_with_origin(current, background, raw, owner, Some(text))
+}
+
+fn wrap_semantic_value_with_origin(
+    current: &mut Heap,
+    background: Option<&Heap>,
+    raw: Val,
+    owner: Val,
+    origin: Option<Val>,
+) -> Result<Val, HeapError> {
+    let raw = origin.map_or(raw, |origin| Val::original(raw.value(), origin.loc()));
     enum RawNode {
         Unit(BuiltinAtom),
         Scalar(&'static str, Val),
@@ -65,6 +88,7 @@ pub(crate) fn wrap_semantic_value(
             if view.string_text(payload)?.is_none() {
                 return Err(HeapError("semantic temporal payload is not a String"));
             }
+            let payload = origin.map_or(payload, |origin| Val::original(payload.value(), origin.loc()));
             RawNode::Temporal(tag, payload.without_type_id())
         }
         DecodedValue::NativeType(_)
@@ -94,7 +118,7 @@ pub(crate) fn wrap_semantic_value(
         RawNode::Array(items) => {
             let items = items
                 .into_iter()
-                .map(|item| wrap_semantic_value(current, background, item, owner))
+                .map(|item| wrap_semantic_value_with_origin(current, background, item, owner, origin))
                 .collect::<Result<Box<[_]>, _>>()?;
             let payload = Val::new(
                 DecodedValue::Array(current.allocate(Object::Array(items))),
@@ -110,7 +134,7 @@ pub(crate) fn wrap_semantic_value(
             let mut fields = fields
                 .into_iter()
                 .map(|(name, value)| {
-                    wrap_semantic_value(current, background, value, owner)
+                    wrap_semantic_value_with_origin(current, background, value, owner, origin)
                         .map(|value| (name, value))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -141,7 +165,7 @@ pub(crate) fn wrap_semantic_value(
             )
         }
     };
-    Ok(value.with_type_id(type_id))
+    Ok(raw.with_value(value.value()).with_type_id(type_id))
 }
 
 pub(crate) fn semantic_value_type_id(

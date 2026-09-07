@@ -6,6 +6,7 @@ pub struct Analysis {
     pub trait_ids: BTreeMap<String, crate::TraitId>,
     pub trait_implementations: Vec<TraitImplementation>,
     pub result_type: AnalysisTypeId,
+    pub(crate) result_scheme: Option<TypeScheme>,
     pub hir: HirProgram,
     pub definition_types: BTreeMap<HirDefinitionId, AnalysisTypeId>,
     pub definition_schemes: BTreeMap<HirDefinitionId, TypeScheme>,
@@ -201,7 +202,6 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         prelude
             .schemes
             .keys()
-            .filter(|name| name.as_str() != "BlameError")
             .filter(|name| !external_roots.contains_key(*name))
             .chain(external_roots.keys())
             .cloned()
@@ -262,9 +262,11 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .iter()
             .map(|(name, root)| (name.clone(), root.runtime())),
     );
-    let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in bindings.values() {
-        tool_values.insert(binding.value.name.value.clone(), any_metadata);
+        let name = binding.value.name.value.clone();
+        let pending = evaluator.descriptor(&TypeDescriptor::Named(name.clone()))
+            .expect("named pending metadata can enter the tool world");
+        tool_values.insert(name, pending);
     }
     for node in &dependencies.nodes {
         let binding = bindings[&node.definition];
@@ -479,9 +481,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                                 result: Box::new(TypeDescriptor::TypeOf(Box::new(descriptor))),
                             },
                         };
-                        let erased = erase_type_variables(&scheme.body);
+                        let projected = scheme.body.clone();
                         definition_schemes.insert(node.definition, scheme);
-                        (erased, family_value)
+                        (projected, family_value)
                     };
                     let id = types.intern_descriptor(&definition_descriptor);
                     tool_values.insert(binding.value.name.value.clone(), published_value);
@@ -554,7 +556,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                 );
                 match outcome {
                     Ok(built) => {
-                        let descriptor = erase_type_variables(&built.scheme.body);
+                        let descriptor = built.scheme.body.clone();
                         let id = types.intern_descriptor(&descriptor);
                         definition_schemes.insert(definition, built.scheme);
                         tool_values.insert(binding.value.name.value.clone(), built.family_value);
@@ -692,7 +694,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         if root.runtime().type_id().is_none() {
             continue;
         }
-        let descriptor = infer_value_ref(ValueRef::persistent(*root, evaluator.main));
+        let Some(descriptor) = infer_value_ref(ValueRef::persistent(*root, evaluator.main)) else {
+            continue;
+        };
         let ty = types.intern_descriptor(&descriptor);
         facts.insert(definition.id, SemanticFact::known(ty));
     }

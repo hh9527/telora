@@ -160,7 +160,7 @@ import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, ees.none, fn(ctx) {
+export def run = entry.run(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'Int(9))]),

@@ -1,5 +1,4 @@
 import "std/codec" as codec;
-import "std/result" as result;
 
 type Type = struct {v: Option(String)};
 
@@ -8,7 +7,7 @@ def decode = fn(value) {
 };
 
 def encode = fn(value) {
-    codec.encode(Type, value) |> result.unwrap
+    codec.encode(codec.Value, value)
 };
 
 export { Type, decode, encode };

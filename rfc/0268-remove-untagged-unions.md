@@ -1,6 +1,7 @@
 # RFC 0268: Remove Untagged Unions
 
 - Status: Accepted
+- Partial supersession by [RFC 0269](0269-remove-any.md): The provision retaining explicit Any is superseded by complete Any removal.
 - Tracking: [#155](https://github.com/hh9527/telora/issues/155)
 - Baseline: `f6164be`
 - Scope: Removal of public untagged Union and explicit common-type contexts.

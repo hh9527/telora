@@ -1,0 +1,3 @@
+import "@src/check/module-interfaces/namespace" *;
+
+export def identity: for(A) Fn(A) -> A = fn(value) { model.identity(value) };

@@ -234,7 +234,8 @@ pub enum Instruction {
         message: Register,
     },
     Raise {
-        error: Register,
+        message: Register,
+        subjects: Vec<Register>,
     },
     Debug {
         value: Register,
@@ -455,7 +456,8 @@ pub enum Opcode {
         message: Register,
     },
     Raise {
-        error: Register,
+        message: Register,
+        subjects: Vec<Register>,
     },
     Debug {
         value: Register,
@@ -800,7 +802,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Return { src } => Opcode::Return { src },
         Instruction::Fail { message } => Opcode::Fail { message },
         Instruction::Panic { message } => Opcode::Panic { message },
-        Instruction::Raise { error } => Opcode::Raise { error },
+        Instruction::Raise { message, subjects } => Opcode::Raise { message, subjects },
         Instruction::Debug {
             value,
             module,

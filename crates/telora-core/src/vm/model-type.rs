@@ -144,7 +144,9 @@ struct CodecProperties {
 enum CodecKind {
     TypeSlot(Handle),
     TypeRef(Handle),
-    Any,
+    // Generic metadata may be inspected during construction, but cannot run a codec.
+    Bound,
+    Named,
     Type,
     Dyn,
     Int,
@@ -213,6 +215,7 @@ struct CodecFailure {
     message: String,
     data: Val,
     rule: Val,
+    input: Option<Val>,
 }
 
 impl CodecFailure {
@@ -221,6 +224,7 @@ impl CodecFailure {
             message: message.into(),
             data,
             rule,
+            input: None,
         }
     }
 }

@@ -1,16 +1,24 @@
 import "std/value" {Value};
 import "std/ees" as ees;
 
-type Diagnostic = BlameError;
+type Severity = enum {'Error, 'Warning, 'Info};
+type SourceRange = struct {source: String, start: Int, end: Int};
+type Label = struct {location: SourceRange, message: String, primary: Bool};
+type Diagnostic = struct {
+    severity: Severity,
+    message: String,
+    labels: Array(Label),
+    notes: Array(String),
+};
 
 native call_with_diagnostics:
-    for(A, R) Fn(Fn(A) -> R, A)
-        -> Result(Tuple([R, Array(BlameError)]), Array(BlameError));
+    for(A, R) Fn(Fn(A) -> R, A, TypeOf(Diagnostic), TypeOf(Severity), TypeOf(Label), TypeOf(SourceRange))
+        -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic));
 
 def with_diagnostics:
     for(A, R) Fn(Fn(A) -> R)
-        -> Fn(A) -> Result(Tuple([R, Array(BlameError)]), Array(BlameError)) =
-    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument) } };
+        -> Fn(A) -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic)) =
+    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, Diagnostic, Severity, Label, SourceRange) } };
 
 type Platform = struct {
     os: String,
@@ -99,10 +107,12 @@ type SystemEffect = enum {
     'Exit(Int),
 };
 
-native state_type: for(State) Fn(State) -> TypeOf(State);
 
 export {
     Diagnostic,
+    Severity,
+    SourceRange,
+    Label,
     with_diagnostics,
     Platform,
     Env,
@@ -118,5 +128,4 @@ export {
     EesReply,
     SystemEvent,
     SystemEffect,
-    state_type,
 };

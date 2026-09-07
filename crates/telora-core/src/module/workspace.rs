@@ -456,8 +456,9 @@ impl WorkspaceBuilder<'_> {
                 external_roots.insert(name.clone(), candidate.root);
                 external_interfaces.insert(
                     name.clone(),
-                    ModuleInterface {
-                        exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
+                    candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                        namespaces: BTreeMap::new(),
+                        exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
                         concrete_types: candidate.concrete_types,
                         traits: candidate
                             .trait_id
@@ -470,7 +471,7 @@ impl WorkspaceBuilder<'_> {
                             .type_family_template
                             .map(|family| BTreeMap::from([(name.clone(), family)]))
                             .unwrap_or_default(),
-                    },
+                    }),
                 );
             }
             self.visiting.pop();
@@ -661,7 +662,7 @@ impl WorkspaceBuilder<'_> {
         external_roots: &HashMap<String, PersistentValue>,
         external_interfaces: &BTreeMap<String, ModuleInterface>,
     ) -> ModuleEvaluation {
-        let mut account = QuotaAccount::new(self.engine.config.module_quota);
+        let mut account = QuotaAccount::new(self.engine.config.module_quota).with_sources(&self.sources);
         if let Some(query) = self.query {
             account = account.with_query(query.clone());
         }

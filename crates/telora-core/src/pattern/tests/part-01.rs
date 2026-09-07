@@ -20,8 +20,8 @@
         let analysis = analyze_pattern(&input, &matched);
         assert_eq!(analysis.compatibility, PatternCompatibility::Compatible);
         assert!(analysis.irrefutable);
-        assert_eq!(analysis.bindings[0].ty, TypeDescriptor::String);
-        assert_eq!(analysis.bindings[1].ty, TypeDescriptor::Int);
+        assert_eq!(analysis.bindings[0].ty, Some(TypeDescriptor::String));
+        assert_eq!(analysis.bindings[1].ty, Some(TypeDescriptor::Int));
     }
 
     #[test]
@@ -30,14 +30,15 @@
             PatternKind::Tuple(vec![binding("left", 1), binding("right", 2)]),
             0,
         );
-        let analysis = analyze_pattern(&input, &TypeDescriptor::Any);
-        assert_eq!(analysis.compatibility, PatternCompatibility::Unknown);
-        assert!(!analysis.irrefutable);
+        let mut analysis = AnalysisContext::default();
+        let shape = analysis.analyze_optional(&input, None);
+        assert_eq!(shape.compatibility, PatternCompatibility::Unknown);
+        assert!(!shape.irrefutable);
         assert!(
             analysis
                 .bindings
                 .iter()
-                .all(|binding| binding.ty == TypeDescriptor::Any)
+                .all(|binding| binding.ty.is_none())
         );
     }
 
@@ -82,7 +83,7 @@
         let matched = TypeDescriptor::Tuple(vec![TypeDescriptor::Int, TypeDescriptor::String]);
         let analysis = analyze_pattern(&input, &matched);
         assert_eq!(analysis.bindings.len(), 1);
-        assert_eq!(analysis.bindings[0].ty, TypeDescriptor::Int);
+        assert_eq!(analysis.bindings[0].ty, Some(TypeDescriptor::Int));
         assert_eq!(analysis.bindings[0].location, location(1));
         assert_eq!(analysis.duplicates.len(), 1);
         assert_eq!(analysis.duplicates[0].name, "item");

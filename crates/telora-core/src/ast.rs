@@ -98,7 +98,8 @@ pub enum ExprKind {
         message: Box<Expr>,
     },
     Raise {
-        error: Box<Expr>,
+        message: Box<Expr>,
+        subjects: Vec<Expr>,
     },
     Debug {
         value: Box<Expr>,

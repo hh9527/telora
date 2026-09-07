@@ -14,6 +14,12 @@ impl<'a> GenericInference<'a> {
         query: Option<crate::query::QueryContext>,
     ) -> Self {
         let mut declared_bodies = HashMap::new();
+        for scheme in schemes.values() {
+            collect_declared_bodies(&scheme.body, &mut declared_bodies, &mut HashSet::new());
+        }
+        for descriptor in local_annotations.values() {
+            collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
+        }
         for descriptor in named_types.values() {
             collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
         }
@@ -47,7 +53,6 @@ impl<'a> GenericInference<'a> {
             named_types,
             declared_bodies,
             local_annotations,
-            authored_any_definitions: HashSet::new(),
             dyn_namespaces,
             builtin_tuple_available,
             query,
@@ -77,6 +82,18 @@ impl<'a> GenericInference<'a> {
 
     fn take_failure_location(&mut self, fallback: crate::Location) -> crate::Location {
         self.failure_location.take().unwrap_or(fallback)
+    }
+
+    fn require_pattern_binding(&mut self, binding: &crate::pattern::PatternBinding) -> Result<TypeDescriptor, String> {
+        if let Some(ty) = &binding.ty {
+            return Ok(ty.clone());
+        }
+        if let Some((location, message)) = self.pattern_diagnostics.first_key_value() {
+            self.failure_location = Some(*location);
+            return Err(message.clone());
+        }
+        self.failure_location = Some(binding.location);
+        Err(format!("cannot infer pattern binding {:?}; provide an explicit type context", binding.name))
     }
 
     fn take_failure_diagnostic(
@@ -373,17 +390,19 @@ impl<'a> GenericInference<'a> {
             .insert(name, scheme);
     }
 
+    fn namespace_interface(&self, expression: &Expr) -> Option<&ModuleInterface> {
+        match &expression.value {
+            ExprKind::Variable(name) => self.external_interfaces.get(&name.value),
+            ExprKind::Field { receiver, field } => self.namespace_interface(receiver)?.namespaces.get(&field.value),
+            _ => None,
+        }
+    }
+
     fn explicit_scheme(&self, callee: &Expr) -> Option<TypeScheme> {
         match &callee.value {
             ExprKind::Variable(name) => self.scheme(&name.value),
-            ExprKind::Field { receiver, field } => match &receiver.value {
-                ExprKind::Variable(module) => self
-                    .external_interfaces
-                    .get(&module.value)
-                    .and_then(|interface| interface.exports.get(&field.value))
-                    .cloned(),
-                _ => None,
-            },
+            ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
+                .and_then(|interface| interface.exports.get(&field.value)).cloned(),
             _ => None,
         }
     }
@@ -623,6 +642,12 @@ impl<'a> GenericInference<'a> {
                 location,
             })
             .collect();
+        for descriptor in self.records.values_mut() {
+            *descriptor = bind_inference_variables(descriptor, &replacements);
+        }
+        for descriptor in self.pattern_binding_types.values_mut() {
+            *descriptor = bind_inference_variables(descriptor, &replacements);
+        }
         Ok(Some(TypeScheme {
             parameters,
             constraints: Vec::new(),
@@ -683,16 +708,6 @@ impl<'a> GenericInference<'a> {
                 _ => None,
             },
             _ => None,
-        }
-    }
-
-    fn recursive_expected(descriptor: &TypeDescriptor) -> TypeDescriptor {
-        match descriptor {
-            TypeDescriptor::Function { parameters, .. } => TypeDescriptor::Function {
-                parameters: parameters.clone(),
-                result: Box::new(TypeDescriptor::Any),
-            },
-            descriptor => descriptor.clone(),
         }
     }
 

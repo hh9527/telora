@@ -1,6 +1,7 @@
 # RFC 0016: Core Dict Functions
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Dict helper contracts use homogeneous Dict(A) with preserved element types.
 
 ## Summary
 

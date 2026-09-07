@@ -59,15 +59,15 @@ export def verified_case = test.should_ok(fn() {
         }
         && int_expr_type == same_int_expr_type
         && int_expr_type != string_expr_type
-        && match validate(User, {age: 36, name: "Ada"}) {
+        && match {age: 36, name: "Ada"}.cast!(User) {
             'Ok(_) => 'True,
             'Err(_) => 'False,
         }
-        && match validate(User, {age: "old", name: "Ada"}) {
+        && match {age: "old", name: "Ada"}.cast!(User) {
             'Ok(_) => 'False,
             'Err(_) => 'True,
         }
-        && match validate(Box(Int), {value: 42}) {
+        && match {value: 42}.cast!(Box(Int)) {
             'Ok(_) => 'True,
             'Err(_) => 'False,
         };

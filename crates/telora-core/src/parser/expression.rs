@@ -740,41 +740,14 @@ impl<'a> Lowerer<'a> {
         let location = self.location(node);
         let mut arguments = arguments.into_iter();
         let message = arguments.next().expect("blame message was checked");
-        // Keep the explicit subject boundary in the internal envelope. The VM
-        // uses this tuple to retain one ordered provenance location per subject.
-        let data = located(ExprKind::Tuple(arguments.collect()), location);
-        let rule = located(ExprKind::String(format!("{name}!")), location);
-        let fields = [("data", data), ("message", message), ("rule", rule)]
-            .into_iter()
-            .map(|(name, value)| {
-                located(
-                    DictFieldKind {
-                        decorators: Vec::new(),
-                        name: Some(located(name.into(), location)),
-                        value,
-                    },
-                    location,
-                )
-            })
-            .collect();
-        Ok(located(ExprKind::Dict(fields), location))
+        Ok(located(ExprKind::Raise {
+            message: Box::new(message),
+            subjects: arguments.collect(),
+        }, location))
     }
 
     fn lower_fail(&self, arguments: Vec<Expr>, node: NodeRef) -> Result<Expr, Diagnostic> {
-        if arguments.is_empty() {
-            return Err(self.error(
-                node,
-                "fail! expects a message followed by zero or more subjects",
-            ));
-        }
-        let location = self.location(node);
-        let blame = self.lower_blame("fail", arguments, node)?;
-        Ok(located(
-            ExprKind::Raise {
-                error: Box::new(blame),
-            },
-            location,
-        ))
+        self.lower_blame("fail", arguments, node)
     }
 
     fn lower_check(
@@ -885,12 +858,7 @@ impl<'a> Lowerer<'a> {
                     .collect(),
                 node,
             )?;
-            located(
-                ExprKind::Raise {
-                    error: Box::new(envelope),
-                },
-                location,
-            )
+            envelope
         };
         let result = located(
             ExprKind::Match {
@@ -1028,12 +996,7 @@ impl<'a> Lowerer<'a> {
                 ],
                 node,
             )?;
-            located(
-                ExprKind::Raise {
-                    error: Box::new(envelope),
-                },
-                location,
-            )
+            envelope
         };
         let matched = located(
             ExprKind::Match {

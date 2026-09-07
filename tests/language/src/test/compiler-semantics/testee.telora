@@ -23,7 +23,7 @@ export def atom_tuples = test.should_ok(fn() {
 
 export def function_identity = test.should_ok(fn() {
     expect({
-        let f: Fn(Any) -> Any = fn(x) { x };
+        let f: Fn(Int) -> Int = fn(x) { x };
         f == f && f != fn(x) { x }
     })
 });
@@ -92,10 +92,10 @@ export def inferred_recursion = test.should_ok(fn() {
         def countdown = fn(value) {
             if value < 1 { 0 } else { countdown(value - 1) }
         };
-        def even = fn(value) {
+        def even = fn(value) -> Bool {
             if value < 1 { 'True } else { odd(value - 1) }
         };
-        def odd = fn(value) {
+        def odd = fn(value) -> Bool {
             if value < 1 { 'False } else { even(value - 1) }
         };
         countdown(4) == 0 && even(4)
@@ -145,7 +145,7 @@ export def call_sections = test.should_ok(fn() {
         let apply = fn(callback, value) { callback(value) };
         let array_type = Array\(_);
         let second = fn(first, second) { second };
-        let make: Fn() -> Fn(Any) -> Any = fn() { fn(value) { value } };
+        let make: Fn() -> Fn(Int) -> Int = fn() { fn(value) { value } };
         let reevaluated = second\(_, make());
         section(1, 2) == 13
             && flipped(2, 10) == 8
@@ -195,16 +195,11 @@ export def structural_patterns = test.should_ok(fn() {
     expect({
         let user = {name: "Ada", address: {city: "London"}};
         let selected = match user { {name, address: {city}} => (name, city) };
-        let select: Fn(Any) -> String = fn(value) {
-            match value { {name} => name, _ => "fallback" }
+        let select: Fn(Option(String)) -> String = fn(value) {
+            match value { 'Some(name) => name, _ => "fallback" }
         };
-        let is_struct: Fn(Any) -> Bool = fn(value) {
-            match value { {} => 'True, _ => 'False }
-        };
-        selected == ("Ada", "London")
-            && select(1) == "fallback"
-            && is_struct({})
-            && !is_struct(1)
+        selected == ("Ada", "London") && select('None) == "fallback"
+            && select('Some("Ada")) == "Ada"
     })
 });
 
@@ -365,8 +360,8 @@ export def boolean_and_bitwise_not = test.should_ok(fn() {
             && !('True && 'False)
             && !0 == -1
             && !-1 == 0
-            && { let invert: Fn(Any) -> Bool = fn(value) { !value }; invert('True) == 'False && invert('False) }
-            && { let invert: Fn(Any) -> Any = fn(value) { !value }; invert('True) == 'False && invert(0) == -1 }
+            && { let invert: Fn(Bool) -> Bool = fn(value) { !value }; invert('True) == 'False && invert('False) }
+            && { let invert: Fn(Int) -> Int = fn(value) { !value }; invert(0) == -1 }
     )
 });
 
@@ -399,13 +394,13 @@ export def tail_calls = test.should_ok(fn() {
         def matched: Fn(Int) -> Int = fn(n) {
             match n { 0 => 0, value => matched(value - 1) }
         };
-        let iterate: Fn(Any, Int) -> Int = fn(step, n) {
-            if n < 1 { 0 } else { step(step, n - 1) }
+        def iterate: Fn(Fn(Int) -> Int, Int) -> Int = fn(step, n) {
+            if n < 1 { step(0) } else { iterate(step, n - 1) }
         };
         direct(1500) == 0
             && even(1500) == 0
             && matched(1500) == 0
-            && iterate(iterate, 1500) == 0
+            && iterate(fn(value) { value }, 1500) == 0
     })
 });
 

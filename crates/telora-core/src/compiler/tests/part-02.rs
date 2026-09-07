@@ -37,7 +37,7 @@
 
     #[test]
     fn generated_function_results_rebase_to_the_authored_call_site() {
-        let source = "def inner: Fn() -> Any = fn() { 1 + 1 };\ndef outer: Fn() -> Any = fn() { inner() };\nlet value = outer();\nvalue.missing";
+        let source = "def inner: Fn() -> Int = fn() { 1 + 1 };\ndef outer: Fn() -> Int = fn() { inner() };\nlet value = outer();\nfail!(\"failure\", value)";
         let call_start = source.find("outer();").unwrap();
         let error = run(source).unwrap_err();
         let ExecutionError::Runtime(error) = error else {

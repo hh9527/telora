@@ -1,0 +1,1 @@
+export type Invalid = Tagged(42, Int);

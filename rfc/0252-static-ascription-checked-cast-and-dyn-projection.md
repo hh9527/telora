@@ -1,6 +1,7 @@
 # RFC 0252: Static Ascription, Checked Cast, and Exact Dyn Projection
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): validate is removed; cast retains Result(A, String) and Dyn projection retains explicit witnesses.
 - Tracking issue: #99
 - Depends on: RFC 0052, RFC 0055, RFC 0178, RFC 0248, RFC 0250
 

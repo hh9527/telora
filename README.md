@@ -56,7 +56,7 @@ import "std/entry" as entry;
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, ees.none, fn(ctx) {
+export def run = entry.run(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (
@@ -171,7 +171,7 @@ type Request = struct { subject: String, limit: Int };
 
 def raw_text: String = "{\"subject\":\"orders\",\"limit\":20}";
 def request: Request = json.decode(Request, raw_text) |> result.unwrap;
-def encoded: Value = codec.encode(Value, request) |> result.unwrap;
+def encoded: Value = codec.encode(Value, request);
 ```
 
 `std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本和 schema。

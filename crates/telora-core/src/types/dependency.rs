@@ -127,10 +127,6 @@ pub(crate) enum ModuleAnalysisContext {
 }
 
 impl ModuleAnalysisContext {
-    const fn native_abi(self) -> bool {
-        matches!(self, Self::Builtin { .. })
-    }
-
     const fn defines_display_trait(self) -> bool {
         matches!(
             self,
@@ -214,6 +210,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     tool_heap: &mut Heap,
     type_store: &mut TypeStore,
 ) -> Result<Analysis, FrontendError> {
+    account.register_sources(sources);
     let prelude = BootstrapPrelude::new();
     let authored_names = program
         .value
@@ -234,7 +231,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         prelude
             .types
             .keys()
-            .filter(|name| module_context.native_abi() || name.as_str() != "BlameError")
             .filter(|name| !external_roots.contains_key(*name))
             .chain(external_roots.keys())
             .cloned()
@@ -247,11 +243,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .filter(|name| !authored_names.contains(name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let native_abi = module_context.native_abi();
     let prelude_names = prelude
         .types
         .keys()
-        .filter(|name| native_abi || name.as_str() != "BlameError")
         .cloned()
         .collect::<Vec<_>>();
     let BootstrapPrelude {
@@ -353,13 +347,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let interface = qualified_external_interfaces.get(name);
         let scheme = interface
             .and_then(|interface| interface.exports.get(name))
+            .or_else(|| qualified_external_interfaces.values()
+                .flat_map(|interface| &interface.trait_implementations)
+                .find(|implementation| implementation.dictionary == *name)
+                .map(|implementation| &implementation.dictionary_scheme))
             .cloned();
         tool_values.insert(name.clone(), root.runtime());
-        let inferred = imported_static_descriptor(
+        let inferred = scheme.as_ref().map(|scheme| scheme.body.clone()).or_else(|| imported_static_descriptor(
             ValueRef::persistent(*root, evaluator.main),
             interface,
             name,
-        );
+        )).ok_or_else(|| frontend_error(source_name, format!("Host binding {name:?} requires an explicit type interface")))?;
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
         if let Some(scheme) = scheme {
@@ -372,7 +370,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .collect::<BTreeMap<_, _>>();
     validate_export_references(program, prelude_names.iter(), external_roots, sources)?;
 
-    let any_metadata = *tool_values.get("Any").expect("core prelude defines Any");
     for binding in &program.value.body.value.bindings {
         if binding.value.kind == BindingKind::NativeType {
             let name = &binding.value.name.value;
@@ -390,7 +387,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             continue;
         }
         if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
-            tool_values.insert(binding.value.name.value.clone(), any_metadata);
+            let name = binding.value.name.value.clone();
+            let pending = evaluator.descriptor(&TypeDescriptor::Named(name.clone()))?;
+            tool_values.insert(name, pending);
             static_environment.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
             binding_types.insert(binding.value.name.value.clone(), TypeDescriptor::Type);
         }
@@ -403,8 +402,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 format!("dynamic binding {name:?} has no value"),
             ));
         }
-        static_environment.insert(name.clone(), TypeDescriptor::Any);
-        binding_types.insert(name.clone(), TypeDescriptor::Any);
     }
 
     // Definition contracts are evaluated before the source-order binding pass.
@@ -470,6 +467,25 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .collect::<Vec<_>>();
     let mut scheduled_types = BTreeSet::new();
     let mut frontier = family_dependents;
+    let helper_dependent_types = type_definitions
+        .iter()
+        .copied()
+        .filter(|definition| {
+            definition_dependencies(&hir, *definition).iter().any(|dependency| {
+                hir.definition(*dependency).is_some_and(|dependency| {
+                    dependency.top_level
+                        && matches!(dependency.kind, HirDefinitionKind::Let | HirDefinitionKind::DefinitionSlot)
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    // Resolve forward type references before publishing metadata. Types that
+    // execute local value helpers remain in the source-order tool pass.
+    frontier.extend(type_definitions.iter().copied().filter(|definition| {
+        !helper_dependent_types.iter().any(|helper| {
+            definition == helper || dependency_reaches(&type_dependencies, *definition, *helper)
+        })
+    }));
     frontier.extend(contract_type_definitions);
     frontier.extend(
         type_definitions
@@ -703,10 +719,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     result: Box::new(TypeDescriptor::TypeOf(Box::new(descriptor))),
                 },
             };
-            let erased = erase_type_variables(&scheme.body);
+            let projected = scheme.body.clone();
             tool_values.insert(binding.value.name.value.clone(), family_value);
-            static_environment.insert(binding.value.name.value.clone(), erased.clone());
-            binding_types.insert(binding.value.name.value.clone(), erased);
+            static_environment.insert(binding.value.name.value.clone(), projected.clone());
+            binding_types.insert(binding.value.name.value.clone(), projected);
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
             type_family_templates.insert(binding.value.name.value.clone(), family.clone());
             type_family_values.insert(binding.value.name.value.clone(), family.clone());
@@ -758,10 +774,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     sources,
                     &mut evaluator,
                 )?;
-                let erased = erase_type_variables(&built.scheme.body);
+                let projected = built.scheme.body.clone();
                 tool_values.insert(binding.value.name.value.clone(), built.family_value);
-                static_environment.insert(binding.value.name.value.clone(), erased.clone());
-                binding_types.insert(binding.value.name.value.clone(), erased);
+                static_environment.insert(binding.value.name.value.clone(), projected.clone());
+                binding_types.insert(binding.value.name.value.clone(), projected);
                 binding_schemes.insert(binding.value.name.value.clone(), built.scheme);
                 type_family_templates
                     .insert(binding.value.name.value.clone(), built.family.clone());
@@ -981,9 +997,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 },
             );
         }
-        let erased = erase_type_variables(&descriptor);
-        static_environment.insert(name.clone(), erased.clone());
-        binding_types.insert(name.clone(), erased);
+        let projected = descriptor.clone();
+        static_environment.insert(name.clone(), projected.clone());
+        binding_types.insert(name.clone(), projected);
         if matches!(
             binding.value.kind,
             BindingKind::Decl | BindingKind::Def | BindingKind::Impl
@@ -1059,14 +1075,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     for binding in &program.value.body.value.bindings {
-        check_interpolations(&binding.value.value, &static_environment, sources)?;
         let inferred_expression = infer_expr_recorded(
             &binding.value.value,
             &static_environment,
             &mut expression_descriptors,
         );
         if let Some(annotation) = &binding.value.annotation {
-            check_interpolations(annotation, &static_environment, sources)?;
             infer_expr_recorded(annotation, &static_environment, &mut expression_descriptors);
         }
         match binding.value.kind {
@@ -1171,10 +1185,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             BindingKind::Let | BindingKind::Impl => {
                 let inferred = inferred_expression;
                 let checked = if binding.value.kind == BindingKind::Impl {
-                    definition_contracts
+                    Some(definition_contracts
                         .get(&binding.value.name.value)
                         .cloned()
-                        .expect("impl contract was evaluated with its type parameter scope")
+                        .expect("impl contract was evaluated with its type parameter scope"))
                 } else if let Some(annotation) = &binding.value.annotation {
                     let metadata = evaluate_tool_expression(
                         source_name,
@@ -1193,13 +1207,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             ),
                         )
                     })?;
-                    if !contains_any_descriptor(&inferred)
+                    if let Some(inferred) = &inferred
                         && !contains_named_type(&expected)
                         && !same_nominal_head_with_erased_arguments(&inferred, &expected)
                         && !assignable(&inferred, &expected)
                         && !is_declared_literal_construction(
                             &binding.value.value,
-                            &inferred,
                             &expected,
                         )
                     {
@@ -1238,12 +1251,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             return Err(FrontendError::from_diagnostic(sources, diagnostic));
                         }
                     }
-                    expected
+                    Some(expected)
                 } else {
                     inferred
                 };
-                static_environment.insert(binding.value.name.value.clone(), checked.clone());
-                binding_types.insert(binding.value.name.value.clone(), checked);
+                set_projected_type(&mut static_environment, &binding.value.name.value, checked.clone());
+                if let Some(checked) = checked { binding_types.insert(binding.value.name.value.clone(), checked); }
+                else { binding_types.remove(&binding.value.name.value); }
 
                 if let Ok(value) = evaluate_typed_tool_expression_silent(
                     source_name,
@@ -1262,10 +1276,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 let inferred = inferred_expression;
                 let checked = definition_contracts
                     .get(name)
-                    .map(erase_type_variables)
-                    .unwrap_or(inferred);
-                static_environment.insert(name.clone(), checked.clone());
-                binding_types.insert(name.clone(), checked);
+                    .cloned()
+                    .or(inferred);
+                set_projected_type(&mut static_environment, name, checked.clone());
+                if let Some(checked) = checked { binding_types.insert(name.clone(), checked); }
+                else { binding_types.remove(name); }
                 if let Ok(value) = evaluate_typed_tool_expression_silent(
                     source_name,
                     &binding.value.value,
@@ -1296,7 +1311,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     ValueRef::persistent(value, evaluator.main),
                     interface,
                     &binding.value.name.value,
-                );
+                ).ok_or_else(|| frontend_error(source_name, format!("import {:?} requires an explicit type interface", binding.value.name.value)))?;
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
                 if let Some(scheme) = scheme {
@@ -1357,11 +1372,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
 
-    check_interpolations(
-        &program.value.body.value.result,
-        &static_environment,
-        sources,
-    )?;
     infer_expr_recorded(
         &program.value.body.value.result,
         &static_environment,
@@ -1456,17 +1466,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         !external_roots.contains_key("Tuple"),
         account.query_context(),
     );
-    for binding in &program.value.body.value.bindings {
-        if binding.value.annotation.is_some()
-            && binding_types
-                .get(&binding.value.name.value)
-                .is_some_and(contains_any_descriptor)
-        {
-            inference
-                .authored_any_definitions
-                .insert(binding.value.name.location);
-        }
-    }
     let mut checked_environment = static_environment.clone();
     let type_metadata_expected = TypeDescriptor::Type;
     let mut delayed_bindings = Vec::new();
@@ -1515,13 +1514,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let Some((skeleton, _)) = recursive_skeletons.get(&binding.value.name.value) else {
             continue;
         };
+        if binding.value.kind != BindingKind::Def {
+            continue;
+        }
         inference.delayed_initializer_depth += 1;
         inference.recursive_body_inference_depth += 1;
-        let recursive_expected = GenericInference::recursive_expected(skeleton);
         let inferred = inference.infer(
             &binding.value.value,
             &checked_environment,
-            Some(&recursive_expected),
+            Some(skeleton),
         );
         inference.recursive_body_inference_depth -= 1;
         inference.delayed_initializer_depth -= 1;
@@ -1725,7 +1726,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             inference.infer(&binding.value.value, environment, expected)
         } else {
-            inference.infer_authored_boundary(&binding.value.value, environment, expected)
+            inference.infer(&binding.value.value, environment, expected)
         };
         if let Some(start) = lexical_evidence_start {
             inference.pop_lexical_evidence(start);
@@ -1917,6 +1918,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .collect();
     binding_schemes.extend(inference.top_level_inferred_schemes.clone());
+    let namespace_bindings = qualified_external_interfaces.keys()
+        .filter(|name| external_roots.get(*name).is_some_and(|root| ValueRef::persistent(*root, evaluator.main).kind() == ValueKind::Module))
+        .cloned().collect::<HashSet<_>>();
     let explicitly_exported_locals = program
         .value
         .body
@@ -1928,7 +1932,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .map(|name| name.value.as_str())
         .collect::<HashSet<_>>();
     for (name, descriptor) in &binding_types {
-        if explicitly_exported_locals.contains(name.as_str()) {
+        if explicitly_exported_locals.contains(name.as_str()) && !namespace_bindings.contains(name) {
             binding_schemes
                 .entry(name.clone())
                 .or_insert_with(|| TypeScheme {
@@ -1938,7 +1942,37 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 });
         }
     }
-    let resolved_result = inference.resolve(&result_type);
+    let mut resolved_result = inference.resolve(&result_type);
+    // Exported callable values retain their quantified contracts, rather than an
+    // unconstrained instantiation created while checking the export expression.
+    match (&program.value.body.value.result.value, &mut resolved_result) {
+        (ExprKind::Variable(name), descriptor) => {
+            if let Some(scheme) = binding_schemes.get(&name.value) {
+                *descriptor = scheme.body.clone();
+            }
+        }
+        (ExprKind::Dict(fields), TypeDescriptor::Struct(descriptors)) => {
+            for field in fields {
+                if let (Some(name), ExprKind::Variable(binding)) =
+                    (&field.value.name, &field.value.value.value)
+                    && let Some(scheme) = binding_schemes.get(&binding.value)
+                {
+                    descriptors.insert(name.value.clone(), scheme.body.clone());
+                    expression_descriptors.insert(field.value.value.location, scheme.body.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+    expression_descriptors.insert(program.value.body.value.result.location, resolved_result.clone());
+    let result_scheme = match &program.value.body.value.result.value {
+        ExprKind::Variable(name) => binding_schemes.get(&name.value).cloned(),
+        _ => None,
+    }.or_else(|| (!contains_type_variable(&resolved_result)).then(|| TypeScheme {
+        parameters: Vec::new(),
+        constraints: Vec::new(),
+        body: resolved_result.clone(),
+    })).filter(|scheme| validate_publishable_scheme(scheme).is_ok());
     for (name, descriptor) in &binding_types {
         let resolved = inference.resolve(descriptor);
         if contains_type_variable(&resolved) {
@@ -1974,20 +2008,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .into_iter()
         .map(|(name, descriptor)| {
             let descriptor = inference.resolve(&descriptor);
-            (name, types.intern_erased_descriptor(&descriptor))
+            (name, types.intern_descriptor(&descriptor))
         })
         .collect();
-    let result_type = types.intern_erased_descriptor(&resolved_result);
+    let result_type = types.intern_resolved_descriptor(&resolved_result).ok_or_else(|| {
+        frontend_error(source_name, "cannot publish unresolved result type; provide an explicit type context")
+    })?;
     let expression_types: BTreeMap<HirExpressionId, AnalysisTypeId> = hir
         .expressions()
         .iter()
         .filter_map(|expression| {
             expression_descriptors
                 .get(&expression.location)
-                .map(|descriptor| (expression.id, types.intern_erased_descriptor(descriptor)))
+                .and_then(|descriptor| types.intern_resolved_descriptor(descriptor))
+                .map(|ty| (expression.id, ty))
         })
         .collect();
-    let any_type = types.intern_descriptor(&TypeDescriptor::Any);
     let pattern_definition_types = hir
         .definitions()
         .iter()
@@ -1996,18 +2032,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
             inference
                 .pattern_binding_types
                 .get(&definition.location)
-                .map(|descriptor| {
-                    (
-                        definition.id,
-                        types.intern_erased_descriptor(&inference.resolve(descriptor)),
-                    )
-                })
+                .and_then(|descriptor| types.intern_resolved_descriptor(&inference.resolve(descriptor)))
+                .map(|ty| (definition.id, ty))
         })
         .collect::<HashMap<_, _>>();
     let definition_types = hir
         .definitions()
         .iter()
-        .map(|definition| {
+        .filter_map(|definition| {
             let ty = if definition.top_level {
                 binding_types.get(&definition.name).copied()
             } else {
@@ -2015,9 +2047,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     .value
                     .and_then(|value| expression_types.get(&value).copied())
             }
-            .or_else(|| pattern_definition_types.get(&definition.id).copied())
-            .unwrap_or(any_type);
-            (definition.id, ty)
+            .or_else(|| pattern_definition_types.get(&definition.id).copied());
+            ty.map(|ty| (definition.id, ty))
         })
         .collect();
     let definition_schemes = hir
@@ -2056,6 +2087,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .find_map(|interface| interface.display_trait)
     };
     let module_interface = ModuleInterface {
+        namespaces: match &program.value.body.value.result.value {
+            ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
+                let ExprKind::Variable(binding) = &field.value.value.value else { return None; };
+                let interface = qualified_external_interfaces.get(&binding.value)?;
+                let root = external_roots.get(&binding.value)?;
+                if ValueRef::persistent(*root, evaluator.main).kind() != ValueKind::Module { return None; }
+                Some((field.value.name.as_ref()?.value.clone(), interface.clone()))
+            }).collect(),
+            _ => BTreeMap::new(),
+        },
         exports: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields
                 .iter()
@@ -2063,6 +2104,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     let ExprKind::Variable(binding) = &field.value.value.value else {
                         return None;
                     };
+                    if namespace_bindings.contains(&binding.value) { return None; }
                     binding_schemes
                         .get(&binding.value)
                         .cloned()
@@ -2328,6 +2370,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         trait_ids,
         trait_implementations,
         result_type,
+        result_scheme,
         hir,
         definition_types,
         definition_schemes,

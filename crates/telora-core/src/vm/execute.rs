@@ -1752,112 +1752,30 @@ impl Vm {
                                     .to_owned();
                                 return Err(error(RuntimeErrorKind::Panic, text, function, pc));
                             }
-                            Opcode::Raise {
-                                error: error_register,
-                            } => {
-                                let structured =
-                                    *read_register(&registers, *error_register, function, pc)?;
-                                let DecodedValue::Dict(handle) = structured.value() else {
-                                    return Err(runtime_type_error(
-                                        "BlameError",
-                                        &structured,
-                                        &view,
-                                        function,
-                                        pc,
-                                    ));
-                                };
-                                let fields = view.dict_fields(handle).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                                if fields.as_slice() != ["data", "message", "rule"] {
-                                    return Err(runtime_type_error(
-                                        "BlameError",
-                                        &structured,
-                                        &view,
-                                        function,
-                                        pc,
-                                    ));
-                                }
-                                let get_field = |name| {
-                                    view.dict_get_text(handle, name)
-                                        .map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?
-                                        .ok_or_else(|| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                format!("BlameError is missing {name}"),
-                                                function,
-                                                pc,
-                                            )
-                                        })
-                                };
-                                let data = get_field("data")?;
-                                let message = get_field("message")?;
-                                let rule = get_field("rule")?;
-                                let text = view.string_text(message).map_err(|heap_error| {
-                                    error(
-                                        RuntimeErrorKind::InvalidBytecode,
-                                        heap_error.to_string(),
-                                        function,
-                                        pc,
-                                    )
-                                })?;
-                                let Some(text) = text else {
-                                    return Err(runtime_type_error(
-                                        "String", &message, &view, function, pc,
-                                    ));
-                                };
-                                let mut runtime =
-                                    error(RuntimeErrorKind::RaisedBlame, text, function, pc);
-                                let data_sources = match data.value() {
-                                    DecodedValue::Tuple(handle) => view
-                                        .sequence(handle, true)
-                                        .map_err(|heap_error| {
-                                            error(
-                                                RuntimeErrorKind::InvalidBytecode,
-                                                heap_error.to_string(),
-                                                function,
-                                                pc,
-                                            )
-                                        })?
-                                        .iter()
-                                        .filter_map(|value| value.loc())
-                                        .collect::<Vec<_>>(),
-                                    _ => data.loc().into_iter().collect(),
-                                };
-                                let contextual = view
-                                    .string_text(rule)
-                                    .map_err(|heap_error| {
-                                        error(
-                                            RuntimeErrorKind::InvalidBytecode,
-                                            heap_error.to_string(),
-                                            function,
-                                            pc,
-                                        )
-                                    })?
-                                    .is_some_and(|marker| {
-                                        matches!(marker.as_str(), "fail!" | "must_ok!" | "unwrap!")
-                                    });
-                                if contextual {
-                                    runtime.set_contextual_locations(
-                                        data_sources,
-                                        rule_boundary.or(rule.loc()),
-                                        rule.loc(),
-                                    );
-                                } else {
-                                    runtime.set_data_sources(data_sources, rule.loc());
-                                }
+                            Opcode::Raise { message, subjects } => {
+                                let message = *read_register(&registers, *message, function, pc)?;
+                                let values = subjects.iter().map(|subject|
+                                    read_register(&registers, *subject, function, pc).copied()
+                                ).collect::<Result<Vec<_>, _>>()?;
+                                propagate_data_failures(&[message], &view, function, pc)?;
+                                propagate_data_failures(&values, &view, function, pc)?;
+                                let text = view.string_text(message)
+                                    .map_err(|heap_error| error(RuntimeErrorKind::InvalidBytecode,
+                                        heap_error.to_string(), function, pc))?
+                                    .ok_or_else(|| runtime_type_error("String", &message, &view, function, pc))?;
+                                // Keep diagnostic allocation accounting independent of a public value type.
+                                let bytes = logical_value_bytes(values.len().saturating_add(3))
+                                    .and_then(|bytes| bytes.checked_add(15).ok_or_else(||
+                                        NativeError::allocation_limit("diagnostic size overflowed")))
+                                    .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
+                                charge_allocation(account, bytes, function, pc)?;
+                                let mut runtime = error(RuntimeErrorKind::RaisedBlame, text, function, pc);
+                                let location = instruction_location(function, pc);
+                                runtime.set_contextual_locations(
+                                    values.iter().filter_map(|value| value.loc()),
+                                    rule_boundary.or(location),
+                                    location,
+                                );
                                 return Err(runtime);
                             }
                             Opcode::Debug {
@@ -1895,28 +1813,6 @@ impl Vm {
                                 )
                             }) =>
                     {
-                        let raised = frames.last().and_then(|frame| {
-                            (frame.function.name() == runtime_error.function)
-                                .then(|| {
-                                    let Opcode::Raise { error } = frame
-                                        .function
-                                        .instructions()
-                                        .get(runtime_error.instruction)?
-                                    else {
-                                        return None;
-                                    };
-                                    let end = frame.base + frame.function.register_count();
-                                    read_register(
-                                        &stack[frame.base..end],
-                                        *error,
-                                        &frame.function,
-                                        runtime_error.instruction,
-                                    )
-                                    .ok()
-                                    .copied()
-                                })
-                                .flatten()
-                        });
                         append_runtime_trace(&mut runtime_error, &frames);
                         let frame_index = frames
                             .iter()
@@ -1936,7 +1832,6 @@ impl Vm {
                         };
                         let action = continuation.catch_recoverable(
                             runtime_error,
-                            raised,
                             &mut current,
                             background,
                             account,

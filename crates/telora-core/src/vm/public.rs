@@ -49,6 +49,7 @@ pub struct QuotaAccount {
     requested_allocation_bytes: u64,
     query: Option<crate::query::QueryContext>,
     diagnostics: Vec<Diagnostic>,
+    source_names: std::collections::BTreeMap<crate::SourceId, Arc<str>>,
 }
 
 impl QuotaAccount {
@@ -59,12 +60,24 @@ impl QuotaAccount {
             requested_allocation_bytes: 0,
             query: None,
             diagnostics: Vec::new(),
+            source_names: std::collections::BTreeMap::new(),
         }
     }
 
     pub fn with_query(mut self, query: crate::query::QueryContext) -> Self {
         self.query = Some(query);
         self
+    }
+
+    pub fn with_sources(mut self, sources: &SourceDatabase) -> Self {
+        self.register_sources(sources);
+        self
+    }
+
+    pub(crate) fn register_sources(&mut self, sources: &SourceDatabase) {
+        self.source_names.extend(
+            sources.files().map(|file| (file.id(), Arc::clone(&file.name))),
+        );
     }
 
     pub const fn quota(&self) -> Quota {
@@ -322,16 +335,6 @@ impl<'a> ValueRef<'a> {
             view: HeapView {
                 current: work,
                 background: Some(main),
-            },
-        }
-    }
-
-    pub(crate) fn local(value: Val, heap: &'a Heap) -> Self {
-        Self {
-            value,
-            view: HeapView {
-                current: heap,
-                background: None,
             },
         }
     }

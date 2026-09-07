@@ -1,5 +1,7 @@
+import "std/dyn" as dyn;
+
 export def t0321_should_error = {
-    let left: Any = "a";
-    let right: Any = 1;
+    let left = dyn.pack(String, "a");
+    let right = dyn.pack(Int, 1);
     left < right
 };

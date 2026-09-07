@@ -75,7 +75,7 @@ def declared_ees: Fn(Array(ees.Model)) -> Dict(String) = fn(models) {
 
 def diagnostics: Fn(Array(rt.Diagnostic)) -> Array(Value) = fn(found) {
     array.map(found, fn(diagnostic) {
-        'Object({message: 'String(codec.format_error(diagnostic))})
+        'Object({message: 'String(diagnostic.message)})
     })
 };
 

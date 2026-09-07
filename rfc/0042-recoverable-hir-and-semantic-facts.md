@@ -1,6 +1,7 @@
 # RFC 0042: Recoverable HIR and semantic fact states
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Recovery and incomplete type evidence have no Any representation or executable authority.
 - Depends on: RFC 0008, RFC 0038, RFC 0041
 
 ## Summary

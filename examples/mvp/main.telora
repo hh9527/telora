@@ -7,5 +7,5 @@ type User = struct {
 };
 
 def user: User = raw_user;
-def result = validate(User, user);
+def result = user.cast!(User);
 export { result as output };

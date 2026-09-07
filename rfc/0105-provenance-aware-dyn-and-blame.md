@@ -1,6 +1,7 @@
 # RFC 0105: Provenance-aware Dyn and `blame!`
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Error subjects use producer-specific contracts; direct diagnostic emission observes internal Val subjects.
 - Depends on: RFC 0089 through RFC 0099, RFC 0101, RFC 0102
 
 ## Summary

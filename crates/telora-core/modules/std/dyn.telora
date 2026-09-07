@@ -11,17 +11,43 @@ native check_int: Fn(Dyn) -> Option(Int);
 native check_float: Fn(Dyn) -> Option(Float);
 native check_string: Fn(Dyn) -> Option(String);
 native check_bytes: Fn(Dyn) -> Option(Bytes);
-native field: Fn(Dyn, String) -> Result(Dyn, BlameError);
-native fields: Fn(Dyn) -> Result(Array(Tuple([String, Dyn])), BlameError);
-native array_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
-native tuple_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
-native tag: Fn(Dyn) -> Result(String, BlameError);
-native payload: Fn(Dyn) -> Result(Option(Dyn), BlameError);
+type AccessError = struct {message: String, value: Dyn};
+native field_raw: Fn(Dyn, String) -> Result(Dyn, String);
+native fields_raw: Fn(Dyn) -> Result(Array(Tuple([String, Dyn])), String);
+native array_items_raw: Fn(Dyn) -> Result(Array(Dyn), String);
+native tuple_items_raw: Fn(Dyn) -> Result(Array(Dyn), String);
+native tag_raw: Fn(Dyn) -> Result(String, String);
+native payload_raw: Fn(Dyn) -> Result(Option(Dyn), String);
+def checked: for(A) Fn(Dyn, Result(A, String)) -> Result(A, AccessError) = fn(value, result) {
+    match result {
+        'Ok(item) => 'Ok(item),
+        'Err(message) => 'Err({message, value}),
+    }
+};
+def field: Fn(Dyn, String) -> Result(Dyn, AccessError) = fn(value, name) {
+    checked(value, field_raw(value, name))
+};
+def fields: Fn(Dyn) -> Result(Array(Tuple([String, Dyn])), AccessError) = fn(value) {
+    checked(value, fields_raw(value))
+};
+def array_items: Fn(Dyn) -> Result(Array(Dyn), AccessError) = fn(value) {
+    checked(value, array_items_raw(value))
+};
+def tuple_items: Fn(Dyn) -> Result(Array(Dyn), AccessError) = fn(value) {
+    checked(value, tuple_items_raw(value))
+};
+def tag: Fn(Dyn) -> Result(String, AccessError) = fn(value) {
+    checked(value, tag_raw(value))
+};
+def payload: Fn(Dyn) -> Result(Option(Dyn), AccessError) = fn(value) {
+    checked(value, payload_raw(value))
+};
 native get_field_value: Fn(Dyn, Int) -> Dyn;
 native get_variant_index: Fn(Dyn) -> Int;
 native get_variant_payload: Fn(Dyn, Int) -> Option(Dyn);
 export {
     Dyn,
+    AccessError,
     ValueKind,
     pack,
     project_with,

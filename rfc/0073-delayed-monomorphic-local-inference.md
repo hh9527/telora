@@ -1,6 +1,7 @@
 # RFC 0073: Delayed monomorphic local inference
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Unresolved monomorphic evidence requires context; generic schemes preserve Bound relationships.
 - Depends on: RFC 0052, RFC 0070, RFC 0071, RFC 0072
 
 ## Summary

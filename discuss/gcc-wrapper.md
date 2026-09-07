@@ -363,7 +363,7 @@ host input TARGET: unsupported GCC target "arm64-linux"
 TARGET is required by the gcc wrapper
 ```
 
-这暴露了一个标准库表达缺口：`Dict(String)` 需要类型保持的 `get`/`require` 能力，应用才能在不依赖动态字段错误的情况下返回自己的 `BlameError`。
+`dict.get` 以 `for(A) Fn(Dict(A), String) -> Option(A)` 保持字典元素类型；应用可将缺失键转换为自己的领域错误，或用 `fail!` 报告诊断。
 
 ### 错误的最终计划
 

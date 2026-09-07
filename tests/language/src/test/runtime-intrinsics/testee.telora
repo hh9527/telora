@@ -7,8 +7,8 @@ type B = struct {value: Int};
 export def verified_case = test.should_ok(fn() {
 
     {
-        let dynamic_array: Any = [1, 2];
-        let dynamic_tuple: Any = (1, "x");
+        let dynamic_array: Array(Int) = [1, 2];
+        let dynamic_tuple: Tuple([Int, String]) = (1, "x");
         let ok: Result(Int, String) = 'Ok(7);
         let recoverable: Result(Int, String) = 'Err("recoverable");
         let a: A = {value: 1};

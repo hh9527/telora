@@ -30,7 +30,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
     for (name, instance) in [
         ("Type", TypeDescriptor::Type),
         ("Dyn", TypeDescriptor::Dyn),
-        ("Any", TypeDescriptor::Any),
         ("Never", TypeDescriptor::Never),
         ("Int", TypeDescriptor::Int),
         ("Float", TypeDescriptor::Float),
@@ -38,7 +37,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("Bytes", TypeDescriptor::Bytes),
         ("Atom", TypeDescriptor::AtomValue),
         ("Bool", normalized_bool_descriptor()),
-        ("BlameError", blame_error_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
     }
@@ -57,7 +55,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
     prelude.insert(
         "Tagged".into(),
         function(
-            vec![TypeDescriptor::Any, metadata.clone()],
+            vec![TypeDescriptor::AtomValue, metadata.clone()],
             metadata.clone(),
         ),
     );
@@ -82,7 +80,10 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         prelude.insert(
             name.into(),
             function(
-                vec![TypeDescriptor::Any, TypeDescriptor::Any],
+                vec![
+                    TypeDescriptor::Bound(TypeParameterId(0)),
+                    TypeDescriptor::Bound(TypeParameterId(1)),
+                ],
                 metadata.clone(),
             ),
         );
@@ -100,28 +101,30 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         function(vec![metadata.clone(), metadata.clone()], metadata.clone()),
     );
     prelude.insert(
-        "validate".into(),
-        function(vec![metadata, TypeDescriptor::Any], TypeDescriptor::Any),
-    );
-    prelude.insert(
         "\0telora_warn".into(),
         function(
-            vec![TypeDescriptor::String, TypeDescriptor::Any],
+            vec![TypeDescriptor::String, TypeDescriptor::Bound(TypeParameterId(0))],
             TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
         ),
     );
     prelude.insert(
         "\0telora_pack_dyn".into(),
         function(
-            vec![TypeDescriptor::Type, TypeDescriptor::Any],
+            vec![
+                TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(TypeParameterId(0)))),
+                TypeDescriptor::Bound(TypeParameterId(0)),
+            ],
             TypeDescriptor::Dyn,
         ),
     );
     prelude.insert(
         "\0telora_cast".into(),
         function(
-            vec![TypeDescriptor::Type, TypeDescriptor::Any],
-            TypeDescriptor::Any,
+            vec![
+                TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Bound(TypeParameterId(1)))),
+                TypeDescriptor::Bound(TypeParameterId(0)),
+            ],
+            result_descriptor(TypeDescriptor::Bound(TypeParameterId(1)), TypeDescriptor::String),
         ),
     );
     prelude
@@ -140,6 +143,23 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
         body,
     };
     HashMap::from([
+        (
+            "\0telora_struct".into(),
+            scheme(function(vec![bound(0), bound(1)], TypeDescriptor::Type)),
+        ),
+        (
+            "\0telora_enum".into(),
+            scheme(function(vec![bound(0), bound(1)], TypeDescriptor::Type)),
+        ),
+        (
+            "\0telora_pack_dyn".into(),
+            scheme(function(vec![witness(bound(0)), bound(0)], TypeDescriptor::Dyn)),
+        ),
+        (
+            "\0telora_cast".into(),
+            scheme(function(vec![witness(bound(1)), bound(0)],
+                result_descriptor(bound(1), TypeDescriptor::String))),
+        ),
         (
             "Array".into(),
             scheme(function(
@@ -183,16 +203,9 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             )),
         ),
         (
-            "validate".into(),
-            scheme(function(
-                vec![witness(bound(0)), TypeDescriptor::Any],
-                result_descriptor(bound(0), blame_error_descriptor()),
-            )),
-        ),
-        (
             "\0telora_warn".into(),
             scheme(function(
-                vec![TypeDescriptor::String, TypeDescriptor::Any],
+                vec![TypeDescriptor::String, bound(0)],
                 TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
             )),
         ),
@@ -200,7 +213,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["PropertyAttr", "validate"]
+    let expected = ["PropertyAttr"]
         .into_iter()
         .collect::<BTreeSet<_>>();
     let actual = interface
@@ -209,17 +222,7 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("std/prelude must export exactly PropertyAttr and validate".into());
-    }
-    let bootstrap = core_prelude_schemes();
-    let expected_validate = &bootstrap["validate"];
-    let declared_validate = &interface.exports["validate"];
-    if declared_validate.body != expected_validate.body {
-        return Err(format!(
-            "std/prelude validate scheme {} differs from bootstrap {}",
-            declared_validate.display_name(),
-            expected_validate.display_name()
-        ));
+        return Err("std/prelude must export exactly PropertyAttr".into());
     }
     Ok(())
 }
@@ -237,14 +240,6 @@ fn option_parts(
     (variants.len() == 2 && variants.get("None").is_some_and(Option::is_none))
         .then(|| variants.get("Some").and_then(Option::as_deref))
         .flatten()
-}
-
-fn blame_error_descriptor() -> TypeDescriptor {
-    TypeDescriptor::Struct(BTreeMap::from([
-        ("data".into(), TypeDescriptor::Any),
-        ("message".into(), TypeDescriptor::String),
-        ("rule".into(), TypeDescriptor::Any),
-    ]))
 }
 
 fn result_descriptor(ok: TypeDescriptor, err: TypeDescriptor) -> TypeDescriptor {
@@ -306,11 +301,6 @@ fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
         validate_native_type(value)?;
     }
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
-}
-
-pub(crate) fn native_value_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let value = context.argument(0)?;
-    context.set_value_type(context.result(), value)
 }
 
 fn native_tagged_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -380,43 +370,6 @@ fn write_native_type_record(
             .map(|(name, register)| ((*name).to_owned(), *register)),
     );
     context.make_dict(context.result(), &fields)
-}
-
-pub(crate) fn native_validate(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let type_register = context.argument(0)?;
-    let value_register = context.argument(1)?;
-    let descriptor = decode_native_type(context.value(type_register)?)?;
-    let tag = context.scratch()?;
-    let payload = context.scratch()?;
-    match validate_value_ref(&descriptor, context.value(value_register)?, "value") {
-        Ok(()) => {
-            context.set_atom(tag, "Ok")?;
-            if matches!(descriptor, TypeDescriptor::Declared(_))
-                && context
-                    .value(value_register)?
-                    .declared_value_parts()
-                    .is_none()
-            {
-                context.make_declared_value(payload, type_register, value_register)?;
-            } else {
-                context.copy(payload, value_register)?;
-            }
-        }
-        Err(message) => {
-            context.set_atom(tag, "Err")?;
-            let error_message = context.scratch()?;
-            context.set_string(error_message, message)?;
-            context.make_dict(
-                payload,
-                &[
-                    ("message".into(), error_message),
-                    ("data".into(), value_register),
-                    ("rule".into(), type_register),
-                ],
-            )?;
-        }
-    }
-    context.make_tagged(context.result(), tag, payload)
 }
 
 fn native_checked_cast(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -501,7 +454,7 @@ fn decode_type_ref_with_visiting(
             return Ok(TypeDescriptor::Named(name.to_owned()));
         }
         let decoded_body = if shallow_declared_types {
-            TypeDescriptor::Any
+            TypeDescriptor::Named(name.to_owned())
         } else {
             let body = decode_type_ref_with_visiting(body, path, false, visiting_declared)?;
             visiting_declared.remove(id);
@@ -549,8 +502,7 @@ fn decode_type_ref_with_visiting(
             TypeDescriptor::Named(name.as_str().to_owned())
         }
         "Any" => {
-            require(&["kind"])?;
-            TypeDescriptor::Any
+            return Err(format!("{path}: Any is not a supported type"));
         }
         "Never" => {
             require(&["kind"])?;
@@ -779,7 +731,6 @@ fn validate_value_ref(
                 validate_value_ref(&expected.body, value, path)
             }
         }
-        TypeDescriptor::Any => Ok(()),
         TypeDescriptor::Never => Err(format!("{path} cannot have type Never")),
         TypeDescriptor::Type => decode_type_ref(value, path).map(|_| ()),
         TypeDescriptor::Dyn if value.kind() == ValueKind::Dyn => Ok(()),
@@ -927,10 +878,6 @@ fn validate_value_ref(
     }
 }
 
-fn infer_expr(expression: &Expr, environment: &HashMap<String, TypeDescriptor>) -> TypeDescriptor {
-    infer_expr_with(expression, environment, &mut |_, _| {})
-}
-
 fn collect_declared_bodies(
     descriptor: &TypeDescriptor,
     bodies: &mut HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
@@ -987,7 +934,6 @@ fn collect_declared_bodies(
         TypeDescriptor::Bound(_)
         | TypeDescriptor::Named(_)
         | TypeDescriptor::Inference(_)
-        | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn

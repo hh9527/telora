@@ -68,7 +68,7 @@ impl Engine {
             Arc::clone(&self.debug_sink),
         )?;
 
-        let mut account = QuotaAccount::new(self.config.session_quota);
+        let mut account = QuotaAccount::new(self.config.session_quota).with_sources(&loader.sources);
         let support_world = Vm::new()
             .with_debug_sink(Arc::clone(&self.debug_sink))
             .execute_in_work(

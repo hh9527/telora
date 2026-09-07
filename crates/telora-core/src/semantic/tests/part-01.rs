@@ -12,7 +12,6 @@
             WorkspaceTypeNode::Struct(BTreeMap::from([("field".to_owned(), int)])),
             WorkspaceTypeNode::Ref(structure),
             WorkspaceTypeNode::Ref(cycle),
-            WorkspaceTypeNode::Any,
             WorkspaceTypeNode::Enum(BTreeMap::from([("Node".into(), Some(structure))])),
         ];
         assert_eq!(types.members_of(reference)[0].name, "field");
@@ -232,18 +231,18 @@
     }
 
     #[test]
-    fn known_any_is_distinct_from_unavailable_fact_states() {
+    fn known_type_is_distinct_from_unavailable_fact_states() {
         let mut sources = SourceDatabase::default();
-        let source = sources.add("any.telora", "let id: Fn(Any) -> Any = fn(x) { x }; id");
+        let source = sources.add("known.telora", "let id: Fn(Int) -> Int = fn(x) { x }; id");
         let parsed = crate::parser::parse_registered(&sources, source);
         let program = parsed.program.unwrap();
         let analysis =
-            crate::types::analyze_program_registered("any.telora", &sources, &program, 1_000_000)
+            crate::types::analyze_program_registered("known.telora", &sources, &program, 1_000_000)
                 .unwrap();
         let snapshot = WorkspaceSnapshot::build(
             sources,
             vec![SemanticModuleInput {
-                key: "any.telora".into(),
+                key: "known.telora".into(),
                 path: None,
                 kind: WorkspaceModuleKind::Telora,
                 source: Some(source),
@@ -262,10 +261,10 @@
             .find(|expression| {
                 expression.ty.state == FactState::Known
                     && expression.ty.value.is_some_and(|ty| {
-                        snapshot.types().node(ty) == Some(&WorkspaceTypeNode::Any)
+                        snapshot.types().node(ty) == Some(&WorkspaceTypeNode::Int)
                     })
             })
-            .expect("parameter reference has a known Any type");
+            .expect("parameter reference has a known Int type");
         let unknown = SemanticFact::<WorkspaceTypeId>::unknown(UnknownReason::MissingSyntax);
         let conflicted =
             SemanticFact::<WorkspaceTypeId>::conflicted(None, Conflict::IncompatibleContract);

@@ -168,7 +168,10 @@ impl Elaborator<'_> {
             }
             ExprKind::Return { value } => self.expression(value),
             ExprKind::Panic { message } => self.expression(message),
-            ExprKind::Raise { error } => self.expression(error),
+            ExprKind::Raise { message, subjects } => {
+                self.expression(message);
+                for subject in subjects { self.expression(subject); }
+            },
             ExprKind::Debug { value, .. } => self.expression(value),
             ExprKind::Binary {
                 operator,

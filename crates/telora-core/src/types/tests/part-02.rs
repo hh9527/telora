@@ -50,18 +50,18 @@
             "Fn(enum {False, True}, Int) -> Int"
         );
 
-        let dynamic =
-            analyze_with_natives("let value: Any = 1; if 'True { value } else { 1 }", &[]).unwrap();
-        assert_eq!(dynamic.display(dynamic.result_type), "Any");
+        let concrete =
+            analyze_with_natives("let value: Int = 1; if 'True { value } else { 1 }", &[]).unwrap();
+        assert_eq!(concrete.display(concrete.result_type), "Int");
     }
 
     #[test]
     fn adversarial_branch_joins_are_pure_symmetric_and_canonical() {
         for (left, right, expected) in [
             (
-                "let dynamic: Any = 1; if 'True { dynamic } else { \"x\" }",
-                "let dynamic: Any = 1; if 'True { \"x\" } else { dynamic }",
-                "Any",
+                "let value: String = \"a\"; if 'True { value } else { \"x\" }",
+                "let value: String = \"a\"; if 'True { \"x\" } else { value }",
+                "String",
             ),
             (
                 "if 'True { Int } else { Array(String) }",
@@ -191,19 +191,25 @@
     }
 
     #[test]
-    #[should_panic(expected = "solver descriptors must be explicitly erased before interning")]
+    #[should_panic(expected = "solver descriptors must be resolved before interning")]
     fn strict_type_graph_interning_rejects_solver_descriptors() {
         TypeGraph::default().intern_descriptor(&TypeDescriptor::Inference(InferenceVariableId(0)));
     }
 
     #[test]
-    fn explicit_runtime_erasure_is_the_only_solver_to_any_path() {
+    fn type_graph_preserves_parameters_and_omits_unresolved_evidence() {
         let mut types = TypeGraph::default();
-        let erased = types.intern_erased_descriptor(&TypeDescriptor::Function {
+        let unresolved = types.intern_resolved_descriptor(&TypeDescriptor::Function {
             parameters: vec![TypeDescriptor::Bound(TypeParameterId(0))],
             result: Box::new(TypeDescriptor::Inference(InferenceVariableId(0))),
         });
-        assert_eq!(types.display(erased), "Fn(Any) -> Any");
+        assert!(unresolved.is_none());
+        let descriptor = TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Bound(TypeParameterId(0))],
+            result: Box::new(TypeDescriptor::Bound(TypeParameterId(0))),
+        };
+        let resolved = types.intern_resolved_descriptor(&descriptor).unwrap();
+        assert_eq!(types.descriptor(resolved).unwrap(), descriptor);
     }
 
     #[test]

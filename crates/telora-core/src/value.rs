@@ -419,7 +419,7 @@ impl CoreRuntimeFunction {
     }
 
     pub(crate) const fn arity(self) -> usize {
-        2
+        6
     }
 }
 
@@ -561,7 +561,10 @@ impl CoreCodecFunction {
     }
 
     pub(crate) const fn arity(self) -> usize {
-        3
+        match self {
+            Self::Decode => 4,
+            Self::Encode => 3,
+        }
     }
 }
 
@@ -585,7 +588,6 @@ pub(crate) enum CoreJsonFunction {
     Parse,
     ParseYaml,
     ParseToml,
-    Decode,
     Stringify,
     StringifyPretty,
     StringifyPrettyValue,
@@ -598,7 +600,6 @@ impl CoreJsonFunction {
             Self::Parse => "std/json.parse",
             Self::ParseYaml => "std/yaml.parse",
             Self::ParseToml => "std/toml.parse",
-            Self::Decode => "std/json.decode_with",
             Self::Stringify => "std/json.stringify",
             Self::StringifyPretty => "std/json.stringify_pretty",
             Self::StringifyPrettyValue => "std/json.stringify_pretty.configured",
@@ -608,9 +609,8 @@ impl CoreJsonFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Parse | Self::ParseYaml | Self::ParseToml => 2,
-            Self::Decode => 3,
-            Self::Schema => 2,
+            Self::Parse | Self::ParseYaml | Self::ParseToml => 3,
+            Self::Schema => 3,
             _ => 1,
         }
     }

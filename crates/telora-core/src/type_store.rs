@@ -50,7 +50,6 @@ impl TypeId {
         self.0
     }
 
-    pub(crate) const ANY: Self = Self::builtin(1);
     pub(crate) const NEVER: Self = Self::builtin(2);
     pub(crate) const TYPE: Self = Self::builtin(3);
     pub(crate) const DYN: Self = Self::builtin(4);
@@ -204,7 +203,6 @@ impl TypeStore {
         names: &HashMap<String, TypeId>,
     ) -> Result<TypeId, String> {
         match descriptor {
-            TypeDescriptor::Any => Ok(TypeId::ANY),
             TypeDescriptor::Never => Ok(TypeId::NEVER),
             TypeDescriptor::Type => Ok(TypeId::TYPE),
             TypeDescriptor::Dyn => Ok(TypeId::DYN),

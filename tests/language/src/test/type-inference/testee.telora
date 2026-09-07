@@ -50,10 +50,10 @@ def explicit_pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) {
 def recursive_countdown = fn(value) {
     if value < 1 { 0 } else { recursive_countdown(value - 1) }
 };
-def recursive_even = fn(value) {
+def recursive_even = fn(value) -> Bool {
     if value < 1 { 'True } else { recursive_odd(value - 1) }
 };
-def recursive_odd = fn(value) {
+def recursive_odd = fn(value) -> Bool {
     if value < 1 { 'False } else { recursive_even(value - 1) }
 };
 

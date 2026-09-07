@@ -1,6 +1,7 @@
 # RFC 0231: Closed diagnostic surface
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Ordinary errors use typed producer contracts; privileged capture uses Diagnostic snapshots.
 - Tracking issue: #59
 - Replaces the public surfaces of RFCs 0105, 0188, and 0189
 

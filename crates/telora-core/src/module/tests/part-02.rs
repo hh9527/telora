@@ -37,7 +37,7 @@
     }
 
     #[test]
-    fn annotation_error_labels_json_data_and_telora_type_declaration() {
+    fn decode_error_labels_json_data_and_explicit_failure() {
         let directory = fixture_dir();
         fs::write(directory.join("user.json"), r#"{"name":"Ada","age":"old"}"#).unwrap();
         fs::write(
@@ -46,7 +46,7 @@
              import \"std/codec\" as codec;\n\
              import \"std/result\" as result;\n\
              type User = struct {name: String, age: Int};\n\
-             let checked = codec.decode(User, user) |> result.unwrap;\n\
+             let checked = match codec.decode(User, user) { 'Ok(value) => value, 'Err(error) => fail!(error.message, error.value) };\n\
              checked",
         )
         .unwrap();
@@ -54,7 +54,16 @@
         let error = module.execute(100_000).unwrap_err();
         let message = error.to_string();
         assert!(message.contains("user.json:1:21"), "{message}");
-        assert!(message.contains("standalone/main:4:"), "{message}");
+        assert!(message.contains("standalone/main:5:"), "{message}");
+        fs::write(directory.join("main.telora"),
+            "import \"std/json\" as json; export def parse = json.parse;").unwrap();
+        let engine = recovery_engine();
+        let module = engine.load_module(directory.join("main.telora"), BTreeMap::new()).unwrap();
+        let parse = engine.execute(&module).unwrap().select("parse").unwrap();
+        let output = engine.invoke_world(&module, parse, &[crate::DataWorld::string("{")]).unwrap();
+        let (_, error) = output.value().tagged_parts().expect("parse returns Err");
+        assert!(error.get("value").unwrap().runtime().loc().is_none(),
+            "an unsourced Host string must not acquire a fabricated data location");
         fs::remove_dir_all(directory).unwrap();
     }
 

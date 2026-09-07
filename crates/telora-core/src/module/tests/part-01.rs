@@ -185,8 +185,8 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"def identity: Fn(Any) -> Any = fn(value) { value };
-               def data = { text: "line\nnext", items: [1, 'Ok, (2,)].ty!(Array(Any)) };
+            r#"def identity: Fn(Int) -> Int = fn(value) { value };
+               def data = { text: "line\nnext", items: (1, 'Ok, (2,)) };
                def observed = dbg!(data, "loaded\nvalue");
                def seen_identity = dbg!(identity);
                def seen_value = dbg!(observed);
@@ -207,7 +207,7 @@
             .unwrap();
         assert_eq!(
             named_output(&engine.execute(&module).unwrap()).to_string(),
-            "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
+            "{items: (1, 'Ok, (2)), text: \"line\\nnext\"}"
         );
         let events = sink.events.lock().unwrap();
         assert_eq!(events.len(), 5);
@@ -217,7 +217,7 @@
         assert_eq!(events[0].line, 3);
         assert_eq!(
             events[0].repr,
-            "{items: [1, 'Ok, (2)], text: \"line\\nnext\"}"
+            "{items: (1, 'Ok, (2)), text: \"line\\nnext\"}"
         );
         assert_eq!(events[1].name, "identity");
         assert!(events[1].repr.starts_with("<fn-ref "));
@@ -317,7 +317,7 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("erased.telora"),
-            r#"def observe: Fn(Any) -> Any = fn(value) { dbg!(value, "metadata") };
+            r#"def observe: for(A) Fn(A) -> A = fn(value) { dbg!(value, "metadata") };
                type Observed = observe(Int);
                0"#,
         )
@@ -342,7 +342,7 @@
 
         fs::write(
             directory.join("retained.telora"),
-            r#"def observe: Fn(Any) -> Any = fn(value) { dbg!(value, "observed") };
+            r#"def observe: for(A) Fn(A) -> A = fn(value) { dbg!(value, "observed") };
                type Observed = observe(Int);
                observe(1)"#,
         )

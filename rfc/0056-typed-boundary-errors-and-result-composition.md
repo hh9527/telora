@@ -1,6 +1,7 @@
 # RFC 0056: Typed blame errors and Result composition
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): BlameError is replaced by producer-specific error contracts and privileged Diagnostic snapshots.
 - Depends on: RFC 0020, RFC 0021, RFC 0031, RFC 0032, RFC 0036, RFC 0052, RFC 0053, RFC 0055
 
 ## Amendment

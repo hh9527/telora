@@ -1,0 +1,4 @@
+import "std/dict" as dict;
+type Record = struct {count: Int};
+def value: Record = {count: 1};
+export def invalid = dict.keys(value);

@@ -1,0 +1,11 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+import "@src/test/forward-type-contracts/provider" {Env};
+
+def read: Fn(Env) -> Int = fn(env) {
+    if env.mode == 'Run { env.data.value } else { 0 }
+};
+
+export def imported_forward_types = test.should_ok(fn() {
+    expect(read({mode: 'Run, data: {value: 42}}) == 42)
+});

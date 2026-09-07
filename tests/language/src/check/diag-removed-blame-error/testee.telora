@@ -1,0 +1,1 @@
+export def invalid: BlameError = {message: "error", data: 1, rule: 2};

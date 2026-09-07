@@ -46,10 +46,12 @@ Validation is not a hidden language operation. It can be expressed as a
 transformation with an explicit result:
 
 ```text
-A -> Result(B, BlameError)
+A -> Result(B, Error)
 ```
 
-`B` may be the original value or a normalized domain value. The same principle
+`Error` is a domain-defined error type, and `B` may be the original value or a
+normalized domain value. A caller emits a diagnostic with `fail!(message, subject)`.
+The same principle
 applies to codecs and derived schemas: the language supplies computation and
 data; libraries supply domain meaning.
 
@@ -115,10 +117,10 @@ analysis. Truly external values enter separately through a host window.
 
 Incomplete source is normal during editing and generation. Recoverable syntax,
 HIR, semantic facts, workspace revisions, and the language server should retain
-independent knowledge around damage. The tooling must distinguish an explicit
-`Any` from a fact that is unknown, conflicting, blocked by a dependency, or
-incomputable within the tool-stage budget. It must not fabricate precision to
-make completion appear richer.
+independent knowledge around damage. The tooling distinguishes checked type
+contracts from facts that are unknown, conflicting, blocked by a dependency,
+or incomputable within the tool-stage budget. Incomplete facts retain their
+status until enough evidence is available.
 
 The same authoritative semantics should drive strict checking, runtime
 validation, command-line inspection, and editor feedback.
@@ -248,7 +250,7 @@ Telora can also define the pure transition of a host-driven loop:
 
 ```text
 Context x State x Observation
-    -> Result(LoopDecision(State, Plan, Output), BlameError)
+    -> Result(LoopDecision(State, Plan, Output), Error)
 ```
 
 The host owns time, persistence, observation, effects, retries, approvals, and

@@ -1,6 +1,7 @@
 # RFC 0177: Entry runtime and virtual modules
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Entry run/serve receive an explicit State witness and _rt.state_type is removed.
 - Depends on: RFC 0176
 
 ## Summary

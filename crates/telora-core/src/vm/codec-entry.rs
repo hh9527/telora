@@ -108,8 +108,12 @@ fn run_core_codec(
         )
     };
     if identity {
-        return finish_codec_result(
-            Ok(CodecNode::Existing(arguments[2])),
+        if matches!(direction, CodecDirection::Encode) {
+            return Ok(VmAction::Return { value: arguments[2], return_target });
+        }
+        return finish_codec_payload(
+            BuiltinAtom::Ok,
+            CodecNode::Existing(arguments[2]),
             arguments[2],
             return_target,
             function,
@@ -174,7 +178,7 @@ fn run_core_codec(
             )
         },
     )?;
-    let result = transform_codec(
+    let result = transform_codec_with_input(
         &schema,
         &properties,
         raw,
@@ -182,10 +186,12 @@ fn run_core_codec(
         "$",
         current,
         background,
+        Some(arguments[2]),
     );
-    finish_codec_result(
+    finish_decode_result(
         result,
         arguments[2],
+        arguments[3],
         return_target,
         function,
         pc,

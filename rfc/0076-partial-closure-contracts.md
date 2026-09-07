@@ -1,6 +1,7 @@
 # RFC 0076: Partial closure contracts
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Incomplete closure contracts no longer default to Any.
 - Depends on: RFC 0050, RFC 0051, RFC 0052, RFC 0072, RFC 0073
 
 ## Summary

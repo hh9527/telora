@@ -5,7 +5,9 @@
 - Baseline: `cccb8c3`
 - Scope: Remove public Any and its permissive semantics; give affected boundaries explicit contracts.
 - Partial supersession: RFC 0268's preservation of explicit Any. Index other affected historical provisions during implementation; historical bodies remain unchanged.
-- Implementation: Not started. Acceptance records the design, not implemented behavior.
+- Implementation: Completed locally and verified; acceptance evidence
+  is recorded in the implementation audit below. The design and baseline
+  inventory sections retain their drafting context.
 
 ## Summary
 
@@ -305,36 +307,34 @@ implementation and tests; they do not retain Any or introduce an untyped substit
 | codec.decode/decode_with | Result(A, codec.DecodeError) | Original failing Value, or parent for a missing member. |
 | json.decode/decode_with | Result(A, codec.DecodeError) | Current parsed Value; original text wrapped as Value.String with its existing location for syntax failure. |
 | json.parse, yaml.parse, toml.parse and parse_raw | Result(Value, codec.DecodeError) | Original parser input wrapped as Value.String with its existing location; parser position details in message. |
-| codec.encode/encode_with | Result(Value, codec.EncodeError) | Input packed as Dyn with its original Val position preserved. |
+| codec.encode/encode_with | Value; failure produces a runtime diagnostic | Existing failing Val and codec rule locations, with no public error value. |
 | string.parse/parse_with | Result(A, string.ParseError) | Original String input. |
 | dyn.field/fields/array_items/tuple_items/tag/payload | Result(existing success type, dyn.AccessError) | Existing Dyn input, reused without double packing. |
 | type-desc.resolve | Result(Type, type-desc.ResolveError) | Original Type input. |
 | _rt.call_with_diagnostics/with_diagnostics | Existing Result/tuple shape with Array(_rt.Diagnostic) | Encoded labels and messages, no raw subject field. |
 | validate | Removed | Migrate to cast!, ty! or decoding as appropriate. |
 
-Define EncodeError as a non-generic type with message: String and value: Dyn.
 Define ParseError, AccessError and ResolveError locally in their respective
 modules with message: String and value: String, Dyn and Type respectively.
 Export these types from their owning module. No dependency on std/codec is
-needed for Dyn or type reflection. EncodeError can retain inputs that cannot be
-encoded as Value, without putting A in the error type. These value fields serve
+needed for Dyn or type reflection. These value fields serve
 as diagnostic subjects to recover original positions; callers need not project
 or inspect the original business values. Existing Dyn operations remain available,
 but recovery of business values is not the purpose of this error contract.
 
-Encode still obtains accurate input evidence from its generic A. On failure,
-pack the input with that witness and preserve its Val location and provenance.
-The baseline run_core_dyn implementation uses input.with_value(Dyn(...));
-Val::with_value preserves both location and provenance, and the payload retains
-the original Val. Reuse this behavior rather than constructing a wrapper at the
-encoding-error or pack-call location. No special location carrier is necessary.
+Encoding returns Value directly. There is no EncodeError and no Dyn packaging
+or additional input type witness needed for error reporting. The encoder retains
+the failing Val internally and reports its existing location together with the
+codec rule location. Nested paths remain in the diagnostic message where available.
+Other returned error values can be reported with fail!(error.message, error.value).
 
-The caller uses fail!(error.message, error.value) consistently. For encode,
-retain the original input root with its known witness and identify a nested
-failure path in message. A more precise child subject may be used only where
-the encoder already has its accurate witness; never guess one from raw shape.
-Dyn packaging does not itself lose tracking, but neither does it manufacture
-missing type evidence for an arbitrary raw child.
+Telora Float values are finite: literal parsing, arithmetic and supported Host/native
+construction reject non-finite values before encoding. Defensive non-finite checks
+in the encoder do not justify a public error type. Unsupported input types and
+invalid codec configurations currently produce diagnostics; moving their detection
+to static codec-capability validation is a separate improvement, not a prerequisite
+for this ABI change. Internal representation failures also remain runtime failures.
+Custom Display failures and terminal resource failures propagate normally.
 
 codec.format_error becomes a generic function over an argument with a supported
 message-field obligation, returning that String. Verify its published scheme
@@ -455,8 +455,8 @@ Native functions must construct the declared error type, including its canonical
 identity. Retain result-type evidence at native dispatch for the relevant Result
 instantiation, or pass an explicit hidden Type witness in a non-exported native
 wrapper. This evidence is resolved from checked module declarations; never look
-up types globally by display name. EncodeError's Dyn subject uses the actual A
-from the encode call scheme, not a structural guess from the failed value. Keep error-node
+up types globally by display name. Encoding diagnostics use the original Val
+internally without constructing a typed error subject. Keep error-node
 construction distinct from raw CodecFailure, which may remain a Rust-only type.
 
 Prefer explicit private witness parameters for module-local helper natives if
@@ -468,6 +468,12 @@ language values. Document every remaining bootstrap approximation as pending
 analysis, never as a valid canonical type.
 
 ## Dyn, Value and Host Boundaries
+
+`entry.run` and `entry.serve` take an explicit leading `TypeOf(State)` witness:
+`entry.run(State, config, ees_config, prepare)`. Pass that witness to
+`actor.service` when packing and projecting state. Delete `_rt.state_type` and
+its runtime value-shape inference: empty containers and function fields cannot
+recover the declared State contract from their current contents.
 
 Dyn remains explicit packing with a canonical witness, followed by projection
 or checked observers. There is no implicit T-to-Dyn assignment or automatic
@@ -621,12 +627,12 @@ and relocation across heaps. Check that error propagation retains the original
 Val locations and ordinary Host reporting uses them. Add terminal allocation-limit
 coverage for error materialization; no new source registration is part of this change.
 
-Verify each error contract in the producer table, including EncodeError with Dyn
-subjects for non-Value inputs, Dyn observers without double packing, and Type reflection
+Verify each error contract in the producer table, including direct encode results
+and failures for unsupported inputs, Dyn observers without double packing, and Type reflection
 without codec imports. Test both warning records and raised errors through the
 existing privileged snapshot path. Ordinary access to _rt remains rejected.
-For EncodeError, verify the outer Dyn and its original payload retain input
-location/provenance and fail! reports that location, not the packaging site.
+For encoding failures, verify diagnostics retain the failing input location and
+codec rule location without an intermediate error value or Dyn wrapper.
 
 Use focused Rust tests for bootstrap/native ABI agreement, malformed Host
 metadata, canonical interning, query recovery versus executable publication,
@@ -662,7 +668,8 @@ and invariants address these risks; a smaller grep count alone does not.
 The user has decided to remove validate and make codec.decode/json.decode return
 Result(A, DecodeError), with value: Value retaining data provenance for later
 explicit fail!. The earlier direct-failure decode proposal is superseded.
-Also accepted are non-generic EncodeError with a Dyn subject, typed ParseError,
+Encoding returns Value directly and failures produce diagnostics; EncodeError is
+cancelled. Also accepted are typed ParseError,
 AccessError and ResolveError, the existing privileged _rt Diagnostic replacement,
 typed Dict-only helpers, Value schema output and concrete rename cases. Opening
 diagnostic capture is explicitly deferred and does not gate the decode change.
@@ -699,6 +706,73 @@ The scope is broader than changing a return annotation: it includes preserving
 the current Value through decoding and an existing privileged ABI migration. Start implementation
 only against the reviewed design, and report provenance/evidence test failures
 as failures to meet its contract, not as permission to silently weaken it.
+
+## Implementation Audit
+
+The implementation removes `TypeDescriptor::Any`, `TypeExprId::Any`,
+`TypeNode::Any`, `WorkspaceTypeNode::Any`, `TypeId::ANY`, and `CodecKind::Any`.
+The three metadata decoders explicitly reject the `Any` tag. Remaining source
+mentions are rejection tests, rejection messages, Rust's `std::any::Any` for
+opaque Host payloads, and the unrelated `array.any` operation.
+
+Coarse expression inference returns optional evidence. Generic schemes retain
+their Bound variables; solved expression records retain generalized parameter
+relationships. Unresolved solver descriptors cannot be interned or published
+as known expression/definition types. Namespace exports carry member interfaces
+with separate schemes, including nested, selective and open re-exports. A
+namespace is not published as an unbound ordinary value scheme.
+
+Runtime parsing uses the original input text's provenance for each resulting
+Value node. Parser-local source IDs and offsets do not enter the caller's source
+database. Semantic wrappers preserve the node's provenance status, and untagged
+all-candidate failure retains the first failed payload's current Value while
+including every candidate message in deterministic variant order. Static data
+modules continue to preserve precise child spans. Unsourced Host arguments
+remain unsourced at error materialization.
+
+Private native declarations carry explicit witnesses where necessary:
+`codec.decode_with` receives `TypeOf(DecodeError)`; parser natives receive Value
+and DecodeError witnesses; schema receives its Value witness. Public `json.decode`
+composes `json.parse` and `codec.decode` in Telora, replacing the private combined
+JSON decode native. No public decode-with API existed at the baseline. Encoding
+returns Value directly and creates no EncodeError or Dyn error wrapper.
+
+### Acceptance Evidence
+
+Paths in the fixture column are relative to `tests/language/src/`.
+
+| Requirement | Implementation and verification evidence |
+| --- | --- |
+| Generic relationships and contextual inference | `test/explicit-boundary-types`, `test/type-inference`, `test/module-interfaces`, `test/forward-type-contracts`; solver publication and type graph tests in `types/tests/`. |
+| Typed Dict operations | `test/stdlib-semantics`, `test/stdlib-collections`, `check/diag-dict-struct-input`, `check/diag-dict-merge-mismatch`. |
+| Common contexts, empty collections, Never | `test/explicit-common-type`, `check/diag-common-type-*`, partial/recursive-result-context rejection fixtures. |
+| validate removal and identifier reuse | `check/diag-removed-validate`, `check/diag-removed-validate-import`, `test/explicit-boundary-types`. |
+| DecodeError, ordinary recovery, composition | `test/decode-errors`; codec and JSON share the same declared error identity. |
+| Exact data provenance and lifetime | `test/decode-provenance` checks repeated scalars, Unicode, missing fields, renamed fields, ordinary Telora flatten/default policies, untagged trials, empty/escaped syntax errors, function returns and initialized-module exports. |
+| No fabricated Host source | `decode_error_labels_json_data_and_explicit_failure` also invokes the parser with an unsourced Host string and inspects DecodeError.value. |
+| Remaining error interfaces | `test/native-errors` checks AccessError, ResolveError and ParseError without a codec import; `test/decode-errors` checks YAML/TOML errors. |
+| Direct encode and diagnostic rule/data locations | `test/encode`; `encoding_failure_retains_nested_subject_and_rule_locations` and prepared-display diagnostic tests. |
+| Privileged snapshots, warnings, nesting and quotas | `module/tests/part-09.rs` tests snapshot contents, nested capture, warning order and terminal fuel failures; resolver tests check ordinary `_rt` import denial and CLI tests check its query visibility. |
+| Error allocation accounting | `semantic_value_parsing_and_encoding_charge_complete_wrapper_graphs` checks exact and one-byte-short budgets for successful outputs and parse/decode error materialization. |
+| Value schema, recursive targets and enum policy | `test/codec-schema`, `test/enum-codec`, recursive metadata/codec tests in `module/tests/`. |
+| Explicit Dyn and nominal identity | `test/reflection`, `test/nominal-equality`, `test/explicit-boundary-types`, existing recursive Dyn/Host boundary tests. |
+| Removed type and invalid metadata | `check/diag-removed-any`, `check/diag-removed-any-metadata`, `check/diag-removed-any-nested-metadata`, `check/diag-removed-blame-error`; canonical interning rejects unresolved metadata. |
+| Deferred test discovery boundaries | `test/basic` and its checker preserve direct Test discovery and ignored typed-container/Dyn exports. |
+| State witness boundaries | `test/entry-state` exercises empty arrays and function-bearing State through run/serve transitions. |
+| Documentation and historical status | Current README, VISION, guide, design and discussion documents use explicit contracts; affected historical RFC status entries link to this RFC without rewriting their bodies. |
+
+The supported built-in JSON properties are RenameAll and Untagged. Flatten and
+default policies in the provenance fixture are ordinary Telora data preparation;
+this change does not introduce additional codec decorators or struct spread.
+Opening diagnostic capture remains deferred.
+
+Final verification (2026-09-07): `mise x -- cargo test --workspace --quiet`
+passed, including 269 core tests, 41 CLI tests and the 229 language acceptance
+fixture groups exercised by the CLI suite. `git diff --check` passed. Final
+searches found none of the removed descriptor/node/runtime variants or erasure
+helpers, and no obsolete Any/BlameError/EncodeError references in non-RFC
+Markdown documents. All builds used the debug profile; no release binary was
+built. The 26 affected historical RFC files each add only one status line.
 
 ## Non-Goals
 

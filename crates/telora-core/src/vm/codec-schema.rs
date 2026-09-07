@@ -197,7 +197,11 @@ fn generate_json_schema_node(
                 loc,
             ))
         }
-        CodecKind::Any => Ok(CodecNode::Dict(Vec::new(), loc)),
+        CodecKind::Bound | CodecKind::Named => Err(CodecFailure::new(
+            "JSON Schema requires a concrete type",
+            schema.rule,
+            schema.rule,
+        )),
         CodecKind::Type => Err(CodecFailure::new(
             "JSON Schema cannot describe Type metadata",
             schema.rule,
@@ -435,7 +439,8 @@ fn generate_struct_schema_fields(
 fn codec_type_name(schema: &CodecType) -> &'static str {
     match &schema.kind {
         CodecKind::TypeSlot(_) | CodecKind::TypeRef(_) => "recursive Type",
-        CodecKind::Any => "Any",
+        CodecKind::Bound => "bound type parameter",
+        CodecKind::Named => "unresolved named type",
         CodecKind::Type => "Type",
         CodecKind::Dyn => "Dyn",
         CodecKind::Int => "Int",

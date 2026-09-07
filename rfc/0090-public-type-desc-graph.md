@@ -1,6 +1,7 @@
 # RFC 0090: Public `TypeDesc` graph
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Reflection omits Any and resolution errors retain value: Type.
 - Depends on: RFC 0089
 - Tracking issue: https://github.com/hh9527/forma/issues/4
 

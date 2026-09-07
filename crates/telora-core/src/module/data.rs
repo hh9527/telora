@@ -7,15 +7,17 @@ struct StaticDataParse {
 #[derive(Clone)]
 struct ModuleArtifact {
     root: PersistentValue,
+    root_scheme: Option<crate::types::TypeScheme>,
     interface: ModuleInterface,
     provenance: Option<Provenance>,
 }
 
 #[derive(Clone)]
 struct OpenImportCandidate {
+    namespace: Option<ModuleInterface>,
     provider: ModuleCName,
     root: PersistentValue,
-    scheme: crate::types::TypeScheme,
+    scheme: Option<crate::types::TypeScheme>,
     provenance: Option<Provenance>,
     concrete_types: BTreeMap<String, TypeDescriptor>,
     trait_id: Option<crate::TraitId>,
@@ -27,8 +29,9 @@ struct OpenImportCandidate {
 
 #[derive(Clone)]
 struct WorkspaceOpenImportCandidate {
+    namespace: Option<ModuleInterface>,
     provider: ModuleCName,
-    scheme: crate::types::TypeScheme,
+    scheme: Option<crate::types::TypeScheme>,
     root: PersistentValue,
     concrete_types: BTreeMap<String, TypeDescriptor>,
     trait_id: Option<crate::TraitId>,
@@ -47,6 +50,8 @@ fn workspace_open_import_exports(
     interface
         .exports
         .iter()
+        .map(|(name, scheme)| (name, Some(scheme)))
+        .chain(interface.namespaces.keys().map(|name| (name, None)))
         .map(|(name, scheme)| {
             let field_root = root
                 .export_get(heap, name)
@@ -57,8 +62,9 @@ fn workspace_open_import_exports(
             Ok((
                 name.clone(),
                 WorkspaceOpenImportCandidate {
+                    namespace: interface.namespaces.get(name).cloned(),
                     provider: provider.clone(),
-                    scheme: scheme.clone(),
+                    scheme: scheme.cloned(),
                     root: field_root,
                     concrete_types: interface.concrete_types.clone(),
                     trait_id: interface.traits.get(name).copied(),
@@ -82,6 +88,8 @@ fn open_import_exports(
     interface
         .exports
         .iter()
+        .map(|(name, scheme)| (name, Some(scheme)))
+        .chain(interface.namespaces.keys().map(|name| (name, None)))
         .map(|(name, scheme)| {
             let root = root
                 .export_get(heap, name)
@@ -92,9 +100,10 @@ fn open_import_exports(
             Ok((
                 name.clone(),
                 OpenImportCandidate {
+                    namespace: interface.namespaces.get(name).cloned(),
                     provider: provider.clone(),
                     root,
-                    scheme: scheme.clone(),
+                    scheme: scheme.cloned(),
                     provenance: provenance.cloned(),
                     concrete_types: interface.concrete_types.clone(),
                     trait_id: interface.traits.get(name).copied(),
@@ -214,6 +223,7 @@ fn entry_wrapper_body(
 
 fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
     ModuleInterface {
+        namespaces: BTreeMap::new(),
         exports: BTreeMap::from([(
             "data".into(),
             TypeScheme {

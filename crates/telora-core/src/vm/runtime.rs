@@ -56,12 +56,11 @@ trait NativeContinuation: fmt::Debug {
     fn catch_recoverable(
         self: Box<Self>,
         error: RuntimeError,
-        raised: Option<Val>,
         current: &mut Heap,
         background: &Heap,
         account: &mut QuotaAccount,
     ) -> Result<VmAction, RuntimeError> {
-        let _ = (raised, current, background, account);
+        let _ = (current, background, account);
         Err(error)
     }
 }
@@ -69,10 +68,19 @@ trait NativeContinuation: fmt::Debug {
 #[derive(Debug)]
 struct DiagnosticContinuation {
     diagnostic_start: usize,
+    types: DiagnosticTypes,
     return_target: ReturnTarget,
     call_function: Arc<BytecodeFunction>,
     call_pc: usize,
     trace_frame: RuntimeFrame,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DiagnosticTypes {
+    diagnostic: Val,
+    severity: Val,
+    label: Val,
+    range: Val,
 }
 
 #[derive(Debug)]

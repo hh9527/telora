@@ -1,6 +1,7 @@
 # RFC 0187: Variadic blame and `raise!`
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Raise consumes message and subject registers directly, without a BlameError carrier.
 - Depends on: RFC 0186
 
 ## Summary

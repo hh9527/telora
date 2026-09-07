@@ -240,7 +240,7 @@ impl Engine {
             .map(|argument| argument.relocate_into(world.heap_mut(), &main))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| ModuleError::new(error.to_string()))?;
-        let mut account = QuotaAccount::new(self.config.session_quota);
+        let mut account = QuotaAccount::new(self.config.session_quota).with_sources(&module.sources);
         let world = Vm::new()
             .with_debug_sink(Arc::clone(&self.debug_sink))
             .execute_in_existing_world_with_runtime_args(
@@ -360,7 +360,7 @@ impl Engine {
             self.config.data_limits,
             Arc::clone(&self.debug_sink),
         )?;
-        let mut account = QuotaAccount::new(self.config.session_quota);
+        let mut account = QuotaAccount::new(self.config.session_quota).with_sources(&loader.sources);
         let entry_world = Vm::new()
             .with_debug_sink(Arc::clone(&self.debug_sink))
             .execute_in_work(

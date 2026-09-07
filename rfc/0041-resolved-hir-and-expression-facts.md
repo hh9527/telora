@@ -1,6 +1,7 @@
 # RFC 0041: Resolved HIR and expression facts
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Incomplete expression and definition evidence is absent, rather than an Any fact.
 - Depends on: RFC 0039, RFC 0040
 
 ## Summary

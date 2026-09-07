@@ -1,1 +1,1 @@
-Bool
+cannot unify Dyn with enum {False, True}

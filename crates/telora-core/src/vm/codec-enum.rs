@@ -8,6 +8,7 @@ fn transform_codec_enum(
     path: &str,
     current: &Heap,
     background: &Heap,
+    input: Option<Val>,
 ) -> Result<CodecNode, CodecFailure> {
     let view = HeapView {
         current,
@@ -23,6 +24,7 @@ fn transform_codec_enum(
             path,
             current,
             background,
+            input,
         );
     }
     match direction {
@@ -97,7 +99,7 @@ fn transform_codec_enum(
                     variant.internal_name.clone(),
                     value.loc(),
                 )),
-                payload: Box::new(transform_codec(
+                payload: Box::new(transform_codec_with_input(
                     payload,
                     properties,
                     values[0],
@@ -105,6 +107,7 @@ fn transform_codec_enum(
                     &format!("{path}.{tag}"),
                     current,
                     background,
+                    codec_input_field(input, tag, &view),
                 )?),
                 loc: value.loc(),
             })
@@ -202,11 +205,13 @@ fn transform_untagged_enum(
     path: &str,
     current: &Heap,
     background: &Heap,
+    input: Option<Val>,
 ) -> Result<CodecNode, CodecFailure> {
     match direction {
         CodecDirection::Decode => {
             let mut matches = Vec::new();
             let mut errors = Vec::new();
+            let mut first_failure = None;
             for variant in &plan.variants {
                 let Some(payload) = &variant.payload else {
                     if value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::None) {
@@ -216,7 +221,7 @@ fn transform_untagged_enum(
                     }
                     continue;
                 };
-                match transform_codec(
+                match transform_codec_with_input(
                     payload,
                     properties,
                     value,
@@ -224,9 +229,13 @@ fn transform_untagged_enum(
                     path,
                     current,
                     background,
+                    input,
                 ) {
                     Ok(node) => matches.push((variant, Some(node))),
-                    Err(failure) => errors.push(failure.message),
+                    Err(failure) => {
+                        errors.push(failure.message.clone());
+                        first_failure.get_or_insert(failure);
+                    }
                 }
             }
             match matches.as_slice() {
@@ -242,17 +251,18 @@ fn transform_untagged_enum(
                     variant.internal_name.clone(),
                     value.loc(),
                 )),
-                [] => Err(CodecFailure::new(
-                    format!(
+                [] => {
+                    let message = format!(
                         "{path}: value matches no untagged Enum variant ({})",
                         errors.join("; ")
-                    ),
-                    value,
-                    plan.variants
-                        .first()
-                        .map(|variant| variant.rule)
-                        .unwrap_or(value),
-                )),
+                    );
+                    let mut failure = first_failure.unwrap_or_else(|| CodecFailure::new(
+                        String::new(), value,
+                        plan.variants.first().map(|variant| variant.rule).unwrap_or(value),
+                    ));
+                    failure.message = message;
+                    Err(failure)
+                }
                 _ => Err(CodecFailure::new(
                     format!("{path}: value ambiguously matches multiple untagged Enum variants"),
                     value,
@@ -348,13 +358,14 @@ fn decode_struct_fields(
     path: &str,
     current: &Heap,
     background: &Heap,
+    semantic_input: Option<Val>,
 ) -> Result<Vec<(String, CodecNode)>, CodecFailure> {
     let mut output = Vec::with_capacity(plan.fields.len());
     for field in &plan.fields {
         let external_path = format!("{path}.{}", field.external_name);
         let node = if let Some(value) = input.get(&field.external_name).copied() {
             consumed.insert(field.external_name.clone());
-            transform_codec_field(
+            transform_codec_field_with_input(
                 &field.schema,
                 properties,
                 value,
@@ -362,6 +373,10 @@ fn decode_struct_fields(
                 &external_path,
                 current,
                 background,
+                codec_input_field(semantic_input, &field.external_name, &HeapView {
+                    current,
+                    background: Some(background),
+                }),
             )?
         } else if option_item(&field.schema).is_some() {
             CodecNode::Atom(BuiltinAtom::None, container.loc())
@@ -441,8 +456,22 @@ fn transform_codec_field(
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecNode, CodecFailure> {
+    transform_codec_field_with_input(schema, properties, value, direction, path, current, background, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transform_codec_field_with_input(
+    schema: &CodecType,
+    properties: &CodecProperties,
+    value: Val,
+    direction: CodecDirection,
+    path: &str,
+    current: &Heap,
+    background: &Heap,
+    input: Option<Val>,
+) -> Result<CodecNode, CodecFailure> {
     let Some(item) = option_item(schema) else {
-        return transform_codec(
+        return transform_codec_with_input(
             schema,
             properties,
             value,
@@ -450,6 +479,7 @@ fn transform_codec_field(
             path,
             current,
             background,
+            input,
         );
     };
     if value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::None) {
@@ -458,7 +488,7 @@ fn transform_codec_field(
     match direction {
         CodecDirection::Decode => Ok(CodecNode::Tagged {
             tag: Box::new(CodecNode::Atom(BuiltinAtom::Some, value.loc())),
-            payload: Box::new(transform_codec(
+            payload: Box::new(transform_codec_with_input(
                 item,
                 properties,
                 value,
@@ -466,6 +496,7 @@ fn transform_codec_field(
                 path,
                 current,
                 background,
+                input,
             )?),
             loc: value.loc(),
         }),

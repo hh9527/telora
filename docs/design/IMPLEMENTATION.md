@@ -77,8 +77,7 @@ Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
              CyclicEvaluation | Cancelled)
 ```
 
-显式 `Any` 是一个已知静态类型，不是 `Unknown`。Recovery 也不制造“部分成功”的语言
-值或特殊 Module 类型：Module 只有源码层面的 `Available` / `Unavailable`，细粒度状态
+`Unknown` 表示尚未取得类型依据的分析状态。Module 只有源码层面的 `Available` / `Unavailable`，细粒度状态
 属于 definition、expression 和 type fact。
 
 严格 AST 经类型分析后先 elaboration，再降低为寄存器 LIR，并组装为 bytecode。静态
@@ -173,8 +172,8 @@ Bound parameter、inference variable 和 unresolved named type 不能直接 cano
 内建 canonical `TypeId` 当前固定为：
 
 ```text
-Any = 1, Never = 2, Type = 3, Dyn = 4,
-Int = 5, Float = 6, String = 7, Bytes = 8
+Never = 2, Type = 3, Dyn = 4,
+Int = 5, Float = 6, String = 7, Bytes = 8, Atom = 9
 ```
 
 动态 `TypeId` 从 1024 开始。名义实例的 intern key 是
@@ -281,14 +280,15 @@ Fail child，以保留形状并继续健康的独立分支；Fail 不是用户�
 `RuntimeError` 为 contextual failure 保存一个 rule location、有序去重的 data source
 locations，以及可选的 intrinsic implementation location。执行帧同时携带最外层
 authored rule boundary；普通调用继承该边界，第一次调用建立边界，tail call 显式搬运
-边界，native continuation 回调使用其 authored call site。`Raise` 读取 opaque
-`BlameError` carrier 后一次建立 root diagnostic。failure arena 的传播节点只保存 root
+边界，native continuation 回调使用其 authored call site。`Raise` 读取
+消息和 subject 寄存器后一次建立 root diagnostic。failure arena 的传播节点只保存 root
 failure id，因此 strict 与 best-effort 不会产生两套归因路径。
 
 Entry runtime 的 `with_diagnostics` 使用 native continuation 在同一 WorkWorld 中调用
 目标 closure。continuation 记录 `QuotaAccount.diagnostics` 的起点；成功或可恢复失败
-时只取出并消费该区间。可恢复 `Raise` 尽量沿用原 `BlameError` carrier，其他可恢复
-runtime error 按相同的 `rule + data_sources` 结构重建。terminal failure 不进入该
+时只取出并消费该区间。可恢复 failure 通过运行时统一的诊断转换得到 severity、
+labels 和 notes，再物化为 `std/_rt.Diagnostic`；标签保留源码名称和字节范围。
+快照与嵌套字段使用显式类型见证，分配计入当前 account。terminal failure 不进入该
 continuation 的 catch 路径。
 
 Best-effort 不是另一套成功语义。没有 error 时，它与严格执行同属成功并产生相同
@@ -369,7 +369,7 @@ Host 固定工具路径，不通过用户 Entry ABI。
 
 修改当前实现时至少保持以下不变量：
 
-- CST recovery 不得把未知或冲突伪装成 `Any` 或成功值；
+- CST recovery 必须保留未知或冲突的 fact state；
 - module identity 和静态 slot 不依赖文件发现、HashMap 或求值顺序；
 - concrete nominal identity 只由 constructor identity 与 type arguments 决定；
 - Main 中的持久对象不能引用已释放的 Work storage；

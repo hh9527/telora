@@ -73,8 +73,9 @@
         assert!(
             wrong_arity
                 .message
-                .contains("cannot unify Fn(Any, Any) -> Any with Fn(Int) -> Int")
+                .contains("with Fn(Int) -> Int")
         );
+        assert!(!wrong_arity.message.contains("Any"));
         assert_eq!(wrong_arity.location.line, 1);
         assert_eq!(wrong_arity.location.column, 72);
     }
@@ -99,7 +100,7 @@
         assert_eq!(stack.kind, RuntimeErrorKind::StackLimitExceeded);
         assert!(stack.to_string().contains("quota.telora:1:"));
 
-        let native_source = "validate(Int, \"wrong\")";
+        let native_source = "\"wrong\".cast!(Int)";
         let native = compile_source("native-quota.telora", native_source).unwrap();
         let native_error = native
             .execute_with_quota(&mut Vm::new(), Quota::new(1, 100, 0))

@@ -1,0 +1,38 @@
+import "std/codec" as codec;
+import "std/json" as json;
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+type Item = struct {count: Int};
+type Action = struct {run: Fn(Int) -> Int};
+@json.rename_all('CamelCase)
+type Collision = struct {foo_bar: Int, fooBar: Int};
+
+export def direct_value = test.should_ok(fn() {
+    let item: Item = {count: 3};
+    let value: codec.Value = codec.encode(codec.Value, item);
+    expect(value == 'Object({count: 'Int(3)}))
+});
+
+export def value_identity = test.should_ok(fn() {
+    let input: codec.Value = 'Array(['Int(1), 'String("two")]);
+    let encoded: codec.Value = codec.encode(codec.Value, input);
+    expect(encoded == input && match codec.decode(codec.Value, encoded) {
+        'Ok(value) => value == input,
+        'Err(_) => 'False,
+    })
+});
+
+export def unsupported_field = test.should_fail_with(fn() {
+    let action: Action = {run: fn(value) { value }};
+    codec.encode(codec.Value, action)
+}, "Function has no JSON codec");
+
+export def invalid_configuration = test.should_fail_with(fn() {
+    let value: Collision = {foo_bar: 1, fooBar: 2};
+    codec.encode(codec.Value, value)
+}, "duplicate external field name");
+
+export def unsupported_type_value = test.should_fail_with(fn() {
+    codec.encode(codec.Value, Item)
+}, "cannot encode Type");

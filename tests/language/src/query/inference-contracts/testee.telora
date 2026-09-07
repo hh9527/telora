@@ -1,3 +1,5 @@
+import "std/value" {Value};
+import "std/dyn" as dyn;
 def apply = fn(callback, value) { callback(value) };
 
 def select = fn(condition, value) {
@@ -51,7 +53,7 @@ def choose_conflict: Fn(Int) -> Record = fn(value) {
 
 def add_partial = fn(value: Int, other) { value + other };
 def add_result = fn(value) -> Int { value + 1 };
-def decorate = fn(ctx: Any, value) -> Int { value + 1 };
+def decorate = fn(ctx, value) -> Int { value + 1 };
 def nested_partial = fn(value: Int) {
     fn(other: Int) -> Int { value + other }
 };
@@ -65,10 +67,10 @@ def partial_pair_value = explicit_pair@[Int, _](1, "x");
 def countdown = fn(value) {
     if value < 1 { 0 } else { countdown(value - 1) }
 };
-def even = fn(value) {
+def even = fn(value) -> Bool {
     if value < 1 { 'True } else { odd(value - 1) }
 };
-def odd = fn(value) {
+def odd = fn(value) -> Bool {
     if value < 1 { 'False } else { even(value - 1) }
 };
 
@@ -77,7 +79,7 @@ def polymorphic_keep = fn(left: Int, right) { (left, right) };
 def nested_constraints = fn(left) { fn(right) { left + right + 1 } };
 
 def array_union: Array(Scalar) = ['Integer(1), 'Text("x")];
-def array_dynamic: Array(Any) = [1, "x"];
+def array_dynamic: Array(Value) = ['Int(1), 'String("x")];
 def dict_union = {
     let ints: Dict(Scalar) = {a: 'Integer(1)};
     let strings: Dict(Scalar) = {b: 'Text("x")};
@@ -87,8 +89,8 @@ def field_projection = {
     let record = {value: 1};
     let dictionary: Dict(String) = {value: "x"};
     let alternative = if 'True { {value: 1} } else { {value: 2} };
-    let dynamic: Any = record;
-    (record.value, dictionary.value, alternative.value, dynamic.value)
+    let dynamic = dyn.pack(Int, record.value);
+    (record.value, dictionary.value, alternative.value, dynamic)
 };
 
 def stop: Fn() -> Never = fn() { fail!("stop") };

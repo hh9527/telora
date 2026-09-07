@@ -1,6 +1,7 @@
 # RFC 0091: Opaque `Dyn` values
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Dyn witnesses contain supported canonical types; Any metadata is rejected.
 - Depends on: RFC 0089, RFC 0090
 - Tracking issue: https://github.com/hh9527/forma/issues/4
 

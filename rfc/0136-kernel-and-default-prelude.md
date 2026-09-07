@@ -1,6 +1,7 @@
 # RFC 0136: Kernel and default prelude
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Any and validate are removed from bootstrap and prelude surfaces.
 - Depends on: RFC 0028, RFC 0048, RFC 0114, RFC 0134
 - Child RFCs: RFC 0137 through RFC 0139
 

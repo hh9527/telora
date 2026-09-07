@@ -1,28 +1,32 @@
 import "std/value" { Value };
 import "std/codec" as codec;
-import "std/codec" { JsonRenameAll as RenameAll, JsonUntagged as Untagged };
+import "std/codec" { DecodeError, RenameCase, JsonRenameAll as RenameAll, JsonUntagged as Untagged };
 import "std/_codec" {rename_all, untagged};
 
-native parse_raw: Fn(Type, String) -> Result(Value, BlameError);
-native decode_with: for(A) Fn(codec.Properties, TypeOf(A), String) -> Result(A, BlameError);
+native parse_raw: Fn(TypeOf(Value), String, TypeOf(DecodeError)) -> Result(Value, DecodeError);
 native stringify: Fn(Value) -> String;
 native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
-native schema_with: Fn(codec.Properties, Type) -> Any;
-def decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, text) {
-    decode_with(codec.properties, target, text)
+native schema_with: Fn(codec.Properties, Type, TypeOf(Value)) -> Value;
+def decode: for(A) Fn(TypeOf(A), String) -> Result(A, DecodeError) = fn(target, text) {
+    match parse(text) {
+        'Ok(value) => codec.decode(target, value),
+        'Err(error) => 'Err(error),
+    }
 };
-def schema: Fn(Type) -> Any = fn(target) {
-    schema_with(codec.properties, target)
+def schema: Fn(Type) -> Value = fn(target) {
+    schema_with(codec.properties, target, Value)
 };
-def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
-    parse_raw(Value, text)
+def parse: Fn(String) -> Result(Value, DecodeError) = fn(text) {
+    parse_raw(Value, text, DecodeError)
 };
 export {
     parse,
+    DecodeError,
     decode,
     stringify,
     stringify_pretty,
     RenameAll,
+    RenameCase,
     Untagged,
     rename_all,
     untagged,

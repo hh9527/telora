@@ -151,9 +151,10 @@ cannot statically express that restriction today. Honest alternatives include:
 
 ```telora
 # Validate derivability when the factory is evaluated.
+type DerivationError = struct {message: String, value: Type};
 native try_hash_fn: for(A) Fn(
     TypeOf(A),
-) -> Result(Fn(A) -> Bytes, BlameError);
+) -> Result(Fn(A) -> Bytes, DerivationError);
 
 # Ask the caller to provide the policy explicitly.
 native hash_with: for(A) Fn(
@@ -208,7 +209,7 @@ JSON attributes today.
 This remains simpler when attributes are data:
 
 ```telora
-@hash.ignore transient_cache: Any
+@hash.ignore transient_cache: Dict(String)
 ```
 
 Storing arbitrary executable capability values inside TypeMetadata is a much

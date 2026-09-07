@@ -51,7 +51,7 @@ fn invoke_world_member_in(
         Vec::new(),
         instructions,
     );
-    let mut account = QuotaAccount::new(quota);
+    let mut account = QuotaAccount::new(quota).with_sources(sources);
     Vm::new()
         .with_debug_sink(debug_sink)
         .execute_in_existing_world_with_runtime_args(
@@ -135,7 +135,7 @@ fn prepare_and_initialize_entry_in(
         initializer,
         main_argument,
     ];
-    let mut account = QuotaAccount::new(quota);
+    let mut account = QuotaAccount::new(quota).with_sources(sources);
     Vm::new()
         .with_debug_sink(debug_sink)
         .execute_in_existing_world_with_runtime_args(
@@ -190,7 +190,7 @@ impl LoadedModule {
         quota: Quota,
         debug_sink: Arc<dyn DebugSink>,
     ) -> (Result<(), crate::RuntimeError>, Vec<Diagnostic>) {
-        let mut account = QuotaAccount::new(quota);
+        let mut account = QuotaAccount::new(quota).with_sources(&self.sources);
         let result = Vm::new()
             .with_debug_sink(debug_sink)
             .execute_in_work(
@@ -242,7 +242,7 @@ impl LoadedModule {
         quota: Quota,
         debug_sink: Arc<dyn DebugSink>,
     ) -> (Result<WorkWorld, crate::RuntimeError>, Vec<Diagnostic>) {
-        let mut account = QuotaAccount::new(quota);
+        let mut account = QuotaAccount::new(quota).with_sources(&self.sources);
         let result = Vm::new()
             .with_debug_sink(debug_sink)
             .execute_in_work(
@@ -290,7 +290,7 @@ impl LoadedModule {
                 Instruction::Return { src: Register(3) },
             ],
         );
-        let mut account = QuotaAccount::new(quota);
+        let mut account = QuotaAccount::new(quota).with_sources(&self.sources);
         let result = Vm::new()
             .with_debug_sink(debug_sink)
             .execute_in_existing_world_with_runtime_args(

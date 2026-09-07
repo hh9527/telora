@@ -15,17 +15,8 @@ fn run_core_json(
         CoreJsonFunction::Parse
             | CoreJsonFunction::ParseYaml
             | CoreJsonFunction::ParseToml
-            | CoreJsonFunction::Decode
     ) {
-        let (input_index, properties) = if operation == CoreJsonFunction::Decode {
-            let properties = decode_codec_properties(arguments[0], current, background)
-                .map_err(|message| {
-                    error(RuntimeErrorKind::TypeMismatch, message, function, pc)
-                })?;
-            (2, Some(properties))
-        } else {
-            (1, None)
-        };
+        let input_index = 1;
         let view = HeapView {
             current,
             background: Some(background),
@@ -44,9 +35,9 @@ fn run_core_json(
             ));
         };
         let parsed = match operation {
-            CoreJsonFunction::Parse | CoreJsonFunction::Decode => {
+            CoreJsonFunction::Parse => {
                 crate::json::parse_json("<json string>", source.as_str())
-                    .map_err(|error| error.message)
+                    .map_err(|error| error.to_string())
             }
             CoreJsonFunction::ParseYaml => {
                 let mut sources = SourceDatabase::default();
@@ -55,7 +46,7 @@ fn run_core_json(
                 parsed.value.map(|value| value.value).ok_or_else(|| {
                     parsed.diagnostics.first().map_or_else(
                         || "invalid YAML".into(),
-                        |diagnostic| diagnostic.message.clone(),
+                        |diagnostic| sources.render(diagnostic),
                     )
                 })
             }
@@ -66,7 +57,7 @@ fn run_core_json(
                 parsed.value.map(|value| value.value).ok_or_else(|| {
                     parsed.diagnostics.first().map_or_else(
                         || "invalid TOML".into(),
-                        |diagnostic| diagnostic.message.clone(),
+                        |diagnostic| sources.render(diagnostic),
                     )
                 })
             }
@@ -98,13 +89,20 @@ fn run_core_json(
                     ),
                     arguments[input_index].loc(),
                 );
-                return finish_codec_result(
+                let wrapper_bytes = semantic_value_wrapper_bytes(current, Some(background), arguments[input_index])
+                    .map_err(|heap_error| error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc))?;
+                charge_allocation(account, wrapper_bytes, function, pc)?;
+                let input = wrap_semantic_value(current, Some(background), arguments[input_index], arguments[0])
+                    .map_err(|heap_error| error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc))?;
+                return finish_decode_result(
                     Err(CodecFailure {
                         message: parse_error,
                         data: arguments[input_index],
                         rule,
+                        input: Some(input),
                     }),
-                    arguments[input_index],
+                    input,
+                    arguments[2],
                     return_target,
                     function,
                     pc,
@@ -128,7 +126,7 @@ fn run_core_json(
                     )
                 })?;
             charge_allocation(account, wrapper_bytes, function, pc)?;
-            let parsed = wrap_semantic_value(current, Some(background), parsed, arguments[0])
+            let parsed = crate::heap::wrap_parsed_semantic_value(current, Some(background), parsed, arguments[0], arguments[input_index])
                 .map_err(|heap_error| {
                     error(
                         RuntimeErrorKind::TypeMismatch,
@@ -137,8 +135,9 @@ fn run_core_json(
                         pc,
                     )
                 })?;
-            return finish_codec_result(
-                Ok(CodecNode::Existing(parsed)),
+            return finish_codec_payload(
+                BuiltinAtom::Ok,
+                CodecNode::Existing(parsed),
                 arguments[input_index],
                 return_target,
                 function,
@@ -148,41 +147,7 @@ fn run_core_json(
                 account,
             );
         }
-        let schema_index = if operation == CoreJsonFunction::Decode { 1 } else { 0 };
-        let schema = decode_runtime_type(arguments[schema_index], current, background)
-            .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
-        assert_codec_graph_ready(&schema, current, background).map_err(|graph_error| {
-            match graph_error {
-                CodecGraphError::Pending => error(
-                    RuntimeErrorKind::UninitializedDefinition,
-                    "codec was invoked before recursive type metadata was sealed",
-                    function,
-                    pc,
-                ),
-                CodecGraphError::Invalid(message) => {
-                    error(RuntimeErrorKind::TypeMismatch, message, function, pc)
-                }
-            }
-        })?;
-        let result = transform_codec(
-            &schema,
-            properties.as_ref().expect("decode initializes codec properties"),
-            parsed,
-            CodecDirection::Decode,
-            "$",
-            current,
-            background,
-        );
-        return finish_codec_result(
-            result,
-            arguments[input_index],
-            return_target,
-            function,
-            pc,
-            current,
-            background,
-            account,
-        );
+        unreachable!("all text parser operations returned above");
     }
     if operation == CoreJsonFunction::Schema {
         let properties = decode_codec_properties(arguments[0], current, background)
@@ -228,6 +193,15 @@ fn run_core_json(
             .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
         charge_allocation(account, bytes, function, pc)?;
         let value = materialize_codec_node(node, current, background);
+        let wrapper_bytes = semantic_value_wrapper_bytes(current, Some(background), value)
+            .map_err(|heap_error| {
+                error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc)
+            })?;
+        charge_allocation(account, wrapper_bytes, function, pc)?;
+        let value = wrap_semantic_value(current, Some(background), value, arguments[2])
+            .map_err(|heap_error| {
+                error(RuntimeErrorKind::TypeMismatch, heap_error.to_string(), function, pc)
+            })?;
         return Ok(VmAction::Return {
             value,
             return_target,
@@ -298,7 +272,6 @@ fn run_core_json(
         | CoreJsonFunction::Parse
         | CoreJsonFunction::ParseYaml
         | CoreJsonFunction::ParseToml
-        | CoreJsonFunction::Decode
         | CoreJsonFunction::Schema => unreachable!(),
     };
     let owner = {

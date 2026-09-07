@@ -1,6 +1,7 @@
 # RFC 0033: JSON Schema generation from codec metadata
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Schema output is the semantic Value representation.
 - Depends on: RFC 0031, RFC 0032
 
 ## Summary

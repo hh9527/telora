@@ -56,124 +56,7 @@ impl<'a> GenericInference<'a> {
         })
     }
 
-    fn infer_authored_boundary(
-        &mut self,
-        expression: &Expr,
-        environment: &HashMap<String, TypeDescriptor>,
-        expected: Option<&TypeDescriptor>,
-    ) -> Result<TypeDescriptor, String> {
-        let authored = expected.and_then(|expected| {
-            self.authored_expression_contract(expression, environment)
-                .map(|actual| (actual, self.resolve(expected)))
-        });
-        let inferred = self.infer(expression, environment, expected)?;
-        if let Some((actual, expected)) = authored
-            && narrows_any(&self.resolve(&actual), &expected)
-        {
-            return Err(format!(
-                "cannot narrow {} to {} without cast!",
-                actual.display_name(),
-                expected.display_name()
-            ));
-        }
-        Ok(inferred)
-    }
 
-    fn authored_expression_contract(
-        &self,
-        expression: &Expr,
-        environment: &HashMap<String, TypeDescriptor>,
-    ) -> Option<TypeDescriptor> {
-        match &expression.value {
-            ExprKind::Variable(name) => {
-                let contract = self
-                    .scheme(&name.value)
-                    .map(|scheme| scheme.body)
-                    .or_else(|| environment.get(&name.value).cloned())?;
-                (self.reference_has_authored_contract(expression)
-                    && contains_any_descriptor(&contract))
-                .then_some(contract)
-            }
-            ExprKind::Field { .. } => self.explicit_scheme(expression).map(|scheme| scheme.body),
-            ExprKind::Call { callee, .. } => {
-                let callee_contract = self
-                    .explicit_scheme(callee)
-                    .map(|scheme| scheme.body)
-                    .or_else(|| match &callee.value {
-                        ExprKind::Variable(name) => environment.get(&name.value).cloned(),
-                        _ => None,
-                    })?;
-                match callee_contract {
-                    TypeDescriptor::Function { result, .. }
-                        if !contains_any_descriptor(&result)
-                            || self.reference_has_authored_contract(callee) =>
-                    {
-                        Some(*result)
-                    }
-                    _ => None,
-                }
-            }
-            ExprKind::TypeAscription { target, .. } => {
-                self.local_annotations.get(&target.location).cloned()
-            }
-            _ => None,
-        }
-    }
-
-    fn reference_has_authored_contract(&self, expression: &Expr) -> bool {
-        if let ExprKind::Field { receiver, .. } = &expression.value
-            && let ExprKind::Variable(module) = &receiver.value
-            && self.external_interfaces.contains_key(&module.value)
-        {
-            return true;
-        }
-        if let ExprKind::TypeApply { callee, .. } = &expression.value {
-            return self.reference_has_authored_contract(callee);
-        }
-        self.hir
-            .expression_ids_at(expression.location)
-            .filter_map(|id| self.hir.expression(id))
-            .filter_map(|expression| expression.reference)
-            .filter_map(|id| self.hir.reference(id))
-            .any(|reference| match reference.resolution {
-                HirResolution::External => true,
-                HirResolution::Definition(id) => {
-                    self.hir.definition(id).is_some_and(|definition| {
-                        self.authored_any_definitions.contains(&definition.location)
-                    })
-                }
-                HirResolution::Unresolved => false,
-            })
-    }
-
-    fn callee_has_runtime_boundary(&self, callee: &Expr) -> bool {
-        if let ExprKind::Field { receiver, .. } = &callee.value
-            && let ExprKind::Variable(module) = &receiver.value
-            && self.external_interfaces.contains_key(&module.value)
-        {
-            return true;
-        }
-        if let ExprKind::TypeApply { callee, .. } = &callee.value {
-            return self.callee_has_runtime_boundary(callee);
-        }
-        self.hir
-            .expression_ids_at(callee.location)
-            .filter_map(|id| self.hir.expression(id))
-            .filter_map(|expression| expression.reference)
-            .filter_map(|id| self.hir.reference(id))
-            .any(|reference| match reference.resolution {
-                HirResolution::External => true,
-                HirResolution::Definition(id) => {
-                    self.hir.definition(id).is_some_and(|definition| {
-                        matches!(
-                            definition.kind,
-                            HirDefinitionKind::Import | HirDefinitionKind::Native
-                        )
-                    })
-                }
-                HirResolution::Unresolved => false,
-            })
-    }
 
     fn infer_inner(
         &mut self,
@@ -185,15 +68,11 @@ impl<'a> GenericInference<'a> {
             query.check().map_err(|error| error.to_string())?;
         }
         let inferred = match &expression.value {
-            ExprKind::Variable(name) => self.scheme(&name.value).map_or_else(
-                || {
-                    environment
-                        .get(&name.value)
-                        .cloned()
-                        .unwrap_or(TypeDescriptor::Any)
-                },
-                |scheme| self.instantiate(&scheme, expression.location),
-            ),
+            ExprKind::Variable(name) => match self.scheme(&name.value) {
+                Some(scheme) => self.instantiate(&scheme, expression.location),
+                None => environment.get(&name.value).cloned()
+                    .ok_or_else(|| format!("unknown binding {:?}", name.value))?,
+            },
             ExprKind::Int(_) => TypeDescriptor::Int,
             ExprKind::Float(_) => TypeDescriptor::Float,
             ExprKind::String(_) => TypeDescriptor::String,
@@ -386,11 +265,10 @@ impl<'a> GenericInference<'a> {
                                 {
                                     Some(NotFamily::Bool)
                                 }
-                                TypeDescriptor::Any => Some(NotFamily::Dynamic),
                                 _ => None,
                             });
                     let operand_expectation = resolved_expected.as_ref().filter(|expected| {
-                        matches!(expected, TypeDescriptor::Int | TypeDescriptor::Any)
+                        matches!(expected, TypeDescriptor::Int)
                             || matches!(
                                 expected,
                                 TypeDescriptor::Enum(variants)
@@ -471,7 +349,7 @@ impl<'a> GenericInference<'a> {
                     .ok_or_else(|| "return is allowed only inside a Function".to_owned())?
                     .expected
                     .clone();
-                let value = self.infer_authored_boundary(value, environment, expected.as_ref())?;
+                let value = self.infer(value, environment, expected.as_ref())?;
                 self.return_boundaries
                     .last_mut()
                     .and_then(Option::as_mut)
@@ -484,8 +362,11 @@ impl<'a> GenericInference<'a> {
                 self.infer(message, environment, Some(&TypeDescriptor::String))?;
                 TypeDescriptor::Never
             }
-            ExprKind::Raise { error } => {
-                self.infer(error, environment, Some(&blame_error_descriptor()))?;
+            ExprKind::Raise { message, subjects } => {
+                self.infer(message, environment, Some(&TypeDescriptor::String))?;
+                for subject in subjects {
+                    self.infer(subject, environment, None)?;
+                }
                 TypeDescriptor::Never
             }
             ExprKind::Debug { value, .. } => self.infer(value, environment, expected)?,
@@ -498,7 +379,7 @@ impl<'a> GenericInference<'a> {
                     .ok_or_else(|| {
                         "type ascription target metadata was not evaluated".to_owned()
                     })?;
-                let inferred = self.infer_authored_boundary(value, environment, Some(&target))?;
+                let inferred = self.infer(value, environment, Some(&target))?;
                 self.check(&inferred, &target)?;
                 target
             }
@@ -614,10 +495,8 @@ impl<'a> GenericInference<'a> {
                 }
             },
             ExprKind::Field { receiver, field } => {
-                if let ExprKind::Variable(module) = &receiver.value
-                    && let Some(scheme) = self
-                        .external_interfaces
-                        .get(&module.value)
+                if let Some(scheme) = self
+                        .namespace_interface(receiver)
                         .and_then(|interface| interface.exports.get(&field.value))
                         .cloned()
                 {
@@ -642,7 +521,6 @@ impl<'a> GenericInference<'a> {
                         item
                     }
                     TypeDescriptor::Never => TypeDescriptor::Never,
-                    TypeDescriptor::Any => TypeDescriptor::Any,
                     descriptor => {
                         return Err(format!(
                             "cannot index value of type {}",
@@ -663,7 +541,6 @@ impl<'a> GenericInference<'a> {
                 {
                     result?
                 } else {
-                let callee_has_runtime_boundary = self.callee_has_runtime_boundary(callee);
                 if self.is_builtin_tuple(callee)
                     && let [argument] = arguments.as_slice()
                     && let ExprKind::Array(items) = &argument.value
@@ -675,6 +552,7 @@ impl<'a> GenericInference<'a> {
                     let metadata_array = TypeDescriptor::Array(Box::new(TypeDescriptor::Type));
                     self.infer(argument, environment, Some(&metadata_array))?;
                     let mut tuple_items = Vec::with_capacity(items.len());
+                    let mut has_complete_witnesses = true;
                     for item in items {
                         let item = self
                             .records
@@ -683,9 +561,7 @@ impl<'a> GenericInference<'a> {
                             .ok_or_else(|| "Tuple item has no inferred Type metadata".to_owned())?;
                         match item {
                             TypeDescriptor::TypeOf(item) => tuple_items.push(*item),
-                            TypeDescriptor::Type | TypeDescriptor::Any => {
-                                tuple_items.push(TypeDescriptor::Any)
-                            }
+                            TypeDescriptor::Type => has_complete_witnesses = false,
                             item => {
                                 return Err(format!(
                                     "Tuple items must be Type metadata, found {}",
@@ -694,8 +570,11 @@ impl<'a> GenericInference<'a> {
                             }
                         };
                     }
-                    let inferred =
-                        TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Tuple(tuple_items)));
+                    let inferred = if has_complete_witnesses {
+                        TypeDescriptor::TypeOf(Box::new(TypeDescriptor::Tuple(tuple_items)))
+                    } else {
+                        TypeDescriptor::Type
+                    };
                     if let Some(expected) = expected {
                         self.check(&inferred, expected)?;
                     }
@@ -760,7 +639,6 @@ impl<'a> GenericInference<'a> {
                         if let Some(expected) = expected {
                             self.check(&result, expected)?;
                         }
-                        let mut partial_tagged_evidence = false;
                         let mut unresolved_argument_evidence = false;
                         // Macro-generated arguments can share a source location, so retain
                         // each inference result rather than rereading the location map.
@@ -782,25 +660,10 @@ impl<'a> GenericInference<'a> {
                             } else {
                                 Some(parameter)
                             };
-                            let argument_type = if callee_has_runtime_boundary {
-                                self.infer(argument, environment, inference_expected)?
-                            } else {
-                                self.infer_authored_boundary(
-                                    argument,
-                                    environment,
-                                    inference_expected,
-                                )?
-                            };
+                            let argument_type = self.infer(argument, environment, inference_expected)?;
                             argument_types[index] = argument_type.clone();
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.resolve(&argument_type));
-                            partial_tagged_evidence |= matches!(
-                                self.resolve(&argument_type),
-                                TypeDescriptor::Tagged { .. }
-                            );
-                            if matches!(self.resolve(&argument_type), TypeDescriptor::Any) {
-                                self.default_inference_variables_to_any(parameter);
-                            }
                             if contains_exposed_type_variable(parameter) {
                                 self.unify(&argument_type, parameter)?;
                             } else {
@@ -831,11 +694,6 @@ impl<'a> GenericInference<'a> {
                         self.materialize_field_requirements(&TypeDescriptor::Tuple(
                             parameters.clone(),
                         ))?;
-                        if partial_tagged_evidence {
-                            for parameter in &parameters {
-                                self.default_inference_variables_to_any(parameter);
-                            }
-                        }
                         let result = self.resolve(&result);
                         let result = if matches!(result, TypeDescriptor::TypeOf(_))
                             && contains_type_variable(&result)
@@ -856,12 +714,6 @@ impl<'a> GenericInference<'a> {
                             ));
                         }
                         result
-                    }
-                    TypeDescriptor::Any => {
-                        for argument in arguments {
-                            self.infer(argument, environment, None)?;
-                        }
-                        TypeDescriptor::Any
                     }
                     descriptor => {
                         for argument in arguments {
@@ -972,20 +824,12 @@ impl<'a> GenericInference<'a> {
                     let local = parameter.annotation.as_ref().and_then(|annotation| {
                         self.local_annotations.get(&annotation.location).cloned()
                     });
-                    if local.as_ref().is_some_and(contains_any_descriptor) {
-                        self.authored_any_definitions
-                            .insert(parameter.name.location);
-                    }
                     if let (Some(local), Some(surrounding)) = (&local, surrounding) {
                         self.check(local, surrounding)?;
                     }
                     let parameter_type = local
                         .or_else(|| surrounding.cloned())
                         .unwrap_or_else(|| self.fresh_variable());
-                    if contains_any_descriptor(&parameter_type) {
-                        self.authored_any_definitions
-                            .insert(parameter.name.location);
-                    }
                     parameter_types.push(parameter_type);
                 }
                 for (parameter, ty) in parameters.iter().zip(&parameter_types) {
@@ -1038,12 +882,6 @@ impl<'a> GenericInference<'a> {
                     parameters: parameter_types,
                     result: Box::new(local_result.unwrap_or(inferred_result)),
                 };
-                if expected.is_none()
-                    && self.delayed_initializer_depth == 0
-                    && contains_type_variable(&function)
-                {
-                    self.default_inference_variables_to_any(&function);
-                }
                 self.resolve(&function)
             }
             ExprKind::Block(block) => self.infer_block(block, environment, expected)?,
@@ -1106,10 +944,11 @@ impl<'a> GenericInference<'a> {
                 let mut then_environment = environment.clone();
                 self.scheme_scopes.push(HashMap::new());
                 for binding in analysis.bindings {
+                    let binding_type = self.require_pattern_binding(&binding)?;
                     self.pattern_binding_types
-                        .insert(binding.location, binding.ty.clone());
+                        .insert(binding.location, binding_type.clone());
                     self.set_local_scheme(binding.name.clone(), None);
-                    then_environment.insert(binding.name, binding.ty);
+                    then_environment.insert(binding.name, binding_type);
                 }
                 let then_type = self.infer_block(then_branch, &then_environment, expected);
                 self.scheme_scopes.pop();
@@ -1159,10 +998,11 @@ impl<'a> GenericInference<'a> {
                 let mut body_environment = environment.clone();
                 self.scheme_scopes.push(HashMap::new());
                 for binding in analysis.bindings {
+                    let binding_type = self.require_pattern_binding(&binding)?;
                     self.pattern_binding_types
-                        .insert(binding.location, binding.ty.clone());
+                        .insert(binding.location, binding_type.clone());
                     self.set_local_scheme(binding.name.clone(), None);
-                    body_environment.insert(binding.name, binding.ty);
+                    body_environment.insert(binding.name, binding_type);
                 }
                 let body_type = self.infer_block(body, &body_environment, expected);
                 self.scheme_scopes.pop();
@@ -1281,12 +1121,13 @@ impl<'a> GenericInference<'a> {
                     }
                     self.scheme_scopes.push(HashMap::new());
                     for binding in analysis.bindings {
+                        let ty = self.require_pattern_binding(&binding)?;
                         let binding_type = evidence
                             .as_ref()
                             .map(|replacements| {
-                                replace_inference_variables(&binding.ty, replacements)
+                                replace_inference_variables(&ty, replacements)
                             })
-                            .unwrap_or(binding.ty);
+                            .unwrap_or(ty);
                         self.pattern_binding_types
                             .insert(binding.location, binding_type.clone());
                         self.set_local_scheme(binding.name.clone(), None);
@@ -1338,7 +1179,7 @@ impl<'a> GenericInference<'a> {
                             join_types(joined, self.resolve(&arm))
                         })
                 } else {
-                    TypeDescriptor::Any
+                    TypeDescriptor::Never
                 }
             }
         };

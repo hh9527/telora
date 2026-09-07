@@ -33,7 +33,7 @@
                let packed = dyn.pack(Node, root);
                let decoded: Node = codec.decode(
                    Node,
-                   codec.encode(codec.Value, root) |> result.unwrap,
+                   codec.encode(codec.Value, root),
                ) |> result.unwrap;
                export def output = {
                    sum,
@@ -138,7 +138,6 @@
                };
                 {
                     encoded: codec.encode(codec.Value, relation)
-                       |> result.unwrap
                        |> json.stringify,
                     schema: json.schema(Use),
                 }"#,
@@ -196,8 +195,8 @@
                ]});
                let produced: types.Plan = creator.make_plan(expr);
                let direct: types.Plan = {grouping: [expr]};
-               let direct_encoded = codec.encode(Value, direct) |> result.unwrap;
-               let produced_encoded = codec.encode(Value, produced) |> result.unwrap;
+               let direct_encoded = codec.encode(Value, direct);
+               let produced_encoded = codec.encode(Value, produced);
                {
                    direct: codec.decode(types.Plan, direct_encoded) |> result.unwrap,
                    produced: codec.decode(types.Plan, produced_encoded) |> result.unwrap,
@@ -248,7 +247,6 @@
                    g: 'Some("eight"),
                };
                types.encode_rejection(rejection)
-                   |> result.unwrap
                    |> json.stringify"#,
         )
         .unwrap();
@@ -376,7 +374,7 @@
             r#"import "std/codec" as codec;
                import "std/result" as result;
                type Forward = struct {next: Later};
-               let premature = codec.decode(Forward, codec.encode(codec.Value, {next: 1}) |> result.unwrap);
+               let premature = codec.decode(Forward, codec.encode(codec.Value, {next: 1}));
                type Later = Int;
                premature"#,
         )

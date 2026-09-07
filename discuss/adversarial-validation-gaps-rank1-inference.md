@@ -119,16 +119,16 @@ negative probe (a program that *would* leak if the invariant were broken):
 ### 6. Branch joins (RFC 0075)
 
 - True arm-order independence for: distinct metadata witnesses (join to
-  `Type`), `Never` mixes, nested Unions, and duplicates.
+  `Type`), `Never` mixes, contextual enums, and duplicates.
 - Join purity: a join must not leave substitutions behind that a later
   conflicting branch observes.
-- `Any` dominance is explicit and symmetric in both positions.
-- Pathological shapes: deeply nested Unions, Unions with many members —
-  deterministic canonical order and terminating display.
+- Incompatible contributors require an explicit common contract in either order.
+- Pathological shapes: deeply nested enum payloads and collections retain
+  deterministic diagnostics and terminating display.
 
 ### 7. Recursion / least fixed point (RFC 0078)
 
-- Evidence-free recursion stays unresolved (never `Any`, never `Never`):
+- Evidence-free recursion requires an explicit result contract:
   `def loop = fn(v) { loop(v) };`.
 - Indirect self-reference that *looks* acyclic: recursion via an alias, via a
   capture, or via a `let` hop (`def a = fn(v) { b(v) }; let tmp = a; def b =
@@ -144,8 +144,7 @@ negative probe (a program that *would* leak if the invariant were broken):
   parameter appears twice in the body.
 - Placeholder on an inferred scheme uses semantic identity, not presentation
   name: `let pair = fn(l, r) { (l, r) }; pair[Int, _](1, "x")`.
-- Placeholder is never `Any`: hover/facts show a concrete type or an error,
-  never `Any`.
+- Placeholder hover/facts show a resolved type or an explicit incomplete/error state.
 - Placeholder in a nested block cannot escape unresolved.
 
 ### 9. Context-complete generic calls (RFC 0082)
@@ -180,14 +179,11 @@ negative probe (a program that *would* leak if the invariant were broken):
 When a semantic change forces test fixtures to be rewritten, distinguish a
 *legitimate migration* from a *masked regression*:
 
-- For each fixture migrated to an explicit `Any` contract (during RFC 0073,
-  and any future migrations): temporarily remove the annotation and re-run.
-  If the program infers correctly without it, the migration hid a regression
-  in the inference path rather than a genuinely dynamic program.
-- The RFC 0073 migrations (decorator contexts, debug/function-identity
-  callbacks, metadata/runtime dual-use helpers) were audited as genuinely
-  dynamic at the time; re-verify a sample under the current checker, since
-  RFC 0079 and RFC 0083 subsequently changed what may infer.
+- For each fixture given an explicit contract, verify whether its original
+  type relationships can be inferred. Preserve generic relationships when
+  testing decorator contexts, callbacks and metadata/runtime helpers.
+- Keep explicit Dyn packaging in fixtures whose purpose is dynamic inspection.
+  Fixtures for ordinary generic functions should exercise their checked schemes.
 
 ## Minimum viable adversarial suite
 

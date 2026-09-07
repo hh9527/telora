@@ -29,7 +29,7 @@ export def verified_case = test.should_ok(fn() {
     let verified = {
         let endpoint_property = type_property.get_type_prop(Endpoint, fmt.DisplayBy);
         let property_valid = match endpoint_property {
-            'Some(property) => results.is_ok(validate(fmt.DisplayBy, property)),
+            'Some(property) => results.is_ok(property.cast!(fmt.DisplayBy)),
             'None => 'False,
         };
         fmt.render(fmt.display(Endpoint, endpoint)) == "localhost:8080"

@@ -124,7 +124,7 @@ def ees: effect.Config = {
 };
 
 type State = enum {'Ready, 'Waiting};
-export def run = entry.run(config, ees, fn(ctx) {
+export def run = entry.run(State, config, ees, fn(ctx) {
     let initial: State = 'Ready;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
@@ -192,7 +192,7 @@ import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
 def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = enum {'Ready, 'WaitingFirst(String), 'WaitingSecond(String)};
-export def run = entry.run(config, ees, fn(ctx) {
+export def run = entry.run(State, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             ('Ready, 'Request(request)) => (
@@ -269,7 +269,7 @@ import "std/ees" as effect;
 def config: entry.ContextConfig = {{sources: [], envs: [], args: 'False}};
 def ees: effect.Config = {{vars: {{}}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]}};
 type State = struct {{}};
-export def run = entry.run(config, ees, fn(ctx) {{
+export def run = entry.run(State, config, ees, fn(ctx) {{
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {{
         match event {{
             'Request(request) => {{
@@ -317,7 +317,7 @@ def ees: effect.Config = {
 };
 
 type State = struct {};
-export def run = entry.run(config, ees, fn(ctx) {
+export def run = entry.run(State, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'None)]),
@@ -378,7 +378,7 @@ def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
 def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 
 type State = struct {pending: Array(String)};
-export def serve = entry.serve(config, ees, fn(ctx) {
+export def serve = entry.serve(State, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => {
@@ -478,7 +478,7 @@ def ees: effect.Config = {
 };
 
 type State = enum {'Ready, 'Waiting};
-export def run = entry.run(config, ees, fn(ctx) {
+export def run = entry.run(State, config, ees, fn(ctx) {
     let plan = match dict.get(ctx.sources, "plan") {
         'Some(value) => value,
         'None => fail!("missing plan"),
@@ -546,7 +546,7 @@ import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
 def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = struct {};
-export def run = entry.run(config, ees, fn(ctx) {
+export def run = entry.run(State, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (

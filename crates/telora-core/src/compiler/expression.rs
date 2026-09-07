@@ -140,10 +140,12 @@ impl<'a> Compiler<'a> {
                 self.emit(Operation::Panic { message }, expression.location);
                 Ok(message)
             }
-            ExprKind::Raise { error } => {
-                let error = self.compile_expr(error)?;
-                self.emit(Operation::Raise { error }, expression.location);
-                Ok(error)
+            ExprKind::Raise { message, subjects } => {
+                let message = self.compile_expr(message)?;
+                let subjects = subjects.iter().map(|subject| self.compile_expr(subject))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.emit(Operation::Raise { message, subjects }, expression.location);
+                Ok(message)
             }
             ExprKind::Debug {
                 value,

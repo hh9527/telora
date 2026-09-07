@@ -55,10 +55,10 @@ type Context = struct {
 };
 ```
 
-`entry.run` 和 `entry.serve` 接受相同形状的初始化函数：它返回初始 State 和 reducer。
+`entry.run` 和 `entry.serve` 的首个参数是状态类型 `State`，初始化函数返回该类型的初始值和 reducer。
 
 ```telora
-entry.run(config, ees_config, fn(ctx) {
+entry.run(State, config, ees_config, fn(ctx) {
     let initial: State = ...;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) =
         fn(state, event) { ... };
@@ -205,7 +205,7 @@ def effects: ees.Config = {
 
 type State = enum {'Ready, 'Waiting};
 
-export def run = entry.run(config, effects, fn(ctx) {
+export def run = entry.run(State, config, effects, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             ('Ready, 'Request(request)) => (

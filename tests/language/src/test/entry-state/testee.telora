@@ -1,0 +1,41 @@
+import "std/actor" as actor;
+import "std/array" as array;
+import "std/entry" as entry;
+import "std/ees" as ees;
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+type State = struct {pending: Array(String), next: Fn(Int) -> Int};
+def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def prepare: Fn(entry.Context) -> Tuple([
+    State, Fn(State, actor.Event) -> actor.Transition(State),
+]) = fn(ctx) {
+    let initial: State = {pending: [], next: fn(value) { value + 1 }};
+    let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
+        match event {
+            'Request(request) => (
+                {pending: array.push(state.pending, request.id), next: state.next},
+                [actor.reply(request.id, 'Int(state.next(array.length(state.pending))))],
+            ),
+            'EesReply(_) => (state, []),
+        }
+    };
+    (initial, reduce)
+};
+
+def verify: Fn(actor.Service) -> Bool = fn(service) {
+    let first = service.reduce((service.state, 'Request({id: "a", input: 'None})));
+    let second = service.reduce((first.0, 'Request({id: "b", input: 'None})));
+    first.1 == [actor.reply("a", 'Int(1))]
+        && second.1 == [actor.reply("b", 'Int(2))]
+};
+
+export def run_state = test.should_ok(fn() {
+    let wrapper = entry.run(State, config, ees.none, prepare);
+    expect(verify(wrapper.start({sources: {}, env: {}, args: []})))
+});
+
+export def serve_state = test.should_ok(fn() {
+    let wrapper = entry.serve(State, config, ees.none, prepare);
+    expect(verify(wrapper.start({sources: {}, env: {}, args: []})))
+});

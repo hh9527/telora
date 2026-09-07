@@ -5,6 +5,8 @@ import "@src/check/module-interfaces/origin" {accepts, identity as direct, use};
 import "@src/check/module-interfaces/facade" {Box, Tree, Family, identity};
 import "@src/check/module-interfaces/local-alias" {LocalBox as ImportedLocalBox, Local};
 import "@src/check/module-interfaces/namespace" {model};
+import "@src/check/module-interfaces/namespace" as nested;
+import "@src/check/module-interfaces/open-namespace" as opened;
 import "@src/check/module-interfaces/second" {answer, identity as relayed};
 import "@src/check/module-interfaces/opaque-facade" {State};
 import "std/type-desc" as type_desc;
@@ -121,6 +123,13 @@ export def nested_namespace = test.should_ok(fn() {
         let value: model.Box(Int) = model.identity({value: 1});
         value.value == 1 && model.identity(1) == 1 && model.identity("x") == "x"
     })
+});
+
+export def namespace_member_schemes = test.should_ok(fn() {
+    expect(nested.model.identity(1) == 1
+        && nested.model.identity("text") == "text"
+        && opened.identity(2) == 2
+        && opened.identity("other") == "other")
 });
 
 export def reexport_identity = test.should_ok(fn() {

@@ -40,8 +40,8 @@ export def dictionaries = test.should_ok(fn() {
         let empty: Array(Tuple([String, Int])) = [];
         let round_trip = dict.from_pairs(dict.pairs(source));
         let merged = dict.merge(
-            {a: 1, nested: {left: 1}},
-            {b: 2, nested: {right: 2}},
+            {a: 1, shared: 3},
+            {b: 2, shared: 4},
         );
         dict.keys(source) == ["a", "middle", "z"]
             && dict.values(source) == [1, 2, 3]
@@ -49,9 +49,9 @@ export def dictionaries = test.should_ok(fn() {
             && dict.get(round_trip, "a") == 'Some(1)
             && dict.get(round_trip, "middle") == 'Some(2)
             && dict.get(round_trip, "z") == 'Some(3)
-            && merged.a == 1
-            && merged.b == 2
-            && merged.nested.right == 2
+            && dict.get(merged, "a") == 'Some(1)
+            && dict.get(merged, "b") == 'Some(2)
+            && dict.get(merged, "shared") == 'Some(4)
             && dict.keys(dict.from_pairs(empty)) == []
     })
 });
@@ -78,19 +78,15 @@ export def format_fragments = test.should_ok(fn() {
 
 export def codec_and_schema = test.should_ok(fn() {
     expect({
-        let boolean = codec.decode(Bool, codec.encode(codec.Value, 'True) |> result.unwrap)
+        let boolean = codec.decode(Bool, codec.encode(codec.Value, 'True))
             |> result.unwrap;
-        let none = codec.decode(Option(Int), codec.encode(codec.Value, 'None) |> result.unwrap)
+        let none = codec.decode(Option(Int), codec.encode(codec.Value, 'None))
             |> result.unwrap;
-        let some = codec.decode(Option(Int), codec.encode(codec.Value, 3) |> result.unwrap)
+        let some = codec.decode(Option(Int), codec.encode(codec.Value, 3))
             |> result.unwrap;
-        let encoded = codec.encode(codec.Value, 4) |> result.unwrap;
-        let bool_schema = json.stringify(
-            codec.encode(codec.Value, json.schema(Bool)) |> result.unwrap,
-        );
-        let option_schema = json.stringify(
-            codec.encode(codec.Value, json.schema(Option(Int))) |> result.unwrap,
-        );
+        let encoded = codec.encode(codec.Value, 4);
+        let bool_schema = json.stringify(json.schema(Bool));
+        let option_schema = json.stringify(json.schema(Option(Int)));
         boolean
             && none == 'None
             && some == 'Some(3)

@@ -71,6 +71,7 @@ impl TypeScheme {
 #[derive(Clone, Debug, Default)]
 pub struct ModuleInterface {
     pub exports: BTreeMap<String, TypeScheme>,
+    pub namespaces: BTreeMap<String, ModuleInterface>,
     pub concrete_types: BTreeMap<String, TypeDescriptor>,
     pub traits: BTreeMap<String, crate::TraitId>,
     pub trait_implementations: Vec<TraitImplementation>,
@@ -87,6 +88,9 @@ impl ModuleInterface {
             .map(|name| (name.clone(), format!("\0import:{namespace}:{name}")))
             .collect::<HashMap<_, _>>();
         Self {
+            namespaces: self.namespaces.iter()
+                .map(|(name, interface)| (name.clone(), interface.qualified(&format!("{namespace}.{name}"))))
+                .collect(),
             exports: self
                 .exports
                 .iter()
@@ -174,7 +178,6 @@ pub enum TypeDescriptor {
     Named(String),
     Declared(DeclaredTypeDescriptor),
     Inference(InferenceVariableId),
-    Any,
     Never,
     Type,
     Dyn,
@@ -218,7 +221,6 @@ pub(crate) enum TypeExprId {
     Bound(u32),
     Declared(crate::TypeConstructorId, Box<[TypeExprId]>),
     Inference(u32),
-    Any,
     Never,
     Type,
     Dyn,
@@ -261,7 +263,6 @@ impl TypeExprId {
                     .into(),
             ),
             TypeDescriptor::Inference(variable) => Self::Inference(variable.index()),
-            TypeDescriptor::Any => Self::Any,
             TypeDescriptor::Never => Self::Never,
             TypeDescriptor::Type => Self::Type,
             TypeDescriptor::Dyn => Self::Dyn,
@@ -338,7 +339,6 @@ impl TypeDescriptor {
             Self::Named(name) => display_named_type(name).to_owned(),
             Self::Declared(declared) => declared.name.clone(),
             Self::Inference(variable) => format!("?{}", variable.0),
-            Self::Any => "Any".into(),
             Self::Never => "Never".into(),
             Self::Type => "Type".into(),
             Self::Dyn => "Dyn".into(),
@@ -411,7 +411,6 @@ fn display_scheme_descriptor(
         TypeDescriptor::Named(name) => display_named_type(name).to_owned(),
         TypeDescriptor::Declared(declared) => declared.name.clone(),
         TypeDescriptor::Inference(variable) => format!("?{}", variable.0),
-        TypeDescriptor::Any => "Any".into(),
         TypeDescriptor::Never => "Never".into(),
         TypeDescriptor::Type => "Type".into(),
         TypeDescriptor::Dyn => "Dyn".into(),

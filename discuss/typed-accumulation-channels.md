@@ -175,9 +175,9 @@ Information belongs in the primary result when the caller must inspect it to
 continue correctly. Accumulation is appropriate when the producing computation
 must not read the channel and the information is observational or auxiliary.
 
-For example, a fatal decode failure should remain a `BlameError` in the
-function's result. Non-fatal migration warnings or provenance records may be
-accumulated.
+For example, decoding returns `Result(A, codec.DecodeError)` so callers can
+recover or emit a diagnostic with `fail!(error.message, error.value)`.
+Non-fatal migration warnings or provenance records may be accumulated.
 
 This distinction prevents an API from hiding its essential failure contract in
 a channel that an ordinary caller can ignore.
@@ -373,4 +373,3 @@ This discussion is ready to become an RFC when it can answer at least:
 9. static-analysis, LSP, compiler, and VM acceptance cases;
 10. explicit non-goals that keep the feature smaller than general algebraic
     effects.
-

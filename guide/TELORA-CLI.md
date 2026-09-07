@@ -86,7 +86,7 @@ fixture 不产生 import 边，来源使用 `@test-ctx/<入口>/<导出名>/<索
 
 Test 按公开导出名排序，组内按数组顺序深度优先执行。显式重导出按入口的公开名称
 执行，两个别名执行两次；普通导入不会执行被导入模块的 Test。其他导出可作为 helper，
-容器、Dyn 和 Any 内的 Test 不参与发现。没有直接 Test 导出时失败。
+测试发现以直接导出的 Test 为单位。容器和 Dyn 中的 Test 不参与发现。没有直接 Test 导出时失败。
 
 stdout 使用 `telora.test/v2`：diagnostic 保留原有字段，并为用例增加 `test`、
 `fixtures`、`sources` 和 `phase`（discovery、fixture、factory、execution）；随后

@@ -102,7 +102,7 @@ impl Heap {
                     if let Some(existing) = declared.get(&value.id) {
                         return Ok(*existing);
                     }
-                    let placeholder = kind(heap, "Any")?;
+                    let placeholder = build(heap, background, &T::Named(value.name.clone()), declared)?;
                     let owner = heap.reserve_type_metadata(
                         value.id.clone(),
                         value.name.as_str(),
@@ -112,7 +112,6 @@ impl Heap {
                     let body = build(heap, background, &value.body, declared)?;
                     heap.seal_type_ref(owner, body)
                 }
-                T::Any => kind(heap, "Any"),
                 T::Never => kind(heap, "Never"),
                 T::Type => kind(heap, "Type"),
                 T::Dyn => kind(heap, "Dyn"),

@@ -285,6 +285,7 @@ impl ModuleLoader {
                     );
                     Ok(ModuleArtifact {
                         root,
+                        root_scheme: None,
                         interface,
                         provenance: Some(provenance),
                     })
@@ -320,6 +321,7 @@ impl ModuleLoader {
                     .map_err(|error| ModuleError::new(error.to_string()))?;
                     Ok(ModuleArtifact {
                         root,
+                        root_scheme: if analysis.explicit_exports { None } else { analysis.result_scheme },
                         interface: analysis.module_interface,
                         provenance: None,
                     })
@@ -554,13 +556,18 @@ impl ModuleLoader {
                 }
                 continue;
             }
-            let (selected_root, selected_interface) = select_import_root(
+            let (selected_root, mut selected_interface) = select_import_root(
                 artifact.root,
                 artifact.interface,
                 binding.value.imported_name.as_deref(),
                 &binding.value.name.value,
                 &self.main.heap,
             )?;
+            if binding.value.imported_name.is_none()
+                && let Some(scheme) = artifact.root_scheme
+            {
+                selected_interface.exports.insert(binding.value.name.value.clone(), scheme);
+            }
             external_roots.insert(binding.value.name.value.clone(), selected_root);
             external_interfaces.insert(binding.value.name.value.clone(), selected_interface);
             if let Some(provenance) = artifact.provenance
@@ -661,8 +668,9 @@ impl ModuleLoader {
             external_roots.insert(name.clone(), candidate.root);
             external_interfaces.insert(
                 name.clone(),
-                ModuleInterface {
-                    exports: BTreeMap::from([(name.clone(), candidate.scheme)]),
+                candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                    namespaces: BTreeMap::new(),
+                    exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
                     concrete_types: candidate.concrete_types,
                     traits: candidate
                         .trait_id
@@ -675,7 +683,7 @@ impl ModuleLoader {
                         .type_family_template
                         .map(|family| BTreeMap::from([(name.clone(), family)]))
                         .unwrap_or_default(),
-                },
+                }),
             );
             if let Some(provenance) = candidate.provenance
                 && !provenance.values.is_empty()
@@ -893,7 +901,9 @@ fn expression_has_import(expression: &Expr) -> bool {
         }
         ExprKind::Return { value } => expression_has_import(value),
         ExprKind::Panic { message } => expression_has_import(message),
-        ExprKind::Raise { error } => expression_has_import(error),
+        ExprKind::Raise { message, subjects } => {
+            expression_has_import(message) || subjects.iter().any(expression_has_import)
+        },
         ExprKind::Debug { value, .. } => expression_has_import(value),
         ExprKind::Binary { left, right, .. } => {
             expression_has_import(left) || expression_has_import(right)

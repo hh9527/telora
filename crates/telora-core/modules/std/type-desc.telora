@@ -1,5 +1,5 @@
 type TypeDescKind = enum {
-    'Any, 'Never, 'Type, 'TypeOf,
+    'Never, 'Type, 'TypeOf,
     'Int, 'Float, 'String, 'Bytes,
     'Atom, 'Array, 'Dict, 'Tagged,
     'Tuple, 'Struct, 'Enum,
@@ -12,11 +12,19 @@ native children: Fn(Type) -> Array(Type);
 native fields: Fn(Type) -> Array(FieldDesc);
 native variants: Fn(Type) -> Array(VariantDesc);
 native opaque_name: Fn(Type) -> Option(String);
-native resolve: Fn(Type) -> Result(Type, BlameError);
+type ResolveError = struct {message: String, value: Type};
+native resolve_raw: Fn(Type) -> Result(Type, String);
+def resolve: Fn(Type) -> Result(Type, ResolveError) = fn(value) {
+    match resolve_raw(value) {
+        'Ok(target) => 'Ok(target),
+        'Err(message) => 'Err({message, value}),
+    }
+};
 
 export {
     Type as TypeDesc,
     TypeDescKind,
+    ResolveError,
     FieldDesc,
     VariantDesc,
     kind,

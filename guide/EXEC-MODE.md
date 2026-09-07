@@ -107,7 +107,7 @@ type State = struct {handled: Int};
 
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
 
-export def run = entry.run(config, ees.none, fn(ctx) {
+export def run = entry.run(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (
@@ -137,7 +137,7 @@ model；需要外部能力时换成明确的 `ees.Config` 并处理 `actor.EesRe
 区别由 Host 生命周期和请求 transport 决定：
 
 ```telora
-export def serve = entry.serve(config, ees.none, fn(ctx) {
+export def serve = entry.serve(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (

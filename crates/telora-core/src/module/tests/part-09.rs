@@ -116,7 +116,7 @@
 
         fs::write(
             &main,
-            source("codec.encode(codec.Value, endpoint) |> result.unwrap"),
+            source("codec.encode(codec.Value, endpoint)"),
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 200_000).unwrap();
@@ -258,3 +258,153 @@
         }
         fs::remove_dir_all(directory).unwrap();
     }
+#[test]
+fn privileged_diagnostic_snapshots_preserve_labels_and_nested_scope_order() {
+    let directory = fixture_dir();
+    let path = directory.join("main.telora");
+    fs::write(&path, "export def main = 0;").unwrap();
+    let source = r#"
+import "std/_rt" as rt;
+import "std/array" as array;
+def check: Fn(Bool) -> Bool = fn(condition) {
+    if condition { 'True } else { fail!("snapshot assertion failed") }
+};
+def warn: Fn(String) -> Result(Int, String) = fn(message) { 'Err(message) };
+def message: Fn() -> String = fn() {
+    let warning = warn.should_ok!("message evaluated");
+    "rejected"
+};
+def subject: Fn() -> Int = fn() {
+    let warning = warn.should_ok!("subject evaluated");
+    42
+};
+export def once = match rt.with_diagnostics@[Int, Int](fn(value) {
+    fail!(message(), subject(), "text", fn(item: Int) { item })
+})(0) {
+    'Err(reports) => check(array.length(reports) == 3
+        && reports[0].message == "message evaluated"
+        && reports[1].message == "subject evaluated"
+        && reports[2].message == "rejected"),
+    'Ok(_) => fail!("expected failure"),
+};
+export def success = match rt.with_diagnostics(fn(value: Int) {
+    let warning = warn.should_ok!("successful warning");
+    value + 1
+})(7) {
+    'Ok(observed) => {
+        let checked = check(observed.0 == 8);
+        let checked = check(array.length(observed.1) == 1);
+        let checked = check(observed.1[0].severity == 'Warning);
+        check(observed.1[0].message == "successful warning")
+    },
+    'Err(_) => fail!("expected successful capture"),
+};
+export def observed = rt.with_diagnostics@[Int, Int](fn(value: Int) {
+    let warning = warn.should_ok!("before");
+    let inner = rt.with_diagnostics@[Int, Int](fn(item: Int) { fail!("inside", item) })(value);
+    let message = match inner {
+        'Err(reports) => reports[0].message,
+        'Ok(_) => "unexpected",
+    };
+    let checked = check(message == "inside");
+    let warning = warn.should_ok!(message);
+    fail!("after", value)
+})(7);
+export def checked = match observed {
+    'Err(reports) => {
+        let checked = check(array.length(reports) == 3);
+        let checked = check(reports[0].severity == 'Warning);
+        let checked = check(reports[0].message == "before");
+        let checked = check(reports[1].message == "inside");
+        let checked = check(reports[2].severity == 'Error);
+        let checked = check(reports[2].message == "after");
+        let checked = check(array.length(reports[2].labels) > 0);
+        let label = reports[2].labels[0];
+        let checked = check(label.primary);
+        let checked = check(label.location.end > label.location.start);
+        reports[2].labels
+    },
+    'Ok(_) => fail!("expected diagnostic failure"),
+};
+"#;
+    let selected = prepare_selected_entry(
+        ModuleResolver::for_root(&path).unwrap(),
+        ModuleCName::builtin(PRIVATE_ENTRY_MODULE),
+        source,
+        Quota::with_fuel(100_000),
+        DataLimits::default(),
+        Arc::new(DiscardDebugSink),
+    ).unwrap();
+    let mut account = QuotaAccount::new(Quota::with_fuel(100_000))
+        .with_sources(&selected.loader.sources);
+    let world = Vm::new().execute_in_work(
+        &selected.loader.main.heap, &selected.entry.externals,
+        &selected.entry.function, &[], &mut account,
+    ).unwrap().seal_module().unwrap();
+    let checked = world.module_member_ref(&selected.loader.main.heap, "checked")
+        .unwrap().unwrap();
+    let mut entry_label = false;
+    for index in 0..checked.sequence_len().unwrap() {
+        let label = checked.sequence_get(index).unwrap();
+        let location = label.dict_get("location").unwrap();
+        let name = location.dict_get("source").unwrap().as_str().unwrap().to_string();
+        let start = location.dict_get("start").unwrap().as_int().unwrap() as usize;
+        let end = location.dict_get("end").unwrap().as_int().unwrap() as usize;
+        assert!(selected.loader.sources.files().any(|file| file.name.as_ref() == name));
+        if name == "std/_entry" {
+            entry_label = true;
+            assert!(!source[start..end].is_empty());
+        }
+    }
+    assert!(entry_label, "failure must retain its authored subject location");
+    assert!(account.diagnostics().is_empty());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn privileged_diagnostic_scope_propagates_fuel_exhaustion() {
+    let directory = fixture_dir();
+    let path = directory.join("main.telora");
+    fs::write(&path, "export def main = 0;").unwrap();
+    let selected = prepare_selected_entry(
+        ModuleResolver::for_root(&path).unwrap(),
+        ModuleCName::builtin(PRIVATE_ENTRY_MODULE),
+        r#"
+import "std/_rt" as rt;
+def spin: Fn(Int) -> Int = fn(value) { spin(value + 1) };
+export def observed = rt.with_diagnostics(spin)(0);
+"#,
+        Quota::with_fuel(100_000),
+        DataLimits::default(),
+        Arc::new(DiscardDebugSink),
+    ).unwrap();
+    let mut account = QuotaAccount::new(Quota::with_fuel(1_000))
+        .with_sources(&selected.loader.sources);
+    let error = Vm::new().execute_in_work(
+        &selected.loader.main.heap, &selected.entry.externals,
+        &selected.entry.function, &[], &mut account,
+    ).err().expect("fuel exhaustion must escape the diagnostic scope");
+    assert_eq!(error.kind, crate::RuntimeErrorKind::FuelExhausted);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn encoding_failure_retains_nested_subject_and_rule_locations() {
+    let directory = fixture_dir();
+    let path = directory.join("main.telora");
+    fs::write(&path, r#"
+import "std/codec" as codec;
+type Action = struct {run: Fn(Int) -> Int};
+let action: Action = {run: fn(value) { value }};
+codec.encode(codec.Value, action)
+"#).unwrap();
+    let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
+    let error = module.execute(100_000).unwrap_err();
+    assert!(error.message.contains("$.run: Function has no JSON codec"), "{error}");
+    let data = error.data_location().expect("nested input location");
+    assert_eq!(module.sources.get(data.source).slice(data).as_deref(),
+        Some("fn(value) { value }"));
+    let rule = error.rule_location().expect("codec rule location");
+    assert!(module.sources.get(rule.source).slice(rule).unwrap().contains("Fn(Int) -> Int"));
+    fs::remove_dir_all(directory).unwrap();
+}

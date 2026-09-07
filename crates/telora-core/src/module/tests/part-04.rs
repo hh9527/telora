@@ -10,7 +10,10 @@
                import "std/codec" as codec;
                import "std/result" as result;
                type Box(Item) = struct {value: Item};
-               codec.decode(Box(String), data) |> result.unwrap"#,
+               match codec.decode(Box(String), data) {
+                   'Ok(value) => value,
+                   'Err(error) => fail!(error.message, error.value),
+               }"#,
         )
         .unwrap();
 
@@ -32,7 +35,7 @@
                 .sources
                 .get(rule_location.source)
                 .slice(rule_location)
-                .is_some_and(|rule| rule.contains("String")),
+                .is_some_and(|rule| rule.contains("fail!")),
             "rule location: {rule_location:?}"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -450,18 +453,18 @@
             r#"import "std/codec" as codec;
                import "std/result" as result;
                type User = struct {name: String};
-               let as_value = fn(value) { codec.encode(codec.Value, value) |> result.unwrap };
+               let as_value = fn(value) { codec.encode(codec.Value, value) };
                let decoded = codec.decode(User, as_value({name: "Ada"}));
                let encoded = codec.encode(codec.Value, {name: "Lin"});
-               let checked = validate(User, {name: "Grace"});
-               let invalid = validate(User, {name: 1});
+               let checked = {name: "Grace"}.cast!(User);
+               let invalid = {name: 1}.cast!(User);
                let formatted = result.map_err(
                    codec.decode(User, as_value({name: 1})),
-                   codec.format_error,
+                   fn(error) { error.message },
                );
                let chained = result.flat_map(
-                   codec.decode(User, as_value({name: "Mira"})),
-                   fn(user) { validate(User, user) },
+                   result.map_err(codec.decode(User, as_value({name: "Mira"})), fn(error) { error.message }),
+                   fn(user) { user.cast!(User) },
                );
                let name = result.unwrap(result.map(
                    codec.decode(User, as_value({name: "Kai"})),
@@ -483,19 +486,19 @@
             module
                 .analysis
                 .display(module.analysis.binding_types["decoded"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok(User)}"
+            "enum {Err(DecodeError), Ok(User)}"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["checked"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok(User)}"
+            "enum {Err(String), Ok(User)}"
         );
         assert_eq!(
             module
                 .analysis
                 .display(module.analysis.binding_types["encoded"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok(Value)}"
+            "Value"
         );
         assert_eq!(
             module
@@ -507,7 +510,7 @@
             module
                 .analysis
                 .display(module.analysis.binding_types["chained"]),
-            "enum {Err({data: Any, message: String, rule: Any}), Ok(User)}"
+            "enum {Err(String), Ok(User)}"
         );
         assert_eq!(
             module
@@ -527,11 +530,8 @@
         );
         let (tag, error) = output.get("invalid").unwrap().tagged_parts().unwrap();
         assert_eq!(tag.as_atom().as_deref(), Some("Err"));
-        let message = error.get("message").unwrap().to_string();
+        let message = error.as_str().unwrap().as_str().to_owned();
         assert!(message.contains("must be String"), "{message}");
-        assert_eq!(error.get("data").unwrap().to_string(), "{name: 1}");
-        let rule = error.get("rule").unwrap().to_string();
-        assert!(rule.contains("User"), "{rule}");
 
         fs::write(
             directory.join("wrong-encode.telora"),
@@ -551,7 +551,8 @@
 
         fs::write(
             directory.join("erased.telora"),
-            "let metadata: Type = Int; validate(metadata, 1)",
+            r#"import "std/codec" as codec;
+               let metadata: Type = Int; codec.decode(metadata, 'Int(1))"#,
         )
         .unwrap();
         let error =

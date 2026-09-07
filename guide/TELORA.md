@@ -37,7 +37,7 @@ import "std/entry" as entry;
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(config, ees.none, fn(ctx) {
+export def run = entry.run(State, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             'Request(request) => (state, [actor.reply(request.id, 'String("hello, telora"))]),
@@ -109,7 +109,7 @@ left >= right
 而不是返回 False。普通复合值保持结构相等语义，两个具名 struct/enum 值还要求
 相同的名义类型。dict、Atom 或 Tagged 字面量可以从另一侧获得 exact nominal
 context，例如 `wrapper == 'Box("x")` 和 `'Box("x") == wrapper`；不需要先单独
-标注字面量。同一 enum 契约或显式 Any 边界内的不同运行时 variant 可以比较并返回 False。
+标注字面量。同一 enum 契约内的不同运行时 variant 可以比较并返回 False。
 有序比较只接受类型相同的
 `Int`、`Float` 或 `String` 操作数；不存在混合数值强制转换。String 按其内部
 UTF-8 字节序列精确地进行字典序比较，不做规范化，不使用 locale 规则、大小写
@@ -182,6 +182,14 @@ pair@[Int, _](1, "text")
 `_` 表示由完整调用上下文推断该类型实参。没有标记的 `value[index]` 只表示
 Array 索引。
 
+回调参数和 Result 分支需要足够的类型上下文。例如，`'Err("bad")` 只提供错误
+类型，可以用完整契约确定成功类型及回调参数：
+
+```telora
+let mapped: Result(Int, String) = result.map('Err("bad"), fn(value) { value });
+let explicit = result.map@[Int, String, Int]('Err("bad"), fn(value) { value });
+```
+
 推断会综合完整泛型调用中的证据。当另一个实参能够确定外围 enum 时，单独一个
 封闭 Atom 实参不会过早地把共享参数固定为其 singleton 类型。例如，`'Base`
 实参和 `Array(NodeId)` 实参可以共同推断出 `NodeId`。只有完整调用仍确实存在
@@ -226,7 +234,7 @@ import 和 reexport 保留原声明身份。字段使用 `.field`；enum 值使�
 `@struct`、`@enum` 不是可用的兼容语法。
 
 声明上下文中的记录或 tag 字面量会取得预期类型的声明身份。外部 JSON/TOML/YAML
-数据可以在 `codec.decode` 或 `validate(Type, raw)` 这类有精确 witness 的边界取得
+数据可以在 `codec.decode` 这类有精确 witness 的解码边界取得
 身份。已经产生的匿名记录或另一个声明类型的值，不能只因结构相同而在后续标注、
 参数或返回值边界被重新标记；应在字面量的产生点给出声明契约。
 
@@ -242,8 +250,8 @@ import "std/dyn" as dyn;
 let projected = dyn.project@[User](package); # Option(User)
 ```
 
-`ty!` 必须能在编译期证明目标类型，不能从 `Any` 或 `Dyn` 恢复类型。普通赋值只允许
-`T -> Any`，不允许未经检查的 `Any -> T`。`cast!` 只验证表示并保留原数据图：raw
+`ty!` 必须能在编译期证明目标类型。Dyn 中的值通过显式投影取得具体类型。
+`cast!` 只验证表示并保留原数据图：raw
 Dict/Atom 可以在完整匹配时取得目标 witness，但两个不同具名类型不能按结构互转；
 String parse、Int/Float 转换、`Value -> model`、rename/default/flatten 都属于 codec，
 不属于 cast。Dyn 投影只在打包时的 canonical 类型与目标完全相同时成功，不做结构猜测。
@@ -362,13 +370,12 @@ type Expr(Leaf) = enum {
 
 它形成有限 symbolic graph；同一 concrete application 复用 canonical identity。参数
 变换或换序、mutual family cycle、mixed cycle、无生产 alias，以及对普通局部 helper
-的依赖仍然非法。family 也可以引用已经封闭的 concrete recursive type。不得用
-`Any`、`Dyn` 或 String 标识替代本可由类型表达的关系。
+的依赖仍然非法。family 也可以引用已经封闭的 concrete recursive type，并由类型参数保留静态关系。
 
 ## Value、格式、codec 与 schema
 
 JSON、YAML 和 TOML 统一归一化为 `std/value.Value`。它是普通的 nominal recursive
-enum，不是 `Any`、VM raw graph 或 lossless AST：
+enum，表示归一化后的语义数据：
 
 ```telora
 type Value = enum {
@@ -399,10 +406,11 @@ type Query = struct {
 let raw = json.parse("{\"subject\":\"orders\",\"limit\":20}")
     |> result.unwrap;
 let query: Query = codec.decode(Query, raw) |> result.unwrap;
-let encoded: Value = codec.encode(Value, query) |> result.unwrap;
+let encoded: Value = codec.encode(Value, query);
 let compact: String = json.stringify(encoded);
 let pretty: String = encoded |> json.stringify_pretty(2);
 let query_schema = json.schema(Query);
+let schema_text = json.stringify(query_schema);
 ```
 
 也可以用 `json.decode(Query, text)` 直接把 JSON 文本解码成 `Query`。两条路径的
@@ -410,17 +418,19 @@ let query_schema = json.schema(Query);
 Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Value` witness，
 返回 Value；只有需要 JSON 文本边界时才调用 `json.stringify` 或
 `json.stringify_pretty`。`yaml.parse` 和 `toml.parse` 同样返回
-`Result(Value, BlameError)`。
+`Result(Value, codec.DecodeError)`。`codec.decode` 和 `json.decode` 返回
+`Result(A, codec.DecodeError)`；错误包含 `message: String` 和 `value: Value`。
+解码试探失败可以作为普通 Result 继续处理。需要产生诊断时使用
+`fail!(error.message, error.value)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
+静态数据模块保留每个子节点的位置。字符串解析产生的节点保留输入字符串的来源，
+解析消息中的行列描述字符串内容；这些行列不作为 Telora 源码内的偏移。
 
 Value 的每个递归 Array/Object 子节点都具有同一个 canonical TypeId，可以穷尽
 match。`cast!` 只做表示不变的 checked refinement，不能解开 Value variant；
 Value 与领域 model 的 rename/default/flatten 转换只能由 codec 完成。
 
-上述 parse、decode 和 encode 都返回带 native opaque error 的 `Result`。普通源码
-不命名该错误类型。调用者确实需要根据失败恢复或选择其他路径时，使用 `match` 保留
-这个 `Result`；当前函数承诺返回解码后的值、失败后无法履行该契约时，使用
-`unwrap!`，或匹配 Err 后调用 `fail!(error.message, error, input)`。Codec 失败不会
-发布部分解码值。
+parse 和 decode 的错误可以通过 `match` 恢复或选择其他路径。encode 直接返回
+`Value`；无法编码的输入或有冲突的编码配置产生诊断。Codec 失败不会发布部分结果。
 
 Struct 和 enum 默认从同一份 TypeMetadata 派生 codec 与 JSON schema。`std/json`
 目前保留两个类型级 typed-property decorator：
@@ -439,7 +449,8 @@ type Scalar = enum {
 };
 ```
 
-`rename_all` 和 `untagged` 产生具名 property，codec 和 schema 按目标 TypeId 与
+`rename_all` 接受 `RenameCase` enum，支持 `'CamelCase`。`json.schema` 返回 `Value`，
+可以直接交给 `json.stringify`。`rename_all` 和 `untagged` 产生具名 property，codec 和 schema 按目标 TypeId 与
 property TypeId 查询同一份 MainWorld 数据。字段和 variant property 按 owner TypeId、
 canonical member index 和 property TypeId 安全存取。当前 JSON API 在类型层提供
 `rename_all` 和 `untagged`；member 表示定制在领域模型或显式 codec 层表达。
@@ -568,7 +579,7 @@ contextual intrinsic 糖：`value.dbg!("message")` 等价于
 ## 当前实现限制与缓解方法
 
 本节描述当前实现中已经由源码和测试确认的边界。遇到这些边界时，应使用给出的
-有类型写法，不要用 `Any`、`Dyn` 或 String 标识绕过。
+有类型写法，并通过类型参数保留输入输出之间的关系。
 
 ### 多元素能力目录的类型推断
 
@@ -642,8 +653,8 @@ let expr: Expr = 'Column({alias: "o", column: "id"});
 
 ### Family 与递归具体类型
 
-递归 enum/struct 在函数契约、参数化 family 契约和模块接口中保持精确类型，不会把
-递归位置擦除为 `Any`。Family 可以引用已经封闭的非参数化递归具体类型：
+递归 enum/struct 在函数契约、参数化 family 契约和模块接口中保持精确类型。
+Family 可以引用已经封闭的非参数化递归具体类型：
 
 ```telora
 type Expr = enum {'Literal(Value), 'Call(CallExpr)};
@@ -672,12 +683,12 @@ type Renderer(Context) = struct {
 ```
 
 同一递归代数只需要替换叶节点类型时，优先使用上述同参递归 family。若递归过程中
-必须改变参数，分别声明封闭递归类型或先把允许叶节点建模为闭合 enum；不要用
-`Any`/`Dyn` 模拟开放递归。
+必须改变参数，分别声明封闭递归类型或先把允许叶节点建模为闭合 enum。
 
 ### 复杂 family 值的 codec witness
 
-`codec.encode(Value, value)` 的首个参数固定为公共 Value witness；codec 从有类型值
+`codec.encode(Value, value)` 的首个参数固定为公共 Value witness；编码直接返回
+`Value`，失败产生诊断。codec 从输入
 已经携带的 canonical witness 读取 source schema。对于参数很多的 concrete family，
 规范做法仍是在定义模块中建立一次 concrete type alias，并导出 alias 或有类型的
 边界函数：
@@ -696,8 +707,7 @@ export { Snapshot, encode_snapshot };
 ```
 
 下游调用 `encode_snapshot(value)`，不重建完整 TypeMetadata。该方式同样覆盖跨模块
-调用和包含封闭递归类型参数的 family。Alias 和函数契约仍由静态检查，不从运行时值
-反射类型；不要把值打包为 `Any`/`Dyn` 后猜测 witness。
+调用和包含封闭递归类型参数的 family。Alias 和函数契约由静态检查，witness 来自明确的类型元数据。
 
 ### Bytes 没有默认 JSON 表示
 
@@ -717,7 +727,7 @@ type Val = enum {
 
 若应用要求本身必须携带二进制数据，把它记录为当前模型无法覆盖的边界，不自行
 选择 Base64、tagged object 或其他协议。不要用 String 假装 Bytes，也不要通过手写
-JSON、`Any` 或 `Dyn` 绕过该限制。Array 元素、enum payload 和根 Bytes 同样没有
+JSON 或 `Dyn` 绕过该限制。Array 元素、enum payload 和根 Bytes 同样没有
 隐式表示。
 
 ### 泛型函数和外围类型参数
@@ -764,7 +774,7 @@ SQL 模板等包含大量反斜杠的文本优先使用 raw String，并按需�
 
 每个插值表达式都必须实现 `std/fmt.Display`；String、Int、Float 和 Atom 的实现
 由标准能力提供。编译器静态选择 implementation，并把插值降低为普通 dictionary
-member 调用。`Any`、`Dyn` 或无法解析的类型必须先显式投影或格式化。Bool 和其他
+member 调用。`Dyn` 必须先显式投影，插值处需要已确定的类型及其 Display 实现。Bool 和其他
 具名 enum 不会因运行时使用 Atom 表示而自动获得 `Display`。Float 使用有限
 binary64 的稳定文本表示：最短、可往返、不受
 locale 影响；`3.0` 显示为 `3`，`-0.0` 显示为 `-0`，原始小数或指数拼写不会保留。
@@ -863,7 +873,7 @@ let ignored = reject_same.should_ok!(subject, "missing capability");
 
 ```telora
 def make_plan: Fn(Model, Request) -> Plan = fn(model, request) {
-    let checked = validate(model, request);
+    let checked = check_request(model, request);
     if checked.valid {
         assemble_plan(model, checked)
     } else {
@@ -897,11 +907,9 @@ WorkWorld/MainWorld 间的内部固化不是对外发布，可以保留 Fail。�
 健康 export 和含 Fail 的 export：下游读取健康项可继续工作，读取失败项则传播同一个 Fail。
 没有 `PartialModule`/`UntrustedModule` 语言实体，也不会把原始 error 降级。
 
-不要仅仅为了让运行时报告诊断，就把 `Fn(Input) -> Output` 改成公开的
-`Fn(Input) -> Outcome(Output, Rejection)`，也不要在 eDSL 中复制一套
-`BlameError`、诊断数组或发布状态机。只有 Telora 调用者本身确实需要恢复、分支或
-组合失败时，才把失败建模为 `Option`、`Result` 或领域 enum。`panic!` 仍只表示实现
-错误或不变量破坏，不用于输入不满足动态契约。
+`Fn(Input) -> Output` 可以通过 `fail!` 报告无法产生结果的原因，诊断记录和发布
+状态由运行时管理。Telora 调用者需要恢复、分支或组合失败时，使用 `Option`、
+`Result` 或领域 enum 建模。`panic!` 表示实现错误或不变量破坏。
 
 ## 模块
 
@@ -924,9 +932,9 @@ native 和 export；普通模块值也使用 `def`。`let` 只用于函数或 `d
 都不合法。模块只暴露显式 export。库必须导出向调用者承诺的每个类型和函数。
 
 默认 prelude 相当于可遮蔽的隐式 open import，只为本模块尚未声明的名字提供
-fallback。`validate` 等 prelude 名不是保留字，本地 binding 可以正常使用同名；
+fallback。`PropertyAttr` 等 prelude 名不是保留字，本地 binding 可以正常使用同名；
 仍需访问内建项时使用显式别名，例如
-`import "std/prelude" { validate as builtin_validate };`。
+`import "std/prelude" { PropertyAttr as BuiltinPropertyAttr };`。
 
 `src/` 下的文件由 crate module 清单发布；`tests/` 下的入口由 Host 以 `@test/...`
 选择，`telora test NAME` 是对应的测试命令。测试支持子目录，选中入口时 Host 建立
@@ -999,7 +1007,7 @@ Telora 支持带显式契约的递归函数。调用和 back-edge 消耗 fuel；
 - 通过 selector 和回调保留精确的泛型类型。
 - 嵌套回调约束不足时，优先使用带显式契约的小型具名辅助函数。
 - 应用事实和物理映射留在可复用方法库之外。
-- 不得添加外部函数、native 声明、`Any` 或 `Dyn` 来绕过困难的泛型关系。
+- 用泛型参数和明确的输入输出契约表达类型关系。
 - 优先让类型表达静态约束；动态失败使用 `fail!` 并携带原始证据。
 - 纯导出使用 `eval` / `eval-with` 验收，应用 service 使用严格 `run` 验收；失败排查时
   再使用 `--best-effort` 扩大诊断覆盖。

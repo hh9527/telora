@@ -1,0 +1,42 @@
+import "std/result" as result;
+import "std/dyn" as dyn;
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(function, value) { function(value) };
+type IntFunction = Fn(Int) -> Int;
+
+export def user_defined_validate = test.should_ok(fn() {
+    let validate = fn(value) { value + 1 };
+    expect(validate(41) == 42)
+});
+
+export def annotated_recursion = test.should_ok(fn() {
+    def down: Fn(Int) -> Int = fn(value) { if value == 0 { 0 } else { down(value - 1) } };
+    def even: Fn(Int) -> Bool = fn(value) { if value == 0 { 'True } else { odd(value - 1) } };
+    def odd: Fn(Int) -> Bool = fn(value) { if value == 0 { 'False } else { even(value - 1) } };
+    expect(down(4) == 0 && even(4) && odd(3))
+});
+
+export def closure_context = test.should_ok(fn() {
+    expect(apply(fn(value) { value }, 42) == 42
+        && apply(fn(value) { value }, "text") == "text")
+});
+
+export def explicit_partial_result = test.should_ok(fn() {
+    let mapped: Result(Int, String) = result.map('Err("bad"), fn(value) { value });
+    let explicit = result.map@[Int, String, Int]('Err("bad"), fn(value) { value });
+    expect(mapped == explicit)
+});
+
+export def cast_and_pack = test.should_ok(fn() {
+    let checked: Result(Int, String) = 42.cast!(Int);
+    let rejected: Result(Int, String) = "text".cast!(Int);
+    let packed = dyn.pack(IntFunction, fn(value) { value });
+    expect(checked == 'Ok(42)
+        && !result.is_ok(rejected)
+        && match dyn.project_with(IntFunction, packed) {
+            'Some(function) => function(7) == 7,
+            'None => 'False,
+        })
+});

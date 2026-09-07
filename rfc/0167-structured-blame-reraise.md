@@ -1,6 +1,7 @@
 # RFC 0167: Structured blame re-raise
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Runtime diagnostic emission uses message and subject registers rather than BlameError values.
 - Depends on: RFC 0056, RFC 0107, RFC 0166
 
 ## Summary

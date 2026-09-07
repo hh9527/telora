@@ -9,10 +9,6 @@ type Choice = enum {'Some(Int), 'None};
 
 export def array_bounds = test.should_fail_with(fn() { [1][1] }, "OutOfRange");
 export def non_finite_arithmetic = test.should_fail_with(fn() { 0.0 / 0.0 }, "NonFiniteFloat");
-export def dynamic_projection = test.should_fail_with(fn() {
-    let value: Any = 1;
-    value[0]
-}, "expected Array");
 export def unwrap = test.should_fail_with(fn() {
     let result: Result(Int, String) = 'Err("required");
     result.unwrap!()
@@ -42,7 +38,7 @@ export def fmt_fragments = test.should_fail_with(fn() {
     fmt.render(fmt.concat(["missing tail"], [fmt.from_int(1)]))
 }, "strings.len == items.len + 1");
 
-export def dynamic_match = test.should_fail_with(fn() {
-    let select: Fn(Any) -> Int = fn(value) { match value { 'Some => 1 } };
-    select('None)
+export def incomplete_integer_match = test.should_fail_with(fn() {
+    let select: Fn(Int) -> Int = fn(value) { match value { 1 => 1 } };
+    select(2)
 }, "no match arm accepted the value");

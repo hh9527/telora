@@ -1,6 +1,7 @@
 # RFC 0112: Explicit diagnostic collection
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Privileged capture returns typed Diagnostic snapshots; access remains restricted.
 - Depends on: RFC 0056, RFC 0095, RFC 0102, RFC 0105, RFC 0108
 
 ## Summary

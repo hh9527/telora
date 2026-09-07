@@ -321,18 +321,9 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
 fn set_error(context: &mut CallContext<'_, '_>, message: String) -> Result<(), NativeError> {
     let tag = context.scratch()?;
     context.set_atom(tag, "Err")?;
-    let error = context.scratch()?;
     let message_register = context.scratch()?;
     context.set_string(message_register, message)?;
-    context.make_dict(
-        error,
-        &[
-            ("message".into(), message_register),
-            ("data".into(), context.argument(2)?),
-            ("rule".into(), context.argument(0)?),
-        ],
-    )?;
-    context.make_tagged(context.result(), tag, error)
+    context.make_tagged(context.result(), tag, message_register)
 }
 
 fn execute_plan(plan: &ParsePlan, input: &str) -> Result<ParsedValue, String> {

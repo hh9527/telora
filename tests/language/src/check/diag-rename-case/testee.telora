@@ -1,0 +1,5 @@
+import "std/json" as json;
+
+@json.rename_all('UnknownCase)
+type Item = struct {value: Int};
+export {Item};

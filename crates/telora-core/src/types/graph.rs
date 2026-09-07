@@ -22,7 +22,6 @@ pub enum TypeNode {
         name: String,
         body: AnalysisTypeId,
     },
-    Any,
     Never,
     Type,
     Dyn,
@@ -191,7 +190,6 @@ impl TypeGraph {
                     }
                     Ok(type_id)
                 }
-                TypeNode::Any => Ok(TypeId::ANY),
                 TypeNode::Never => Ok(TypeId::NEVER),
                 TypeNode::Type => Ok(TypeId::TYPE),
                 TypeNode::Dyn => Ok(TypeId::DYN),
@@ -370,9 +368,8 @@ impl TypeGraph {
                 .map_or_else(|| TypeNode::Named(name.clone()), TypeNode::Ref),
             TypeDescriptor::Declared(_) => unreachable!("declared descriptors return above"),
             TypeDescriptor::Inference(_) => {
-                unreachable!("solver descriptors must be explicitly erased before interning")
+                unreachable!("solver descriptors must be resolved before interning")
             }
-            TypeDescriptor::Any => TypeNode::Any,
             TypeDescriptor::Never => TypeNode::Never,
             TypeDescriptor::Type => TypeNode::Type,
             TypeDescriptor::Dyn => TypeNode::Dyn,
@@ -430,8 +427,11 @@ impl TypeGraph {
         self.intern_node(node)
     }
 
-    fn intern_erased_descriptor(&mut self, descriptor: &TypeDescriptor) -> AnalysisTypeId {
-        self.intern_descriptor(&erase_type_variables(descriptor))
+    fn intern_resolved_descriptor(&mut self, descriptor: &TypeDescriptor) -> Option<AnalysisTypeId> {
+        if contains_type_variable(descriptor) || contains_pending_alternatives(descriptor) {
+            return None;
+        }
+        Some(self.intern_descriptor(descriptor))
     }
 
     fn descriptor(&self, root: AnalysisTypeId) -> Result<TypeDescriptor, String> {
@@ -465,7 +465,6 @@ impl TypeGraph {
                         body: Arc::new(body),
                     })
                 }
-                TypeNode::Any => TypeDescriptor::Any,
                 TypeNode::Never => TypeDescriptor::Never,
                 TypeNode::Type => TypeDescriptor::Type,
                 TypeNode::Dyn => TypeDescriptor::Dyn,
@@ -656,8 +655,7 @@ impl TypeGraph {
                 TypeNode::Named(name.as_str().to_owned())
             }
             "Any" => {
-                require(&["kind"])?;
-                TypeNode::Any
+                return Err(format!("{path}: Any is not a supported type"));
             }
             "Never" => {
                 require(&["kind"])?;
@@ -838,7 +836,6 @@ impl TypeGraph {
             TypeNode::Bound(parameter) => format!("T{}", parameter.0),
             TypeNode::Named(name) => display_named_type(name).to_owned(),
             TypeNode::Declared { name, .. } => name.clone(),
-            TypeNode::Any => "Any".into(),
             TypeNode::Never => "Never".into(),
             TypeNode::Type => "Type".into(),
             TypeNode::Dyn => "Dyn".into(),
@@ -923,7 +920,6 @@ impl TypeGraph {
                 actual == expected
             }
             (TypeNode::Never, _) => true,
-            (TypeNode::Any, _) | (_, TypeNode::Any) => true,
             (TypeNode::TypeOf(_), TypeNode::Type) => true,
             (TypeNode::TypeOf(a), TypeNode::TypeOf(e)) => self.assignable_with(*a, *e, visited),
             (TypeNode::Atom(_), TypeNode::AtomValue) => true,

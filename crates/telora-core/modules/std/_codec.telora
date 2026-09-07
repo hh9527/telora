@@ -1,10 +1,12 @@
+type RenameCase = enum {'CamelCase};
+
 @property('Type)
-type JsonRenameAll = struct {case: Any};
+type JsonRenameAll = struct {case: RenameCase};
 
 @property('Type)
 type JsonUntagged = struct {};
 
-def rename_all: Fn(Any) -> Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(case) {
+def rename_all: Fn(RenameCase) -> Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(case) {
     fn(target, previous) {
         if case == 'CamelCase {
             let property: JsonRenameAll = {case};
@@ -20,4 +22,4 @@ def untagged: Fn(Type, Option(JsonUntagged)) -> JsonUntagged = fn(target, previo
     property
 };
 
-export {JsonRenameAll, JsonUntagged, rename_all, untagged};
+export {RenameCase, JsonRenameAll, JsonUntagged, rename_all, untagged};

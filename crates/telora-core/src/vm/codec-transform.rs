@@ -7,6 +7,50 @@ fn transform_codec(
     current: &Heap,
     background: &Heap,
 ) -> Result<CodecNode, CodecFailure> {
+    transform_codec_with_input(schema, properties, value, direction, path, current, background, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transform_codec_with_input(
+    schema: &CodecType,
+    properties: &CodecProperties,
+    value: Val,
+    direction: CodecDirection,
+    path: &str,
+    current: &Heap,
+    background: &Heap,
+    input: Option<Val>,
+) -> Result<CodecNode, CodecFailure> {
+    transform_codec_inner(schema, properties, value, direction, path, current, background, input)
+        .map_err(|mut failure| {
+            if failure.input.is_none() {
+                failure.input = input;
+            }
+            failure
+        })
+}
+
+fn codec_input_field(input: Option<Val>, name: &str, view: &HeapView<'_>) -> Option<Val> {
+    let value = ValueRef { value: input?, view: *view };
+    value.tagged_parts()?.1.dict_get(name).map(ValueRef::runtime)
+}
+
+fn codec_input_item(input: Option<Val>, index: usize, view: &HeapView<'_>) -> Option<Val> {
+    let value = ValueRef { value: input?, view: *view };
+    value.tagged_parts()?.1.sequence_get(index).map(ValueRef::runtime)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transform_codec_inner(
+    schema: &CodecType,
+    properties: &CodecProperties,
+    value: Val,
+    direction: CodecDirection,
+    path: &str,
+    current: &Heap,
+    background: &Heap,
+    input: Option<Val>,
+) -> Result<CodecNode, CodecFailure> {
     if let Some(owner) = schema.declared_owner {
         let view = HeapView {
             current,
@@ -61,7 +105,7 @@ fn transform_codec(
         apply_codec_type_properties(&mut structural, metadata, properties)
             .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
         return match direction {
-            CodecDirection::Decode => transform_codec(
+            CodecDirection::Decode => transform_codec_with_input(
                 &structural,
                 properties,
                 value,
@@ -69,6 +113,7 @@ fn transform_codec(
                 path,
                 current,
                 background,
+                input,
             )
             .map(|payload| CodecNode::Declared {
                 owner,
@@ -113,7 +158,7 @@ fn transform_codec(
         };
     }
     if option_item(schema).is_some() {
-        return transform_codec_field(
+        return transform_codec_field_with_input(
             schema,
             properties,
             value,
@@ -121,6 +166,7 @@ fn transform_codec(
             path,
             current,
             background,
+            input,
         );
     }
     let view = HeapView {
@@ -128,6 +174,11 @@ fn transform_codec(
         background: Some(background),
     };
     match &schema.kind {
+        CodecKind::Bound | CodecKind::Named => Err(CodecFailure::new(
+            format!("{path}: codec requires a concrete type"),
+            value,
+            schema.rule,
+        )),
         CodecKind::TypeSlot(handle) => {
             let resolved = view
                 .type_slot(*handle)
@@ -137,7 +188,7 @@ fn transform_codec(
                 })?;
             let resolved = decode_runtime_type(resolved, current, background)
                 .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
-            transform_codec(
+            transform_codec_with_input(
                 &resolved,
                 properties,
                 value,
@@ -145,6 +196,7 @@ fn transform_codec(
                 path,
                 current,
                 background,
+                input,
             )
         }
         CodecKind::TypeRef(handle) => {
@@ -161,7 +213,7 @@ fn transform_codec(
             let mut resolved = decode_runtime_type(*body, current, background)
                 .map_err(|message| CodecFailure::new(message, value, schema.rule))?;
             resolved.declared_owner = Some(Val::unknown(DecodedValue::DeclaredType(*handle)));
-            transform_codec(
+            transform_codec_with_input(
                 &resolved,
                 properties,
                 value,
@@ -169,9 +221,9 @@ fn transform_codec(
                 path,
                 current,
                 background,
+                input,
             )
         }
-        CodecKind::Any => Ok(CodecNode::Existing(value)),
         CodecKind::Type => decode_runtime_type(value, current, background)
             .map(|_| CodecNode::Existing(value))
             .map_err(|message| CodecFailure::new(message, value, schema.rule)),
@@ -222,7 +274,7 @@ fn transform_codec(
                 .into_iter()
                 .enumerate()
                 .map(|(index, value)| {
-                    transform_codec(
+                    transform_codec_with_input(
                         item,
                         properties,
                         value,
@@ -230,6 +282,7 @@ fn transform_codec(
                         &format!("{path}[{index}]"),
                         current,
                         background,
+                        codec_input_item(input, index, &view),
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -254,7 +307,7 @@ fn transform_codec(
                         .text(*name)
                         .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
                         .to_owned();
-                    let node = transform_codec(
+                    let node = transform_codec_with_input(
                         item,
                         properties,
                         *item_value,
@@ -262,6 +315,7 @@ fn transform_codec(
                         &format!("{path}.{name}"),
                         current,
                         background,
+                        codec_input_field(input, &name, &view),
                     )?;
                     Ok((name, node))
                 })
@@ -339,7 +393,7 @@ fn transform_codec(
                 .zip(values)
                 .enumerate()
                 .map(|(index, (item, value))| {
-                    transform_codec(
+                    transform_codec_with_input(
                         item,
                         properties,
                         value,
@@ -347,6 +401,7 @@ fn transform_codec(
                         &format!("{path}[{index}]"),
                         current,
                         background,
+                        codec_input_item(input, index, &view),
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -364,6 +419,7 @@ fn transform_codec(
             path,
             current,
             background,
+            input,
         ),
         CodecKind::Enum(variants) if is_bool_enum(variants) => {
             if matches!(
@@ -388,6 +444,7 @@ fn transform_codec(
             path,
             current,
             background,
+            input,
         ),
         CodecKind::Bytes => Err(CodecFailure::new(
             format!("{path}: Bytes has no JSON codec"),
@@ -422,6 +479,7 @@ fn transform_codec_struct(
     path: &str,
     current: &Heap,
     background: &Heap,
+    semantic_input: Option<Val>,
 ) -> Result<CodecNode, CodecFailure> {
     let DecodedValue::Dict(handle) = value.value() else {
         return Err(CodecFailure::new(
@@ -456,13 +514,16 @@ fn transform_codec_struct(
                 path,
                 current,
                 background,
+                semantic_input,
             )?;
             if let Some(unknown) = input.keys().find(|name| !consumed.contains(*name)) {
-                return Err(CodecFailure::new(
+                let mut failure = CodecFailure::new(
                     format!("{path}.{unknown}: unknown field"),
                     input[unknown],
                     schema.rule,
-                ));
+                );
+                failure.input = codec_input_field(semantic_input, unknown, &view);
+                return Err(failure);
             }
             Ok(CodecNode::Dict(output, value.loc()))
         }

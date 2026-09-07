@@ -47,7 +47,6 @@ fn run_core_type_desc(
                         )
                     })?;
                 const KINDS: &[&str] = &[
-                    "Any",
                     "Never",
                     "Type",
                     "TypeOf",

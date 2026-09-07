@@ -14,7 +14,7 @@ pub(crate) enum PatternCompatibility {
 pub(crate) struct PatternBinding {
     pub(crate) name: String,
     pub(crate) location: Location,
-    pub(crate) ty: TypeDescriptor,
+    pub(crate) ty: Option<TypeDescriptor>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -185,6 +185,37 @@ impl PatternShape {
 }
 
 impl AnalysisContext {
+    fn analyze_optional(&mut self, pattern: &Pattern, matched: Option<&TypeDescriptor>) -> PatternShape {
+        if let Some(matched) = matched {
+            return self.analyze(pattern, matched);
+        }
+        match &pattern.value {
+            PatternKind::Binding(name) => {
+                if self.names.insert(name.value.clone()) {
+                    self.bindings.push(PatternBinding {
+                        name: name.value.clone(),
+                        location: name.location,
+                        ty: None,
+                    });
+                } else {
+                    self.duplicates.push(DuplicatePatternBinding {
+                        name: name.value.clone(),
+                        location: name.location,
+                    });
+                }
+            }
+            PatternKind::Tagged { payload, .. } => { self.analyze_optional(payload, None); }
+            PatternKind::Tuple(items) => {
+                for item in items { self.analyze_optional(item, None); }
+            }
+            PatternKind::Struct(fields) => {
+                for field in fields { self.analyze_optional(&field.pattern, None); }
+            }
+            _ => {}
+        }
+        PatternShape::new(PatternCompatibility::Unknown, false)
+    }
+
     fn analyze(&mut self, pattern: &Pattern, matched: &TypeDescriptor) -> PatternShape {
         if !matches!(
             pattern.value,
@@ -200,7 +231,7 @@ impl AnalysisContext {
                     self.bindings.push(PatternBinding {
                         name: name.value.clone(),
                         location: name.location,
-                        ty: matched.clone(),
+                        ty: Some(matched.clone()),
                     });
                 } else {
                     self.duplicates.push(DuplicatePatternBinding {
@@ -220,40 +251,40 @@ impl AnalysisContext {
                         tag: matched_tag,
                         payload,
                     } if matched_tag.name() == tag => {
-                        (payload.as_ref(), PatternCompatibility::Compatible, true)
+                        (Some(payload.as_ref()), PatternCompatibility::Compatible, true)
                     }
                     TypeDescriptor::Tagged { .. } => (
-                        &TypeDescriptor::Any,
+                        None,
                         PatternCompatibility::Incompatible,
                         false,
                     ),
                     TypeDescriptor::Enum(variants) => match variants.get(tag) {
                         Some(Some(payload)) => (
-                            payload.as_ref(),
+                            Some(payload.as_ref()),
                             PatternCompatibility::Compatible,
                             variants.len() == 1,
                         ),
                         Some(None) => (
-                            &TypeDescriptor::Any,
+                            None,
                             PatternCompatibility::Incompatible,
                             variants.len() == 1,
                         ),
                         None => (
-                            &TypeDescriptor::Any,
+                            None,
                             PatternCompatibility::Incompatible,
                             false,
                         ),
                     },
                     matched if is_unknown(matched) => {
-                        (&TypeDescriptor::Any, PatternCompatibility::Unknown, false)
+                        (None, PatternCompatibility::Unknown, false)
                     }
                     _ => (
-                        &TypeDescriptor::Any,
+                        None,
                         PatternCompatibility::Incompatible,
                         false,
                     ),
                 };
-                let payload = self.analyze(payload, payload_type);
+                let payload = self.analyze_optional(payload, payload_type);
                 let compatibility = combine(outer_compatibility, payload.compatibility);
                 let mut shape = PatternShape::new(
                     compatibility,
@@ -290,9 +321,8 @@ impl AnalysisContext {
                 let mut irrefutable = outer == PatternCompatibility::Compatible;
                 for (index, item) in items.iter().enumerate() {
                     let item_type = matched_items
-                        .and_then(|matched| matched.get(index))
-                        .unwrap_or(&TypeDescriptor::Any);
-                    let item = self.analyze(item, item_type);
+                        .and_then(|matched| matched.get(index));
+                    let item = self.analyze_optional(item, item_type);
                     compatibility = combine(compatibility, item.compatibility);
                     irrefutable &= item.irrefutable;
                 }
@@ -338,7 +368,7 @@ impl AnalysisContext {
                         irrefutable = false;
                     }
                     let field =
-                        self.analyze(&field.pattern, field_type.unwrap_or(&TypeDescriptor::Any));
+                        self.analyze_optional(&field.pattern, field_type);
                     compatibility = combine(compatibility, field.compatibility);
                     irrefutable &= field.irrefutable && field_type.is_some();
                 }
@@ -414,8 +444,7 @@ fn atom_shape(matched: &TypeDescriptor, tag: &str) -> PatternShape {
 fn is_unknown(matched: &TypeDescriptor) -> bool {
     matches!(
         matched,
-        TypeDescriptor::Any
-            | TypeDescriptor::Never
+        TypeDescriptor::Never
             | TypeDescriptor::Bound(_)
             | TypeDescriptor::Inference(_)
             | TypeDescriptor::PendingAlternatives(_)

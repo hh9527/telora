@@ -1,4 +1,5 @@
 import "std/test" as test;
+import "std/dyn" as dyn;
 import "std/eq" as eq;
 import "std/eq" {equal as same};
 import "@src/test-support" {expect};
@@ -9,7 +10,6 @@ type Wrapped = enum {'Some(Array(Item)), 'None};
 def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
 def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
 def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
-def choose_dynamic: Fn(Any, Any) -> Any = fn(left, right) { left };
 def choose_with_factory: for(T) Fn(Array(T), Fn() -> T) -> Array(T) = fn(left, factory) { left };
 
 export def direct = test.should_ok(fn() {
@@ -58,8 +58,11 @@ export def existing_anonymous = test.should_ok(fn() {
         && (item, 1) != (raw, 1) && (raw, 1) != (item, 1))
 });
 export def dynamic_boundary = test.should_ok(fn() {
-    let dynamic: Any = item;
-    expect([dynamic] != [{value: 42}] && [{value: 42}] != [dynamic])
+    let dynamic = dyn.pack(Item, item);
+    expect(match dyn.project_with(Item, dynamic) {
+        'Some(value) => value == item,
+        'None => 'False,
+    })
 });
 export def spreads = test.should_ok(fn() {
     let raw = [{value: 42}];
@@ -83,8 +86,7 @@ export def generic_nested_parameter = test.should_ok(fn() {
         && choose_array([item], {value: 42}) == [item])
 });
 export def generic_independent_parameters = test.should_ok(fn() {
-    expect(choose_independent([{value: 42}], [item]) != [item]
-        && choose_dynamic([{value: 42}], [item]) != [item])
+    expect(choose_independent([{value: 42}], [item]) != [item])
 });
 export def generic_existing_value = test.should_ok(fn() {
     let raw = [{value: 42}];

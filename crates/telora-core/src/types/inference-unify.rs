@@ -7,7 +7,6 @@ impl<'a> GenericInference<'a> {
             }
             TypeDescriptor::Int
             | TypeDescriptor::Float
-            | TypeDescriptor::Any
             | TypeDescriptor::Never => Ok(()),
             ty => Err(format!(
                 "numeric operator requires Int or Float, found {}",
@@ -22,7 +21,7 @@ impl<'a> GenericInference<'a> {
                 self.not_variables.insert(variable);
                 Ok(())
             }
-            TypeDescriptor::Int | TypeDescriptor::Any | TypeDescriptor::Never => Ok(()),
+            TypeDescriptor::Int | TypeDescriptor::Never => Ok(()),
             TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::True | BuiltinAtom::False)) => Ok(()),
             TypeDescriptor::Enum(variants)
                 if TypeDescriptor::Enum(variants.clone()) == normalized_bool_descriptor() =>
@@ -45,7 +44,6 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Int
             | TypeDescriptor::Float
             | TypeDescriptor::String
-            | TypeDescriptor::Any
             | TypeDescriptor::Never => Ok(()),
             ty => Err(format!(
                 "ordered comparison requires Int, Float, or String, found {}",
@@ -70,8 +68,7 @@ impl<'a> GenericInference<'a> {
                 }
                 TypeDescriptor::Int
                 | TypeDescriptor::Float
-                | TypeDescriptor::Any
-                | TypeDescriptor::Never => {}
+                    | TypeDescriptor::Never => {}
                 _ => {
                     return Err(format!(
                         "numeric operator requires Int or Float, found {}",
@@ -90,7 +87,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Inference(target) => {
                     self.not_variables.insert(*target);
                 }
-                TypeDescriptor::Int | TypeDescriptor::Any | TypeDescriptor::Never => {}
+                TypeDescriptor::Int | TypeDescriptor::Never => {}
                 TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::True | BuiltinAtom::False)) => {}
                 TypeDescriptor::Enum(variants)
                     if TypeDescriptor::Enum(variants.clone()) == normalized_bool_descriptor() => {}
@@ -115,8 +112,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Int
                 | TypeDescriptor::Float
                 | TypeDescriptor::String
-                | TypeDescriptor::Any
-                | TypeDescriptor::Never => {}
+                    | TypeDescriptor::Never => {}
                 _ => {
                     return Err(format!(
                         "ordered comparison requires Int, Float, or String, found {}",
@@ -261,7 +257,6 @@ impl<'a> GenericInference<'a> {
             | (ty, TypeDescriptor::Inference(variable)) => {
                 self.bind_inference_variable(*variable, ty)
             }
-            (TypeDescriptor::Any, _) | (_, TypeDescriptor::Any) => Ok(()),
             (TypeDescriptor::TypeOf(_), TypeDescriptor::Type) => Ok(()),
             (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
                 match (left.as_ref(), right.as_ref()) {
@@ -404,7 +399,7 @@ impl<'a> GenericInference<'a> {
         }
         let actual = self.expose_named(actual);
         match (parameter, &actual) {
-            (TypeDescriptor::Any | TypeDescriptor::PendingAlternatives(_), _) => Ok(parameter.clone()),
+            (TypeDescriptor::PendingAlternatives(_), _) => Ok(parameter.clone()),
             (_, TypeDescriptor::Declared(declared)) => {
                 self.check(parameter, &actual)?;
                 if self.declared_identity(parameter).is_some() {
@@ -478,7 +473,6 @@ impl<'a> GenericInference<'a> {
             return Ok(());
         }
         match (&left, &right) {
-            (TypeDescriptor::Any, _) | (_, TypeDescriptor::Any) => Ok(()),
             (TypeDescriptor::Atom(_), TypeDescriptor::Atom(_)) => Ok(()),
             (
                 TypeDescriptor::Tagged {
@@ -661,7 +655,7 @@ impl<'a> GenericInference<'a> {
         if let TypeDescriptor::Declared(expected) = expected
             && !matches!(actual, TypeDescriptor::Declared(_))
         {
-            if matches!(actual, TypeDescriptor::Any | TypeDescriptor::Never) {
+            if matches!(actual, TypeDescriptor::Never) {
                 return Ok(());
             }
             if matches!(actual, TypeDescriptor::Inference(_)) {
@@ -861,44 +855,6 @@ impl<'a> GenericInference<'a> {
         self.unify(&actual, &expected)
     }
 
-    fn default_inference_variables_to_any(&mut self, ty: &TypeDescriptor) {
-        match self.resolve(ty) {
-            TypeDescriptor::Inference(variable) => {
-                self.substitutions.insert(variable, TypeDescriptor::Any);
-            }
-            TypeDescriptor::Array(item)
-            | TypeDescriptor::Dict(item)
-            | TypeDescriptor::TypeOf(item) => {
-                self.default_inference_variables_to_any(&item);
-            }
-            TypeDescriptor::Tagged { payload, .. } => {
-                self.default_inference_variables_to_any(&payload);
-            }
-            TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
-                for item in items {
-                    self.default_inference_variables_to_any(&item);
-                }
-            }
-            TypeDescriptor::Struct(fields) => {
-                for field in fields.values() {
-                    self.default_inference_variables_to_any(field);
-                }
-            }
-            TypeDescriptor::Enum(variants) => {
-                for payload in variants.values().flatten() {
-                    self.default_inference_variables_to_any(payload);
-                }
-            }
-            TypeDescriptor::Function { parameters, result } => {
-                for parameter in parameters {
-                    self.default_inference_variables_to_any(&parameter);
-                }
-                self.default_inference_variables_to_any(&result);
-            }
-            _ => {}
-        }
-    }
-
     fn freshen_runtime_never_leaves(&mut self, descriptor: &TypeDescriptor) -> TypeDescriptor {
         match descriptor {
             TypeDescriptor::Never => self.fresh_variable(),
@@ -946,7 +902,6 @@ impl<'a> GenericInference<'a> {
                 .collect::<Result<Vec<_>, _>>()
                 .map(join_all_types),
             TypeDescriptor::Never => Ok(TypeDescriptor::Never),
-            TypeDescriptor::Any => Ok(TypeDescriptor::Any),
             TypeDescriptor::Inference(variable) => {
                 if let Some(result) = self
                     .field_requirements
@@ -994,7 +949,6 @@ impl<'a> GenericInference<'a> {
                 .collect::<Result<Vec<_>, _>>()
                 .map(pending_alternatives),
             TypeDescriptor::Never => Ok(TypeDescriptor::Never),
-            TypeDescriptor::Any => Ok(TypeDescriptor::Any),
             descriptor => Err(format!(
                 "cannot project tuple item {index} from {}",
                 descriptor.display_name()

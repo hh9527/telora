@@ -888,6 +888,7 @@ fn install_native_modules_observed(
             spec.name,
             ModuleArtifact {
                 root,
+                root_scheme: None,
                 interface,
                 provenance: None,
             },
@@ -929,6 +930,9 @@ fn select_import_root(
         .export_get(heap, &exported.value)
         .map_err(|error| ModuleError::new(error.to_string()))?
         .ok_or_else(|| ModuleError::new(format!("module has no export {:?}", exported.value)))?;
+    if let Some(namespace) = interface.namespaces.get(&exported.value) {
+        return Ok((selected, namespace.clone()));
+    }
     let scheme = interface
         .exports
         .get(&exported.value)
@@ -942,6 +946,7 @@ fn select_import_root(
     Ok((
         selected,
         ModuleInterface {
+            namespaces: BTreeMap::new(),
             exports: BTreeMap::from([(local.to_owned(), scheme)]),
             concrete_types: interface.concrete_types,
             traits: interface

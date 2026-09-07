@@ -264,7 +264,7 @@
             &path,
             r#"import "std/json" as json;
                type Shape = enum {'Number(Int), 'Strings(Array(String)), 'Pair(Tuple([Int, String]))};
-               json.schema(Shape)"#,
+               json.stringify(json.schema(Shape))"#,
         )
         .unwrap();
         let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
@@ -333,16 +333,16 @@
                let node = codec.decode(Types.Node, codec.encode(codec.Value, {
                    value: 1,
                    children: [{value: 2, children: []}],
-               }) |> result.unwrap) |> result.unwrap;
+               })) |> result.unwrap;
                let pair = codec.decode(Types.Left, codec.encode(codec.Value, {
                    right: {left: 'None},
-               }) |> result.unwrap) |> result.unwrap;
+               })) |> result.unwrap;
                {
                    node: node,
-                   encoded: codec.encode(codec.Value, node) |> result.unwrap,
+                   encoded: codec.encode(codec.Value, node),
                    pair: pair,
-                   schema: json.schema(Types.Node),
-                   mutual_schema: json.schema(Types.Left),
+                   schema: json.stringify(json.schema(Types.Node)),
+                   mutual_schema: json.stringify(json.schema(Types.Left)),
                }"#,
         )
         .unwrap();
@@ -371,7 +371,10 @@
                import "./Types" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
-               codec.decode(Types.Node, data) |> result.unwrap"#,
+               match codec.decode(Types.Node, data) {
+                   'Ok(value) => value,
+                   'Err(error) => fail!(error.message, error.value),
+               }"#,
         )
         .unwrap();
         let bad = load_module(directory.join("bad.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -385,7 +388,7 @@
             r#"import "./Types" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
-               codec.encode(codec.Value, Types.Node) |> result.unwrap"#,
+               codec.encode(codec.Value, Types.Node)"#,
         )
         .unwrap();
         let leak = load_module(directory.join("leak.telora"), BTreeMap::new(), 100_000).unwrap();

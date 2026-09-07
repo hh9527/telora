@@ -1,0 +1,4 @@
+import "std/dict" as dict;
+def left: Dict(Int) = {item: 1};
+def right: Dict(String) = {item: "wrong"};
+export def invalid = dict.merge(left, right);

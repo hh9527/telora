@@ -3,5 +3,5 @@ type Request = struct {
     count: Int,
 };
 
-def result = validate(Request, input);
+def result = input.cast!(Request);
 export { result as output };

@@ -223,7 +223,8 @@ pub enum Operation {
         message: RegisterId,
     },
     Raise {
-        error: RegisterId,
+        message: RegisterId,
+        subjects: Vec<RegisterId>,
     },
     Debug {
         value: RegisterId,
@@ -604,8 +605,9 @@ fn lower_operation(
         Operation::Panic { message } => Instruction::Panic {
             message: register(message)?,
         },
-        Operation::Raise { error } => Instruction::Raise {
-            error: register(error)?,
+        Operation::Raise { message, subjects } => Instruction::Raise {
+            message: register(message)?,
+            subjects: subjects.into_iter().map(register).collect::<Result<_, _>>()?,
         },
         Operation::Debug {
             value,

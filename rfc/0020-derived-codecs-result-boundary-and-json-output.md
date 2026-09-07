@@ -1,6 +1,7 @@
 # RFC 0020: Derived Codecs, Result Boundary, and JSON Output
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Decoding returns DecodeError with its current Value; encoding returns Value directly.
 
 ## Summary
 

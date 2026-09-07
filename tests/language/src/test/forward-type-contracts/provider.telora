@@ -1,0 +1,5 @@
+type Env = struct {mode: Mode, data: Data};
+type Mode = enum {'Run, 'Serve};
+type Data = struct {value: Int};
+
+export {Env};

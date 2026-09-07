@@ -19,9 +19,13 @@ type DecodeByParse = struct {};
 @property('Type)
 type EncodeByDisplay = struct {};
 
-native parse_with: for(A) Fn(Type, TypeOf(A), String) -> Result(A, BlameError);
-def parse: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, input) {
-    parse_with(ParseBy, target, input)
+type ParseError = struct {message: String, value: String};
+native parse_with: for(A) Fn(Type, TypeOf(A), String) -> Result(A, String);
+def parse: for(A) Fn(TypeOf(A), String) -> Result(A, ParseError) = fn(target, input) {
+    match parse_with(ParseBy, target, input) {
+        'Ok(value) => 'Ok(value),
+        'Err(message) => 'Err({message, value: input}),
+    }
 };
 def decode_by_parse: Fn(TypeDesc, Option(DecodeByParse)) -> DecodeByParse = fn(target, previous) {
     let property: DecodeByParse = {};
@@ -32,4 +36,4 @@ def encode_by_display: Fn(TypeDesc, Option(EncodeByDisplay)) -> EncodeByDisplay 
     property
 };
 
-export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };
+export { length, join, join_lines, split, lines, starts_with, ends_with, contains, replace, indent, ensure_trailing_newline, trim_margin, parse, ParseError, DecodeByParse, EncodeByDisplay, decode_by_parse, encode_by_display };

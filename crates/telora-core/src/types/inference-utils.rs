@@ -43,7 +43,6 @@ fn collect_inference_variables(
         }
         TypeDescriptor::Bound(_)
         | TypeDescriptor::Named(_)
-        | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn
@@ -137,7 +136,6 @@ fn replace_inference_variables(
         },
         TypeDescriptor::Bound(_)
         | TypeDescriptor::Named(_)
-        | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn
@@ -320,7 +318,6 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
         }
         TypeDescriptor::Inference(_)
         | TypeDescriptor::Named(_)
-        | TypeDescriptor::Any
         | TypeDescriptor::Never
         | TypeDescriptor::Type
         | TypeDescriptor::Dyn
@@ -590,8 +587,7 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
         | TypeDescriptor::Tagged { payload: item, .. } => contains_runtime_never_leaf(item),
         TypeDescriptor::Tuple(items) => items.iter().any(contains_runtime_never_leaf),
         TypeDescriptor::Struct(fields) => fields.values().any(contains_runtime_never_leaf),
-        TypeDescriptor::Any
-        | TypeDescriptor::Named(_)
+        TypeDescriptor::Named(_)
         | TypeDescriptor::Type
         | TypeDescriptor::TypeOf(_)
         | TypeDescriptor::Int
@@ -610,120 +606,7 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
-fn contains_any_descriptor(descriptor: &TypeDescriptor) -> bool {
-    match descriptor {
-        TypeDescriptor::Any => true,
-        TypeDescriptor::Declared(declared) => contains_any_descriptor(&declared.body),
-        TypeDescriptor::TypeOf(item)
-        | TypeDescriptor::Array(item)
-        | TypeDescriptor::Dict(item)
-        | TypeDescriptor::Tagged { payload: item, .. } => contains_any_descriptor(item),
-        TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {
-            items.iter().any(contains_any_descriptor)
-        }
-        TypeDescriptor::Struct(fields) => fields.values().any(contains_any_descriptor),
-        TypeDescriptor::Enum(variants) => variants
-            .values()
-            .flatten()
-            .any(|payload| contains_any_descriptor(payload)),
-        TypeDescriptor::Function { parameters, result } => {
-            parameters.iter().any(contains_any_descriptor) || contains_any_descriptor(result)
-        }
-        TypeDescriptor::Named(_)
-        | TypeDescriptor::Never
-        | TypeDescriptor::Type
-        | TypeDescriptor::Dyn
-        | TypeDescriptor::Int
-        | TypeDescriptor::Float
-        | TypeDescriptor::String
-        | TypeDescriptor::Bytes
-        | TypeDescriptor::AtomValue
-        | TypeDescriptor::Opaque(_)
-        | TypeDescriptor::Atom(_)
-        | TypeDescriptor::Bound(_)
-        | TypeDescriptor::Inference(_) => false,
-    }
-}
 
-fn narrows_any(actual: &TypeDescriptor, expected: &TypeDescriptor) -> bool {
-    if matches!(
-        expected,
-        TypeDescriptor::Any | TypeDescriptor::Inference(_) | TypeDescriptor::Bound(_)
-    ) {
-        return false;
-    }
-    if matches!(actual, TypeDescriptor::Any) {
-        return true;
-    }
-    match (actual, expected) {
-        (TypeDescriptor::Declared(actual), TypeDescriptor::Declared(expected))
-            if actual.id == expected.id =>
-        {
-            actual
-                .id
-                .arguments()
-                .iter()
-                .zip(expected.id.arguments())
-                .any(|(actual, expected)| narrows_any(actual, expected))
-        }
-        (TypeDescriptor::Declared(actual), expected) => narrows_any(&actual.body, expected),
-        (actual, TypeDescriptor::Declared(expected)) => narrows_any(actual, &expected.body),
-        (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
-        | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
-        | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
-            narrows_any(actual, expected)
-        }
-        (
-            TypeDescriptor::Tagged {
-                payload: actual, ..
-            },
-            TypeDescriptor::Tagged {
-                payload: expected, ..
-            },
-        ) => narrows_any(actual, expected),
-        (TypeDescriptor::Tuple(actual), TypeDescriptor::Tuple(expected))
-        | (TypeDescriptor::PendingAlternatives(actual), TypeDescriptor::PendingAlternatives(expected))
-            if actual.len() == expected.len() =>
-        {
-            actual
-                .iter()
-                .zip(expected)
-                .any(|(actual, expected)| narrows_any(actual, expected))
-        }
-        (TypeDescriptor::Struct(actual), TypeDescriptor::Struct(expected)) => {
-            actual.iter().any(|(name, actual)| {
-                expected
-                    .get(name)
-                    .is_some_and(|expected| narrows_any(actual, expected))
-            })
-        }
-        (TypeDescriptor::Enum(actual), TypeDescriptor::Enum(expected)) => {
-            actual.iter().any(|(name, actual)| {
-                match (actual, expected.get(name).and_then(Option::as_deref)) {
-                    (Some(actual), Some(expected)) => narrows_any(actual, expected),
-                    _ => false,
-                }
-            })
-        }
-        (
-            TypeDescriptor::Function {
-                parameters: actual_parameters,
-                result: actual_result,
-            },
-            TypeDescriptor::Function {
-                parameters: expected_parameters,
-                result: expected_result,
-            },
-        ) if actual_parameters.len() == expected_parameters.len() => {
-            actual_parameters
-                .iter()
-                .zip(expected_parameters)
-                .any(|(actual, expected)| narrows_any(actual, expected))
-                || narrows_any(actual_result, expected_result)
-        }
-        _ => false,
-    }
-}
 
 fn expression_references_names(
     expression: &Expr,
@@ -765,7 +648,10 @@ fn expression_references_names(
         } => expression_references_names(operand, names, bound),
         ExprKind::Return { value } => expression_references_names(value, names, bound),
         ExprKind::Panic { message } => expression_references_names(message, names, bound),
-        ExprKind::Raise { error } => expression_references_names(error, names, bound),
+        ExprKind::Raise { message, subjects } => {
+            expression_references_names(message, names, bound)
+                || subjects.iter().any(|subject| expression_references_names(subject, names, bound))
+        },
         ExprKind::Debug { value, .. } => expression_references_names(value, names, bound),
         ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
             expression_references_names(value, names, bound)

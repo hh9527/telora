@@ -2,18 +2,26 @@ fn imported_static_descriptor(
     value: ValueRef<'_>,
     interface: Option<&ModuleInterface>,
     local: &str,
-) -> TypeDescriptor {
-    let Some(interface) = interface.filter(|interface| !interface.exports.is_empty()) else {
+) -> Option<TypeDescriptor> {
+    let Some(interface) = interface else {
         return infer_value_ref(value);
     };
-    if let Some(scheme) = interface.exports.get(local) {
-        return erase_type_variables(&scheme.body);
+    if interface.exports.is_empty() && interface.namespaces.is_empty() && value.kind() != ValueKind::Module {
+        return infer_value_ref(value);
     }
+    if let Some(scheme) = interface.exports.get(local) {
+        return Some(scheme.body.clone());
+    }
+    Some(interface_descriptor(interface))
+}
+
+fn interface_descriptor(interface: &ModuleInterface) -> TypeDescriptor {
     TypeDescriptor::Struct(
         interface
             .exports
             .iter()
-            .map(|(name, scheme)| (name.clone(), erase_type_variables(&scheme.body)))
+            .map(|(name, scheme)| (name.clone(), scheme.body.clone()))
+            .chain(interface.namespaces.iter().map(|(name, namespace)| (name.clone(), interface_descriptor(namespace))))
             .collect(),
     )
 }
@@ -118,104 +126,88 @@ fn validate_interpreter_contract(
     Ok(())
 }
 
-pub(crate) fn infer_value_ref(value: ValueRef<'_>) -> TypeDescriptor {
+pub(crate) fn infer_value_ref(value: ValueRef<'_>) -> Option<TypeDescriptor> {
     infer_value_ref_with(value, &mut HashSet::new())
 }
 
 fn infer_value_ref_with(
     value: ValueRef<'_>,
     visiting_type_slots: &mut HashSet<Handle>,
-) -> TypeDescriptor {
+) -> Option<TypeDescriptor> {
     if let Some(handle) = value.hidden_type_slot_handle() {
         if !visiting_type_slots.insert(handle) {
-            return TypeDescriptor::Any;
+            return None;
         }
         let inferred = value
             .resolve_hidden_type_slot()
-            .map(|resolved| infer_value_ref_with(resolved, visiting_type_slots))
-            .unwrap_or(TypeDescriptor::Any);
+            .ok()
+            .and_then(|resolved| infer_value_ref_with(resolved, visiting_type_slots));
         visiting_type_slots.remove(&handle);
         return inferred;
     }
-    if let Some((owner, payload)) = value.declared_value_parts() {
-        return decode_type_ref(owner, "declared value owner")
-            .unwrap_or_else(|_| infer_value_ref_with(payload, visiting_type_slots));
+    if let Some((owner, _)) = value.declared_value_parts() {
+        return decode_type_ref(owner, "declared value owner").ok();
     }
-    match value.kind() {
+    Some(match value.kind() {
         ValueKind::Int => TypeDescriptor::Int,
         ValueKind::Float => TypeDescriptor::Float,
         ValueKind::String => TypeDescriptor::String,
         ValueKind::Bytes => TypeDescriptor::Bytes,
         ValueKind::Type => TypeDescriptor::TypeOf(Box::new(
-            decode_type_ref(value, "Type").unwrap_or(TypeDescriptor::Any),
+            decode_type_ref(value, "Type").ok()?,
         )),
         ValueKind::Opaque => value
             .opaque_native_type()
             .cloned()
-            .map(TypeDescriptor::Opaque)
-            .unwrap_or(TypeDescriptor::Any),
+            .map(TypeDescriptor::Opaque)?,
         ValueKind::Atom => value
             .as_atom()
-            .map(|atom| TypeDescriptor::Atom(atom_from_name(atom.as_str())))
-            .unwrap_or(TypeDescriptor::Any),
+            .map(|atom| TypeDescriptor::Atom(atom_from_name(atom.as_str())))?,
         ValueKind::Array => {
             let items = (0..value.sequence_len().unwrap_or_default())
                 .filter_map(|index| value.sequence_get(index))
                 .map(|item| infer_value_ref_with(item, visiting_type_slots))
-                .collect();
-            TypeDescriptor::Array(Box::new(common_type(items).unwrap_or(TypeDescriptor::Any)))
+                .collect::<Option<Vec<_>>>()?;
+            let item = if items.is_empty() { TypeDescriptor::Never } else { common_type(items)? };
+            TypeDescriptor::Array(Box::new(item))
         }
         ValueKind::Tagged => value
             .tagged_parts()
             .and_then(|(tag, payload)| {
                 Some(TypeDescriptor::Tagged {
                     tag: atom_from_name(tag.as_atom()?.as_str()),
-                    payload: Box::new(infer_value_ref_with(payload, visiting_type_slots)),
+                    payload: Box::new(infer_value_ref_with(payload, visiting_type_slots)?),
                 })
-            })
-            .unwrap_or(TypeDescriptor::Any),
+            })?,
         ValueKind::Tuple => TypeDescriptor::Tuple(
             (0..value.sequence_len().unwrap_or_default())
                 .filter_map(|index| value.sequence_get(index))
                 .map(|item| infer_value_ref_with(item, visiting_type_slots))
-                .collect(),
+                .collect::<Option<Vec<_>>>()?,
         ),
         ValueKind::Dict => TypeDescriptor::Struct(
             value
                 .dict_fields()
                 .unwrap_or_default()
                 .into_iter()
-                .filter_map(|name| {
-                    value.dict_get(name).map(|field| {
-                        (
-                            name.to_owned(),
-                            infer_value_ref_with(field, visiting_type_slots),
-                        )
-                    })
+                .map(|name| {
+                    Some((name.to_owned(), infer_value_ref_with(value.dict_get(name)?, visiting_type_slots)?))
                 })
-                .collect(),
+                .collect::<Option<BTreeMap<_, _>>>()?,
         ),
-        ValueKind::Func => TypeDescriptor::Function {
-            parameters: vec![TypeDescriptor::Any; value.function_arity().unwrap_or_default()],
-            result: Box::new(TypeDescriptor::Any),
-        },
+        ValueKind::Func => return None,
         ValueKind::Dyn => TypeDescriptor::Dyn,
         ValueKind::Module => TypeDescriptor::Struct(
             value
                 .module_fields()
                 .unwrap_or_default()
                 .into_iter()
-                .filter_map(|name| {
-                    value.module_get(name).map(|field| {
-                        (
-                            name.to_owned(),
-                            infer_value_ref_with(field, visiting_type_slots),
-                        )
-                    })
+                .map(|name| {
+                    Some((name.to_owned(), infer_value_ref_with(value.module_get(name)?, visiting_type_slots)?))
                 })
-                .collect(),
+                .collect::<Option<BTreeMap<_, _>>>()?,
         ),
-    }
+    })
 }
 
 fn declare_metadata_value(
@@ -286,7 +278,6 @@ fn validate_declared_metadata(
 
 fn is_declared_literal_construction(
     expression: &Expr,
-    _actual: &TypeDescriptor,
     expected: &TypeDescriptor,
 ) -> bool {
     match (expected, &expression.value) {
@@ -298,7 +289,7 @@ fn is_declared_literal_construction(
         {
             items.iter().all(|item_expression| {
                 !matches!(item_expression.value, ExprKind::Spread(_))
-                    && is_declared_literal_construction(item_expression, &TypeDescriptor::Any, item)
+                    && is_declared_literal_construction(item_expression, item)
             })
         }
         _ => false,
@@ -423,4 +414,3 @@ fn evaluate_tool_expression_with_debug(
         };
     Ok(root)
 }
-

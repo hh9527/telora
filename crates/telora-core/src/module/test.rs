@@ -188,7 +188,7 @@ impl Engine {
             main: &main.heap,
             host,
             limits,
-            account: QuotaAccount::new(self.config.session_quota),
+            account: QuotaAccount::new(self.config.session_quota).with_sources(&builder.sources),
             retained: 0,
             expanded: 0,
             value_owner: value_owner.runtime(),

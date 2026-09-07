@@ -2,492 +2,258 @@ fn infer_expr_recorded(
     expression: &Expr,
     environment: &HashMap<String, TypeDescriptor>,
     facts: &mut HashMap<crate::Location, TypeDescriptor>,
-) -> TypeDescriptor {
+) -> Option<TypeDescriptor> {
     infer_expr_with(expression, environment, &mut |location, descriptor| {
         facts.insert(location, descriptor.clone());
     })
 }
 
+// This projection records only evidence available before strict inference.
+// Missing evidence is not a type and cannot justify a compatibility decision.
 fn infer_expr_with(
     expression: &Expr,
     environment: &HashMap<String, TypeDescriptor>,
     record: &mut impl FnMut(crate::Location, &TypeDescriptor),
-) -> TypeDescriptor {
+) -> Option<TypeDescriptor> {
     let inferred = match &expression.value {
-        ExprKind::Int(_) => TypeDescriptor::Int,
-        ExprKind::Float(_) => TypeDescriptor::Float,
-        ExprKind::String(_) => TypeDescriptor::String,
+        ExprKind::Int(_) => Some(TypeDescriptor::Int),
+        ExprKind::Float(_) => Some(TypeDescriptor::Float),
+        ExprKind::String(_) => Some(TypeDescriptor::String),
+        ExprKind::Bytes(_) => Some(TypeDescriptor::Bytes),
+        ExprKind::Atom(name) => Some(TypeDescriptor::Atom(atom_from_name(name))),
+        ExprKind::Variable(name) => environment.get(&name.value).cloned(),
         ExprKind::InterpolatedString(parts) => {
             for part in parts {
                 if let StringPartKind::Expression(expression) = &part.value {
                     infer_expr_with(expression, environment, record);
                 }
             }
-            TypeDescriptor::String
+            Some(TypeDescriptor::String)
         }
-        ExprKind::Bytes(_) => TypeDescriptor::Bytes,
-        ExprKind::Atom(name) => TypeDescriptor::Atom(atom_from_name(name)),
-        ExprKind::Variable(name) => environment
-            .get(&name.value)
-            .cloned()
-            .unwrap_or(TypeDescriptor::Any),
         ExprKind::Array(items) => {
-            let item_types = items
-                .iter()
-                .map(|item| {
-                    if let ExprKind::Spread(operand) = &item.value {
-                        match infer_expr_with(operand, environment, record) {
-                            TypeDescriptor::Array(item) => *item,
-                            _ => TypeDescriptor::Any,
-                        }
-                    } else {
-                        infer_expr_with(item, environment, record)
+            let items = items.iter().map(|item| {
+                if let ExprKind::Spread(operand) = &item.value {
+                    match infer_expr_with(operand, environment, record) {
+                        Some(TypeDescriptor::Array(item)) => Some(*item),
+                        _ => None,
                     }
-                })
-                .collect::<Vec<_>>();
-            let item = common_type(item_types).unwrap_or(TypeDescriptor::Any);
-            TypeDescriptor::Array(Box::new(item))
+                } else {
+                    infer_expr_with(item, environment, record)
+                }
+            }).collect::<Vec<_>>();
+            items.into_iter().collect::<Option<Vec<_>>>()
+                .and_then(|items| if items.is_empty() { Some(TypeDescriptor::Never) } else { common_type(items) })
+                .map(|item| TypeDescriptor::Array(Box::new(item)))
         }
-        ExprKind::Spread(operand) => infer_expr_with(operand, environment, record),
-        ExprKind::Tuple(items) => TypeDescriptor::Tuple(
-            items
-                .iter()
-                .map(|item| infer_expr_with(item, environment, record))
-                .collect(),
-        ),
+        ExprKind::Tuple(items) => {
+            let items = items.iter().map(|item| infer_expr_with(item, environment, record)).collect::<Vec<_>>();
+            items.into_iter().collect::<Option<Vec<_>>>().map(TypeDescriptor::Tuple)
+        }
         ExprKind::Dict(fields) if fields.iter().any(|field| field.value.name.is_none()) => {
-            let items = fields
-                .iter()
-                .map(|field| {
-                    if field.value.name.is_none() {
-                        let ExprKind::Spread(operand) = &field.value.value.value else {
-                            return TypeDescriptor::Any;
-                        };
-                        match infer_expr_with(operand, environment, record) {
-                            TypeDescriptor::Dict(item) => *item,
-                            _ => TypeDescriptor::Any,
-                        }
-                    } else {
-                        infer_expr_with(&field.value.value, environment, record)
+            let items = fields.iter().map(|field| {
+                if field.value.name.is_none() {
+                    let ExprKind::Spread(operand) = &field.value.value.value else { return None; };
+                    match infer_expr_with(operand, environment, record) {
+                        Some(TypeDescriptor::Dict(item)) => Some(*item),
+                        _ => None,
                     }
-                })
-                .collect();
-            TypeDescriptor::Dict(Box::new(common_type(items).unwrap_or(TypeDescriptor::Any)))
+                } else {
+                    infer_expr_with(&field.value.value, environment, record)
+                }
+            }).collect::<Vec<_>>();
+            items.into_iter().collect::<Option<Vec<_>>>()
+                .and_then(common_type).map(|item| TypeDescriptor::Dict(Box::new(item)))
         }
-        ExprKind::Dict(fields) => TypeDescriptor::Struct(
-            fields
-                .iter()
-                .map(|field| {
-                    (
-                        field
-                            .value
-                            .name
-                            .as_ref()
-                            .expect("ordinary Dict field has a name")
-                            .value
-                            .clone(),
-                        infer_expr_with(&field.value.value, environment, record),
-                    )
-                })
-                .collect(),
-        ),
+        ExprKind::Dict(fields) => {
+            let fields = fields.iter().map(|field| {
+                let ty = infer_expr_with(&field.value.value, environment, record);
+                ty.map(|ty| (field.value.name.as_ref().expect("ordinary field has a name").value.clone(), ty))
+            }).collect::<Vec<_>>();
+            fields.into_iter().collect::<Option<BTreeMap<_, _>>>().map(TypeDescriptor::Struct)
+        }
         ExprKind::Block(block) => infer_block_with(block, environment, record),
-        ExprKind::Unary { operand, .. } | ExprKind::Propagate { operand } => {
-            infer_expr_with(operand, environment, record)
-        }
+        ExprKind::Spread(operand) | ExprKind::Unary { operand, .. } | ExprKind::Propagate { operand } =>
+            infer_expr_with(operand, environment, record),
         ExprKind::Return { value } => {
             infer_expr_with(value, environment, record);
-            TypeDescriptor::Never
+            Some(TypeDescriptor::Never)
         }
         ExprKind::Panic { message } => {
             infer_expr_with(message, environment, record);
-            TypeDescriptor::Never
+            Some(TypeDescriptor::Never)
         }
-        ExprKind::Raise { error } => {
-            infer_expr_with(error, environment, record);
-            TypeDescriptor::Never
+        ExprKind::Raise { message, subjects } => {
+            infer_expr_with(message, environment, record);
+            for subject in subjects { infer_expr_with(subject, environment, record); }
+            Some(TypeDescriptor::Never)
         }
         ExprKind::Debug { value, .. } => infer_expr_with(value, environment, record),
-        ExprKind::Binary {
-            operator,
-            left,
-            right,
-        } => match operator.value {
-            BinaryOperator::LessThan
-            | BinaryOperator::LessThanOrEqual
-            | BinaryOperator::GreaterThan
-            | BinaryOperator::GreaterThanOrEqual
-            | BinaryOperator::Equal
-            | BinaryOperator::NotEqual => normalized_bool_descriptor(),
-            _ => {
-                let left = infer_expr_with(left, environment, record);
-                let right = infer_expr_with(right, environment, record);
-                if left == right {
-                    left
-                } else {
-                    TypeDescriptor::Any
-                }
+        ExprKind::Binary { operator, left, right } => {
+            let left = infer_expr_with(left, environment, record);
+            let right = infer_expr_with(right, environment, record);
+            match operator.value {
+                BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual
+                | BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual
+                | BinaryOperator::Equal | BinaryOperator::NotEqual => Some(normalized_bool_descriptor()),
+                _ if left == right => left,
+                _ => None,
             }
-        },
+        }
         ExprKind::Field { receiver, field } => {
             match infer_expr_with(receiver, environment, record) {
-                TypeDescriptor::Struct(fields) => fields
-                    .get(&field.value)
-                    .cloned()
-                    .unwrap_or(TypeDescriptor::Any),
-                _ => TypeDescriptor::Any,
+                Some(TypeDescriptor::Struct(fields)) => fields.get(&field.value).cloned(),
+                Some(TypeDescriptor::Dict(item)) => Some(*item),
+                _ => None,
             }
         }
         ExprKind::Index { receiver, index } => {
             let receiver = infer_expr_with(receiver, environment, record);
             infer_expr_with(index, environment, record);
             match receiver {
-                TypeDescriptor::Array(item) => *item,
-                _ => TypeDescriptor::Any,
+                Some(TypeDescriptor::Array(item)) => Some(*item),
+                _ => None,
             }
         }
         ExprKind::TupleProjection { receiver, index } => {
             match infer_expr_with(receiver, environment, record) {
-                TypeDescriptor::Tuple(items) => items
-                    .get(index.value)
-                    .cloned()
-                    .unwrap_or(TypeDescriptor::Any),
-                _ => TypeDescriptor::Any,
+                Some(TypeDescriptor::Tuple(items)) => items.get(index.value).cloned(),
+                _ => None,
             }
         }
         ExprKind::TypeAscription { value, target } => {
-            infer_expr_with(target, environment, record);
-            infer_expr_with(value, environment, record)
+            let actual = infer_expr_with(value, environment, record);
+            match infer_expr_with(target, environment, record) {
+                Some(TypeDescriptor::TypeOf(target)) => Some(*target),
+                _ => actual,
+            }
         }
         ExprKind::CheckedCast { value, target } => {
             infer_expr_with(value, environment, record);
-            infer_expr_with(target, environment, record);
-            TypeDescriptor::Any
+            match infer_expr_with(target, environment, record) {
+                Some(TypeDescriptor::TypeOf(target)) => Some(result_descriptor(*target, TypeDescriptor::String)),
+                _ => None,
+            }
         }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
+        ExprKind::DynProject { namespace, target, value } => {
             infer_expr_with(namespace, environment, record);
-            infer_expr_with(target, environment, record);
             infer_expr_with(value, environment, record);
-            TypeDescriptor::Any
+            match infer_expr_with(target, environment, record) {
+                Some(TypeDescriptor::TypeOf(target)) => Some(option_descriptor(*target)),
+                _ => None,
+            }
         }
         ExprKind::TypeApply { callee, arguments } => {
             infer_expr_with(callee, environment, record);
             for argument in arguments {
-                match &argument.value {
-                    TypeArgumentKind::Explicit(argument) => {
-                        infer_expr_with(argument, environment, record);
-                    }
-                    TypeArgumentKind::Infer => {
-                        record(argument.location, &TypeDescriptor::Any);
-                    }
+                if let TypeArgumentKind::Explicit(argument) = &argument.value {
+                    infer_expr_with(argument, environment, record);
                 }
             }
-            TypeDescriptor::Any
+            None
         }
         ExprKind::Call { callee, arguments } => {
             let callee = infer_expr_with(callee, environment, record);
-            let argument_types = arguments
-                .iter()
-                .map(|argument| infer_expr_with(argument, environment, record))
-                .collect::<Vec<_>>();
+            let arguments = arguments.iter().map(|argument| infer_expr_with(argument, environment, record)).collect::<Vec<_>>();
             match callee {
-                TypeDescriptor::Function { result, .. } => *result,
-                TypeDescriptor::Atom(tag) if argument_types.len() == 1 => TypeDescriptor::Tagged {
-                    tag,
-                    payload: Box::new(argument_types.into_iter().next().expect("one argument")),
-                },
-                _ => TypeDescriptor::Any,
+                Some(TypeDescriptor::Function { result, .. }) => {
+                    let mut parameters = Vec::new();
+                    collect_bound_parameters(&result, &mut parameters);
+                    parameters.is_empty().then_some(*result)
+                }
+                Some(TypeDescriptor::Atom(tag)) if arguments.len() == 1 =>
+                    arguments.into_iter().next().flatten().map(|payload| TypeDescriptor::Tagged { tag, payload: Box::new(payload) }),
+                _ => None,
             }
         }
-        ExprKind::Interpreter { elaboration, .. } => {
-            infer_expr_with(elaboration, environment, record)
-        }
-        ExprKind::Closure {
-            parameters,
-            result_annotation,
-            body,
-        } => {
-            for annotation in parameters
-                .iter()
-                .filter_map(|parameter| parameter.annotation.as_ref())
-                .chain(result_annotation.as_deref())
-            {
-                infer_expr_with(annotation, environment, record);
-            }
+        ExprKind::Interpreter { elaboration, .. } => infer_expr_with(elaboration, environment, record),
+        ExprKind::Closure { parameters, result_annotation, body } => {
             let mut closure_environment = environment.clone();
-            for parameter in parameters {
-                closure_environment.insert(parameter.name.value.clone(), TypeDescriptor::Any);
-            }
-            TypeDescriptor::Function {
-                parameters: vec![TypeDescriptor::Any; parameters.len()],
-                result: Box::new(infer_block_with(body, &closure_environment, record)),
-            }
+            let parameters = parameters.iter().map(|parameter| {
+                let ty = parameter.annotation.as_ref().and_then(|annotation| {
+                    match infer_expr_with(annotation, environment, record) {
+                        Some(TypeDescriptor::TypeOf(ty)) => Some(*ty),
+                        _ => None,
+                    }
+                });
+                set_projected_type(&mut closure_environment, &parameter.name.value, ty.clone());
+                ty
+            }).collect::<Vec<_>>();
+            if let Some(annotation) = result_annotation { infer_expr_with(annotation, environment, record); }
+            let result = infer_block_with(body, &closure_environment, record);
+            parameters.into_iter().collect::<Option<Vec<_>>>().zip(result)
+                .map(|(parameters, result)| TypeDescriptor::Function { parameters, result: Box::new(result) })
         }
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
+        ExprKind::If { condition, then_branch, else_branch } => {
             infer_expr_with(condition, environment, record);
-            pending_alternatives(vec![
-                infer_block_with(then_branch, environment, record),
-                infer_block_with(else_branch, environment, record),
-            ])
+            let left = infer_block_with(then_branch, environment, record);
+            let right = infer_block_with(else_branch, environment, record);
+            left.zip(right).map(|(left, right)| join_types(left, right))
         }
-        ExprKind::IfLet {
-            value,
-            then_branch,
-            else_branch,
-            ..
-        } => {
+        ExprKind::IfLet { pattern, value, then_branch, else_branch } => {
             infer_expr_with(value, environment, record);
-            join_types(
-                infer_block_with(then_branch, environment, record),
-                infer_block_with(else_branch, environment, record),
-            )
+            let mut then_environment = environment.clone();
+            clear_pattern_types(pattern, &mut then_environment);
+            let left = infer_block_with(then_branch, &then_environment, record);
+            let right = infer_block_with(else_branch, environment, record);
+            left.zip(right).map(|(left, right)| join_types(left, right))
         }
-        ExprKind::LetElse {
-            value,
-            else_branch,
-            body,
-            ..
-        } => {
+        ExprKind::LetElse { pattern, value, else_branch, body } => {
             infer_expr_with(value, environment, record);
             infer_block_with(else_branch, environment, record);
-            infer_block_with(body, environment, record)
+            let mut body_environment = environment.clone();
+            clear_pattern_types(pattern, &mut body_environment);
+            infer_block_with(body, &body_environment, record)
         }
         ExprKind::Match { value, arms } => {
             infer_expr_with(value, environment, record);
-            pending_alternatives(
-                arms.iter()
-                    .map(|arm| {
-                        let mut arm_environment = environment.clone();
-                        bind_pattern_types(&arm.value.pattern, &mut arm_environment);
-                        if let Some(guard) = &arm.value.guard {
-                            infer_expr_with(guard, &arm_environment, record);
-                        }
-                        infer_expr_with(&arm.value.value, &arm_environment, record)
-                    })
-                    .collect(),
-            )
+            let arms = arms.iter().map(|arm| {
+                let mut arm_environment = environment.clone();
+                clear_pattern_types(&arm.value.pattern, &mut arm_environment);
+                if let Some(guard) = &arm.value.guard { infer_expr_with(guard, &arm_environment, record); }
+                infer_expr_with(&arm.value.value, &arm_environment, record)
+            }).collect::<Vec<_>>();
+            arms.into_iter().collect::<Option<Vec<_>>>().map(pending_alternatives)
         }
     };
-    record(expression.location, &inferred);
+    if let Some(inferred) = &inferred { record(expression.location, inferred); }
     inferred
 }
 
-fn check_interpolations(
-    expression: &Expr,
-    environment: &HashMap<String, TypeDescriptor>,
-    sources: &SourceDatabase,
-) -> Result<(), FrontendError> {
-    match &expression.value {
-        ExprKind::InterpolatedString(parts) => {
-            for part in parts {
-                if let StringPartKind::Expression(part_expression) = &part.value {
-                    check_interpolations(part_expression, environment, sources)?;
-                }
-            }
-        }
-        ExprKind::Array(items) | ExprKind::Tuple(items) => {
-            for item in items {
-                check_interpolations(item, environment, sources)?;
-            }
-        }
-        ExprKind::Spread(operand) => check_interpolations(operand, environment, sources)?,
-        ExprKind::Dict(fields) => {
-            for field in fields {
-                check_interpolations(&field.value.value, environment, sources)?;
-            }
-        }
-        ExprKind::Block(block) => check_block_interpolations(block, environment, sources)?,
-        ExprKind::Unary { operand, .. } | ExprKind::Propagate { operand } => {
-            check_interpolations(operand, environment, sources)?;
-        }
-        ExprKind::Return { value } => check_interpolations(value, environment, sources)?,
-        ExprKind::Panic { message } => check_interpolations(message, environment, sources)?,
-        ExprKind::Raise { error } => check_interpolations(error, environment, sources)?,
-        ExprKind::Debug { value, .. } => check_interpolations(value, environment, sources)?,
-        ExprKind::Binary { left, right, .. } => {
-            check_interpolations(left, environment, sources)?;
-            check_interpolations(right, environment, sources)?;
-        }
-        ExprKind::Field { receiver, .. } => {
-            check_interpolations(receiver, environment, sources)?;
-        }
-        ExprKind::Index { receiver, index } => {
-            check_interpolations(receiver, environment, sources)?;
-            check_interpolations(index, environment, sources)?;
-        }
-        ExprKind::TupleProjection { receiver, .. } => {
-            check_interpolations(receiver, environment, sources)?;
-        }
-        ExprKind::TypeAscription { value, target } | ExprKind::CheckedCast { value, target } => {
-            check_interpolations(value, environment, sources)?;
-            check_interpolations(target, environment, sources)?;
-        }
-        ExprKind::DynProject {
-            namespace,
-            target,
-            value,
-        } => {
-            check_interpolations(namespace, environment, sources)?;
-            check_interpolations(target, environment, sources)?;
-            check_interpolations(value, environment, sources)?;
-        }
-        ExprKind::Call { callee, arguments } => {
-            check_interpolations(callee, environment, sources)?;
-            for argument in arguments {
-                check_interpolations(argument, environment, sources)?;
-            }
-        }
-        ExprKind::TypeApply { callee, arguments } => {
-            check_interpolations(callee, environment, sources)?;
-            for argument in arguments {
-                if let TypeArgumentKind::Explicit(argument) = &argument.value {
-                    check_interpolations(argument, environment, sources)?;
-                }
-            }
-        }
-        ExprKind::Interpreter { operand, .. } => {
-            check_interpolations(operand, environment, sources)?;
-        }
-        ExprKind::Closure {
-            parameters,
-            result_annotation,
-            body,
-        } => {
-            for annotation in parameters
-                .iter()
-                .filter_map(|parameter| parameter.annotation.as_ref())
-                .chain(result_annotation.as_deref())
-            {
-                check_interpolations(annotation, environment, sources)?;
-            }
-            let mut closure_environment = environment.clone();
-            for parameter in parameters {
-                closure_environment.insert(parameter.name.value.clone(), TypeDescriptor::Any);
-            }
-            check_block_interpolations(body, &closure_environment, sources)?;
-        }
-        ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            check_interpolations(condition, environment, sources)?;
-            check_block_interpolations(then_branch, environment, sources)?;
-            check_block_interpolations(else_branch, environment, sources)?;
-        }
-        ExprKind::IfLet {
-            value,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            check_interpolations(value, environment, sources)?;
-            check_block_interpolations(then_branch, environment, sources)?;
-            check_block_interpolations(else_branch, environment, sources)?;
-        }
-        ExprKind::LetElse {
-            value,
-            else_branch,
-            body,
-            ..
-        } => {
-            check_interpolations(value, environment, sources)?;
-            check_block_interpolations(else_branch, environment, sources)?;
-            check_block_interpolations(body, environment, sources)?;
-        }
-        ExprKind::Match { value, arms } => {
-            check_interpolations(value, environment, sources)?;
-            for arm in arms {
-                let mut arm_environment = environment.clone();
-                bind_pattern_types(&arm.value.pattern, &mut arm_environment);
-                if let Some(guard) = &arm.value.guard {
-                    check_interpolations(guard, &arm_environment, sources)?;
-                }
-                check_interpolations(&arm.value.value, &arm_environment, sources)?;
-            }
-        }
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::String(_)
-        | ExprKind::Bytes(_)
-        | ExprKind::Atom(_)
-        | ExprKind::Variable(_) => {}
-    }
-    Ok(())
-}
-
-fn check_block_interpolations(
-    block: &Block,
-    environment: &HashMap<String, TypeDescriptor>,
-    sources: &SourceDatabase,
-) -> Result<(), FrontendError> {
-    let mut environment = environment.clone();
-    for binding in &block.value.bindings {
-        if matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native) {
-            environment.insert(binding.value.name.value.clone(), TypeDescriptor::Any);
-        }
-    }
-    for binding in &block.value.bindings {
-        check_interpolations(&binding.value.value, &environment, sources)?;
-        if let Some(annotation) = &binding.value.annotation {
-            check_interpolations(annotation, &environment, sources)?;
-        }
-        if matches!(
-            binding.value.kind,
-            BindingKind::Let | BindingKind::Def | BindingKind::Import
-        ) {
-            let inferred = infer_expr(&binding.value.value, &environment);
-            environment.insert(binding.value.name.value.clone(), inferred);
-        }
-    }
-    check_interpolations(&block.value.result, &environment, sources)
+fn set_projected_type(environment: &mut HashMap<String, TypeDescriptor>, name: &str, ty: Option<TypeDescriptor>) {
+    if let Some(ty) = ty { environment.insert(name.to_owned(), ty); }
+    else { environment.remove(name); }
 }
 
 fn infer_block_with(
     block: &Block,
     environment: &HashMap<String, TypeDescriptor>,
     record: &mut impl FnMut(crate::Location, &TypeDescriptor),
-) -> TypeDescriptor {
+) -> Option<TypeDescriptor> {
     let mut environment = environment.clone();
     for binding in &block.value.bindings {
-        if matches!(binding.value.kind, BindingKind::Decl | BindingKind::Native) {
-            environment.insert(binding.value.name.value.clone(), TypeDescriptor::Any);
-        }
+        environment.remove(&binding.value.name.value);
     }
     for binding in &block.value.bindings {
-        if let Some(annotation) = &binding.value.annotation {
-            infer_expr_with(annotation, &environment, record);
-        }
+        if let Some(annotation) = &binding.value.annotation { infer_expr_with(annotation, &environment, record); }
         let inferred = infer_expr_with(&binding.value.value, &environment, record);
-        if matches!(
-            binding.value.kind,
-            BindingKind::Let | BindingKind::Def | BindingKind::Import
-        ) {
-            environment.insert(binding.value.name.value.clone(), inferred);
+        if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def | BindingKind::Import) {
+            set_projected_type(&mut environment, &binding.value.name.value, inferred);
         }
     }
     infer_expr_with(&block.value.result, &environment, record)
 }
 
-fn bind_pattern_types(pattern: &Pattern, environment: &mut HashMap<String, TypeDescriptor>) {
-    bind_pattern_types_from(pattern, &TypeDescriptor::Any, environment);
-}
-
-fn bind_pattern_types_from(
-    pattern: &Pattern,
-    matched: &TypeDescriptor,
-    environment: &mut HashMap<String, TypeDescriptor>,
-) {
-    for binding in crate::pattern::analyze_pattern(pattern, matched).bindings {
-        environment.insert(binding.name, binding.ty);
+fn clear_pattern_types(pattern: &Pattern, environment: &mut HashMap<String, TypeDescriptor>) {
+    match &pattern.value {
+        crate::ast::PatternKind::Binding(name) => { environment.remove(&name.value); }
+        crate::ast::PatternKind::Tagged { payload, .. } => clear_pattern_types(payload, environment),
+        crate::ast::PatternKind::Tuple(items) => {
+            for item in items { clear_pattern_types(item, environment); }
+        }
+        crate::ast::PatternKind::Struct(fields) => {
+            for field in fields { clear_pattern_types(&field.pattern, environment); }
+        }
+        _ => {}
     }
 }
 

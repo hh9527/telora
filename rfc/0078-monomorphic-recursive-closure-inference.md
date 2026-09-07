@@ -1,6 +1,7 @@
 # RFC 0078: Monomorphic recursive closure inference
 
 - Status: Implemented
+- Partial supersession by [RFC 0269](0269-remove-any.md): Unresolved recursive results require context and are excluded from publication.
 - Depends on: RFC 0050, RFC 0052, RFC 0073, RFC 0074, RFC 0075, RFC 0076
 
 ## Summary

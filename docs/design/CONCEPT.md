@@ -291,8 +291,7 @@ capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
 **Type scheme** 是 `for(A) Fn(A) -> A` 这样的 rank-1 contract。**Bound type** 是
 检查该 contract 时 `A` 的刚性含义。Scheme 不是普通 `Type` 值。
 Bound 身份只在所属 scheme 内有意义，不能按内部编号跨 scheme 比较。模块接口独立
-保留权威 scheme；普通 binding fact 可以呈现擦除后的 `Any` 形状，但调用时必须从
-scheme 新鲜实例化，而不是复用其中的 Bound。
+保留权威 scheme；每次调用从 scheme 新鲜实例化，Bound 的关系在所属 scheme 内保留。
 
 ### TypeMetadata Family
 
@@ -305,7 +304,7 @@ Family 声明以刚性 Bound 参数求值一次并发布符号模板；applicati
 Bound，不按 concrete 参数重跑声明 body。这个限制使泛型 contract 与值级结果保持
 一致，也让工具能够发布完整、可诊断的 scheme。符号模板保留规范 TypeMetadata；
 application 产生的规则节点保留 authored call-site provenance。
-Partial recovery 对独立有效的 family 同样发布精确 scheme，而不是以 `Any` 代替关系。
+Partial recovery 对独立有效的 family 同样发布精确 scheme。
 
 Family 不是任意 metadata function、associated type、trait implementation、
 higher-kinded type parameter 或 nominal constructor。它不参与实例搜索，不能作为 type parameter 传递，
@@ -314,13 +313,6 @@ higher-kinded type parameter 或 nominal constructor。它不参与实例搜索�
 名义 Struct/Enum family 可以在自己的有限符号模板中以完全相同的 Bound 参数建立直接
 回边。参数变换、mutual family recursion 和无生产 alias 不属于该能力；它们需要一般
 递归 type-function 归一化，当前不支持。
-
-### `Any`
-
-`Any` 是显式的静态精度逃生口，允许值在缺少精确静态类型时跨越边界。API 如果
-声称保留某项类型关系，就不能用 `Any` 隐藏该关系。
-
-`Any` 与分析阶段暂时 unknown 的 fact 不同。
 
 ### `Dyn`
 
@@ -432,7 +424,6 @@ Recovery 不会把失败结果变成可发布的成功结果。
 expression。其状态至少区分：
 
 - known information；
-- 显式 `Any`；
 - unknown information；
 - conflicting constraint；
 - dependency blocking；
@@ -497,7 +488,7 @@ Telora 只负责其中一次封闭、确定的计算。
 | Artifact 与 effect | Artifact 是数据；只有 Host 可以执行效果。 |
 | Validation 与 lowering | 两者概念不同，但经常必须在同一个过程完成。 |
 | `Type` 与 `TypeOf(A)` | 前者证明元数据有效；后者保留它描述什么。 |
-| `Any` 与 unknown | `Any` 是显式精度损失；unknown 是可恢复的 fact state。 |
+| 类型与 unknown | 类型描述值的契约；unknown 描述分析尚未取得依据的 fact state。 |
 | `Dyn` 与 cast | `Dyn` 保留经过检查的 existential evidence；cast 会绕过它。 |
 | Diagnostic 与 `Result` | Diagnostic 是 Host-observed feedback；`Result` 是普通值协议。 |
 | Recovery 与 success | Recovery 保留信息，绝不自动授权发布。 |

@@ -34,8 +34,10 @@ the logical data shapes without requiring dynamic construction of an `A`.
 The erased interpreter is an ordinary recursive Telora function:
 
 ```telora
+type InterpreterError = struct {message: String, value: Dyn};
+
 def my_eq_i:
-    Fn(Dyn, Dyn) -> Result(Bool, BlameError) =
+    Fn(Dyn, Dyn) -> Result(Bool, InterpreterError) =
     fn(left, right) {
         # Inspect dyn.desc(left), project both values, then recurse normally.
         my_eq_i(child_left, child_right)
@@ -48,7 +50,7 @@ factory:
 ```telora
 def eq_fn:
     for(A) Fn(TypeOf(A)) ->
-        Fn(A, A) -> Result(Bool, BlameError) =
+        Fn(A, A) -> Result(Bool, InterpreterError) =
     interpreter(my_eq_i);
 ```
 
@@ -84,10 +86,10 @@ example:
 
 ```text
 Expected:
-for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Result(Bool, BlameError)
+for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Result(Bool, InterpreterError)
 
 Operand requirement:
-Fn(Dyn, Dyn) -> Result(Bool, BlameError)
+Fn(Dyn, Dyn) -> Result(Bool, InterpreterError)
 ```
 
 Conceptually, the compiler lowers it to an ordinary adapter:
@@ -118,7 +120,7 @@ The first version supports interpreters whose result does not contain `A`:
 ```telora
 for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Bool
 for(A) Fn(TypeOf(A)) -> Fn(A) -> String
-for(A) Fn(TypeOf(A)) -> Fn(A) -> Result(Array(Change), BlameError)
+for(A) Fn(TypeOf(A)) -> Fn(A) -> Result(Array(Change), InterpreterError)
 ```
 
 It deliberately defers type-preserving outputs:
@@ -126,7 +128,7 @@ It deliberately defers type-preserving outputs:
 ```telora
 for(A) Fn(TypeOf(A)) -> Fn(A) -> A
 for(A) Fn(TypeOf(A)) -> Fn(A) -> Option(A)
-for(A) Fn(TypeOf(A)) -> Fn(Any) -> Result(A, BlameError)
+for(A) Fn(TypeOf(A)) -> Fn(Value) -> Result(A, codec.DecodeError)
 ```
 
 Those forms require dynamic construction plus validation against the original
@@ -179,8 +181,7 @@ safe inspection and resolution:
 
 ```telora
 type_desc.kind: Fn(TypeDesc) -> TypeDescKind;
-type_desc.ref_id: Fn(TypeDesc) -> Result(TypeRef, BlameError);
-type_desc.resolve: Fn(TypeDesc) -> Result(TypeDesc, BlameError);
+type_desc.resolve: Fn(Type) -> Result(Type, type_desc.ResolveError);
 ```
 
 The current hidden VM up-link may implement this behavior, but it must not leak
@@ -228,12 +229,8 @@ share the same policy, so the first version should not pre-emptively impose one.
 
 ## `Dyn`: descriptor and value kept together
 
-Passing `TypeDesc` and `Any` separately would expose an invalid state: user
-code could accidentally pair the descriptor of one field with the value of
-another. `Any` also suggests unrestricted dynamic behavior, while the actual
-value has one unknown but definite type.
-
-The public interpreter ABI should therefore use an opaque `Dyn` package:
+The public interpreter ABI uses an opaque `Dyn` package that retains a value
+and the canonical witness for its type together:
 
 ```text
 Dyn = exists A. {
@@ -244,9 +241,8 @@ Dyn = exists A. {
 
 This is a semantic model, not a user-constructible Struct. Only trusted
 lowering and native observer code can create a `Dyn`; ordinary Telora code
-cannot forge the relationship between its descriptor and value. The VM may
-store an ordinary erased Value internally, but bare `Any` does not appear at
-the interpreter boundary.
+cannot forge the relationship between its descriptor and value. The VM stores the witnessed value internally and observers preserve that
+relationship when returning child packages.
 
 Introducing `Dyn` does not introduce a global `Unknown` top type, implicit
 subtyping, or arbitrary value coercion. If codec, reflection, and module
@@ -258,11 +254,11 @@ The minimal read-only API is:
 ```telora
 dyn.desc: Fn(Dyn) -> TypeDesc;
 dyn.kind: Fn(Dyn) -> ValueKind;
-dyn.field: Fn(Dyn, String) -> Result(Dyn, BlameError);
-dyn.array_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
-dyn.tuple_items: Fn(Dyn) -> Result(Array(Dyn), BlameError);
-dyn.tag: Fn(Dyn) -> Result(String, BlameError);
-dyn.payload: Fn(Dyn) -> Result(Option(Dyn), BlameError);
+dyn.field: Fn(Dyn, String) -> Result(Dyn, dyn.AccessError);
+dyn.array_items: Fn(Dyn) -> Result(Array(Dyn), dyn.AccessError);
+dyn.tuple_items: Fn(Dyn) -> Result(Array(Dyn), dyn.AccessError);
+dyn.tag: Fn(Dyn) -> Result(String, dyn.AccessError);
+dyn.payload: Fn(Dyn) -> Result(Option(Dyn), dyn.AccessError);
 ```
 
 Each structural observer checks the descriptor and runtime shape together,
@@ -280,8 +276,8 @@ dyn.check_int: Fn(Dyn) -> Option(Int);
 dyn.check_string: Fn(Dyn) -> Option(String);
 dyn.check_bool: Fn(Dyn) -> Option(Bool);
 
-dyn.expect_int: Fn(Dyn) -> Result(Int, BlameError);
-dyn.expect_string: Fn(Dyn) -> Result(String, BlameError);
+dyn.expect_int: Fn(Dyn) -> Result(Int, dyn.AccessError);
+dyn.expect_string: Fn(Dyn) -> Result(String, dyn.AccessError);
 ```
 
 `check_*` supports branch selection; `expect_*` preserves diagnostics and
@@ -292,7 +288,7 @@ A later generic projection is possible:
 
 ```telora
 dyn.check: for(A) Fn(TypeOf(A), Dyn) -> Option(A);
-dyn.expect: for(A) Fn(TypeOf(A), Dyn) -> Result(A, BlameError);
+dyn.expect: for(A) Fn(TypeOf(A), Dyn) -> Result(A, dyn.AccessError);
 ```
 
 It is not required by the first equality slice. It needs canonical descriptor
@@ -331,7 +327,7 @@ unsupported opaque node
 policy rejected by attributes
 ```
 
-They return `BlameError`. Paths can initially be constructed by the ordinary
+They return `InterpreterError`. Paths can initially be constructed by the ordinary
 Telora interpreter as it recurses; they do not require a hidden dispatcher.
 
 Execution failures remain VM/query failures:
@@ -461,7 +457,7 @@ The experiment succeeds when ordinary Telora code can:
 - recurse as an ordinary Telora function;
 - use checked leaf projection;
 - define equality for every supported public data shape; and
-- expose it as `Fn(A, A) -> Result(Bool, BlameError)` through one trusted,
+- expose it as `Fn(A, A) -> Result(Bool, InterpreterError)` through one trusted,
   mechanically checked `interpreter` lift.
 
 It fails if the lift relies on unchecked user assertions, if meaningful public
@@ -483,7 +479,7 @@ than expose raw heap state or introduce a trait system.
 6. What atomic policy, if any, should native code expose for opaque Functions?
 7. Must the initial `eq_fn(Int)` call infer `A`, or may the first prototype
    require `eq_fn[Int](Int)`?
-8. Should the lifted equality return `Bool` or `Result(Bool, BlameError)` after
+8. Should the lifted equality return `Bool` or `Result(Bool, InterpreterError)` after
    construction and observer contracts are proven?
 9. Should a general `Unknown` ever subsume `Dyn`, or is the existential package
    intentionally limited to reflection and interpretation?
