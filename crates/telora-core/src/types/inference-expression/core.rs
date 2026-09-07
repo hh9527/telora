@@ -1,4 +1,75 @@
 impl<'a> GenericInference<'a> {
+    fn infer_struct_update(
+        &mut self,
+        expression: &Expr,
+        environment: &HashMap<String, TypeDescriptor>,
+        target: &BTreeMap<String, TypeDescriptor>,
+    ) -> Result<(), String> {
+        let mut contributed = BTreeMap::new();
+        if let ExprKind::Dict(entries) = &expression.value {
+            let mut spreads = BTreeMap::new();
+            let mut winners = BTreeMap::new();
+            let mut explicit = BTreeSet::new();
+            // Discover spread shapes before supplying context to winning literals.
+            for (index, entry) in entries.iter().enumerate() {
+                if let Some(name) = &entry.value.name {
+                    if !explicit.insert(name.value.clone()) {
+                        return Err(format!("duplicate update field {:?}", name.value));
+                    }
+                    winners.insert(name.value.clone(), index);
+                } else if let ExprKind::Spread(operand) = &entry.value.value.value {
+                    let ty = self.infer(operand, environment, None)?;
+                    let fields = self.struct_update_fields(&ty)?;
+                    for name in fields.keys() {
+                        winners.insert(name.clone(), index);
+                    }
+                    spreads.insert(index, fields);
+                }
+            }
+            for name in winners.keys() {
+                if !target.contains_key(name) {
+                    return Err(format!("unknown struct update field {name:?}"));
+                }
+            }
+            for (index, entry) in entries.iter().enumerate() {
+                if let Some(name) = &entry.value.name {
+                    let expected =
+                        (winners[&name.value] == index).then(|| &target[&name.value]);
+                    let ty = self.infer(&entry.value.value, environment, expected)?;
+                    contributed.insert(name.value.clone(), ty);
+                } else if let Some(fields) = spreads.remove(&index) {
+                    contributed.extend(fields);
+                }
+            }
+            self.records.insert(
+                expression.location,
+                TypeDescriptor::Struct(contributed.clone()),
+            );
+        } else {
+            let ty = self.infer(expression, environment, None)?;
+            contributed = self.struct_update_fields(&ty)?;
+        }
+        for (name, ty) in contributed {
+            let expected = target
+                .get(&name)
+                .ok_or_else(|| format!("unknown struct update field {name:?}"))?;
+            self.check(&ty, expected)?;
+        }
+        Ok(())
+    }
+
+    fn struct_update_fields(
+        &self,
+        ty: &TypeDescriptor,
+    ) -> Result<BTreeMap<String, TypeDescriptor>, String> {
+        if let TypeDescriptor::Declared(declared) = self.expose_named(ty)
+            && let TypeDescriptor::Struct(fields) = declared.body.as_ref()
+        {
+            return Ok(fields.clone());
+        }
+        Err("struct update requires a named struct operand".into())
+    }
+
     fn infer(
         &mut self,
         expression: &Expr,
@@ -461,7 +532,21 @@ impl<'a> GenericInference<'a> {
                     }
                     normalized_bool_descriptor()
                 }
-                BinaryOperator::BitAnd | BinaryOperator::BitOr | BinaryOperator::BitXor => {
+                BinaryOperator::BitAnd => {
+                    let base = self.infer(left, environment, None)?;
+                    let base = self.expose_named(&base);
+                    if let TypeDescriptor::Declared(declared) = &base
+                        && let TypeDescriptor::Struct(fields) = declared.body.as_ref()
+                    {
+                        self.infer_struct_update(right, environment, fields)?;
+                        base
+                    } else {
+                        self.check(&base, &TypeDescriptor::Int)?;
+                        self.infer(right, environment, Some(&TypeDescriptor::Int))?;
+                        TypeDescriptor::Int
+                    }
+                }
+                BinaryOperator::BitOr | BinaryOperator::BitXor => {
                     if let Some(expected) = expected {
                         self.check(&TypeDescriptor::Int, expected)?;
                     }

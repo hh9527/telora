@@ -1,0 +1,34 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(records)) => {
+            let located: Fn(String, Int, Int) -> Bool = fn(name, line, column) {
+                array.any(records, fn(record) {
+                    support.string_field_equals(record, "record", "diagnostic")
+                        && support.string_field_equals(record, "test", name)
+                        && match support.record_field(record, "labels") {
+                            'Some('Array(labels)) => array.any(labels, fn(label) {
+                                support.string_field_contains(label, "source", "struct-update-provenance/provider")
+                                    && support.string_field_equals(label, "message", "subject 1 originated here")
+                                    && match support.record_field(label, "location") {
+                                        'Some(location) => support.record_field(location, "line") == 'Some('Int(line))
+                                            && support.record_field(location, "column") == 'Some('Int(column)),
+                                        _ => 'False,
+                                    }
+                            }),
+                            _ => 'False,
+                        }
+                })
+            };
+            support.bool_value(support.exit_code(actual) == 'Some(1)
+                && located("kept", 3, 31)
+                && located("spread", 4, 37)
+                && located("literal", 5, 25)
+                && located("container", 6, 21))
+        },
+        _ => 'False,
+    }
+};

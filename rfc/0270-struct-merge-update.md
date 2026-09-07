@@ -3,6 +3,10 @@
 - Status: Accepted
 - Tracking: [#157](https://github.com/hh9527/telora/issues/157)
 - Scope: Nominal struct updates, including spreads inside update literals.
+- Implementation: Complete. Debug build and workspace tests passed; the final
+  language acceptance suite passes all 242 fixture groups, including nominal
+  updates, ten rejection cases, exported type queries and field/container
+  provenance. New behavioral tests are written in Telora.
 
 ## Motivation
 

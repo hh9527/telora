@@ -95,6 +95,9 @@ fn infer_expr_with(
                 BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual
                 | BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual
                 | BinaryOperator::Equal | BinaryOperator::NotEqual => Some(normalized_bool_descriptor()),
+                BinaryOperator::BitAnd if matches!(&left,
+                    Some(TypeDescriptor::Declared(declared))
+                        if matches!(declared.body.as_ref(), TypeDescriptor::Struct(_))) => left,
                 _ if left == right => left,
                 _ => None,
             }

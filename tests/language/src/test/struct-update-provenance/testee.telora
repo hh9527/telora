@@ -1,0 +1,16 @@
+import "std/test" as test;
+import "./provider" as provider;
+
+export def kept = test.should_ok(fn() {
+    fail!("kept", provider.updated.kept)
+});
+export def spread = test.should_ok(fn() {
+    fail!("spread", provider.updated.replaced)
+});
+export def literal = test.should_ok(fn() {
+    let updated = provider.base & {replaced: provider.replacement};
+    fail!("literal", updated.replaced)
+});
+export def container = test.should_ok(fn() {
+    fail!("container", provider.updated)
+});

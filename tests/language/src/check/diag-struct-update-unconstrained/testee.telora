@@ -1,0 +1,2 @@
+decl update: for(A) Fn(A) -> A;
+export def update = fn(base) { base & {} };

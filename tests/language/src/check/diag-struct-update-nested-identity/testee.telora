@@ -1,0 +1,4 @@
+type X = struct {value: Int};
+type Y = struct {value: Int};
+type A = struct {x: X};
+export def result = { let a: A = {x: {value: 1}}; let y: Y = {value: 2}; a & {x: y} };

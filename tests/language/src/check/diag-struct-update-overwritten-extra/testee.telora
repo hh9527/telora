@@ -1,0 +1,3 @@
+type A = struct {x: Int};
+type B = struct {extra: Int};
+export def result = { let a: A = {x: 1}; let b: B = {extra: 2}; a & {...b, extra: 3} };

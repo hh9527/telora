@@ -1,0 +1,62 @@
+import "std/test" as test;
+import "std/dyn" as dyn;
+import "@src/test-support" {expect};
+
+type Full = struct {x: Int, label: String};
+type Label = struct {label: String};
+type Count = struct {x: Int};
+type WrongCount = struct {x: String};
+type SameShape = struct {x: Int, label: String};
+type Child = struct {value: Int};
+type Parent = struct {child: Child, values: Array(Int)};
+type Box(A) = struct {value: A};
+
+export def nominal_chain = test.should_ok(fn() {
+    let base: Full = {x: 1, label: "base"};
+    let label: Label = {label: "patch"};
+    let count: Count = {x: 2};
+    let updated = base & label & count & {x: 3,};
+    let checked: Full = updated;
+    expect(checked.x == 3 && checked.label == "patch"
+        && base.x == 1 && base.label == "base"
+        && dyn.project_with(SameShape, dyn.pack(Full, updated)) == 'None
+        && dyn.project_with(Full, dyn.pack(Full, updated)) == 'Some(checked))
+});
+
+export def spread_order = test.should_ok(fn() {
+    let base: Full = {x: 1, label: "base"};
+    let count: Count = {x: 2};
+    let wrong: WrongCount = {x: "overwritten"};
+    let first = base & {x: "overwritten", ...count};
+    let second = base & {...wrong, x: 3};
+    expect(first.x == 2 && second.x == 3
+        && (base & {...count, ...count}).x == 2
+        && (base & {}).label == "base")
+});
+
+export def contextual_fields = test.should_ok(fn() {
+    let base: Parent = {child: {value: 1}, values: [1]};
+    let updated = base & {child: {value: 2}, values: []};
+    let child: Child = updated.child;
+    expect(child.value == 2 && updated.values == [] && base.child.value == 1)
+});
+
+decl replace: for(A) Fn(Box(A), A) -> Box(A);
+def replace = fn(base, value) { base & {value: value} };
+
+export def generic_identity = test.should_ok(fn() {
+    let base: Box(String) = {value: "base"};
+    let updated = replace(base, "updated");
+    let checked: Box(String) = updated;
+    expect(checked.value == "updated")
+});
+
+export def integer_and = test.should_ok(fn() {
+    expect((7 & 3 & 1) == 1 && (7 & 2) == 2)
+});
+
+export def overwritten_failure = test.should_fail_with(fn() {
+    let base: Full = {x: 1, label: "base"};
+    let count: Count = {x: 2};
+    base & {x: fail!("update evaluated"), ...count}
+}, "update evaluated");
