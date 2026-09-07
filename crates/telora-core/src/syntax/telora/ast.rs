@@ -573,7 +573,6 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::Primary
                 | Rule::Braced
                 | Rule::ArrayExpr
-                | Rule::AtomExpr
                 | Rule::BinaryExpr
                 | Rule::Block
                 | Rule::BytesExpr

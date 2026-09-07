@@ -58,7 +58,7 @@
             (
                 "export def broken = match A { @ => 1, _ => 2 };",
                 &[
-                    "invalid syntax, expected one of: <atom>, '\"', <float>, <identifier>, <integer>, '{', '(', '_', <raw string>",
+                    "invalid syntax, expected one of: '\"', <float>, <identifier>, <integer>, '{', '(', '_', <raw string>",
                 ],
             ),
         ];

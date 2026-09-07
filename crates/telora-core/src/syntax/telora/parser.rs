@@ -76,7 +76,7 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
     fn predicate_binding_4(&self) -> bool {
         if self.current != Token::Let
-            || !(matches!(self.peek(1), Token::Atom | Token::LParen | Token::LBrace)
+            || !(matches!(self.peek(1), Token::LParen | Token::LBrace)
                 || self.peek(1) == Token::Identifier)
         {
             return false;
@@ -219,9 +219,6 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
     fn predicate_dot_suffix_1(&self) -> bool {
         self.current == Token::Identifier && self.peek(1) == Token::Bang
-    }
-    fn predicate_pattern_2(&self) -> bool {
-        self.peek(1) == Token::LParen
     }
     fn predicate_pattern_4(&self) -> bool {
         self.current == Token::Identifier && matches!(self.peek(1), Token::LParen | Token::Dot)

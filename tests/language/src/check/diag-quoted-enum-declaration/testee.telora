@@ -1,0 +1,2 @@
+type Event = enum {'Ready};
+export {Event};

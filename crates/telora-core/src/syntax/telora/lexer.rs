@@ -88,7 +88,6 @@ pub enum Token {
     UnterminatedEscapeSequence,
     InterpolationStart,
     Bytes,
-    Atom,
     Placeholder,
     IndexedPlaceholder,
     Identifier,
@@ -224,8 +223,6 @@ enum NormalToken {
     RawString,
     #[regex(r#"b\"([^\"\\]|\\.)*\""#)]
     Bytes,
-    #[regex(r"'[A-Za-z_][A-Za-z0-9_]*")]
-    Atom,
     #[token("_", priority = 4)]
     Placeholder,
     #[regex(r"_[0-9]+", priority = 4)]
@@ -782,7 +779,6 @@ impl From<NormalToken> for Token {
             NormalToken::Backtick => Self::Backtick,
             NormalToken::RawString => Self::RawString,
             NormalToken::Bytes => Self::Bytes,
-            NormalToken::Atom => Self::Atom,
             NormalToken::Placeholder => Self::Placeholder,
             NormalToken::IndexedPlaceholder => Self::IndexedPlaceholder,
             NormalToken::Identifier => Self::Identifier,

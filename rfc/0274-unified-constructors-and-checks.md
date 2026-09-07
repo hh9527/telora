@@ -37,8 +37,10 @@
   evidence propagates until no further variables can be solved.
   Rust-embedded Telora sources now use named constructors and patterns throughout
   core and CLI tests, while runtime display snapshots retain Atom/Tagged output.
-  Quoted-syntax removal in the parser and remaining documentation,
-  and construction checks remain pending.
+  The lexer, grammar and parser now accept named enum members only in authored
+  declarations, expressions and patterns. Compiler-generated Atom/Tagged nodes
+  remain private implementation representations. Documentation and diagnostic
+  wording migration, and construction checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
 - Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
   including computed markers, aliases, nominal rejection and marker arity.
@@ -54,6 +56,8 @@
   The Rust-embedded source migration passed workspace tests, including core,
   CLI and language acceptance tests. Diagnostic provenance assertions continue
   to verify both original data and authored failure locations.
+  Quoted-syntax removal passed debug build, workspace tests, 269 core tests and 341 language
+  fixture groups, including rejection of quoted declarations, values and patterns.
   New behavior is tested in
   `.telora`; no release binary was built.
 

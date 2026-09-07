@@ -1,0 +1,1 @@
+export def value = match Some(1) {'Some(x) => x, None => 0};

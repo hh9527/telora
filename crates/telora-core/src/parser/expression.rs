@@ -13,7 +13,6 @@ impl<'a> Lowerer<'a> {
                         .map_err(|message| self.error(node, message))?,
                 ),
                 Token::Bytes => ExprKind::Bytes(self.decode_telora_string(node)?.into_bytes()),
-                Token::Atom => ExprKind::Atom(self.text(node).trim_start_matches('\'').to_owned()),
                 Token::Identifier => ExprKind::Variable(self.identifier(node)),
                 _ => return Err(self.error(node, "expected expression token")),
             };
@@ -47,11 +46,6 @@ impl<'a> Lowerer<'a> {
             Rule::BytesExpr => ExprKind::Bytes(
                 self.decode_telora_string(self.first_token(node, Token::Bytes)?)?
                     .into_bytes(),
-            ),
-            Rule::AtomExpr => ExprKind::Atom(
-                self.text(self.first_token(node, Token::Atom)?)
-                    .trim_start_matches('\'')
-                    .to_owned(),
             ),
             Rule::VariableExpr => {
                 ExprKind::Variable(self.identifier(self.first_token(node, Token::Identifier)?))

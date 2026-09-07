@@ -53,9 +53,6 @@ impl<'a> Lowerer<'a> {
                     parse_float_literal(&self.text(node))
                         .map_err(|message| self.error(node, message))?,
                 ),
-                Token::Atom => {
-                    PatternKind::Atom(self.text(node).trim_start_matches('\'').to_owned())
-                }
                 _ => return Err(self.error(node, "expected pattern token")),
             };
             return Ok(located(inner, self.location(node)));
@@ -129,27 +126,6 @@ impl<'a> Lowerer<'a> {
                     .ok_or_else(|| self.error(node, "string pattern has no literal"))?;
                 PatternKind::String(self.plain_string(string, "string pattern")?)
             }
-            Rule::AtomPattern => PatternKind::Atom(
-                self.text(self.first_token(node, Token::Atom)?)
-                    .trim_start_matches('\'')
-                    .to_owned(),
-            ),
-            Rule::TaggedPattern => PatternKind::Tagged {
-                tag: self
-                    .text(self.first_token(node, Token::Atom)?)
-                    .trim_start_matches('\'')
-                    .to_owned(),
-                payload: Box::new(
-                    self.pattern(
-                        self.children(node)
-                            .filter(|child| {
-                                !matches!(self.cst.get(*child), Node::Token(Token::Atom, _))
-                            })
-                            .find(|child| self.is_pattern(*child))
-                            .ok_or_else(|| self.error(node, "tagged pattern has no payload"))?,
-                    )?,
-                ),
-            },
             Rule::TuplePattern => PatternKind::Tuple(
                 self.children(node)
                     .filter(|child| self.is_pattern(*child))
@@ -421,10 +397,9 @@ impl<'a> Lowerer<'a> {
                     .filter(|child| self.rule(*child) == Some(Rule::EnumInitializerVariant))
                 {
                     let tag_node = self.token_children(variant, Token::Identifier).next()
-                        .or_else(|| self.token_children(variant, Token::Atom).next())
                         .ok_or_else(|| self.error(variant, "missing Identifier"))?;
                     let name = located(
-                        self.text(tag_node).trim_start_matches('\'').to_owned(),
+                        self.text(tag_node).into_owned(),
                         self.location(tag_node),
                     );
                     if !names.insert(name.value.clone()) {

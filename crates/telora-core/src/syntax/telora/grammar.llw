@@ -9,7 +9,7 @@ token Int='<integer>' Float='<float>' Bytes='<bytes>';
 token DoubleQuote='"' Backtick='`' RawString='<raw string>' StringText='<string text>' EscapeSequence='<escape>';
 token UnknownEscapeSequence='<unknown escape>' UnterminatedEscapeSequence='<unterminated escape>';
 token InterpolationStart='<interpolation start>';
-token Atom='<atom>' Placeholder='_' IndexedPlaceholder='<indexed placeholder>' Identifier='<identifier>';
+token Placeholder='_' IndexedPlaceholder='<indexed placeholder>' Identifier='<identifier>';
 token StructInitializer='<struct initializer>' EnumInitializer='<enum initializer>';
 token Whitespace Comment;
 
@@ -38,7 +38,7 @@ type_initializer^: struct_initializer | enum_initializer | expression;
 struct_initializer: StructInitializer ('{' [struct_initializer_field (?1 ',' struct_initializer_field)* [',']] '}' | '(' expression ')');
 struct_initializer_field: decorator* Identifier ':' expression;
 enum_initializer: EnumInitializer '{' [enum_initializer_variant (?1 ',' enum_initializer_variant)* [',']] '}';
-enum_initializer_variant: decorator* (Identifier | Atom) ['(' expression ')'];
+enum_initializer_variant: decorator* Identifier ['(' expression ')'];
 trait_binding: 'trait' Identifier '{' [trait_member (?1 ',' trait_member)* [',']] '}' ';';
 trait_member: Identifier ':' contract;
 impl_binding: 'impl' [type_parameters] contract 'for' contract '{' [impl_member (?1 ',' impl_member)* [',']] '}' ';';
@@ -76,7 +76,6 @@ primary:
 | string_literal @string_expr
 | concat_expression @string_expr
 | Bytes @bytes_expr
-| Atom @atom_expr
 | ?4 named_intrinsic
 | Identifier @variable_expr
 | ?5 interpreter_intrinsic
@@ -138,8 +137,6 @@ pattern:
 | Int @int_pattern
 | Float @float_pattern
 | string_literal @string_pattern
-| ?2 Atom '(' pattern ')' @tagged_pattern
-| ?t Atom @atom_pattern
 | '(' [pattern (?1 ',' pattern)* [',']] ')' @tuple_pattern
 | '{' [struct_pattern_field (?3 ',' struct_pattern_field)* [',']] '}' @struct_pattern
 ;
