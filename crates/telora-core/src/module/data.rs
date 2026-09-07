@@ -227,6 +227,7 @@ fn entry_wrapper_body(
 
 fn static_data_interface(descriptor: TypeDescriptor) -> ModuleInterface {
     ModuleInterface {
+        value_binding: None,
         type_declarations: BTreeSet::new(),
         namespaces: BTreeMap::new(),
         exports: BTreeMap::from([(

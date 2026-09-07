@@ -1,7 +1,6 @@
 fn imported_static_descriptor(
     value: ValueRef<'_>,
     interface: Option<&ModuleInterface>,
-    local: &str,
 ) -> Option<TypeDescriptor> {
     let Some(interface) = interface else {
         return infer_value_ref(value);
@@ -9,7 +8,7 @@ fn imported_static_descriptor(
     if interface.exports.is_empty() && interface.namespaces.is_empty() && value.kind() != ValueKind::Module {
         return infer_value_ref(value);
     }
-    if let Some(scheme) = interface.exports.get(local) {
+    if let Some(scheme) = interface.binding_scheme() {
         return Some(scheme.body.clone());
     }
     Some(interface_descriptor(interface))
@@ -334,7 +333,7 @@ fn infer_tool_expression_evidence(
     // evidence, just like the parameters supplied to the final inference pass.
     for (name, value) in bindings {
         if let Some(scheme) = context.interfaces.get(name)
-            .and_then(|interface| interface.exports.get(name))
+            .and_then(ModuleInterface::binding_scheme)
         {
             schemes.insert(name.clone(), scheme.clone());
         }
@@ -342,7 +341,7 @@ fn infer_tool_expression_evidence(
             environment.insert(name.clone(), TypeDescriptor::TypeOf(Box::new(descriptor)));
         } else if let Some(interface) = context.interfaces.get(name)
             && let Some(descriptor) = imported_static_descriptor(
-                ValueRef::work(*value, &evaluator.work, evaluator.main), Some(interface), name,
+                ValueRef::work(*value, &evaluator.work, evaluator.main), Some(interface),
             )
         {
             environment.insert(name.clone(), descriptor);

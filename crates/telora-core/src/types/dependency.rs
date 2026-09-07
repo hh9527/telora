@@ -346,7 +346,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
         let interface = qualified_external_interfaces.get(name);
         let scheme = interface
-            .and_then(|interface| interface.exports.get(name))
+            .and_then(ModuleInterface::binding_scheme)
             .or_else(|| qualified_external_interfaces.values()
                 .flat_map(|interface| &interface.trait_implementations)
                 .find(|implementation| implementation.dictionary == *name)
@@ -356,7 +356,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let inferred = scheme.as_ref().map(|scheme| scheme.body.clone()).or_else(|| imported_static_descriptor(
             ValueRef::persistent(*root, evaluator.main),
             interface,
-            name,
         )).ok_or_else(|| frontend_error(source_name, format!("Host binding {name:?} requires an explicit type interface")))?;
         static_environment.insert(name.clone(), inferred.clone());
         binding_types.insert(name.clone(), inferred);
@@ -1309,12 +1308,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     })?;
                 let interface = qualified_external_interfaces.get(&binding.value.name.value);
                 let scheme = interface
-                    .and_then(|interface| interface.exports.get(&binding.value.name.value))
+                    .and_then(ModuleInterface::binding_scheme)
                     .cloned();
                 let inferred = imported_static_descriptor(
                     ValueRef::persistent(value, evaluator.main),
                     interface,
-                    &binding.value.name.value,
                 ).ok_or_else(|| frontend_error(source_name, format!("import {:?} requires an explicit type interface", binding.value.name.value)))?;
                 static_environment.insert(binding.value.name.value.clone(), inferred.clone());
                 binding_types.insert(binding.value.name.value.clone(), inferred);
@@ -1621,7 +1619,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             if binding.value.kind == BindingKind::Import {
                 let scheme = external_interfaces
                     .get(&binding.value.name.value)
-                    .and_then(|interface| interface.exports.get(&binding.value.name.value))
+                    .and_then(ModuleInterface::binding_scheme)
                     .cloned();
                 inference.set_local_scheme(binding.value.name.value.clone(), scheme);
             }
@@ -2104,6 +2102,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .find_map(|interface| interface.display_trait)
     };
     let module_interface = ModuleInterface {
+        value_binding: None,
         type_declarations: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
                 inference.declared_constructor_reference(&field.value.value)

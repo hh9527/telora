@@ -566,6 +566,7 @@ impl ModuleLoader {
             if binding.value.imported_name.is_none()
                 && let Some(scheme) = artifact.root_scheme
             {
+                selected_interface.value_binding = Some(binding.value.name.value.clone());
                 selected_interface.exports.insert(binding.value.name.value.clone(), scheme);
             }
             external_roots.insert(binding.value.name.value.clone(), selected_root);
@@ -669,6 +670,7 @@ impl ModuleLoader {
             external_interfaces.insert(
                 name.clone(),
                 candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                    value_binding: Some(name.clone()),
                     type_declarations: if candidate.type_declaration { BTreeSet::from([name.clone()]) } else { BTreeSet::new() },
                     namespaces: BTreeMap::new(),
                     exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),

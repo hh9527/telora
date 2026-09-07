@@ -14,10 +14,12 @@
   Tool-stage callable construction shares strict inference evidence, including
   generic/imported constructors, helper functions, codec ownership and decorator
   arguments. Qualified enum value constructors, including generic members and
-  first-class use, are implemented. Member imports/exports, named enum patterns,
+  first-class use, are implemented. Module namespaces and selected values now
+  carry explicit binding provenance, including same-name module/type aliases.
+  Member imports/exports, named enum patterns,
   quoted-syntax removal and checks remain pending.
-- Validation: debug build and workspace tests pass for the qualified enum constructor
-  batch, including 307 language fixture groups. New behavior is tested in
+- Validation: debug build and workspace tests pass for the binding-provenance
+  batch, including 308 language fixture groups. New behavior is tested in
   `.telora`; no release binary was built.
 
 ## Objective
@@ -186,11 +188,12 @@ enum with Type, StructType, EnumType, Field and Variant members, referenced as
 prelude. Bootstrap code uses the same identities as user modules without
 relying on the prelude to load itself.
 
-The member-binding implementation must distinguish a module namespace from a
+The member-binding implementation distinguishes a module namespace from a
 selectively imported type even when the module alias and an exported type have
 the same spelling. A singleton export lookup is insufficient evidence of a
-type binding; this distinction belongs to binding provenance and is an
-acceptance check for member import/export integration.
+type binding. `ModuleInterface.value_binding` records the selected value's name;
+namespace interfaces retain their full export table. Qualification, reexport,
+open imports and standalone direct-value roots preserve this provenance.
 
 Remove quoted forms in declarations, expressions and patterns together.
 Migrate generated AST paths, embedded sources, language fixtures, examples,

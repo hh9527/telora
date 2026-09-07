@@ -457,6 +457,7 @@ impl WorkspaceBuilder<'_> {
                 external_interfaces.insert(
                     name.clone(),
                     candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                        value_binding: Some(name.clone()),
                         type_declarations: if candidate.type_declaration { BTreeSet::from([name.clone()]) } else { BTreeSet::new() },
                         namespaces: BTreeMap::new(),
                         exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
@@ -487,8 +488,7 @@ impl WorkspaceBuilder<'_> {
                 .iter()
                 .filter_map(|(name, interface)| {
                     interface
-                        .exports
-                        .get(name)
+                        .binding_scheme()
                         .map(|scheme| (name.clone(), scheme.clone()))
                 })
                 .collect::<BTreeMap<_, _>>();

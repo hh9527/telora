@@ -70,6 +70,8 @@ impl TypeScheme {
 
 #[derive(Clone, Debug, Default)]
 pub struct ModuleInterface {
+    // A selected value has a binding name; a module namespace does not.
+    pub(crate) value_binding: Option<String>,
     pub(crate) type_declarations: BTreeSet<String>,
     pub exports: BTreeMap<String, TypeScheme>,
     pub namespaces: BTreeMap<String, ModuleInterface>,
@@ -82,6 +84,10 @@ pub struct ModuleInterface {
 }
 
 impl ModuleInterface {
+    pub(crate) fn binding_scheme(&self) -> Option<&TypeScheme> {
+        self.value_binding.as_ref().and_then(|name| self.exports.get(name))
+    }
+
     fn qualified(&self, namespace: &str) -> Self {
         let names = self
             .concrete_types
@@ -89,6 +95,7 @@ impl ModuleInterface {
             .map(|name| (name.clone(), format!("\0import:{namespace}:{name}")))
             .collect::<HashMap<_, _>>();
         Self {
+            value_binding: self.value_binding.clone(),
             type_declarations: self.type_declarations.clone(),
             namespaces: self.namespaces.iter()
                 .map(|(name, interface)| (name.clone(), interface.qualified(&format!("{namespace}.{name}"))))

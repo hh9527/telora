@@ -946,6 +946,7 @@ fn select_import_root(
     Ok((
         selected,
         ModuleInterface {
+            value_binding: Some(local.to_owned()),
             type_declarations: if interface.type_declarations.contains(&exported.value) {
                 BTreeSet::from([local.to_owned()])
             } else {

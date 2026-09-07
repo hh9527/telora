@@ -1,0 +1,3 @@
+import "@src/test/enum-binding-origins/model" as Model;
+import "@src/test/enum-binding-origins/model" { Model as Direct };
+export { Model as Namespace, Direct as Alias };

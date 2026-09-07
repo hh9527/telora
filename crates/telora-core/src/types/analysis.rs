@@ -271,7 +271,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     schemes.extend(control.external_schemes.iter().map(|(name, scheme)| (name.clone(), scheme.clone())));
     for (name, root) in external_roots {
         if let Some(descriptor) = imported_static_descriptor(
-            ValueRef::persistent(*root, evaluator.main), interfaces.get(name), name,
+            ValueRef::persistent(*root, evaluator.main), interfaces.get(name),
         ) {
             environment.insert(name.clone(), descriptor);
         }

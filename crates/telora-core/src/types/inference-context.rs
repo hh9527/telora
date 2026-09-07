@@ -458,7 +458,8 @@ impl<'a> GenericInference<'a> {
 
     fn namespace_interface(&self, expression: &Expr) -> Option<&ModuleInterface> {
         match &expression.value {
-            ExprKind::Variable(name) => self.external_interfaces.get(&name.value),
+            ExprKind::Variable(name) => self.external_interfaces.get(&name.value)
+                .filter(|interface| interface.value_binding.is_none()),
             ExprKind::Field { receiver, field } => self.namespace_interface(receiver)?.namespaces.get(&field.value),
             _ => None,
         }
@@ -508,7 +509,8 @@ impl<'a> GenericInference<'a> {
                     return definition.kind == HirDefinitionKind::Type;
                 }
                 self.external_interfaces.get(&name.value)
-                    .is_some_and(|interface| interface.type_declarations.contains(&name.value))
+                    .is_some_and(|interface| interface.value_binding.as_deref() == Some(name.value.as_str())
+                        && interface.type_declarations.contains(&name.value))
             }
             ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
                 .is_some_and(|interface| interface.type_declarations.contains(&field.value)),
