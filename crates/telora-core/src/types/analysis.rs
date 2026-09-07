@@ -280,15 +280,11 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             environment.insert(name.clone(), descriptor);
         }
     }
-    evaluator.inference_context = Some(ToolInferenceContext {
-        hir: hir.clone(),
-        named_types: interfaces.values().flat_map(|interface| interface.concrete_types.clone()).collect(),
-        interfaces,
-        environment,
-        schemes,
-        builtin_tuple_available: !external_roots.contains_key("Tuple"),
-        dyn_namespaces: imported_dyn_namespaces(&recovered.bindings),
-    });
+    let named_types = interfaces.values().flat_map(|interface| interface.concrete_types.clone()).collect();
+    evaluator.inference_context = Some(ToolInferenceContext::new(
+        hir.clone(), interfaces, environment, schemes, named_types,
+        !external_roots.contains_key("Tuple"), imported_dyn_namespaces(&recovered.bindings),
+    ));
     let mut tool_values = evaluator
         .install_bootstrap()
         .expect("core prelude values can enter the tool Main world");

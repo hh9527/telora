@@ -1,0 +1,18 @@
+import "std/test" as test;
+import "std/type-property" as property;
+import "@src/test-support" {expect};
+import "@src/test/static-property-evidence/model" as model;
+
+def constrained: for(T: Property(model.Label)) Fn(TypeOf(T)) -> Bool = fn(target) { True };
+
+export def constrained_trait = test.should_ok(fn() {
+    let item: model.Item = {id: 42};
+    expect(model.name(item) == "named" && constrained(model.Item))
+});
+
+export def materialized_record = test.should_ok(fn() {
+    expect(match property.get_type_prop(model.Item, model.Label) {
+        Some(label) => label.text == "ready",
+        None => False,
+    })
+});

@@ -40,10 +40,29 @@ fn dependency_reaches(
 }
 
 fn expression_dependencies(hir: &HirProgram, root: HirExpressionId) -> Vec<HirDefinitionId> {
+    expression_dependencies_with_properties(hir, root, true)
+}
+
+fn expression_dependencies_with_properties(
+    hir: &HirProgram,
+    root: HirExpressionId,
+    include_properties: bool,
+) -> Vec<HirDefinitionId> {
     let mut dependencies = hir
         .expressions()
         .iter()
         .filter(|expression| expression_descends_from(hir, expression.id, root))
+        .filter(|expression| {
+            if include_properties { return true; }
+            let mut parent = Some(expression.id);
+            while let Some(id) = parent {
+                let expression = hir.expression(id).expect("HIR expression exists");
+                if hir.is_property_root(expression.location) { return false; }
+                if id == root { break; }
+                parent = expression.parent;
+            }
+            true
+        })
         .filter_map(|expression| expression.reference)
         .filter_map(|reference| hir.reference(reference))
         .filter_map(|reference| match reference.resolution {
@@ -64,6 +83,12 @@ fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec
     expression_dependencies(hir, root)
 }
 
+fn type_definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
+    let root = hir.definition(definition).and_then(|definition| definition.value)
+        .expect("type definition has a value expression");
+    expression_dependencies_with_properties(hir, root, false)
+}
+
 fn type_dependency_graph(
     hir: &HirProgram,
     type_definitions: &HashSet<HirDefinitionId>,
@@ -73,7 +98,7 @@ fn type_dependency_graph(
         .copied()
         .map(|definition| SemanticDependencyNode {
             definition,
-            dependencies: definition_dependencies(hir, definition)
+            dependencies: type_definition_dependencies(hir, definition)
                 .into_iter()
                 .filter(|dependency| type_definitions.contains(dependency))
                 .collect(),
@@ -81,6 +106,44 @@ fn type_dependency_graph(
         .collect::<Vec<_>>();
     nodes.sort_by_key(|node| node.definition);
     SemanticDependencyGraph { nodes }
+}
+
+fn tool_value_dependencies(hir: &HirProgram, program: &Program) -> HashSet<String> {
+    let mut needed = HashSet::new();
+    let mut frontier = Vec::new();
+    for expression in hir.expressions() {
+        let Some(reference) = expression.reference.and_then(|id| hir.reference(id)) else { continue; };
+        let HirResolution::Definition(definition) = reference.resolution else { continue; };
+        let mut parent = Some(expression.id);
+        while let Some(id) = parent {
+            let expression = hir.expression(id).expect("HIR expression exists");
+            if hir.is_tool_root(expression.location) {
+                frontier.push(definition);
+                break;
+            }
+            parent = expression.parent;
+        }
+    }
+    // Constraint syntax is not part of runtime HIR, but its metadata arguments
+    // can refer to ordinary helper bindings too.
+    for bound in program.value.body.value.bindings.iter()
+        .flat_map(|binding| binding.value.type_parameter_bounds.iter().flatten())
+    {
+        let inputs = HirProgram::resolve_expression(bound, Vec::new());
+        for reference in inputs.unresolved() {
+            frontier.extend(hir.definitions().iter()
+                .filter(|definition| definition.top_level && definition.name == reference.name)
+                .map(|definition| definition.id));
+        }
+    }
+    while let Some(id) = frontier.pop() {
+        let Some(definition) = hir.definition(id) else { continue; };
+        if !definition.top_level || !needed.insert(id) || definition.value.is_none() {
+            continue;
+        }
+        frontier.extend(definition_dependencies(hir, id));
+    }
+    needed.into_iter().filter_map(|id| hir.definition(id).map(|definition| definition.name.clone())).collect()
 }
 
 fn type_definition_bindings<'a>(
@@ -422,15 +485,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
-    evaluator.inference_context = Some(ToolInferenceContext {
-        hir: hir.clone(),
-        interfaces: qualified_external_interfaces.clone(),
-        environment: static_environment.clone(),
-        schemes: binding_schemes.clone(),
-        named_types: imported_named_types.clone(),
-        builtin_tuple_available: !external_roots.contains_key("Tuple"),
-        dyn_namespaces: imported_dyn_namespaces(&program.value.body.value.bindings),
-    });
+    evaluator.inference_context = Some(ToolInferenceContext::new(
+        hir.clone(), qualified_external_interfaces.clone(), static_environment.clone(),
+        binding_schemes.clone(), imported_named_types.clone().into_iter().chain(declared_types.clone()).collect(),
+        !external_roots.contains_key("Tuple"),
+        imported_dyn_namespaces(&program.value.body.value.bindings),
+    ));
     let type_definitions = type_bindings.keys().copied().collect::<HashSet<_>>();
     let type_dependencies = type_dependency_graph(&hir, &type_definitions);
     for node in &type_dependencies.nodes {
@@ -473,7 +533,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .iter()
         .copied()
         .filter(|definition| {
-            definition_dependencies(&hir, *definition).iter().any(|dependency| {
+            type_definition_dependencies(&hir, *definition).iter().any(|dependency| {
                 hir.definition(*dependency).is_some_and(|dependency| {
                     dependency.top_level
                         && matches!(dependency.kind, HirDefinitionKind::Let | HirDefinitionKind::DefinitionSlot)
@@ -516,7 +576,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
     while !pending_types.is_empty() {
         let mut progressed = false;
         for definition in pending_types.iter().copied().collect::<Vec<_>>() {
-            evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
             let node = type_dependencies
                 .nodes
                 .iter()
@@ -589,6 +648,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         body: witness,
                     },
                 );
+                evaluator.publish_inference_binding(&name, &static_environment, &binding_schemes, &declared_types);
                 evaluated_concrete_type_names.insert(name);
                 pending_types.remove(&definition);
                 evaluated_types.insert(definition);
@@ -727,6 +787,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             static_environment.insert(binding.value.name.value.clone(), projected.clone());
             binding_types.insert(binding.value.name.value.clone(), projected);
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
+            evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
             type_family_templates.insert(binding.value.name.value.clone(), family.clone());
             type_family_values.insert(binding.value.name.value.clone(), family.clone());
             pending_types.remove(&definition);
@@ -782,6 +843,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 static_environment.insert(binding.value.name.value.clone(), projected.clone());
                 binding_types.insert(binding.value.name.value.clone(), projected);
                 binding_schemes.insert(binding.value.name.value.clone(), built.scheme);
+                evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
                 type_family_templates
                     .insert(binding.value.name.value.clone(), built.family.clone());
                 type_family_values.insert(binding.value.name.value.clone(), built.family);
@@ -883,6 +945,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             body: witness,
                         },
                     );
+                    evaluator.publish_inference_binding(&name, &static_environment, &binding_schemes, &declared_types);
                     evaluated_concrete_type_names.insert(name);
                     pending_types.remove(&definition);
                     evaluated_types.insert(definition);
@@ -1078,8 +1141,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         ));
     }
 
+    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+    let tool_dependencies = tool_value_dependencies(&hir, program);
     for binding in &program.value.body.value.bindings {
-        evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
         let inferred_expression = infer_expr_recorded(
             &binding.value.value,
             &static_environment,
@@ -1264,7 +1328,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 if let Some(checked) = checked { binding_types.insert(binding.value.name.value.clone(), checked); }
                 else { binding_types.remove(&binding.value.name.value); }
 
-                if let Ok(value) = evaluate_typed_tool_expression_silent(
+                if tool_dependencies.contains(&binding.value.name.value)
+                    && let Ok(value) = evaluate_typed_tool_expression_silent(
                     source_name,
                     &binding.value.value,
                     &tool_values,
@@ -1287,7 +1352,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 set_projected_type(&mut static_environment, name, checked.clone());
                 if let Some(checked) = checked { binding_types.insert(name.clone(), checked); }
                 else { binding_types.remove(name); }
-                if let Ok(value) = evaluate_typed_tool_expression_silent(
+                if tool_dependencies.contains(name)
+                    && let Ok(value) = evaluate_typed_tool_expression_silent(
                     source_name,
                     &binding.value.value,
                     &tool_values,
@@ -1328,29 +1394,22 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 }
             }
         }
+        evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
     }
 
     evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
-    let local_type_properties = evaluate_declared_properties(
-        source_name,
+    let local_type_property_evidence = declared_property_evidence(
         program,
         &tool_values,
         &static_environment,
-        account,
         sources,
         &mut evaluator,
     )?;
-    let local_type_property_roots = local_type_properties
-        .iter()
-        .map(|(evidence, root)| (evidence.root.clone(), *root))
-        .collect::<BTreeMap<_, _>>();
     let mut type_properties = qualified_external_interfaces
         .values()
         .flat_map(|interface| interface.type_properties.iter().cloned())
         .chain(
-            local_type_properties
-                .iter()
-                .map(|(evidence, _)| evidence.clone()),
+            local_type_property_evidence.iter().cloned(),
         )
         .collect::<Vec<_>>();
     type_properties.sort_by(|left, right| {
@@ -1462,6 +1521,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         display_trait,
         &dyn_namespaces,
         !external_roots.contains_key("Tuple"),
+        None,
         account.query_context(),
     );
     let mut checked_environment = static_environment.clone();
@@ -1935,6 +1995,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             (*location, scheme)
         })
         .collect();
+    let mut binding_schemes = binding_schemes.clone();
     binding_schemes.extend(inference.top_level_inferred_schemes.clone());
     let namespace_bindings = qualified_external_interfaces.keys()
         .filter(|name| external_roots.get(*name).is_some_and(|root| ValueRef::persistent(*root, evaluator.main).kind() == ValueKind::Module))
@@ -2101,6 +2162,18 @@ pub(crate) fn analyze_program_with_bindings_observed(
             validate_publishable_scheme(scheme)
                 .map_err(|message| frontend_error(source_name, message))?;
         }
+    }
+    // Property presence follows the provider contract. Values are materialized
+    // only after the module's static obligations have succeeded.
+    let local_type_properties = evaluate_declared_properties(
+        source_name, program, &tool_values, &static_environment,
+        account, sources, &mut evaluator,
+    )?;
+    let local_type_property_roots = local_type_properties.iter()
+        .map(|(evidence, root)| (evidence.root.clone(), *root))
+        .collect::<BTreeMap<_, _>>();
+    if local_type_property_evidence.iter().any(|evidence| !local_type_property_roots.contains_key(&evidence.root)) {
+        return Err(frontend_error(source_name, "declared property evidence was not materialized"));
     }
     let module_display_trait = if module_context.defines_display_trait() {
         trait_ids.get("Display").copied()

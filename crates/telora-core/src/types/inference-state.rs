@@ -1,5 +1,5 @@
 struct GenericInference<'a> {
-    schemes: HashMap<String, TypeScheme>,
+    schemes: &'a HashMap<String, TypeScheme>,
     scheme_scopes: Vec<HashMap<String, Option<TypeScheme>>>,
     top_level_inferred_schemes: HashMap<String, TypeScheme>,
     inferred_schemes: HashMap<crate::Location, TypeScheme>,
@@ -18,7 +18,7 @@ struct GenericInference<'a> {
     hir: &'a HirProgram,
     external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     named_types: &'a BTreeMap<String, TypeDescriptor>,
-    declared_bodies: HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
+    declared_bodies: std::borrow::Cow<'a, HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>>,
     local_annotations: &'a HashMap<crate::Location, TypeDescriptor>,
     dyn_namespaces: &'a HashSet<String>,
     builtin_tuple_available: bool,

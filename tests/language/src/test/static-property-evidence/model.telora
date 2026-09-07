@@ -1,0 +1,20 @@
+@property(PropertyTarget.Type)
+type Label = struct {text: String};
+
+def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) {
+    {text: "ready"}
+};
+
+@label
+type Item = struct {id: Int};
+
+trait Named {name: Fn(Self) -> String};
+impl(T: Property(Label)) Named for T {
+    name: fn(value) { "named" },
+};
+
+def name: for(T: Named) Fn(T) -> String = fn(value) {
+    Named.name(value)
+};
+
+export {Label, Item, Named, name};

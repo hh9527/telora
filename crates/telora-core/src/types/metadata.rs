@@ -307,16 +307,7 @@ fn infer_tool_expression_evidence(
     evaluator: &mut ToolEvaluator,
 ) -> Result<ToolExpressionEvidence, String> {
     let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    if !context.named_types.values().any(|descriptor| {
-        matches!(descriptor, TypeDescriptor::Declared(declared)
-            if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)))
-    }) && !context.schemes.values()
-        .chain(context.interfaces.values().flat_map(|interface| interface.exports.values()))
-        .any(|scheme| constructor_instance_type(&scheme.body).is_some_and(|owner| {
-            let body = match owner { TypeDescriptor::Declared(declared) => declared.body.as_ref(), ty => ty };
-            matches!(body, TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_))
-        }))
-    {
+    if !context.supports_constructors {
         return Ok(ToolExpressionEvidence {
             descriptors: HashMap::new(),
             value_constructors: HashMap::new(),
@@ -330,39 +321,48 @@ fn infer_tool_expression_evidence(
     evaluator.inference_depth -= 1;
     annotation_result.map_err(|error| error.to_string())?;
     let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    let mut environment = context.environment.clone();
-    let mut schemes = context.schemes.clone();
+    let inputs = HirProgram::resolve_expression(expression, Vec::new());
+    let names = inputs.references().iter()
+        .filter(|reference| !matches!(reference.resolution, HirResolution::Definition(_)))
+        .map(|reference| reference.name.as_str()).collect::<HashSet<_>>();
+    let mut environment = HashMap::new();
+    let mut lexical_schemes = Vec::new();
     // Bound type parameters supplied by the metadata scheduler are lexical
     // evidence, just like the parameters supplied to the final inference pass.
-    for (name, value) in bindings {
+    for name in names {
+        if let Some(descriptor) = context.environment.get(name) {
+            environment.insert(name.to_owned(), descriptor.clone());
+        }
         if let Some(scheme) = context.interfaces.get(name)
             .and_then(ModuleInterface::binding_scheme)
         {
-            schemes.insert(name.clone(), scheme.clone());
+            lexical_schemes.push((name.to_owned(), scheme.clone()));
         }
+        let Some(value) = bindings.get(name) else { continue; };
         if let Ok(descriptor) = evaluator.decode_type(*value, "Type") {
-            environment.insert(name.clone(), TypeDescriptor::TypeOf(Box::new(descriptor)));
+            environment.insert(name.to_owned(), TypeDescriptor::TypeOf(Box::new(descriptor)));
         } else if let Some(interface) = context.interfaces.get(name)
             && let Some(descriptor) = imported_static_descriptor(
                 ValueRef::work(*value, &evaluator.work, evaluator.main), Some(interface),
             )
         {
-            environment.insert(name.clone(), descriptor);
+            environment.insert(name.to_owned(), descriptor);
         }
     }
-    let implementations = context.interfaces.values()
-        .flat_map(|interface| interface.trait_implementations.clone()).collect::<Vec<_>>();
-    let properties = context.interfaces.values()
-        .flat_map(|interface| interface.type_properties.clone()).collect::<Vec<_>>();
-    let traits = context.interfaces.values()
-        .flat_map(|interface| interface.traits.clone()).collect::<BTreeMap<_, _>>();
-    let display_trait = context.interfaces.values().find_map(|interface| interface.display_trait)
-        .map(|id| (id, "std/fmt.Display".to_owned()));
+    let context = evaluator.inference_context.as_mut().expect("tool inference context exists");
+    for descriptor in annotations.values().chain(environment.values()) {
+        collect_declared_bodies(descriptor, &mut context.declared_bodies, &mut HashSet::new());
+    }
     let mut inference = GenericInference::new(
-        &schemes, &context.hir, &context.interfaces, &context.named_types,
-        &annotations, &implementations, &properties, &traits, display_trait,
-        &context.dyn_namespaces, context.builtin_tuple_available, account.query_context(),
+        &context.schemes, &context.hir, &context.interfaces, &context.named_types,
+        &annotations, &context.trait_implementations, &context.type_properties,
+        &context.trait_ids, context.display_trait.clone(),
+        &context.dyn_namespaces, context.builtin_tuple_available,
+        Some(&context.declared_bodies), account.query_context(),
     );
+    for (name, scheme) in lexical_schemes {
+        inference.set_local_scheme(name, Some(scheme));
+    }
     // The caller decides whether incomplete metadata may defer a failed
     // inference pass; typed tool expressions require successful evidence.
     inference.infer(expression, &environment, expected)?;
@@ -439,10 +439,35 @@ fn evaluate_tool_expression_with_debug(
         }
         Err(_) => None,
     };
-    let value_constructors = evidence.as_ref()
-        .map(|evidence| evidence.value_constructors.clone()).unwrap_or_default();
-    let mut descriptors = expression_descriptors.cloned().unwrap_or_default();
-    if let Some(evidence) = evidence { descriptors.extend(evidence.descriptors); }
+    let mut prepared = ToolExpressionEvidence {
+        descriptors: expression_descriptors.into_iter().flat_map(|descriptors| descriptors.iter())
+            .filter(|(location, _)| location.source == expression.location.source
+                && expression.location.start <= location.start
+                && location.end <= expression.location.end)
+            .map(|(location, descriptor)| (*location, descriptor.clone())).collect(),
+        value_constructors: HashMap::new(),
+    };
+    if let Some(evidence) = evidence {
+        prepared.descriptors.extend(evidence.descriptors);
+        prepared.value_constructors = evidence.value_constructors;
+    }
+    evaluate_prepared_tool_expression(
+        source_name, expression, bindings, prepared, account, sources, evaluator, observed,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_prepared_tool_expression(
+    source_name: &str,
+    expression: &Expr,
+    bindings: &BTreeMap<String, Val>,
+    evidence: ToolExpressionEvidence,
+    account: &mut QuotaAccount,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator,
+    observed: bool,
+) -> Result<Val, FrontendError> {
+    let ToolExpressionEvidence { descriptors, value_constructors } = evidence;
     let mut bindings = bindings.clone();
     let mut declared_value_owners = HashMap::new();
     for (location, descriptor) in &descriptors {

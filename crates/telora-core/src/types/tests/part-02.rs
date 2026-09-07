@@ -120,6 +120,7 @@
             &dyn_namespaces,
             true,
             None,
+            None,
         );
         let variable = TypeDescriptor::Inference(InferenceVariableId(0));
         assert!(

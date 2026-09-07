@@ -375,8 +375,14 @@ pub(crate) fn compile_expression_with_external_bindings(
     let mut lowered = expression.clone();
     crate::elaboration::lower_constructor_patterns(&mut lowered, &value_constructors);
     let expression = &lowered;
+    let mut required = BTreeSet::new();
+    free_expr(expression, &HashSet::new(), &mut required);
+    required.extend(declared_value_owners.values().cloned());
     let hir = HirProgram::resolve_runtime_expression(expression, bindings.iter().cloned());
     validate_hir(source_file, &hir, &HashSet::new())?;
+    required.extend(hir.references().iter()
+        .filter(|reference| reference.resolution == crate::hir::HirResolution::External)
+        .map(|reference| reference.name.clone()));
     let mut compiler = Compiler {
         source_name,
         function_name: function_name.to_owned(),
@@ -402,7 +408,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
-    for name in bindings {
+    for name in bindings.into_iter().filter(|name| required.contains(name)) {
         let register = compiler.load_external_constant(name.clone(), expression.location);
         compiler.environment.insert(name, register);
     }

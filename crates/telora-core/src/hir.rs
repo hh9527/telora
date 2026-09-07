@@ -83,6 +83,8 @@ pub struct HirProgram {
     references: Vec<HirReference>,
     expressions: Vec<HirExpression>,
     member_patterns: HashSet<Location>,
+    tool_roots: HashSet<Location>,
+    property_roots: HashSet<Location>,
 }
 
 impl HirProgram {
@@ -191,6 +193,14 @@ impl HirProgram {
 
     pub fn expressions(&self) -> &[HirExpression] {
         &self.expressions
+    }
+
+    pub(crate) fn is_tool_root(&self, location: Location) -> bool {
+        self.tool_roots.contains(&location)
+    }
+
+    pub(crate) fn is_property_root(&self, location: Location) -> bool {
+        self.property_roots.contains(&location)
     }
 
     pub fn expression(&self, id: HirExpressionId) -> Option<&HirExpression> {
@@ -452,6 +462,11 @@ impl Resolver {
         expression: &Expr,
         scopes: &mut Vec<Scope>,
     ) -> HirExpressionId {
+        if self.static_expressions && (matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
+            || binding.value.annotation.as_ref().is_some_and(|annotation| annotation.location == expression.location))
+        {
+            self.hir.tool_roots.insert(expression.location);
+        }
         let inserted = binding
             .value
             .type_parameters
@@ -467,9 +482,11 @@ impl Resolver {
                     ExprKind::Variable(name) if name.value == "property"
                 );
                 if !intrinsic_property {
+                    self.hir.property_roots.insert(decorator.value.callee.location);
                     self.index_expr(&decorator.value.callee, scopes);
                 }
                 for argument in &decorator.value.arguments {
+                    self.hir.property_roots.insert(argument.location);
                     self.index_expr(argument, scopes);
                 }
             }
@@ -481,6 +498,13 @@ impl Resolver {
             }
         }
         expression
+    }
+
+    fn index_tool_expr(&mut self, expression: &Expr, scopes: &mut Vec<Scope>) -> HirExpressionId {
+        if self.static_expressions {
+            self.hir.tool_roots.insert(expression.location);
+        }
+        self.index_expr(expression, scopes)
     }
 
     fn index_expr(&mut self, expression: &Expr, scopes: &mut Vec<Scope>) -> HirExpressionId {
@@ -540,9 +564,11 @@ impl Resolver {
                                 ExprKind::Variable(name) if name.value == "property"
                             );
                             if !intrinsic_property {
+                                self.hir.property_roots.insert(decorator.value.callee.location);
                                 self.index_expr(&decorator.value.callee, scopes);
                             }
                             for argument in &decorator.value.arguments {
+                                self.hir.property_roots.insert(argument.location);
                                 self.index_expr(argument, scopes);
                             }
                         }
@@ -597,7 +623,7 @@ impl Resolver {
             ExprKind::TypeAscription { value, target }
             | ExprKind::CheckedCast { value, target } => {
                 self.index_expr(value, scopes);
-                self.index_expr(target, scopes);
+                self.index_tool_expr(target, scopes);
                 None
             }
             ExprKind::DynProject {
@@ -606,7 +632,7 @@ impl Resolver {
                 value,
             } => {
                 self.index_expr(namespace, scopes);
-                self.index_expr(target, scopes);
+                self.index_tool_expr(target, scopes);
                 self.index_expr(value, scopes);
                 None
             }
@@ -623,7 +649,7 @@ impl Resolver {
                     for argument in arguments {
                         match &argument.value {
                             TypeArgumentKind::Explicit(argument) => {
-                                self.index_expr(argument, scopes);
+                                self.index_tool_expr(argument, scopes);
                             }
                             TypeArgumentKind::Infer => {
                                 let id = HirExpressionId(self.hir.expressions.len() as u32);
@@ -651,11 +677,11 @@ impl Resolver {
                 if self.static_expressions {
                     for parameter in parameters {
                         if let Some(annotation) = &parameter.annotation {
-                            self.index_expr(annotation, scopes);
+                            self.index_tool_expr(annotation, scopes);
                         }
                     }
                     if let Some(annotation) = result_annotation {
-                        self.index_expr(annotation, scopes);
+                        self.index_tool_expr(annotation, scopes);
                     }
                 }
                 scopes.push(Scope::new());

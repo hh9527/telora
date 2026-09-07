@@ -65,8 +65,8 @@ fn property_capability(
     let evidence = infer_tool_expression_evidence(&source_name, argument, tool_values, Some(&expected), account, sources, evaluator)
         .map_err(|message| FrontendError::from_diagnostic(sources,
             Diagnostic::error(format!("@property requires PropertyTarget: {message}"), argument.location)))?;
-    let value = evaluate_typed_tool_expression_silent(&source_name, argument, tool_values,
-        &evidence.descriptors, Some(&expected), account, sources, evaluator)?;
+    let value = evaluate_prepared_tool_expression(&source_name, argument, tool_values,
+        evidence, account, sources, evaluator, false)?;
     let value = ValueRef::work(value, &evaluator.work, evaluator.main);
     let capability = value.as_atom().ok_or_else(|| FrontendError::from_diagnostic(sources,
         Diagnostic::error("@property must evaluate to a PropertyTarget value", argument.location)))?;
@@ -494,6 +494,54 @@ fn validate_decorated_binding(
             binding.location,
         ),
     ))
+}
+
+fn declared_property_evidence(
+    program: &Program,
+    tool_values: &BTreeMap<String, Val>,
+    environment: &HashMap<String, TypeDescriptor>,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator<'_>,
+) -> Result<Vec<TypePropertyEvidence>, FrontendError> {
+    let mut evidence = BTreeMap::new();
+    for binding in &program.value.body.value.bindings {
+        if binding.value.decorators.is_empty() && !binding_has_member_decorators(binding) {
+            continue;
+        }
+        validate_decorated_binding(binding, sources)?;
+        let target = environment.get(&binding.value.name.value)
+            .and_then(type_value_descriptor)
+            .expect("decorated type has a concrete Type descriptor");
+        let target_type = evaluator.declared_type_id(tool_values[&binding.value.name.value])?;
+        for decorator in &binding.value.decorators {
+            let property = if intrinsic_property_marker(decorator) {
+                environment.get("PropertyAttr").and_then(type_value_descriptor)
+                    .ok_or_else(|| FrontendError::from_diagnostic(sources, Diagnostic::error(
+                        "@property requires the PropertyAttr bootstrap", decorator.location,
+                    )))?
+            } else {
+                decorator_property_descriptor(
+                    decorator,
+                    PropertyOwnerKind::Ty(binding.value.declared_initializer.expect("nominal declaration")),
+                    environment,
+                    sources,
+                )?
+            };
+            if !matches!(property, TypeDescriptor::Declared(_)) || type_identity_is_symbolic(&property) {
+                return Err(FrontendError::from_diagnostic(sources, Diagnostic::error(
+                    format!("decorator result must be a concrete nominal property type, got {}", property.display_name()),
+                    decorator.location,
+                )));
+            }
+            let property_type = evaluator.canonical_type_id(&property)?;
+            let key = PropertyKey::Ty { ty: target_type, property_ty: property_type };
+            evidence.insert(key, TypePropertyEvidence {
+                target: target.clone(), property,
+                root: type_property_runtime_name(target_type, property_type),
+            });
+        }
+    }
+    Ok(evidence.into_values().collect())
 }
 
 fn establish_property_markers(

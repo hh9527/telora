@@ -1,0 +1,12 @@
+@property(PropertyTarget.Type)
+type Label = struct {text: String};
+
+def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) {
+    fail!("property provider must not run before static checking")
+};
+
+@label
+type Item = struct {id: Int};
+
+def requires: for(T: Property(Label)) Fn(TypeOf(T)) -> Int = fn(target) { 1 };
+export def invalid: String = requires(Item);

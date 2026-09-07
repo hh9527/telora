@@ -1,6 +1,6 @@
 impl<'a> GenericInference<'a> {
     fn new(
-        schemes: &HashMap<String, TypeScheme>,
+        schemes: &'a HashMap<String, TypeScheme>,
         hir: &'a HirProgram,
         external_interfaces: &'a BTreeMap<String, ModuleInterface>,
         named_types: &'a BTreeMap<String, TypeDescriptor>,
@@ -11,28 +11,34 @@ impl<'a> GenericInference<'a> {
         display_trait: Option<(crate::TraitId, String)>,
         dyn_namespaces: &'a HashSet<String>,
         builtin_tuple_available: bool,
+        prepared_bodies: Option<&'a HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>>,
         query: Option<crate::query::QueryContext>,
     ) -> Self {
-        let mut declared_bodies = HashMap::new();
-        for scheme in schemes.values() {
-            collect_declared_bodies(&scheme.body, &mut declared_bodies, &mut HashSet::new());
-        }
-        for descriptor in local_annotations.values() {
-            collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
-        }
-        for descriptor in named_types.values() {
-            collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
-        }
-        for interface in external_interfaces.values() {
-            for descriptor in interface.concrete_types.values() {
-                collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
-            }
-            for scheme in interface.exports.values() {
+        let declared_bodies = if let Some(bodies) = prepared_bodies {
+            std::borrow::Cow::Borrowed(bodies)
+        } else {
+            let mut declared_bodies = HashMap::new();
+            for scheme in schemes.values() {
                 collect_declared_bodies(&scheme.body, &mut declared_bodies, &mut HashSet::new());
             }
-        }
+            for descriptor in local_annotations.values() {
+                collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
+            }
+            for descriptor in named_types.values() {
+                collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
+            }
+            for interface in external_interfaces.values() {
+                for descriptor in interface.concrete_types.values() {
+                    collect_declared_bodies(descriptor, &mut declared_bodies, &mut HashSet::new());
+                }
+                for scheme in interface.exports.values() {
+                    collect_declared_bodies(&scheme.body, &mut declared_bodies, &mut HashSet::new());
+                }
+            }
+            std::borrow::Cow::Owned(declared_bodies)
+        };
         Self {
-            schemes: schemes.clone(),
+            schemes,
             scheme_scopes: vec![HashMap::new()],
             top_level_inferred_schemes: HashMap::new(),
             inferred_schemes: HashMap::new(),

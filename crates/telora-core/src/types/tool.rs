@@ -15,6 +15,12 @@ struct ToolInferenceContext {
     named_types: BTreeMap<String, TypeDescriptor>,
     builtin_tuple_available: bool,
     dyn_namespaces: HashSet<String>,
+    declared_bodies: HashMap<crate::value::DeclaredTypeId, Arc<TypeDescriptor>>,
+    trait_implementations: Vec<TraitImplementation>,
+    type_properties: Vec<TypePropertyEvidence>,
+    trait_ids: BTreeMap<String, crate::TraitId>,
+    display_trait: Option<(crate::TraitId, String)>,
+    supports_constructors: bool,
 }
 
 fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
@@ -30,6 +36,70 @@ struct ToolExpressionEvidence {
 }
 
 impl ToolInferenceContext {
+    fn new(
+        hir: HirProgram,
+        interfaces: BTreeMap<String, ModuleInterface>,
+        environment: HashMap<String, TypeDescriptor>,
+        schemes: HashMap<String, TypeScheme>,
+        named_types: BTreeMap<String, TypeDescriptor>,
+        builtin_tuple_available: bool,
+        dyn_namespaces: HashSet<String>,
+    ) -> Self {
+        let trait_implementations = interfaces.values()
+            .flat_map(|interface| interface.trait_implementations.iter().cloned()).collect();
+        let type_properties = interfaces.values()
+            .flat_map(|interface| interface.type_properties.iter().cloned()).collect();
+        let trait_ids = interfaces.values()
+            .flat_map(|interface| interface.traits.clone()).collect();
+        let display_trait = interfaces.values().find_map(|interface| interface.display_trait)
+            .map(|id| (id, "std/fmt.Display".to_owned()));
+        let mut context = Self {
+            hir, interfaces, environment, schemes, named_types, builtin_tuple_available,
+            dyn_namespaces, declared_bodies: HashMap::new(), trait_implementations,
+            type_properties, trait_ids, display_trait, supports_constructors: false,
+        };
+        context.prepare_declarations();
+        context
+    }
+
+    fn prepare_declarations(&mut self) {
+        self.declared_bodies.clear();
+        for descriptor in self.named_types.values()
+            .chain(self.schemes.values().map(|scheme| &scheme.body))
+            .chain(self.interfaces.values().flat_map(|interface| interface.concrete_types.values()))
+            .chain(self.interfaces.values().flat_map(|interface| interface.exports.values().map(|scheme| &scheme.body)))
+        {
+            collect_declared_bodies(descriptor, &mut self.declared_bodies, &mut HashSet::new());
+            self.supports_constructors |= tool_constructor_type(descriptor);
+        }
+    }
+
+    fn publish_binding(
+        &mut self,
+        name: &str,
+        descriptor: Option<&TypeDescriptor>,
+        scheme: Option<&TypeScheme>,
+        named_type: Option<&TypeDescriptor>,
+    ) {
+        if let Some(descriptor) = descriptor {
+            self.environment.insert(name.into(), descriptor.clone());
+            collect_declared_bodies(descriptor, &mut self.declared_bodies, &mut HashSet::new());
+            self.supports_constructors |= tool_constructor_type(descriptor);
+        } else {
+            self.environment.remove(name);
+        }
+        if let Some(scheme) = scheme {
+            self.schemes.insert(name.into(), scheme.clone());
+            collect_declared_bodies(&scheme.body, &mut self.declared_bodies, &mut HashSet::new());
+            self.supports_constructors |= tool_constructor_type(&scheme.body);
+        } else {
+            self.schemes.remove(name);
+        }
+        if let Some(descriptor) = named_type {
+            self.named_types.insert(name.into(), descriptor.clone());
+        }
+    }
+
     fn publish_type(&mut self, name: &str, descriptor: &TypeDescriptor, scheme: Option<&TypeScheme>) {
         let (witness, body) = if let Some(scheme) = scheme {
             self.schemes.insert(name.into(), scheme.clone());
@@ -44,9 +114,17 @@ impl ToolInferenceContext {
         } else {
             (TypeDescriptor::TypeOf(Box::new(descriptor.clone())), descriptor.clone())
         };
-        self.environment.insert(name.into(), witness);
-        self.named_types.insert(name.into(), body);
+        self.publish_binding(name, Some(&witness), scheme, Some(&body));
     }
+}
+
+fn tool_constructor_type(descriptor: &TypeDescriptor) -> bool {
+    let owner = constructor_instance_type(descriptor).unwrap_or(descriptor);
+    let body = match owner {
+        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+        ty => ty,
+    };
+    matches!(body, TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_))
 }
 
 impl<'a> ToolEvaluator<'a> {
@@ -74,6 +152,19 @@ impl<'a> ToolEvaluator<'a> {
             context.named_types = context.interfaces.values()
                 .flat_map(|interface| interface.concrete_types.clone())
                 .chain(declared_types.clone()).collect();
+            context.prepare_declarations();
+        }
+    }
+
+    fn publish_inference_binding(
+        &mut self,
+        name: &str,
+        environment: &HashMap<String, TypeDescriptor>,
+        schemes: &HashMap<String, TypeScheme>,
+        declared_types: &BTreeMap<String, TypeDescriptor>,
+    ) {
+        if let Some(context) = &mut self.inference_context {
+            context.publish_binding(name, environment.get(name), schemes.get(name), declared_types.get(name));
         }
     }
 

@@ -157,6 +157,13 @@ builtin ABI source 同样使用 `std/...` canonical name，不通过 synthetic s
 
 ## 4. 分析期类型与运行时类型
 
+Tool expression inference 共享模块的 scheme 与 declared body 输入，只解码表达式
+实际引用的外部值；每次查询的 substitution 与诊断仍独立。普通函数体由模块推导
+检查，只有类型计算、注解等 tool root 的传递依赖才提前求值。
+Property provider 的返回 contract 在模块推导前登记静态 evidence 和未来的 runtime
+binding，不依赖 payload 求值；模块静态检查通过后才物化 property records，失败则
+阻止发布。Decorator 引用不构成类型骨架的调度依赖。
+
 实现有三个必须区分的层次：
 
 | 层次 | 用途 | 身份范围 |

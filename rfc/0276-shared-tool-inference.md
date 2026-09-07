@@ -1,6 +1,6 @@
 # RFC 0276: Shared Tool Inference and Static Property Evidence
 
-- Status: Proposed; local performance experiment.
+- Status: Implemented on local experimental branch `perf/shared-tool-inference`.
 - Baseline: 58f0b8c, after RFC 0274.
 - Related: RFC 0260, RFC 0274, RFC 0275.
 
@@ -57,3 +57,31 @@ Run the workspace suite with a debug build. Compare identical declaration,
 function and shared-type workloads against the preserved baseline executable.
 Keep benchmark inputs and a reproducible runner with the change. Record actual
 results and remaining architectural limitations before marking implemented.
+
+The workspace debug test suite passes, including constructor tool evaluation,
+generic lexical shadows and explicit type arguments, local/imported property
+trait selection, static-error precedence and failed-provider publication.
+
+Debug measurements on 2026-09-08, same toolchain and lockfile, one warmup and
+three sequential samples per case (median wall seconds):
+
+| Workload | 58f0b8c | Experiment | Speedup |
+| --- | ---: | ---: | ---: |
+| One Int constant | 1.203 | 0.802 | 1.50x |
+| 400 Int functions | 4.550 | 2.201 | 2.07x |
+| 400 independent structs | 11.231 | 2.863 | 3.92x |
+| 400-element array | 1.296 | 0.874 | 1.48x |
+
+Reproduce with `python3 scripts/measure-tool-inference.py BASELINE_BINARY
+EXPERIMENT_BINARY --sizes 400 --samples 3`. The runner generates identical
+temporary workspaces and performs no builds. These results measure the combined
+optimization, not the isolated contribution of static property evidence.
+
+## Remaining Limits
+
+Tool expressions still have isolated inference state; this is shared input
+preparation, not a single inference invocation for every phase. Partial and full
+module analysis remain separate. Metadata-computing helpers still require tool
+evaluation and local inference. Property planning retains the existing explicit
+provider return-contract requirement. Shared type-DAG traversal is not globally
+memoized. These changes do not establish a speedup for every workload.

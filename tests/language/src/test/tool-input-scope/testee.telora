@@ -1,0 +1,21 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+type T = struct {value: String};
+type Wrapped = struct(Type);
+type Box(T) = struct(Wrapped(T).0);
+type Inner = Wrapped(Int).0;
+
+def identity: for(T) Fn(T) -> T = fn(value: T) { value };
+def metadata: Fn(Type) -> Type = fn(value) { value };
+
+export def lexical_type_inputs = test.should_ok(fn() {
+    let value: Box(Int) = Box@[Int](42);
+    let scalar: Inner = identity(value.0);
+    expect(scalar == 42)
+});
+
+export def annotation_dependency = test.should_ok(fn() {
+    let value: metadata(String) = "scope";
+    expect(value == "scope")
+});

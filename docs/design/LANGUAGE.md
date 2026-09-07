@@ -595,9 +595,11 @@ Impl 是顶层静态声明，必须完整且精确地
 blanket impl；精确 impl 优先于满足约束的 property blanket impl。orphan boundary
 要求 impl module 拥有 trait 或目标最外层 nominal constructor。
 
-`Property(P)` 是内建约束：`T: Property(P)` 证明封闭模块中精确的 `Ty(T, P)` typed
-property 已成功发布。它可以驱动 blanket impl，而普通反射查询仍返回 `Option(P)`。
-Evidence 携带已发布 property payload，implementation selection 不读取 payload 内容。
+`Property(P)` 是内建约束：`T: Property(P)` 根据 provider 的返回类型证明精确的
+`Ty(T, P)` typed property 存在，无需先求出 property 值。它可以驱动 blanket impl，
+而普通反射查询仍返回 `Option(P)`。静态 evidence 引用待生成的 payload binding；
+模块类型检查通过后才计算 property 值，全部成功后才能发布模块。
+Implementation selection 不读取 payload 内容。
 
 当前不存在 higher-rank type、用户定义或通用 subtyping、trait object、interface、
 associated type、default member、specialization、trait inheritance 或 higher-kinded
