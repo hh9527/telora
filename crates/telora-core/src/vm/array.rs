@@ -382,7 +382,7 @@ fn resume_array_continuation(
             _ => {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
-                    "std/array.filter predicate must return 'True or 'False",
+                    "std/array.filter predicate must return True or False",
                     &continuation.call_function,
                     continuation.call_pc,
                 ));
@@ -420,7 +420,7 @@ fn resume_array_continuation(
             let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
-                    "std/array.fold_control callback must return 'Continue(value) or 'Break(value)",
+                    "std/array.fold_control callback must return FoldControl.Continue(value) or FoldControl.Break(value)",
                     &continuation.call_function,
                     continuation.call_pc,
                 ));
@@ -454,7 +454,7 @@ fn resume_array_continuation(
                 _ => {
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
-                        "std/array.fold_control callback must return 'Continue(value) or 'Break(value)",
+                        "std/array.fold_control callback must return FoldControl.Continue(value) or FoldControl.Break(value)",
                         &continuation.call_function,
                         continuation.call_pc,
                     ));
@@ -469,7 +469,7 @@ fn resume_array_continuation(
                     return Err(error(
                         RuntimeErrorKind::TypeMismatch,
                         format!(
-                            "{} predicate must return 'True or 'False",
+                            "{} predicate must return True or False",
                             continuation.function.name()
                         ),
                         &continuation.call_function,

@@ -107,7 +107,7 @@ fn assert_codec_graph_ready(
                     .map_err(CodecGraphError::Invalid)?;
                 visit(&resolved, current, background, visited)
             }
-            CodecKind::Array(item) | CodecKind::Dict(item) => {
+            CodecKind::Array(item) | CodecKind::Dict(item) | CodecKind::Newtype(item) => {
                 visit(item, current, background, visited)
             }
             CodecKind::Tuple(items) => items
@@ -244,6 +244,14 @@ fn decode_runtime_type_at(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             CodecKind::Tuple(decoded)
+        }
+        "Newtype" => {
+            let payload = view.dict_get_text(handle, "payload")
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{path}.payload is missing"))?;
+            CodecKind::Newtype(Box::new(decode_runtime_type_at(
+                payload, &format!("{path}.payload"), current, background,
+            )?))
         }
         "Struct" => {
             let fields = view

@@ -24,6 +24,7 @@ struct NestedEnvironment<'a> {
     type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
     declared_value_owners: &'a HashMap<Location, String>,
+    value_constructors: &'a HashMap<Location, crate::types::ValueConstructor>,
 }
 
 #[derive(Debug)]
@@ -227,6 +228,7 @@ pub(crate) fn compile_program_with_promoted_types_and_static_funcs(
 ) -> Result<BytecodeFunction, FrontendError> {
     validate_hir(source_file, &analysis.hir, &analysis.external_bindings)?;
     let mut program = program.clone();
+    crate::elaboration::lower_block_constructor_patterns(&mut program.value.body, &analysis.value_constructors);
     program.value.body.value.bindings.retain(|binding| {
         matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait)
             || !erased_bindings.contains(&binding.value.name.value)
@@ -366,9 +368,13 @@ pub(crate) fn compile_expression_with_external_bindings(
     expression: &Expr,
     bindings: impl IntoIterator<Item = String>,
     declared_value_owners: HashMap<Location, String>,
+    value_constructors: HashMap<Location, crate::types::ValueConstructor>,
     source_file: &SourceFile,
 ) -> Result<BytecodeFunction, FrontendError> {
     let bindings = bindings.into_iter().collect::<Vec<_>>();
+    let mut lowered = expression.clone();
+    crate::elaboration::lower_constructor_patterns(&mut lowered, &value_constructors);
+    let expression = &lowered;
     let hir = HirProgram::resolve_runtime_expression(expression, bindings.iter().cloned());
     validate_hir(source_file, &hir, &HashSet::new())?;
     let mut compiler = Compiler {
@@ -392,6 +398,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
         declared_value_owners,
+        value_constructors,
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };

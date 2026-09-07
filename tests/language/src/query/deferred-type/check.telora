@@ -4,6 +4,6 @@ import "std/value" { Value };
 export def check: Fn(Value) -> Value = fn(actual) {
     if support.succeeded(actual)
         && support.stream_contains_string_field(actual, "stdout", "type", "opaque(std/test#Test)") {
-        'True
-    } else { 'False }
+        Value.True
+    } else { Value.False }
 };

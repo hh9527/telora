@@ -59,6 +59,7 @@ fn run_core_type_desc(
                     "Dict",
                     "Tuple",
                     "Struct",
+                    "Newtype",
                     "Enum",
                     "Func",
                     "Bound",

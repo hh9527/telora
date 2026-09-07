@@ -13,8 +13,8 @@ type ExecRequest = struct {
     cwd: String,
 };
 type UnpackType = enum {
-    'TarGzip,
-    'Tar,
+    TarGzip,
+    Tar,
 };
 type UnpackOpt = struct {
     file: String,
@@ -29,7 +29,7 @@ type ExecEnvironment = struct {
     update: Dict(Option(String)),
 };
 type Install = enum {
-    'Unpack(UnpackOpt),
+    Unpack(UnpackOpt),
 };
 type ExecEnv = struct {
     install: Array(Install),

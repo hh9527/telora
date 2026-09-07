@@ -14,8 +14,8 @@ type EesReply = struct {
 };
 
 type Event = enum {
-    'Request(Request),
-    'EesReply(EesReply),
+    Request(Request),
+    EesReply(EesReply),
 };
 
 type EesCall = struct {
@@ -30,8 +30,8 @@ type Reply = struct {
 };
 
 type Effect = enum {
-    'EesCall(EesCall),
-    'Reply(Reply),
+    EesCall(EesCall),
+    Reply(Reply),
 };
 
 type Transition(State) = Tuple([State, Array(Effect)]);
@@ -52,8 +52,8 @@ def service: for(State)
                 let state = input.0;
                 let event = input.1;
                 let state = match dyn.project_with(target, state) {
-                    'Some(state) => state,
-                    'None => fail!("actor Service state does not match its declared State"),
+                    Some(state) => state,
+                    None => fail!("actor Service state does not match its declared State"),
                 };
                 let transition = reduce(state, event);
                 (dyn.pack(target, transition.0), transition.1)
@@ -62,11 +62,11 @@ def service: for(State)
     };
 
 def ees_call: Fn(String, String, ees.Request) -> Effect = fn(id, request_id, request) {
-    'EesCall({id, request_id, request})
+    Effect.EesCall({id, request_id, request})
 };
 
 def reply: Fn(String, Value) -> Effect = fn(request_id, value) {
-    'Reply({request_id, value})
+    Effect.Reply({request_id, value})
 };
 
 export {

@@ -64,7 +64,8 @@ type Endpoint = struct {host: String, port: Int};
 - `std/toml`：把 TOML 文本解析为 Value。
 
 `Value` 是 source、Entry、EES 和 JSON 共享的数据边界。`ScalarValue` 的 untagged codec
-把 `'None`、`'Bool(...)`、`'Int(...)`、`'Float(...)`、`'String(...)` 分别编码为普通
+把 `ScalarValue.None`、`ScalarValue.Bool(...)`、`ScalarValue.Int(...)`、
+`ScalarValue.Float(...)`、`ScalarValue.String(...)` 分别编码为普通
 JSON null、boolean、number 和 string。
 
 通常先在格式模块中得到 Value，再用 `codec.decode(Target, value)` 进入业务名义类型；
@@ -84,6 +85,10 @@ JSON null、boolean、number 和 string。
 `type-desc.kind` 描述静态类型；enum 使用 Enum 或具名引用 Ref，并通过 `variants`
 查询其分支。`dyn.kind` 描述底层值表示，所以 enum 值可以返回 Atom 或 Tagged。
 `dyn.desc` 保留装箱时的 enum 契约，投影使用明确的目标类型身份。
+
+newtype 的具名类型返回 Ref；解析引用后，kind 为 Newtype，children 包含唯一的
+载荷类型。`dyn.tuple_items` 可读取其单个载荷，并保留载荷自己的类型身份。
+newtype 的 JSON 表示和 schema 使用载荷契约。
 
 ## 执行与效果
 

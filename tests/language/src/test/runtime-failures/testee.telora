@@ -5,16 +5,16 @@ import "std/regex" as regex;
 import "std/string" as string;
 
 type User = struct {value: Int};
-type Choice = enum {'Some(Int), 'None};
+type Choice = enum {Some(Int), None};
 
 export def array_bounds = test.should_fail_with(fn() { [1][1] }, "OutOfRange");
 export def non_finite_arithmetic = test.should_fail_with(fn() { 0.0 / 0.0 }, "NonFiniteFloat");
 export def unwrap = test.should_fail_with(fn() {
-    let result: Result(Int, String) = 'Err("required");
+    let result: Result(Int, String) = Err("required");
     result.unwrap!()
 }, "required");
 export def must_ok = test.should_fail_with(fn() {
-    let reject: Fn(Int, String) -> Result(Int, String) = fn(left, right) { 'Err("rejected") };
+    let reject: Fn(Int, String) -> Result(Int, String) = fn(left, right) { Err("rejected") };
     reject.must_ok!(1, "two")
 }, "rejected");
 export def reflection_field_index = test.should_fail_with(fn() {
@@ -22,7 +22,7 @@ export def reflection_field_index = test.should_fail_with(fn() {
     dyn.get_field_value(dyn.pack(User, user), 1)
 }, "field index 1 is out of range");
 export def reflection_variant_index = test.should_fail_with(fn() {
-    let choice: Choice = 'Some(9);
+    let choice: Choice = Choice.Some(9);
     dyn.get_variant_payload(dyn.pack(Choice, choice), 0)
 }, "variant index is 1, not 0");
 export def regex_syntax = test.should_fail_with(fn() {

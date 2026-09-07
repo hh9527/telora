@@ -6,7 +6,7 @@ import "@src/test-support" {expect};
 import "@src/test/nominal-equality/provider" {Item};
 
 def item: Item = {value: 42};
-type Wrapped = enum {'Some(Array(Item)), 'None};
+type Wrapped = enum {Some(Array(Item)), None};
 def choose: for(T) Fn(T, T) -> T = fn(left, right) { left };
 def choose_array: for(T) Fn(Array(T), T) -> Array(T) = fn(left, right) { left };
 def choose_independent: for(A, B) Fn(A, B) -> A = fn(left, right) { left };
@@ -49,8 +49,8 @@ export def dictionaries = test.should_ok(fn() {
     expect(values == {entry: {value: 42}} && {entry: {value: 42}} == values)
 });
 export def tagged_payload = test.should_ok(fn() {
-    expect('Some([item]).ty!(Option(Array(Item))) == 'Some([{value: 42}])
-        && 'Some([{value: 42}]) == 'Some([item]).ty!(Option(Array(Item))))
+    expect(Some([item]).ty!(Option(Array(Item))) == Some([{value: 42}])
+        && Some([{value: 42}]) == Some([item]).ty!(Option(Array(Item))))
 });
 export def existing_anonymous = test.should_ok(fn() {
     let raw = {value: 42};
@@ -60,8 +60,8 @@ export def existing_anonymous = test.should_ok(fn() {
 export def dynamic_boundary = test.should_ok(fn() {
     let dynamic = dyn.pack(Item, item);
     expect(match dyn.project_with(Item, dynamic) {
-        'Some(value) => value == item,
-        'None => 'False,
+        Some(value) => value == item,
+        None => False,
     })
 });
 export def spreads = test.should_ok(fn() {
@@ -70,9 +70,9 @@ export def spreads = test.should_ok(fn() {
         && [item] != [...raw] && [...raw] != [item])
 });
 export def enum_payload = test.should_ok(fn() {
-    let wrapped: Wrapped = 'Some([item]);
-    expect([wrapped] == ['Some([{value: 42}])]
-        && ['Some([{value: 42}])] == [wrapped])
+    let wrapped: Wrapped = Wrapped.Some([item]);
+    expect([wrapped] == [Wrapped.Some([{value: 42}])]
+        && [Wrapped.Some([{value: 42}])] == [wrapped])
 });
 export def renamed_equality = test.should_ok(fn() {
     expect(same([{value: 42}], [item]) && same([item], [{value: 42}]))

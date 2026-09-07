@@ -3,6 +3,9 @@ use crate::ast::*;
 use crate::types::{NotFamily, PropagationFamily, ResolvedEvidence};
 use std::collections::HashMap;
 
+mod constructors;
+pub(crate) use constructors::{lower_block_constructor_patterns, lower_constructor_patterns};
+
 pub(crate) fn elaborate_program(
     program: &mut Program,
     families: &HashMap<Location, PropagationFamily>,

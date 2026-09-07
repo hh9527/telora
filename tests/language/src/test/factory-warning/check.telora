@@ -4,16 +4,16 @@ import "std/value" { Value };
 
 export def check: Fn(Value) -> Value = fn(actual) {
     match support.record_field(actual, "stdout") {
-        'Some('Array(records)) => {
+        Some(Value.Array(records)) => {
             let warnings = array.filter(records, fn(record) { support.string_field_equals(record, "severity", "warning") });
-            let expected_path: Value = 'Array(['Int(0)]);
+            let expected_path: Value = Value.Array([Value.Int(0)]);
             match array.get(warnings, 0) {
-                'Some(record) => if support.succeeded(actual) && array.length(warnings) == 1
+                Some(record) => if support.succeeded(actual) && array.length(warnings) == 1
                     && support.string_field_equals(record, "phase", "factory")
-                    && support.record_field(record, "fixtures") == 'Some(expected_path) { 'True } else { 'False },
-                _ => 'False,
+                    && support.record_field(record, "fixtures") == Some(expected_path) { Value.True } else { Value.False },
+                _ => Value.False,
             }
         },
-        _ => 'False,
+        _ => Value.False,
     }
 };

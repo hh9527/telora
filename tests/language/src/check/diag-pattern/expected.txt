@@ -1,1 +1,1 @@
-pattern cannot match Int
+cannot unify Int with enum {None, Some(

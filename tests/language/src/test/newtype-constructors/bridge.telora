@@ -1,0 +1,2 @@
+import "@src/test/newtype-constructors/model" as model, { External as Id, Packet as Box };
+export { model, Id, Box };

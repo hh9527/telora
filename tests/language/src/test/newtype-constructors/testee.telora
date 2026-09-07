@@ -1,0 +1,123 @@
+import "std/test" as test;
+import "std/codec" as codec;
+import "std/dyn" as dyn;
+import "std/value" { Value };
+import "std/type-desc" as type_desc;
+import "@src/test-support" { expect };
+import "@src/test/newtype-constructors/model" as model;
+import "@src/test/newtype-constructors/model" { External as RemoteId, Packet as RemoteBox };
+import "@src/test/newtype-constructors/bridge" as bridge;
+
+type UserId = struct(Int);
+type Box(T) = struct(T);
+type IdConstructor = Fn(Int) -> UserId;
+type Item = struct { value: Int };
+type WrappedItem = struct(Item);
+type Maybe = struct(Option(Int));
+def box: for(T) Fn(T) -> Box(T) = fn(value) { Box(value) };
+def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(make, value) { make(value) };
+def metadata_factory: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId };
+def identity: for(T) Fn(T) -> T = fn(value) { value };
+def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
+    let Box(payload) = value;
+    payload
+};
+
+export def direct = test.should_ok(fn() {
+    let id = UserId(7);
+    expect(id.0 == 7 && codec.encode(Value, id) == Value.Int(7))
+});
+
+export def first_class = test.should_ok(fn() {
+    let make = UserId;
+    let typed: Fn(Int) -> UserId = UserId;
+    expect(make(8).0 == 8 && typed(9).0 == 9 && apply(UserId, 10).0 == 10)
+});
+
+export def generic = test.should_ok(fn() {
+    let contextual: Box(Int) = Box(11);
+    let inferred = Box("hello");
+    let explicit = Box@[Int](12);
+    expect(contextual.0 == 11 && inferred.0 == "hello" && explicit.0 == 12)
+});
+
+export def generic_forwarding = test.should_ok(fn() {
+    let id = box(UserId(13));
+    expect(id.0.0 == 13 && codec.encode(Value, id) == Value.Int(13))
+});
+
+export def type_facet = test.should_ok(fn() {
+    let metadata: Type = UserId;
+    let boxed: Type = Box(Int);
+    let family: Fn(Type) -> Type = Box;
+    expect(type_desc.kind(metadata) == type_desc.TypeDescKind.Ref && type_desc.kind(boxed) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(family(Int)) == type_desc.TypeDescKind.Ref)
+});
+
+export def constructor_dyn = test.should_ok(fn() {
+    let packed = dyn.pack(IdConstructor, UserId);
+    expect(match dyn.project_with(IdConstructor, packed) {
+        Some(make) => make(14).0 == 14,
+        None => False,
+    })
+});
+
+export def imported = test.should_ok(fn() {
+    let a = model.External(15);
+    let b = RemoteId(16);
+    let c = model.Packet(a);
+    let d = RemoteBox(b);
+    expect(a.0 == 15 && b.0 == 16 && c.0.0 == 15 && d.0.0 == 16
+        && model.create(17).0 == 17 && model.wrap(18).0 == 18
+        && bridge.Id(21).0 == 21 && bridge.Box(22).0 == 22
+        && bridge.model.External(23).0 == 23)
+});
+
+export def ordinary_metadata_function = test.should_ok(fn() {
+    let metadata = metadata_factory(0);
+    let local: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId };
+    let local_metadata = local(1);
+    let witness: TypeOf(UserId) = UserId;
+    expect(type_desc.kind(identity(metadata)) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(identity(local_metadata)) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(identity(witness)) == type_desc.TypeDescKind.Ref
+        && type_desc.kind(identity(model.metadata)) == type_desc.TypeDescKind.Ref)
+});
+
+export def contextual_payload = test.should_ok(fn() {
+    let item = WrappedItem({value: 19});
+    let option = Maybe(Some(20));
+    expect(item.0.value == 19 && option.0 == Some(20))
+});
+
+export def constructor_patterns = test.should_ok(fn() {
+    let UserId(id) = UserId(24);
+    let Box(UserId(nested)) = Box(UserId(25));
+    let model.External(remote) = model.External(26);
+    let bridge.Id(reexported) = bridge.Id(27);
+    let selected = match UserId(28) {
+        UserId(0) => 0,
+        UserId(value) => value,
+    };
+    let conditional = if let UserId(29) = UserId(29) { 29 } else { 0 };
+    expect(id == 24 && nested == 25 && remote == 26 && reexported == 27
+        && selected == 28 && conditional == 29 && unbox(Box(30)) == 30)
+});
+
+export def pattern_control_flow = test.should_ok(fn() {
+    let extract: Fn(Maybe) -> Int = fn(value) {
+        let Maybe(Some(item)) = value else { return 0; };
+        item
+    };
+    let guarded = match Box(UserId(31)) {
+        Box(UserId(value)) if value == 0 => 0,
+        Box(UserId(value)) => value,
+    };
+    let nested: Option(UserId) = Some(UserId(32));
+    let from_enum = match nested {
+        Some(UserId(value)) => value,
+        None => 0,
+    };
+    expect(extract(Maybe(Some(33))) == 33 && extract(Maybe(None)) == 0
+        && guarded == 31 && from_enum == 32)
+});

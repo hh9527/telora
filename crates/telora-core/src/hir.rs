@@ -58,6 +58,7 @@ pub struct HirDefinition {
     pub type_parameters: Vec<HirTypeParameter>,
     pub top_level: bool,
     pub value: Option<HirExpressionId>,
+    pub(crate) member_import: Option<Expr>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,13 +82,23 @@ pub struct HirProgram {
     definitions: Vec<HirDefinition>,
     references: Vec<HirReference>,
     expressions: Vec<HirExpression>,
+    member_patterns: HashSet<Location>,
 }
 
 impl HirProgram {
     pub fn resolve(program: &Program, external_names: impl IntoIterator<Item = String>) -> Self {
+        Self::resolve_with_member_constructors(program, external_names, HashSet::new())
+    }
+
+    pub(crate) fn resolve_with_member_constructors(
+        program: &Program,
+        external_names: impl IntoIterator<Item = String>,
+        external_member_names: HashSet<String>,
+    ) -> Self {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names,
             expression_stack: Vec::new(),
             static_expressions: true,
         };
@@ -97,6 +108,10 @@ impl HirProgram {
         resolver.hir
     }
 
+    pub(crate) fn is_member_pattern(&self, location: Location) -> bool {
+        self.member_patterns.contains(&location)
+    }
+
     pub fn resolve_expression(
         expression: &Expr,
         external_names: impl IntoIterator<Item = String>,
@@ -104,6 +119,7 @@ impl HirProgram {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names: HashSet::new(),
             expression_stack: Vec::new(),
             static_expressions: true,
         };
@@ -119,6 +135,7 @@ impl HirProgram {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names: HashSet::new(),
             expression_stack: Vec::new(),
             static_expressions: false,
         };
@@ -131,9 +148,18 @@ impl HirProgram {
         program: &RecoveredProgram,
         external_names: impl IntoIterator<Item = String>,
     ) -> Self {
+        Self::resolve_recovered_with_member_constructors(program, external_names, HashSet::new())
+    }
+
+    pub(crate) fn resolve_recovered_with_member_constructors(
+        program: &RecoveredProgram,
+        external_names: impl IntoIterator<Item = String>,
+        external_member_names: HashSet<String>,
+    ) -> Self {
         let mut resolver = Resolver {
             hir: Self::default(),
             external_names: external_names.into_iter().collect(),
+            external_member_names,
             expression_stack: Vec::new(),
             static_expressions: true,
         };
@@ -250,6 +276,7 @@ type Scope = HashMap<String, HirDefinitionId>;
 struct Resolver {
     hir: HirProgram,
     external_names: HashSet<String>,
+    external_member_names: HashSet<String>,
     expression_stack: Vec<HirExpressionId>,
     static_expressions: bool,
 }
@@ -270,6 +297,8 @@ impl Resolver {
             BindingKind::NativeType => HirDefinitionKind::NativeType,
         };
         let id = self.define_name(name, kind, binding.value.name.location, scope, top_level);
+        self.hir.definitions[id.index()].member_import = binding.value.is_member_import()
+            .then(|| binding.value.value.clone());
         self.hir.definitions[id.index()].type_parameters = binding
             .value
             .type_parameters
@@ -300,6 +329,7 @@ impl Resolver {
             type_parameters: Vec::new(),
             top_level,
             value: None,
+            member_import: None,
         });
         scope.insert(name.into(), id);
         id
@@ -660,6 +690,7 @@ impl Resolver {
             } => {
                 self.index_expr(value, scopes);
                 scopes.push(Scope::new());
+                self.index_pattern_constructors(pattern, scopes);
                 self.index_pattern(pattern, scopes.last_mut().expect("if let has a scope"));
                 self.index_block(then_branch, scopes, false);
                 scopes.pop();
@@ -675,6 +706,7 @@ impl Resolver {
                 self.index_expr(value, scopes);
                 self.index_block(else_branch, scopes, false);
                 scopes.push(Scope::new());
+                self.index_pattern_constructors(pattern, scopes);
                 self.index_pattern(pattern, scopes.last_mut().expect("let else has a scope"));
                 self.index_block(body, scopes, false);
                 scopes.pop();
@@ -700,6 +732,7 @@ impl Resolver {
 
     fn index_arm(&mut self, arm: &MatchArm, scopes: &mut Vec<Scope>) {
         scopes.push(Scope::new());
+        self.index_pattern_constructors(&arm.value.pattern, scopes);
         self.index_pattern(
             &arm.value.pattern,
             scopes.last_mut().expect("arm has a scope"),
@@ -714,6 +747,7 @@ impl Resolver {
     fn index_pattern(&mut self, pattern: &Pattern, scope: &mut Scope) {
         match &pattern.value {
             PatternKind::Binding(name) => {
+                if self.hir.is_member_pattern(name.location) { return; }
                 self.define_name(
                     &name.value,
                     HirDefinitionKind::Pattern,
@@ -727,11 +761,43 @@ impl Resolver {
                     self.index_pattern(item, scope);
                 }
             }
-            PatternKind::Tagged { payload, .. } => self.index_pattern(payload, scope),
+            PatternKind::Tagged { payload, .. } | PatternKind::Constructor { payload: Some(payload), .. } => self.index_pattern(payload, scope),
             PatternKind::Struct(fields) => {
                 for field in fields {
                     self.index_pattern(&field.pattern, scope);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn index_pattern_constructors(&mut self, pattern: &Pattern, scopes: &mut Vec<Scope>) {
+        match &pattern.value {
+            PatternKind::Binding(name) => {
+                let member = resolve_name(scopes, &name.value).map_or_else(
+                    || self.external_member_names.contains(&name.value),
+                    |id| {
+                        let definition = &self.hir.definitions[id.index()];
+                        definition.member_import.is_some()
+                            || definition.kind == HirDefinitionKind::Import
+                                && self.external_member_names.contains(&name.value)
+                    },
+                );
+                if member {
+                    self.hir.member_patterns.insert(name.location);
+                    self.index_expr(&crate::ast::located(ExprKind::Variable(name.clone()), name.location), scopes);
+                }
+            }
+            PatternKind::Constructor { constructor, payload } => {
+                self.index_expr(constructor, scopes);
+                if let Some(payload) = payload { self.index_pattern_constructors(payload, scopes); }
+            }
+            PatternKind::Tagged { payload, .. } => self.index_pattern_constructors(payload, scopes),
+            PatternKind::Tuple(items) => {
+                for item in items { self.index_pattern_constructors(item, scopes); }
+            }
+            PatternKind::Struct(fields) => {
+                for field in fields { self.index_pattern_constructors(&field.pattern, scopes); }
             }
             _ => {}
         }

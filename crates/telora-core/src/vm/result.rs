@@ -13,7 +13,7 @@ fn run_core_result(
     };
     let DecodedValue::Tagged(handle) = arguments[0].value() else {
         return Err(runtime_type_error(
-            "'Ok(value) or 'Err(message)",
+            "Ok(value) or Err(message)",
             &arguments[0],
             &view,
             function,
@@ -99,7 +99,7 @@ fn run_core_result(
         }
         _ => Err(error(
             RuntimeErrorKind::TypeMismatch,
-            "std/result.unwrap expects 'Ok(value) or 'Err(message)",
+            "std/result.unwrap expects Ok(value) or Err(message)",
             function,
             pc,
         )),

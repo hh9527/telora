@@ -4,22 +4,22 @@ import "std/value" { Value };
 
 export def check: Fn(Value) -> Value = fn(actual) {
     match support.record_field(actual, "stdout") {
-        'Some('Array(records)) => {
+        Some(Value.Array(records)) => {
             let cases = array.filter(records, fn(record) { support.string_field_equals(record, "record", "case") });
             let summaries = array.filter(records, fn(record) { support.string_field_equals(record, "record", "summary") });
             match array.get(summaries, 0) {
-                'Some('Object(summary)) => if support.exit_code(actual) == 'Some(1)
+                Some(Value.Object(summary)) => if support.exit_code(actual) == Some(1)
                     && array.length(cases) == 5 && array.length(summaries) == 1
-                    && summary.passed == 'Int(4) && summary.failed == 'Int(1)
-                    && summary.aborted == 'False
+                    && summary.passed == Value.Int(4) && summary.failed == Value.Int(1)
+                    && summary.aborted == Value.False
                     && array.all(array.enumerate(cases), fn(pair) {
                         let (index, record) = pair;
-                        let expected: Value = 'Array(['Int(index)]);
-                        support.record_field(record, "fixtures") == 'Some(expected)
-                    }) { 'True } else { 'False },
-                _ => 'False,
+                        let expected: Value = Value.Array([Value.Int(index)]);
+                        support.record_field(record, "fixtures") == Some(expected)
+                    }) { Value.True } else { Value.False },
+                _ => Value.False,
             }
         },
-        _ => 'False,
+        _ => Value.False,
     }
 };

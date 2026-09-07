@@ -363,6 +363,7 @@ pub(crate) enum CorePathFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreModelFunction {
     Struct,
+    Newtype,
     Enum,
 }
 
@@ -370,6 +371,7 @@ impl CoreModelFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Struct => "\0telora_struct",
+            Self::Newtype => "\0telora_newtype",
             Self::Enum => "\0telora_enum",
         }
     }

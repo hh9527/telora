@@ -292,7 +292,6 @@ fn parser_expects_only(diagnostic: &Diagnostic, symbol: &str) -> bool {
 
 fn missing_token_symbol(message: &str) -> Option<&'static str> {
     Some(match message.strip_prefix("missing ")? {
-        "Atom" => "<atom>",
         "Bang" => "'!'",
         "Bytes" => "<bytes>",
         "Colon" => "':'",

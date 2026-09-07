@@ -81,6 +81,7 @@ pub(crate) enum TypeShape {
         payload: TypeId,
     },
     Tuple(Box<[TypeId]>),
+    Newtype(TypeId),
     Struct(Box<[(String, TypeId)]>),
     Enum(Box<[(String, Option<TypeId>)]>),
     Function {
@@ -258,6 +259,10 @@ impl TypeStore {
                 let item = self.intern_descriptor_with_names(item, names)?;
                 Ok(self.intern_structural(TypeShape::Dict(item)))
             }
+            TypeDescriptor::Newtype(item) => {
+                let item = self.intern_descriptor_with_names(item, names)?;
+                Ok(self.intern_structural(TypeShape::Newtype(item)))
+            }
             TypeDescriptor::Tagged { tag, payload } => {
                 let payload = self.intern_descriptor_with_names(payload, names)?;
                 Ok(self.intern_structural(TypeShape::Tagged {
@@ -367,6 +372,9 @@ impl TypeStore {
         names: &HashMap<String, TypeId>,
     ) -> Result<TypeShape, String> {
         match descriptor {
+            TypeDescriptor::Newtype(payload) => self
+                .intern_descriptor_with_names(payload, names)
+                .map(TypeShape::Newtype),
             TypeDescriptor::Struct(fields) => fields
                 .iter()
                 .map(|(name, field)| {
@@ -386,7 +394,7 @@ impl TypeStore {
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map(|variants| TypeShape::Enum(variants.into())),
-            _ => Err("nominal type body must be a struct or enum".into()),
+            _ => Err("nominal type body must be a struct, newtype or enum".into()),
         }
     }
 

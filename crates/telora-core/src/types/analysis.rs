@@ -25,6 +25,13 @@ pub struct Analysis {
     pub(crate) dynamic_bindings: HashSet<String>,
     pub(crate) type_family_values: BTreeMap<String, TypeFamilyTemplate>,
     pub(crate) declared_value_owners: HashMap<crate::Location, String>,
+    pub(crate) value_constructors: HashMap<crate::Location, ValueConstructor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ValueConstructor {
+    Newtype,
+    EnumMember { tag: String, has_payload: bool },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,6 +180,7 @@ pub(crate) fn analyze_partial_types_recovered(
         PartialAnalysisControl {
             unavailable_imports,
             external_schemes: &BTreeMap::new(),
+            external_interfaces: &BTreeMap::new(),
             query: None,
         },
     )
@@ -181,6 +189,7 @@ pub(crate) fn analyze_partial_types_recovered(
 pub(crate) struct PartialAnalysisControl<'a> {
     pub unavailable_imports: &'a HashSet<String>,
     pub external_schemes: &'a BTreeMap<String, TypeScheme>,
+    pub external_interfaces: &'a BTreeMap<String, ModuleInterface>,
     pub query: Option<&'a crate::query::QueryContext>,
 }
 
@@ -197,7 +206,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     let source_name = sources.get(source_id).name.to_string();
     let module_id = crate::ModuleId::ANONYMOUS;
     let prelude = BootstrapPrelude::new();
-    let hir = HirProgram::resolve_recovered(
+    let hir = HirProgram::resolve_recovered_with_member_constructors(
         recovered,
         prelude
             .schemes
@@ -206,6 +215,10 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .chain(external_roots.keys())
             .cloned()
             .collect::<Vec<_>>(),
+        control.external_interfaces.iter().filter(|(name, interface)|
+            interface.value_binding.as_deref() == Some(name.as_str())
+                && interface.member_constructors.contains_key(*name))
+            .map(|(name, _)| name.clone()).collect(),
     );
     let bindings = type_definition_bindings(&hir, &recovered.bindings);
     let declared_initializer_slots = recovered
@@ -254,6 +267,28 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     let mut types = TypeGraph::default();
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
     let mut evaluator = ToolEvaluator::new(Arc::clone(&debug_sink), tool_heap);
+    let interfaces = control.external_interfaces.iter()
+        .map(|(name, interface)| (name.clone(), interface.qualified(name)))
+        .collect::<BTreeMap<_, _>>();
+    let mut environment = prelude.types.clone();
+    let mut schemes = prelude.schemes.clone();
+    schemes.extend(control.external_schemes.iter().map(|(name, scheme)| (name.clone(), scheme.clone())));
+    for (name, root) in external_roots {
+        if let Some(descriptor) = imported_static_descriptor(
+            ValueRef::persistent(*root, evaluator.main), interfaces.get(name),
+        ) {
+            environment.insert(name.clone(), descriptor);
+        }
+    }
+    evaluator.inference_context = Some(ToolInferenceContext {
+        hir: hir.clone(),
+        named_types: interfaces.values().flat_map(|interface| interface.concrete_types.clone()).collect(),
+        interfaces,
+        environment,
+        schemes,
+        builtin_tuple_available: !external_roots.contains_key("Tuple"),
+        dyn_namespaces: imported_dyn_namespaces(&recovered.bindings),
+    });
     let mut tool_values = evaluator
         .install_bootstrap()
         .expect("core prelude values can enter the tool Main world");
@@ -486,6 +521,10 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         (projected, family_value)
                     };
                     let id = types.intern_descriptor(&definition_descriptor);
+                    if let Some(context) = &mut evaluator.inference_context {
+                        context.publish_type(&binding.value.name.value, &definition_descriptor,
+                            definition_schemes.get(&node.definition));
+                    }
                     tool_values.insert(binding.value.name.value.clone(), published_value);
                     facts.insert(node.definition, SemanticFact::known(id));
                 }
@@ -558,6 +597,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                     Ok(built) => {
                         let descriptor = built.scheme.body.clone();
                         let id = types.intern_descriptor(&descriptor);
+                        if let Some(context) = &mut evaluator.inference_context {
+                            context.publish_type(&binding.value.name.value, &descriptor, Some(&built.scheme));
+                        }
                         definition_schemes.insert(definition, built.scheme);
                         tool_values.insert(binding.value.name.value.clone(), built.family_value);
                         facts.insert(definition, SemanticFact::known(id));
@@ -641,6 +683,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                         let binding = bindings[definition];
                         let name = &binding.value.name.value;
                         facts.insert(*definition, SemanticFact::known(roots[name]));
+                        if let Some(context) = &mut evaluator.inference_context {
+                            context.publish_type(name, &descriptors[name], None);
+                        }
                         tool_values.insert(name.clone(), values[name]);
                     }
                 } else {

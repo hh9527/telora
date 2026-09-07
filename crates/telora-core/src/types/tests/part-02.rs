@@ -22,17 +22,17 @@
     }
     #[test]
     fn branch_joins_are_canonical_pure_and_order_independent() {
-        for source in ["if 'True { 1 } else { \"x\" }", "if 'True { \"x\" } else { 1 }"] {
+        for source in ["if Bool.True { 1 } else { \"x\" }", "if Bool.True { \"x\" } else { 1 }"] {
             assert!(analyze_with_natives(source, &[]).err().unwrap().to_string().contains("no common type"));
         }
 
-        let metadata = analyze_with_natives("if 'True { Int } else { String }", &[]).unwrap();
-        let reversed = analyze_with_natives("if 'True { String } else { Int }", &[]).unwrap();
+        let metadata = analyze_with_natives("if Bool.True { Int } else { String }", &[]).unwrap();
+        let reversed = analyze_with_natives("if Bool.True { String } else { Int }", &[]).unwrap();
         assert_eq!(metadata.display(metadata.result_type), "Type");
         assert_eq!(reversed.display(reversed.result_type), "Type");
 
         let nested = analyze_with_natives(
-            "if 'True { if 'False { 1 } else { \"x\" } } else { 1 }",
+            "if Bool.True { if Bool.False { 1 } else { \"x\" } } else { 1 }",
             &[],
         )
         .err().unwrap();
@@ -41,7 +41,7 @@
         let delayed = analyze_with_natives(
             "def choose: Fn(Bool, Int) -> Int = fn(flag, value) {\
                  if flag { value } else { 1 }\
-             }; let selected = choose('True, 2); choose",
+             }; let selected = choose(Bool.True, 2); choose",
             &[],
         )
         .unwrap();
@@ -51,7 +51,7 @@
         );
 
         let concrete =
-            analyze_with_natives("let value: Int = 1; if 'True { value } else { 1 }", &[]).unwrap();
+            analyze_with_natives("let value: Int = 1; if Bool.True { value } else { 1 }", &[]).unwrap();
         assert_eq!(concrete.display(concrete.result_type), "Int");
     }
 
@@ -59,13 +59,13 @@
     fn adversarial_branch_joins_are_pure_symmetric_and_canonical() {
         for (left, right, expected) in [
             (
-                "let value: String = \"a\"; if 'True { value } else { \"x\" }",
-                "let value: String = \"a\"; if 'True { \"x\" } else { value }",
+                "let value: String = \"a\"; if Bool.True { value } else { \"x\" }",
+                "let value: String = \"a\"; if Bool.True { \"x\" } else { value }",
                 "String",
             ),
             (
-                "if 'True { Int } else { Array(String) }",
-                "if 'True { Array(String) } else { Int }",
+                "if Bool.True { Int } else { Array(String) }",
+                "if Bool.True { Array(String) } else { Int }",
                 "Type",
             ),
         ] {
@@ -77,7 +77,7 @@
 
         let no_leak = analyze_with_natives(
             "let select = fn(flag, value) { if flag { value } else { 1 } };\
-             (select('True, \"x\"), select('False, 2.0))",
+             (select(Bool.True, \"x\"), select(Bool.False, 2.0))",
             &[],
         )
         .err().unwrap();

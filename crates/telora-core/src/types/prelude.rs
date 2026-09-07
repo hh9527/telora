@@ -36,6 +36,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         ("String", TypeDescriptor::String),
         ("Bytes", TypeDescriptor::Bytes),
         ("Bool", normalized_bool_descriptor()),
+        ("PropertyTarget", property_target_descriptor()),
     ] {
         prelude.insert(name.into(), TypeDescriptor::TypeOf(Box::new(instance)));
     }
@@ -68,7 +69,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             metadata.clone(),
         ),
     );
-    for name in ["\0telora_struct", "\0telora_enum"] {
+    for name in ["\0telora_struct", "\0telora_newtype", "\0telora_enum"] {
         prelude.insert(
             name.into(),
             function(
@@ -135,12 +136,18 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
         body,
     };
     HashMap::from([
+        ("Bool".into(), scheme(witness(normalized_bool_descriptor()))),
+        ("PropertyTarget".into(), scheme(witness(property_target_descriptor()))),
         (
             "\0telora_struct".into(),
             scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
             "\0telora_enum".into(),
+            scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
+        ),
+        (
+            "\0telora_newtype".into(),
             scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
@@ -205,7 +212,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["PropertyAttr"]
+    let expected = ["PropertyAttr", "True", "False", "Some", "None", "Ok", "Err"]
         .into_iter()
         .collect::<BTreeSet<_>>();
     let actual = interface
@@ -214,7 +221,7 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("std/prelude must export exactly PropertyAttr".into());
+        return Err("std/prelude must export exactly PropertyAttr, True, False, Some, None, Ok and Err".into());
     }
     Ok(())
 }
@@ -273,6 +280,19 @@ fn normalized_bool_descriptor() -> TypeDescriptor {
         ("False".into(), None),
         ("True".into(), None),
     ]))
+}
+
+fn property_target_descriptor() -> TypeDescriptor {
+    // Source declarations use local IDs starting at FIRST_DYNAMIC_MODULE_LOCAL.
+    let id = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 1);
+    TypeDescriptor::Declared(DeclaredTypeDescriptor {
+        id,
+        name: "PropertyTarget".into(),
+        body: Arc::new(TypeDescriptor::Enum(
+            ["Type", "StructType", "EnumType", "Member", "Field", "Variant"]
+                .into_iter().map(|name| (name.to_owned(), None)).collect(),
+        )),
+    })
 }
 
 fn native_array_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
@@ -576,6 +596,17 @@ fn decode_type_ref_with_visiting(
                 .collect::<Result<Vec<_>, _>>()?;
             TypeDescriptor::Tuple(values)
         }
+        "Newtype" => {
+            require(&["kind", "payload"])?;
+            let payload = value.dict_get("payload")
+                .ok_or_else(|| format!("{path}.payload is missing"))?;
+            TypeDescriptor::Newtype(Box::new(decode_type_ref_with_visiting(
+                payload,
+                &format!("{path}.payload"),
+                shallow_declared_types,
+                visiting_declared,
+            )?))
+        }
         "Struct" => {
             require(&["fields", "kind"])?;
             let fields_value = value
@@ -726,6 +757,12 @@ fn validate_value_ref(
             Ok(())
         }
         TypeDescriptor::Atom(expected) => Err(format!("{path} must be '{}", expected.name())),
+        TypeDescriptor::Newtype(payload) => {
+            if value.kind() != ValueKind::Tuple || value.sequence_len() != Some(1) {
+                return Err(format!("{path} must be a newtype payload container"));
+            }
+            validate_value_ref(payload, value.sequence_get(0).expect("one payload"), path)
+        }
         TypeDescriptor::Array(item) => {
             if value.kind() != ValueKind::Array {
                 return Err(format!("{path} must be an Array"));
@@ -800,8 +837,8 @@ fn validate_value_ref(
             if let Some(tag) = value.as_atom() {
                 return match variants.get(tag.as_str()) {
                     Some(None) => Ok(()),
-                    Some(Some(_)) => Err(format!("{path} variant '{tag} requires a payload")),
-                    None => Err(format!("{path} has unknown Enum variant '{tag}")),
+                    Some(Some(_)) => Err(format!("{path} variant {tag} requires a payload")),
+                    None => Err(format!("{path} has unknown Enum variant {tag}")),
                 };
             }
             let Some((tag_value, payload_value)) = value.tagged_parts() else {
@@ -814,8 +851,8 @@ fn validate_value_ref(
                 Some(Some(payload)) => {
                     validate_value_ref(payload, payload_value, &format!("{path}.{tag}"))
                 }
-                Some(None) => Err(format!("{path} variant '{tag} does not accept a payload")),
-                None => Err(format!("{path} has unknown Enum variant '{tag}")),
+                Some(None) => Err(format!("{path} variant {tag} does not accept a payload")),
+                None => Err(format!("{path} has unknown Enum variant {tag}")),
             }
         }
         TypeDescriptor::PendingAlternatives(_) => Err(format!("{path}: unresolved common type")),
@@ -849,7 +886,7 @@ fn collect_declared_bodies(
         TypeDescriptor::Declared(declared) => {
             if matches!(
                 declared.body.as_ref(),
-                TypeDescriptor::Struct(_) | TypeDescriptor::Enum(_)
+                TypeDescriptor::Struct(_) | TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)
             ) {
                 bodies
                     .entry(declared.id.clone())
@@ -865,6 +902,7 @@ fn collect_declared_bodies(
         }
         TypeDescriptor::TypeOf(inner)
         | TypeDescriptor::Array(inner)
+        | TypeDescriptor::Newtype(inner)
         | TypeDescriptor::Dict(inner) => visit(inner, bodies, visiting),
         TypeDescriptor::Tagged { payload, .. } => visit(payload, bodies, visiting),
         TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {

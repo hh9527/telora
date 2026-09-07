@@ -15,22 +15,22 @@ import "std/array" as array;
 type StringBox = Box(String);
 type TreeBox = Box(Tree);
 type LocalBox(A) = struct {value: A};
-type LocalMaybe(A) = enum {'None, 'Some(A)};
+type LocalMaybe(A) = enum {None, Some(A)};
 type LocalStringBox = LocalBox(String);
 type LocalNode = struct {value: Int, children: Array(LocalNode)};
 
 type LocalBranch = struct {children: Array(LocalTree)};
-type LocalTree = enum {'Leaf(Int), 'Branch(LocalBranch)};
+type LocalTree = enum {Leaf(Int), Branch(LocalBranch)};
 
-type Node = enum {'A, 'B};
+type Node = enum {A, B};
 type Requirement = struct {target: Node};
 def target_of: Fn(Requirement) -> Node = fn(requirement) { requirement.target };
 type EvalBranch = struct {children: Array(EvalExpr)};
-type EvalExpr = enum {'Leaf(Int), 'Branch(EvalBranch)};
+type EvalExpr = enum {Leaf(Int), Branch(EvalBranch)};
 def eval_expr: Fn(EvalExpr) -> Int = fn(expr) {
     match expr {
-        'Leaf(value) => value,
-        'Branch(branch) => array.fold(branch.children, 0, fn(total, child) {
+        EvalExpr.Leaf(value) => value,
+        EvalExpr.Branch(branch) => array.fold(branch.children, 0, fn(total, child) {
             total + eval_expr(child)
         }),
     }
@@ -61,17 +61,17 @@ export def local_family_alias = test.should_ok(fn() {
 export def recursive_local_families = test.should_ok(fn() {
     expect({
         let boxed: LocalBox(String) = {value: "ready"};
-        let maybe: LocalMaybe(Int) = 'Some(3);
+        let maybe: LocalMaybe(Int) = LocalMaybe.Some(3);
         let node: LocalNode = {value: 1, children: [{value: 2, children: []}]};
-        let tree: LocalTree = 'Branch({children: ['Leaf(2)]});
+        let tree: LocalTree = LocalTree.Branch({children: [LocalTree.Leaf(2)]});
         boxed.value == "ready"
-            && maybe == 'Some(3)
+            && maybe == LocalMaybe.Some(3)
             && node.children[0].value == 2
             && match tree {
-                'Leaf(value) => value == 2,
-                'Branch(branch) => match branch.children[0] {
-                    'Leaf(value) => value == 2,
-                    'Branch(_) => 'False,
+                LocalTree.Leaf(value) => value == 2,
+                LocalTree.Branch(branch) => match branch.children[0] {
+                    LocalTree.Leaf(value) => value == 2,
+                    LocalTree.Branch(_) => False,
                 },
             }
     })
@@ -79,33 +79,33 @@ export def recursive_local_families = test.should_ok(fn() {
 
 export def imported_nominal_values = test.should_ok(fn() {
     expect({
-        let wrapper: origin.Wrapper = 'Box("x");
-        let expected: origin.Wrapper = 'Box("x");
-        let status: origin.Status = 'Ready;
+        let wrapper: origin.Wrapper = origin.Wrapper.Box("x");
+        let expected: origin.Wrapper = origin.Wrapper.Box("x");
+        let status: origin.Status = origin.Status.Ready;
         let point: origin.Point = {x: 1};
         wrapper == expected
-            && wrapper == 'Box("x")
-            && 'Box("x") == wrapper
-            && status == 'Ready
-            && 'Ready == status
+            && wrapper == origin.Wrapper.Box("x")
+            && origin.Wrapper.Box("x") == wrapper
+            && status == origin.Status.Ready
+            && origin.Status.Ready == status
             && point == {x: 1}
             && {x: 1} == point
     })
 });
 
 export def imported_parameter_context = test.should_ok(fn() {
-    expect(accepts({statuses: ['Ready]}))
+    expect(accepts({statuses: [origin.PrivateReady]}))
 });
 
 export def recursive_imported_family = test.should_ok(fn() {
     expect({
-        let value: TreeBox = {value: 'Branch({children: ['Leaf(1)]})};
+        let value: TreeBox = {value: Tree.Branch({children: [Tree.Leaf(1)]})};
         let same: TreeBox = identity(value);
         match same.value {
-            'Leaf(_) => 'False,
-            'Branch(branch) => match branch.children[0] {
-                'Leaf(value) => value == 1,
-                'Branch(_) => 'False,
+            Tree.Leaf(_) => False,
+            Tree.Branch(branch) => match branch.children[0] {
+                Tree.Leaf(value) => value == 1,
+                Tree.Branch(_) => False,
             },
         }
     })
@@ -113,8 +113,8 @@ export def recursive_imported_family = test.should_ok(fn() {
 
 export def imported_result_context = test.should_ok(fn() {
     expect({
-        let value: TreeBox = identity({value: 'Leaf(1)});
-        match value.value { 'Leaf(item) => item == 1, 'Branch(_) => 'False }
+        let value: TreeBox = identity({value: Tree.Leaf(1)});
+        match value.value { Tree.Leaf(item) => item == 1, Tree.Branch(_) => False }
     })
 });
 
@@ -143,39 +143,39 @@ export def reexport_identity = test.should_ok(fn() {
 
 export def opaque_reexport = test.should_ok(fn() {
     expect(
-        type_desc.kind(State) == 'Opaque
-            && type_desc.opaque_name(State) == 'Some("std/hash#HashState")
+        type_desc.kind(State) == type_desc.TypeDescKind.Opaque
+            && type_desc.opaque_name(State) == Some("std/hash#HashState")
     )
 });
 
 export def imported_generic_callback = test.should_ok(fn() {
     expect({
-        let selected: Node = use([{target: 'B}], target_of);
-        selected == 'B
+        let selected: Node = use([{target: Node.B}], target_of);
+        selected == Node.B
     })
 });
 
 export def composed_imported_family = test.should_ok(fn() {
     expect({
-        let value: Family(String) = {expr: 'Literal(1), value: "ready"};
+        let value: Family(String) = {expr: origin.Literal(1), value: "ready"};
         value.value == "ready"
             && match value.expr {
-                'Literal(item) => item == 1,
-                'Call(_) => 'False,
+                origin.Literal(item) => item == 1,
+                origin.Call(_) => False,
             }
     })
 });
 
 export def recursive_enum_evaluation = test.should_ok(fn() {
     expect({
-        eval_expr('Branch({children: ['Leaf(1)]})) == 1
+        eval_expr(EvalExpr.Branch({children: [EvalExpr.Leaf(1)]})) == 1
     })
 });
 
 export def private_nominal_alias = test.should_ok(fn() {
     expect({
-        let via_alias: ImportedLocalBox = {value: 'A};
-        let direct_box: origin.Box(Local) = {value: 'A};
-        via_alias.value == 'A && direct_box.value == 'A
+        let via_alias: ImportedLocalBox = {value: Local.A};
+        let direct_box: origin.Box(Local) = {value: Local.A};
+        via_alias.value == Local.A && direct_box.value == Local.A
     })
 });

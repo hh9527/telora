@@ -287,6 +287,7 @@ impl<'a> GenericInference<'a> {
                 Ok(())
             }
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right)) => self.unify(left, right),
+            (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => self.unify(left, right),
             (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => self.unify(left, right),
             (
                 TypeDescriptor::Tagged {
@@ -416,6 +417,9 @@ impl<'a> GenericInference<'a> {
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right)) => Ok(
                 TypeDescriptor::Array(Box::new(self.refine_argument_nominal_context(left, right)?)),
             ),
+            (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => Ok(
+                TypeDescriptor::Newtype(Box::new(self.refine_argument_nominal_context(left, right)?)),
+            ),
             (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => Ok(
                 TypeDescriptor::Dict(Box::new(self.refine_argument_nominal_context(left, right)?)),
             ),
@@ -452,6 +456,19 @@ impl<'a> GenericInference<'a> {
                         Ok((name.clone(), self.refine_argument_nominal_context(left, &right[name])?))
                     }).collect::<Result<_, String>>()?,
                 ))
+            }
+            (TypeDescriptor::Enum(left), TypeDescriptor::Enum(right))
+                if left.keys().eq(right.keys()) =>
+            {
+                Ok(TypeDescriptor::Enum(left.iter().map(|(name, left)| {
+                    let payload = match (left, &right[name]) {
+                        (Some(left), Some(right)) => Some(Box::new(
+                            self.refine_argument_nominal_context(left, right)?,
+                        )),
+                        _ => left.clone(),
+                    };
+                    Ok((name.clone(), payload))
+                }).collect::<Result<_, String>>()?))
             }
             (
                 TypeDescriptor::Tagged { tag: left_tag, payload: left },
@@ -495,6 +512,7 @@ impl<'a> GenericInference<'a> {
                 }
             }
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right))
+            | (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right))
             | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
                 self.unify_equality(left, right)
             }
@@ -563,7 +581,7 @@ impl<'a> GenericInference<'a> {
                         kind: EnumInferenceFailureKind::IllegalVariant,
                         expected_name: expected_name.clone(),
                     },
-                    format!("variant '{tag} is not part of {expected_name}"),
+                    format!("variant {tag} is not part of {expected_name}"),
                 ));
             }
         }
@@ -571,8 +589,8 @@ impl<'a> GenericInference<'a> {
             let expected_payload = &expected_variants[tag];
             let mismatch = match (actual_payload, expected_payload) {
                 (None, None) => None,
-                (None, Some(_)) => Some(format!("variant '{tag} requires a payload")),
-                (Some(_), None) => Some(format!("variant '{tag} does not accept a payload")),
+                (None, Some(_)) => Some(format!("variant {tag} requires a payload")),
+                (Some(_), None) => Some(format!("variant {tag} does not accept a payload")),
                 (Some(actual), Some(expected)) => {
                     let actual = erase_declared_identity(actual);
                     let expected = erase_declared_identity(expected);
@@ -581,7 +599,7 @@ impl<'a> GenericInference<'a> {
                         let expected_leaf = type_at_path(&expected, &path).unwrap_or(&expected);
                         let path = display_type_path(&path);
                         format!(
-                            "variant '{tag} payload is incompatible with {expected_name}{path}: expected {}, found {}",
+                            "variant {tag} payload is incompatible with {expected_name}{path}: expected {}, found {}",
                             expected_leaf.display_name(),
                             actual_leaf.display_name()
                         )
@@ -600,7 +618,7 @@ impl<'a> GenericInference<'a> {
         }
         let variants = actual_variants
             .iter()
-            .map(|(tag, _)| format!("'{tag}"))
+            .map(|(tag, _)| tag.clone())
             .collect::<Vec<_>>()
             .join(" | ");
         let noun = if actual_variants.len() == 1 {
@@ -779,6 +797,7 @@ impl<'a> GenericInference<'a> {
                 }
             }
             (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
+            | (TypeDescriptor::Newtype(actual), TypeDescriptor::Newtype(expected))
             | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
             | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
                 return self.check(actual, expected);
@@ -865,6 +884,9 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Array(item) => {
                 TypeDescriptor::Array(Box::new(self.freshen_runtime_never_leaves(item)))
             }
+            TypeDescriptor::Newtype(item) => {
+                TypeDescriptor::Newtype(Box::new(self.freshen_runtime_never_leaves(item)))
+            }
             TypeDescriptor::Dict(item) => {
                 TypeDescriptor::Dict(Box::new(self.freshen_runtime_never_leaves(item)))
             }
@@ -941,6 +963,21 @@ impl<'a> GenericInference<'a> {
         index: usize,
     ) -> Result<TypeDescriptor, String> {
         match self.expose_named(receiver) {
+            TypeDescriptor::Declared(declared)
+                if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_)) =>
+            {
+                let TypeDescriptor::Newtype(payload) = declared.body.as_ref() else {
+                    unreachable!()
+                };
+                if index == 0 {
+                    Ok(payload.as_ref().clone())
+                } else {
+                    Err(format!(
+                        "newtype {} has no item at index {index}; its payload is .0",
+                        declared.name,
+                    ))
+                }
+            }
             TypeDescriptor::Tuple(items) => items.get(index).cloned().ok_or_else(|| {
                 format!(
                     "Tuple of length {} has no item at index {index}",
@@ -1022,7 +1059,7 @@ impl<'a> GenericInference<'a> {
                     kind: EnumInferenceFailureKind::IllegalVariant,
                     expected_name: expected_name.clone(),
                 },
-                format!("variant '{tag} is not part of {expected_name}"),
+                format!("variant {tag} is not part of {expected_name}"),
             ));
         }
         let type_failure = inner_message.contains("cannot unify")
@@ -1035,7 +1072,7 @@ impl<'a> GenericInference<'a> {
                     expected_name: expected_name.clone(),
                 },
                 format!(
-                    "variant '{tag} payload is incompatible with {expected_name}: {inner_message}"
+                    "variant {tag} payload is incompatible with {expected_name}: {inner_message}"
                 ),
             )
         })

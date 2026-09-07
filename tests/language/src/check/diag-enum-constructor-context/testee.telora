@@ -1,0 +1,1 @@
+export def invalid = Result.Ok(1);

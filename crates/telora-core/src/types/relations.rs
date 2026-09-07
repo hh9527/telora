@@ -20,6 +20,56 @@ pub(crate) fn apply_declared_type_arguments(
     id.reapply(&applied)
 }
 
+fn newtype_constructor_type(descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
+    let result = constructor_instance_type(descriptor)?;
+    let TypeDescriptor::Declared(declared) = result else { return None; };
+    let TypeDescriptor::Newtype(payload) = declared.body.as_ref() else { return None; };
+    Some(TypeDescriptor::Function {
+        parameters: vec![payload.as_ref().clone()],
+        result: Box::new(result.clone()),
+    })
+}
+
+fn constructor_instance_type(descriptor: &TypeDescriptor) -> Option<&TypeDescriptor> {
+    Some(match descriptor {
+        TypeDescriptor::TypeOf(result) => result.as_ref(),
+        TypeDescriptor::Function { result, .. } => match result.as_ref() {
+            TypeDescriptor::TypeOf(result) => result.as_ref(),
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+fn enum_member_type(
+    descriptor: &TypeDescriptor, tag: &str,
+) -> Result<Option<(TypeDescriptor, ValueConstructor)>, String> {
+    let Some(owner) = constructor_instance_type(descriptor) else { return Ok(None); };
+    let body = match owner {
+        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+        descriptor => descriptor,
+    };
+    let TypeDescriptor::Enum(variants) = body else { return Ok(None); };
+    let payload = variants.get(tag).ok_or_else(|| {
+        format!("enum {} has no member {tag:?}", owner.display_name())
+    })?;
+    let ty = match payload {
+        Some(payload) => TypeDescriptor::Function {
+            parameters: vec![payload.as_ref().clone()], result: Box::new(owner.clone()),
+        },
+        None => owner.clone(),
+    };
+    Ok(Some((ty, ValueConstructor::EnumMember { tag: tag.into(), has_payload: payload.is_some() })))
+}
+
+fn expects_type_value(expected: &TypeDescriptor) -> bool {
+    match expected {
+        TypeDescriptor::Type | TypeDescriptor::TypeOf(_) => true,
+        TypeDescriptor::Function { result, .. } => expects_type_value(result),
+        _ => false,
+    }
+}
+
 pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor) -> bool {
     match descriptor {
         TypeDescriptor::Bound(_) => true,
@@ -28,7 +78,7 @@ pub(crate) fn type_identity_contains_bound_parameter(descriptor: &TypeDescriptor
             .arguments()
             .iter()
             .any(type_identity_contains_bound_parameter),
-        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
             type_identity_contains_bound_parameter(item)
         }
         TypeDescriptor::Tagged { payload, .. } => type_identity_contains_bound_parameter(payload),
@@ -72,7 +122,7 @@ pub(crate) fn type_identity_is_symbolic(descriptor: &TypeDescriptor) -> bool {
             .arguments()
             .iter()
             .any(type_identity_is_symbolic),
-        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
             type_identity_is_symbolic(item)
         }
         TypeDescriptor::Tagged { payload, .. } => type_identity_is_symbolic(payload),
@@ -107,7 +157,7 @@ fn join_all_types(types: Vec<TypeDescriptor>) -> TypeDescriptor {
 fn contains_pending_alternatives(ty: &TypeDescriptor) -> bool {
     match ty {
         TypeDescriptor::PendingAlternatives(_) => true,
-        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item)
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item) | TypeDescriptor::Tagged { payload: item, .. } => {
             contains_pending_alternatives(item)
         }
@@ -132,6 +182,7 @@ fn potentially_assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) ->
     }
     match (actual, expected) {
         (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
+        | (TypeDescriptor::Newtype(actual), TypeDescriptor::Newtype(expected))
         | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
         | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
             potentially_assignable(actual, expected)
@@ -260,6 +311,9 @@ pub(crate) fn assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) -> 
         (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected)) => {
             assignable(actual, expected)
         }
+        (TypeDescriptor::Newtype(actual), TypeDescriptor::Newtype(expected)) => {
+            assignable(actual, expected)
+        }
         (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected)) => {
             assignable(actual, expected)
         }
@@ -317,6 +371,9 @@ pub(crate) fn erase_declared_identity(descriptor: &TypeDescriptor) -> TypeDescri
         TypeDescriptor::Declared(declared) => erase_declared_identity(&declared.body),
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(erase_declared_identity(item)))
+        }
+        TypeDescriptor::Newtype(item) => {
+            TypeDescriptor::Newtype(Box::new(erase_declared_identity(item)))
         }
         TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(erase_declared_identity(item))),
         TypeDescriptor::TypeOf(instance) => {

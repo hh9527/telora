@@ -1,7 +1,7 @@
 import "std/value" {Value};
 import "std/ees" as ees;
 
-type Severity = enum {'Error, 'Warning, 'Info};
+type Severity = enum {Error, Warning, Info};
 type SourceRange = struct {source: String, start: Int, end: Int};
 type Label = struct {location: SourceRange, message: String, primary: Bool};
 type Diagnostic = struct {
@@ -34,14 +34,14 @@ type Env = struct {
 };
 
 type EntryMode = enum {
-    'Run,
-    'Serve,
+    Run,
+    Serve,
 };
 
 type DataFormat = enum {
-    'Json,
-    'Yaml,
-    'Toml,
+    Json,
+    Yaml,
+    Toml,
 };
 
 type DataSrc = struct {
@@ -56,9 +56,9 @@ type TextSrc = struct {
 };
 
 type Stdin = enum {
-    'Text,
-    'Lined,
-    'Null,
+    Text,
+    Lined,
+    Null,
 };
 
 type SystemCaps = struct {
@@ -96,15 +96,15 @@ type EesReply = struct {
 };
 
 type SystemEvent = enum {
-    'Initialize,
-    'EesReply(EesReply),
-    'StdinLine(Option(String)),
+    Initialize,
+    EesReply(EesReply),
+    StdinLine(Option(String)),
 };
 
 type SystemEffect = enum {
-    'EesCall(EesCall),
-    'Output(String),
-    'Exit(Int),
+    EesCall(EesCall),
+    Output(String),
+    Exit(Int),
 };
 
 

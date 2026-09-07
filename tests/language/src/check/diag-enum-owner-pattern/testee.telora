@@ -1,3 +1,4 @@
+type State = enum {Ready};
 export def inspect: for(A) Fn(A) -> Int = fn(value) {
-    match value { 'Ready => 1, _ => 2 }
+    match value { State.Ready => 1, _ => 2 }
 };

@@ -1,0 +1,3 @@
+import "@src/check/diag-bare-member-ambiguous/left" *;
+import "@src/check/diag-bare-member-ambiguous/right" *;
+export def result = match Bool.True { End => 1, _ => 0 };

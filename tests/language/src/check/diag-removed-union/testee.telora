@@ -1,1 +1,1 @@
-export type Removed = union('None, [Int, String]);
+export type Removed = union(None.ty!(Option(Type)), [Int, String]);

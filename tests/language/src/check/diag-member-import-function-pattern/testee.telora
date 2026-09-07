@@ -1,0 +1,4 @@
+type Event = enum { Progress(Int) };
+import Event.{Progress};
+def make: Fn(Int) -> Event = Progress;
+export def value = match Progress(1) { make(value) => value };

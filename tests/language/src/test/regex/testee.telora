@@ -32,8 +32,8 @@ export def verified_case = test.should_ok(fn() {
         && (string.parse(String, "plain") |> results.unwrap) == "plain"
         && (string.parse(Int, "42") |> results.unwrap) == 42
         && (string.parse(Float, "1.5") |> results.unwrap) == 1.5
-        && first == {name: "answer", value: 42, unit: 'None}
-        && second == {name: "size", value: 7, unit: 'Some("px")}
+        && first == {name: "answer", value: 42, unit: None}
+        && second == {name: "size", value: 7, unit: Some("px")}
         && !results.is_ok(string.parse(Record, "not a record"))
         && !results.is_ok(string.parse(Int, "4x"))
         && !results.is_ok(string.parse(Float, "1.5x"))

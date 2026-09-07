@@ -2,11 +2,11 @@ import "@src/support" as support;
 import "std/value" {Value};
 export def check: Fn(Value) -> Value = fn(actual) {
     match support.stream_item(actual, "stdout", 0) {
-        'Some(value) => support.bool_value(
-            support.exit_code(actual) == 'Some(0)
+        Some(value) => support.bool_value(
+            support.exit_code(actual) == Some(0)
                 && support.string_field_equals(value, "name", "result")
                 && support.string_field_equals(value, "type", "(Int, String, enum {False, True}, Int)")
-                && support.stream_length(actual, "stderr") == 'Some(0)),
-        _ => 'False,
+                && support.stream_length(actual, "stderr") == Some(0)),
+        _ => Value.False,
     }
 };

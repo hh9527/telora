@@ -42,9 +42,16 @@ pub struct BindingData {
     pub value: Expr,
 }
 
+impl BindingData {
+    pub fn is_member_import(&self) -> bool {
+        self.kind == BindingKind::Def && self.imported_name.is_some()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeclaredInitializerKind {
     Struct,
+    Newtype,
     Enum,
 }
 
@@ -253,6 +260,7 @@ pub enum PatternKind {
     String(String),
     Atom(String),
     Tagged { tag: String, payload: Box<Pattern> },
+    Constructor { constructor: Box<Expr>, payload: Option<Box<Pattern>> },
     Tuple(Vec<Pattern>),
     Struct(Vec<StructPatternField>),
 }

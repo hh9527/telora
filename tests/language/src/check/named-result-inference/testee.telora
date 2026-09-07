@@ -1,0 +1,8 @@
+export def value = match Some("hi") {
+    Some(x) => Ok(x),
+    None => Err(2),
+};
+export def reversed = match Some("hi") {
+    None => Err(2),
+    Some(x) => Ok(x),
+};

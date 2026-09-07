@@ -53,9 +53,6 @@ impl<'a> Lowerer<'a> {
                     parse_float_literal(&self.text(node))
                         .map_err(|message| self.error(node, message))?,
                 ),
-                Token::Atom => {
-                    PatternKind::Atom(self.text(node).trim_start_matches('\'').to_owned())
-                }
                 _ => return Err(self.error(node, "expected pattern token")),
             };
             return Ok(located(inner, self.location(node)));
@@ -70,6 +67,33 @@ impl<'a> Lowerer<'a> {
             );
         }
         let inner = match rule {
+            Rule::ConstructorPattern => {
+                let mut names = self.token_children(node, Token::Identifier);
+                let first = self.identifier(names.next().expect("constructor has a name"));
+                let mut constructor = located(ExprKind::Variable(first.clone()), first.location);
+                for name in names {
+                    let field = self.identifier(name);
+                    let location = Location::new(
+                        constructor.location.source,
+                        crate::source::TextRange::from_usize(
+                            constructor.location.start as usize..field.location.end as usize,
+                        ).expect("constructor path is within a parsed source"),
+                    );
+                    constructor = located(ExprKind::Field {
+                        receiver: Box::new(constructor), field,
+                    }, location);
+                }
+                let payload = if let Some(open) = self.token_children(node, Token::LParen).next() {
+                    let payload = self.children(node).find(|child| self.is_pattern(*child)
+                        && self.cst.span(*child).start >= self.cst.span(open).end)
+                        .ok_or_else(|| self.error(node, "constructor pattern has no payload"))?;
+                    Some(Box::new(self.pattern(payload)?))
+                } else { None };
+                PatternKind::Constructor {
+                    constructor: Box::new(constructor),
+                    payload,
+                }
+            }
             Rule::IdentifierPattern => {
                 if self
                     .token_children(node, Token::Placeholder)
@@ -102,27 +126,6 @@ impl<'a> Lowerer<'a> {
                     .ok_or_else(|| self.error(node, "string pattern has no literal"))?;
                 PatternKind::String(self.plain_string(string, "string pattern")?)
             }
-            Rule::AtomPattern => PatternKind::Atom(
-                self.text(self.first_token(node, Token::Atom)?)
-                    .trim_start_matches('\'')
-                    .to_owned(),
-            ),
-            Rule::TaggedPattern => PatternKind::Tagged {
-                tag: self
-                    .text(self.first_token(node, Token::Atom)?)
-                    .trim_start_matches('\'')
-                    .to_owned(),
-                payload: Box::new(
-                    self.pattern(
-                        self.children(node)
-                            .filter(|child| {
-                                !matches!(self.cst.get(*child), Node::Token(Token::Atom, _))
-                            })
-                            .find(|child| self.is_pattern(*child))
-                            .ok_or_else(|| self.error(node, "tagged pattern has no payload"))?,
-                    )?,
-                ),
-            },
             Rule::TuplePattern => PatternKind::Tuple(
                 self.children(node)
                     .filter(|child| self.is_pattern(*child))
@@ -337,6 +340,19 @@ impl<'a> Lowerer<'a> {
 
     fn declared_type_initializer(&self, node: NodeRef) -> Result<(Expr, Decorator), Diagnostic> {
         let (operation, members) = match self.rule(node) {
+            Some(Rule::StructInitializer) if self.first_token(node, Token::LParen).is_ok() => {
+                let payload = self.children(node)
+                    .find(|child| self.is_expression(*child))
+                    .ok_or_else(|| self.error(node, "newtype has no payload type"))?;
+                ("\0telora_newtype", vec![located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located("payload".to_owned(), self.location(payload))),
+                        value: self.expression(payload)?,
+                    },
+                    self.location(payload),
+                )])
+            }
             Some(Rule::StructInitializer) => {
                 let mut fields = Vec::new();
                 let mut names = std::collections::HashSet::new();
@@ -380,9 +396,10 @@ impl<'a> Lowerer<'a> {
                     .rule_children(node)
                     .filter(|child| self.rule(*child) == Some(Rule::EnumInitializerVariant))
                 {
-                    let tag_node = self.first_token(variant, Token::Atom)?;
+                    let tag_node = self.token_children(variant, Token::Identifier).next()
+                        .ok_or_else(|| self.error(variant, "missing Identifier"))?;
                     let name = located(
-                        self.text(tag_node).trim_start_matches('\'').to_owned(),
+                        self.text(tag_node).into_owned(),
                         self.location(tag_node),
                     );
                     if !names.insert(name.value.clone()) {

@@ -224,6 +224,9 @@
                 BTreeMap::from([(
                     "host".to_owned(),
                     ModuleInterface {
+                        value_binding: Some("host".into()),
+                        type_declarations: BTreeSet::new(),
+                        member_constructors: BTreeMap::new(),
                         namespaces: BTreeMap::new(),
                         exports: BTreeMap::from([("host".to_owned(), scheme)]),
                         concrete_types: BTreeMap::new(),
@@ -294,10 +297,10 @@
         assert_eq!(dynamic.display(dynamic.result_type), "Int");
 
         let chained =
-            analyze_with_natives("if 'False { 1 } else if 'True { \"x\" } else { 2.0 }", &[])
+            analyze_with_natives("if Bool.False { 1 } else if Bool.True { \"x\" } else { 2.0 }", &[])
                 .err().unwrap();
         let explicit_nested = analyze_with_natives(
-            "if 'False { 1 } else { if 'True { \"x\" } else { 2.0 } }",
+            "if Bool.False { 1 } else { if Bool.True { \"x\" } else { 2.0 } }",
             &[],
         )
         .err().unwrap();

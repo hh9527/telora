@@ -11,8 +11,8 @@
                import "std/result" as result;
                type Box(Item) = struct {value: Item};
                match codec.decode(Box(String), data) {
-                   'Ok(value) => value,
-                   'Err(error) => fail!(error.message, error.value),
+                   Ok(value) => value,
+                   Err(error) => fail!(error.message, error.value),
                }"#,
         )
         .unwrap();
@@ -383,8 +383,8 @@
                import "./data.json" { data };
                let data = codec.decode(Array(Int), data) |> result.unwrap;
                match arrays.get(data, 0) {
-                   'Some(value) => fail!("selected", value),
-                   'None => 0,
+                   Some(value) => fail!("selected", value),
+                   None => 0,
                }"#,
         )
         .unwrap();
@@ -430,8 +430,8 @@
                let indexed = arrays.enumerate(data);
                let first = arrays.get(indexed, 0);
                match first {
-                   'Some((index, value)) => fail!("index", index),
-                   'None => 0,
+                   Some((index, value)) => fail!("index", index),
+                   None => 0,
                }"#,
         )
         .unwrap();
@@ -552,7 +552,7 @@
         fs::write(
             directory.join("erased.telora"),
             r#"import "std/codec" as codec;
-               let metadata: Type = Int; codec.decode(metadata, 'Int(1))"#,
+               let metadata: Type = Int; codec.decode(metadata, codec.Value.Int(1))"#,
         )
         .unwrap();
         let error =

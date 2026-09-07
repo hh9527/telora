@@ -1,6 +1,16 @@
 impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
-        let payload = self.compile_expr_unowned(expression)?;
+        let payload = if let Some(constructor) = self.value_constructors.get(&expression.location).cloned() {
+            match &constructor {
+                crate::types::ValueConstructor::EnumMember { tag, has_payload: false } => {
+                    self.compile_constructor_declaration(expression, &constructor)?;
+                    self.load_constant(atom_constant(tag), expression.location)
+                }
+                _ => return self.compile_value_constructor(expression, &constructor),
+            }
+        } else {
+            self.compile_expr_unowned(expression)?
+        };
         let Some(owner) = self
             .declared_value_owners
             .get(&expression.location)

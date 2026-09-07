@@ -4,13 +4,13 @@ import "std/value" {Value};
 
 def find_export: Fn(Value, String) -> Value = fn(actual, name) {
     match support.record_field(actual, "stdout") {
-        'Some('Array(items)) => match array.find(items, fn(item) {
+        Some(Value.Array(items)) => match array.find(items, fn(item) {
             support.string_field_equals(item, "name", name)
         }) {
-            'Some(item) => item,
-            'None => 'None,
+            Some(item) => item,
+            None => Value.None,
         },
-        _ => 'None,
+        _ => Value.None,
     }
 };
 
@@ -19,7 +19,7 @@ def has_type: Fn(Value, String, String) -> Bool = fn(actual, name, expected) {
 };
 
 export def check: Fn(Value) -> Value = fn(actual) {
-    if support.exit_code(actual) == 'Some(0)
+    if support.exit_code(actual) == Some(0)
         && has_type(actual, "Box", "for(A) Fn(TypeOf(A)) -> TypeOf(Box)")
         && has_type(actual, "Tree", "for(A) Fn(TypeOf(A)) -> TypeOf(Tree)")
         && has_type(actual, "IntTree", "TypeOf(Tree)")
@@ -28,9 +28,9 @@ export def check: Fn(Value) -> Value = fn(actual) {
         && has_type(actual, "keep", "for(A) Fn(Int, A) -> (Int, A)")
         && has_type(actual, "nested", "Fn(Int) -> Fn(Int) -> Int")
         && has_type(actual, "recursive", "Fn(Int) -> Int")
-        && support.stream_length(actual, "stderr") == 'Some(0) {
-        'True
+        && support.stream_length(actual, "stderr") == Some(0) {
+        Value.True
     } else {
-        'False
+        Value.False
     }
 };

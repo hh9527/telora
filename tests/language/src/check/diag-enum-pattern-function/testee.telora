@@ -1,0 +1,3 @@
+type Event = enum { Progress(Int), Finished };
+def make: Fn(Int) -> Event = Event.Progress;
+export def invalid = match Event.Progress(1) { make(value) => value, _ => 0 };

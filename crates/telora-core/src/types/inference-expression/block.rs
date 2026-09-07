@@ -234,7 +234,9 @@ impl<'a> GenericInference<'a> {
                 binding.value.kind,
                 BindingKind::Let | BindingKind::Def | BindingKind::Impl | BindingKind::Import
             ) {
-                let inferred_scheme = if binding.value.kind == BindingKind::Let
+                let inferred_scheme = if binding.value.is_member_import() {
+                    Some(self.member_import_scheme(&binding.value, &inferred)?)
+                } else if binding.value.kind == BindingKind::Let
                     && binding.value.annotation.is_none()
                     && binding.value.type_parameters.is_empty()
                     && matches!(binding.value.value.value, ExprKind::Closure { .. })

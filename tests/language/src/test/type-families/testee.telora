@@ -4,7 +4,7 @@ import "@src/test-support" {expect};
 type Box(A) = struct {value: A};
 type Other(A) = struct {value: A};
 type Phantom(A) = struct {value: Int};
-type Maybe(A) = enum {'None, 'Some(A)};
+type Maybe(A) = enum {None, Some(A)};
 
 def unbox: for(Content) Fn(Box(Content)) -> Content = fn(boxed) { boxed.value };
 def make_nested: for(A) Fn(Array(Tuple([A, Int]))) -> Box(Array(Tuple([A, Int]))) =
@@ -24,14 +24,14 @@ type LocalId = Int;
 type Pair(A) = Tuple([LocalId, A]);
 type PairOutput = Pair(String);
 
-type Expr(A) = enum {'Leaf(A), 'Call(Array(Expr(A)))};
+type Expr(A) = enum {Leaf(A), Call(Array(Expr(A)))};
 type IntExpr = Expr(Int);
 type StringExpr = Expr(String);
 
 type User = struct {name: String, age: Int};
 
 export def verified_case = test.should_ok(fn() {
-    let int_expr: IntExpr = 'Call(['Leaf(1)]);
+    let int_expr: IntExpr = Expr.Call([Expr.Leaf(1)]);
     let box_int: Type = Box(Int);
     let same_box_int: Type = Box(Int);
     let box_string: Type = Box(String);
@@ -51,25 +51,25 @@ export def verified_case = test.should_ok(fn() {
         && unbox({value: 7}) == 7
         && make_nested([(1, 2)]).value == [(1, 2)]
         && match int_expr {
-            'Leaf(_) => 'False,
-            'Call(items) => match items[0] {
-                'Leaf(value) => value == 1,
-                'Call(_) => 'False,
+            Expr.Leaf(_) => False,
+            Expr.Call(items) => match items[0] {
+                Expr.Leaf(value) => value == 1,
+                Expr.Call(_) => False,
             },
         }
         && int_expr_type == same_int_expr_type
         && int_expr_type != string_expr_type
         && match {age: 36, name: "Ada"}.cast!(User) {
-            'Ok(_) => 'True,
-            'Err(_) => 'False,
+            Ok(_) => True,
+            Err(_) => False,
         }
         && match {age: "old", name: "Ada"}.cast!(User) {
-            'Ok(_) => 'False,
-            'Err(_) => 'True,
+            Ok(_) => False,
+            Err(_) => True,
         }
         && match {value: 42}.cast!(Box(Int)) {
-            'Ok(_) => 'True,
-            'Err(_) => 'False,
+            Ok(_) => True,
+            Err(_) => False,
         };
     expect(verified)
 });

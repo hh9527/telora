@@ -1,1 +1,1 @@
-export def make: Fn(String) -> Option(Int) = 'Some;
+export def make: Fn(String) -> Option(Int) = Some;

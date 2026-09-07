@@ -68,8 +68,8 @@ import "std/dyn" as dyn;
 type User = struct {age: Int};
 def inspect_i: Fn(Dyn) -> Int = fn(value) {
     match dyn.field(value, "age") {
-        'Ok(age) => fail!("age rejected", age),
-        'Err(error) => fail!(error.message, error),
+        Ok(age) => fail!("age rejected", age),
+        Err(error) => fail!(error.message, error),
     }
 };
 def inspect: for(A) Fn(TypeOf(A)) -> Fn(A) -> Int = interpreter!(inspect_i);
@@ -112,7 +112,7 @@ inspect(User)(checked)"#;
         );
         assert!(rendered.contains("user.json:1:8"), "{rendered}");
         assert!(
-            rendered.contains("standalone/main:8:21"),
+            rendered.contains("standalone/main:8:20"),
             "{rendered}"
         );
         fs::remove_dir_all(directory).unwrap();

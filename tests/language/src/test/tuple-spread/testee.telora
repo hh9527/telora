@@ -4,8 +4,8 @@ type Item = struct {value: Int};
 
 export def heterogeneous = test.should_ok(fn() {
     let a = (1, "hi");
-    let b = (...a, 'True.ty!(Bool), 3);
-    let expected: Tuple([Int, String, Bool, Int]) = (1, "hi", 'True, 3);
+    let b = (...a, True.ty!(Bool), 3);
+    let expected: Tuple([Int, String, Bool, Int]) = (1, "hi", True, 3);
     expect(b == expected)
 });
 

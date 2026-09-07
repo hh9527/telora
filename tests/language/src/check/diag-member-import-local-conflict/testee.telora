@@ -1,0 +1,4 @@
+type A = enum { Item(Int) };
+import A.{Item};
+def Item = fn(value) { value };
+export def result = Item(1);

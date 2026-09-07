@@ -1,2 +1,2 @@
-def option: Option(Int) = 'Some(1);
-export def invalid = match option { 'Some(value) => value };
+def option: Option(Int) = Some(1);
+export def invalid = match option { Some(value) => value };

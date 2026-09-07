@@ -569,7 +569,7 @@ fn install_native_modules_observed(
             )));
         }
     }
-    let mut default_prelude: Option<BTreeMap<String, PersistentValue>> = None;
+    let mut default_prelude: Option<BTreeMap<String, (PersistentValue, ModuleInterface)>> = None;
     for spec in specs {
         // Semantic catalog queries can install built-ins before their selected
         // graph is available. Keep those provisional identities distinct.
@@ -725,8 +725,11 @@ fn install_native_modules_observed(
             )));
         }
         if let Some(prelude) = &default_prelude {
-            for (name, root) in prelude {
-                external_roots.entry(name.clone()).or_insert(*root);
+            for (name, (root, interface)) in prelude {
+                if let std::collections::hash_map::Entry::Vacant(entry) = external_roots.entry(name.clone()) {
+                    entry.insert(*root);
+                    external_interfaces.insert(name.clone(), interface.clone());
+                }
             }
         }
         let mut account = QuotaAccount::new(Quota::new(100_000, 1_000, u64::MAX));
@@ -901,17 +904,18 @@ fn default_prelude_exports(
     root: PersistentValue,
     interface: &ModuleInterface,
     heap: &Heap,
-) -> Result<BTreeMap<String, PersistentValue>, ModuleError> {
+) -> Result<BTreeMap<String, (PersistentValue, ModuleInterface)>, ModuleError> {
     interface
         .exports
         .keys()
         .map(|name| {
-            root.export_get(heap, name)
+            let value = root.export_get(heap, name)
                 .map_err(|error| ModuleError::new(error.to_string()))?
                 // Prelude bindings are semantic constants. Their use site, not
                 // the prelude implementation, supplies the root provenance.
-                .map(|value| (name.clone(), value.without_location()))
-                .ok_or_else(|| ModuleError::new(format!("std/prelude has no export {name:?}")))
+                .map(|value| value.without_location())
+                .ok_or_else(|| ModuleError::new(format!("std/prelude has no export {name:?}")))?;
+            Ok((name.clone(), (value, select_import_interface(interface.clone(), name, name)?)))
         })
         .collect()
 }
@@ -930,28 +934,43 @@ fn select_import_root(
         .export_get(heap, &exported.value)
         .map_err(|error| ModuleError::new(error.to_string()))?
         .ok_or_else(|| ModuleError::new(format!("module has no export {:?}", exported.value)))?;
-    if let Some(namespace) = interface.namespaces.get(&exported.value) {
-        return Ok((selected, namespace.clone()));
+    Ok((selected, select_import_interface(interface, &exported.value, local)?))
+}
+
+fn select_import_interface(
+    interface: ModuleInterface,
+    exported: &str,
+    local: &str,
+) -> Result<ModuleInterface, ModuleError> {
+    if let Some(namespace) = interface.namespaces.get(exported) {
+        return Ok(namespace.clone());
     }
     let scheme = interface
         .exports
-        .get(&exported.value)
+        .get(exported)
         .cloned()
         .ok_or_else(|| {
             ModuleError::new(format!(
                 "module interface has no export {:?}",
-                exported.value
+                exported
             ))
         })?;
-    Ok((
-        selected,
-        ModuleInterface {
+    Ok(ModuleInterface {
+            value_binding: Some(local.to_owned()),
+            member_constructors: interface.member_constructors.get(exported)
+                .cloned().map(|constructor| BTreeMap::from([(local.to_owned(), constructor)]))
+                .unwrap_or_default(),
+            type_declarations: if interface.type_declarations.contains(exported) {
+                BTreeSet::from([local.to_owned()])
+            } else {
+                BTreeSet::new()
+            },
             namespaces: BTreeMap::new(),
             exports: BTreeMap::from([(local.to_owned(), scheme)]),
             concrete_types: interface.concrete_types,
             traits: interface
                 .traits
-                .get(&exported.value)
+                .get(exported)
                 .copied()
                 .map(|id| BTreeMap::from([(local.to_owned(), id)]))
                 .unwrap_or_default(),
@@ -960,10 +979,9 @@ fn select_import_root(
             display_trait: interface.display_trait,
             type_family_templates: interface
                 .type_family_templates
-                .get(&exported.value)
+                .get(exported)
                 .cloned()
                 .map(|family| BTreeMap::from([(local.to_owned(), family)]))
                 .unwrap_or_default(),
-        },
-    ))
+        })
 }

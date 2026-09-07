@@ -1,1 +1,2 @@
-export type Removed = {kind: 'Atom};
+type Kind = enum {Atom};
+export type Removed = {kind: Kind.Atom};

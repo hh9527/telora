@@ -1,1 +1,2 @@
-export type Removed = {kind: 'Union, variants: [Int, String]};
+type Kind = enum {Union};
+export type Removed = {kind: Kind.Union, variants: [Int, String]};

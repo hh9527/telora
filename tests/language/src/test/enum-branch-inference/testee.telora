@@ -1,0 +1,62 @@
+import "std/test" as test;
+import "std/dict" as dict;
+import "@src/test-support" {expect};
+
+type Choice(A, B) = enum {Left(A), Right(B)};
+
+export def option_branches = test.should_ok(fn() {
+    let first = if True { Some(1) } else { None };
+    let second = if False { None } else { Some(1) };
+    expect(first == second && first == Some(1))
+});
+
+export def result_branches = test.should_ok(fn() {
+    let value = match Some("hi") { Some(x) => Ok(x), None => Err(2) };
+    let reversed = match Some("hi") { None => Err(2), Some(x) => Ok(x) };
+    expect(value == reversed && value == Ok("hi"))
+});
+
+export def if_let_branches = test.should_ok(fn() {
+    let value = if let Some(x) = Some("hi") { Ok(x) } else { Err(2) };
+    expect(value == Ok("hi"))
+});
+
+export def declared_branches = test.should_ok(fn() {
+    let value = if True { Choice.Left("hi") } else { Choice.Right(2) };
+    let reversed = if False { Choice.Right(2) } else { Choice.Left("hi") };
+    expect(value == reversed && value == Choice.Left("hi"))
+});
+
+export def nested_branches = test.should_ok(fn() {
+    let value = match Some("hi") {
+        Some(x) => Some(Ok(x)),
+        None => Some(Err(2)),
+    };
+    let values = [Ok("hi"), Err(2)];
+    expect(value == Some(values[0]))
+});
+
+export def return_branches = test.should_ok(fn() {
+    let choose = fn(flag) {
+        if flag { return Ok("hi"); } else { Err(2) }
+    };
+    expect(choose(True) == Ok("hi") && choose(False) == Err(2))
+});
+
+export def all_return_branches = test.should_ok(fn() {
+    let choose = fn(flag) {
+        if flag { return Ok("hi"); } else { return Err(2); }
+    };
+    expect(choose(True) == Ok("hi") && choose(False) == Err(2))
+});
+
+export def dictionary_entries = test.should_ok(fn() {
+    let values = {...dict.from_pairs([]), success: Ok("hi"), failure: Err(2)};
+    expect(dict.get(values, "success") == Some(Ok("hi"))
+        && dict.get(values, "failure") == Some(Err(2)))
+});
+
+export def empty_array_spread = test.should_ok(fn() {
+    let values = [...[], Ok("hi"), Err(2)];
+    expect(values[0] == Ok("hi") && values[1] == Err(2))
+});

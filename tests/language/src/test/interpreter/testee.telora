@@ -4,11 +4,11 @@ import "@src/test-support" {expect};
 
 def int_equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) {
     match dyn.check_int(left) {
-        'Some(left) => match dyn.check_int(right) {
-            'Some(right) => left == right,
-            'None => 'False,
+        Some(left) => match dyn.check_int(right) {
+            Some(right) => left == right,
+            None => False,
         },
-        'None => 'False,
+        None => False,
     }
 };
 
@@ -16,8 +16,8 @@ def equal: for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Bool = interpreter!(int_equal);
 
 def consume_string: Fn(Dyn) -> Bool = fn(value) {
     match dyn.project_with(String, value) {
-        'Some(_) => 'True,
-        'None => 'False,
+        Some(_) => True,
+        None => False,
     }
 };
 

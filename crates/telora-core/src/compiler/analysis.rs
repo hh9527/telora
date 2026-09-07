@@ -208,7 +208,7 @@ fn bind_pattern(pattern: &Pattern, bound: &mut HashSet<String>) {
                 bind_pattern(item, bound);
             }
         }
-        PatternKind::Tagged { payload, .. } => bind_pattern(payload, bound),
+        PatternKind::Tagged { payload, .. } | PatternKind::Constructor { payload: Some(payload), .. } => bind_pattern(payload, bound),
         PatternKind::Struct(fields) => {
             for field in fields {
                 bind_pattern(&field.pattern, bound);
@@ -218,7 +218,8 @@ fn bind_pattern(pattern: &Pattern, bound: &mut HashSet<String>) {
         | PatternKind::Int(_)
         | PatternKind::Float(_)
         | PatternKind::String(_)
-        | PatternKind::Atom(_) => {}
+        | PatternKind::Atom(_)
+        | PatternKind::Constructor { payload: None, .. } => {}
     }
 }
 

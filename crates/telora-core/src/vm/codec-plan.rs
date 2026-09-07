@@ -13,7 +13,7 @@ fn plan_struct(
                 .is_none_or(|atom| atom != "CamelCase")
             {
                 return Err(CodecFailure::new(
-                    format!("{path}: rename_all must be 'CamelCase"),
+                    format!("{path}: rename_all must be json.RenameCase.CamelCase"),
                     data,
                     rule,
                 ));
@@ -156,7 +156,7 @@ fn plan_enum(
                 .is_none_or(|atom| atom != "CamelCase")
             {
                 return Err(CodecFailure::new(
-                    format!("{path}: rename_all must be 'CamelCase"),
+                    format!("{path}: rename_all must be json.RenameCase.CamelCase"),
                     data,
                     rule,
                 ));

@@ -372,7 +372,7 @@ fn resume_dict_continuation(
             _ => {
                 return Err(error(
                     RuntimeErrorKind::TypeMismatch,
-                    "std/dict.filter predicate must return 'True or 'False",
+                    "std/dict.filter predicate must return True or False",
                     &continuation.call_function,
                     continuation.call_pc,
                 ));

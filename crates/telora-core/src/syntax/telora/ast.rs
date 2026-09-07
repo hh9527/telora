@@ -402,6 +402,7 @@ impl<'tree> ImportBinding<'tree> {
 
     pub fn has_selector(self) -> bool {
         child_node(self.syntax, Rule::ImportSelector).is_some()
+            || child_node(self.syntax, Rule::MemberSelector).is_some()
     }
 }
 
@@ -528,7 +529,8 @@ pub fn validate(source: SourceId, tree: &CstData) -> Vec<SyntaxIssue> {
                     Some(Token::Semicolon),
                     ExpectedSyntax::BindingValue,
                 )),
-            Binding::Import(node) if node.path().is_none() => {
+            Binding::Import(node) if node.path().is_none()
+                && child_node(node.syntax, Rule::MemberSelector).is_none() => {
                 issues.push(missing_at(source, node.syntax, ExpectedSyntax::ImportPath))
             }
             Binding::Export(_) => {}
@@ -571,7 +573,6 @@ fn is_expression_slot(syntax: SyntaxNode<'_>) -> bool {
                 | Rule::Primary
                 | Rule::Braced
                 | Rule::ArrayExpr
-                | Rule::AtomExpr
                 | Rule::BinaryExpr
                 | Rule::Block
                 | Rule::BytesExpr

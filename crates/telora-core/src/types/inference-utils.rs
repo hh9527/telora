@@ -9,6 +9,7 @@ fn collect_inference_variables(
             }
         }
         TypeDescriptor::Array(item)
+        | TypeDescriptor::Newtype(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => {
@@ -80,6 +81,9 @@ fn replace_inference_variables(
         }
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(replace_inference_variables(item, replacements)))
+        }
+        TypeDescriptor::Newtype(item) => {
+            TypeDescriptor::Newtype(Box::new(replace_inference_variables(item, replacements)))
         }
         TypeDescriptor::Dict(item) => {
             TypeDescriptor::Dict(Box::new(replace_inference_variables(item, replacements)))
@@ -175,6 +179,9 @@ fn rename_named_types(
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(rename_named_types(item, names)))
         }
+        TypeDescriptor::Newtype(item) => {
+            TypeDescriptor::Newtype(Box::new(rename_named_types(item, names)))
+        }
         TypeDescriptor::Dict(item) => {
             TypeDescriptor::Dict(Box::new(rename_named_types(item, names)))
         }
@@ -245,6 +252,7 @@ fn collect_named_names(descriptor: &TypeDescriptor, names: &mut HashMap<String, 
             collect_named_names(&declared.body, names);
         }
         TypeDescriptor::Array(item)
+        | TypeDescriptor::Newtype(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => collect_named_names(item, names),
@@ -281,6 +289,7 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
             }
         }
         TypeDescriptor::Array(item)
+        | TypeDescriptor::Newtype(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => {
@@ -334,7 +343,7 @@ fn collect_bound_parameters(descriptor: &TypeDescriptor, parameters: &mut Vec<Ty
 fn contains_standalone_sum(ty: &TypeDescriptor) -> bool {
     match ty {
         TypeDescriptor::AtomValue | TypeDescriptor::Atom(_) | TypeDescriptor::Tagged { .. } => true,
-        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
             contains_standalone_sum(item)
         }
         TypeDescriptor::Declared(declared) => {
@@ -440,6 +449,9 @@ fn bind_inference_variables(
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(bind_inference_variables(item, replacements)))
         }
+        TypeDescriptor::Newtype(item) => {
+            TypeDescriptor::Newtype(Box::new(bind_inference_variables(item, replacements)))
+        }
         TypeDescriptor::Dict(item) => {
             TypeDescriptor::Dict(Box::new(bind_inference_variables(item, replacements)))
         }
@@ -510,7 +522,7 @@ fn contains_type_variable(ty: &TypeDescriptor) -> bool {
             declared.id.arguments().iter().any(contains_type_variable)
                 || contains_type_variable(&declared.body)
         }
-        TypeDescriptor::Array(item) => contains_type_variable(item),
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) => contains_type_variable(item),
         TypeDescriptor::Dict(item) => contains_type_variable(item),
         TypeDescriptor::TypeOf(instance) => contains_type_variable(instance),
         TypeDescriptor::Tagged { payload, .. } => contains_type_variable(payload),
@@ -538,6 +550,7 @@ fn contains_exposed_type_variable(ty: &TypeDescriptor) -> bool {
             .iter()
             .any(contains_exposed_type_variable),
         TypeDescriptor::Array(item)
+        | TypeDescriptor::Newtype(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_exposed_type_variable(item),
@@ -565,6 +578,7 @@ pub(crate) fn contains_named_type(descriptor: &TypeDescriptor) -> bool {
                 || contains_named_type(&declared.body)
         }
         TypeDescriptor::Array(item)
+        | TypeDescriptor::Newtype(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::TypeOf(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_named_type(item),
@@ -611,6 +625,7 @@ fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
         TypeDescriptor::Never => true,
         TypeDescriptor::Declared(declared) => contains_runtime_never_leaf(&declared.body),
         TypeDescriptor::Array(item)
+        | TypeDescriptor::Newtype(item)
         | TypeDescriptor::Dict(item)
         | TypeDescriptor::Tagged { payload: item, .. } => contains_runtime_never_leaf(item),
         TypeDescriptor::Tuple(items) => items.iter().any(contains_runtime_never_leaf),
@@ -764,35 +779,12 @@ fn expression_references_names(
                     bound,
                 )
         }
-        ExprKind::IfLet {
-            value,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            expression_references_names(value, names, bound)
-                || expression_references_names(&then_branch.value.result, names, bound)
-                || expression_references_names(&else_branch.value.result, names, bound)
-        }
-        ExprKind::LetElse {
-            value,
-            else_branch,
-            body,
-            ..
-        } => {
-            expression_references_names(value, names, bound)
-                || expression_references_names(&else_branch.value.result, names, bound)
-                || expression_references_names(&body.value.result, names, bound)
-        }
-        ExprKind::Match { value, arms } => {
-            expression_references_names(value, names, bound)
-                || arms.iter().any(|arm| {
-                    arm.value
-                        .guard
-                        .as_ref()
-                        .is_some_and(|guard| expression_references_names(guard, names, bound))
-                        || expression_references_names(&arm.value.value, names, bound)
-                })
+        ExprKind::IfLet { .. } | ExprKind::LetElse { .. } | ExprKind::Match { .. } => {
+            // HIR distinguishes constructor references from bindings introduced by patterns.
+            HirProgram::resolve_expression(expression, names.iter().cloned())
+                .references().iter().any(|reference|
+                    reference.resolution == HirResolution::External
+                        && names.contains(&reference.name) && !bound.contains(&reference.name))
         }
         ExprKind::Int(_)
         | ExprKind::Float(_)
@@ -802,8 +794,9 @@ fn expression_references_names(
     }
 }
 
-pub(crate) fn program_references_name(program: &Program, name: &str) -> bool {
-    HirProgram::resolve(program, Vec::<String>::new())
+pub(crate) fn program_references_name(program: &Program, name: &str, member_candidate: bool) -> bool {
+    HirProgram::resolve_with_member_constructors(program, Vec::<String>::new(),
+        if member_candidate { HashSet::from([name.to_owned()]) } else { HashSet::new() })
         .references()
         .iter()
         .any(|reference| {
@@ -864,8 +857,10 @@ fn validate_export_references<'a, T>(
 pub(crate) fn recovered_reference_locations(
     program: &crate::parser::RecoveredProgram,
     name: &str,
+    member_candidate: bool,
 ) -> Vec<crate::source::Location> {
-    HirProgram::resolve_recovered(program, Vec::<String>::new())
+    HirProgram::resolve_recovered_with_member_constructors(program, Vec::<String>::new(),
+        if member_candidate { HashSet::from([name.to_owned()]) } else { HashSet::new() })
         .references()
         .iter()
         .filter(|reference| {
@@ -878,7 +873,7 @@ pub(crate) fn recovered_reference_locations(
 fn contains_inference_variable_at_or_after(ty: &TypeDescriptor, first: u32) -> bool {
     match ty {
         TypeDescriptor::Inference(variable) => variable.0 >= first,
-        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
             contains_inference_variable_at_or_after(item, first)
         }
         TypeDescriptor::Tagged { payload, .. } => {
@@ -910,7 +905,7 @@ fn contains_any_inference_variable(
 ) -> bool {
     match ty {
         TypeDescriptor::Inference(variable) => variables.contains(variable),
-        TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) | TypeDescriptor::Dict(item) | TypeDescriptor::TypeOf(item) => {
             contains_any_inference_variable(item, variables)
         }
         TypeDescriptor::Tagged { payload, .. } => {
@@ -940,7 +935,7 @@ fn contains_metatype(ty: &TypeDescriptor) -> bool {
     match ty {
         TypeDescriptor::Type => true,
         TypeDescriptor::TypeOf(instance) => contains_metatype(instance),
-        TypeDescriptor::Array(item) => contains_metatype(item),
+        TypeDescriptor::Newtype(item) | TypeDescriptor::Array(item) => contains_metatype(item),
         TypeDescriptor::Dict(item) => contains_metatype(item),
         TypeDescriptor::Tagged { payload, .. } => contains_metatype(payload),
         TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {

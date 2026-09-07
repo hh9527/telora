@@ -1,0 +1,5 @@
+import "std/json" as json;
+
+@json.rename_all(json.RenameCase.UnknownCase)
+type Record = struct {field: Int};
+export {Record};

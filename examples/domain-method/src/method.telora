@@ -12,7 +12,7 @@ def completed:
     for(A) Fn(Array(Option(A))) -> Array(A) =
     fn(results) {
         array.flat_map(results, fn(result) {
-            match result { 'Some(value) => [value], 'None => [] }
+            match result { Some(value) => [value], None => [] }
         })
     };
 
@@ -21,9 +21,9 @@ def collect_complete:
     fn(results) {
         let values = completed(results);
         if array.length(values) == array.length(results) {
-            'Some(values)
+            Some(values)
         } else {
-            'None
+            None
         }
     };
 
@@ -31,21 +31,21 @@ def compose:
     for(A, B, C) Fn(Fn(A) -> Option(B), Fn(B) -> Option(C), A) -> Option(C) =
     fn(first, second, input) {
         match first(input) {
-            'Some(value) => second(value),
-            'None => 'None,
+            Some(value) => second(value),
+            None => None,
         }
     };
 
 def or_else:
     for(A) Fn(Option(A), Fn() -> A) -> A =
     fn(value, fallback) {
-        match value { 'Some(found) => found, 'None => fallback() }
+        match value { Some(found) => found, None => fallback() }
     };
 
 def finalize:
     for(A) Fn(Bool, A) -> Option(A) =
     fn(complete, value) {
-        if complete { 'Some(value) } else { 'None }
+        if complete { Some(value) } else { None }
     };
 
 export { lower_independent, completed, collect_complete, compose, or_else, finalize };

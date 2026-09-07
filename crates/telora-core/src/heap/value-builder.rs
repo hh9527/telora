@@ -154,6 +154,11 @@ impl Heap {
                         ],
                     )
                 }
+                T::Newtype(payload) => {
+                    let payload = build(heap, background, payload, declared)?;
+                    let kind = atom(heap, "Newtype");
+                    record(heap, [("kind".into(), kind), ("payload".into(), payload)])
+                }
                 T::PendingAlternatives(_) => return Err(HeapError("unresolved common type")),
                 T::Tuple(items) => {
                     let items = items

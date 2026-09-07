@@ -1,11 +1,12 @@
 import "std/test" as test;
+import "std/value" {Value};
 
 export def make: Fn() -> test.Test = fn() {
     test.with_fixtures(["input.json", "input.json"], fn(outer) {
         test.with_fixtures(["file+json://input.json"], fn(inner) {
             test.should_ok(fn() {
                 match inner {
-                    'Object(fields) => fail!("field failure", fields.n),
+                    Value.Object(fields) => fail!("field failure", fields.n),
                     _ => fail!("wrong shape", outer),
                 }
             })

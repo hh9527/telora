@@ -249,6 +249,19 @@ impl<'a> Lowerer<'a> {
                 None => {}
             }
         }
+        let mut local_names = HashMap::new();
+        for entry in &entries {
+            let BlockEntry::Binding(binding) = entry else { continue; };
+            if matches!(binding.value.kind, BindingKind::Export | BindingKind::OpenImport) { continue; }
+            let name = &binding.value.name;
+            if let Some((location, member)) = local_names.insert(name.value.clone(),
+                (name.location, binding.value.is_member_import()))
+                && (member || binding.value.is_member_import())
+            {
+                return Err(Diagnostic::error(format!("conflicting member binding {:?}", name.value), name.location)
+                    .with_secondary("first binding here", location));
+            }
+        }
         let result = if let Some(result) = result {
             result
         } else if allow_destructuring {
@@ -636,7 +649,13 @@ impl<'a> Lowerer<'a> {
                 });
                 let declared_initializer =
                     initializer.and_then(|initializer| match self.rule(initializer) {
-                        Some(Rule::StructInitializer) => Some(DeclaredInitializerKind::Struct),
+                        Some(Rule::StructInitializer) => {
+                            Some(if self.first_token(initializer, Token::LParen).is_ok() {
+                                DeclaredInitializerKind::Newtype
+                            } else {
+                                DeclaredInitializerKind::Struct
+                            })
+                        }
                         Some(Rule::EnumInitializer) => Some(DeclaredInitializerKind::Enum),
                         _ => None,
                     });
@@ -845,6 +864,11 @@ impl<'a> Lowerer<'a> {
     }
 
     fn import_bindings(&self, node: NodeRef) -> Result<Vec<Binding>, Diagnostic> {
+        if let Some(selector) = self.rule_children(node)
+            .find(|child| self.rule(*child) == Some(Rule::MemberSelector))
+        {
+            return self.member_bindings(selector, false);
+        }
         let path = self
             .rule_children(node)
             .find(|child| self.rule(*child) == Some(Rule::StringLiteral))
@@ -940,6 +964,11 @@ impl<'a> Lowerer<'a> {
     }
 
     fn export_bindings(&self, node: NodeRef) -> Result<Vec<Binding>, Diagnostic> {
+        if let Some(selector) = self.rule_children(node)
+            .find(|child| self.rule(*child) == Some(Rule::MemberSelector))
+        {
+            return self.member_bindings(selector, true);
+        }
         if let Some(binding_node) = self.rule_children(node).find(|child| {
             matches!(
                 self.rule(*child),
@@ -1004,6 +1033,44 @@ impl<'a> Lowerer<'a> {
                 ))
             })
             .collect()
+    }
+
+    fn member_bindings(&self, node: NodeRef, exported: bool) -> Result<Vec<Binding>, Diagnostic> {
+        let mut names = self.token_children(node, Token::Identifier)
+            .map(|name| self.identifier(name));
+        let first = names.next().ok_or_else(|| self.error(node, "member import has no type name"))?;
+        let mut receiver = located(ExprKind::Variable(first.clone()), first.location);
+        for field in names {
+            let location = Location::new(receiver.location.source,
+                crate::source::TextRange::from_usize(receiver.location.start as usize..field.location.end as usize)
+                    .expect("member path is within a parsed source"));
+            receiver = located(ExprKind::Field { receiver: Box::new(receiver), field }, location);
+        }
+        let items = self.rule_children(node)
+            .find(|child| self.rule(*child) == Some(Rule::ImportItems))
+            .ok_or_else(|| self.error(node, "member import has no selector"))?;
+        let mut bindings = Vec::new();
+        for item in self.rule_children(items).filter(|child| self.rule(*child) == Some(Rule::ImportItem)) {
+            let names = self.token_children(item, Token::Identifier)
+                .map(|name| self.identifier(name)).collect::<Vec<_>>();
+            let member = names.first().cloned().ok_or_else(|| self.error(item, "member import has no name"))?;
+            let local = names.get(1).cloned().unwrap_or_else(|| member.clone());
+            bindings.push(located(BindingData {
+                decorators: Vec::new(), kind: BindingKind::Def, declared_initializer: None,
+                imported_name: Some(Box::new(member.clone())), name: local.clone(),
+                type_parameters: Vec::new(), type_parameter_bounds: Vec::new(), annotation: None,
+                value: located(ExprKind::Field { receiver: Box::new(receiver.clone()), field: member }, self.location(item)),
+            }, self.location(item)));
+            if exported {
+                bindings.push(located(BindingData {
+                    decorators: Vec::new(), kind: BindingKind::Export, declared_initializer: None,
+                    imported_name: Some(Box::new(local.clone())), name: local.clone(),
+                    type_parameters: Vec::new(), type_parameter_bounds: Vec::new(), annotation: None,
+                    value: located(ExprKind::Variable(local), self.location(item)),
+                }, self.location(item)));
+            }
+        }
+        Ok(bindings)
     }
 
 }

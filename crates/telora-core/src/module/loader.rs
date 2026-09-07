@@ -566,6 +566,7 @@ impl ModuleLoader {
             if binding.value.imported_name.is_none()
                 && let Some(scheme) = artifact.root_scheme
             {
+                selected_interface.value_binding = Some(binding.value.name.value.clone());
                 selected_interface.exports.insert(binding.value.name.value.clone(), scheme);
             }
             external_roots.insert(binding.value.name.value.clone(), selected_root);
@@ -598,7 +599,7 @@ impl ModuleLoader {
                 &self.main.heap,
                 module.provenance.as_ref(),
             )? {
-                open_candidates.entry(name).or_default().push(candidate);
+                open_candidates.entry(name).or_insert_with(|| vec![candidate]);
             }
         }
         let imports_fmt = program.value.body.value.bindings.iter().any(|binding| {
@@ -650,7 +651,7 @@ impl ModuleLoader {
             candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
             candidates.dedup_by(|left, right| left.provider == right.provider);
             if candidates.len() > 1 {
-                if program_references_name(&program, &name) {
+                if program_references_name(&program, &name, candidates.iter().any(|candidate| candidate.member_constructor.is_some())) {
                     let providers = candidates
                         .iter()
                         .map(|candidate| candidate.provider.to_string())
@@ -669,6 +670,10 @@ impl ModuleLoader {
             external_interfaces.insert(
                 name.clone(),
                 candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                    value_binding: Some(name.clone()),
+                    type_declarations: if candidate.type_declaration { BTreeSet::from([name.clone()]) } else { BTreeSet::new() },
+                    member_constructors: candidate.member_constructor.clone()
+                        .map(|constructor| BTreeMap::from([(name.clone(), constructor)])).unwrap_or_default(),
                     namespaces: BTreeMap::new(),
                     exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
                     concrete_types: candidate.concrete_types,

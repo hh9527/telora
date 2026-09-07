@@ -3,31 +3,32 @@ import "std/array" as array;
 import "std/entry" as entry;
 import "std/ees" as ees;
 import "std/test" as test;
+import "std/value" {Value};
 import "@src/test-support" {expect};
 
 type State = struct {pending: Array(String), next: Fn(Int) -> Int};
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 def prepare: Fn(entry.Context) -> Tuple([
     State, Fn(State, actor.Event) -> actor.Transition(State),
 ]) = fn(ctx) {
     let initial: State = {pending: [], next: fn(value) { value + 1 }};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
-            'Request(request) => (
+            actor.Event.Request(request) => (
                 {pending: array.push(state.pending, request.id), next: state.next},
-                [actor.reply(request.id, 'Int(state.next(array.length(state.pending))))],
+                [actor.reply(request.id, Value.Int(state.next(array.length(state.pending))))],
             ),
-            'EesReply(_) => (state, []),
+            actor.Event.EesReply(_) => (state, []),
         }
     };
     (initial, reduce)
 };
 
 def verify: Fn(actor.Service) -> Bool = fn(service) {
-    let first = service.reduce((service.state, 'Request({id: "a", input: 'None})));
-    let second = service.reduce((first.0, 'Request({id: "b", input: 'None})));
-    first.1 == [actor.reply("a", 'Int(1))]
-        && second.1 == [actor.reply("b", 'Int(2))]
+    let first = service.reduce((service.state, actor.Event.Request({id: "a", input: Value.None})));
+    let second = service.reduce((first.0, actor.Event.Request({id: "b", input: Value.None})));
+    first.1 == [actor.reply("a", Value.Int(1))]
+        && second.1 == [actor.reply("b", Value.Int(2))]
 };
 
 export def run_state = test.should_ok(fn() {

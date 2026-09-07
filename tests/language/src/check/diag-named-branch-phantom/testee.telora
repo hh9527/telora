@@ -1,0 +1,2 @@
+type Choice(A, B) = enum {First(A), Second(A)};
+export def value = if True { Choice.First(1) } else { Choice.Second(2) };

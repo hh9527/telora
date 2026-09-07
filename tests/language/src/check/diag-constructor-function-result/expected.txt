@@ -1,1 +1,1 @@
-requires an enum context
+cannot unify enum {None, Some(Int)} with Int

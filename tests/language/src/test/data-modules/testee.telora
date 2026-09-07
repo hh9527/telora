@@ -8,10 +8,10 @@ import "@src/test-support" {expect};
 
 type User = struct {name: String, age: Int};
 type Date = enum {
-    'OffsetDateTime(String),
-    'LocalDateTime(String),
-    'LocalDate(String),
-    'LocalTime(String),
+    OffsetDateTime(String),
+    LocalDateTime(String),
+    LocalDate(String),
+    LocalTime(String),
 };
 type Tool = struct {name: String};
 type Config = struct {
@@ -35,7 +35,7 @@ export def toml_data_case = test.should_ok(fn() {
     let config = codec.decode(Config, toml_data) |> results.unwrap;
     let expected_tools: Array(Tool) = [{name: "telora"}, {name: "rustc"}];
     expect(
-        config.released == 'LocalDate("2026-08-04")
+        config.released == Date.LocalDate("2026-08-04")
             && config.environment.PATH == "/bin"
             && config.tools == expected_tools
     )

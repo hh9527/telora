@@ -1,0 +1,6 @@
+type Wrapped = struct(Type);
+type Observed = {
+    let value: dbg!(Wrapped, "newtype annotation") = Wrapped(Int);
+    value.0
+};
+export def value: Observed = 42;

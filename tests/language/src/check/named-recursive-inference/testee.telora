@@ -1,0 +1,4 @@
+def even = fn(value) { if value == 0 { True } else { odd(value - 1) } };
+def odd = fn(value) { if value == 0 { False } else { even(value - 1) } };
+export {even, odd};
+export def result = even(2);

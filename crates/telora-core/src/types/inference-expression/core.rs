@@ -218,8 +218,9 @@ impl<'a> GenericInference<'a> {
         if let Some(query) = &self.query {
             query.check().map_err(|error| error.to_string())?;
         }
+        self.value_constructors.remove(&expression.location);
         let inferred = match &expression.value {
-            ExprKind::Variable(name) => match self.scheme(&name.value) {
+            ExprKind::Variable(name) => match self.explicit_scheme(expression) {
                 Some(scheme) => self.instantiate(&scheme, expression.location),
                 None => environment.get(&name.value).cloned()
                     .ok_or_else(|| format!("unknown binding {:?}", name.value))?,
@@ -339,9 +340,16 @@ impl<'a> GenericInference<'a> {
                             )?);
                         }
                     }
-                    TypeDescriptor::Dict(Box::new(
-                        item_expected.unwrap_or_else(|| join_all_types(item_types)),
-                    ))
+                    let item = if let Some(expected) = item_expected {
+                        expected
+                    } else {
+                        let dictionaries = item_types.iter()
+                            .map(|ty| TypeDescriptor::Dict(Box::new(ty.clone())))
+                            .collect::<Vec<_>>();
+                        self.merge_structural_join_evidence(&dictionaries)?;
+                        join_all_types(item_types.iter().map(|ty| self.resolve(ty)).collect())
+                    };
+                    TypeDescriptor::Dict(Box::new(item))
                 } else {
                     if let Some(TypeDescriptor::Dict(item)) = expected.map(|ty| self.resolve(ty)) {
                         for field in fields {
@@ -668,7 +676,16 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Declared(declared)
             }
             ExprKind::Field { receiver, field } => {
-                if let Some(scheme) = self
+                if self.declared_constructor_reference(receiver) {
+                    self.type_facet_locations.insert(receiver.location);
+                    let receiver_type = self.infer(receiver, environment, None)?;
+                    if let Some((ty, constructor)) = enum_member_type(&self.resolve(&receiver_type), &field.value)? {
+                        self.value_constructors.insert(expression.location, constructor);
+                        ty
+                    } else {
+                        self.project_field(&receiver_type, &field.value)?
+                    }
+                } else if let Some(scheme) = self
                         .namespace_interface(receiver)
                         .and_then(|interface| interface.exports.get(&field.value))
                         .cloned()
@@ -787,7 +804,7 @@ impl<'a> GenericInference<'a> {
                             .any(|argument| matches!(argument.value, TypeArgumentKind::Infer))
                 );
                 let model_fields = if matches!(&callee.value, ExprKind::Variable(name)
-                    if name.value == "\0telora_enum")
+                    if matches!(name.value.as_str(), "\0telora_enum" | "\0telora_struct" | "\0telora_newtype"))
                     && let Some(Expr { value: ExprKind::Dict(fields), .. }) = arguments.get(1)
                 {
                     Some(TypeDescriptor::Struct(fields.iter().filter_map(|field| {
@@ -802,6 +819,9 @@ impl<'a> GenericInference<'a> {
                 } else {
                     None
                 };
+                if expected.is_some_and(|ty| expects_type_value(&self.resolve(ty))) {
+                    self.type_facet_locations.insert(callee.location);
+                }
                 let callee = self.infer(callee, environment, None)?;
                 let resolved_callee = self.resolve(&callee);
                 let resolved_callee = if let TypeDescriptor::Inference(variable) = resolved_callee {
@@ -844,6 +864,7 @@ impl<'a> GenericInference<'a> {
                                 model_fields.as_ref()
                             } else if contains_exposed_type_variable(parameter)
                                 && matches!(argument.value, ExprKind::Variable(_))
+                                && !expects_type_value(&self.resolve(parameter))
                             {
                                 None
                             } else {
@@ -932,6 +953,11 @@ impl<'a> GenericInference<'a> {
                     ));
                 }
                 let pending_start = self.pending_type_constraints.len();
+                if self.type_facet_locations.contains(&expression.location)
+                    || expected.is_some_and(|ty| expects_type_value(&self.resolve(ty)))
+                {
+                    self.type_facet_locations.insert(callee.location);
+                }
                 self.infer(callee, environment, None)?;
                 self.pending_type_constraints.truncate(pending_start);
                 let type_expected = TypeDescriptor::Type;
@@ -981,6 +1007,9 @@ impl<'a> GenericInference<'a> {
                             lexical_evidence: self.lexical_type_evidence.clone(),
                         });
                     }
+                }
+                if let Some(constructor) = self.value_constructors.get(&callee.location).cloned() {
+                    self.value_constructors.insert(expression.location, constructor);
                 }
                 substitute_bound_parameters(&scheme.body, &replacements)
             }
@@ -1110,8 +1139,10 @@ impl<'a> GenericInference<'a> {
                 else_branch,
             } => {
                 let value_type = self.infer(value, environment, None)?;
+                let canonical_pattern = self.infer_pattern_constructors(pattern, &value_type, environment)?;
+                let pattern = &canonical_pattern;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
-                let analysis = crate::pattern::analyze_pattern(pattern, &value_type);
+                let analysis = crate::pattern::analyze_pattern(pattern, &self.resolve(&value_type));
                 if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                     && analysis.problems.is_empty()
                 {
@@ -1153,8 +1184,10 @@ impl<'a> GenericInference<'a> {
                 body,
             } => {
                 let value_type = self.infer(value, environment, None)?;
+                let canonical_pattern = self.infer_pattern_constructors(pattern, &value_type, environment)?;
+                let pattern = &canonical_pattern;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
-                let analysis = crate::pattern::analyze_pattern(pattern, &value_type);
+                let analysis = crate::pattern::analyze_pattern(pattern, &self.resolve(&value_type));
                 if analysis.irrefutable {
                     self.pattern_diagnostics
                         .entry(pattern.location)
@@ -1199,6 +1232,9 @@ impl<'a> GenericInference<'a> {
             }
             ExprKind::Match { value, arms } => {
                 let value_type = self.infer(value, environment, None)?;
+                let patterns = arms.iter().map(|arm|
+                    self.infer_pattern_constructors(&arm.value.pattern, &value_type, environment)
+                ).collect::<Result<Vec<_>, _>>()?;
                 let resolved_value_type = self.expose_pattern_type(&value_type);
                 // These parser-generated intrinsics have an Option contract; this
                 // is not enum synthesis for user-authored match expressions.
@@ -1216,7 +1252,7 @@ impl<'a> GenericInference<'a> {
                 let mut arm_evidence = Vec::new();
                 let mut covered_variants = BTreeSet::new();
                 let mut all_values_covered = false;
-                for arm in arms {
+                for (arm, pattern) in arms.iter().zip(&patterns) {
                     if let Some(query) = &self.query {
                         query.check().map_err(|error| error.to_string())?;
                     }
@@ -1231,13 +1267,13 @@ impl<'a> GenericInference<'a> {
                         (environment.clone(), None, None)
                     };
                     let analysis =
-                        crate::pattern::analyze_pattern(&arm.value.pattern, &resolved_value_type);
+                        crate::pattern::analyze_pattern(pattern, &resolved_value_type);
                     if analysis.compatibility == crate::pattern::PatternCompatibility::Incompatible
                         && !arm.value.irrefutable_required
                         && analysis.problems.is_empty()
                     {
                         let location = crate::pattern::first_incompatible_location(
-                            &arm.value.pattern,
+                            pattern,
                             &resolved_value_type,
                         )
                         .unwrap_or(arm.value.pattern.location);
@@ -1250,7 +1286,7 @@ impl<'a> GenericInference<'a> {
                     }
                     if arm.value.irrefutable_required && !analysis.irrefutable {
                         let location = crate::pattern::first_refutable_location(
-                            &arm.value.pattern,
+                            pattern,
                             &resolved_value_type,
                         )
                         .unwrap_or(arm.value.pattern.location);
@@ -1278,7 +1314,7 @@ impl<'a> GenericInference<'a> {
                                 "unreachable match arm; prior arms cover {}",
                                 redundant_variants
                                     .iter()
-                                    .map(|variant| format!("'{variant}"))
+                                    .map(|variant| variant.clone())
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )
@@ -1344,9 +1380,9 @@ impl<'a> GenericInference<'a> {
                         .filter(|(name, _)| !covered_variants.contains(*name))
                         .map(|(name, payload)| {
                             if payload.is_some() {
-                                format!("'{name}(_)")
+                                format!("{name}(_)")
                             } else {
-                                format!("'{name}")
+                                name.clone()
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1371,6 +1407,20 @@ impl<'a> GenericInference<'a> {
                     TypeDescriptor::Never
                 }
             }
+        };
+        if let Some(constructor) = self.member_constructor_reference(expression) {
+            self.value_constructors.insert(expression.location, constructor);
+        }
+        let inferred = if matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. } | ExprKind::TypeApply { .. })
+            && self.declared_constructor_reference(expression)
+            && !self.type_facet_locations.contains(&expression.location)
+            && !expected.is_some_and(|ty| expects_type_value(&self.resolve(ty)))
+            && let Some(constructor) = newtype_constructor_type(&inferred)
+        {
+            self.value_constructors.insert(expression.location, ValueConstructor::Newtype);
+            constructor
+        } else {
+            inferred
         };
         if let Some(expected) = expected
             && !(self.recursive_body_inference_depth > 0
@@ -1403,6 +1453,32 @@ impl<'a> GenericInference<'a> {
                 self.check(&actual, expected)?;
             }
             return Ok(self.resolve(&actual));
+        }
+        // A named member fixes the enum owner, but its authored payload can still
+        // receive nominal context learned from the rest of the enclosing call.
+        if let ExprKind::Call { callee, arguments } = &expression.value
+            && let [argument] = arguments.as_slice()
+            && let Some(ValueConstructor::EnumMember { tag, has_payload: true }) =
+                self.value_constructors.get(&callee.location).cloned()
+        {
+            let expected = self.expose_named(expected);
+            let same_owner = match (self.declared_identity(&actual), self.declared_identity(&expected)) {
+                (Some(actual), Some(expected)) => actual.constructor() == expected.constructor(),
+                (None, None) => true,
+                _ => false,
+            };
+            if same_owner
+                && let Some((TypeDescriptor::Function { parameters, .. }, _)) =
+                    enum_member_type(&TypeDescriptor::TypeOf(Box::new(expected)), &tag)?
+                && let Some(TypeDescriptor::Function { parameters: original, result }) =
+                    self.records.get(&callee.location).cloned()
+            {
+                let payload = self.contextualize_authored_literal(argument, &parameters[0])?;
+                self.refine_argument_nominal_context(&original[0], &payload)?;
+                let result = self.resolve(&result);
+                self.records.insert(expression.location, result.clone());
+                return Ok(result);
+            }
         }
         if self.declared_identity(&actual).is_some() {
             return Ok(actual);

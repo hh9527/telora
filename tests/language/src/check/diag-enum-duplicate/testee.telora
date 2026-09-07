@@ -1,2 +1,2 @@
-type Duplicate = enum {'Value, 'Value(Int)};
+type Duplicate = enum {Value, Value(Int)};
 export {Duplicate};

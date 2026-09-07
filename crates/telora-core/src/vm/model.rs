@@ -10,7 +10,38 @@ fn run_core_model(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     validate_model_context(arguments[0], function, pc, current, background)?;
+    if operation == CoreModelFunction::Newtype {
+        let entries = core_dict_entries(
+            arguments[1], "newtype payload", function, pc, current, background,
+        )?;
+        let [(name, payload)] = entries.as_slice() else {
+            return Err(error(
+                RuntimeErrorKind::TypeMismatch, "newtype requires one payload type", function, pc,
+            ));
+        };
+        if name != "payload" {
+            return Err(error(
+                RuntimeErrorKind::TypeMismatch, "newtype requires a payload type", function, pc,
+            ));
+        }
+        if !matches!(
+            payload.value(),
+            DecodedValue::DeclaredType(_) | DecodedValue::SymbolicType(_) | DecodedValue::TypeSlot(_)
+        ) {
+            decode_runtime_type_at(*payload, "payload", current, background)
+                .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
+        }
+        let kind = Val::new(
+            DecodedValue::Atom(current.intern("Newtype")), instruction_location(function, pc),
+        );
+        let value = allocate_core_dict(
+            vec![("kind".into(), kind), ("payload".into(), *payload)],
+            function, pc, current, account,
+        )?;
+        return Ok(VmAction::Return { value, return_target });
+    }
     let member_name = match operation {
+        CoreModelFunction::Newtype => unreachable!(),
         CoreModelFunction::Struct => "fields",
         CoreModelFunction::Enum => "variants",
     };
@@ -35,6 +66,7 @@ fn run_core_model(
     for (name, member) in entries {
         let path = format!("{member_name}.{name}");
         match operation {
+            CoreModelFunction::Newtype => unreachable!(),
             CoreModelFunction::Struct => {
                 if !matches!(
                     member.value(),
@@ -75,6 +107,7 @@ fn run_core_model(
 
     let members = allocate_core_dict(normalized, function, pc, current, account)?;
     let kind_name = match operation {
+        CoreModelFunction::Newtype => unreachable!(),
         CoreModelFunction::Struct => "Struct",
         CoreModelFunction::Enum => "Enum",
     };

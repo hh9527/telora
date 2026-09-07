@@ -19,8 +19,8 @@ export def nominal_chain = test.should_ok(fn() {
     let checked: Full = updated;
     expect(checked.x == 3 && checked.label == "patch"
         && base.x == 1 && base.label == "base"
-        && dyn.project_with(SameShape, dyn.pack(Full, updated)) == 'None
-        && dyn.project_with(Full, dyn.pack(Full, updated)) == 'Some(checked))
+        && dyn.project_with(SameShape, dyn.pack(Full, updated)) == None
+        && dyn.project_with(Full, dyn.pack(Full, updated)) == Some(checked))
 });
 
 export def spread_order = test.should_ok(fn() {

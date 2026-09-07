@@ -1,1 +1,2 @@
-export def make = fn() { 'Ready };
+type State = enum {Ready};
+export def make = fn() { Ready };

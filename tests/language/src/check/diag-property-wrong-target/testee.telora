@@ -1,5 +1,5 @@
 import "std/type-desc" {TypeDesc};
-@property('Field)
+@property(PropertyTarget.Field)
 type Prop = struct {};
 def deco: Fn(TypeDesc, Option(Prop)) -> Prop = fn(target, previous) {
     let value: Prop = {};

@@ -1,0 +1,4 @@
+type Fake = enum { Type, StructType, EnumType, Member, Field, Variant };
+@property(Fake.Type)
+type Mark = struct { value: Int };
+export { Mark };

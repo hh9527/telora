@@ -65,6 +65,8 @@ impl<'a> GenericInference<'a> {
             ordered_variables: HashSet::new(),
             field_requirements: HashMap::new(),
             enum_constructors: HashMap::new(),
+            value_constructors: HashMap::new(),
+            type_facet_locations: HashSet::new(),
             recursive_equations: HashMap::new(),
             substitutions: HashMap::new(),
             records: HashMap::new(),
@@ -83,6 +85,87 @@ impl<'a> GenericInference<'a> {
 
     fn take_failure_location(&mut self, fallback: crate::Location) -> crate::Location {
         self.failure_location.take().unwrap_or(fallback)
+    }
+
+    fn infer_pattern_constructors(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        matched: &TypeDescriptor,
+        environment: &HashMap<String, TypeDescriptor>,
+    ) -> Result<crate::ast::Pattern, String> {
+        use crate::ast::PatternKind;
+        if let PatternKind::Binding(name) = &pattern.value
+            && self.hir.is_member_pattern(name.location)
+        {
+            return self.infer_pattern_constructors(&crate::ast::located(PatternKind::Constructor {
+                constructor: Box::new(crate::ast::located(ExprKind::Variable(name.clone()), name.location)),
+                payload: None,
+            }, pattern.location), matched, environment);
+        }
+        if let PatternKind::Constructor { constructor, payload } = &pattern.value {
+            self.failure_location = Some(constructor.location);
+            let ty = self.infer(constructor, environment, None)?;
+            let kind = self.value_constructors.get(&constructor.location).cloned()
+                .ok_or_else(|| "constructor pattern requires a type declaration".to_owned())?;
+            let resolved = self.resolve(&ty);
+            let has_payload = !matches!(kind, ValueConstructor::EnumMember { has_payload: false, .. });
+            let (owner, payload_type) = if has_payload {
+                let TypeDescriptor::Function { parameters, result } = resolved else {
+                    return Err("constructor pattern requires a constructor function".into());
+                };
+                (result.as_ref().clone(), parameters.into_iter().next())
+            } else {
+                (resolved, None)
+            };
+            self.unify(matched, &owner)?;
+            if payload.is_some() != has_payload {
+                return Err(if has_payload {
+                    "constructor pattern requires a payload pattern".into()
+                } else {
+                    "unit enum member does not accept a payload pattern".into()
+                });
+            }
+            self.failure_location = None;
+            let payload = match (payload, payload_type) {
+                (Some(payload), Some(ty)) => Some(Box::new(self.infer_pattern_constructors(
+                    payload, &self.resolve(&ty), environment,
+                )?)),
+                _ => None,
+            };
+            let value = match kind {
+                ValueConstructor::Newtype => PatternKind::Constructor { constructor: constructor.clone(), payload },
+                ValueConstructor::EnumMember { tag, .. } => match payload {
+                    Some(payload) => PatternKind::Tagged { tag, payload },
+                    None => PatternKind::Atom(tag),
+                },
+            };
+            return Ok(crate::ast::located(value, pattern.location));
+        }
+        let mut canonical = pattern.clone();
+        match (&mut canonical.value, self.expose_pattern_type(matched)) {
+            (PatternKind::Tuple(items), TypeDescriptor::Tuple(types)) => {
+                for (item, ty) in items.iter_mut().zip(types.iter()) {
+                    *item = self.infer_pattern_constructors(item, ty, environment)?;
+                }
+            }
+            (PatternKind::Struct(fields), TypeDescriptor::Struct(types)) => {
+                for field in fields {
+                    if let Some(ty) = types.get(&field.name.value) {
+                        field.pattern = self.infer_pattern_constructors(&field.pattern, ty, environment)?;
+                    }
+                }
+            }
+            (PatternKind::Tagged { tag, payload }, TypeDescriptor::Enum(variants)) => {
+                if let Some(Some(ty)) = variants.get(tag) {
+                    **payload = self.infer_pattern_constructors(payload, ty, environment)?;
+                }
+            }
+            (PatternKind::Tagged { payload, .. }, TypeDescriptor::Tagged { payload: ty, .. }) => {
+                **payload = self.infer_pattern_constructors(payload, &ty, environment)?;
+            }
+            _ => {}
+        }
+        Ok(canonical)
     }
 
     fn require_pattern_binding(&mut self, binding: &crate::pattern::PatternBinding) -> Result<TypeDescriptor, String> {
@@ -245,7 +328,8 @@ impl<'a> GenericInference<'a> {
         }
         let mut values = boundary.values;
         values.push(tail);
-        Ok(common_type(values).unwrap_or(TypeDescriptor::Never))
+        self.merge_structural_join_evidence(&values)?;
+        Ok(join_all_types(values.iter().map(|value| self.resolve(value)).collect()))
     }
 
     fn record_propagation(&mut self, requirement: PropagationRequirement) -> Result<(), String> {
@@ -294,7 +378,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Atom(tag) if tag.name() == "None" => {
                     match expected.map(|ty| self.resolve(ty)) {
                         Some(ref expected @ TypeDescriptor::Enum(ref variants)) if option_parts(variants).is_some() => Ok(expected.clone()),
-                        _ => Err("Option propagation boundary ending in 'None needs an expected Option success type".into()),
+                        _ => Err("Option propagation boundary ending in None needs an expected Option success type".into()),
                     }
                 }
                 _ => Err(format!(
@@ -334,7 +418,7 @@ impl<'a> GenericInference<'a> {
                                 self.check(&payload, &boundary_error)?;
                                 Ok(expected.clone())
                             }
-                            _ => Err("Result propagation boundary ending in 'Err(_) needs an expected Result success type".into()),
+                            _ => Err("Result propagation boundary ending in Err(_) needs an expected Result success type".into()),
                         }
                     }
                     _ => Err(format!("Result propagation requires a Result-shaped boundary result, found {}", resolved.display_name())),
@@ -405,7 +489,8 @@ impl<'a> GenericInference<'a> {
 
     fn namespace_interface(&self, expression: &Expr) -> Option<&ModuleInterface> {
         match &expression.value {
-            ExprKind::Variable(name) => self.external_interfaces.get(&name.value),
+            ExprKind::Variable(name) => self.external_interfaces.get(&name.value)
+                .filter(|interface| interface.value_binding.is_none()),
             ExprKind::Field { receiver, field } => self.namespace_interface(receiver)?.namespaces.get(&field.value),
             _ => None,
         }
@@ -413,10 +498,107 @@ impl<'a> GenericInference<'a> {
 
     fn explicit_scheme(&self, callee: &Expr) -> Option<TypeScheme> {
         match &callee.value {
-            ExprKind::Variable(name) => self.scheme(&name.value),
+            ExprKind::Variable(name) => self.member_import_definition(name)
+                .and_then(|definition| self.inferred_schemes.get(&definition.location).cloned()
+                    .or_else(|| self.explicit_scheme(definition.member_import.as_ref()?)))
+                .or_else(|| self.scheme(&name.value)),
+            ExprKind::Field { receiver, field } if self.declared_constructor_reference(receiver) => {
+                let mut scheme = self.explicit_scheme(receiver)?;
+                let (body, _) = enum_member_type(&scheme.body, &field.value).ok()??;
+                scheme.body = body;
+                if scheme.parameters.is_empty() {
+                    let mut parameters = Vec::new();
+                    collect_bound_parameters(&scheme.body, &mut parameters);
+                    parameters.sort_unstable();
+                    parameters.dedup();
+                    scheme.parameters = parameters.into_iter().map(|id| TypeParameter {
+                        id, name: format!("T{}", id.0), location: receiver.location,
+                    }).collect();
+                }
+                Some(scheme)
+            }
             ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
                 .and_then(|interface| interface.exports.get(&field.value)).cloned(),
             _ => None,
+        }
+    }
+
+    fn member_import_definition(&self, name: &crate::ast::Identifier) -> Option<&crate::hir::HirDefinition> {
+        let reference = self.hir.references().iter()
+            .find(|reference| reference.location == name.location && reference.name == name.value)?;
+        let HirResolution::Definition(id) = reference.resolution else { return None; };
+        self.hir.definition(id).filter(|definition| definition.member_import.is_some())
+    }
+
+    fn member_constructor_reference(&self, expression: &Expr) -> Option<ValueConstructor> {
+        match &expression.value {
+            ExprKind::Variable(name) => {
+                if let Some(import) = self.member_import_definition(name).and_then(|definition| definition.member_import.as_ref()) {
+                    return self.value_constructors.get(&import.location).cloned()
+                        .or_else(|| self.member_constructor_reference(import));
+                }
+                if self.hir.references().iter().any(|reference|
+                    reference.location == name.location && reference.name == name.value
+                        && matches!(reference.resolution, HirResolution::Definition(id)
+                            if self.hir.definition(id).is_some_and(|definition| definition.kind != HirDefinitionKind::Import)))
+                {
+                    return None;
+                }
+                self.external_interfaces.get(&name.value)
+                    .filter(|interface| interface.value_binding.as_deref() == Some(name.value.as_str()))
+                    .and_then(|interface| interface.member_constructors.get(&name.value)).cloned()
+            }
+            ExprKind::Field { receiver, field } if self.declared_constructor_reference(receiver) => {
+                let scheme = self.explicit_scheme(receiver)?;
+                enum_member_type(&scheme.body, &field.value).ok().flatten().map(|(_, constructor)| constructor)
+            }
+            ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
+                .and_then(|interface| interface.member_constructors.get(&field.value)).cloned(),
+            ExprKind::TypeApply { callee, .. } => self.member_constructor_reference(callee),
+            _ => None,
+        }
+    }
+
+    fn member_import_scheme(&mut self, binding: &crate::ast::BindingData, inferred: &TypeDescriptor) -> Result<TypeScheme, String> {
+        if !matches!(&binding.value.value, ExprKind::Field { receiver, .. }
+            if self.declared_constructor_reference(receiver))
+            || self.member_constructor_reference(&binding.value).is_none()
+        {
+            return Err("member import requires an enum declaration member".into());
+        }
+        let scheme = self.explicit_scheme(&binding.value)
+            .ok_or_else(|| "member import has no declaration contract".to_owned())?;
+        self.unify(inferred, &scheme.body)?;
+        Ok(scheme)
+    }
+
+    fn declared_constructor_reference(&self, expression: &Expr) -> bool {
+        match &expression.value {
+            ExprKind::Variable(name) => {
+                if matches!(name.value.as_str(), "Bool" | "Option" | "Result" | "FoldControl" | "PropertyTarget")
+                    && !self.external_interfaces.contains_key(&name.value)
+                    && self.hir.references().iter().any(|reference|
+                        reference.location == name.location && reference.name == name.value
+                            && reference.resolution == HirResolution::External)
+                {
+                    return true;
+                }
+                if let Some(reference) = self.hir.references().iter()
+                    .find(|reference| reference.location == name.location && reference.name == name.value)
+                    && let HirResolution::Definition(id) = reference.resolution
+                    && let Some(definition) = self.hir.definition(id)
+                    && definition.kind != HirDefinitionKind::Import
+                {
+                    return definition.kind == HirDefinitionKind::Type;
+                }
+                self.external_interfaces.get(&name.value)
+                    .is_some_and(|interface| interface.value_binding.as_deref() == Some(name.value.as_str())
+                        && interface.type_declarations.contains(&name.value))
+            }
+            ExprKind::Field { receiver, field } => self.namespace_interface(receiver)
+                .is_some_and(|interface| interface.type_declarations.contains(&field.value)),
+            ExprKind::TypeApply { callee, .. } => self.declared_constructor_reference(callee),
+            _ => false,
         }
     }
 
@@ -513,11 +695,11 @@ impl<'a> GenericInference<'a> {
             unresolved: &TypeDescriptor,
             evidence: &TypeDescriptor,
             collected: &mut HashMap<InferenceVariableId, Vec<TypeDescriptor>>,
-            collection_element: bool,
+            may_infer: bool,
             enum_owners: &HashSet<InferenceVariableId>,
         ) {
             if let TypeDescriptor::Inference(variable) = unresolved {
-                if (collection_element || enum_owners.contains(variable))
+                if (may_infer || enum_owners.contains(variable))
                     && !contains_type_variable(evidence) {
                     collected
                         .entry(*variable)
@@ -531,8 +713,9 @@ impl<'a> GenericInference<'a> {
                 | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
                     collect(left, right, collected, true, enum_owners);
                 }
-                (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
-                    collect(left, right, collected, collection_element, enum_owners);
+                (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right))
+                | (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => {
+                    collect(left, right, collected, may_infer, enum_owners);
                 }
                 (
                     TypeDescriptor::Tagged {
@@ -544,20 +727,20 @@ impl<'a> GenericInference<'a> {
                         payload: right,
                     },
                 ) if left_tag == right_tag => {
-                    collect(left, right, collected, collection_element, enum_owners);
+                    collect(left, right, collected, may_infer, enum_owners);
                 }
                 (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right))
                     if left.len() == right.len() =>
                 {
                     for (left, right) in left.iter().zip(right) {
-                        collect(left, right, collected, collection_element, enum_owners);
+                        collect(left, right, collected, may_infer, enum_owners);
                     }
                 }
                 (TypeDescriptor::Struct(left), TypeDescriptor::Struct(right))
                     if left.keys().eq(right.keys()) =>
                 {
                     for (name, left) in left {
-                        collect(left, &right[name], collected, collection_element, enum_owners);
+                        collect(left, &right[name], collected, may_infer, enum_owners);
                     }
                 }
                 (TypeDescriptor::Enum(left), TypeDescriptor::Enum(right))
@@ -566,8 +749,16 @@ impl<'a> GenericInference<'a> {
                     for (name, left) in left {
                         if let (Some(left), Some(right)) = (left.as_deref(), right[name].as_deref())
                         {
-                            collect(left, right, collected, collection_element, enum_owners);
+                            collect(left, right, collected, true, enum_owners);
                         }
+                    }
+                }
+                (TypeDescriptor::Declared(left), TypeDescriptor::Declared(right))
+                    if left.id.has_same_head(&right.id)
+                        && left.id.arguments().len() == right.id.arguments().len() =>
+                {
+                    for (left, right) in left.id.arguments().iter().zip(right.id.arguments()) {
+                        collect(left, right, collected, true, enum_owners);
                     }
                 }
                 (
@@ -581,31 +772,38 @@ impl<'a> GenericInference<'a> {
                     },
                 ) if left_parameters.len() == right_parameters.len() => {
                     for (left, right) in left_parameters.iter().zip(right_parameters) {
-                        collect(left, right, collected, collection_element, enum_owners);
+                        collect(left, right, collected, may_infer, enum_owners);
                     }
-                    collect(left_result, right_result, collected, collection_element, enum_owners);
+                    collect(left_result, right_result, collected, may_infer, enum_owners);
                 }
                 _ => {}
             }
         }
 
-        let resolved = branches
-            .iter()
-            .map(|branch| self.resolve(branch))
-            .collect::<Vec<_>>();
-        let mut collected = HashMap::new();
-        let enum_owners = self.enum_constructors.keys().copied().collect();
-        for (index, branch) in resolved.iter().enumerate() {
-            for evidence in resolved.iter().skip(index + 1) {
-                collect(branch, evidence, &mut collected, false, &enum_owners);
-                collect(evidence, branch, &mut collected, false, &enum_owners);
+        loop {
+            let resolved = branches
+                .iter()
+                .map(|branch| self.resolve(branch))
+                .collect::<Vec<_>>();
+            let mut collected = HashMap::new();
+            let enum_owners = self.enum_constructors.keys().copied().collect();
+            for (index, branch) in resolved.iter().enumerate() {
+                for evidence in resolved.iter().skip(index + 1) {
+                    collect(branch, evidence, &mut collected, false, &enum_owners);
+                    collect(evidence, branch, &mut collected, false, &enum_owners);
+                }
             }
-        }
-        for (variable, evidence) in collected {
-            self.check(
-                &join_all_types(evidence),
-                &TypeDescriptor::Inference(variable),
-            )?;
+            if collected.is_empty() {
+                break;
+            }
+            // Each pass solves previously unknown variables with concrete evidence;
+            // a completed enum can then supply an empty collection's element type.
+            for (variable, evidence) in collected {
+                self.check(
+                    &join_all_types(evidence),
+                    &TypeDescriptor::Inference(variable),
+                )?;
+            }
         }
         Ok(())
     }
@@ -814,6 +1012,9 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Array(item) => {
                 TypeDescriptor::Array(Box::new(self.instantiate_with(item, variables)))
             }
+            TypeDescriptor::Newtype(item) => {
+                TypeDescriptor::Newtype(Box::new(self.instantiate_with(item, variables)))
+            }
             TypeDescriptor::Dict(item) => {
                 TypeDescriptor::Dict(Box::new(self.instantiate_with(item, variables)))
             }
@@ -887,6 +1088,7 @@ impl<'a> GenericInference<'a> {
                 })
             }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
+            TypeDescriptor::Newtype(item) => TypeDescriptor::Newtype(Box::new(self.resolve(item))),
             TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(self.resolve(item))),
             TypeDescriptor::TypeOf(instance) => {
                 TypeDescriptor::TypeOf(Box::new(self.resolve(instance)))
@@ -944,6 +1146,7 @@ impl<'a> GenericInference<'a> {
                     || self.occurs(variable, &declared.body)
             }
             TypeDescriptor::Array(item) => self.occurs(variable, &item),
+            TypeDescriptor::Newtype(item) => self.occurs(variable, &item),
             TypeDescriptor::Dict(item) => self.occurs(variable, &item),
             TypeDescriptor::TypeOf(instance) => self.occurs(variable, &instance),
             TypeDescriptor::Tagged { payload, .. } => self.occurs(variable, &payload),

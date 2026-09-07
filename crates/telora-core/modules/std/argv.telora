@@ -13,8 +13,8 @@ def reject_option:
     Fn(Array(String), String) -> Result(Array(String), String) =
     fn(arguments, option) {
         match array.find(arguments, fn(argument) { matches_option(argument, option) }) {
-            'None => 'Ok(arguments),
-            'Some(argument) => 'Err(`conflicting argument: \{option}`),
+            None => Ok(arguments),
+            Some(argument) => Err(`conflicting argument: \{option}`),
         }
     };
 

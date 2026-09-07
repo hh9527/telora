@@ -1,13 +1,13 @@
 def map: for(A, B) Fn(Option(A), Fn(A) -> B) -> Option(B) = fn(option, function) {
-    match option { 'None => 'None, 'Some(value) => 'Some(function(value)) }
+    match option { None => None, Some(value) => Some(function(value)) }
 };
 def flat_map: for(A, B) Fn(Option(A), Fn(A) -> Option(B)) -> Option(B) = fn(option, function) {
-    match option { 'None => 'None, 'Some(value) => function(value) }
+    match option { None => None, Some(value) => function(value) }
 };
 def unwrap_or: for(A) Fn(Option(A), A) -> A = fn(option, fallback) {
-    match option { 'None => fallback, 'Some(value) => value }
+    match option { None => fallback, Some(value) => value }
 };
 def is_some: for(A) Fn(Option(A)) -> Bool = fn(option) {
-    match option { 'None => 'False, 'Some(_) => 'True }
+    match option { None => False, Some(_) => True }
 };
 export { map, flat_map, unwrap_or, is_some };

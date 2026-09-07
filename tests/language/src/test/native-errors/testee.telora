@@ -8,18 +8,18 @@ export def dyn_error_keeps_input = test.should_ok(fn() {
     let input = dyn.pack(Int, 42);
     let checked: Result(Array(Dyn), dyn.AccessError) = dyn.array_items(input);
     expect(match checked {
-        'Err(error) => dyn.check_int(error.value) == 'Some(42)
+        Err(error) => dyn.check_int(error.value) == Some(42)
             && string.length(error.message) > 0,
-        'Ok(_) => 'False,
+        Ok(_) => False,
     })
 });
 
 export def type_error_keeps_input = test.should_ok(fn() {
     let checked: Result(Type, types.ResolveError) = types.resolve(Int);
     expect(match checked {
-        'Err(error) => error.value == Int
+        Err(error) => error.value == Int
             && string.contains(error.message, "not a recursive reference"),
-        'Ok(_) => 'False,
+        Ok(_) => False,
     })
 });
 
@@ -27,7 +27,7 @@ export def parse_error_keeps_input = test.should_ok(fn() {
     let input = "not-an-integer";
     let checked: Result(Int, string.ParseError) = string.parse(Int, input);
     expect(match checked {
-        'Err(error) => error.value == input && string.length(error.message) > 0,
-        'Ok(_) => 'False,
+        Err(error) => error.value == input && string.length(error.message) > 0,
+        Ok(_) => False,
     })
 });

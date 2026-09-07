@@ -210,6 +210,50 @@ handle 的 work bit 让复制器无需间接查询即可区分 Main 与 Work 引
 
 Heap 是按 storage scope 管理的对象、text、shape、静态函数、类型 witness 和 typed
 property 集合。
+
+Newtype 在类型描述符、分析图和 canonical type store 中具有独立的 Newtype 节点。
+其值使用单元素 Tuple 容器保存载荷 Val，外层容器携带具名 TypeId；`.0` 复制内部
+Val，所以嵌套具名载荷的身份和位置不被外层构造覆盖。codec 对外使用载荷表示，
+decode 分别建立载荷容器与外层身份，encode 先验证外层身份再读取载荷。
+
+严格推断依据 HIR 声明和模块接口的 `type_declarations` 识别 newtype 名称，
+根据 Type 上下文选择类型用途或构造器用途。构造器表达式记录位置与构造器种类，
+编译为单参数闭包，使用 `MakeTuple` 和可用的 `OwnDeclared` 类型证据。
+导出记录保留声明本身；普通函数的 TypeOf 返回契约不提供声明身份。
+构造器模式在 HIR 中保留声明引用，严格推断先统一具名目标类型，再递归分析载荷
+模式。newtype 解构编译为 `GetTuple(0)`，直接读取原始载荷 Val。
+
+工具阶段根据当前已经建立的声明、模块接口与泛型契约复用严格推断，向表达式
+编译器传递构造器位置与具名类型证据。工具函数、类型计算和 decorator 参数中的
+构造器使用相同的单元素 Tuple 表示。推断期间的注解求值使用静默观察，正式的
+元数据初始化负责输出诊断。错误恢复分析同步维护声明与泛型构造器的类型证据。
+带类型描述符的工具表达式要求构造器推断成功，推断错误在求值前作为源码诊断
+返回；普通增量类型初始化可以推迟尚未完成的推断，由最终检查确认声明是否合法。
+
+enum 成员解析使用同一份值构造器证据。限定成员读取先解析所属类型声明，再得到
+成员的完整泛型契约；带载荷成员编译为单参数闭包，无载荷成员编译为 Atom 值。
+具名 enum 使用同样的 `OwnDeclared` 证据保留身份，底层 Atom/Tagged 表示保持一致。
+限定 enum 模式先通过同一份证据验证声明归属与载荷数量，再转换为内部的
+Atom/Tagged 模式进行嵌套类型检查和穷尽性分析。编译器使用已验证的成员证据
+生成匹配指令；普通函数别名不提供模式构造器身份。
+
+模块接口用 `value_binding` 区分命名空间与被选择的值。选择性导入、开放导入的
+值以及独立文件的直接结果记录绑定名，模块命名空间保留完整导出表。类型方案
+与构造器身份依据这个来源读取，限定链不依赖模块别名是否恰好出现在导出表中。
+选择性 enum 成员导入降为携带 `imported_name` 的定义绑定，HIR 保留原声明选择
+表达式。严格推断使用成员原有的泛型契约，模块接口的 `member_constructors`
+记录公开成员的 tag 与载荷形式；所属具名类型和类型参数由公开契约保持。模块的
+选择性导入、开放导入和 reexport 同步传播这份证据。普通定义不继承该证据。
+HIR 根据本地成员导入和外部接口，将模式中的裸成员名称记录为声明引用，其他
+名称记录为模式绑定。严格推断沿用限定构造器的类型与穷尽性检查。编译前根据
+已验证的证据将裸成员模式规范化为构造器模式，使运行时与工具阶段的闭包捕获
+一致。开放导入在名称仅出现在模式中时同样检查成员候选的歧义。
+
+`std/prelude` 显式导出 Bool、Option 和 Result 成员。标准库启动安装预设名称时，
+同时传递值与所选成员的 ModuleInterface，保留泛型契约和构造器来源。普通模块
+将隐式 prelude 作为名称 fallback，显式模块导入的候选优先；多个显式来源仍须
+消除歧义。
+
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
 
@@ -233,10 +277,11 @@ member snapshot。整个声明的 effective heads 在失败检查后一次复制
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
 无限递归；函数和 opaque value 使用各自的不透明身份规则。来源位置不参与相等。
 
-enum 构造通过 inference variable 和独立的构造约束记录归属、variant 名称、payload
-证据及源码位置。绑定归属时检查完整 enum 契约，并把 payload 上下文传入直接构造的
-嵌套值。分支和完整调用复用既有证据合并机制；Option/Result 传播和布尔操作符也提供
-各自的闭合契约。未解约束不能泛型化，模块推断完成时必须全部解决。VM 继续使用
+具名 enum 构造器通过名称解析获得声明来源、variant 名称和完整泛型契约；
+`value_constructors` 按源码位置把构造器证据传递给编译阶段。调用上下文补全泛型
+参数，并把 payload 上下文传入直接构造的嵌套值。同一类型族的分支、返回值和
+集合元素共享参数证据合并，具体证据迭代传播至没有新增解，支持 enum 参数补全后
+继续确定空集合的元素类型。不同声明及冲突的具体参数保持类型错误。VM 使用
 Atom/Tagged 表示，复制 payload 的 Val 来源位置不变。
 
 底层表示描述符及工具阶段的 provisional constructor evidence 可以保留内部
@@ -367,7 +412,7 @@ Entry 属于 `std` crate，可以访问 `std/_...` 协议模块。只有内置 `
 3. 解析 `SystemCaps`，由 `RunHost.configure` 一次性确认 data/env/stdin 与 EES 诉求；
 4. Host 按 caps 读取并校验资源，由私有 runtime bridge 在 Entry WorkWorld 中构造
    `SystemResources`，再与 wrapper payload 一起传给 Initializer；
-5. 发送 `'Initialize` 及后续 stdin/EES event，每次调用 reducer；
+5. 发送 `Initialize` 及后续 stdin/EES event，每次调用 reducer；
 6. Host 先完整解析和审计一批 SystemEffect，再执行第一个 effect。
 
 应用不直接读取 open world。wrapper 声明 capabilities；实际文件、环境、stdin 和 EES

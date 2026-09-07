@@ -46,7 +46,7 @@
              import \"std/codec\" as codec;\n\
              import \"std/result\" as result;\n\
              type User = struct {name: String, age: Int};\n\
-             let checked = match codec.decode(User, user) { 'Ok(value) => value, 'Err(error) => fail!(error.message, error.value) };\n\
+             let checked = match codec.decode(User, user) { Ok(value) => value, Err(error) => fail!(error.message, error.value) };\n\
              checked",
         )
         .unwrap();

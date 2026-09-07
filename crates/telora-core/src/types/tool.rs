@@ -3,6 +3,50 @@ struct ToolEvaluator<'a> {
     silent_vm: Vm,
     main: &'a mut Heap,
     work: Heap,
+    inference_context: Option<ToolInferenceContext>,
+    inference_depth: usize,
+}
+
+struct ToolInferenceContext {
+    hir: HirProgram,
+    interfaces: BTreeMap<String, ModuleInterface>,
+    environment: HashMap<String, TypeDescriptor>,
+    schemes: HashMap<String, TypeScheme>,
+    named_types: BTreeMap<String, TypeDescriptor>,
+    builtin_tuple_available: bool,
+    dyn_namespaces: HashSet<String>,
+}
+
+fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
+    bindings.iter().filter(|binding| {
+        binding.value.kind == BindingKind::Import && binding.value.imported_name.is_none()
+            && matches!(&binding.value.value.value, ExprKind::String(path) if path == "std/dyn")
+    }).map(|binding| binding.value.name.value.clone()).collect()
+}
+
+struct ToolExpressionEvidence {
+    descriptors: HashMap<crate::Location, TypeDescriptor>,
+    value_constructors: HashMap<crate::Location, ValueConstructor>,
+}
+
+impl ToolInferenceContext {
+    fn publish_type(&mut self, name: &str, descriptor: &TypeDescriptor, scheme: Option<&TypeScheme>) {
+        let (witness, body) = if let Some(scheme) = scheme {
+            self.schemes.insert(name.into(), scheme.clone());
+            let body = match &scheme.body {
+                TypeDescriptor::Function { result, .. } => match result.as_ref() {
+                    TypeDescriptor::TypeOf(body) => body.as_ref(),
+                    _ => descriptor,
+                },
+                _ => descriptor,
+            };
+            (scheme.body.clone(), body.clone())
+        } else {
+            (TypeDescriptor::TypeOf(Box::new(descriptor.clone())), descriptor.clone())
+        };
+        self.environment.insert(name.into(), witness);
+        self.named_types.insert(name.into(), body);
+    }
 }
 
 impl<'a> ToolEvaluator<'a> {
@@ -13,6 +57,23 @@ impl<'a> ToolEvaluator<'a> {
             silent_vm: Vm::new().with_debug_sink(Arc::new(DiscardDebugSink)),
             main,
             work,
+            inference_context: None,
+            inference_depth: 0,
+        }
+    }
+
+    fn refresh_inference_context(
+        &mut self,
+        environment: &HashMap<String, TypeDescriptor>,
+        schemes: &HashMap<String, TypeScheme>,
+        declared_types: &BTreeMap<String, TypeDescriptor>,
+    ) {
+        if let Some(context) = &mut self.inference_context {
+            context.environment.clone_from(environment);
+            context.schemes.clone_from(schemes);
+            context.named_types = context.interfaces.values()
+                .flat_map(|interface| interface.concrete_types.clone())
+                .chain(declared_types.clone()).collect();
         }
     }
 
@@ -32,6 +93,7 @@ impl<'a> ToolEvaluator<'a> {
             ("Float", TypeDescriptor::Float),
             ("String", TypeDescriptor::String),
             ("Bytes", TypeDescriptor::Bytes),
+            ("PropertyTarget", property_target_descriptor()),
         ] {
             values.insert(name.into(), self.descriptor(&descriptor)?);
         }
@@ -43,6 +105,7 @@ impl<'a> ToolEvaluator<'a> {
         );
         for function in [
             NativeFunction::core_model(CoreModelFunction::Struct),
+            NativeFunction::core_model(CoreModelFunction::Newtype),
             NativeFunction::core_model(CoreModelFunction::Enum),
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Option),
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Result),

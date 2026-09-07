@@ -54,7 +54,7 @@ def missing_names:
     Fn(Array(String), Array(Field), Fn(Field) -> String) -> Array(String) =
     fn(requested, available, name_of) {
         array.filter(requested, fn(name) {
-            array.any(available, fn(field) { name_of(field) == name }) == 'False
+            array.any(available, fn(field) { name_of(field) == name }) == False
         })
     };
 

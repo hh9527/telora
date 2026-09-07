@@ -7,7 +7,7 @@ def recursive: Fn(Int) -> Int = fn(value) {
 def recursive_result: Int = recursive(3);
 
 type Box(A) = struct {value: A};
-type Tree(A) = enum {'Leaf(A), 'Branch(Array(Tree(A)))};
+type Tree(A) = enum {Leaf(A), Branch(Array(Tree(A)))};
 type IntTree = Tree(Int);
 
 def collect: for(N, M)

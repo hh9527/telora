@@ -1,28 +1,28 @@
 import "std/_codec" as codec;
 
 type Value = enum {
-    'None,
-    'True,
-    'False,
-    'Int(Int),
-    'Float(Float),
-    'String(String),
-    'Bytes(Bytes),
-    'Array(Array(Value)),
-    'Object(Dict(Value)),
-    'LocalDate(String),
-    'LocalTime(String),
-    'LocalDateTime(String),
-    'OffsetDateTime(String),
+    None,
+    True,
+    False,
+    Int(Int),
+    Float(Float),
+    String(String),
+    Bytes(Bytes),
+    Array(Array(Value)),
+    Object(Dict(Value)),
+    LocalDate(String),
+    LocalTime(String),
+    LocalDateTime(String),
+    OffsetDateTime(String),
 };
 
 @codec.untagged
 type ScalarValue = enum {
-    'None,
-    'Bool(Bool),
-    'Int(Int),
-    'Float(Float),
-    'String(String),
+    None,
+    Bool(Bool),
+    Int(Int),
+    Float(Float),
+    String(String),
 };
 
 export {Value, ScalarValue};

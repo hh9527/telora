@@ -1,0 +1,2 @@
+type A = struct(Int);
+export def invalid = match A(1) { A("wrong") => 0, _ => 1 };

@@ -25,7 +25,7 @@
 
         let branches = compile_source(
             "test",
-            "let id = fn(x) { x }; if 'True { id(1) } else { id(2) }",
+            "let id = fn(x) { x }; if Bool.True { id(1) } else { id(2) }",
         )
         .unwrap();
         assert_eq!(
@@ -200,7 +200,7 @@
             assert_eq!(run(source).unwrap().to_string(), "[]");
         }
 
-        let truth = run("'True.ty!(Bool)").unwrap();
+        let truth = run("Bool.True.ty!(Bool)").unwrap();
         assert_eq!(truth.to_string(), "'True");
 
         let invalid = compile_source("test", "\"1\".ty!(Int)").unwrap_err();
@@ -215,7 +215,7 @@
     fn check_records_a_warning_and_returns_option() {
         let function = compile_source(
             "test",
-            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { 'Err(\"warning\") }; reject.should_ok!(1, \"two\")",
+            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { Result.Err(\"warning\") }; reject.should_ok!(1, \"two\")",
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
@@ -232,7 +232,7 @@
 
         let discarded = compile_source(
             "test",
-            "let reject: Fn(Int) -> Result(Int, String) = fn(value) { 'Err(\"discarded\") }; let ignored = reject.should_ok!(1); 0",
+            "let reject: Fn(Int) -> Result(Int, String) = fn(value) { Result.Err(\"discarded\") }; let ignored = reject.should_ok!(1); 0",
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));

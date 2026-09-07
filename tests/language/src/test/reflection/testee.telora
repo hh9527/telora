@@ -5,7 +5,7 @@ import "std/test" as test;
 import "@src/test-support" {expect};
 
 type User = struct {name: String, age: Int};
-type Event = enum {'Idle, 'Message(String), 'Code(Int)};
+type Event = enum {Idle, Message(String), Code(Int)};
 type Node = struct {value: Int, children: Array(Node)};
 type A = struct {value: Int};
 type B = struct {value: Int};
@@ -30,62 +30,62 @@ export def verified_case = test.should_ok(fn() {
         let children_dyn = dyn.field(root_dyn, "children") |> results.unwrap;
         let child_dyns = dyn.array_items(children_dyn) |> results.unwrap;
         let expected_user_fields: Array(Tuple([String, dyn.ValueKind])) = [
-            ("age", 'Int),
-            ("name", 'String),
+            ("age", dyn.ValueKind.Int),
+            ("name", dyn.ValueKind.String),
         ];
         let tuple_items = dyn.tuple_items(tuple_dyn) |> results.unwrap;
         let child_values = array.map(child_dyns, fn(child) {
             dyn.field(child, "value") |> results.unwrap |> dyn.check_int
         });
-        let message: Event = 'Message("ready");
+        let message: Event = Event.Message("ready");
         let message_dyn = dyn.pack(Event, message);
         let message_index = dyn.get_variant_index(message_dyn);
         let message_payload = dyn.get_variant_payload(message_dyn, message_index);
         let message_tag = dyn.tag(message_dyn) |> results.unwrap;
         let user_ok = dyn.desc(user_dyn) == User
-            && dyn.kind(user_dyn) == 'Dict
-            && dyn.check_int(dyn.get_field_value(user_dyn, 0)) == 'Some(42)
-            && dyn.check_string(dyn.get_field_value(user_dyn, 1)) == 'Some("Ada");
-        let primitives_ok = dyn.kind(int_dyn) == 'Int
-            && dyn.kind(function_dyn) == 'Func
-            && dyn.check_int(int_dyn) == 'Some(41)
-            && dyn.check_string(int_dyn) == 'None
-            && dyn.check_string(string_dyn) == 'Some("text")
-            && dyn.check_float(float_dyn) == 'Some(1.5)
-            && dyn.check_bytes(bytes_dyn) == 'Some(b"ab")
-            && dyn.project_with(Int, int_dyn) == 'Some(41)
-            && dyn.project@[Int](int_dyn) == 'Some(41)
-            && dyn.project_with(Float, int_dyn) == 'None
+            && dyn.kind(user_dyn) == dyn.ValueKind.Dict
+            && dyn.check_int(dyn.get_field_value(user_dyn, 0)) == Some(42)
+            && dyn.check_string(dyn.get_field_value(user_dyn, 1)) == Some("Ada");
+        let primitives_ok = dyn.kind(int_dyn) == dyn.ValueKind.Int
+            && dyn.kind(function_dyn) == dyn.ValueKind.Func
+            && dyn.check_int(int_dyn) == Some(41)
+            && dyn.check_string(int_dyn) == None
+            && dyn.check_string(string_dyn) == Some("text")
+            && dyn.check_float(float_dyn) == Some(1.5)
+            && dyn.check_bytes(bytes_dyn) == Some(b"ab")
+            && dyn.project_with(Int, int_dyn) == Some(41)
+            && dyn.project@[Int](int_dyn) == Some(41)
+            && dyn.project_with(Float, int_dyn) == None
             && match dyn.project_with(A, nominal_dyn) {
-                'Some(value) => value.value == 7,
-                'None => 'False,
+                Some(value) => value.value == 7,
+                None => False,
             }
-            && dyn.project_with(B, nominal_dyn) == 'None
+            && dyn.project_with(B, nominal_dyn) == None
             && int_dyn == int_dyn
             && int_dyn != dyn.pack(Int, 41);
         let structural_ok = array.map(dyn.fields(user_dyn) |> results.unwrap, fn(pair) {
             match pair { (name, value) => (name, dyn.kind(value)) }
         }) == expected_user_fields
             && array.map(dyn.array_items(numbers_dyn) |> results.unwrap, dyn.check_int)
-                == ['Some(1), 'Some(2)]
+                == [Some(1), Some(2)]
             && array.length(tuple_items) == 2
             && match array.get(tuple_items, 0) {
-                'Some(item) => dyn.check_int(item) == 'Some(1),
-                'None => 'False,
+                Some(item) => dyn.check_int(item) == Some(1),
+                None => False,
             }
             && match array.get(tuple_items, 1) {
-                'Some(item) => dyn.check_string(item) == 'Some("one"),
-                'None => 'False,
+                Some(item) => dyn.check_string(item) == Some("one"),
+                None => False,
             }
             && !results.is_ok(dyn.field(user_dyn, "missing"))
             && !results.is_ok(dyn.array_items(user_dyn))
             && array.length(child_values) == 1
-            && array.get(child_values, 0) == 'Some('Some(2));
+            && array.get(child_values, 0) == Some(Some(2));
         let variant_ok = message_tag == "Message"
             && message_index == 2
             && match message_payload {
-                'Some(payload) => dyn.check_string(payload) == 'Some("ready"),
-                'None => 'False,
+                Some(payload) => dyn.check_string(payload) == Some("ready"),
+                None => False,
             };
         expect(
             user_ok

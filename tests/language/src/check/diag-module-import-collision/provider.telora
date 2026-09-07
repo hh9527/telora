@@ -1,2 +1,2 @@
-type Capability(T) = enum {'Value(T)};
+type Capability(T) = enum {Value(T)};
 export {Capability};

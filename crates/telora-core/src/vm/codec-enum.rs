@@ -301,7 +301,7 @@ fn transform_untagged_enum(
             }
             let DecodedValue::Tagged(handle) = value.value() else {
                 return Err(CodecFailure::new(
-                    format!("{path}: expected ('Variant, payload)"),
+                    format!("{path}: expected an Enum variant with a payload"),
                     value,
                     plan.variants
                         .first()

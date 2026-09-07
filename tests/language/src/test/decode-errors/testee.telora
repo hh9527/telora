@@ -10,8 +10,8 @@ export def yaml_error_keeps_input = test.should_ok(fn() {
     let input = "a: [";
     let checked: Result(codec.Value, codec.DecodeError) = yaml.parse(input);
     expect(match checked {
-        'Err(error) => error.value == 'String(input) && string.length(error.message) > 0,
-        'Ok(_) => 'False,
+        Err(error) => error.value == codec.Value.String(input) && string.length(error.message) > 0,
+        Ok(_) => False,
     })
 });
 
@@ -19,69 +19,69 @@ export def toml_error_keeps_input = test.should_ok(fn() {
     let input = "a = [";
     let checked: Result(codec.Value, codec.DecodeError) = toml.parse(input);
     expect(match checked {
-        'Err(error) => error.value == 'String(input) && string.length(error.message) > 0,
-        'Ok(_) => 'False,
+        Err(error) => error.value == codec.Value.String(input) && string.length(error.message) > 0,
+        Ok(_) => False,
     })
 });
 
 type Item = struct {count: Int};
 type Items = struct {items: Array(Item)};
 @json.untagged
-type NumberOrText = enum {'Number(Int), 'Text(String)};
+type NumberOrText = enum {Number(Int), Text(String)};
 
 export def nested_subject = test.should_ok(fn() {
-    let bad: codec.Value = 'String("wrong");
-    let input: codec.Value = 'Object({items: 'Array([
-        'Object({count: 'Int(1)}),
-        'Object({count: bad}),
+    let bad: codec.Value = codec.Value.String("wrong");
+    let input: codec.Value = codec.Value.Object({items: codec.Value.Array([
+        codec.Value.Object({count: codec.Value.Int(1)}),
+        codec.Value.Object({count: bad}),
     ])});
     expect(match codec.decode(Items, input) {
-        'Err(error) => error.value == bad && string.contains(error.message, "items[1].count"),
-        'Ok(_) => 'False,
+        Err(error) => error.value == bad && string.contains(error.message, "items[1].count"),
+        Ok(_) => False,
     })
 });
 
 export def missing_subject = test.should_ok(fn() {
-    let parent: codec.Value = 'Object({});
+    let parent: codec.Value = codec.Value.Object({});
     expect(match codec.decode(Item, parent) {
-        'Err(error) => error.value == parent && string.contains(error.message, "missing required field"),
-        'Ok(_) => 'False,
+        Err(error) => error.value == parent && string.contains(error.message, "missing required field"),
+        Ok(_) => False,
     })
 });
 
 export def recover_and_compose = test.should_ok(fn() {
-    let input: codec.Value = 'String("hello");
+    let input: codec.Value = codec.Value.String("hello");
     let decoded: Result(String, codec.DecodeError) = match codec.decode(Int, input) {
-        'Ok(_) => 'Ok("number"),
-        'Err(_) => codec.decode(String, input),
+        Ok(_) => Ok("number"),
+        Err(_) => codec.decode(String, input),
     };
     expect(match decoded {
-        'Ok(value) => value == "hello",
-        'Err(_) => 'False,
+        Ok(value) => value == "hello",
+        Err(_) => False,
     })
 });
 
 export def untagged_failure = test.should_ok(fn() {
-    let input: codec.Value = 'Array([]);
+    let input: codec.Value = codec.Value.Array([]);
     expect(match codec.decode(NumberOrText, input) {
-        'Err(error) => error.value == input && string.contains(error.message, "matches no untagged"),
-        'Ok(_) => 'False,
+        Err(error) => error.value == input && string.contains(error.message, "matches no untagged"),
+        Ok(_) => False,
     })
 });
 
 export def syntax_subject = test.should_ok(fn() {
     let text = "{invalid";
     expect(match json.decode(Item, text) {
-        'Err(error) => error.value == 'String(text) && string.contains(error.message, "<json string>"),
-        'Ok(_) => 'False,
+        Err(error) => error.value == codec.Value.String(text) && string.contains(error.message, "<json string>"),
+        Ok(_) => False,
     })
 });
 
 export def authored_error = test.should_ok(fn() {
-    let error: codec.DecodeError = {message: "custom decoder", value: 'Int(42)};
-    let result: Result(Int, codec.DecodeError) = 'Err(error);
+    let error: codec.DecodeError = {message: "custom decoder", value: codec.Value.Int(42)};
+    let result: Result(Int, codec.DecodeError) = Err(error);
     expect(match result {
-        'Err(error) => error.message == "custom decoder" && error.value == 'Int(42),
-        'Ok(_) => 'False,
+        Err(error) => error.message == "custom decoder" && error.value == codec.Value.Int(42),
+        Ok(_) => False,
     })
 });

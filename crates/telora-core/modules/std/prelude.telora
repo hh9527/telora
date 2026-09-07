@@ -1,4 +1,7 @@
-@property('Type)
+@property(PropertyTarget.Type)
 type PropertyAttr = struct { bits: Int };
 
 export { PropertyAttr };
+export Bool.{True, False};
+export Option.{Some, None};
+export Result.{Ok, Err};

@@ -389,7 +389,7 @@ impl WorkspaceBuilder<'_> {
                     &self.main.heap,
                 ) {
                     for (name, candidate) in exports {
-                        open_candidates.entry(name).or_default().push(candidate);
+                        open_candidates.entry(name).or_insert_with(|| vec![candidate]);
                     }
                 }
             }
@@ -444,7 +444,8 @@ impl WorkspaceBuilder<'_> {
                         .map(|candidate| candidate.provider.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    for location in recovered_reference_locations(&parsed.recovered, &name) {
+                    for location in recovered_reference_locations(&parsed.recovered, &name,
+                        candidates.iter().any(|candidate| candidate.member_constructor.is_some())) {
                         diagnostics.push(Diagnostic::error(
                             format!("open import name {name:?} is ambiguous between {providers}"),
                             location,
@@ -457,6 +458,10 @@ impl WorkspaceBuilder<'_> {
                 external_interfaces.insert(
                     name.clone(),
                     candidate.namespace.unwrap_or_else(|| ModuleInterface {
+                        value_binding: Some(name.clone()),
+                        type_declarations: if candidate.type_declaration { BTreeSet::from([name.clone()]) } else { BTreeSet::new() },
+                        member_constructors: candidate.member_constructor.clone()
+                            .map(|constructor| BTreeMap::from([(name.clone(), constructor)])).unwrap_or_default(),
                         namespaces: BTreeMap::new(),
                         exports: candidate.scheme.map(|scheme| BTreeMap::from([(name.clone(), scheme)])).unwrap_or_default(),
                         concrete_types: candidate.concrete_types,
@@ -486,8 +491,7 @@ impl WorkspaceBuilder<'_> {
                 .iter()
                 .filter_map(|(name, interface)| {
                     interface
-                        .exports
-                        .get(name)
+                        .binding_scheme()
                         .map(|scheme| (name.clone(), scheme.clone()))
                 })
                 .collect::<BTreeMap<_, _>>();
@@ -505,6 +509,7 @@ impl WorkspaceBuilder<'_> {
                 PartialAnalysisControl {
                     unavailable_imports: &unavailable_imports,
                     external_schemes: &external_schemes,
+                    external_interfaces: &external_interfaces,
                     query: self.query,
                 },
             );

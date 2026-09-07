@@ -1,0 +1,77 @@
+import "std/test" as test;
+import "std/codec" as codec;
+import "std/value" { Value };
+import "std/type-property" as property;
+import "@src/test-support" { expect };
+import "@src/test/newtype-tool-stage/generic" as generic;
+import "@src/test/newtype-tool-stage/generic" { Box as ImportedBox };
+
+type Wrapped = struct(Type);
+type Direct = Wrapped(Int).0;
+type Box(T) = struct(T);
+type Generic = Box@[Type](String).0;
+def wrap: Fn(Type) -> Wrapped = fn(value) { Wrapped(value) };
+def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
+    let Box(payload) = value;
+    payload
+};
+def apply: Fn(Fn(Type) -> Wrapped, Type) -> Wrapped = fn(make, value) { make(value) };
+def make = Wrapped;
+def make_generic: for(T) Fn(T) -> Box(T) = Box;
+def metadata_factory: Fn(Type) -> TypeOf(Wrapped) = fn(value) { Wrapped };
+def typed_make = do {
+    let make: Fn(Type) -> Wrapped = Wrapped;
+    make
+};
+type FromHelper = wrap(Int).0;
+type FromGenericHelper = unbox(Box@[Type](Int));
+type FromFirstClass = apply(Wrapped, String).0;
+type FromImport = generic.Box@[Type](Int).0;
+type FromSelectiveImport = ImportedBox@[Type](String).0;
+type FromAlias = make(Int).0;
+type FromGenericAlias = make_generic@[Type](String).0;
+type FromCodec = if codec.encode(Value, Box@[Int](42)) == Value.Int(42) { Int } else { String };
+type FromTypedLet = typed_make(Int).0;
+type FromAliasCodec = if codec.encode(Value, make_generic@[Int](42)) == Value.Int(42) { Int } else { String };
+type FromMetadataFunction = metadata_factory(Int);
+
+type Count = struct(Int);
+@property(PropertyTarget.Type)
+type Stamp = struct { value: Int };
+def stamp: Fn(Count) -> Fn(Type, Option(Stamp)) -> Stamp = fn(count) {
+    fn(target, previous) {
+        let result: Stamp = { value: count.0 };
+        result
+    }
+};
+@stamp(Count(45))
+type Annotated = struct { value: Int };
+
+export def direct = test.should_ok(fn() {
+    let value: Direct = 42;
+    expect(value == 42)
+});
+
+export def decorator_argument = test.should_ok(fn() {
+    expect(match property.get_type_prop(Annotated, Stamp) {
+        Some(stamp) => stamp.value == 45,
+        None => False,
+    })
+});
+
+export def helpers = test.should_ok(fn() {
+    let first: FromHelper = 1;
+    let second: FromGenericHelper = 2;
+    let third: FromFirstClass = "ok";
+    let fourth: Generic = "ok";
+    let fifth: FromImport = generic.value;
+    let sixth: FromSelectiveImport = "ok";
+    let seventh: FromAlias = 8;
+    let eighth: FromGenericAlias = "ok";
+    let ninth: FromCodec = 42;
+    let tenth: FromTypedLet = 43;
+    let eleventh: FromAliasCodec = 44;
+    let metadata: FromMetadataFunction = Wrapped(Int);
+    expect(first + second == 3 && third == fourth && fifth == 7 && sixth == third
+        && seventh == 8 && eighth == third && ninth == 42 && tenth == 43 && eleventh == 44)
+});

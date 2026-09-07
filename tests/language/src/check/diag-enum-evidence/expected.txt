@@ -1,1 +1,1 @@
-variant 'Base is not part of ForeignId
+cannot unify ForeignId with NodeId

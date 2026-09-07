@@ -1,0 +1,4 @@
+type A = enum { End };
+type B = enum { End };
+import A.{End};
+export def result = match B.End { End => 1 };

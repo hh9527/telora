@@ -1,0 +1,54 @@
+import "std/test" as test;
+import "std/type-property" as property;
+import "std/type-property" { FieldPropertyCtx, VariantPropertyCtx };
+import "@src/test-support" { expect };
+import PropertyTarget.{Type as OnType, Member as OnMember};
+
+type Target = PropertyTarget;
+def target: Fn(Bool) -> PropertyTarget = fn(enabled) {
+    if enabled { Target.StructType } else { Target.EnumType }
+};
+
+@property(OnType)
+type General = struct { value: Int };
+@property(target(True))
+type StructOnly = struct { value: Int };
+@property(Target.EnumType)
+type EnumOnly = struct { value: Int };
+@property(OnMember)
+type MemberOnly = struct { value: Int };
+
+def general: Fn(Type, Option(General)) -> General = fn(ctx, previous) { { value: 1 } };
+def on_struct: Fn(Type, Option(StructOnly)) -> StructOnly = fn(ctx, previous) { { value: 2 } };
+def on_enum: Fn(Type, Option(EnumOnly)) -> EnumOnly = fn(ctx, previous) { { value: 3 } };
+def field: Fn(FieldPropertyCtx, Option(MemberOnly)) -> MemberOnly = fn(ctx, previous) { { value: 4 } };
+def variant: Fn(VariantPropertyCtx, Option(MemberOnly)) -> MemberOnly = fn(ctx, previous) { { value: 5 } };
+
+@general
+@on_struct
+type Record = struct { @field value: Int };
+@general
+@on_enum
+type Choice = enum { @variant Item(Int) };
+
+export def capabilities = test.should_ok(fn() {
+    expect(match property.get_type_prop(Record, General) { Some(value) => value.value == 1, None => False }
+        && match property.get_type_prop(Record, StructOnly) { Some(value) => value.value == 2, None => False }
+        && match property.get_type_prop(Choice, EnumOnly) { Some(value) => value.value == 3, None => False }
+        && match property.get_field_prop(Record, 0, MemberOnly) { Some(value) => value.value == 4, None => False }
+        && match property.get_variant_prop(Choice, 0, MemberOnly) { Some(value) => value.value == 5, None => False })
+});
+
+export def enum_identity = test.should_ok(fn() {
+    let name: Fn(PropertyTarget) -> String = fn(value) {
+        match value {
+            OnType => "type",
+            Target.StructType => "struct",
+            Target.EnumType => "enum",
+            OnMember => "member",
+            Target.Field => "field",
+            Target.Variant => "variant",
+        }
+    };
+    expect(name(Target.Field) == "field" && name(target(False)) == "enum")
+});

@@ -1,7 +1,7 @@
 type ValueKind = enum {
-    'Int, 'Float, 'String, 'Bytes, 'Type, 'Opaque,
-    'Dict, 'Array, 'Atom, 'Tagged,
-    'Tuple, 'Func, 'Dyn,
+    Int, Float, String, Bytes, Type, Opaque,
+    Dict, Array, Atom, Tagged,
+    Tuple, Func, Dyn,
 };
 native pack: for(A) Fn(TypeOf(A), A) -> Dyn;
 native project_with: for(A) Fn(TypeOf(A), Dyn) -> Option(A);
@@ -20,8 +20,8 @@ native tag_raw: Fn(Dyn) -> Result(String, String);
 native payload_raw: Fn(Dyn) -> Result(Option(Dyn), String);
 def checked: for(A) Fn(Dyn, Result(A, String)) -> Result(A, AccessError) = fn(value, result) {
     match result {
-        'Ok(item) => 'Ok(item),
-        'Err(message) => 'Err({message, value}),
+        Ok(item) => Ok(item),
+        Err(message) => Err({message, value}),
     }
 };
 def field: Fn(Dyn, String) -> Result(Dyn, AccessError) = fn(value, name) {

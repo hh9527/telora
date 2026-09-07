@@ -1,0 +1,3 @@
+@property("Type")
+type Mark = struct { value: Int };
+export { Mark };

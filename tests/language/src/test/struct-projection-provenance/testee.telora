@@ -12,7 +12,7 @@ export def update = test.should_ok(fn() {
     fail!("update", updated.Y)
 });
 
-def notice: Fn() -> Result(Int, String) = fn() { 'Err("receiver evaluated") };
+def notice: Fn() -> Result(Int, String) = fn() { Err("receiver evaluated") };
 def receiver: Fn() -> provider.Source = fn() {
     let warning = notice.should_ok!();
     provider.source

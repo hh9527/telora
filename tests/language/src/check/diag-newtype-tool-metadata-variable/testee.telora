@@ -1,0 +1,6 @@
+type Wrapped = struct(Type);
+type Invalid = {
+    let metadata: TypeOf(Wrapped) = Wrapped;
+    metadata(Int).0
+};
+export def value = 0;

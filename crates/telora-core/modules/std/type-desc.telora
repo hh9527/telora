@@ -1,9 +1,9 @@
 type TypeDescKind = enum {
-    'Never, 'Type, 'TypeOf,
-    'Int, 'Float, 'String, 'Bytes,
-    'Array, 'Dict,
-    'Tuple, 'Struct, 'Enum,
-    'Func, 'Opaque, 'Bound, 'Dyn, 'Ref,
+    Never, Type, TypeOf,
+    Int, Float, String, Bytes,
+    Array, Dict,
+    Tuple, Struct, Newtype, Enum,
+    Func, Opaque, Bound, Dyn, Ref,
 };
 type FieldDesc = struct { index: Int, name: String, ty: Type };
 type VariantDesc = struct { index: Int, name: String, payload: Option(Type) };
@@ -16,8 +16,8 @@ type ResolveError = struct {message: String, value: Type};
 native resolve_raw: Fn(Type) -> Result(Type, String);
 def resolve: Fn(Type) -> Result(Type, ResolveError) = fn(value) {
     match resolve_raw(value) {
-        'Ok(target) => 'Ok(target),
-        'Err(message) => 'Err({message, value}),
+        Ok(target) => Ok(target),
+        Err(message) => Err({message, value}),
     }
 };
 

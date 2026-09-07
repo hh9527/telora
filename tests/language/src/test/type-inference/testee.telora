@@ -28,19 +28,19 @@ def callback_builder: Fn(Int) -> CallbackPlan = fn(value) {
 type Node = struct {value: Int, children: Array(Node)};
 def node_value: Fn(Node) -> Int = fn(node) { node.value };
 
-type Expr = enum {'Value(Int), 'Call(CallExpr)};
+type Expr = enum {Value(Int), Call(CallExpr)};
 type CallExpr = struct {name: String, args: Array(Expr)};
 type Renderer(Context) = struct {render: Fn(Context, Expr) -> String};
 type RenderContext = struct {prefix: String};
 def inspect_expr: Fn(Expr) -> Int = fn(expr) {
-    match expr { 'Value(value) => value, 'Call(_) => 0 }
+    match expr { Expr.Value(value) => value, Expr.Call(_) => 0 }
 };
 
 def option_apply: for(A, B) Fn(A, Fn(A) -> Option(B)) -> Option(B) = fn(value, f) {
     f(value)
 };
 
-type NodeId = enum {'Base, 'Other};
+type NodeId = enum {Base, Other};
 def choose_node: for(N) Fn(N, Array(N)) -> N = fn(base, nodes) { base };
 
 def explicit_pair: for(A, B) Fn(A, B) -> Tuple([A, B]) = fn(left, right) {
@@ -51,10 +51,10 @@ def recursive_countdown = fn(value) {
     if value < 1 { 0 } else { recursive_countdown(value - 1) }
 };
 def recursive_even = fn(value) -> Bool {
-    if value < 1 { 'True } else { recursive_odd(value - 1) }
+    if value < 1 { True } else { recursive_odd(value - 1) }
 };
 def recursive_odd = fn(value) -> Bool {
-    if value < 1 { 'False } else { recursive_even(value - 1) }
+    if value < 1 { False } else { recursive_even(value - 1) }
 };
 
 def ordered_identity = fn(value) { value };
@@ -72,10 +72,10 @@ def collect: for(N, M)
     retain(result)
 };
 
-type FamilyTree(A) = enum {'Leaf(A), 'Branch(Array(FamilyTree(A)))};
-def int_leaf: FamilyTree(Int) = 'Leaf(1);
-def string_leaf: FamilyTree(String) = 'Leaf("x");
-def string_tree: FamilyTree(String) = 'Branch([string_leaf]);
+type FamilyTree(A) = enum {Leaf(A), Branch(Array(FamilyTree(A)))};
+def int_leaf: FamilyTree(Int) = FamilyTree.Leaf(1);
+def string_leaf: FamilyTree(String) = FamilyTree.Leaf("x");
+def string_tree: FamilyTree(String) = FamilyTree.Branch([string_leaf]);
 
 export def generic_calls = test.should_ok(fn() {
     expect(
@@ -109,29 +109,29 @@ export def recursive_struct = test.should_ok(fn() {
 
 export def mutually_recursive_types = test.should_ok(fn() {
     expect({
-        let expr: Expr = 'Call({name: "sum", args: ['Value(1)]});
+        let expr: Expr = Expr.Call({name: "sum", args: [Expr.Value(1)]});
         let renderer: Renderer(RenderContext) = {
             render: fn(context, expr) { context.prefix },
         };
         inspect_expr(expr) == 0
-            && renderer.render({prefix: "p"}, 'Value(1)) == "p"
+            && renderer.render({prefix: "p"}, Expr.Value(1)) == "p"
     })
 });
 
 export def inferred_option_callback = test.should_ok(fn() {
     expect({
         let build: Fn(Int) -> Option(String) = fn(value) {
-            if value > 0 { 'Some("ok") } else { 'None }
+            if value > 0 { Some("ok") } else { None }
         };
-        option_apply(1, build) == 'Some("ok")
+        option_apply(1, build) == Some("ok")
     })
 });
 
 export def contextual_enum = test.should_ok(fn() {
     expect({
-        let nodes: Array(NodeId) = ['Other];
-        let selected: NodeId = choose_node('Base, nodes);
-        selected == 'Base
+        let nodes: Array(NodeId) = [NodeId.Other];
+        let selected: NodeId = choose_node(NodeId.Base, nodes);
+        selected == NodeId.Base
     })
 });
 
@@ -204,7 +204,7 @@ export def nested_function_contract = test.should_ok(fn() {
 
 export def contextual_collections_and_patterns = test.should_ok(fn() {
     expect({
-        let values: Array(Int) = if 'True { [] } else { [1] };
+        let values: Array(Int) = if True { [] } else { [1] };
         let selected: Int = match (1, "x") { (number, _) => number };
         values == [] && selected == 1
     })
@@ -221,12 +221,12 @@ export def nested_family_contract = test.should_ok(fn() {
 
 export def distinct_family_instances = test.should_ok(fn() {
     expect(
-        match int_leaf { 'Leaf(value) => value == 1, 'Branch(_) => 'False }
+        match int_leaf { FamilyTree.Leaf(value) => value == 1, FamilyTree.Branch(_) => False }
             && match string_tree {
-                'Leaf(_) => 'False,
-                'Branch(items) => match items[0] {
-                    'Leaf(value) => value == "x",
-                    'Branch(_) => 'False,
+                FamilyTree.Leaf(_) => False,
+                FamilyTree.Branch(items) => match items[0] {
+                    FamilyTree.Leaf(value) => value == "x",
+                    FamilyTree.Branch(_) => False,
                 },
             }
     )

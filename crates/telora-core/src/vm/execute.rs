@@ -1712,7 +1712,7 @@ impl Vm {
                                     }
                                     _ => {
                                         return Err(runtime_type_error(
-                                            "'True or 'False",
+                                            "True or False",
                                             condition,
                                             &view,
                                             function,

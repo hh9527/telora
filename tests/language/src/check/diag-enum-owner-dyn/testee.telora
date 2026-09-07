@@ -1,2 +1,3 @@
 import "std/dyn" as dyn;
-export def value = dyn.pack(Dyn, 'Ready);
+type State = enum {Ready};
+export def value = dyn.pack(Dyn, State.Ready);

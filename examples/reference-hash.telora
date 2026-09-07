@@ -10,14 +10,14 @@ type HashControl = FoldControl(HashResult, HashResult);
 type Field = Tuple([String, Dyn]);
 
 def reject: Fn(Dyn, String) -> HashResult = fn(value, message) {
-    'Err(message)
+    Err(message)
 };
 
 def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
     match desc.kind(ty) {
-        'Ref => match desc.resolve(ty) {
-            'Ok(target) => logical_kind(target),
-            'Err(_) => 'Ref,
+        TypeDescKind.Ref => match desc.resolve(ty) {
+            Ok(target) => logical_kind(target),
+            Err(_) => TypeDescKind.Ref,
         },
         kind => kind,
     }
@@ -25,20 +25,20 @@ def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
 
 def finish_control: Fn(HashControl) -> HashResult = fn(control) {
     match control {
-        'Continue(result) => result,
-        'Break(result) => result,
+        FoldControl.Continue(result) => result,
+        FoldControl.Break(result) => result,
     }
 };
 
 def hash_items: Fn(Array(Dyn), HashState, String) -> HashResult = fn(values, state, kind) {
     let state = hash.update_string(state, kind);
     let state = hash.update_int(state, arrays.length(values));
-    finish_control(arrays.fold_control@[Dyn, HashResult, HashResult](values, 'Ok(state), fn(result, value) {
+    finish_control(arrays.fold_control@[Dyn, HashResult, HashResult](values, Ok(state), fn(result, value) {
         match result {
-            'Err(error) => 'Break('Err(error)),
-            'Ok(state) => match hash_dyn(value, state) {
-                'Err(error) => 'Break('Err(error)),
-                'Ok(state) => 'Continue('Ok(state)),
+            Err(error) => FoldControl.Break(Err(error)),
+            Ok(state) => match hash_dyn(value, state) {
+                Err(error) => FoldControl.Break(Err(error)),
+                Ok(state) => FoldControl.Continue(Ok(state)),
             },
         }
     }))
@@ -47,15 +47,15 @@ def hash_items: Fn(Array(Dyn), HashState, String) -> HashResult = fn(values, sta
 def hash_fields: Fn(Array(Field), HashState, String) -> HashResult = fn(fields, state, kind) {
     let state = hash.update_string(state, kind);
     let state = hash.update_int(state, arrays.length(fields));
-    finish_control(arrays.fold_control@[Field, HashResult, HashResult](fields, 'Ok(state), fn(result, field) {
+    finish_control(arrays.fold_control@[Field, HashResult, HashResult](fields, Ok(state), fn(result, field) {
         match result {
-            'Err(error) => 'Break('Err(error)),
-            'Ok(state) => match field {
+            Err(error) => FoldControl.Break(Err(error)),
+            Ok(state) => match field {
                 (name, value) => {
                     let state = hash.update_string(state, name);
                     match hash_dyn(value, state) {
-                        'Err(error) => 'Break('Err(error)),
-                        'Ok(state) => 'Continue('Ok(state)),
+                        Err(error) => FoldControl.Break(Err(error)),
+                        Ok(state) => FoldControl.Continue(Ok(state)),
                     }
                 },
             },
@@ -65,14 +65,14 @@ def hash_fields: Fn(Array(Field), HashState, String) -> HashResult = fn(fields, 
 
 def hash_tagged: Fn(Dyn, HashState, String) -> HashResult = fn(value, state, kind) {
     match dyn.tag(value) {
-        'Err(error) => 'Err(error.message),
-        'Ok(tag) => {
+        Err(error) => Err(error.message),
+        Ok(tag) => {
             let state = hash.update_string(state, kind);
             let state = hash.update_string(state, tag);
             match dyn.payload(value) {
-                'Err(error) => 'Err(error.message),
-                'Ok('None) => 'Ok(hash.update_int(state, 0)),
-                'Ok('Some(payload)) => {
+                Err(error) => Err(error.message),
+                Ok(None) => Ok(hash.update_int(state, 0)),
+                Ok(Some(payload)) => {
                     let state = hash.update_int(state, 1);
                     hash_dyn(payload, state)
                 },
@@ -84,37 +84,35 @@ def hash_tagged: Fn(Dyn, HashState, String) -> HashResult = fn(value, state, kin
 
 def hash_dyn: Fn(Dyn, HashState) -> HashResult = fn(value, state) {
     match logical_kind(dyn.desc(value)) {
-        'Int => match dyn.check_int(value) {
-            'None => reject(value, "invalid Int package"),
-            'Some(number) => 'Ok(hash.update_int(hash.update_string(state, "Int"), number)),
+        TypeDescKind.Int => match dyn.check_int(value) {
+            None => reject(value, "invalid Int package"),
+            Some(number) => Ok(hash.update_int(hash.update_string(state, "Int"), number)),
         },
-        'String => match dyn.check_string(value) {
-            'None => reject(value, "invalid String package"),
-            'Some(text) => 'Ok(hash.update_string(hash.update_string(state, "String"), text)),
+        TypeDescKind.String => match dyn.check_string(value) {
+            None => reject(value, "invalid String package"),
+            Some(text) => Ok(hash.update_string(hash.update_string(state, "String"), text)),
         },
-        'Bytes => match dyn.check_bytes(value) {
-            'None => reject(value, "invalid Bytes package"),
-            'Some(bytes) => 'Ok(hash.update_bytes(hash.update_string(state, "Bytes"), bytes)),
+        TypeDescKind.Bytes => match dyn.check_bytes(value) {
+            None => reject(value, "invalid Bytes package"),
+            Some(bytes) => Ok(hash.update_bytes(hash.update_string(state, "Bytes"), bytes)),
         },
-        'Array => match dyn.array_items(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(items) => hash_items(items, state, "Array"),
+        TypeDescKind.Array => match dyn.array_items(value) {
+            Err(error) => Err(error.message),
+            Ok(items) => hash_items(items, state, "Array"),
         },
-        'Tuple => match dyn.tuple_items(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(items) => hash_items(items, state, "Tuple"),
+        TypeDescKind.Tuple => match dyn.tuple_items(value) {
+            Err(error) => Err(error.message),
+            Ok(items) => hash_items(items, state, "Tuple"),
         },
-        'Struct => match dyn.fields(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(fields) => hash_fields(fields, state, "Struct"),
+        TypeDescKind.Struct => match dyn.fields(value) {
+            Err(error) => Err(error.message),
+            Ok(fields) => hash_fields(fields, state, "Struct"),
         },
-        'Dict => match dyn.fields(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(fields) => hash_fields(fields, state, "Dict"),
+        TypeDescKind.Dict => match dyn.fields(value) {
+            Err(error) => Err(error.message),
+            Ok(fields) => hash_fields(fields, state, "Dict"),
         },
-        'Atom => hash_tagged(value, state, "Atom"),
-        'Tagged => hash_tagged(value, state, "Tagged"),
-        'Enum => hash_tagged(value, state, "Enum"),
+        TypeDescKind.Enum => hash_tagged(value, state, "Enum"),
         kind => reject(value, "unsupported my_hash descriptor"),
     }
 };
