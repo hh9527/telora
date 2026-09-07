@@ -564,7 +564,7 @@ impl CoreCodecFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Decode => 4,
+            Self::Decode => 3,
             Self::Encode => 3,
         }
     }
@@ -611,7 +611,7 @@ impl CoreJsonFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Parse | Self::ParseYaml | Self::ParseToml => 3,
+            Self::Parse | Self::ParseYaml | Self::ParseToml => 2,
             Self::Schema => 3,
             _ => 1,
         }

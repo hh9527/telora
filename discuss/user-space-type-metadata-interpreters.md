@@ -128,7 +128,7 @@ It deliberately defers type-preserving outputs:
 ```telora
 for(A) Fn(TypeOf(A)) -> Fn(A) -> A
 for(A) Fn(TypeOf(A)) -> Fn(A) -> Option(A)
-for(A) Fn(TypeOf(A)) -> Fn(Value) -> Result(A, codec.DecodeError)
+for(A) Fn(TypeOf(A)) -> Fn(Value) -> Result(A, codec.BlameError)
 ```
 
 Those forms require dynamic construction plus validation against the original

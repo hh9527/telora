@@ -102,7 +102,6 @@ fn run_core_json(
                         input: Some(input),
                     }),
                     input,
-                    arguments[2],
                     return_target,
                     function,
                     pc,

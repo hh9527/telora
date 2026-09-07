@@ -658,6 +658,7 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
         TYPE_PROPERTY_MODULE => 0,
         PRIVATE_CODEC_MODULE => 1,
         VALUE_MODULE => 1,
+        BLAME_MODULE => 1,
         EQ_MODULE => 2,
         DYN_MODULE => 3,
         TYPE_DESC_MODULE => 4,

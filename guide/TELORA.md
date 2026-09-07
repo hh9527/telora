@@ -584,10 +584,10 @@ let schema_text = json.stringify(query_schema);
 Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Value` witness，
 返回 Value；只有需要 JSON 文本边界时才调用 `json.stringify` 或
 `json.stringify_pretty`。`yaml.parse` 和 `toml.parse` 同样返回
-`Result(Value, codec.DecodeError)`。`codec.decode` 和 `json.decode` 返回
-`Result(A, codec.DecodeError)`；错误包含 `message: String` 和 `value: Value`。
+`Result(Value, codec.BlameError)`。`codec.decode` 和 `json.decode` 返回
+`Result(A, codec.BlameError)`；错误为不可观察的 native 对象，保留消息和失败值的来源。
 解码试探失败可以作为普通 Result 继续处理。需要产生诊断时使用
-`fail!(error.message, error.value)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
+`raise!(error)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
 静态数据模块保留每个子节点的位置。字符串解析产生的节点保留输入字符串的来源，
 解析消息中的行列描述字符串内容；这些行列不作为 Telora 源码内的偏移。
 

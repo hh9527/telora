@@ -73,6 +73,8 @@ JSON null、boolean、number 和 string。
 
 通常先在格式模块中得到 Value，再用 `codec.decode(Target, value)` 进入业务名义类型；
 输出时用 `codec.encode(codec.Value, value)` 回到数据边界。
+解析和解码返回 `Result(A, BlameError)`，调用方可以通过 match 恢复，或用
+`raise!(error)` 发出保留原始值来源的诊断。
 
 ## 反射
 

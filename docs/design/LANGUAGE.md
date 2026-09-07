@@ -1072,9 +1072,9 @@ type ScalarValue = enum {
 运行时文本解析使用同一边界：
 
 ```telora
-json.parse(text)  # Result(Value, codec.DecodeError)
-yaml.parse(text)  # Result(Value, codec.DecodeError)
-toml.parse(text)  # Result(Value, codec.DecodeError)
+json.parse(text)  # Result(Value, codec.BlameError)
+yaml.parse(text)  # Result(Value, codec.BlameError)
+toml.parse(text)  # Result(Value, codec.BlameError)
 ```
 
 Typed model 与 Value 之间只通过 codec 重建数据图：
@@ -1194,14 +1194,14 @@ receiver.ident!(arguments...) == ident!(receiver, arguments...)
 `fail!` 向运行时传递消息和 subjects，运行时读取 subjects 的来源并记录诊断。
 这些参数各求值一次，诊断的产生不需要构造语言级错误值。
 
-解码使用公开的 `codec.DecodeError`，字段为 `message: String`、`value: Value`。
-`codec.decode` 与 `json.decode` 返回 `Result(A, DecodeError)`，失败本身不产生诊断。
+解码使用不可观察的 native `codec.BlameError`，保存消息和失败值的来源。
+`codec.decode` 与 `json.decode` 返回 `Result(A, BlameError)`，失败本身不产生诊断。
 错误保留当前解码 Value，调用方可以继续试探，或显式使用其来源产生诊断：
 
 ```telora
 match codec.decode(User, raw) {
     Ok(user) => user,
-    Err(error) => fail!(error.message, error.value),
+    Err(error) => raise!(error),
 }
 ```
 
@@ -1343,7 +1343,7 @@ Tool stage 执行 annotation、type initializer、decorator、module interface �
 普通值使用时，该值会保留到运行时。
 
 `codec.decode(Target, value)` 的首个参数是受检查的 `TypeOf(Target)`；
-解码返回 `Result(Target, codec.DecodeError)`。编码直接返回 `Value`，失败产生诊断，
+解码返回 `Result(Target, codec.BlameError)`。编码直接返回 `Value`，失败产生诊断，
 并保留失败值和编码规则的来源位置。
 `codec.encode(Value, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
 已经携带的 nominal witness 选择 schema。Dyn 中的模型需先投影到具体类型。

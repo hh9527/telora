@@ -3,7 +3,8 @@
 - Status: Accepted core contracts; implementation in progress.
 - Implementation: `std/blame.BlameError` is an opaque native type. The blame,
   raise and warn intrinsics are implemented. Dyn returns preserve erased-value
-  origins across call boundaries. Codec migration and construction checks remain pending.
+  origins across call boundaries. Codec and JSON/TOML/YAML now return the same
+  opaque BlameError without an error type witness. Construction checks remain pending.
 - Validation: debug build and workspace tests pass; 348 language fixture groups
   pass, including opaque access rejection, intrinsic argument contracts, deferred
   error construction, warnings returning None and cross-module subject origins.

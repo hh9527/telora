@@ -444,7 +444,6 @@ fn finish_encode_value(
 fn finish_decode_result(
     result: Result<CodecNode, CodecFailure>,
     input: Val,
-    error_owner: Val,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -456,14 +455,19 @@ fn finish_decode_result(
         Ok(node) => (BuiltinAtom::Ok, node),
         Err(failure) => {
             let value = failure.input.unwrap_or(input);
-            (BuiltinAtom::Err, CodecNode::Declared {
-                owner: error_owner,
-                payload: Box::new(CodecNode::Dict(vec![
-                    ("message".into(), CodecNode::String(failure.message, value.loc())),
-                    ("value".into(), CodecNode::Existing(value)),
-                ], value.loc())),
-                loc: value.loc(),
-            })
+            let bytes = logical_value_bytes(4)
+                .and_then(|bytes| bytes.checked_add(failure.message.len() as u64)
+                    .ok_or_else(|| NativeError::allocation_limit("decode error size overflowed")))
+                .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
+            charge_allocation(account, bytes, function, pc)?;
+            let mut opaque = crate::OpaqueValue::new_identity(
+                crate::core::blame_native_type(), failure.message,
+            );
+            opaque.traced = vec![value].into_boxed_slice();
+            let blame = Val::new(
+                DecodedValue::Opaque(current.allocate(Object::Opaque(opaque))), value.loc(),
+            );
+            (BuiltinAtom::Err, CodecNode::Existing(blame))
         }
     };
     finish_codec_payload(tag, payload, input, return_target, function, pc, current, background, account)

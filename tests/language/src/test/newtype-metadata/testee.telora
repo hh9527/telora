@@ -25,7 +25,7 @@ export def reflection = test.should_ok(fn() {
 export def codec_roundtrip = test.should_ok(fn() {
     let id = match json.decode(UserId, "7") {
         Ok(value) => value,
-        Err(error) => fail!(error.message),
+        Err(error) => raise!(error),
     };
     expect(id.0 == 7 && codec.encode(Value, id) == Value.Int(7)
         && dyn.project_with(OtherId, dyn.pack(UserId, id)) == None)
@@ -34,11 +34,11 @@ export def codec_roundtrip = test.should_ok(fn() {
 export def nested_payload_identity = test.should_ok(fn() {
     let nested = match json.decode(Nested, "8") {
         Ok(value) => value,
-        Err(error) => fail!(error.message),
+        Err(error) => raise!(error),
     };
     let generic = match json.decode(Box(UserId), "9") {
         Ok(value) => value,
-        Err(error) => fail!(error.message),
+        Err(error) => raise!(error),
     };
     let nested_id: UserId = nested.0;
     let generic_id: UserId = generic.0;
@@ -50,22 +50,22 @@ export def nested_payload_identity = test.should_ok(fn() {
 export def recursive_metadata = test.should_ok(fn() {
     let tree = match json.decode(Tree, "null") {
         Ok(value) => value,
-        Err(error) => fail!(error.message),
+        Err(error) => raise!(error),
     };
     expect(codec.encode(Value, tree) == Value.None)
 });
 
-export def decode_failure_input = test.should_ok(fn() {
-    expect(match json.decode(UserId, "\"invalid\"") {
-        Ok(_) => False,
-        Err(error) => error.value == Value.String("invalid"),
-    })
-});
+export def decode_failure_input = test.should_fail_with(fn() {
+    match json.decode(UserId, "\"invalid\"") {
+        Ok(_) => 0,
+        Err(error) => raise!(error),
+    }
+}, "expected Int");
 
 export def dynamic_payload = test.should_ok(fn() {
     let nested = match json.decode(Nested, "10") {
         Ok(value) => value,
-        Err(error) => fail!(error.message),
+        Err(error) => raise!(error),
     };
     let items = match dyn.tuple_items(dyn.pack(Nested, nested)) {
         Ok(items) => items,
@@ -79,7 +79,7 @@ export def schema = test.should_ok(fn() {
     let recursive = json.schema(Tree);
     let expected = match json.parse(r##"{"$defs":{"Type0":{"type":"integer"}},"$ref":"#/$defs/Type0","$schema":"https://json-schema.org/draft/2020-12/schema"}"##) {
         Ok(value) => value,
-        Err(error) => fail!(error.message),
+        Err(error) => raise!(error),
     };
     expect(json.schema(UserId) == expected)
 });
