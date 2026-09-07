@@ -283,7 +283,8 @@ impl<'a> GenericInference<'a> {
                     }
                     join_all_types(item_types.iter().map(|ty| self.normalize(ty)).collect())
                 };
-                TypeDescriptor::Array(Box::new(item))
+                let item = self.variables.structure_edge(item);
+                TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Array, &[item]))
             }
             ExprKind::Spread(operand) => self.infer(operand, environment, expected)?,
             ExprKind::Tuple(items) => {
@@ -291,9 +292,11 @@ impl<'a> GenericInference<'a> {
                     Some(TypeDescriptor::Tuple(expected_items)) => Some(expected_items),
                     _ => None,
                 };
-                TypeDescriptor::Tuple(self.infer_tuple_items(
+                let items = self.infer_tuple_items(
                     items, environment, item_expected.as_deref(),
-                )?)
+                )?;
+                let items = items.into_iter().map(|item| self.variables.structure_edge(item)).collect::<Vec<_>>();
+                TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Tuple, &items))
             }
             ExprKind::Dict(fields) => {
                 let has_spread = fields.iter().any(|field| field.value.name.is_none());

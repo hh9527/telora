@@ -85,6 +85,87 @@
     }
 
     #[test]
+    fn slot_backed_empty_containers_freshen_evidence_without_rebinding_never() {
+        let schemes = HashMap::new();
+        let hir = HirProgram::default();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        let never = inference.variables.structure_node(InferenceConstructor::Never, &[]);
+        let array = inference.variables.structure_node(InferenceConstructor::Array, &[never]);
+        let actual = TypeDescriptor::Inference(array);
+        assert!(inference.variables.contains_runtime_never_leaf(&actual));
+        assert!(inference.variables.descriptor_views.iter().all(|view| view.get().is_none()));
+        let expected = inference.fresh_variable();
+        inference.check(&actual, &expected).unwrap();
+        let TypeDescriptor::Array(item) = inference.normalize(&expected) else { panic!("expected array evidence"); };
+        assert!(matches!(*item, TypeDescriptor::Inference(_)));
+        inference.unify(&item, &TypeDescriptor::Int).unwrap();
+        assert_eq!(inference.normalize(&expected), TypeDescriptor::Array(Box::new(TypeDescriptor::Int)));
+        assert_eq!(inference.normalize(&actual), TypeDescriptor::Array(Box::new(TypeDescriptor::Never)));
+    }
+
+    #[test]
+    fn known_named_slots_use_the_same_compatibility_rules_as_inline_names() {
+        let schemes = HashMap::new();
+        let hir = HirProgram::default();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        // Recursive references may have an identity without a local body.
+        let named = TypeDescriptor::Named("Tree".into());
+        let slot = TypeDescriptor::Inference(inference.variables.structure_edge(named.clone()));
+        inference.check(&named, &named).unwrap();
+        inference.check(&slot, &named).unwrap();
+        inference.check(&named, &slot).unwrap();
+        inference.check(&slot, &slot).unwrap();
+    }
+
+    #[test]
+    fn aggregate_expressions_produce_slot_edges_directly() {
+        let schemes = HashMap::new();
+        let hir = HirProgram::default();
+        let interfaces = BTreeMap::new();
+        let named_types = BTreeMap::new();
+        let annotations = HashMap::new();
+        let trait_ids = BTreeMap::new();
+        let dyn_namespaces = HashSet::new();
+        let mut inference = GenericInference::new(
+            &schemes, &hir, &interfaces, &named_types, &annotations,
+            &[], &[], &trait_ids, None, &dyn_namespaces, true, None, None,
+        );
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("aggregate.telora", "([1, 2], [3])");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let expression = &program.value.body.value.result;
+        let ty = inference.infer(expression, &HashMap::new(), None).unwrap();
+        let TypeDescriptor::Inference(tuple) = ty else { panic!("tuple result must be a slot"); };
+        assert_eq!(inference.records[&expression.location], ty);
+        let arguments = inference.variables.arguments(inference.variables.known(tuple).unwrap());
+        assert_eq!(arguments.len(), 2);
+        for argument in arguments {
+            assert!(matches!(inference.variables.constructor(inference.variables.known(*argument).unwrap()),
+                InferenceConstructor::Array));
+        }
+        assert_eq!(inference.normalize(&ty), TypeDescriptor::Tuple(vec![
+            TypeDescriptor::Array(Box::new(TypeDescriptor::Int)),
+            TypeDescriptor::Array(Box::new(TypeDescriptor::Int)),
+        ]));
+    }
+
+    #[test]
     fn deep_slot_unification_uses_graph_edges_without_descriptor_views() {
         let schemes = HashMap::new();
         let hir = HirProgram::default();

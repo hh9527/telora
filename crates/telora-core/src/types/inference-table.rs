@@ -20,6 +20,36 @@ mod inference_table_tests {
     }
 
     #[test]
+    fn leaf_rows_are_shared_but_slots_remain_independent() {
+        let mut arena = InferenceVariables::default();
+        let left = arena.structure_edge(TypeDescriptor::Int);
+        let right = arena.structure_edge(TypeDescriptor::Int);
+        assert_ne!(left, right);
+        assert_eq!(arena.known(left), arena.known(right));
+        assert_eq!(arena.types.len(), 1);
+        arena.set(left, TypeDescriptor::String);
+        assert_eq!(arena.binding(left), Some(&TypeDescriptor::String));
+        assert_eq!(arena.binding(right), Some(&TypeDescriptor::Int));
+    }
+
+    #[test]
+    fn direct_constructor_nodes_share_edges_and_propagate_late_conflicts() {
+        let mut arena = InferenceVariables::default();
+        let item = arena.fresh();
+        let left = arena.structure_node(InferenceConstructor::Array, &[item]);
+        let right = arena.structure_node(InferenceConstructor::Array, &[item]);
+        let tuple = arena.structure_node(InferenceConstructor::Tuple, &[left, right]);
+        assert_eq!(arena.arguments(arena.known(tuple).unwrap()), &[left, right]);
+        arena.set(item, TypeDescriptor::Int);
+        assert!(arena.same_slots(left, right));
+        assert_eq!(arena.canonicalize_slots(), 1);
+        assert_eq!(arena.root(left), arena.root(right));
+        arena.record_conflict(&TypeDescriptor::Inference(item), "late element conflict");
+        assert!(arena.ensure_consistent(&TypeDescriptor::Inference(tuple)).is_err());
+        assert!(arena.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
+
+    #[test]
     fn graph_operations_do_not_materialize_descriptor_views() {
         let mut arena = InferenceVariables::default();
         let item = arena.fresh();
@@ -139,10 +169,14 @@ impl InferenceVariables {
                     .expect("inference constructor capacity exceeded"));
                 let constructor = Arc::new(constructor);
                 self.constructors.push(Arc::clone(&constructor));
+                self.leaf_types.push(None);
                 self.constructor_ids.insert(constructor, id);
                 id
             }
         };
+        if arguments.is_empty() && let Some(id) = self.leaf_types[constructor.0 as usize] {
+            return id;
+        }
         let id = InferenceTypeId(u32::try_from(self.types.len())
             .expect("inference type capacity exceeded"));
         let arguments_start = u32::try_from(self.arguments.len())
@@ -154,6 +188,7 @@ impl InferenceVariables {
         self.types.push(InferenceType { constructor, arguments_start, arguments_len });
         self.descriptor_views.push(std::cell::OnceCell::new());
         self.normalized_bodies.push(std::cell::RefCell::new(None));
+        if arguments.is_empty() { self.leaf_types[constructor.0 as usize] = Some(id); }
         id
     }
 
@@ -161,6 +196,17 @@ impl InferenceVariables {
         if let TypeDescriptor::Inference(slot) = ty { return slot; }
         let slot = self.fresh();
         self.set(slot, ty);
+        slot
+    }
+
+    fn structure_node(
+        &mut self,
+        constructor: InferenceConstructor,
+        arguments: &[InferenceVariableId],
+    ) -> InferenceVariableId {
+        let id = self.push_type(constructor, arguments);
+        let slot = self.fresh();
+        self.set_known(slot, id);
         slot
     }
 

@@ -1,6 +1,7 @@
 # RFC 0276: Shared Tool Inference and Static Property Evidence
 
-- Status: Implemented on local experimental branch `perf/shared-tool-inference`.
+- Status: In progress on local branch `perf/shared-tool-inference`; shared-slot
+  solver implemented, expression-interface migration and main integration pending.
 - Baseline: 58f0b8c, after RFC 0274.
 - Related: RFC 0260, RFC 0274, RFC 0275.
 
@@ -47,7 +48,8 @@ Static type errors may now precede property-provider execution errors.
 - Caching results solely by source location across different lexical scopes.
 - Removing checks or treating incomplete metadata as successful evidence.
 - Implementing RFC 0275 construction checks.
-- Publishing, pushing or merging this local experiment.
+- Publishing or pushing this local experiment. Local main integration is required
+  after completing and verifying the optimization.
 
 ## Verification
 
@@ -320,3 +322,42 @@ Remaining work includes the descriptor-facing inference interfaces and fully
 consuming resolved IDs through lowering rather than recovering them from AST
 locations. The performance improvement does not imply a completed HIR-to-LIR
 pipeline migration.
+
+### Expression Record Experiment
+
+An experiment imported descriptor results into slot-based expression records.
+Workspace tests passed (288 core tests plus language acceptance), but the release
+query regressed to 23.39 s with peak RSS 982356 KB (single sample, exit 0).
+The record conversion was withdrawn: while inference still returns descriptors,
+importing every expression result adds graph construction and storage overhead.
+Direct slot-producing inference must precede this publication change.
+
+Immutable zero-argument type rows are now interned per constructor; their mutable
+slots remain independent. A regression test checks row reuse and slot isolation.
+After withdrawing the record conversion, all 287 core tests and the release
+build passed. The release query returned to 12.11 s with peak RSS 602556 KB
+(single sample, exit 0). This does not establish a speedup from leaf interning
+over the earlier 11.89-12.12 s samples. Workspace acceptance passed before the
+withdrawal; the final reduced change was rechecked with the core suite.
+
+### Direct Aggregate Inference
+
+Array and tuple expressions now allocate constructor rows directly from child
+slots and return their root slot. They no longer construct a full aggregate
+descriptor first. Other expression families and final publication still retain
+descriptor adapters; the expression-record conversion experiment above remains
+withdrawn.
+
+Known slots are shallowly exposed before nominal/name compatibility checks,
+so an imported recursive name follows the same rules as an inline name without
+requiring a local body lookup. Runtime `Never` evidence detection traverses slot
+edges without constructing descriptor views. Freshening empty-container evidence
+does not change the original `Never` slot. Tests cover direct expression edges,
+late conflicts, known-name representation equivalence and `Never` isolation.
+
+The workspace suite passed (291 core tests plus language acceptance) and the
+release build succeeded. Two sequential release query samples took 12.51 s and
+12.70 s, with peak RSS 653816 KB and 653644 KB (exit 0). Compared with the prior
+12.11 s / 602556 KB sample, this is an intermediate migration cost, not a net
+performance improvement. Remaining descriptor-producing expression families
+must be migrated and measured before final integration.

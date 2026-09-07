@@ -101,6 +101,7 @@ struct InferenceVariables {
     arguments: Vec<InferenceVariableId>,
     constructors: Vec<Arc<InferenceConstructor>>,
     constructor_ids: HashMap<Arc<InferenceConstructor>, InferenceConstructorId>,
+    leaf_types: Vec<Option<InferenceTypeId>>,
     descriptor_views: Vec<std::cell::OnceCell<Arc<TypeDescriptor>>>,
     descriptor_view_ids: std::cell::RefCell<HashMap<*const TypeDescriptor, InferenceTypeId>>,
     normalized_bodies: Vec<std::cell::RefCell<Option<(u64, Arc<TypeDescriptor>)>>>,
@@ -214,18 +215,22 @@ impl InferenceVariables {
                 self.refresh(waiting);
             }
         } else {
-            self.advance_revision();
             let id = self.lower_structure(ty);
-            let mut dependencies = self.arguments(id).to_vec();
-            dependencies.sort_unstable();
-            dependencies.dedup();
-            for dependency in dependencies {
-                let dependency = self.root(dependency);
-                self.dependents[dependency.0 as usize].push(root);
-            }
-            self.nodes[root.0 as usize].set(InferenceNode::Known(id));
-            self.refresh(vec![root]);
+            self.set_known(root, id);
         }
+    }
+
+    fn set_known(&mut self, root: InferenceVariableId, id: InferenceTypeId) {
+        self.advance_revision();
+        let mut dependencies = self.arguments(id).to_vec();
+        dependencies.sort_unstable();
+        dependencies.dedup();
+        for dependency in dependencies {
+            let dependency = self.root(dependency);
+            self.dependents[dependency.0 as usize].push(root);
+        }
+        self.nodes[root.0 as usize].set(InferenceNode::Known(id));
+        self.refresh(vec![root]);
     }
 
     fn advance_revision(&mut self) {

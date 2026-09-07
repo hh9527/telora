@@ -1,5 +1,37 @@
 impl InferenceVariables {
 
+    fn contains_runtime_never_leaf(&self, descriptor: &TypeDescriptor) -> bool {
+        let mut descriptors = vec![descriptor];
+        let mut slots = Vec::new();
+        while let Some(descriptor) = descriptors.pop() {
+            match descriptor {
+                TypeDescriptor::Never => return true,
+                TypeDescriptor::Inference(slot) => slots.push(*slot),
+                TypeDescriptor::Declared(declared) => descriptors.push(&declared.body),
+                TypeDescriptor::Array(item) | TypeDescriptor::Newtype(item)
+                | TypeDescriptor::Dict(item) | TypeDescriptor::Tagged { payload: item, .. } => descriptors.push(item),
+                TypeDescriptor::Tuple(items) => descriptors.extend(items),
+                TypeDescriptor::Struct(fields) => descriptors.extend(fields.values()),
+                _ => {},
+            }
+        }
+        let mut visited = HashSet::new();
+        while let Some(slot) = slots.pop() {
+            let slot = self.root(slot);
+            if !visited.insert(slot) { continue; }
+            let Some(id) = self.known(slot) else { continue; };
+            match self.constructor(id) {
+                InferenceConstructor::Never => return true,
+                InferenceConstructor::Declared { .. } => slots.extend(self.arguments(id).last()),
+                InferenceConstructor::Array | InferenceConstructor::Newtype
+                | InferenceConstructor::Dict | InferenceConstructor::Tagged(_)
+                | InferenceConstructor::Tuple | InferenceConstructor::Struct(_) => slots.extend(self.arguments(id)),
+                _ => {},
+            }
+        }
+        false
+    }
+
     fn same_slots(&self, left: InferenceVariableId, right: InferenceVariableId) -> bool {
         let mut pending = vec![(left, right)];
         let mut visited = HashSet::new();

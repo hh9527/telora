@@ -525,37 +525,6 @@ fn same_nominal_head_with_erased_arguments(
             })
 }
 
-fn contains_runtime_never_leaf(descriptor: &TypeDescriptor) -> bool {
-    match descriptor {
-        TypeDescriptor::Never => true,
-        TypeDescriptor::Declared(declared) => contains_runtime_never_leaf(&declared.body),
-        TypeDescriptor::Array(item)
-        | TypeDescriptor::Newtype(item)
-        | TypeDescriptor::Dict(item)
-        | TypeDescriptor::Tagged { payload: item, .. } => contains_runtime_never_leaf(item),
-        TypeDescriptor::Tuple(items) => items.iter().any(contains_runtime_never_leaf),
-        TypeDescriptor::Struct(fields) => fields.values().any(contains_runtime_never_leaf),
-        TypeDescriptor::Named(_)
-        | TypeDescriptor::Type
-        | TypeDescriptor::TypeOf(_)
-        | TypeDescriptor::Int
-        | TypeDescriptor::Float
-        | TypeDescriptor::String
-        | TypeDescriptor::Bytes
-        | TypeDescriptor::AtomValue
-        | TypeDescriptor::Opaque(_)
-        | TypeDescriptor::Atom(_)
-        | TypeDescriptor::Enum(_)
-        | TypeDescriptor::PendingAlternatives(_)
-        | TypeDescriptor::Function { .. }
-        | TypeDescriptor::Bound(_)
-        | TypeDescriptor::Inference(_) => false,
-        TypeDescriptor::Dyn => false,
-    }
-}
-
-
-
 fn expression_references_names(
     expression: &Expr,
     names: &HashSet<String>,

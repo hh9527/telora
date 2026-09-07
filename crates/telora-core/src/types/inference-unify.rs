@@ -752,6 +752,12 @@ impl<'a> GenericInference<'a> {
     }
 
     fn check_consistent(&mut self, actual: &TypeDescriptor, expected: &TypeDescriptor) -> Result<(), String> {
+        // Known slots and inline descriptors must take the same nominal/name
+        // compatibility path; only unresolved roots are inference variables.
+        let actual_head = self.variables.head(actual);
+        let expected_head = self.variables.head(expected);
+        let actual = &*actual_head;
+        let expected = &*expected_head;
         let completed_actual = self.complete_declared(actual);
         let completed_expected = self.complete_declared(expected);
         let actual = completed_actual.as_ref().unwrap_or(actual);
@@ -867,18 +873,11 @@ impl<'a> GenericInference<'a> {
             self.checking_named_pairs.remove(&pair);
             return result;
         }
-        let actual_head = self.variables.head(actual);
-        let expected_head = self.variables.head(expected);
-        let actual = &*actual_head;
-        let expected = &*expected_head;
-        if matches!(actual, TypeDescriptor::Named(_)) || matches!(expected, TypeDescriptor::Named(_)) {
-            return self.check(actual, expected);
-        }
         if matches!(actual, TypeDescriptor::Never) {
             return Ok(());
         }
         if let TypeDescriptor::Inference(variable) = expected
-            && contains_runtime_never_leaf(&actual)
+            && self.variables.contains_runtime_never_leaf(&actual)
         {
             let evidence = self.freshen_runtime_never_leaves(&actual);
             return self.bind_inference_variable(*variable, &evidence);
@@ -1000,6 +999,8 @@ impl<'a> GenericInference<'a> {
     }
 
     fn freshen_runtime_never_leaves(&mut self, descriptor: &TypeDescriptor) -> TypeDescriptor {
+        let head = self.variables.head(descriptor);
+        let descriptor = &*head;
         match descriptor {
             TypeDescriptor::Never => self.fresh_variable(),
             TypeDescriptor::Array(item) => {
