@@ -431,3 +431,26 @@ The release build succeeded. Two sequential query samples took 9.89 s and
 half the peak resident memory and also reduces wall time. These remain samples,
 not medians. The workspace suite passed with 301 core tests and 41 CLI tests,
 including language acceptance.
+
+### Direct Nominal Body Publication
+
+Ordinary Declared rows now publish their bodies directly from shared slots. A
+memoized byte-array validation pass checks the reachable body and arguments
+before a nominal identity may be reused or reserved. Publication reserves the
+outer identity before descending into the body, so recursive inner stubs cannot
+replace the complete outer definition. The traversal stack and final-ID cache
+remain iterative; a 16384-deep nominal-body test requires no descriptor views or
+normalization. Another test checks recursive reservation and rejection of an
+unresolved body even when its nominal identity is already in the final graph.
+
+Public DeclaredTypeId argument metadata still requires normalized descriptors.
+Unchecked and pending alternatives retain their specialized normalization
+adapter. Runtime owner descriptors and name-facing inference environments also
+remain; this step does not claim those interfaces are migrated.
+
+The workspace suite passed (303 core tests and 41 CLI tests, including language
+acceptance), and the release build succeeded. Sequential query samples took
+8.13 s and 8.01 s with peak RSS 379596 KB and 378968 KB (exit 0), compared with
+the preceding 9.89 s / 9.74 s and 393428 KB / 394940 KB samples. These are not
+medians. A fresh fetch still places origin/main at 915ffe4, already an ancestor
+of the optimization branch; final local-main integration remains pending.

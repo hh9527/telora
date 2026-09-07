@@ -3,6 +3,7 @@ enum PublishedInferenceSlot {
     #[default]
     Unvisited,
     Visiting,
+    Reserved(AnalysisTypeId),
     Complete(Result<AnalysisTypeId, PublicationFailure>),
 }
 
@@ -28,11 +29,67 @@ impl PublicationFailure {
 struct InferencePublication<'a> {
     variables: &'a InferenceVariables,
     slots: Vec<PublishedInferenceSlot>,
+    validation: Vec<u8>,
 }
 
 impl<'a> InferencePublication<'a> {
     fn new(variables: &'a InferenceVariables) -> Self {
-        Self { variables, slots: vec![PublishedInferenceSlot::Unvisited; variables.nodes.len()] }
+        Self {
+            variables,
+            slots: vec![PublishedInferenceSlot::Unvisited; variables.nodes.len()],
+            validation: vec![u8::MAX; variables.nodes.len()],
+        }
+    }
+
+    fn needs_normalization(constructor: &InferenceConstructor) -> bool {
+        matches!(constructor, InferenceConstructor::PendingAlternatives)
+            || matches!(constructor, InferenceConstructor::Declared { head, .. }
+                if head.constructor() == unchecked_type_constructor())
+    }
+
+    fn validate(
+        &mut self,
+        root: InferenceVariableId,
+        normalize: &impl Fn(InferenceVariableId) -> TypeDescriptor,
+    ) -> PublicationFailure {
+        let root = self.variables.root(root);
+        if self.validation[root.0 as usize] < u8::MAX - 1 {
+            return PublicationFailure(self.validation[root.0 as usize]);
+        }
+        let mut work = vec![(root, false)];
+        while let Some((slot, finish)) = work.pop() {
+            let slot = self.variables.root(slot);
+            let index = slot.0 as usize;
+            if self.validation[index] < u8::MAX - 1 { continue; }
+            let Some(ty) = self.variables.known(slot) else {
+                self.validation[index] = PublicationFailure::UNRESOLVED;
+                continue;
+            };
+            let constructor = self.variables.constructor(ty);
+            if Self::needs_normalization(constructor) {
+                self.validation[index] = PublicationFailure::descriptor(&normalize(slot)).0;
+                continue;
+            }
+            let arguments = self.variables.arguments(ty);
+            if !finish {
+                if self.validation[index] == u8::MAX - 1 {
+                    self.validation[index] = PublicationFailure::UNRESOLVED;
+                    continue;
+                }
+                self.validation[index] = u8::MAX - 1;
+                work.push((slot, true));
+                work.extend(arguments.iter().rev().map(|slot| (*slot, false)));
+                continue;
+            }
+            let mut failure = if matches!(constructor,
+                InferenceConstructor::AtomValue | InferenceConstructor::Atom(_) | InferenceConstructor::Tagged(_))
+            { PublicationFailure::STANDALONE } else { 0 };
+            for argument in arguments {
+                failure |= self.validation[self.variables.root(*argument).0 as usize];
+            }
+            self.validation[index] = failure;
+        }
+        PublicationFailure(self.validation[root.0 as usize])
     }
 
     fn publish(
@@ -57,15 +114,47 @@ impl<'a> InferencePublication<'a> {
             };
             let constructor = self.variables.constructor(ty);
             let arguments = self.variables.arguments(ty);
-            // Nominal publication reserves the identity before its recursive
-            // body. Keep that ordering, and Unchecked/alternative normalization,
-            // at the compatibility boundary until those rules are slot-native.
-            if matches!(constructor, C::Declared { .. } | C::PendingAlternatives) {
+            if Self::needs_normalization(constructor) {
                 let descriptor = normalize(slot);
                 let failure = PublicationFailure::descriptor(&descriptor);
                 self.slots[index] = PublishedInferenceSlot::Complete(if failure.0 == 0 {
                     Ok(graph.intern_descriptor(&descriptor))
                 } else { Err(failure) });
+                continue;
+            }
+            if let C::Declared { head, name } = constructor {
+                if finish {
+                    let PublishedInferenceSlot::Reserved(id) = self.slots[index] else { unreachable!() };
+                    let body = self.variables.root(*arguments.last().expect("nominal body edge"));
+                    let PublishedInferenceSlot::Complete(Ok(body)) = self.slots[body.0 as usize] else {
+                        unreachable!("validated nominal body must publish");
+                    };
+                    let TypeNode::Declared { body: target, .. } = &mut graph.nodes[id.index()] else { unreachable!() };
+                    *target = body;
+                    graph.record_interned_node(id);
+                    self.slots[index] = PublishedInferenceSlot::Complete(Ok(id));
+                    continue;
+                }
+                let failure = self.validate(slot, &normalize);
+                if failure.0 != 0 {
+                    self.slots[index] = PublishedInferenceSlot::Complete(Err(failure));
+                    continue;
+                }
+                let (body, parameters) = arguments.split_last().expect("nominal body edge");
+                // Only the public identity still needs argument descriptors;
+                // the nominal body is published directly from its shared slot.
+                let parameters = parameters.iter().map(|slot| normalize(*slot)).collect::<Vec<_>>();
+                let identity = head.reapply(&parameters);
+                if let Some(id) = graph.declared.get(&identity) {
+                    self.slots[index] = PublishedInferenceSlot::Complete(Ok(*id));
+                    continue;
+                }
+                let id = graph.push(TypeNode::Pending);
+                graph.declared.insert(identity.clone(), id);
+                graph.nodes[id.index()] = TypeNode::Declared { id: identity, name: name.clone(), body: id };
+                self.slots[index] = PublishedInferenceSlot::Reserved(id);
+                work.push((slot, true));
+                work.push((*body, false));
                 continue;
             }
             if !finish {
@@ -135,6 +224,47 @@ impl<'a> InferencePublication<'a> {
 #[cfg(test)]
 mod inference_publication_tests {
     use super::*;
+
+    #[test]
+    fn deep_nominal_bodies_publish_without_normalization_or_descriptor_views() {
+        let mut variables = InferenceVariables::default();
+        let mut root = variables.structure_edge(TypeDescriptor::Int);
+        for declaration in 100..16484 {
+            root = variables.structure_node(InferenceConstructor::Declared {
+                head: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, declaration),
+                name: "Nested".into(),
+            }, &[root]);
+        }
+        let mut graph = TypeGraph::default();
+        let published = InferencePublication::new(&variables).publish(
+            &mut graph, root, |_| panic!("concrete nominal publication must not normalize"),
+        ).ok().unwrap();
+        assert!(matches!(graph.node(published), TypeNode::Declared { .. }));
+        assert_eq!(graph.nodes.len(), 16385);
+        assert!(variables.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
+
+    #[test]
+    fn nominal_reservation_precedes_recursive_stub_and_does_not_hide_invalid_bodies() {
+        let mut variables = InferenceVariables::default();
+        let head = crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 98);
+        let constructor = InferenceConstructor::Declared { head: head.clone(), name: "Recursive".into() };
+        let never = variables.structure_edge(TypeDescriptor::Never);
+        let stub = variables.structure_node(constructor.clone(), &[never]);
+        let body = variables.structure_node(InferenceConstructor::Struct(Box::new(["next".into()])), &[stub]);
+        let root = variables.structure_node(constructor.clone(), &[body]);
+        let unknown = variables.fresh();
+        let invalid = variables.structure_node(constructor, &[unknown]);
+        let mut graph = TypeGraph::default();
+        let mut publication = InferencePublication::new(&variables);
+        let published = publication.publish(&mut graph, root, |_| unreachable!()).ok().unwrap();
+        let TypeNode::Declared { body, .. } = graph.node(published) else { panic!("nominal type") };
+        let TypeNode::Struct(fields) = graph.node(*body) else { panic!("complete body must win over Never stub") };
+        assert_eq!(fields["next"], published);
+        assert_eq!(graph.declared[&head], published);
+        assert!(publication.publish(&mut graph, invalid, |_| unreachable!()).is_err());
+        assert!(variables.descriptor_views.iter().all(|view| view.get().is_none()));
+    }
 
     #[test]
     fn deep_shared_structures_publish_without_descriptor_views() {
