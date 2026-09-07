@@ -1,0 +1,17 @@
+import "std/test" as test;
+import "./provider" {Point};
+import "@src/test-support" {expect};
+
+export def copies = test.should_ok(fn() {
+    let point: Point = {x: 1};
+    let copy: Point = point;
+    let pass: Fn(Point) -> Point = fn(value) { value };
+    let values: Array(Point) = [point, copy, pass(copy)];
+    expect(values[0].x + values[1].x + values[2].x == 3)
+});
+
+export def merge_chain = test.should_ok(fn() {
+    let point: Point = {x: 1};
+    let updated = point <~ {x: 2} <~ {x: 3};
+    expect(updated.x == 3)
+});

@@ -307,7 +307,7 @@ fn infer_tool_expression_evidence(
     evaluator: &mut ToolEvaluator,
 ) -> Result<ToolExpressionEvidence, String> {
     let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    if !context.named_types.values().any(|descriptor| {
+    if !matches!(expected, Some(TypeDescriptor::Function { .. })) && !context.named_types.values().any(|descriptor| {
         matches!(descriptor, TypeDescriptor::Declared(declared)
             if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)))
     }) && !context.schemes.values()

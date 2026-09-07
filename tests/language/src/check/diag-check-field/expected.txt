@@ -1,0 +1,1 @@
+@check is supported on structs, newtypes and payload variants

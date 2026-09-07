@@ -93,7 +93,7 @@ pub(crate) fn publish_type_properties(
         if !keys.insert(*key) {
             return Err(HeapError("duplicate typed property for target"));
         }
-        if value.type_id() != Some(key.property_type()) {
+        if key.property_type().is_some_and(|ty| value.type_id() != Some(ty)) {
             return Err(HeapError(
                 "typed property runtime witness does not match its property TypeId",
             ));

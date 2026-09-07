@@ -47,3 +47,13 @@ export def imported_generic = test.should_ok(fn() {
         && result.value == "hi"
         && provider.finish(provider.candidate).value == 7)
 });
+
+export def idempotent = test.should_ok(fn() {
+    let candidate: Unchecked(Unchecked(Point)) = {x: 8, y: 9};
+    let packed = dyn.pack(Unchecked(Point), candidate);
+    expect(Unchecked(Unchecked(Point)) == Unchecked(Point)
+        && match dyn.project_with(Unchecked(Unchecked(Point)), packed) {
+            Some(value) => value.x == 8 && value.y == 9,
+            None => False,
+        })
+});

@@ -410,6 +410,19 @@ impl Vm {
                                             pc,
                                         )
                                     })?;
+                                if let Some(action) = construction_check_action(
+                                    owner, value, type_id,
+                                    ReturnTarget::Register { destination: *dst, call_site: None },
+                                    Arc::clone(&function_arc), pc, &mut current, background, account,
+                                )? {
+                                    frames.last_mut().expect("construction frame").pc += 1;
+                                    let _ = registers;
+                                    match drive_vm_action(action, &mut frames, &mut stack,
+                                        &mut current, background, account)? {
+                                        DriveOutcome::Pending => continue,
+                                        DriveOutcome::Root(value) => return Ok(value),
+                                    }
+                                }
                                 write_register(
                                     &mut registers,
                                     *dst,
@@ -1252,7 +1265,7 @@ impl Vm {
                                     )),
                                     instruction_location(function, pc),
                                 );
-                                let dict = owner.map_or(dict, |owner| dict.with_type_id(owner));
+                                let dict = owner.map_or(dict, |owner| dict.with_type_id(owner.unchecked()));
                                 write_register(&mut registers, *dst, dict, function, pc)?;
                             }
                             Opcode::GetField { dst, dict, field } => {

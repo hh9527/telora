@@ -279,6 +279,7 @@ let result = match Some("hi") {
 
 `Unchecked(T)` 为具名字段 struct T 提供独立的候选值类型，保留 T 的字段类型
 和泛型参数。候选值可读取字段；需要 T 的上下文将候选值完成构造为 T。
+重复应用保持同一类型：`Unchecked(Unchecked(T))` 等于 `Unchecked(T)`。
 Dyn 保留候选值身份，不能把它直接投影成 T 或另一具名 struct 的候选值。
 
 ```telora
@@ -286,6 +287,23 @@ type Point = struct {x: Int, y: Int};
 let candidate: Unchecked(Point) = {x: 1, y: 2};
 let point: Point = candidate;
 ```
+
+运行时构造可通过 `@check(func)` 校验候选值。校验函数返回 `Option(BlameError)`：
+None 接受原值，Some(error) 在构造处产生诊断。具名字段 struct 的参数为
+`Unchecked(T)`，newtype 和带载荷 variant 的参数为载荷类型。无载荷 variant
+直接成立，不接受 `@check`。
+
+```telora
+@check(fn(value) {
+    if value.min <= value.max { None }
+    else { Some(blame!("invalid range", value.min, value.max)) }
+})
+type Range = struct {min: Int, max: Int};
+let range: Range = {min: 1, max: 3};
+```
+
+校验保留字段的来源位置。读取、复制和传递已完成构造的值不重复校验；
+merge-update 的每个结果分别校验，投影构造的目标值也执行其校验。
 
 `type UserId = struct(Int);` 声明单元素具名 tuple（newtype）。`value.0` 读取
 内部的 Int；外层 UserId 与 Int 是不同类型。newtype 可以参数化，例如

@@ -1,2 +1,0 @@
-type Point = struct {x: Int};
-export type Candidate = Unchecked(Unchecked(Point));

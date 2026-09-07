@@ -1331,6 +1331,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+    evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
+        account, sources, &mut evaluator)?;
     let local_type_properties = evaluate_declared_properties(
         source_name,
         program,

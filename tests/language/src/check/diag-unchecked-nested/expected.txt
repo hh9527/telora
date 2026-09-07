@@ -1,1 +1,0 @@
-Unchecked expects a named-field struct type

@@ -339,9 +339,10 @@ fn native_unchecked_type(context: &mut CallContext<'_, '_>) -> Result<(), Native
     let TypeDescriptor::Declared(declared) = &target else {
         return Err(NativeError::new("Unchecked expects a named-field struct type"));
     };
-    if !matches!(declared.body.as_ref(), TypeDescriptor::Struct(_))
-        || declared.id.constructor() == unchecked_type_constructor()
-    {
+    if declared.id.constructor() == unchecked_type_constructor() {
+        return context.copy(context.result(), argument);
+    }
+    if !matches!(declared.body.as_ref(), TypeDescriptor::Struct(_)) {
         return Err(NativeError::new("Unchecked expects a named-field struct type"));
     }
     let constructor = unchecked_type_constructor();
@@ -355,7 +356,11 @@ pub(crate) fn unchecked_type_constructor() -> crate::TypeConstructorId {
     crate::TypeConstructorId { module: crate::ModuleId::ANONYMOUS, local: 2 }
 }
 
-fn unchecked_descriptor(target: TypeDescriptor) -> TypeDescriptor {
+pub(crate) fn unchecked_descriptor(target: TypeDescriptor) -> TypeDescriptor {
+    if matches!(&target, TypeDescriptor::Declared(declared)
+        if declared.id.constructor() == unchecked_type_constructor()) {
+        return target;
+    }
     let body = match &target {
         TypeDescriptor::Declared(declared) => Arc::clone(&declared.body),
         _ => Arc::new(TypeDescriptor::Struct(BTreeMap::new())),

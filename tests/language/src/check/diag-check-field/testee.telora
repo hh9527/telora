@@ -1,0 +1,4 @@
+export type Point = struct {
+    @check(fn(value) { None })
+    x: Int,
+};
