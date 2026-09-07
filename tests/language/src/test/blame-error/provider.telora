@@ -1,0 +1,5 @@
+import "std/blame" {BlameError};
+
+export def first = 41;
+export def second = "original";
+export def error: BlameError = blame!("candidate rejected", first, second);

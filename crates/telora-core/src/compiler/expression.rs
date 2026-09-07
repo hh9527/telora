@@ -166,12 +166,13 @@ impl<'a> Compiler<'a> {
                 self.emit(Operation::Panic { message }, expression.location);
                 Ok(message)
             }
-            ExprKind::Raise { message, subjects } => {
+            ExprKind::Raise { action, message, subjects } => {
                 let message = self.compile_expr(message)?;
                 let subjects = subjects.iter().map(|subject| self.compile_expr(subject))
                     .collect::<Result<Vec<_>, _>>()?;
-                self.emit(Operation::Raise { message, subjects }, expression.location);
-                Ok(message)
+                let dst = self.allocate();
+                self.emit(Operation::Raise { action: *action, dst, message, subjects }, expression.location);
+                Ok(dst)
             }
             ExprKind::Debug {
                 value,

@@ -171,7 +171,7 @@ impl Elaborator<'_> {
             }
             ExprKind::Return { value } => self.expression(value),
             ExprKind::Panic { message } => self.expression(message),
-            ExprKind::Raise { message, subjects } => {
+            ExprKind::Raise { message, subjects, .. } => {
                 self.expression(message);
                 for subject in subjects { self.expression(subject); }
             },

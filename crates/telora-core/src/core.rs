@@ -11,6 +11,16 @@ pub(crate) const DICT_MODULE: &str = "std/dict";
 pub(crate) const EXEC_MODULE: &str = "std/rt-types/exec";
 pub(crate) const ARGV_MODULE: &str = "std/argv";
 pub(crate) const CODEC_MODULE: &str = "std/codec";
+pub(crate) const BLAME_MODULE: &str = "std/blame";
+pub(crate) fn blame_native_type() -> crate::NativeType {
+    crate::NativeType::bind(
+        crate::value::NativeTypeId {
+            module: crate::value::NativeModuleId(34),
+            local: 0,
+        },
+        "std/blame#BlameError",
+    )
+}
 pub(crate) const OPTION_MODULE: &str = "std/option";
 pub(crate) const RESULT_MODULE: &str = "std/result";
 pub(crate) const JSON_MODULE: &str = "std/json";
@@ -422,6 +432,12 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                 "parse_raw",
                 NativeFunction::core_json(CoreJsonFunction::ParseYaml),
             )],
+        },
+        BuiltinModuleSpec {
+            native_id: 34,
+            name: BLAME_MODULE,
+            source: include_str!("../modules/std/blame.telora"),
+            functions: vec![],
         },
         BuiltinModuleSpec {
             native_id: 13,

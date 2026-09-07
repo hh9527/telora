@@ -98,10 +98,14 @@ fn infer_expr_with(
             infer_expr_with(message, environment, record);
             Some(TypeDescriptor::Never)
         }
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { action, message, subjects } => {
             infer_expr_with(message, environment, record);
             for subject in subjects { infer_expr_with(subject, environment, record); }
-            Some(TypeDescriptor::Never)
+            match action {
+                crate::ast::BlameAction::Build => Some(TypeDescriptor::Opaque(crate::core::blame_native_type())),
+                crate::ast::BlameAction::Warn => None,
+                _ => Some(TypeDescriptor::Never),
+            }
         }
         ExprKind::Debug { value, .. } => infer_expr_with(value, environment, record),
         ExprKind::Binary { operator, left, right } => {

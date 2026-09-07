@@ -906,7 +906,7 @@ fn expression_has_import(expression: &Expr) -> bool {
         }
         ExprKind::Return { value } => expression_has_import(value),
         ExprKind::Panic { message } => expression_has_import(message),
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             expression_has_import(message) || subjects.iter().any(expression_has_import)
         },
         ExprKind::Debug { value, .. } => expression_has_import(value),

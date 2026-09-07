@@ -42,7 +42,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         | Opcode::MakeClosure { dst, .. } => Some(*dst),
         Opcode::Call { base, .. } => Some(*base),
         Opcode::Panic { message } => Some(*message),
-        Opcode::Raise { message, .. } => Some(*message),
+        Opcode::Raise { dst, .. } => Some(*dst),
         Opcode::SealFunc { .. }
         | Opcode::SealTypeSlot { .. }
         | Opcode::AssertTypeSlotReady { .. }

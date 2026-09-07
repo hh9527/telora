@@ -57,6 +57,9 @@ type Endpoint = struct {host: String, port: Int};
 
 ## 数据边界
 
+- `std/blame`：提供不透明 native 类型 `BlameError`。`blame!(message, values...)`
+  保存消息和原值来源；`raise!(error)` 产生失败，`warn!(error)` 记录警告并返回
+  `None`。构造或传递错误值本身不产生诊断。
 - `std/value`：定义递归的 `Value`，以及数据库绑定等边界使用的 `ScalarValue`。
 - `std/codec`：在名义类型与 Value 之间编码、解码，并统一消费 codec property。
 - `std/json`：JSON 解析、类型化解码、编码、schema 与 JSON codec decorator。

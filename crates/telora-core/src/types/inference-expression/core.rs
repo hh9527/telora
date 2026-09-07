@@ -519,12 +519,19 @@ impl<'a> GenericInference<'a> {
                 self.infer(message, environment, Some(&TypeDescriptor::String))?;
                 TypeDescriptor::Never
             }
-            ExprKind::Raise { message, subjects } => {
-                self.infer(message, environment, Some(&TypeDescriptor::String))?;
+            ExprKind::Raise { action, message, subjects } => {
+                let input = if matches!(action, crate::ast::BlameAction::Raise | crate::ast::BlameAction::Warn) {
+                    TypeDescriptor::Opaque(crate::core::blame_native_type())
+                } else { TypeDescriptor::String };
+                self.infer(message, environment, Some(&input))?;
                 for subject in subjects {
                     self.infer(subject, environment, None)?;
                 }
-                TypeDescriptor::Never
+                match action {
+                    crate::ast::BlameAction::Build => TypeDescriptor::Opaque(crate::core::blame_native_type()),
+                    crate::ast::BlameAction::Warn => option_descriptor(self.fresh_variable()),
+                    _ => TypeDescriptor::Never,
+                }
             }
             ExprKind::Debug { value, .. } => self.infer(value, environment, expected)?,
             ExprKind::TypeAscription { value, target } => {

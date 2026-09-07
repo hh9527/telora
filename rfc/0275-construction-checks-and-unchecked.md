@@ -1,6 +1,12 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
 - Status: Accepted core contracts; implementation in progress.
+- Implementation: `std/blame.BlameError` is an opaque native type. The blame,
+  raise and warn intrinsics are implemented. Dyn returns preserve erased-value
+  origins across call boundaries. Codec migration and construction checks remain pending.
+- Validation: debug build and workspace tests pass; 348 language fixture groups
+  pass, including opaque access rejection, intrinsic argument contracts, deferred
+  error construction, warnings returning None and cross-module subject origins.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
   codec field constraints; see the compatibility analysis below.
@@ -92,11 +98,12 @@ and the check's own failure site wherever those locations are available.
 
 ## BlameError and Provenance
 
-BlameError is an ordinary nominal struct, not the historical native diagnostic
-type with the same name:
+BlameError is an opaque native error value, distinct from an emitted diagnostic:
 
 ```telora
-type BlameError = struct {message: String, labels: Array(Dyn)};
+blame!(message: String, values: Dyn...) -> BlameError
+raise!(error: BlameError) -> Never
+warn!(error: BlameError) -> Option(T)  # always None; T comes from context
 ```
 
 It replaces DecodeError in codec and the JSON/TOML/YAML error interfaces. The
@@ -104,16 +111,24 @@ initial public definition lives in `std/blame`, and codec/format modules expose
 the same declaration through reexports. AccessError and ResolveError are outside
 this replacement unless integration proves a change necessary.
 
-Each label is the type-erased original Val, retaining its source location and
+The intrinsic erases subject types without requiring explicit Dyn packing.
+Internally, each label is the original Val, retaining its source location and
 value identity. Dyn packing, copying an error, and publishing it across heaps
 must preserve that origin. The location of the error object or labels array
-must not overwrite any individual label. This works for original semantic Value
+must not overwrite any individual label. Users cannot access message or labels
+as fields; values are traced runtime references within the opaque object.
+This works for original semantic Value
 inputs and for candidate fields of arbitrary static types.
 
 Creating or returning BlameError does not emit a diagnostic and does not attach
-the current rule location. `fail!(error)` recognizes the nominal BlameError
-contract, uses its message and ordered labels, and adds the actual failure
-boundary's rule location. Existing message-and-subject fail calls remain valid.
+the current rule location. `raise!(error)` emits an error using its message and
+ordered labels, adding the actual failure boundary's rule location. `warn!(error)`
+emits a warning at its boundary and returns None without terminating execution.
+The error value itself has no severity; it can be raised or warned without mutation.
+`fail!(message, subjects...)` is equivalent to `raise!(blame!(message, subjects...))`.
+Its first argument remains String, not BlameError. Existing must_ok! behavior
+on Result(T, String) remains unchanged; Result(T, BlameError) can be explicitly
+matched and raised. No implicit multi-error-protocol adaptation is introduced.
 Empty labels are valid and produce a rule-only failure. Multiple labels retain
 their individual origins; unavailable locations remain unavailable rather than
 being replaced with the error allocation site.

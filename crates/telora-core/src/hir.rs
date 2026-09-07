@@ -567,7 +567,7 @@ impl Resolver {
                 self.index_expr(message, scopes);
                 None
             }
-            ExprKind::Raise { message, subjects } => {
+            ExprKind::Raise { message, subjects, .. } => {
                 self.index_expr(message, scopes);
                 for subject in subjects { self.index_expr(subject, scopes); }
                 None

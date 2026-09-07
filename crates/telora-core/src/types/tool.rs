@@ -733,7 +733,7 @@ fn collect_nested_annotation_types(
             debug_sink,
             annotations,
         )?,
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             for value in std::iter::once(message.as_ref()).chain(subjects.iter()) {
                 collect_nested_annotation_types(source_name, value, bindings, account,
                     sources, debug_sink, annotations)?;

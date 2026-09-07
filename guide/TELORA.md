@@ -981,6 +981,19 @@ payload 在复制前预扣，最终输出在分配前按共享节点 memoize 测
 fragment 仍按每次展开的长度核算，但拒绝路径不会实际展开指数大小的结果。这套机制
 是静态 dictionary elaboration，不会把模板转换成 Telora 源码。
 
+`blame!(message, subjects...)` 构造 `std/blame.BlameError`，保存 String 消息及任意
+类型原值的来源，不产生诊断。BlameError 是不透明 native 类型，可以保存和跨模块
+传递，其消息和来源不能作为字段读取。`raise!(error)` 发出失败并返回 Never；
+`warn!(error)` 发出 warning、继续执行并返回 `None`，所属 `Option(T)` 的 T 由上下文
+确定。两者都在发出诊断时补上当前 rule 位置，保留创建错误时选择的原值来源。
+`fail!(message, subjects...)` 等价于构造 BlameError 后立即 raise。
+
+```telora
+let error = blame!("invalid value", candidate);
+let observed: Option(Int) = warn!(error);
+raise!(error)
+```
+
 `dbg!` 的 `repr` 是运行时专用、有界且 cycle-safe 的观察文本，不进入 Telora String；
 codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr 会保留 `3.0` 和
 `-0.0`，有意不同于插值及 `fmt.render` 的 `3` 和 `-0`。
