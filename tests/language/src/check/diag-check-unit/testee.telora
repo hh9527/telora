@@ -1,0 +1,4 @@
+export type Choice = enum {
+    @check(fn(value) { None })
+    Empty,
+};

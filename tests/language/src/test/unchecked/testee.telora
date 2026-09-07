@@ -1,0 +1,59 @@
+import "std/test" as test;
+import "std/dyn" as dyn;
+import "@src/test-support" {expect};
+import "./provider" as provider;
+
+type Point = struct {x: Int, y: Int};
+type Other = struct {x: Int, y: Int};
+type Box(T) = struct {value: T};
+
+export def fields = test.should_ok(fn() {
+    let candidate: Unchecked(Point) = {x: 1, y: 2};
+    expect(candidate.x == 1 && candidate.y == 2)
+});
+
+export def nominal_identity = test.should_ok(fn() {
+    let candidate: Unchecked(Point) = {x: 1, y: 2};
+    let packed = dyn.pack(Unchecked(Point), candidate);
+    expect(dyn.project_with(Point, packed) == None
+        && dyn.project_with(Unchecked(Other), packed) == None
+        && match dyn.project_with(Unchecked(Point), packed) {
+            Some(value) => value.x == 1,
+            None => False,
+        })
+});
+
+export def generic_identity = test.should_ok(fn() {
+    let candidate: Unchecked(Box(Int)) = {value: 3};
+    let packed = dyn.pack(Unchecked(Box(Int)), candidate);
+    expect(candidate.value == 3
+        && dyn.project_with(Box(Int), packed) == None
+        && dyn.project_with(Unchecked(Box(String)), packed) == None)
+});
+
+export def finish_candidate = test.should_ok(fn() {
+    let candidate: Unchecked(Point) = {x: 4, y: 5};
+    let point: Point = candidate;
+    let accept: Fn(Point) -> Int = fn(point) { point.x + point.y };
+    expect(accept(candidate) == 9 && point.x == 4
+        && dyn.project_with(Point, dyn.pack(Point, point)) == Some(point)
+        && dyn.project_with(Point, dyn.pack(Unchecked(Point), candidate)) == None)
+});
+
+export def imported_generic = test.should_ok(fn() {
+    let candidate: Unchecked(provider.Box(String)) = {value: "hi"};
+    let result = provider.finish(candidate);
+    expect(provider.read(candidate) == "hi"
+        && result.value == "hi"
+        && provider.finish(provider.candidate).value == 7)
+});
+
+export def idempotent = test.should_ok(fn() {
+    let candidate: Unchecked(Unchecked(Point)) = {x: 8, y: 9};
+    let packed = dyn.pack(Unchecked(Point), candidate);
+    expect(Unchecked(Unchecked(Point)) == Unchecked(Point)
+        && match dyn.project_with(Unchecked(Unchecked(Point)), packed) {
+            Some(value) => value.x == 8 && value.y == 9,
+            None => False,
+        })
+});

@@ -1,0 +1,2 @@
+native type BlameError @0;
+export {BlameError};

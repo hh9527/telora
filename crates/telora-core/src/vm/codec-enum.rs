@@ -209,19 +209,19 @@ fn transform_untagged_enum(
 ) -> Result<CodecNode, CodecFailure> {
     match direction {
         CodecDirection::Decode => {
-            let mut matches = Vec::new();
-            let mut errors = Vec::new();
-            let mut first_failure = None;
+            let mut alternatives = Vec::new();
             for variant in &plan.variants {
                 let Some(payload) = &variant.payload else {
                     if value.value() == DecodedValue::BuiltinAtom(BuiltinAtom::None) {
-                        matches.push((variant, None));
+                        alternatives.push(CodecNode::NamedAtom(variant.internal_name.clone(), value.loc()));
                     } else {
-                        errors.push(format!("{path}: expected null"));
+                        let mut failure = CodecFailure::new(format!("{path}: expected null"), value, variant.rule);
+                        failure.input = input;
+                        alternatives.push(CodecNode::Reject(failure));
                     }
                     continue;
                 };
-                match transform_codec_with_input(
+                let payload = transform_codec_with_input(
                     payload,
                     properties,
                     value,
@@ -230,45 +230,13 @@ fn transform_untagged_enum(
                     current,
                     background,
                     input,
-                ) {
-                    Ok(node) => matches.push((variant, Some(node))),
-                    Err(failure) => {
-                        errors.push(failure.message.clone());
-                        first_failure.get_or_insert(failure);
-                    }
-                }
+                )?;
+                alternatives.push(CodecNode::Tagged {
+                    tag: Box::new(CodecNode::NamedAtom(variant.internal_name.clone(), value.loc())),
+                    payload: Box::new(payload), loc: value.loc(),
+                });
             }
-            match matches.as_slice() {
-                [(variant, Some(node))] => Ok(CodecNode::Tagged {
-                    tag: Box::new(CodecNode::NamedAtom(
-                        variant.internal_name.clone(),
-                        value.loc(),
-                    )),
-                    payload: Box::new(node.clone()),
-                    loc: value.loc(),
-                }),
-                [(variant, None)] => Ok(CodecNode::NamedAtom(
-                    variant.internal_name.clone(),
-                    value.loc(),
-                )),
-                [] => {
-                    let message = format!(
-                        "{path}: value matches no untagged Enum variant ({})",
-                        errors.join("; ")
-                    );
-                    let mut failure = first_failure.unwrap_or_else(|| CodecFailure::new(
-                        String::new(), value,
-                        plan.variants.first().map(|variant| variant.rule).unwrap_or(value),
-                    ));
-                    failure.message = message;
-                    Err(failure)
-                }
-                _ => Err(CodecFailure::new(
-                    format!("{path}: value ambiguously matches multiple untagged Enum variants"),
-                    value,
-                    matches[1].0.rule,
-                )),
-            }
+            Ok(CodecNode::Trials { variants: alternatives, input: input.unwrap_or(value), path: path.into() })
         }
         CodecDirection::Encode => {
             let view = HeapView {

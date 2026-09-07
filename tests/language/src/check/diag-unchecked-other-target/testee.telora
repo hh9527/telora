@@ -1,0 +1,4 @@
+type A = struct {x: Int};
+type B = struct {x: Int};
+def candidate: Unchecked(A) = {x: 1};
+export def value: B = candidate;

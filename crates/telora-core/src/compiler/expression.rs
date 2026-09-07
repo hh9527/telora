@@ -1,6 +1,26 @@
 impl<'a> Compiler<'a> {
+    fn compile_owner_evidence(
+        &mut self, evidence: &crate::types::ResolvedEvidence, location: Location,
+    ) -> Result<RegisterId, FrontendError> {
+        let binding = self.environment.get(&evidence.binding).copied()
+            .unwrap_or_else(|| self.load_external_constant(evidence.binding.clone(), location));
+        if evidence.arguments.is_empty() { return Ok(binding); }
+        let base = self.allocate();
+        let arguments = evidence.arguments.iter().map(|_| self.allocate()).collect::<Vec<_>>();
+        self.emit(Operation::Move { dst: base, src: binding }, location);
+        for (argument, destination) in evidence.arguments.iter().zip(arguments) {
+            let value = self.compile_owner_evidence(argument, location)?;
+            self.emit(Operation::Move { dst: destination, src: value }, location);
+        }
+        let argument_count = u32::try_from(evidence.arguments.len())
+            .map_err(|_| self.error_at(location, "construction owner has too many type arguments"))?;
+        self.emit(Operation::Call { base, argument_count }, location);
+        Ok(base)
+    }
+
     fn compile_expr(&mut self, expression: &Expr) -> Result<RegisterId, FrontendError> {
-        let payload = if let Some(constructor) = self.value_constructors.get(&expression.location).cloned() {
+        let payload = if !matches!(expression.value, ExprKind::Closure { .. })
+            && let Some(constructor) = self.value_constructors.get(&expression.location).cloned() {
             match &constructor {
                 crate::types::ValueConstructor::EnumMember { tag, has_payload: false } => {
                     self.compile_constructor_declaration(expression, &constructor)?;
@@ -11,6 +31,9 @@ impl<'a> Compiler<'a> {
         } else {
             self.compile_expr_unowned(expression)?
         };
+        if matches!(expression.value, ExprKind::Closure { .. }) {
+            return Ok(payload);
+        }
         let Some(owner) = self
             .declared_value_owners
             .get(&expression.location)
@@ -18,11 +41,7 @@ impl<'a> Compiler<'a> {
         else {
             return Ok(payload);
         };
-        let owner = self
-            .environment
-            .get(&owner)
-            .copied()
-            .unwrap_or_else(|| self.load_external_constant(owner, expression.location));
+        let owner = self.compile_owner_evidence(&owner, expression.location)?;
         let result = self.allocate();
         self.emit(
             Operation::OwnDeclared {
@@ -166,12 +185,13 @@ impl<'a> Compiler<'a> {
                 self.emit(Operation::Panic { message }, expression.location);
                 Ok(message)
             }
-            ExprKind::Raise { message, subjects } => {
+            ExprKind::Raise { action, message, subjects } => {
                 let message = self.compile_expr(message)?;
                 let subjects = subjects.iter().map(|subject| self.compile_expr(subject))
                     .collect::<Result<Vec<_>, _>>()?;
-                self.emit(Operation::Raise { message, subjects }, expression.location);
-                Ok(message)
+                let dst = self.allocate();
+                self.emit(Operation::Raise { action: *action, dst, message, subjects }, expression.location);
+                Ok(dst)
             }
             ExprKind::Debug {
                 value,

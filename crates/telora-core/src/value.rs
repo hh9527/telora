@@ -338,6 +338,7 @@ pub(crate) enum CoreDictFunction {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreStringFunction {
+    Parse,
     Length,
     Join,
     JoinLines,
@@ -564,7 +565,7 @@ impl CoreCodecFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Decode => 4,
+            Self::Decode => 3,
             Self::Encode => 3,
         }
     }
@@ -611,7 +612,7 @@ impl CoreJsonFunction {
 
     pub(crate) const fn arity(self) -> usize {
         match self {
-            Self::Parse | Self::ParseYaml | Self::ParseToml => 3,
+            Self::Parse | Self::ParseYaml | Self::ParseToml => 2,
             Self::Schema => 3,
             _ => 1,
         }
@@ -646,6 +647,7 @@ impl CoreDictFunction {
 impl CoreStringFunction {
     pub(crate) const fn name(self) -> &'static str {
         match self {
+            Self::Parse => "std/string.parse_with",
             Self::Length => "std/string.length",
             Self::Join => "std/string.join",
             Self::JoinLines => "std/string.join_lines",
@@ -671,7 +673,7 @@ impl CoreStringFunction {
             | Self::Contains
             | Self::Indent
             | Self::TrimMargin => 2,
-            Self::Replace => 3,
+            Self::Replace | Self::Parse => 3,
         }
     }
 }
@@ -724,6 +726,7 @@ impl CoreArrayFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeKind {
     Synchronous,
+    CheckedCast,
     CoreArray(CoreArrayFunction),
     CoreModel(CoreModelFunction),
     CoreBuiltinType(CoreBuiltinTypeFunction),
@@ -751,6 +754,13 @@ pub struct NativeFunction {
 }
 
 impl NativeFunction {
+    pub(crate) const fn checked_cast(callback: NativeCallback) -> Self {
+        Self {
+            name: "\0telora_cast", arity: 2, callback,
+            kind: NativeKind::CheckedCast, native_type_local: None,
+        }
+    }
+
     pub const fn new(name: &'static str, arity: usize, callback: NativeCallback) -> Self {
         Self {
             name,

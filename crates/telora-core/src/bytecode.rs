@@ -243,6 +243,8 @@ pub enum Instruction {
         message: Register,
     },
     Raise {
+        action: crate::ast::BlameAction,
+        dst: Register,
         message: Register,
         subjects: Vec<Register>,
     },
@@ -474,6 +476,8 @@ pub enum Opcode {
         message: Register,
     },
     Raise {
+        action: crate::ast::BlameAction,
+        dst: Register,
         message: Register,
         subjects: Vec<Register>,
     },
@@ -822,7 +826,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         Instruction::Return { src } => Opcode::Return { src },
         Instruction::Fail { message } => Opcode::Fail { message },
         Instruction::Panic { message } => Opcode::Panic { message },
-        Instruction::Raise { message, subjects } => Opcode::Raise { message, subjects },
+        Instruction::Raise { action, dst, message, subjects } => Opcode::Raise { action, dst, message, subjects },
         Instruction::Debug {
             value,
             module,

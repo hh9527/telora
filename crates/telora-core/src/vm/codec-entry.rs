@@ -191,7 +191,6 @@ fn run_core_codec(
     finish_decode_result(
         result,
         arguments[2],
-        arguments[3],
         return_target,
         function,
         pc,

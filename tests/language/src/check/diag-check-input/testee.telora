@@ -1,0 +1,5 @@
+import "std/blame" {BlameError};
+def verify: Fn(String) -> Option(BlameError) = fn(value) { None };
+@check(verify)
+type Positive = struct(Int);
+export {Positive};

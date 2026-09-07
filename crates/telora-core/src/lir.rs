@@ -232,6 +232,8 @@ pub enum Operation {
         message: RegisterId,
     },
     Raise {
+        action: crate::ast::BlameAction,
+        dst: RegisterId,
         message: RegisterId,
         subjects: Vec<RegisterId>,
     },
@@ -623,7 +625,9 @@ fn lower_operation(
         Operation::Panic { message } => Instruction::Panic {
             message: register(message)?,
         },
-        Operation::Raise { message, subjects } => Instruction::Raise {
+        Operation::Raise { action, dst, message, subjects } => Instruction::Raise {
+            action,
+            dst: register(dst)?,
             message: register(message)?,
             subjects: subjects.into_iter().map(register).collect::<Result<_, _>>()?,
         },

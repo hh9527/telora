@@ -98,7 +98,7 @@ pub(crate) fn lower_constructor_patterns(
         | ExprKind::FieldProjection {
             receiver: value, ..
         } => lower_constructor_patterns(value, constructors),
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             lower_constructor_patterns(message, constructors);
             for subject in subjects {
                 lower_constructor_patterns(subject, constructors);

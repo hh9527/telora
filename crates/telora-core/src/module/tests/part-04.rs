@@ -12,7 +12,7 @@
                type Box(Item) = struct {value: Item};
                match codec.decode(Box(String), data) {
                    Ok(value) => value,
-                   Err(error) => fail!(error.message, error.value),
+                   Err(error) => raise!(error),
                }"#,
         )
         .unwrap();
@@ -35,7 +35,7 @@
                 .sources
                 .get(rule_location.source)
                 .slice(rule_location)
-                .is_some_and(|rule| rule.contains("fail!")),
+                .is_some_and(|rule| rule.contains("raise!")),
             "rule location: {rule_location:?}"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -460,10 +460,10 @@
                let invalid = {name: 1}.cast!(User);
                let formatted = result.map_err(
                    codec.decode(User, as_value({name: 1})),
-                   fn(error) { error.message },
+                   fn(error) { "decode rejected" },
                );
                let chained = result.flat_map(
-                   result.map_err(codec.decode(User, as_value({name: "Mira"})), fn(error) { error.message }),
+                   result.map_err(codec.decode(User, as_value({name: "Mira"})), fn(error) { "decode rejected" }),
                    fn(user) { user.cast!(User) },
                );
                let name = result.unwrap(result.map(
@@ -486,7 +486,7 @@
             module
                 .analysis
                 .display(module.analysis.binding_types["decoded"]),
-            "enum {Err(DecodeError), Ok(User)}"
+            "enum {Err(opaque(std/blame#BlameError)), Ok(User)}"
         );
         assert_eq!(
             module
@@ -526,7 +526,7 @@
                 .get("formatted")
                 .unwrap()
                 .to_string()
-                .contains("expected String")
+                .contains("decode rejected")
         );
         let (tag, error) = output.get("invalid").unwrap().tagged_parts().unwrap();
         assert_eq!(tag.as_atom().as_deref(), Some("Err"));

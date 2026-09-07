@@ -289,6 +289,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .checked_add(1)
             .expect("type constructor slot exceeds u32");
     }
+    stage_pending_construction_checks(module_id, program, &declared_initializer_slots, &mut evaluator)?;
     let trait_ids = program
         .value
         .body
@@ -517,6 +518,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let mut progressed = false;
         for definition in pending_types.iter().copied().collect::<Vec<_>>() {
             evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+            prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                &static_environment, account, sources, &mut evaluator)?;
             let node = type_dependencies
                 .nodes
                 .iter()
@@ -963,7 +966,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let value = evaluator.descriptor(&TypeDescriptor::Bound(id))?;
             contract_values.insert(parameter.value.clone(), value);
         }
-        let scheme_constraints = evaluate_type_constraints(
+        let mut scheme_constraints = evaluate_type_constraints(
             source_name,
             &scheme_parameters,
             &binding.value.type_parameter_bounds,
@@ -974,6 +977,16 @@ pub(crate) fn analyze_program_with_bindings_observed(
             sources,
             &mut evaluator,
         )?;
+        if matches!(binding.value.kind, BindingKind::Def | BindingKind::Decl)
+            && !program.value.body.value.bindings.iter().any(|candidate| {
+                candidate.value.name.value == *name && matches!(candidate.value.value.value, ExprKind::Interpreter { .. })
+            }) {
+            scheme_constraints.extend(scheme_parameters.iter().map(|parameter| TypeConstraint {
+                parameter: parameter.id,
+                capability: TypeCapability::RuntimeType,
+                location: parameter.location,
+            }));
+        }
         let metadata = evaluate_tool_expression(
             source_name,
             contract,
@@ -1078,8 +1091,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         ));
     }
 
+    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+        &static_environment, account, sources, &mut evaluator)?;
     for binding in &program.value.body.value.bindings {
         evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+        evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
+            account, sources, &mut evaluator, false)?;
         let inferred_expression = infer_expr_recorded(
             &binding.value.value,
             &static_environment,
@@ -1331,6 +1349,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+    evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
+        account, sources, &mut evaluator, true)?;
     let local_type_properties = evaluate_declared_properties(
         source_name,
         program,
@@ -1581,7 +1601,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             FrontendError::from_diagnostic(sources, diagnostic)
         })?;
         let scheme = inference
-            .generalize_local_closure(&inferred, first_owned_variable, binding.value.name.location)
+            .generalize_local_closure(&inferred, first_owned_variable, binding.value.name.location, binding.value.value.location)
             .map_err(|message| {
                 FrontendError::from_diagnostic(
                     sources,
@@ -1721,6 +1741,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .map(|scheme| {
                 inference.push_lexical_evidence(&binding.value.name.value, &scheme)
             });
+        if binding.value.kind == BindingKind::Impl {
+            inference.lexical_type_evidence.extend(binding.value.type_parameters.iter().enumerate().map(|(index, parameter)| LexicalTypeEvidence {
+                capability: TypeCapability::RuntimeType,
+                target: TypeDescriptor::Bound(TypeParameterId(index as u32)),
+                name: parameter.value.clone(),
+            }));
+        }
         let inferred = if matches!(binding.value.kind, BindingKind::Type | BindingKind::Trait) {
             inference.infer(&binding.value.value, environment, expected)
         } else {
@@ -1771,6 +1798,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         &inferred,
                         first_owned_variable,
                         binding.value.name.location,
+                        binding.value.value.location,
                     )
                     .map_err(|message| {
                         FrontendError::from_diagnostic(
@@ -2255,7 +2283,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let interpolation_evidence =
         std::mem::take(&mut inference.resolved_interpolation_evidence);
     let runtime_type_evidence = std::mem::take(&mut inference.runtime_type_evidence);
-    let generic_evidence_parameters = program
+    let mut generic_evidence_parameters: HashMap<_, _> = program
         .value
         .body
         .value
@@ -2276,6 +2304,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             })
         })
         .collect();
+    generic_evidence_parameters.extend(inference.inferred_runtime_scopes.iter().map(|(location, evidence)| {
+        (*location, evidence.iter().map(|evidence| evidence.name.clone()).collect())
+    }));
     let generic_dictionary_factories = program
         .value
         .body
@@ -2332,7 +2363,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let names = runtime_type_evidence.keys().cloned().collect::<Vec<_>>();
         let mut values = Vec::new();
         for (name, descriptor) in runtime_type_evidence {
-            values.push((name, evaluator.descriptor(&descriptor)?));
+            let value = evaluator.descriptor(&descriptor)?;
+            let mut parameters = Vec::new();
+            collect_bound_parameters(&descriptor, &mut parameters);
+            let value = if name.starts_with("\0type_argument:") && !parameters.is_empty() {
+                let arity = parameters.iter().map(|parameter| parameter.0 as usize + 1).max().unwrap();
+                evaluator.create_type_family(value, arity, None)?.0
+            } else { value };
+            values.push((name, value));
         }
         let root = evaluator.persist_table(values)?;
         for name in names {
@@ -2383,13 +2421,51 @@ pub(crate) fn analyze_program_with_bindings_observed(
         } else {
             descriptor
         };
-        if !matches!(descriptor, TypeDescriptor::Declared(_)) || type_identity_is_symbolic(descriptor) {
+        if !matches!(descriptor, TypeDescriptor::Declared(_)) {
             continue;
         }
-        let key = crate::compiler::declared_owner_link_key(*location);
-        let value = evaluator.descriptor(descriptor)?;
+        let key = if type_identity_is_symbolic(descriptor) {
+            format!("\0owner-family:{}:{}", location.start, location.end)
+        } else { crate::compiler::declared_owner_link_key(*location) };
+        let mut owner = ResolvedEvidence::root(key.clone());
+        let mut parameters = Vec::new();
+        collect_bound_parameters(descriptor, &mut parameters);
+        parameters.sort_by_key(|parameter| parameter.0);
+        parameters.dedup();
+        let descriptor = if parameters.is_empty() { descriptor.clone() } else {
+            let binding = program.value.body.value.bindings.iter().find(|binding| {
+                binding.value.value.location.source == location.source
+                    && binding.value.value.location.start <= location.start
+                    && location.end <= binding.value.value.location.end
+            });
+            let scheme = binding.and_then(|binding| binding_schemes.get(&binding.value.name.value));
+            let mut replacements = HashMap::new();
+            for (index, parameter) in parameters.iter().enumerate() {
+                let inferred = inference.inferred_runtime_scopes.iter().filter(|(scope, _)| {
+                    scope.source == location.source && scope.start <= location.start && location.end <= scope.end
+                }).filter_map(|(scope, evidence)| evidence.iter().find(|evidence| evidence.target == TypeDescriptor::Bound(*parameter))
+                    .map(|evidence| (scope.end - scope.start, evidence.name.clone())))
+                    .min_by_key(|(length, _)| *length).map(|(_, name)| name);
+                let explicit = scheme.and_then(|scheme| scheme.constraints.iter().position(|constraint| {
+                    constraint.parameter == *parameter && constraint.capability == TypeCapability::RuntimeType
+                })).map(|index| evidence_parameter_name(&binding.unwrap().value.name.value, index));
+                let implementation = binding.filter(|binding| binding.value.kind == BindingKind::Impl)
+                    .and_then(|binding| binding.value.type_parameters.get(parameter.0 as usize))
+                    .map(|parameter| parameter.value.clone());
+                let Some(name) = inferred.or(explicit).or(implementation) else { break; };
+                owner.arguments.push(ResolvedEvidence::root(name));
+                replacements.insert(*parameter, TypeDescriptor::Bound(TypeParameterId(index as u32)));
+            }
+            if owner.arguments.len() != parameters.len() { continue; }
+            substitute_bound_parameters(descriptor, &replacements)
+        };
+        if contains_type_variable(&descriptor) { continue; }
+        let value = evaluator.descriptor(&descriptor)?;
+        let value = if owner.arguments.is_empty() { value } else {
+            evaluator.create_type_family(value, owner.arguments.len(), None)?.0
+        };
         pending_owner_roots.push((key.clone(), value));
-        declared_value_owners.insert(*location, key);
+        declared_value_owners.insert(*location, owner);
     }
     if !pending_owner_roots.is_empty() {
         let names = pending_owner_roots

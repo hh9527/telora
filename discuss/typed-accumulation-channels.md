@@ -175,8 +175,8 @@ Information belongs in the primary result when the caller must inspect it to
 continue correctly. Accumulation is appropriate when the producing computation
 must not read the channel and the information is observational or auxiliary.
 
-For example, decoding returns `Result(A, codec.DecodeError)` so callers can
-recover or emit a diagnostic with `fail!(error.message, error.value)`.
+For example, decoding returns `Result(A, codec.BlameError)` so callers can
+recover or emit a diagnostic with `raise!(error)`.
 Non-fatal migration warnings or provenance records may be accumulated.
 
 This distinction prevents an API from hiding its essential failure contract in

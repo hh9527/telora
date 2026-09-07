@@ -1,0 +1,82 @@
+import "std/test" as test;
+import "std/json" as json;
+import "std/codec" as codec;
+import "std/blame" {BlameError};
+import "@src/test-support" {expect};
+
+@check(fn(value) { if value > 0 { None } else { Some(blame!("positive required", value)) } })
+type Positive = struct(Int);
+@check(fn(value) { if value < 0 { None } else { Some(blame!("negative required", value)) } })
+type Negative = struct(Int);
+@json.untagged
+type Signed = enum {Positive(Positive), Negative(Negative)};
+@json.untagged
+type VariantChecked = enum {
+    @check(fn(value) { if value > 0 { None } else { Some(blame!("variant positive", value)) } })
+    Positive(Int),
+    @check(fn(value) { if value < 0 { None } else { Some(blame!("variant negative", value)) } })
+    Negative(Int),
+};
+@check(fn(value) {
+    if value.item.0 > 0 { None } else { panic!("unchecked child reached parent") }
+})
+type Container = struct {item: Positive};
+
+@json.untagged
+type Ambiguous = enum {First(Positive), Second(Positive)};
+type SignedContainer = struct {items: Array(Signed)};
+@check(fn(value: Int) -> Option(BlameError) { fail!("checker execution failed", value) })
+type Aborting = struct(Int);
+@json.untagged
+type AbortTrial = enum {First(Aborting), Second(Int)};
+
+export def newtype = test.should_ok(fn() {
+    expect(match json.decode(Positive, "2") { Ok(value) => value.0 == 2, Err(_) => False })
+});
+export def rejection_is_a_value = test.should_ok(fn() {
+    expect(match json.decode(Positive, "0") { Ok(_) => False, Err(_) => True })
+});
+export def raise_rejection = test.should_fail_with(fn() {
+    match json.decode(Positive, "0") { Ok(value) => value, Err(error) => raise!(error) }
+}, "positive required");
+export def nested_rejection = test.should_ok(fn() {
+    expect(match json.decode(Container, "{\"item\":0}") { Ok(_) => False, Err(_) => True })
+});
+export def untagged_payload = test.should_ok(fn() {
+    expect(match json.decode(Signed, "-2") {
+        Ok(Signed.Negative(value)) => value.0 == -2,
+        _ => False,
+    })
+});
+export def untagged_variant = test.should_ok(fn() {
+    expect(match json.decode(VariantChecked, "2") {
+        Ok(VariantChecked.Positive(value)) => value == 2,
+        _ => False,
+    })
+});
+export def untagged_no_match = test.should_fail_with(fn() {
+    match json.decode(Signed, "0") { Ok(value) => value, Err(error) => raise!(error) }
+}, "matches no untagged Enum variant");
+export def valid_encoding = test.should_ok(fn() {
+    let value = match json.decode(Positive, "3") { Ok(value) => value, Err(error) => raise!(error) };
+    expect(codec.encode(codec.Value, value) == codec.Value.Int(3))
+});
+
+export def ambiguity_preserved = test.should_fail_with(fn() {
+    match json.decode(Ambiguous, "2") { Ok(value) => value, Err(error) => raise!(error) }
+}, "ambiguously matches multiple");
+
+export def nested_trials = test.should_ok(fn() {
+    let decoded = match json.decode(SignedContainer, "{\"items\":[2,-3]}") {
+        Ok(value) => value,
+        Err(error) => raise!(error),
+    };
+    expect(match (decoded.items[0], decoded.items[1]) {
+        (Signed.Positive(a), Signed.Negative(b)) => a.0 == 2 && b.0 == -3,
+        _ => False,
+    })
+});
+
+export def execution_failure_aborts_trials = test.should_fail_with(fn() {
+    match json.decode(AbortTrial, "2") { Ok(_) => True, Err(_) => True }
+}, "checker execution failed");

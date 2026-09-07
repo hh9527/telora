@@ -473,7 +473,7 @@ fn binding_has_member_decorators(binding: &Binding) -> bool {
     declared_member_fields(binding).is_some_and(|members| {
         members
             .iter()
-            .any(|member| !member.value.decorators.is_empty())
+            .any(|member| member.value.decorators.iter().any(|decorator| !intrinsic_check_marker(decorator)))
     })
 }
 
@@ -597,7 +597,7 @@ fn evaluate_declared_properties(
             .value
             .decorators
             .iter()
-            .filter(|decorator| !intrinsic_property_marker(decorator))
+            .filter(|decorator| !intrinsic_property_marker(decorator) && !intrinsic_check_marker(decorator))
             .collect::<Vec<_>>();
         if type_decorators.is_empty() && !binding_has_member_decorators(binding) {
             continue;
@@ -652,6 +652,7 @@ fn evaluate_declared_properties(
             let index = u32::try_from(index)
                 .map_err(|_| frontend_error(source_name, "declared type has too many members"))?;
             for decorator in &member.value.decorators {
+                if intrinsic_check_marker(decorator) { continue; }
                 if intrinsic_property_marker(decorator) {
                     return Err(FrontendError::from_diagnostic(
                         sources,

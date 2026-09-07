@@ -692,7 +692,7 @@ fn expression_references_names(
         } => expression_references_names(operand, names, bound),
         ExprKind::Return { value } => expression_references_names(value, names, bound),
         ExprKind::Panic { message } => expression_references_names(message, names, bound),
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             expression_references_names(message, names, bound)
                 || subjects.iter().any(|subject| expression_references_names(subject, names, bound))
         },

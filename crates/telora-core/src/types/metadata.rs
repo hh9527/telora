@@ -307,7 +307,7 @@ fn infer_tool_expression_evidence(
     evaluator: &mut ToolEvaluator,
 ) -> Result<ToolExpressionEvidence, String> {
     let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    if !context.named_types.values().any(|descriptor| {
+    if !matches!(expected, Some(TypeDescriptor::Function { .. })) && !context.named_types.values().any(|descriptor| {
         matches!(descriptor, TypeDescriptor::Declared(declared)
             if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)))
     }) && !context.schemes.values()
@@ -320,6 +320,11 @@ fn infer_tool_expression_evidence(
         return Ok(ToolExpressionEvidence {
             descriptors: HashMap::new(),
             value_constructors: HashMap::new(),
+            calls: HashMap::new(), runtime_types: BTreeMap::new(),
+            parameters: HashMap::new(), lexical_types: HashMap::new(),
+            inferred_scopes: HashMap::new(),
+            families: HashMap::new(), not_families: HashMap::new(),
+            members: HashMap::new(), interpolations: HashMap::new(),
         });
     }
     let mut annotations = HashMap::new();
@@ -365,10 +370,36 @@ fn infer_tool_expression_evidence(
     );
     // The caller decides whether incomplete metadata may defer a failed
     // inference pass; typed tool expressions require successful evidence.
+    let mut parameters = HashMap::new();
+    let mut lexical_types = HashMap::new();
+    let root_scheme = context.hir.definitions().iter().find(|definition| {
+        definition.value.and_then(|value| context.hir.expression(value)).is_some_and(|value| value.location == expression.location)
+    }).and_then(|definition| schemes.get(&definition.name));
+    if let Some(scheme) = root_scheme.filter(|scheme| Some(&scheme.body) == expected && !scheme.parameters.is_empty())
+    {
+        inference.push_lexical_evidence("<tool>", scheme);
+        parameters.insert(expression.location, scheme.constraints.iter().enumerate()
+            .map(|(index, constraint)| {
+                let name = evidence_parameter_name("<tool>", index);
+                if constraint.capability == TypeCapability::RuntimeType {
+                    lexical_types.insert(constraint.parameter, name.clone());
+                }
+                name
+            }).collect());
+    }
     inference.infer(expression, &environment, expected)?;
+    inference.finish_type_constraints().map_err(|(_, message)| message)?;
+    inference.finish_interpolations().map_err(|(_, message)| message)?;
+    parameters.extend(inference.inferred_runtime_scopes.iter().map(|(location, evidence)| {
+        (*location, evidence.iter().map(|evidence| evidence.name.clone()).collect())
+    }));
     let descriptors = inference.records.iter()
         .map(|(location, descriptor)| (*location, inference.resolve(descriptor))).collect();
-    Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors })
+    Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors,
+        calls: inference.resolved_call_evidence, runtime_types: inference.runtime_type_evidence,
+        parameters, lexical_types, inferred_scopes: inference.inferred_runtime_scopes, families: inference.propagation_families,
+        not_families: inference.not_families, members: inference.resolved_trait_members,
+        interpolations: inference.resolved_interpolation_evidence })
 }
 
 fn evaluate_tool_expression(
@@ -442,8 +473,32 @@ fn evaluate_tool_expression_with_debug(
     let value_constructors = evidence.as_ref()
         .map(|evidence| evidence.value_constructors.clone()).unwrap_or_default();
     let mut descriptors = expression_descriptors.cloned().unwrap_or_default();
-    if let Some(evidence) = evidence { descriptors.extend(evidence.descriptors); }
+    let mut lowered = expression.clone();
+    let mut lexical_types = HashMap::new();
+    let mut inferred_scopes = HashMap::new();
     let mut bindings = bindings.clone();
+    if let Some(evidence) = evidence {
+        let arities = evidence.descriptors.iter().filter_map(|(location, descriptor)| {
+            if let TypeDescriptor::Function { parameters, .. } = descriptor {
+                Some((*location, parameters.len()))
+            } else { None }
+        }).collect();
+        crate::elaboration::elaborate_tool_expression(&mut lowered, &evidence.calls, &arities, &evidence.parameters,
+            &evidence.families, &evidence.not_families, &evidence.members, &evidence.interpolations);
+        descriptors.extend(evidence.descriptors);
+        lexical_types = evidence.lexical_types;
+        inferred_scopes = evidence.inferred_scopes;
+        for (name, descriptor) in evidence.runtime_types {
+            let value = evaluator.descriptor(&descriptor)?;
+            let mut parameters = Vec::new();
+            collect_bound_parameters(&descriptor, &mut parameters);
+            let value = if name.starts_with("\0type_argument:") && !parameters.is_empty() {
+                let arity = parameters.iter().map(|parameter| parameter.0 as usize + 1).max().unwrap();
+                evaluator.create_type_family(value, arity, None)?.0
+            } else { value };
+            bindings.insert(name, value);
+        }
+    }
     let mut declared_value_owners = HashMap::new();
     for (location, descriptor) in &descriptors {
         let descriptor = if value_constructors.contains_key(location)
@@ -453,17 +508,40 @@ fn evaluate_tool_expression_with_debug(
             && expression.location.start <= location.start
             && location.end <= expression.location.end
             && matches!(descriptor, TypeDescriptor::Declared(_))
-            && !type_identity_is_symbolic(descriptor)
         {
-            let key = crate::compiler::declared_owner_link_key(*location);
-            bindings.insert(key.clone(), evaluator.descriptor(descriptor)?);
-            declared_value_owners.insert(*location, key);
+            let key = if type_identity_is_symbolic(descriptor) {
+                format!("\0owner-family:{}:{}", location.start, location.end)
+            } else { crate::compiler::declared_owner_link_key(*location) };
+            let mut owner = ResolvedEvidence::root(key.clone());
+            let mut parameters = Vec::new();
+            collect_bound_parameters(descriptor, &mut parameters);
+            parameters.sort_by_key(|parameter| parameter.0);
+            parameters.dedup();
+            let mut replacements = HashMap::new();
+            for (index, parameter) in parameters.iter().enumerate() {
+                let inferred = inferred_scopes.iter().filter(|(scope, _)| {
+                    scope.source == location.source && scope.start <= location.start && location.end <= scope.end
+                }).filter_map(|(scope, evidence)| evidence.iter().find(|evidence| evidence.target == TypeDescriptor::Bound(*parameter))
+                    .map(|evidence| (scope.end - scope.start, &evidence.name)))
+                    .min_by_key(|(length, _)| *length).map(|(_, name)| name);
+                let Some(name) = inferred.or_else(|| lexical_types.get(parameter)) else { break; };
+                owner.arguments.push(ResolvedEvidence::root(name.clone()));
+                replacements.insert(*parameter, TypeDescriptor::Bound(TypeParameterId(index as u32)));
+            }
+            if owner.arguments.len() != parameters.len() || contains_type_variable(descriptor) { continue; }
+            let descriptor = substitute_bound_parameters(descriptor, &replacements);
+            let value = evaluator.descriptor(&descriptor)?;
+            let value = if owner.arguments.is_empty() { value } else {
+                evaluator.create_type_family(value, owner.arguments.len(), None)?.0
+            };
+            bindings.insert(key, value);
+            declared_value_owners.insert(*location, owner);
         }
     }
     let function = compile_expression_with_external_bindings(
         source_name,
         "<tool-stage>",
-        expression,
+        &lowered,
         bindings.keys().cloned(),
         declared_value_owners,
         value_constructors,

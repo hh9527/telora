@@ -14,38 +14,38 @@ import "std/string" as string;
 # ---------------------------------------------------------------- Values
 
 type Val = enum {
-  'String(String),
-  'Int(Int),
-  'Float(Float),
-  'Bool(Bool),
+  String(String),
+  Int(Int),
+  Float(Float),
+  Bool(Bool),
 };
 
 type SqlIdentifier = struct { name: String };
 
 # ---------------------------------------------------------------- Plan model
 
-type JoinKind = enum { 'Inner, 'Left };
+type JoinKind = enum { Inner, Left };
 
-type CompareOp = enum { 'Eq, 'Ne, 'Lt, 'Le, 'Gt, 'Ge };
+type CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 
 type ScalarFunction = enum {
-  'Lower,
-  'Upper,
-  'Abs,
-  'Length,
-  'Coalesce,
-  'Substr,
+  Lower,
+  Upper,
+  Abs,
+  Length,
+  Coalesce,
+  Substr,
 };
 
 type AggregateFunction = enum {
-  'Count,
-  'Sum,
-  'Avg,
-  'Min,
-  'Max,
+  Count,
+  Sum,
+  Avg,
+  Min,
+  Max,
 };
 
-type OrderDirection = enum { 'Asc, 'Desc };
+type OrderDirection = enum { Asc, Desc };
 
 type ColumnRef = struct { alias: SqlIdentifier, column: SqlIdentifier };
 
@@ -58,12 +58,12 @@ type CompareCall = struct { op: CompareOp, left: Expr, right: Expr };
 type Conjunction = struct { items: Array(Expr) };
 
 type Expr = enum {
-  'Column(ColumnRef),
-  'Value(Val),
-  'Scalar(ScalarCall),
-  'Aggregate(AggregateCall),
-  'Compare(CompareCall),
-  'And(Conjunction),
+  Column(ColumnRef),
+  Value(Val),
+  Scalar(ScalarCall),
+  Aggregate(AggregateCall),
+  Compare(CompareCall),
+  And(Conjunction),
 };
 
 type TableRef = struct {
@@ -94,17 +94,17 @@ type Plan = struct {
 # ---------------------------------------------------------------- Operator vocabulary
 
 type Operator = enum {
-  'Scan,
-  'Column,
-  'Binding,
-  'Scalar,
-  'Aggregate,
-  'Project,
-  'Filter,
-  'EquiJoin,
-  'Group,
-  'Order,
-  'Limit,
+  Scan,
+  Column,
+  Binding,
+  Scalar,
+  Aggregate,
+  Project,
+  Filter,
+  EquiJoin,
+  Group,
+  Order,
+  Limit,
 };
 
 type PlanProfile = struct {
@@ -173,14 +173,14 @@ def make_join: Fn(JoinKind, TableRef, ColumnRef, ColumnRef) -> Join = fn(kind, r
 # ---------------------------------------------------------------- Profile vocabulary
 
 def all_operators: Array(Operator) = [
-  'Scan, 'Column, 'Binding, 'Scalar, 'Aggregate, 'Project, 'Filter, 'EquiJoin, 'Group, 'Order, 'Limit,
+  Operator.Scan, Operator.Column, Operator.Binding, Operator.Scalar, Operator.Aggregate, Operator.Project, Operator.Filter, Operator.EquiJoin, Operator.Group, Operator.Order, Operator.Limit,
 ];
 
-def all_join_kinds: Array(JoinKind) = ['Inner, 'Left];
+def all_join_kinds: Array(JoinKind) = [JoinKind.Inner, JoinKind.Left];
 
-def all_scalar_functions: Array(ScalarFunction) = ['Lower, 'Upper, 'Abs, 'Length, 'Coalesce, 'Substr];
+def all_scalar_functions: Array(ScalarFunction) = [ScalarFunction.Lower, ScalarFunction.Upper, ScalarFunction.Abs, ScalarFunction.Length, ScalarFunction.Coalesce, ScalarFunction.Substr];
 
-def all_aggregate_functions: Array(AggregateFunction) = ['Count, 'Sum, 'Avg, 'Min, 'Max];
+def all_aggregate_functions: Array(AggregateFunction) = [AggregateFunction.Count, AggregateFunction.Sum, AggregateFunction.Avg, AggregateFunction.Min, AggregateFunction.Max];
 
 def full_profile: PlanProfile = {
   operators: all_operators,
@@ -191,76 +191,76 @@ def full_profile: PlanProfile = {
 
 # ---------------------------------------------------------------- Example plans
 
-def example_lower_expr: Expr = 'Scalar({ function: 'Lower, args: ['Column(make_column_ref("c", "name"))] });
+def example_lower_expr: Expr = Expr.Scalar({ function: ScalarFunction.Lower, args: [Expr.Column(make_column_ref("c", "name"))] });
 
-def example_total_sum_expr: Expr = 'Aggregate({ function: 'Sum, argument: 'Some('Column(make_column_ref("o", "total"))) });
+def example_total_sum_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Sum, argument: Some(Expr.Column(make_column_ref("o", "total"))) });
 
-def example_filter_expr: Expr = 'And({ items: [
-  'Compare({ op: 'Gt, left: 'Column(make_column_ref("o", "total")), right: 'Value('Float(100.0)) }),
-  'Compare({ op: 'Eq, left: 'Column(make_column_ref("c", "tier")), right: 'Value('String("gold")) }),
+def example_filter_expr: Expr = Expr.And({ items: [
+  Expr.Compare({ op: CompareOp.Gt, left: Expr.Column(make_column_ref("o", "total")), right: Expr.Value(Val.Float(100.0)) }),
+  Expr.Compare({ op: CompareOp.Eq, left: Expr.Column(make_column_ref("c", "tier")), right: Expr.Value(Val.String("gold")) }),
 ] });
 
 def example_full_plan: Plan = {
   revision: "v7",
   source: make_table_ref("orders", "o", ["id", "customer_id", "total", "status", "created_at"]),
   projections: [
-    make_projection('Column(make_column_ref("o", "id")), "order_id"),
-    make_projection('Column(make_column_ref("c", "name")), "customer_name"),
+    make_projection(Expr.Column(make_column_ref("o", "id")), "order_id"),
+    make_projection(Expr.Column(make_column_ref("c", "name")), "customer_name"),
     make_projection(example_lower_expr, "customer_lower"),
     make_projection(example_total_sum_expr, "total_sum"),
   ],
-  filter: 'Some(example_filter_expr),
+  filter: Some(example_filter_expr),
   joins: [
-    make_join('Inner, make_table_ref("customers", "c", ["id", "name", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
+    make_join(JoinKind.Inner, make_table_ref("customers", "c", ["id", "name", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
   ],
-  grouping: ['Column(make_column_ref("o", "id")), 'Column(make_column_ref("c", "name"))],
-  ordering: [make_ordering(make_column_ref("o", "id"), 'Asc)],
-  limit: 'Some(50),
+  grouping: [Expr.Column(make_column_ref("o", "id")), Expr.Column(make_column_ref("c", "name"))],
+  ordering: [make_ordering(make_column_ref("o", "id"), OrderDirection.Asc)],
+  limit: Some(50),
 };
 
-def example_count_expr: Expr = 'Aggregate({ function: 'Count, argument: 'None });
+def example_count_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Count, argument: None });
 
-def example_amount_sum_expr: Expr = 'Aggregate({ function: 'Sum, argument: 'Some('Column(make_column_ref("s", "amount"))) });
+def example_amount_sum_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Sum, argument: Some(Expr.Column(make_column_ref("s", "amount"))) });
 
 def example_grouped_plan: Plan = {
   revision: "v2",
   source: make_table_ref("sales", "s", ["region", "amount"]),
   projections: [
-    make_projection('Column(make_column_ref("s", "region")), "region"),
+    make_projection(Expr.Column(make_column_ref("s", "region")), "region"),
     make_projection(example_count_expr, "order_count"),
     make_projection(example_amount_sum_expr, "amount_sum"),
   ],
-  filter: 'None,
+  filter: None,
   joins: [],
-  grouping: ['Column(make_column_ref("s", "region"))],
-  ordering: [make_ordering(make_column_ref("s", "region"), 'Asc)],
-  limit: 'Some(10),
+  grouping: [Expr.Column(make_column_ref("s", "region"))],
+  ordering: [make_ordering(make_column_ref("s", "region"), OrderDirection.Asc)],
+  limit: Some(10),
 };
 
 def example_simple_plan: Plan = {
   revision: "v1",
   source: make_table_ref("items", "i", ["id", "name", "price"]),
   projections: [
-    make_projection('Column(make_column_ref("i", "id")), "item_id"),
-    make_projection('Column(make_column_ref("i", "name")), "item_name"),
+    make_projection(Expr.Column(make_column_ref("i", "id")), "item_id"),
+    make_projection(Expr.Column(make_column_ref("i", "name")), "item_name"),
   ],
-  filter: 'None,
+  filter: None,
   joins: [],
   grouping: [],
   ordering: [],
-  limit: 'None,
+  limit: None,
 };
 
 # OrderMonth-style example: a multi-hop join chain plus a substr grouping
 # expression (substr(orders.created_at, 1, 7)). Later joins reference aliases
 # introduced by earlier joins, and grouping accepts scalar expressions.
 
-def example_orders_count_expr: Expr = 'Aggregate({ function: 'Count, argument: 'Some('Column(make_column_ref("o", "id"))) });
+def example_orders_count_expr: Expr = Expr.Aggregate({ function: AggregateFunction.Count, argument: Some(Expr.Column(make_column_ref("o", "id"))) });
 
-def example_order_month_expr: Expr = 'Scalar({ function: 'Substr, args: [
-  'Column(make_column_ref("o", "created_at")),
-  'Value('Int(1)),
-  'Value('Int(7)),
+def example_order_month_expr: Expr = Expr.Scalar({ function: ScalarFunction.Substr, args: [
+  Expr.Column(make_column_ref("o", "created_at")),
+  Expr.Value(Val.Int(1)),
+  Expr.Value(Val.Int(7)),
 ] });
 
 def example_multi_hop_plan: Plan = {
@@ -268,29 +268,29 @@ def example_multi_hop_plan: Plan = {
   source: make_table_ref("orders", "o", ["id", "created_at", "customer_id", "warehouse_id", "carrier_id", "service_level_id"]),
   projections: [
     make_projection(example_orders_count_expr, "orders_created"),
-    make_projection('Column(make_column_ref("c", "tier")), "customer_tier"),
-    make_projection('Column(make_column_ref("r", "name")), "origin_region"),
-    make_projection('Column(make_column_ref("car", "name")), "carrier_name"),
-    make_projection('Column(make_column_ref("sl", "name")), "service_name"),
+    make_projection(Expr.Column(make_column_ref("c", "tier")), "customer_tier"),
+    make_projection(Expr.Column(make_column_ref("r", "name")), "origin_region"),
+    make_projection(Expr.Column(make_column_ref("car", "name")), "carrier_name"),
+    make_projection(Expr.Column(make_column_ref("sl", "name")), "service_name"),
     make_projection(example_order_month_expr, "order_month"),
   ],
-  filter: 'None,
+  filter: None,
   joins: [
-    make_join('Inner, make_table_ref("customers", "c", ["id", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
-    make_join('Inner, make_table_ref("warehouses", "w", ["id", "region_id"]), make_column_ref("o", "warehouse_id"), make_column_ref("w", "id")),
-    make_join('Inner, make_table_ref("regions", "r", ["id", "name"]), make_column_ref("w", "region_id"), make_column_ref("r", "id")),
-    make_join('Inner, make_table_ref("carriers", "car", ["id", "name"]), make_column_ref("o", "carrier_id"), make_column_ref("car", "id")),
-    make_join('Inner, make_table_ref("service_levels", "sl", ["id", "name"]), make_column_ref("o", "service_level_id"), make_column_ref("sl", "id")),
+    make_join(JoinKind.Inner, make_table_ref("customers", "c", ["id", "tier"]), make_column_ref("o", "customer_id"), make_column_ref("c", "id")),
+    make_join(JoinKind.Inner, make_table_ref("warehouses", "w", ["id", "region_id"]), make_column_ref("o", "warehouse_id"), make_column_ref("w", "id")),
+    make_join(JoinKind.Inner, make_table_ref("regions", "r", ["id", "name"]), make_column_ref("w", "region_id"), make_column_ref("r", "id")),
+    make_join(JoinKind.Inner, make_table_ref("carriers", "car", ["id", "name"]), make_column_ref("o", "carrier_id"), make_column_ref("car", "id")),
+    make_join(JoinKind.Inner, make_table_ref("service_levels", "sl", ["id", "name"]), make_column_ref("o", "service_level_id"), make_column_ref("sl", "id")),
   ],
   grouping: [
-    'Column(make_column_ref("c", "tier")),
-    'Column(make_column_ref("r", "name")),
-    'Column(make_column_ref("car", "name")),
-    'Column(make_column_ref("sl", "name")),
+    Expr.Column(make_column_ref("c", "tier")),
+    Expr.Column(make_column_ref("r", "name")),
+    Expr.Column(make_column_ref("car", "name")),
+    Expr.Column(make_column_ref("sl", "name")),
     example_order_month_expr,
   ],
   ordering: [],
-  limit: 'None,
+  limit: None,
 };
 
 # ---------------------------------------------------------------- Expression traversal
@@ -298,94 +298,94 @@ def example_multi_hop_plan: Plan = {
 def expr_flatten: Fn(Expr) -> Array(Expr) = fn(expr) {
   let self: Array(Expr) = [expr];
   let children = match expr {
-    'Column(_) => {
+    Expr.Column(_) => {
       let none: Array(Expr) = [];
       none
     },
-    'Value(_) => {
+    Expr.Value(_) => {
       let none: Array(Expr) = [];
       none
     },
-    'Scalar(call) => array.flat_map(call.args, expr_flatten),
-    'Aggregate(call) => match call.argument {
-      'Some(arg) => expr_flatten(arg),
-      'None => {
+    Expr.Scalar(call) => array.flat_map(call.args, expr_flatten),
+    Expr.Aggregate(call) => match call.argument {
+      Some(arg) => expr_flatten(arg),
+      None => {
         let none: Array(Expr) = [];
         none
       },
     },
-    'Compare(call) => array.concat([expr_flatten(call.left), expr_flatten(call.right)]),
-    'And(call) => array.flat_map(call.items, expr_flatten),
+    Expr.Compare(call) => array.concat([expr_flatten(call.left), expr_flatten(call.right)]),
+    Expr.And(call) => array.flat_map(call.items, expr_flatten),
   };
   array.concat([self, children])
 };
 
 def expr_has_column: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    'Column(_) => 'True,
-    'Value(_) => 'False,
-    'Scalar(call) => array.any(call.args, expr_has_column),
-    'Aggregate(call) => match call.argument {
-      'Some(arg) => expr_has_column(arg),
-      'None => 'False,
+    Expr.Column(_) => True,
+    Expr.Value(_) => False,
+    Expr.Scalar(call) => array.any(call.args, expr_has_column),
+    Expr.Aggregate(call) => match call.argument {
+      Some(arg) => expr_has_column(arg),
+      None => False,
     },
-    'Compare(call) => expr_has_column(call.left) || expr_has_column(call.right),
-    'And(call) => array.any(call.items, expr_has_column),
+    Expr.Compare(call) => expr_has_column(call.left) || expr_has_column(call.right),
+    Expr.And(call) => array.any(call.items, expr_has_column),
   }
 };
 
 def expr_has_value: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    'Value(_) => 'True,
-    'Column(_) => 'False,
-    'Scalar(call) => array.any(call.args, expr_has_value),
-    'Aggregate(call) => match call.argument {
-      'Some(arg) => expr_has_value(arg),
-      'None => 'False,
+    Expr.Value(_) => True,
+    Expr.Column(_) => False,
+    Expr.Scalar(call) => array.any(call.args, expr_has_value),
+    Expr.Aggregate(call) => match call.argument {
+      Some(arg) => expr_has_value(arg),
+      None => False,
     },
-    'Compare(call) => expr_has_value(call.left) || expr_has_value(call.right),
-    'And(call) => array.any(call.items, expr_has_value),
+    Expr.Compare(call) => expr_has_value(call.left) || expr_has_value(call.right),
+    Expr.And(call) => array.any(call.items, expr_has_value),
   }
 };
 
 def expr_has_scalar: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    'Scalar(_) => 'True,
-    'Column(_) => 'False,
-    'Value(_) => 'False,
-    'Aggregate(call) => match call.argument {
-      'Some(arg) => expr_has_scalar(arg),
-      'None => 'False,
+    Expr.Scalar(_) => True,
+    Expr.Column(_) => False,
+    Expr.Value(_) => False,
+    Expr.Aggregate(call) => match call.argument {
+      Some(arg) => expr_has_scalar(arg),
+      None => False,
     },
-    'Compare(call) => expr_has_scalar(call.left) || expr_has_scalar(call.right),
-    'And(call) => array.any(call.items, expr_has_scalar),
+    Expr.Compare(call) => expr_has_scalar(call.left) || expr_has_scalar(call.right),
+    Expr.And(call) => array.any(call.items, expr_has_scalar),
   }
 };
 
 def expr_has_aggregate: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    'Aggregate(_) => 'True,
-    'Column(_) => 'False,
-    'Value(_) => 'False,
-    'Scalar(call) => array.any(call.args, expr_has_aggregate),
-    'Compare(call) => expr_has_aggregate(call.left) || expr_has_aggregate(call.right),
-    'And(call) => array.any(call.items, expr_has_aggregate),
+    Expr.Aggregate(_) => True,
+    Expr.Column(_) => False,
+    Expr.Value(_) => False,
+    Expr.Scalar(call) => array.any(call.args, expr_has_aggregate),
+    Expr.Compare(call) => expr_has_aggregate(call.left) || expr_has_aggregate(call.right),
+    Expr.And(call) => array.any(call.items, expr_has_aggregate),
   }
 };
 
 def all_exprs: Fn(Plan) -> Array(Expr) = fn(plan) {
   let projected = array.flat_map(plan.projections, fn(item) { expr_flatten(item.expr) });
   let filtered = match plan.filter {
-    'Some(expr) => expr_flatten(expr),
-    'None => {
+    Some(expr) => expr_flatten(expr),
+    None => {
       let none: Array(Expr) = [];
       none
     },
   };
   let joined = array.flat_map(plan.joins, fn(join) {
     array.concat([
-      expr_flatten('Column(join.condition.left)),
-      expr_flatten('Column(join.condition.right)),
+      expr_flatten(Expr.Column(join.condition.left)),
+      expr_flatten(Expr.Column(join.condition.right)),
     ])
   });
   let grouped = array.flat_map(plan.grouping, expr_flatten);
@@ -396,22 +396,22 @@ def all_exprs: Fn(Plan) -> Array(Expr) = fn(plan) {
 
 def plan_uses: Fn(Plan, Operator) -> Bool = fn(plan, op) {
   match op {
-    'Scan => 'True,
-    'Project => 'True,
-    'Column => array.any(all_exprs(plan), expr_has_column),
-    'Binding => array.any(all_exprs(plan), expr_has_value),
-    'Scalar => array.any(all_exprs(plan), expr_has_scalar),
-    'Aggregate => array.any(all_exprs(plan), expr_has_aggregate),
-    'Filter => match plan.filter {
-      'Some(_) => 'True,
-      'None => 'False,
+    Operator.Scan => True,
+    Operator.Project => True,
+    Operator.Column => array.any(all_exprs(plan), expr_has_column),
+    Operator.Binding => array.any(all_exprs(plan), expr_has_value),
+    Operator.Scalar => array.any(all_exprs(plan), expr_has_scalar),
+    Operator.Aggregate => array.any(all_exprs(plan), expr_has_aggregate),
+    Operator.Filter => match plan.filter {
+      Some(_) => True,
+      None => False,
     },
-    'EquiJoin => array.length(plan.joins) > 0,
-    'Group => array.length(plan.grouping) > 0,
-    'Order => array.length(plan.ordering) > 0,
-    'Limit => match plan.limit {
-      'Some(_) => 'True,
-      'None => 'False,
+    Operator.EquiJoin => array.length(plan.joins) > 0,
+    Operator.Group => array.length(plan.grouping) > 0,
+    Operator.Order => array.length(plan.ordering) > 0,
+    Operator.Limit => match plan.limit {
+      Some(_) => True,
+      None => False,
     },
   }
 };
@@ -422,7 +422,7 @@ def operators: Fn(Plan) -> Array(Operator) = fn(plan) {
 
 def scalar_of: Fn(Expr) -> Array(ScalarFunction) = fn(expr) {
   match expr {
-    'Scalar(call) => {
+    Expr.Scalar(call) => {
       let one: Array(ScalarFunction) = [call.function];
       one
     },
@@ -439,7 +439,7 @@ def used_scalar_functions: Fn(Plan) -> Array(ScalarFunction) = fn(plan) {
 
 def aggregate_of: Fn(Expr) -> Array(AggregateFunction) = fn(expr) {
   match expr {
-    'Aggregate(call) => {
+    Expr.Aggregate(call) => {
       let one: Array(AggregateFunction) = [call.function];
       one
     },
@@ -521,15 +521,15 @@ def ref_resolves: Fn(Plan, ColumnRef) -> Bool = fn(plan, ref) {
 
 def expr_bound: Fn(Plan, Expr) -> Bool = fn(plan, expr) {
   match expr {
-    'Column(ref) => ref_resolves(plan, ref),
-    'Value(_) => 'True,
-    'Scalar(call) => exprs_bound(plan, call.args),
-    'Aggregate(call) => match call.argument {
-      'Some(arg) => expr_bound(plan, arg),
-      'None => 'True,
+    Expr.Column(ref) => ref_resolves(plan, ref),
+    Expr.Value(_) => True,
+    Expr.Scalar(call) => exprs_bound(plan, call.args),
+    Expr.Aggregate(call) => match call.argument {
+      Some(arg) => expr_bound(plan, arg),
+      None => True,
     },
-    'Compare(call) => expr_bound(plan, call.left) && expr_bound(plan, call.right),
-    'And(call) => exprs_bound(plan, call.items),
+    Expr.Compare(call) => expr_bound(plan, call.left) && expr_bound(plan, call.right),
+    Expr.And(call) => exprs_bound(plan, call.items),
   }
 };
 
@@ -539,15 +539,15 @@ def exprs_bound: Fn(Plan, Array(Expr)) -> Bool = fn(plan, exprs) {
 
 def expr_identifiers_valid: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    'Column(ref) => valid_column_ref(ref),
-    'Value(_) => 'True,
-    'Scalar(call) => array.all(call.args, expr_identifiers_valid),
-    'Aggregate(call) => match call.argument {
-      'Some(arg) => expr_identifiers_valid(arg),
-      'None => 'True,
+    Expr.Column(ref) => valid_column_ref(ref),
+    Expr.Value(_) => True,
+    Expr.Scalar(call) => array.all(call.args, expr_identifiers_valid),
+    Expr.Aggregate(call) => match call.argument {
+      Some(arg) => expr_identifiers_valid(arg),
+      None => True,
     },
-    'Compare(call) => expr_identifiers_valid(call.left) && expr_identifiers_valid(call.right),
-    'And(call) => array.all(call.items, expr_identifiers_valid),
+    Expr.Compare(call) => expr_identifiers_valid(call.left) && expr_identifiers_valid(call.right),
+    Expr.And(call) => array.all(call.items, expr_identifiers_valid),
   }
 };
 
@@ -557,8 +557,8 @@ def projections_bound: Fn(Plan) -> Bool = fn(plan) {
 
 def filter_valid: Fn(Plan) -> Bool = fn(plan) {
   match plan.filter {
-    'Some(expr) => expr_identifiers_valid(expr) && expr_bound(plan, expr),
-    'None => 'True,
+    Some(expr) => expr_identifiers_valid(expr) && expr_bound(plan, expr),
+    None => True,
   }
 };
 
@@ -574,9 +574,9 @@ def joins_valid: Fn(Plan) -> Bool = fn(plan) {
 
 def grouping_expr_ok: Fn(Expr) -> Bool = fn(expr) {
   match expr {
-    'Column(_) => 'True,
-    'Scalar(call) => !expr_has_aggregate(expr),
-    _ => 'False,
+    Expr.Column(_) => True,
+    Expr.Scalar(call) => !expr_has_aggregate(expr),
+    _ => False,
   }
 };
 
@@ -592,8 +592,8 @@ def ordering_valid: Fn(Plan) -> Bool = fn(plan) {
 
 def limit_valid: Fn(Plan) -> Bool = fn(plan) {
   match plan.limit {
-    'Some(value) => value >= 0,
-    'None => 'True,
+    Some(value) => value >= 0,
+    None => True,
   }
 };
 
@@ -636,33 +636,33 @@ def validate_plan: Fn(PlanProfile, Plan) -> Plan = fn(profile, plan) {
 
 def scalar_sql_name: Fn(ScalarFunction) -> String = fn(fn_name) {
   match fn_name {
-    'Lower => "LOWER",
-    'Upper => "UPPER",
-    'Abs => "ABS",
-    'Length => "LENGTH",
-    'Coalesce => "COALESCE",
-    'Substr => "SUBSTR",
+    ScalarFunction.Lower => "LOWER",
+    ScalarFunction.Upper => "UPPER",
+    ScalarFunction.Abs => "ABS",
+    ScalarFunction.Length => "LENGTH",
+    ScalarFunction.Coalesce => "COALESCE",
+    ScalarFunction.Substr => "SUBSTR",
   }
 };
 
 def aggregate_sql_name: Fn(AggregateFunction) -> String = fn(fn_name) {
   match fn_name {
-    'Count => "COUNT",
-    'Sum => "SUM",
-    'Avg => "AVG",
-    'Min => "MIN",
-    'Max => "MAX",
+    AggregateFunction.Count => "COUNT",
+    AggregateFunction.Sum => "SUM",
+    AggregateFunction.Avg => "AVG",
+    AggregateFunction.Min => "MIN",
+    AggregateFunction.Max => "MAX",
   }
 };
 
 def compare_sql_op: Fn(CompareOp) -> String = fn(op) {
   match op {
-    'Eq => "=",
-    'Ne => "<>",
-    'Lt => "<",
-    'Le => "<=",
-    'Gt => ">",
-    'Ge => ">=",
+    CompareOp.Eq => "=",
+    CompareOp.Ne => "<>",
+    CompareOp.Lt => "<",
+    CompareOp.Le => "<=",
+    CompareOp.Gt => ">",
+    CompareOp.Ge => ">=",
   }
 };
 
@@ -676,12 +676,12 @@ def render_table_ref: Fn(TableRef) -> String = fn(table) {
 
 def render_expr: Fn(Expr) -> Tuple([String, Array(Val)]) = fn(expr) {
   match expr {
-    'Column(ref) => (render_column_ref(ref), []),
-    'Value(value) => ("?", [value]),
-    'Scalar(call) => render_scalar(call),
-    'Aggregate(call) => render_aggregate(call),
-    'Compare(call) => render_compare(call),
-    'And(call) => render_conjunction(call),
+    Expr.Column(ref) => (render_column_ref(ref), []),
+    Expr.Value(value) => ("?", [value]),
+    Expr.Scalar(call) => render_scalar(call),
+    Expr.Aggregate(call) => render_aggregate(call),
+    Expr.Compare(call) => render_compare(call),
+    Expr.And(call) => render_conjunction(call),
   }
 };
 
@@ -716,13 +716,13 @@ def render_compare: Fn(CompareCall) -> Tuple([String, Array(Val)]) = fn(call) {
 def render_aggregate: Fn(AggregateCall) -> Tuple([String, Array(Val)]) = fn(call) {
   let name = aggregate_sql_name(call.function);
   match call.argument {
-    'Some(arg) => {
+    Some(arg) => {
       let rendered = render_expr(arg);
       let sql = `\{name}(\{rendered.0})`;
       (sql, rendered.1)
     },
-    'None => {
-      if call.function == 'Count {
+    None => {
+      if call.function == AggregateFunction.Count {
         ("COUNT(*)", [])
       } else {
         fail!(`transform-reject: aggregate \{name} requires an argument`, call)
@@ -746,11 +746,11 @@ def render_projection_items: Fn(Array(ProjectionItem)) -> Tuple([Array(String), 
 
 def render_filter: Fn(Option(Expr)) -> Tuple([Option(String), Array(Val)]) = fn(filter) {
   match filter {
-    'Some(expr) => {
+    Some(expr) => {
       let rendered = render_expr(expr);
-      ('Some(rendered.0), rendered.1)
+      (Some(rendered.0), rendered.1)
     },
-    'None => ('None, []),
+    None => (None, []),
   }
 };
 
@@ -764,8 +764,8 @@ def render_grouping: Fn(Array(Expr)) -> Tuple([Array(String), Array(Val)]) = fn(
 def render_ordering: Fn(Array(OrderingItem)) -> Array(String) = fn(ordering) {
   array.map(ordering, fn(item) {
     let direction = match item.direction {
-      'Asc => "ASC",
-      'Desc => "DESC",
+      OrderDirection.Asc => "ASC",
+      OrderDirection.Desc => "DESC",
     };
     `\{render_column_ref(item.column)} \{direction}`
   })
@@ -773,11 +773,11 @@ def render_ordering: Fn(Array(OrderingItem)) -> Array(String) = fn(ordering) {
 
 def render_limit: Fn(Option(Int)) -> Array(Val) = fn(limit) {
   match limit {
-    'Some(value) => {
-      let one: Array(Val) = ['Int(value)];
+    Some(value) => {
+      let one: Array(Val) = [Val.Int(value)];
       one
     },
-    'None => {
+    None => {
       let none: Array(Val) = [];
       none
     },
@@ -786,8 +786,8 @@ def render_limit: Fn(Option(Int)) -> Array(Val) = fn(limit) {
 
 def render_join: Fn(Join) -> Tuple([String, Array(Val)]) = fn(join) {
   let kind_sql = match join.kind {
-    'Inner => "INNER JOIN",
-    'Left => "LEFT JOIN",
+    JoinKind.Inner => "INNER JOIN",
+    JoinKind.Left => "LEFT JOIN",
   };
   let left = render_column_ref(join.condition.left);
   let right = render_column_ref(join.condition.right);
@@ -798,33 +798,33 @@ def render_join: Fn(Join) -> Tuple([String, Array(Val)]) = fn(join) {
 def scalar_arity_ok: Fn(ScalarCall) -> Bool = fn(call) {
   let arg_count = array.length(call.args);
   match call.function {
-    'Lower => arg_count == 1,
-    'Upper => arg_count == 1,
-    'Abs => arg_count == 1,
-    'Length => arg_count == 1,
-    'Coalesce => arg_count >= 1,
-    'Substr => arg_count == 3,
+    ScalarFunction.Lower => arg_count == 1,
+    ScalarFunction.Upper => arg_count == 1,
+    ScalarFunction.Abs => arg_count == 1,
+    ScalarFunction.Length => arg_count == 1,
+    ScalarFunction.Coalesce => arg_count >= 1,
+    ScalarFunction.Substr => arg_count == 3,
   }
 };
 
 def transform_checks: Fn(Plan) -> Bool = fn(plan) {
   let filter_ok = match plan.filter {
-    'Some(expr) => !expr_has_aggregate(expr),
-    'None => 'True,
+    Some(expr) => !expr_has_aggregate(expr),
+    None => True,
   };
   let aggregates_ok = array.all(all_exprs(plan), fn(expr) {
     match expr {
-      'Aggregate(call) => match call.argument {
-        'Some(arg) => !expr_has_aggregate(arg),
-        'None => call.function == 'Count,
+      Expr.Aggregate(call) => match call.argument {
+        Some(arg) => !expr_has_aggregate(arg),
+        None => call.function == AggregateFunction.Count,
       },
-      _ => 'True,
+      _ => True,
     }
   });
   let scalars_ok = array.all(all_exprs(plan), fn(expr) {
     match expr {
-      'Scalar(call) => scalar_arity_ok(call),
-      _ => 'True,
+      Expr.Scalar(call) => scalar_arity_ok(call),
+      _ => True,
     }
   });
   filter_ok && aggregates_ok && scalars_ok
@@ -846,8 +846,8 @@ def build_sqlite_query: Fn(Plan) -> Query = fn(plan) {
   let clauses0: Array(String) = [select_sql, from_sql];
   let with_joins = array.fold(join_sqls, clauses0, fn(acc, clause) { array.push(acc, clause) });
   let with_where = match filter.0 {
-    'Some(clause) => array.push(with_joins, `WHERE \{clause}`),
-    'None => with_joins,
+    Some(clause) => array.push(with_joins, `WHERE \{clause}`),
+    None => with_joins,
   };
   let with_group = if array.length(grouping.0) > 0 {
     array.push(with_where, `GROUP BY \{string.join(grouping.0, ", ")}`)
@@ -860,8 +860,8 @@ def build_sqlite_query: Fn(Plan) -> Query = fn(plan) {
     with_group
   };
   let with_limit = match plan.limit {
-    'Some(_) => array.push(with_order, "LIMIT ?"),
-    'None => with_order,
+    Some(_) => array.push(with_order, "LIMIT ?"),
+    None => with_order,
   };
   let sql = string.join(with_limit, " ");
   let bindings = array.concat([projections.1, filter.1, join_bindings, grouping.1, limit_bindings]);
@@ -885,26 +885,26 @@ def compile: Fn(PlanProfile, Plan) -> Query = fn(profile, plan) {
 
 def operator_display: Fn(Operator) -> String = fn(op) {
   match op {
-    'Scan => "Scan",
-    'Column => "Column",
-    'Binding => "Binding",
-    'Scalar => "Scalar",
-    'Aggregate => "Aggregate",
-    'Project => "Project",
-    'Filter => "Filter",
-    'EquiJoin => "EquiJoin",
-    'Group => "Group",
-    'Order => "Order",
-    'Limit => "Limit",
+    Operator.Scan => "Scan",
+    Operator.Column => "Column",
+    Operator.Binding => "Binding",
+    Operator.Scalar => "Scalar",
+    Operator.Aggregate => "Aggregate",
+    Operator.Project => "Project",
+    Operator.Filter => "Filter",
+    Operator.EquiJoin => "EquiJoin",
+    Operator.Group => "Group",
+    Operator.Order => "Order",
+    Operator.Limit => "Limit",
   }
 };
 
 def val_display: Fn(Val) -> String = fn(value) {
   match value {
-    'String(text) => `"\{text}"`,
-    'Int(number) => `\{number}`,
-    'Float(number) => `\{number}`,
-    'Bool(flag) => if flag { "true" } else { "false" },
+    Val.String(text) => `"\{text}"`,
+    Val.Int(number) => `\{number}`,
+    Val.Float(number) => `\{number}`,
+    Val.Bool(flag) => if flag { "true" } else { "false" },
   }
 };
 

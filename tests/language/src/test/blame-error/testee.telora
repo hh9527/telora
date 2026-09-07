@@ -1,0 +1,26 @@
+import "std/blame" {BlameError};
+import "std/dyn" as dyn;
+import "std/test" as test;
+import "@src/test-support" {expect};
+import "./provider" as provider;
+
+export def identity = test.should_ok(fn() {
+    let error: BlameError = provider.error;
+    expect(dyn.project_with(BlameError, dyn.pack(BlameError, error)) == Some(provider.error))
+});
+
+export def empty = test.should_ok(fn() {
+    let error: BlameError = blame!("no subjects");
+    let result: Option(Int) = warn!(error);
+    expect(result == None)
+});
+
+export def warning = test.should_ok(fn() {
+    let result: Option(String) = warn!(provider.error);
+    expect(result == None)
+});
+
+export def source = test.should_ok(fn() {
+    let error = provider.error;
+    raise!(error)
+});

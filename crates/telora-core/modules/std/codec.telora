@@ -1,5 +1,6 @@
 import "std/_codec" {RenameCase, JsonRenameAll, JsonUntagged};
 import "std/value" {Value};
+import "std/blame" {BlameError};
 import "std/regex" { ParseBy };
 import "std/string" { DecodeByParse, EncodeByDisplay };
 import "std/fmt" { DisplayBy };
@@ -12,7 +13,6 @@ type Properties = struct {
     json_rename_all: Type,
     json_untagged: Type,
 };
-type DecodeError = struct {message: String, value: Value};
 def properties: Properties = {
     parse_by: ParseBy,
     decode_by_parse: DecodeByParse,
@@ -21,17 +21,17 @@ def properties: Properties = {
     json_rename_all: JsonRenameAll,
     json_untagged: JsonUntagged,
 };
-native decode_with: for(A) Fn(Properties, TypeOf(A), Value, TypeOf(DecodeError)) -> Result(A, DecodeError);
+native decode_with: for(A) Fn(Properties, TypeOf(A), Value) -> Result(A, BlameError);
 native encode_with: for(A) Fn(Properties, TypeOf(Value), A) -> Value;
-def decode: for(A) Fn(TypeOf(A), Value) -> Result(A, DecodeError) = fn(target, value) {
-    decode_with(properties, target, value, DecodeError)
+def decode: for(A) Fn(TypeOf(A), Value) -> Result(A, BlameError) = fn(target, value) {
+    decode_with(properties, target, value)
 };
 def encode: for(A) Fn(TypeOf(Value), A) -> Value = fn(target, value) {
     encode_with(properties, target, value)
 };
 export {
     Value,
-    DecodeError,
+    BlameError,
     RenameCase,
     JsonRenameAll,
     JsonUntagged,

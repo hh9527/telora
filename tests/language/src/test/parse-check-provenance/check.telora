@@ -1,0 +1,30 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        Some(Value.Array(records)) => {
+            let located = fn(name: String, line: Int) {
+                array.any(records, fn(record) {
+                    support.string_field_equals(record, "record", "diagnostic")
+                        && support.string_field_equals(record, "test", name)
+                        && match support.record_field(record, "labels") {
+                            Some(Value.Array(labels)) => array.any(labels, fn(label) {
+                                support.string_field_contains(label, "source", "parse-check-provenance/provider")
+                                    && support.string_field_equals(label, "message", "subject 1 originated here")
+                                    && match support.record_field(label, "location") {
+                                        Some(location) => support.record_field(location, "line") == Some(Value.Int(line)),
+                                        _ => False,
+                                    }
+                            }),
+                            _ => False,
+                        }
+                })
+            };
+            support.bool_value(support.exit_code(actual) == Some(1)
+                && located("parsed", 1) && located("decoded", 2))
+        },
+        _ => Value.False,
+    }
+};

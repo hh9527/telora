@@ -89,7 +89,7 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
         }
         ExprKind::Return { value } => free_expr(value, bound, free),
         ExprKind::Panic { message } => free_expr(message, bound, free),
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             free_expr(message, bound, free);
             for subject in subjects { free_expr(subject, bound, free); }
         },
@@ -275,7 +275,7 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
         }
         ExprKind::Return { value } => collect_runtime_names(value, names),
         ExprKind::Panic { message } => collect_runtime_names(message, names),
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             collect_runtime_names(message, names);
             for subject in subjects { collect_runtime_names(subject, names); }
         },
