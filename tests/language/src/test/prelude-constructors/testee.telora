@@ -1,0 +1,48 @@
+import "std/test" as test;
+import "std/option" as option;
+import "std/result" as result;
+import "@src/test-support" { expect };
+import "std/prelude" { Some as ImportedSome, None as ImportedNone };
+import "@src/test/prelude-constructors/model" as model;
+
+type Chosen = match Some(Int) { Some(value) => value, None => String };
+
+export def values = test.should_ok(fn() {
+    let yes: Bool = True;
+    let some = Some(1);
+    let none: Option(Int) = None;
+    let success = Ok@[Int, String](2);
+    let failure: Result(Int, String) = Err("bad");
+    let chosen: Chosen = 3;
+    expect(yes && !False && chosen == 3
+        && match some { Some(value) => value == 1, None => False }
+        && match none { None => True, Some(_) => False }
+        && match success { Ok(value) => value == 2, Err(_) => False }
+        && match failure { Err(value) => value == "bad", Ok(_) => False })
+});
+
+export def standard_functions = test.should_ok(fn() {
+    let mapped = option.map(Some(4), fn(value) { value + 1 });
+    let chained = result.flat_map(Ok@[Int, String](5), fn(value) { Ok(value + 1) });
+    expect(option.unwrap_or(mapped, 0) == 5 && result.unwrap_or(chained, 0) == 6
+        && !option.is_some(None@[Int]) && result.is_ok(Ok@[Int, String](7)))
+});
+
+export def first_class = test.should_ok(fn() {
+    let make: Fn(Int) -> Option(Int) = Some;
+    let make_result: Fn(Int) -> Result(Int, String) = Ok;
+    expect(option.unwrap_or(make(8), 0) == 8 && result.unwrap_or(make_result(9), 0) == 9)
+});
+
+export def shadowing = test.should_ok(fn() {
+    let Some = fn(value) { value + 1 };
+    let True = 10;
+    expect(Some(True) == 11)
+});
+
+export def reexported = test.should_ok(fn() {
+    let value = model.Success@[Int, String](12);
+    expect(match model.Make(13) { model.Make(value) => value == 13, model.Empty => False }
+        && match ImportedSome(14) { ImportedSome(value) => value == 14, ImportedNone => False }
+        && match value { model.Success(value) => value == 12, model.Failure(_) => False })
+});

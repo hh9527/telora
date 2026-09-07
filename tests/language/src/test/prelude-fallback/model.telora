@@ -1,0 +1,2 @@
+type Status = enum { Ok, Err };
+export Status.{Ok, Err};

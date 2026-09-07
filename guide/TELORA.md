@@ -72,14 +72,14 @@ telora query exports @src/app
 "text"                     # String
 b"bytes"                   # Bytes
 'Ready                     # variant 构造，需要 enum 上下文
-'True.ty!(Bool)            # Bool 的 True variant
-'Some(1)                   # 带标签的值
+True                       # Bool 的 True variant
+Some(1)                    # Option(Int) 的 Some variant
 (1, "one")                # Tuple 值
 [1, 2, 3]                  # Array
-{name: "Ada", active: 'True} # record/Dict 值
+{name: "Ada", active: True} # record/Dict 值
 ```
 
-Bool 值是 `'True` 和 `'False`；Telora 不进行 truthiness 转换。Float 是有限的
+Bool 值是 `True` 和 `False`；Telora 不进行 truthiness 转换。Float 是有限的
 IEEE 754 binary64。Float 字面量接受小数点形式（`3.5`）和指数形式（`1e6`、
 `1.25e-3`）。NaN、正无穷和负无穷都不是 Telora 值。
 
@@ -1083,8 +1083,9 @@ native 和 export；普通模块值也使用 `def`。`let` 只用于函数或 `d
 中的顺序计算和局部 shadow。顶层 `let`、`export let`、裸表达式和 final expression
 都不合法。模块只暴露显式 export。库必须导出向调用者承诺的每个类型和函数。
 
-默认 prelude 相当于可遮蔽的隐式 open import，只为本模块尚未声明的名字提供
-fallback。`PropertyAttr` 等 prelude 名不是保留字，本地 binding 可以正常使用同名；
+默认 prelude 提供 `PropertyAttr`、`True`、`False`、`Some`、`None`、`Ok` 和 `Err`。
+它相当于可遮蔽的隐式 open import；本模块声明和显式模块导入优先，其他名字由
+prelude 提供 fallback。这些名字不是保留字，本地 binding 可以正常使用同名；
 仍需访问内建项时使用显式别名，例如
 `import "std/prelude" { PropertyAttr as BuiltinPropertyAttr };`。
 

@@ -1,0 +1,3 @@
+import "@src/check/diag-prelude-authored-ambiguity/left" *;
+import "@src/check/diag-prelude-authored-ambiguity/right" *;
+export def result = match Ok { Ok => 1 };

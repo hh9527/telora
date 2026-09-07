@@ -247,6 +247,11 @@ HIR 根据本地成员导入和外部接口，将模式中的裸成员名称记�
 已验证的证据将裸成员模式规范化为构造器模式，使运行时与工具阶段的闭包捕获
 一致。开放导入在名称仅出现在模式中时同样检查成员候选的歧义。
 
+`std/prelude` 显式导出 Bool、Option 和 Result 成员。标准库启动安装预设名称时，
+同时传递值与所选成员的 ModuleInterface，保留泛型契约和构造器来源。普通模块
+将隐式 prelude 作为名称 fallback，显式模块导入的候选优先；多个显式来源仍须
+消除歧义。
+
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
 

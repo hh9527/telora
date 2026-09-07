@@ -389,7 +389,7 @@ impl WorkspaceBuilder<'_> {
                     &self.main.heap,
                 ) {
                     for (name, candidate) in exports {
-                        open_candidates.entry(name).or_default().push(candidate);
+                        open_candidates.entry(name).or_insert_with(|| vec![candidate]);
                     }
                 }
             }

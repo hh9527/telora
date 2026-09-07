@@ -599,7 +599,7 @@ impl ModuleLoader {
                 &self.main.heap,
                 module.provenance.as_ref(),
             )? {
-                open_candidates.entry(name).or_default().push(candidate);
+                open_candidates.entry(name).or_insert_with(|| vec![candidate]);
             }
         }
         let imports_fmt = program.value.body.value.bindings.iter().any(|binding| {

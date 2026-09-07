@@ -1,0 +1,1 @@
+export def result = Ok(1);

@@ -1,18 +1,18 @@
 native unwrap: for(A, E) Fn(Result(A, E)) -> A;
 def map: for(A, E, B) Fn(Result(A, E), Fn(A) -> B) -> Result(B, E) = fn(result, function) {
-    match result { 'Ok(value) => 'Ok(function(value)), 'Err(error) => 'Err(error) }
+    match result { Ok(value) => Ok(function(value)), Err(error) => Err(error) }
 };
 def flat_map: for(A, E, B) Fn(Result(A, E), Fn(A) -> Result(B, E)) -> Result(B, E) = fn(result, function) {
-    match result { 'Ok(value) => function(value), 'Err(error) => 'Err(error) }
+    match result { Ok(value) => function(value), Err(error) => Err(error) }
 };
 def map_err: for(A, E, F) Fn(Result(A, E), Fn(E) -> F) -> Result(A, F) = fn(result, function) {
-    match result { 'Ok(value) => 'Ok(value), 'Err(error) => 'Err(function(error)) }
+    match result { Ok(value) => Ok(value), Err(error) => Err(function(error)) }
 };
 def unwrap_or: for(A, E) Fn(Result(A, E), A) -> A = fn(result, fallback) {
-    match result { 'Ok(value) => value, 'Err(_) => fallback }
+    match result { Ok(value) => value, Err(_) => fallback }
 };
 def is_ok: for(A, E) Fn(Result(A, E)) -> Bool = fn(result) {
-    match result { 'Ok(_) => 'True, 'Err(_) => 'False }
+    match result { Ok(_) => True, Err(_) => False }
 };
 export {
     unwrap,

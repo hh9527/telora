@@ -135,6 +135,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
         body,
     };
     HashMap::from([
+        ("Bool".into(), scheme(witness(normalized_bool_descriptor()))),
         (
             "\0telora_struct".into(),
             scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
@@ -209,7 +210,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
 }
 
 pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Result<(), String> {
-    let expected = ["PropertyAttr"]
+    let expected = ["PropertyAttr", "True", "False", "Some", "None", "Ok", "Err"]
         .into_iter()
         .collect::<BTreeSet<_>>();
     let actual = interface
@@ -218,7 +219,7 @@ pub(crate) fn audit_default_prelude_interface(interface: &ModuleInterface) -> Re
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if actual != expected {
-        return Err("std/prelude must export exactly PropertyAttr".into());
+        return Err("std/prelude must export exactly PropertyAttr, True, False, Some, None, Ok and Err".into());
     }
     Ok(())
 }

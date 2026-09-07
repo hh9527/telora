@@ -21,11 +21,13 @@
   imports/exports retain declaration origin and the complete generic contract
   through module imports and reexports. Imported payload member patterns work.
   Bare unit member patterns resolve imported declaration origin in match, if-let
-  and let-else, including tool-stage and cross-module use. Prelude member exports,
-  quoted-syntax removal and checks remain pending.
+  and let-else, including tool-stage and cross-module use. Prelude explicitly
+  exports Bool, Option and Result members; standard-library bootstrap preserves
+  their contracts and provenance, and authored imports take precedence over
+  prelude fallbacks. Quoted-syntax removal and checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
-- Validation: bare member patterns passed debug build, workspace tests and
-  325 language fixture groups, including member-only ambiguity resolution.
+- Validation: prelude member exports passed debug build, workspace tests and
+  329 language fixture groups, including fallback and reexport behavior.
   New behavior is tested in
   `.telora`; no release binary was built.
 
@@ -207,6 +209,11 @@ enum with Type, StructType, EnumType, Field and Variant members, referenced as
 `PropertyTarget.Type` and so on. These names are not added unqualified to the
 prelude. Bootstrap code uses the same identities as user modules without
 relying on the prelude to load itself.
+
+Implicit prelude candidates are fallbacks: authored bindings and authored
+module imports take precedence. Conflicting candidates from multiple authored
+open imports remain ambiguous. Bootstrap installation preserves each selected
+prelude member's generic contract and constructor provenance along with its value.
 
 The member-binding implementation distinguishes a module namespace from a
 selectively imported type even when the module alias and an exported type have
