@@ -120,3 +120,70 @@ Eliminating full environment copies accounts for the substantial function
 speedup. These samples do not show a clear additional speedup from Vec versus
 HashMap local scopes. Independent type-declaration scaling remains unchanged;
 dependency indexing and partial/full analysis reuse are outside this follow-up.
+
+## Follow-up: Type Declaration Scaling
+
+Tool evaluation now borrows module bindings and overlays generic parameters,
+recursive family witnesses and provider arguments. Tool compilation returns
+the actual external names needed by the lowered expression, including HIR
+constructor references and hidden declared-owner links. Only those values enter
+the VM external environment. Static inference still sees explicit type inputs.
+
+HIR child indices replace whole-module scans for subtree dependencies, and
+source-location lookup uses the existing sorted expression order. A single
+iterative SCC decomposition identifies recursive type groups; the full module
+schedules groups with dependency counts and a deterministic ready queue.
+Partial analysis uses the same component classification and dependency order,
+while retaining its existing recovery loop and failure propagation.
+
+Verification includes all 512 three-node directed graphs, a 2048-node forward
+chain, subtree-query equivalence including decorators, and the workspace suite
+(274 core tests plus language acceptance fixtures). The benchmark runner adds
+optional `--workloads forward-types repeated-family` to distinguish scheduling
+costs from repeated applications of a memoized type family.
+
+Release measurements against `b01c06e`, one warmup and three sequential samples
+per workload, median wall seconds:
+
+| Workload | Before | After |
+| --- | ---: | ---: |
+| 400 independent structs | 0.517 | 0.309 |
+| 1600 independent structs | 3.804 | 0.957 |
+| 1600 Int functions | 0.766 | 0.486 |
+| 400 forward type aliases | 0.391 | 0.194 |
+| 400 applications of Box(Int) | 0.440 | 0.252 |
+
+The binding-only intermediate build measured 1.214 s for 1600 independent
+structs, before the dependency/index changes. The main comparison used
+`--sizes 400 1600 --samples 3`; the two additional workloads used `--sizes 400
+--samples 3 --workloads forward-types repeated-family`. These improvements do
+not imply that all inference work is now linear or globally shared.
+
+### Duplicate Inference Audit
+
+Interpreter memoization caches runtime results by function identity and
+canonical argument TypeIds within the current heap. It does not cache tool
+expression inference, bytecode preparation or environment construction.
+
+Partial and full analysis still create separate ToolEvaluators. Within full
+analysis, tool expressions receive constructor inference before execution, and
+their ASTs can be checked again by authoritative module inference. Provisional
+type projection also visits value bodies before strict inference. These are
+remaining repeated computations, not eliminated by this follow-up.
+
+The architectural target is one module constraint context, with tool queries
+contributing evidence and recovery consuming the same analysis facts. It is
+not sound to substitute a source-location-only cache: lexical witnesses,
+expected types, substitutions and declaration completeness can differ between
+visits. This change does not implement global constraint solving or claim to
+remove those stage boundaries.
+
+The solver itself already uses fresh inference variables, a substitution map,
+bidirectional expected types and unification. Unknown callees receive a
+function skeleton with fresh parameter and result variables. However, `resolve`
+recursively follows substitutions and reconstructs many composite descriptors;
+`occurs` invokes resolution again. A shared node-based solver could separate
+shallow representative lookup from final descriptor materialization. Such a
+change must preserve occurs checks, per-use generic instantiation, lexical
+generalization boundaries, trait obligations and rejection of unresolved
+inference variables at publication. It is not implemented by this optimization.

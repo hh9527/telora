@@ -67,7 +67,7 @@ fn evaluate_type_constraints(
     source_name: &str,
     parameters: &[TypeParameter],
     authored: &[Vec<Expr>],
-    values: &BTreeMap<String, Val>,
+    values: &dyn ToolBindings,
     local_traits: &BTreeMap<String, crate::TraitId>,
     external_interfaces: &BTreeMap<String, ModuleInterface>,
     account: &mut QuotaAccount,

@@ -82,6 +82,7 @@ pub struct HirProgram {
     definitions: Vec<HirDefinition>,
     references: Vec<HirReference>,
     expressions: Vec<HirExpression>,
+    expression_children: Vec<Vec<HirExpressionId>>,
     member_patterns: HashSet<Location>,
     tool_roots: HashSet<Location>,
     property_roots: HashSet<Location>,
@@ -208,10 +209,18 @@ impl HirProgram {
     }
 
     pub fn expression_ids_at(&self, location: Location) -> impl Iterator<Item = HirExpressionId> {
-        self.expressions
-            .iter()
-            .filter(move |expression| expression.location == location)
+        let key = (location.source, location.start, location.end);
+        let start = self.expressions.partition_point(|expression| {
+            let location = expression.location;
+            (location.source, location.start, location.end) < key
+        });
+        self.expressions[start..].iter()
+            .take_while(move |expression| expression.location == location)
             .map(|expression| expression.id)
+    }
+
+    pub(crate) fn expression_children(&self, id: HirExpressionId) -> &[HirExpressionId] {
+        &self.expression_children[id.index()]
     }
 
     pub fn unresolved(&self) -> impl Iterator<Item = &HirReference> {
@@ -277,6 +286,12 @@ impl HirProgram {
         }
         for expression in &mut self.expressions {
             expression.parent = expression.parent.map(|id| expressions[id.index()]);
+        }
+        self.expression_children = vec![Vec::new(); self.expressions.len()];
+        for expression in &self.expressions {
+            if let Some(parent) = expression.parent {
+                self.expression_children[parent.index()].push(expression.id);
+            }
         }
     }
 }

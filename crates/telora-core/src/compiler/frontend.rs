@@ -366,23 +366,22 @@ pub(crate) fn compile_expression_with_external_bindings(
     source_name: &str,
     function_name: &str,
     expression: &Expr,
-    bindings: impl IntoIterator<Item = String>,
+    binding_exists: impl Fn(&str) -> bool,
     declared_value_owners: HashMap<Location, String>,
     value_constructors: HashMap<Location, crate::types::ValueConstructor>,
     source_file: &SourceFile,
-) -> Result<BytecodeFunction, FrontendError> {
-    let bindings = bindings.into_iter().collect::<Vec<_>>();
+) -> Result<(BytecodeFunction, Vec<String>), FrontendError> {
     let mut lowered = expression.clone();
     crate::elaboration::lower_constructor_patterns(&mut lowered, &value_constructors);
     let expression = &lowered;
     let mut required = BTreeSet::new();
     free_expr(expression, &HashSet::new(), &mut required);
     required.extend(declared_value_owners.values().cloned());
-    let hir = HirProgram::resolve_runtime_expression(expression, bindings.iter().cloned());
-    validate_hir(source_file, &hir, &HashSet::new())?;
-    required.extend(hir.references().iter()
-        .filter(|reference| reference.resolution == crate::hir::HirResolution::External)
+    let hir = HirProgram::resolve_runtime_expression(expression, Vec::new());
+    required.extend(hir.unresolved()
         .map(|reference| reference.name.clone()));
+    let bindings = required.into_iter().filter(|name| binding_exists(name)).collect::<Vec<_>>();
+    validate_hir(source_file, &hir, &bindings.iter().cloned().collect())?;
     let mut compiler = Compiler {
         source_name,
         function_name: function_name.to_owned(),
@@ -408,12 +407,12 @@ pub(crate) fn compile_expression_with_external_bindings(
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };
-    for name in bindings.into_iter().filter(|name| required.contains(name)) {
+    for name in &bindings {
         let register = compiler.load_external_constant(name.clone(), expression.location);
-        compiler.environment.insert(name, register);
+        compiler.environment.insert(name.clone(), register);
     }
     compiler.compile_tail_expr(expression)?;
-    compiler.finish()
+    Ok((compiler.finish()?, bindings))
 }
 
 fn validate_hir(

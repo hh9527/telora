@@ -355,7 +355,7 @@ fn evaluate_property_decorator(
             ),
         ));
     }
-    let mut values = tool_values.clone();
+    let mut values = ScopedToolBindings::new(tool_values);
     let previous = evaluator.previous_property_value(previous);
     values.insert(PROPERTY_PREVIOUS_BINDING.into(), previous);
     let previous_environment = evaluator.inference_context.as_mut()

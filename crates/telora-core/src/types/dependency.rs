@@ -1,44 +1,3 @@
-fn expression_descends_from(
-    hir: &HirProgram,
-    mut expression: HirExpressionId,
-    root: HirExpressionId,
-) -> bool {
-    loop {
-        if expression == root {
-            return true;
-        }
-        let Some(parent) = hir
-            .expression(expression)
-            .and_then(|expression| expression.parent)
-        else {
-            return false;
-        };
-        expression = parent;
-    }
-}
-
-fn dependency_reaches(
-    graph: &SemanticDependencyGraph,
-    current: HirDefinitionId,
-    target: HirDefinitionId,
-) -> bool {
-    fn visit(
-        graph: &SemanticDependencyGraph,
-        current: HirDefinitionId,
-        target: HirDefinitionId,
-        visited: &mut HashSet<HirDefinitionId>,
-    ) -> bool {
-        let Some(node) = graph.nodes.iter().find(|node| node.definition == current) else {
-            return false;
-        };
-        node.dependencies.iter().any(|dependency| {
-            *dependency == target
-                || visited.insert(*dependency) && visit(graph, *dependency, target, visited)
-        })
-    }
-    visit(graph, current, target, &mut HashSet::new())
-}
-
 fn expression_dependencies(hir: &HirProgram, root: HirExpressionId) -> Vec<HirDefinitionId> {
     expression_dependencies_with_properties(hir, root, true)
 }
@@ -48,28 +7,18 @@ fn expression_dependencies_with_properties(
     root: HirExpressionId,
     include_properties: bool,
 ) -> Vec<HirDefinitionId> {
-    let mut dependencies = hir
-        .expressions()
-        .iter()
-        .filter(|expression| expression_descends_from(hir, expression.id, root))
-        .filter(|expression| {
-            if include_properties { return true; }
-            let mut parent = Some(expression.id);
-            while let Some(id) = parent {
-                let expression = hir.expression(id).expect("HIR expression exists");
-                if hir.is_property_root(expression.location) { return false; }
-                if id == root { break; }
-                parent = expression.parent;
-            }
-            true
-        })
-        .filter_map(|expression| expression.reference)
-        .filter_map(|reference| hir.reference(reference))
-        .filter_map(|reference| match reference.resolution {
-            HirResolution::Definition(dependency) => Some(dependency),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let mut dependencies = Vec::new();
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let expression = hir.expression(id).expect("HIR expression exists");
+        if !include_properties && hir.is_property_root(expression.location) { continue; }
+        if let Some(reference) = expression.reference.and_then(|id| hir.reference(id))
+            && let HirResolution::Definition(dependency) = reference.resolution
+        {
+            dependencies.push(dependency);
+        }
+        pending.extend(hir.expression_children(id));
+    }
     dependencies.sort_unstable();
     dependencies.dedup();
     dependencies
@@ -493,11 +442,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
     ));
     let type_definitions = type_bindings.keys().copied().collect::<HashSet<_>>();
     let type_dependencies = type_dependency_graph(&hir, &type_definitions);
+    let dependency_plan = TypeDependencyPlan::new(&type_dependencies);
     for node in &type_dependencies.nodes {
         let binding = type_bindings[&node.definition];
         if binding.value.type_parameters.is_empty()
             && binding.value.declared_initializer.is_some()
-            && dependency_reaches(&type_dependencies, node.definition, node.definition)
+            && dependency_plan.is_cyclic(node.definition)
         {
             let name = binding.value.name.value.clone();
             let value = evaluator.descriptor(&TypeDescriptor::Named(name.clone()))?;
@@ -543,29 +493,21 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .collect::<Vec<_>>();
     // Resolve forward type references before publishing metadata. Types that
     // execute local value helpers remain in the source-order tool pass.
-    frontier.extend(type_definitions.iter().copied().filter(|definition| {
-        !helper_dependent_types.iter().any(|helper| {
-            definition == helper || dependency_reaches(&type_dependencies, *definition, *helper)
-        })
-    }));
+    let helper_dependents = dependency_plan.dependents(&helper_dependent_types);
+    frontier.extend(type_definitions.iter().copied()
+        .filter(|definition| !helper_dependents.contains(definition)));
     frontier.extend(contract_type_definitions);
     frontier.extend(
         type_definitions
             .iter()
             .copied()
-            .filter(|definition| dependency_reaches(&type_dependencies, *definition, *definition)),
+            .filter(|definition| dependency_plan.is_cyclic(*definition)),
     );
     while let Some(definition) = frontier.pop() {
         if !scheduled_types.insert(definition) {
             continue;
         }
-        if let Some(node) = type_dependencies
-            .nodes
-            .iter()
-            .find(|node| node.definition == definition)
-        {
-            frontier.extend(node.dependencies.iter().copied());
-        }
+        frontier.extend(dependency_plan.node(definition).dependencies.iter().copied());
     }
 
     let mut pending_types = scheduled_types.clone();
@@ -573,21 +515,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut evaluated_concrete_type_names = HashSet::new();
     let mut type_family_values = BTreeMap::new();
     let mut type_family_templates = BTreeMap::new();
+    let mut schedule = dependency_plan.order(&scheduled_types).into_iter();
     while !pending_types.is_empty() {
+        let component = schedule.next().expect("pending type has a scheduled component");
         let mut progressed = false;
-        for definition in pending_types.iter().copied().collect::<Vec<_>>() {
-            let node = type_dependencies
-                .nodes
-                .iter()
-                .find(|node| node.definition == definition)
-                .expect("scheduled type has a dependency node");
-            if node
-                .dependencies
-                .iter()
-                .any(|dependency| !evaluated_types.contains(dependency))
-            {
-                continue;
-            }
+        for definition in component.iter().copied().filter(|definition| !dependency_plan.is_cyclic(*definition)) {
+            debug_assert!(dependency_plan.node(definition).dependencies.iter()
+                .all(|dependency| evaluated_types.contains(dependency)));
             let binding = type_bindings[&definition];
             if binding.value.type_parameters.is_empty() {
                 let value = evaluate_tool_expression(
@@ -658,7 +592,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
 
             let mut names = HashSet::new();
             let mut parameters = Vec::new();
-            let mut bindings = tool_values.clone();
+            let mut bindings = ScopedToolBindings::new(&tool_values);
             for (parameter_index, parameter) in binding.value.type_parameters.iter().enumerate() {
                 if !names.insert(parameter.value.as_str()) {
                     return Err(FrontendError::from_diagnostic(
@@ -795,20 +729,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
             progressed = true;
         }
         if !progressed {
-            let root = pending_types
-                .iter()
-                .copied()
-                .find(|definition| dependency_reaches(&type_dependencies, *definition, *definition))
-                .expect("stalled type dependency schedule contains a cycle");
-            let mut component = pending_types
-                .iter()
-                .copied()
-                .filter(|definition| {
-                    dependency_reaches(&type_dependencies, root, *definition)
-                        && dependency_reaches(&type_dependencies, *definition, root)
-                })
-                .collect::<Vec<_>>();
-            component.sort_unstable();
+            let root = component[0];
+            debug_assert!(dependency_plan.is_cyclic(root));
             let names = component
                 .iter()
                 .map(|definition| type_bindings[definition].value.name.value.as_str())
@@ -1004,7 +926,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .annotation
             .as_ref()
             .expect("declaration has a lowered contract");
-        let mut contract_values = tool_values.clone();
+        let mut contract_values = ScopedToolBindings::new(&tool_values);
         let mut parameter_names = HashSet::new();
         let mut scheme_parameters = Vec::new();
         for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
@@ -1445,7 +1367,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     );
     let mut local_annotations = HashMap::new();
     for binding in &program.value.body.value.bindings {
-        let mut annotation_values = tool_values.clone();
+        let mut annotation_values = ScopedToolBindings::new(&tool_values);
         for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
             let value =
                 evaluator.descriptor(&TypeDescriptor::Bound(TypeParameterId(index as u32)))?;

@@ -432,12 +432,12 @@ fn build_recursive_type_family(
     module_id: crate::ModuleId,
     declaration: u32,
     binding: &Binding,
-    base_bindings: &BTreeMap<String, Val>,
+    base_bindings: &dyn ToolBindings,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
 ) -> Result<RecursiveTypeFamilyBuild, FrontendError> {
-    let mut evaluation_bindings = base_bindings.clone();
+    let mut evaluation_bindings = ScopedToolBindings::new(base_bindings);
     let mut parameters = Vec::new();
     let mut parameter_names = HashSet::new();
     for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
@@ -678,7 +678,7 @@ fn native_type_argument_descriptor(
 fn collect_nested_annotation_types(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     debug_sink: &mut ToolEvaluator,
@@ -1127,7 +1127,7 @@ fn collect_nested_annotation_types(
 fn collect_block_annotation_types(
     source_name: &str,
     block: &Block,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     debug_sink: &mut ToolEvaluator,

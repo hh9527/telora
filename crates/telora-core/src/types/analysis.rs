@@ -255,6 +255,9 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         }
     }
     let dependencies = type_dependency_graph(&hir, &type_definitions);
+    let dependency_plan = TypeDependencyPlan::new(&dependencies);
+    let ordered_definitions = dependency_plan.order(&type_definitions.iter().copied().collect())
+        .into_iter().flatten().collect::<Vec<_>>();
     let mut diagnostics = initial_diagnostics;
     let mut facts: BTreeMap<HirDefinitionId, SemanticFact<AnalysisTypeId>> = BTreeMap::new();
     let mut definition_schemes = BTreeMap::new();
@@ -303,7 +306,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         let binding = bindings[&node.definition];
         if binding.value.type_parameters.is_empty()
             && binding.value.declared_initializer.is_some()
-            && dependency_reaches(&dependencies, node.definition, node.definition)
+            && dependency_plan.is_cyclic(node.definition)
         {
             let name = binding.value.name.value.clone();
             tool_values.insert(
@@ -320,7 +323,8 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     }
     while facts.len() < bindings.len() {
         let mut progressed = false;
-        for node in &dependencies.nodes {
+        for definition in &ordered_definitions {
+            let node = dependency_plan.node(*definition);
             if facts.contains_key(&node.definition) {
                 continue;
             }
@@ -346,7 +350,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             }
 
             let binding = bindings[&node.definition];
-            let mut evaluation_bindings = tool_values.clone();
+            let mut evaluation_bindings = ScopedToolBindings::new(&tool_values);
             let mut parameters = Vec::new();
             let mut parameter_names = HashSet::new();
             for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
@@ -551,7 +555,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             .nodes
             .iter()
             .filter(|node| !facts.contains_key(&node.definition))
-            .filter(|node| dependency_reaches(&dependencies, node.definition, node.definition))
+            .filter(|node| dependency_plan.is_cyclic(node.definition))
             .map(|node| node.definition)
             .collect::<Vec<_>>();
         let had_cycle = !cyclic.is_empty();
@@ -560,15 +564,8 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             if !handled.insert(root) {
                 continue;
             }
-            let component = dependencies
-                .nodes
-                .iter()
-                .map(|node| node.definition)
+            let component = dependency_plan.component(root).iter().copied()
                 .filter(|definition| !facts.contains_key(definition))
-                .filter(|definition| {
-                    dependency_reaches(&dependencies, root, *definition)
-                        && dependency_reaches(&dependencies, *definition, root)
-                })
                 .collect::<Vec<_>>();
             handled.extend(component.iter().copied());
             let recursive_nominal_family = component.len() == 1 && {

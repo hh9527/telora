@@ -300,7 +300,7 @@ fn declared_body_accepts_expression(body: &TypeDescriptor, expression: &Expr) ->
 fn infer_tool_expression_evidence(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     expected: Option<&TypeDescriptor>,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
@@ -374,7 +374,7 @@ fn infer_tool_expression_evidence(
 fn evaluate_tool_expression(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator,
@@ -395,7 +395,7 @@ fn evaluate_tool_expression(
 fn evaluate_typed_tool_expression_silent(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     expression_descriptors: &HashMap<crate::Location, TypeDescriptor>,
     expected: Option<&TypeDescriptor>,
     account: &mut QuotaAccount,
@@ -419,7 +419,7 @@ fn evaluate_typed_tool_expression_silent(
 fn evaluate_tool_expression_with_debug(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     expression_descriptors: Option<&HashMap<crate::Location, TypeDescriptor>>,
     expected: Option<&TypeDescriptor>,
     account: &mut QuotaAccount,
@@ -460,7 +460,7 @@ fn evaluate_tool_expression_with_debug(
 fn evaluate_prepared_tool_expression(
     source_name: &str,
     expression: &Expr,
-    bindings: &BTreeMap<String, Val>,
+    bindings: &dyn ToolBindings,
     evidence: ToolExpressionEvidence,
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
@@ -468,7 +468,7 @@ fn evaluate_prepared_tool_expression(
     observed: bool,
 ) -> Result<Val, FrontendError> {
     let ToolExpressionEvidence { descriptors, value_constructors } = evidence;
-    let mut bindings = bindings.clone();
+    let mut bindings = ScopedToolBindings::new(bindings);
     let mut declared_value_owners = HashMap::new();
     for (location, descriptor) in &descriptors {
         let descriptor = if value_constructors.contains_key(location)
@@ -485,18 +485,20 @@ fn evaluate_prepared_tool_expression(
             declared_value_owners.insert(*location, key);
         }
     }
-    let function = compile_expression_with_external_bindings(
+    let (function, required) = compile_expression_with_external_bindings(
         source_name,
         "<tool-stage>",
         expression,
-        bindings.keys().cloned(),
+        |name| bindings.get(name).is_some(),
         declared_value_owners,
         value_constructors,
         sources.get(expression.location.source),
     )?;
-    let externals = bindings
-        .iter()
-        .map(|(name, value)| (name.clone(), *value))
+    let externals = required.into_iter()
+        .map(|name| {
+            let value = *bindings.get(&name).expect("compiled external binding exists");
+            (name, value)
+        })
         .collect::<HashMap<_, _>>();
     let work = std::mem::replace(&mut evaluator.work, Heap::work_for(evaluator.main));
     let vm = if observed && evaluator.inference_depth == 0 {

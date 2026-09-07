@@ -163,6 +163,10 @@ Tool expression inference 共享模块的 scheme 与 declared body 输入，只�
 严格推导与前置类型投影的局部环境借用父环境，以 `Vec` 保存局部覆盖并反向查找，
 不复制模块绑定。未知局部类型用显式遮蔽记录表示，避免意外回退到同名外部绑定。
 模块级环境仍使用 HashMap；match 分支需要 freshen 推导变量时保留独立的变换环境。
+工具值环境也借用模块绑定，以局部覆盖注入泛型参数和 provider 参数；编译器结合
+runtime HIR、自由变量和 constructor owner 链接收集实际依赖，只将这些值传入 VM。
+HIR 保存表达式子节点索引，依赖查询只遍历目标子树。类型依赖图一次计算 SCC，
+完整分析按分组的依赖计数与就绪队列调度；partial 分析复用同样的分组和依赖顺序。
 Property provider 的返回 contract 在模块推导前登记静态 evidence 和未来的 runtime
 binding，不依赖 payload 求值；模块静态检查通过后才物化 property records，失败则
 阻止发布。Decorator 引用不构成类型骨架的调度依赖。

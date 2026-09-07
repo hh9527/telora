@@ -16,6 +16,9 @@ def main():
     parser.add_argument("--sizes", nargs="+", type=int, default=[100, 400])
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--workloads", nargs="+",
+                        choices=["constant", "functions", "types", "array", "forward-types", "repeated-family"],
+                        default=["constant", "functions", "types", "array"])
     args = parser.parse_args()
     if args.samples < 1 or args.timeout <= 0 or any(size < 1 for size in args.sizes):
         parser.error("sizes, samples and timeout must be positive")
@@ -34,6 +37,14 @@ def main():
             + ",".join(str(index) for index in range(size))
             + "];\n"
         )
+        cases[f"forward-types-{size}"] = "\n".join(
+            f"type T{index} = T{index + 1};" for index in range(size - 1)
+        ) + f"\ntype T{size - 1} = Int;\nexport def answer: Int = 42;\n"
+        cases[f"repeated-family-{size}"] = "type Box(T) = struct {value: T};\n" + "\n".join(
+            f"type T{index} = Box(Int);" for index in range(size)
+        ) + "\nexport def answer: Int = 42;\n"
+    cases = {name: source for name, source in cases.items()
+             if any(name == workload or name.startswith(workload + "-") for workload in args.workloads)}
     with tempfile.TemporaryDirectory(prefix="telora-inference-") as directory:
         workspace = Path(directory)
         (workspace / "src").mkdir()
