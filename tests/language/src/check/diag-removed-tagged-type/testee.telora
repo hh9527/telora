@@ -1,1 +1,1 @@
-export type Removed = Tagged('Some, Int);
+export type Removed = Tagged("Some", Int);

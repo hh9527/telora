@@ -1,9 +1,9 @@
 import "std/value" { Value };
 import "std/fmt" as fmt;
 
-type State = enum { 'Ok };
+type State = enum { Ok };
 impl fmt.Display for State {
-    display: fn(value) { match value { 'Ok => fmt.from_string("Ok") } },
+    display: fn(value) { match value { State.Ok => fmt.from_string("Ok") } },
 };
 
 def name = "Ada";
@@ -11,9 +11,9 @@ def count = 3;
 def ratio = 3.0;
 def small = 1.25e-3;
 def zero = -0.0;
-def state: State = 'Ok;
+def state: State = State.Ok;
 
-export def result: Value = 'Object({
-    rendered: 'String(`hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`),
-    nested: 'String(`value=\{if 'True { "yes" } else { "no" }}`),
+export def result: Value = Value.Object({
+    rendered: Value.String(`hi, \{name} count=\{count} ratio=\{ratio} small=\{small} zero=\{zero} state=\{state}`),
+    nested: Value.String(`value=\{if True { "yes" } else { "no" }}`),
 });

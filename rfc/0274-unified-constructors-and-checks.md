@@ -31,7 +31,11 @@
   inference path, including nested builtin and declared generic enums. Existing
   payload values retain their identities. Core behavioral fixtures use named
   members, and providers explicitly export constructors of private enums.
-  Quoted-syntax removal in the parser, remaining fixtures and documentation,
+  Language fixture sources and the fixture generator now use named members.
+  Branch joins combine enum payload and same-family generic argument evidence;
+  return boundaries and collection joins share this propagation. Concrete
+  evidence propagates until no further variables can be solved.
+  Quoted-syntax removal in the parser, embedded sources and remaining documentation,
   and construction checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
 - Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
@@ -41,6 +45,10 @@
   Named-payload contextualization and migrated core fixtures passed workspace
   tests and all 333 language fixture groups, with three additional `.telora`
   regressions for nested, declared-generic and existing-value payloads.
+  Enum branch/return/collection inference and the complete language-fixture
+  migration passed debug build, workspace tests and 338 language fixture groups.
+  The focused branch suite passed nine cases, including if-let and empty spreads;
+  export queries confirm Result(String, Int) for both match-arm orders.
   New behavior is tested in
   `.telora`; no release binary was built.
 
@@ -212,6 +220,17 @@ Generic member specialization uses `Option.Some@[Int]` and
 `Result.Ok@[Int, String]`. All family parameters remain part of that contract,
 including parameters absent from the selected payload. Contextual inference
 may determine them; an unresolved parameter is an error.
+
+Prelude member names already determine Bool, Option or Result ownership. Joining
+members of the same family combines generic parameter evidence: both
+`if True { Some(1) } else { None }` and the reversed branch order infer
+Option(Int). `match Some("hi") { Some(x) => Ok(x), None => Err(2) }` infers
+Result(String, Int) without an annotation. Apply this rule to if-let, explicit
+return boundaries, collection elements and declared generic enum families as
+well. Propagation may require multiple passes when completing an enum supplies
+the element type of an empty collection. Different declarations remain distinct,
+conflicting concrete parameters are rejected, and missing phantom parameters
+still require evidence.
 
 Prelude exports explicitly supply `Bool.{True, False}`, `Option.{Some, None}`
 and `Result.{Ok, Err}`. FoldControl remains

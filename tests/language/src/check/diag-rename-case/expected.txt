@@ -1,1 +1,1 @@
-decorator argument has type 'UnknownCase, which is not assignable to RenameCase
+decorator argument has type String, which is not assignable to RenameCase

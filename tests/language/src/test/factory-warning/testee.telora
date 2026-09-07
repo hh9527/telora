@@ -1,5 +1,5 @@
 import "std/test" as test;
-def warn: Fn() -> Result(Int, String) = fn() { 'Err("factory notice") };
+def warn: Fn() -> Result(Int, String) = fn() { Err("factory notice") };
 export def group = test.with_fixtures(["input.json"], fn(outer) {
     let warning = warn.should_ok!();
     test.with_fixtures(["input.json", "input.json"], fn(inner) {

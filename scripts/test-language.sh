@@ -62,7 +62,7 @@ success_all="$workspace/src/generated/check-success-all.telora"
             success_index=$((success_index + 1))
         fi
     done
-    echo "export def all_loaded: Bool = 'True;"
+    echo "export def all_loaded: Bool = True;"
 } >"$success_all"
 
 diagnostics_all="$workspace/src/generated/check-diagnostics-all.telora"
@@ -77,7 +77,7 @@ diagnostics_all="$workspace/src/generated/check-diagnostics-all.telora"
             diagnostic_index=$((diagnostic_index + 1))
         fi
     done
-    echo "export def all_loaded: Bool = 'True;"
+    echo "export def all_loaded: Bool = True;"
 } >"$diagnostics_all"
 
 generated="$workspace/src/generated/check-all.telora"
@@ -91,29 +91,29 @@ generated="$workspace/src/generated/check-all.telora"
             printf 'import "@src/%s/check" as case_%s;\n' "${cases[$index]}" "$index"
         fi
     done
-    echo 'def config: entry.ContextConfig = {sources: ["actual"], envs: [], args: '\''False};'
+    echo 'def config: entry.ContextConfig = {sources: ["actual"], envs: [], args: False};'
     echo 'def required: Fn(Dict(Value), String) -> Value = fn(values, name) {'
     echo '    match dict.get(values, name) {'
-    echo '        '\''Some(value) => value,'
-    echo '        '\''None => fail!("missing test observation", name),'
+    echo '        Some(value) => value,'
+    echo '        None => fail!("missing test observation", name),'
     echo '    }'
     echo '};'
     echo 'export def check = entry.main(config, fn(ctx) {'
     echo '    let actual = match dict.get(ctx.sources, "actual") {'
-    echo '        '\''Some('\''Object(values)) => values,'
+    echo '        Some(Value.Object(values)) => values,'
     echo '        _ => fail!("actual test observations must be an object"),'
     echo '    };'
-    echo '    '\''Object({'
+    echo '    Value.Object({'
     for index in "${!cases[@]}"; do
         if [[ ${case_checks[$index]} -eq 1 ]]; then
             printf '        "%s": case_%s.check(required(actual, "%s")),\n' \
                 "${cases[$index]}" "$index" "${cases[$index]}"
         elif [[ ${case_checks[$index]} -eq 2 ]]; then
             expected=$(jaq -Rs 'rtrimstr("\n")' "$workspace/src/${cases[$index]}/expected.txt")
-            printf '        "%s": if support.failed_with(required(actual, "%s"), %s) { '\''True } else { '\''False },\n' \
+            printf '        "%s": if support.failed_with(required(actual, "%s"), %s) { Value.True } else { Value.False },\n' \
                 "${cases[$index]}" "${cases[$index]}" "$expected"
         else
-            printf '        "%s": if support.succeeded(required(actual, "%s")) { '\''True } else { '\''False },\n' \
+            printf '        "%s": if support.succeeded(required(actual, "%s")) { Value.True } else { Value.False },\n' \
                 "${cases[$index]}" "${cases[$index]}"
         fi
     done

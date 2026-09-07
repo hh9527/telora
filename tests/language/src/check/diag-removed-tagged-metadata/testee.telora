@@ -1,1 +1,3 @@
-export type Removed = {kind: 'Tagged, tag: 'Some, payload: Int};
+type Kind = enum {Tagged};
+type Tag = enum {Some};
+export type Removed = {kind: Kind.Tagged, tag: Tag.Some, payload: Int};

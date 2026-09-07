@@ -1,8 +1,8 @@
 import "std/test" as test;
 import "std/dyn" as dyn;
 
-export def a_false = test.should_ok(fn() { 'False.ty!(Bool) });
-export def b_error_value = test.should_ok(fn() { 'Err("ordinary return").ty!(Result(Int, String)) });
+export def a_false = test.should_ok(fn() { False.ty!(Bool) });
+export def b_error_value = test.should_ok(fn() { Err("ordinary return").ty!(Result(Int, String)) });
 export def c_failure = test.should_fail(fn() { fail!("expected failure") });
 export def d_message = test.should_fail_with(fn() { fail!("specific message") }, "specific");
 export def e_opaque = test.should_ok(fn() { test.should_fail(fn() { 1 }) });

@@ -1,1 +1,1 @@
-variant 'Foreign is not part of Node
+enum Node has no member "Foreign"

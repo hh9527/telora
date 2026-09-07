@@ -1,1 +1,2 @@
-export def value: Int = { let unused = ('Ready, 0); 1 };
+type State = enum {Ready};
+export def value: Int = { let unused = (Ready, 0); 1 };

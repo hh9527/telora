@@ -1,1 +1,1 @@
-requires an enum context
+cannot unify enum {Ready} with T0

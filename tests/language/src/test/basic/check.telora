@@ -3,11 +3,11 @@ import "std/value" { Value };
 
 export def check: Fn(Value) -> Value = fn(actual) {
     match support.stream_item(actual, "stdout", 5) {
-        'Some('Object(summary)) => if support.succeeded(actual)
-            && support.stream_length(actual, "stdout") == 'Some(6)
-            && summary.schema == 'String("telora.test/v2")
-            && summary.total == 'Int(5) && summary.passed == 'Int(5)
-            && summary.failed == 'Int(0) && summary.aborted == 'False { 'True } else { 'False },
-        _ => 'False,
+        Some(Value.Object(summary)) => if support.succeeded(actual)
+            && support.stream_length(actual, "stdout") == Some(6)
+            && summary.schema == Value.String("telora.test/v2")
+            && summary.total == Value.Int(5) && summary.passed == Value.Int(5)
+            && summary.failed == Value.Int(0) && summary.aborted == Value.False { Value.True } else { Value.False },
+        _ => Value.False,
     }
 };

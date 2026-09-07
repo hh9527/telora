@@ -328,7 +328,8 @@ impl<'a> GenericInference<'a> {
         }
         let mut values = boundary.values;
         values.push(tail);
-        Ok(common_type(values).unwrap_or(TypeDescriptor::Never))
+        self.merge_structural_join_evidence(&values)?;
+        Ok(join_all_types(values.iter().map(|value| self.resolve(value)).collect()))
     }
 
     fn record_propagation(&mut self, requirement: PropagationRequirement) -> Result<(), String> {
@@ -694,11 +695,11 @@ impl<'a> GenericInference<'a> {
             unresolved: &TypeDescriptor,
             evidence: &TypeDescriptor,
             collected: &mut HashMap<InferenceVariableId, Vec<TypeDescriptor>>,
-            collection_element: bool,
+            may_infer: bool,
             enum_owners: &HashSet<InferenceVariableId>,
         ) {
             if let TypeDescriptor::Inference(variable) = unresolved {
-                if (collection_element || enum_owners.contains(variable))
+                if (may_infer || enum_owners.contains(variable))
                     && !contains_type_variable(evidence) {
                     collected
                         .entry(*variable)
@@ -714,7 +715,7 @@ impl<'a> GenericInference<'a> {
                 }
                 (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right))
                 | (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => {
-                    collect(left, right, collected, collection_element, enum_owners);
+                    collect(left, right, collected, may_infer, enum_owners);
                 }
                 (
                     TypeDescriptor::Tagged {
@@ -726,20 +727,20 @@ impl<'a> GenericInference<'a> {
                         payload: right,
                     },
                 ) if left_tag == right_tag => {
-                    collect(left, right, collected, collection_element, enum_owners);
+                    collect(left, right, collected, may_infer, enum_owners);
                 }
                 (TypeDescriptor::Tuple(left), TypeDescriptor::Tuple(right))
                     if left.len() == right.len() =>
                 {
                     for (left, right) in left.iter().zip(right) {
-                        collect(left, right, collected, collection_element, enum_owners);
+                        collect(left, right, collected, may_infer, enum_owners);
                     }
                 }
                 (TypeDescriptor::Struct(left), TypeDescriptor::Struct(right))
                     if left.keys().eq(right.keys()) =>
                 {
                     for (name, left) in left {
-                        collect(left, &right[name], collected, collection_element, enum_owners);
+                        collect(left, &right[name], collected, may_infer, enum_owners);
                     }
                 }
                 (TypeDescriptor::Enum(left), TypeDescriptor::Enum(right))
@@ -748,8 +749,16 @@ impl<'a> GenericInference<'a> {
                     for (name, left) in left {
                         if let (Some(left), Some(right)) = (left.as_deref(), right[name].as_deref())
                         {
-                            collect(left, right, collected, collection_element, enum_owners);
+                            collect(left, right, collected, true, enum_owners);
                         }
+                    }
+                }
+                (TypeDescriptor::Declared(left), TypeDescriptor::Declared(right))
+                    if left.id.has_same_head(&right.id)
+                        && left.id.arguments().len() == right.id.arguments().len() =>
+                {
+                    for (left, right) in left.id.arguments().iter().zip(right.id.arguments()) {
+                        collect(left, right, collected, true, enum_owners);
                     }
                 }
                 (
@@ -763,31 +772,38 @@ impl<'a> GenericInference<'a> {
                     },
                 ) if left_parameters.len() == right_parameters.len() => {
                     for (left, right) in left_parameters.iter().zip(right_parameters) {
-                        collect(left, right, collected, collection_element, enum_owners);
+                        collect(left, right, collected, may_infer, enum_owners);
                     }
-                    collect(left_result, right_result, collected, collection_element, enum_owners);
+                    collect(left_result, right_result, collected, may_infer, enum_owners);
                 }
                 _ => {}
             }
         }
 
-        let resolved = branches
-            .iter()
-            .map(|branch| self.resolve(branch))
-            .collect::<Vec<_>>();
-        let mut collected = HashMap::new();
-        let enum_owners = self.enum_constructors.keys().copied().collect();
-        for (index, branch) in resolved.iter().enumerate() {
-            for evidence in resolved.iter().skip(index + 1) {
-                collect(branch, evidence, &mut collected, false, &enum_owners);
-                collect(evidence, branch, &mut collected, false, &enum_owners);
+        loop {
+            let resolved = branches
+                .iter()
+                .map(|branch| self.resolve(branch))
+                .collect::<Vec<_>>();
+            let mut collected = HashMap::new();
+            let enum_owners = self.enum_constructors.keys().copied().collect();
+            for (index, branch) in resolved.iter().enumerate() {
+                for evidence in resolved.iter().skip(index + 1) {
+                    collect(branch, evidence, &mut collected, false, &enum_owners);
+                    collect(evidence, branch, &mut collected, false, &enum_owners);
+                }
             }
-        }
-        for (variable, evidence) in collected {
-            self.check(
-                &join_all_types(evidence),
-                &TypeDescriptor::Inference(variable),
-            )?;
+            if collected.is_empty() {
+                break;
+            }
+            // Each pass solves previously unknown variables with concrete evidence;
+            // a completed enum can then supply an empty collection's element type.
+            for (variable, evidence) in collected {
+                self.check(
+                    &join_all_types(evidence),
+                    &TypeDescriptor::Inference(variable),
+                )?;
+            }
         }
         Ok(())
     }

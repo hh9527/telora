@@ -21,7 +21,7 @@ export def verified_case = test.should_ok(fn() {
     let model: Model = {
         users: [user],
         labels: {role: "admin"},
-        selected: 'Some(user),
+        selected: Some(user),
     };
     let node: Node = {value: 1, children: [{value: 2, children: []}]};
     let encoded_user = codec.encode(codec.Value, user);
@@ -40,13 +40,13 @@ export def verified_case = test.should_ok(fn() {
     let verified = decoded_user == user
         && decoded_model == model
         && decoded_node == node
-        && codec.decode(User, parsed_json) == 'Ok(user)
-        && codec.decode(User, parsed_toml) == 'Ok(user)
-        && codec.decode(User, parsed_yaml) == 'Ok(user)
-        && !results.is_ok(codec.decode(User, 'Object({name: 'String("Ada")})))
-        && !results.is_ok(codec.decode(User, 'Object({
-            name: 'String("Ada"),
-            age: 'String("old"),
+        && codec.decode(User, parsed_json) == Ok(user)
+        && codec.decode(User, parsed_toml) == Ok(user)
+        && codec.decode(User, parsed_yaml) == Ok(user)
+        && !results.is_ok(codec.decode(User, codec.Value.Object({name: codec.Value.String("Ada")})))
+        && !results.is_ok(codec.decode(User, codec.Value.Object({
+            name: codec.Value.String("Ada"),
+            age: codec.Value.String("old"),
         })))
         && dict.keys(model.labels) == ["role"]
         && string.contains(model_schema_text, "properties")

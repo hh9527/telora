@@ -234,37 +234,43 @@ pair@[Int, _](1, "text")
 `_` 表示由完整调用上下文推断该类型实参。没有标记的 `value[index]` 只表示
 Array 索引。
 
-回调参数和 Result 分支需要足够的类型上下文。例如，`'Err("bad")` 只提供错误
+回调参数和 Result 分支需要足够的类型上下文。例如，`Err("bad")` 只提供错误
 类型，可以用完整契约确定成功类型及回调参数：
 
 ```telora
-let mapped: Result(Int, String) = result.map('Err("bad"), fn(value) { value });
-let explicit = result.map@[Int, String, Int]('Err("bad"), fn(value) { value });
+let mapped: Result(Int, String) = result.map(Err("bad"), fn(value) { value });
+let explicit = result.map@[Int, String, Int](Err("bad"), fn(value) { value });
 ```
 
-推断会综合完整泛型调用中的证据。当另一个实参能够确定外围 enum 时，单独一个
-variant 构造会等待该 enum 的证据。例如，`'Base`
-实参和 `Array(NodeId)` 实参可以共同推断出 `NodeId`。只有完整调用仍确实存在
-歧义或约束不足时，才使用显式 `@[...]`。
+prelude 提供 `True/False`、`Some/None` 和 `Ok/Err`，分别属于 Bool、Option 和
+Result。成员名称确定枚举家族；泛型参数由载荷、完整调用和结果上下文共同确定。
+`Some(1)` 的类型是 `Option(Int)`；单独使用 `None` 时，需要确定其元素类型。
+`Ok(1)` 还需要错误类型，`Err("bad")` 还需要成功类型。
 
 匿名 Struct 实参同样参与完整调用上下文。泛型回调结果可以确定较早 seed 中的
-variant 构造字段和空集合字段。因此，下列 fold 会直接推断出 `flag: Bool`
-和 `items: Array(Int)`：
+空集合字段的元素类型。下列 fold 的 `flag` 由 `False` 确定为 Bool，
+`items` 结合回调推断为 `Array(Int)`：
 
 ```telora
-array.fold([1, 2, 3], {flag: 'False, items: []}, fn(state, item) {
+array.fold([1, 2, 3], {flag: False, items: []}, fn(state, item) {
     {flag: item > 1 || state.flag, items: array.push(state.items, item)}
 })
 ```
 
-回调分支需要共同类型。使用返回类型注解、`.ty!(Option(String))` 或调用的显式
-`@[Ty]`，可以为不同 variant 提供完整的 enum 契约。编译器按此契约检查每个分支
-和 payload，并要求字段的类型具有唯一的补全方式。
+同一家族的不同分支可以互相补全泛型参数，分支顺序不影响结果：
 
-Telora 合并分支证据：泛型代码中的 `if` 若为同一个预期 enum
-结果贡献不同的 variant 构造，会按共同 enum 契约检查它们。例如，有类型的
-`Array(Option(Output))` fold 可以在一个分支 push `'None`，在另一个分支 push
-`'Some(output)`。当回调仍然约束不足时，带有完整契约的具名辅助函数依然有用。
+```telora
+let selected = if True { Some(1) } else { None }; # Option(Int)
+let result = match Some("hi") {
+    Some(x) => Ok(x),
+    None => Err(2),
+}; # Result(String, Int)
+```
+
+这种证据合并适用于 `if`、`if let`、`match`、显式返回值和集合元素，也适用于
+同一具名泛型 enum 的不同成员。嵌套参数逐层补全；不同枚举声明保持独立身份，
+已有的具体类型必须相容。始终没有证据的参数需要返回类型注解、`.ty!(Ty)` 或
+显式 `@[Ty]`。
 
 ## Struct、enum 与模式
 

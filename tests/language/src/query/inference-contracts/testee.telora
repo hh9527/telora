@@ -14,41 +14,41 @@ def before_string = fn(value) { value < "z" };
 def invert_bool: Fn(Bool) -> Bool = fn(value) { !value };
 def invert_int: Fn(Int) -> Int = fn(value) { !value };
 
-type Scalar = enum {'Integer(Int), 'Text(String)};
-def branch_left: Scalar = if 'True { 'Integer(1) } else { 'Text("x") };
-def branch_right: Scalar = if 'True { 'Text("x") } else { 'Integer(1) };
-def branch_nested = (if 'True { if 'False { 'Integer(1) } else { 'Text("x") } } else { 'Integer(1) }).ty!(Scalar);
-def branch_three = (if 'True { if 'False { 'Integer(1) } else { 'Text("x") } } else { 'Integer(2) }).ty!(Scalar);
-def metadata_branch = if 'True { Int } else { String };
+type Scalar = enum {Integer(Int), Text(String)};
+def branch_left: Scalar = if True { Scalar.Integer(1) } else { Scalar.Text("x") };
+def branch_right: Scalar = if True { Scalar.Text("x") } else { Scalar.Integer(1) };
+def branch_nested = (if True { if False { Scalar.Integer(1) } else { Scalar.Text("x") } } else { Scalar.Integer(1) }).ty!(Scalar);
+def branch_three = (if True { if False { Scalar.Integer(1) } else { Scalar.Text("x") } } else { Scalar.Integer(2) }).ty!(Scalar);
+def metadata_branch = if True { Int } else { String };
 
-type RecordKind = enum {'Full, 'Empty, 'First, 'Second, 'Third, 'Ints, 'Strings};
+type RecordKind = enum {Full, Empty, First, Second, Third, Ints, Strings};
 type Record = struct {kind: RecordKind, path: Array(Int)};
 def choose_record: Fn(Bool) -> Record = fn(flag) {
     if flag {
-        {kind: 'Full, path: [1]}
+        {kind: RecordKind.Full, path: [1]}
     } else {
-        {kind: 'Empty, path: []}
+        {kind: RecordKind.Empty, path: []}
     }
 };
 
 def choose_match: Fn(Int) -> Record = fn(value) {
     match value {
-        0 => {kind: 'First, path: []},
-        1 => {kind: 'Second, path: [1]},
-        2 => {kind: 'Third, path: []},
+        0 => {kind: RecordKind.First, path: []},
+        1 => {kind: RecordKind.Second, path: [1]},
+        2 => {kind: RecordKind.Third, path: []},
     }
 };
 
 type Path = struct {path: Array(Int)};
 def choose_nested: Fn(Bool) -> Option(Tuple([Path])) = fn(flag) {
-    if flag { 'Some(({path: []},)) } else { 'Some(({path: [1]},)) }
+    if flag { Some(({path: []},)) } else { Some(({path: [1]},)) }
 };
 
 def choose_conflict: Fn(Int) -> Record = fn(value) {
     match value {
-        0 => {kind: 'Empty, path: []},
-        1 => {kind: 'Ints, path: [1]},
-        2 => {kind: 'Strings, path: [2]},
+        0 => {kind: RecordKind.Empty, path: []},
+        1 => {kind: RecordKind.Ints, path: [1]},
+        2 => {kind: RecordKind.Strings, path: [2]},
     }
 };
 
@@ -69,34 +69,34 @@ def countdown = fn(value) {
     if value < 1 { 0 } else { countdown(value - 1) }
 };
 def even = fn(value) -> Bool {
-    if value < 1 { 'True } else { odd(value - 1) }
+    if value < 1 { True } else { odd(value - 1) }
 };
 def odd = fn(value) -> Bool {
-    if value < 1 { 'False } else { even(value - 1) }
+    if value < 1 { False } else { even(value - 1) }
 };
 
 def polymorphic_identity = fn(value) { value };
 def polymorphic_keep = fn(left: Int, right) { (left, right) };
 def nested_constraints = fn(left) { fn(right) { left + right + 1 } };
 
-def array_union: Array(Scalar) = ['Integer(1), 'Text("x")];
-def array_dynamic: Array(Value) = ['Int(1), 'String("x")];
+def array_union: Array(Scalar) = [Scalar.Integer(1), Scalar.Text("x")];
+def array_dynamic: Array(Value) = [Value.Int(1), Value.String("x")];
 def dict_union = {
-    let ints: Dict(Scalar) = {a: 'Integer(1)};
-    let strings: Dict(Scalar) = {b: 'Text("x")};
+    let ints: Dict(Scalar) = {a: Scalar.Integer(1)};
+    let strings: Dict(Scalar) = {b: Scalar.Text("x")};
     {...ints, ...strings}
 };
 def field_projection = {
     let record = {value: 1};
     let dictionary: Dict(String) = {value: "x"};
-    let alternative = if 'True { {value: 1} } else { {value: 2} };
+    let alternative = if True { {value: 1} } else { {value: 2} };
     let dynamic = dyn.pack(Int, record.value);
     (record.value, dictionary.value, alternative.value, dynamic)
 };
 
 def stop: Fn() -> Never = fn() { fail!("stop") };
-def never_branch = if 'True { 1 } else { stop() };
-def all_never = if 'True { stop() } else { stop() };
+def never_branch = if True { 1 } else { stop() };
+def all_never = if True { stop() } else { stop() };
 def never_array = [stop(), 1];
 
 def compose = fn(outer, inner, value) { outer(inner(value)) };

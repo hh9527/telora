@@ -4,15 +4,15 @@ import "std/value" { Value };
 
 export def check: Fn(Value) -> Value = fn(actual) {
     match support.record_field(actual, "stdout") {
-        'Some('Array(records)) => {
+        Some(Value.Array(records)) => {
             let cases = array.filter(records, fn(record) { support.string_field_equals(record, "record", "case") });
             let diagnostics = array.filter(records, fn(record) { support.string_field_equals(record, "record", "diagnostic") });
-            if support.exit_code(actual) == 'Some(1) && array.length(cases) == 5
+            if support.exit_code(actual) == Some(1) && array.length(cases) == 5
                 && array.all(cases, fn(record) { support.string_field_equals(record, "status", "failed") })
                 && array.all(diagnostics, fn(record) { support.string_field_equals(record, "phase", "fixture") }) {
-                'True
-            } else { 'False }
+                Value.True
+            } else { Value.False }
         },
-        _ => 'False,
+        _ => Value.False,
     }
 };

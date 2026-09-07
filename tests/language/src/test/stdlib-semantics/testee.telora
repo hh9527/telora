@@ -13,20 +13,20 @@ type Endpoint = struct {host: String, port: Int};
 
 export def option_and_result = test.should_ok(fn() {
     expect({
-        let ok: Result(Int, String) = 'Ok(3);
-        let err: Result(Int, String) = 'Err("bad");
-        option.map('Some(2), fn(value) { value + 1 }) == 'Some(3)
-            && option.map('None, fn(value) { value / 0 }) == 'None
-            && option.flat_map('Some(2), fn(value) { 'Some(value + 2) }) == 'Some(4)
-            && option.flat_map('None, fn(value) { 'Some(value / 0) }) == 'None
-            && option.unwrap_or('Some(4), 9) == 4
-            && option.unwrap_or('None, 9) == 9
-            && option.is_some('Some("x"))
-            && !option.is_some('None)
-            && result.map(ok, fn(value) { value + 1 }) == 'Ok(4)
-            && result.map(err, fn(value) { value / 0 }) == 'Err("bad")
-            && result.map_err(err, fn(error) { error }) == 'Err("bad")
-            && result.map_err(ok, fn(error) { error }) == 'Ok(3)
+        let ok: Result(Int, String) = Ok(3);
+        let err: Result(Int, String) = Err("bad");
+        option.map(Some(2), fn(value) { value + 1 }) == Some(3)
+            && option.map(None, fn(value) { value / 0 }) == None
+            && option.flat_map(Some(2), fn(value) { Some(value + 2) }) == Some(4)
+            && option.flat_map(None, fn(value) { Some(value / 0) }) == None
+            && option.unwrap_or(Some(4), 9) == 4
+            && option.unwrap_or(None, 9) == 9
+            && option.is_some(Some("x"))
+            && !option.is_some(None)
+            && result.map(ok, fn(value) { value + 1 }) == Ok(4)
+            && result.map(err, fn(value) { value / 0 }) == Err("bad")
+            && result.map_err(err, fn(error) { error }) == Err("bad")
+            && result.map_err(ok, fn(error) { error }) == Ok(3)
             && result.unwrap_or(ok, 9) == 3
             && result.unwrap_or(err, 9) == 9
             && result.is_ok(ok)
@@ -46,12 +46,12 @@ export def dictionaries = test.should_ok(fn() {
         dict.keys(source) == ["a", "middle", "z"]
             && dict.values(source) == [1, 2, 3]
             && dict.pairs(source) == [("a", 1), ("middle", 2), ("z", 3)]
-            && dict.get(round_trip, "a") == 'Some(1)
-            && dict.get(round_trip, "middle") == 'Some(2)
-            && dict.get(round_trip, "z") == 'Some(3)
-            && dict.get(merged, "a") == 'Some(1)
-            && dict.get(merged, "b") == 'Some(2)
-            && dict.get(merged, "shared") == 'Some(4)
+            && dict.get(round_trip, "a") == Some(1)
+            && dict.get(round_trip, "middle") == Some(2)
+            && dict.get(round_trip, "z") == Some(3)
+            && dict.get(merged, "a") == Some(1)
+            && dict.get(merged, "b") == Some(2)
+            && dict.get(merged, "shared") == Some(4)
             && dict.keys(dict.from_pairs(empty)) == []
     })
 });
@@ -77,9 +77,9 @@ export def format_fragments = test.should_ok(fn() {
 
 export def codec_and_schema = test.should_ok(fn() {
     expect({
-        let boolean = codec.decode(Bool, codec.encode(codec.Value, 'True.ty!(Bool)))
+        let boolean = codec.decode(Bool, codec.encode(codec.Value, True.ty!(Bool)))
             |> result.unwrap;
-        let none = codec.decode(Option(Int), codec.encode(codec.Value, 'None.ty!(Option(Int))))
+        let none = codec.decode(Option(Int), codec.encode(codec.Value, None.ty!(Option(Int))))
             |> result.unwrap;
         let some = codec.decode(Option(Int), codec.encode(codec.Value, 3))
             |> result.unwrap;
@@ -87,9 +87,9 @@ export def codec_and_schema = test.should_ok(fn() {
         let bool_schema = json.stringify(json.schema(Bool));
         let option_schema = json.stringify(json.schema(Option(Int)));
         boolean
-            && none == 'None
-            && some == 'Some(3)
-            && encoded == 'Int(4)
+            && none == None
+            && some == Some(3)
+            && encoded == codec.Value.Int(4)
             && string.contains(bool_schema, "boolean")
             && string.contains(option_schema, "null")
     })

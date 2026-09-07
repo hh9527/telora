@@ -1,2 +1,2 @@
-def equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) { 'True };
+def equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) { True };
 export def invalid = interpreter!(equal);

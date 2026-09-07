@@ -340,9 +340,16 @@ impl<'a> GenericInference<'a> {
                             )?);
                         }
                     }
-                    TypeDescriptor::Dict(Box::new(
-                        item_expected.unwrap_or_else(|| join_all_types(item_types)),
-                    ))
+                    let item = if let Some(expected) = item_expected {
+                        expected
+                    } else {
+                        let dictionaries = item_types.iter()
+                            .map(|ty| TypeDescriptor::Dict(Box::new(ty.clone())))
+                            .collect::<Vec<_>>();
+                        self.merge_structural_join_evidence(&dictionaries)?;
+                        join_all_types(item_types.iter().map(|ty| self.resolve(ty)).collect())
+                    };
+                    TypeDescriptor::Dict(Box::new(item))
                 } else {
                     if let Some(TypeDescriptor::Dict(item)) = expected.map(|ty| self.resolve(ty)) {
                         for field in fields {

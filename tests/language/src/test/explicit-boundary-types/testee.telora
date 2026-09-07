@@ -13,8 +13,8 @@ export def user_defined_validate = test.should_ok(fn() {
 
 export def annotated_recursion = test.should_ok(fn() {
     def down: Fn(Int) -> Int = fn(value) { if value == 0 { 0 } else { down(value - 1) } };
-    def even: Fn(Int) -> Bool = fn(value) { if value == 0 { 'True } else { odd(value - 1) } };
-    def odd: Fn(Int) -> Bool = fn(value) { if value == 0 { 'False } else { even(value - 1) } };
+    def even: Fn(Int) -> Bool = fn(value) { if value == 0 { True } else { odd(value - 1) } };
+    def odd: Fn(Int) -> Bool = fn(value) { if value == 0 { False } else { even(value - 1) } };
     expect(down(4) == 0 && even(4) && odd(3))
 });
 
@@ -24,8 +24,8 @@ export def closure_context = test.should_ok(fn() {
 });
 
 export def explicit_partial_result = test.should_ok(fn() {
-    let mapped: Result(Int, String) = result.map('Err("bad"), fn(value) { value });
-    let explicit = result.map@[Int, String, Int]('Err("bad"), fn(value) { value });
+    let mapped: Result(Int, String) = result.map(Err("bad"), fn(value) { value });
+    let explicit = result.map@[Int, String, Int](Err("bad"), fn(value) { value });
     expect(mapped == explicit)
 });
 
@@ -33,10 +33,10 @@ export def cast_and_pack = test.should_ok(fn() {
     let checked: Result(Int, String) = 42.cast!(Int);
     let rejected: Result(Int, String) = "text".cast!(Int);
     let packed = dyn.pack(IntFunction, fn(value) { value });
-    expect(checked == 'Ok(42)
+    expect(checked == Ok(42)
         && !result.is_ok(rejected)
         && match dyn.project_with(IntFunction, packed) {
-            'Some(function) => function(7) == 7,
-            'None => 'False,
+            Some(function) => function(7) == 7,
+            None => False,
         })
 });

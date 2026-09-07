@@ -5,21 +5,21 @@ import "@src/test-support" {expect};
 
 type Item = struct {count: Int};
 type Action = struct {run: Fn(Int) -> Int};
-@json.rename_all('CamelCase)
+@json.rename_all(json.RenameCase.CamelCase)
 type Collision = struct {foo_bar: Int, fooBar: Int};
 
 export def direct_value = test.should_ok(fn() {
     let item: Item = {count: 3};
     let value: codec.Value = codec.encode(codec.Value, item);
-    expect(value == 'Object({count: 'Int(3)}))
+    expect(value == codec.Value.Object({count: codec.Value.Int(3)}))
 });
 
 export def value_identity = test.should_ok(fn() {
-    let input: codec.Value = 'Array(['Int(1), 'String("two")]);
+    let input: codec.Value = codec.Value.Array([codec.Value.Int(1), codec.Value.String("two")]);
     let encoded: codec.Value = codec.encode(codec.Value, input);
     expect(encoded == input && match codec.decode(codec.Value, encoded) {
-        'Ok(value) => value == input,
-        'Err(_) => 'False,
+        Ok(value) => value == input,
+        Err(_) => False,
     })
 });
 

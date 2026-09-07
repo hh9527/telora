@@ -1,1 +1,1 @@
-variant 'None does not accept a payload
+with Fn(Int) -> enum {None, Some(Int)}
