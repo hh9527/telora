@@ -312,7 +312,7 @@ impl<'a> Lowerer<'a> {
                     .find(|child| {
                         matches!(
                             self.rule(*child),
-                            Some(Rule::PostfixIntrinsicSuffix | Rule::ProjectionSuffix)
+                            Some(Rule::PostfixIntrinsicSuffix | Rule::ProjectionSuffix | Rule::FieldProjectionSuffix)
                         )
                     })
                     .ok_or_else(|| self.error(node, "dot postfix expression has no suffix"))?;
@@ -325,7 +325,18 @@ impl<'a> Lowerer<'a> {
                     );
                 }
                 let receiver = Box::new(receiver_expression);
-                if let Some(field) = self.token_children(suffix, Token::Identifier).last() {
+                if self.rule(suffix) == Some(Rule::FieldProjectionSuffix) {
+                    let mut fields = Vec::new();
+                    for entry in self.rule_children(suffix)
+                        .filter(|child| self.rule(*child) == Some(Rule::FieldProjectionEntry))
+                    {
+                        let mut names = self.token_children(entry, Token::Identifier);
+                        let source = names.next().ok_or_else(|| self.error(entry, "projection requires a field"))?;
+                        let destination = names.next().unwrap_or(source);
+                        fields.push((self.identifier(source), self.identifier(destination)));
+                    }
+                    ExprKind::FieldProjection { receiver, fields }
+                } else if let Some(field) = self.token_children(suffix, Token::Identifier).last() {
                     ExprKind::Field {
                         receiver,
                         field: self.identifier(field),

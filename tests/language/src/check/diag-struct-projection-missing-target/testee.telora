@@ -1,0 +1,4 @@
+type Source = struct {x: Int};
+type Foo = struct {x: Int, y: Int};
+def source: Source = {x: 1};
+export def result: Foo = source.{x};

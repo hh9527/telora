@@ -249,6 +249,28 @@ impl<'a> Compiler<'a> {
                 );
                 self.compile_expr_unowned(&call)
             }
+            ExprKind::FieldProjection { receiver, fields } => {
+                let dict = self.compile_expr(receiver)?;
+                let mut projected = Vec::with_capacity(fields.len());
+                for (source, destination) in fields {
+                    let dst = self.allocate();
+                    self.emit(
+                        Operation::GetField {
+                            dst,
+                            dict,
+                            field: source.value.clone(),
+                        },
+                        source.location,
+                    );
+                    projected.push((destination.value.clone(), dst));
+                }
+                let dst = self.allocate();
+                self.emit(
+                    Operation::MakeDict { dst, fields: projected },
+                    expression.location,
+                );
+                Ok(dst)
+            }
             ExprKind::Field { receiver, field } => {
                 let dict = self.compile_expr(receiver)?;
                 let dst = self.allocate();

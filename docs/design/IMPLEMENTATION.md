@@ -243,6 +243,13 @@ Struct 合并更新复用 Dict 的运行时字段表示。严格推断根据 `<~
 创建新容器并复制 base 的 `TypeId`。字段直接复制 `Val`，保留嵌套身份及来源
 位置，新容器使用指令位置，分配纳入当前 quota account。
 
+字段投影以 `FieldProjection` AST 节点保存 receiver 与有位置的源名/目标名。
+严格推断从源具名 Struct 读取字段类型；普通构造检查 exact nominal target，
+更新右侧检查字段子集。初步推断只遍历 receiver，不从投影形状猜测目标身份。
+编译器把 receiver 求值到一个寄存器，再发出各字段的 `GetField` 和一次
+`MakeDict`；普通构造沿用 `OwnDeclared` 附加目标身份。字段值直接复制，
+保持来源位置，投影无需额外 VM 指令。
+
 `Dyn.project_with` 对目标 witness 和 package descriptor 直接执行
 `TypeGraph::decode_persistent + canonicalize`。它先为 declared node 建立 canonical
 TypeId，再闭合递归边；不能先降成扁平 `TypeDescriptor`，否则 `Option(Node)` 一类

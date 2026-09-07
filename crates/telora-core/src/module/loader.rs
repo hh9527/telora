@@ -908,7 +908,7 @@ fn expression_has_import(expression: &Expr) -> bool {
         ExprKind::Binary { left, right, .. } => {
             expression_has_import(left) || expression_has_import(right)
         }
-        ExprKind::Field { receiver, .. } => expression_has_import(receiver),
+        ExprKind::Field { receiver, .. } | ExprKind::FieldProjection { receiver, .. } => expression_has_import(receiver),
         ExprKind::Index { receiver, index } => {
             expression_has_import(receiver) || expression_has_import(index)
         }

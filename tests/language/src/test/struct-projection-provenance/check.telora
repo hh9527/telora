@@ -1,0 +1,40 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        'Some('Array(records)) => {
+            let located: Fn(String, String, Int, Int) -> Bool = fn(name, source, line, column) {
+                array.any(records, fn(record) {
+                    support.string_field_equals(record, "record", "diagnostic")
+                        && support.string_field_equals(record, "test", name)
+                        && match support.record_field(record, "labels") {
+                            'Some('Array(labels)) => array.any(labels, fn(label) {
+                                support.string_field_contains(label, "source", source)
+                                    && support.string_field_equals(label, "message", "subject 1 originated here")
+                                    && match support.record_field(label, "location") {
+                                        'Some(location) => support.record_field(location, "line") == 'Some('Int(line))
+                                            && support.record_field(location, "column") == 'Some('Int(column)),
+                                        _ => 'False,
+                                    }
+                            }),
+                            _ => 'False,
+                        }
+                })
+            };
+            let notices = array.filter(records, fn(record) {
+                support.string_field_equals(record, "record", "diagnostic")
+                    && support.string_field_equals(record, "message", "receiver evaluated")
+                    && support.string_field_equals(record, "test", "once")
+            });
+            support.bool_value(support.exit_code(actual) == 'Some(1)
+                && located("original", "struct-projection-provenance/provider", 2, 32)
+                && located("renamed", "struct-projection-provenance/provider", 2, 39)
+                && located("update", "struct-projection-provenance/provider", 2, 39)
+                && located("container", "struct-projection-provenance/testee", 4, 23)
+                && array.length(notices) == 1)
+        },
+        _ => 'False,
+    }
+};

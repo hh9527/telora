@@ -1,0 +1,53 @@
+import "std/test" as test;
+import "std/dyn" as dyn;
+import "@src/test-support" {expect};
+
+type Source = struct {x: Int, y: String, extra: Int};
+type Foo = struct {x: Int, Y: String};
+type Twin = struct {x: Int, Y: String};
+type Empty = struct {};
+type Pair = struct {first: Int, second: Int};
+type Box(A) = struct {value: A};
+type Named(A) = struct {item: A};
+def source: Source = {x: 1, y: "hi", extra: 3};
+
+export def construct = test.should_ok(fn() {
+    let selected: Foo = source.{x, y as Y,};
+    expect(selected.x == 1 && selected.Y == "hi"
+        && dyn.project_with(Foo, dyn.pack(Foo, selected)) == 'Some(selected)
+        && dyn.project_with(Twin, dyn.pack(Foo, selected)) == 'None)
+});
+
+export def update = test.should_ok(fn() {
+    let base: Foo = {x: 9, Y: "base"};
+    let updated = base <~ source.{x, y as Y} <~ {x: 2};
+    expect(updated.x == 2 && updated.Y == "hi" && base.x == 9)
+});
+
+def consume: Fn(Foo) -> String = fn(value) { value.Y };
+def select: Fn(Source) -> Foo = fn(value) { value.{x, y as Y} };
+def choose: for(A) Fn(A, A) -> A = fn(first, second) { first };
+
+export def contexts = test.should_ok(fn() {
+    let expected: Foo = {x: 1, Y: "hi"};
+    expect(consume(source.{x, y as Y}) == "hi"
+        && select(source) == expected
+        && source.{x, y as Y} == expected
+        && expected == source.{x, y as Y}
+        && choose(source.{x, y as Y}, expected) == expected)
+});
+
+export def empty_and_repeated = test.should_ok(fn() {
+    let empty: Empty = source.{};
+    let pair: Pair = source.{x as first, x as second};
+    expect(empty == {} && pair.first == 1 && pair.second == 1
+        && (source <~ source.{}).extra == 3)
+});
+
+def rename: for(A) Fn(Box(A)) -> Named(A) = fn(source) { source.{value as item} };
+
+export def generic = test.should_ok(fn() {
+    let source: Box(String) = {value: "generic"};
+    let projected: Named(String) = source.{value as item};
+    expect(projected.item == "generic" && rename(source) == projected)
+});

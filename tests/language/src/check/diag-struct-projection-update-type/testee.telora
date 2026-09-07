@@ -1,0 +1,5 @@
+type Source = struct {x: String};
+type Foo = struct {x: Int};
+def source: Source = {x: "wrong"};
+def base: Foo = {x: 0};
+export def result = base <~ source.{x};

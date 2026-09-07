@@ -1,0 +1,4 @@
+type Source = struct {x: Int, y: String};
+type Target = struct {x: Int, Y: String};
+def source: Source = {x: 1, y: "hi"};
+export def selected: Target = source.{x, y as Y};

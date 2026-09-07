@@ -1,0 +1,5 @@
+type Source = struct {x: Int, y: Int};
+type Foo = struct {x: Int};
+def source: Source = {x: 1, y: 2};
+def base: Foo = {x: 0};
+export def result = base <~ source.{y};

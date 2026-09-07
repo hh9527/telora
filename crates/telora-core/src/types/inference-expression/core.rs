@@ -1,4 +1,29 @@
 impl<'a> GenericInference<'a> {
+    fn infer_field_projection(
+        &mut self,
+        receiver: &Expr,
+        fields: &[(crate::ast::Identifier, crate::ast::Identifier)],
+        environment: &HashMap<String, TypeDescriptor>,
+    ) -> Result<BTreeMap<String, TypeDescriptor>, String> {
+        let source = self.infer(receiver, environment, None)?;
+        let source = self
+            .struct_update_fields(&source)
+            .map_err(|_| "field projection requires a named struct source".to_string())?;
+        let mut projected = BTreeMap::new();
+        for (name, destination) in fields {
+            let ty = source
+                .get(&name.value)
+                .ok_or_else(|| format!("unknown projection source field {:?}", name.value))?;
+            if projected
+                .insert(destination.value.clone(), ty.clone())
+                .is_some()
+            {
+                return Err(format!("duplicate projection destination {:?}", destination.value));
+            }
+        }
+        Ok(projected)
+    }
+
     fn infer_struct_update(
         &mut self,
         expression: &Expr,
@@ -6,7 +31,13 @@ impl<'a> GenericInference<'a> {
         target: &BTreeMap<String, TypeDescriptor>,
     ) -> Result<(), String> {
         let mut contributed = BTreeMap::new();
-        if let ExprKind::Dict(entries) = &expression.value {
+        if let ExprKind::FieldProjection { receiver, fields } = &expression.value {
+            contributed = self.infer_field_projection(receiver, fields, environment)?;
+            self.records.insert(
+                expression.location,
+                TypeDescriptor::Struct(contributed.clone()),
+            );
+        } else if let ExprKind::Dict(entries) = &expression.value {
             let mut spreads = BTreeMap::new();
             let mut winners = BTreeMap::new();
             let mut explicit = BTreeSet::new();
@@ -85,7 +116,8 @@ impl<'a> GenericInference<'a> {
         });
         let structural_expected = expected_declared
             .as_ref()
-            .filter(|_| constructs_declared_value)
+            .filter(|_| constructs_declared_value
+                && !matches!(expression.value, ExprKind::FieldProjection { .. }))
             .map(|declared| declared.body.as_ref());
         let mut result =
             self.infer_inner(expression, environment, structural_expected.or(expected));
@@ -577,6 +609,18 @@ impl<'a> GenericInference<'a> {
                     self.resolve(&numeric)
                 }
             },
+            ExprKind::FieldProjection { receiver, fields } => {
+                let target = expected.map(|ty| self.expose_named(ty));
+                let Some(TypeDescriptor::Declared(declared)) = target else {
+                    return Err("field projection requires a named struct target context".into());
+                };
+                if !matches!(declared.body.as_ref(), TypeDescriptor::Struct(_)) {
+                    return Err("field projection requires a named struct target context".into());
+                }
+                let projected = self.infer_field_projection(receiver, fields, environment)?;
+                self.check(&TypeDescriptor::Struct(projected), &declared.body)?;
+                TypeDescriptor::Declared(declared)
+            }
             ExprKind::Field { receiver, field } => {
                 if let Some(scheme) = self
                         .namespace_interface(receiver)
@@ -729,7 +773,7 @@ impl<'a> GenericInference<'a> {
                         let mut argument_order = (0..arguments.len()).collect::<Vec<_>>();
                         argument_order.sort_by_key(|index| match &arguments[*index].value {
                             _ if self.explicit_scheme(&arguments[*index]).is_some() => 0,
-                            ExprKind::Dict(_) => 2,
+                            ExprKind::Dict(_) | ExprKind::FieldProjection { .. } => 2,
                             ExprKind::Atom(_) => 3,
                             _ => 1,
                         });

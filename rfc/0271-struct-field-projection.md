@@ -1,6 +1,11 @@
 # RFC 0271: Struct Field Projection
 
 - Status: Accepted
+- Implementation: Complete. Debug build and `cargo test --workspace` passed,
+  including 269 core tests, 41 CLI tests and 256 language fixture groups.
+  New acceptance cases are written in Telora and cover nominal construction,
+  updates, generic and equality contexts, static rejection, exported types,
+  field/container provenance and single receiver evaluation.
 - Tracking: [#158](https://github.com/hh9527/telora/issues/158)
 - Baseline: `8f4c085`
 - Scope: Explicit field selection and renaming for nominal construction and update.

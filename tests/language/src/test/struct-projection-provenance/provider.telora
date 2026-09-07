@@ -1,0 +1,2 @@
+export type Source = struct {x: Int, y: String};
+export def source: Source = {x: 11, y: "hi"};

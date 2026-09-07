@@ -98,7 +98,7 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
             free_expr(left, bound, free);
             free_expr(right, bound, free);
         }
-        ExprKind::Field { receiver, .. } => free_expr(receiver, bound, free),
+        ExprKind::Field { receiver, .. } | ExprKind::FieldProjection { receiver, .. } => free_expr(receiver, bound, free),
         ExprKind::Index { receiver, index } => {
             free_expr(receiver, bound, free);
             free_expr(index, bound, free);
@@ -283,7 +283,7 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
             collect_runtime_names(left, names);
             collect_runtime_names(right, names);
         }
-        ExprKind::Field { receiver, .. } => collect_runtime_names(receiver, names),
+        ExprKind::Field { receiver, .. } | ExprKind::FieldProjection { receiver, .. } => collect_runtime_names(receiver, names),
         ExprKind::Index { receiver, index } => {
             collect_runtime_names(receiver, names);
             collect_runtime_names(index, names);

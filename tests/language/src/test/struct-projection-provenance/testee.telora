@@ -1,0 +1,23 @@
+import "std/test" as test;
+import "./provider" as provider;
+type Target = struct {x: Int, Y: String};
+def selected: Target = provider.source.{x, y as Y};
+
+export def original = test.should_ok(fn() { fail!("original", selected.x) });
+export def renamed = test.should_ok(fn() { fail!("renamed", selected.Y) });
+export def container = test.should_ok(fn() { fail!("container", selected) });
+export def update = test.should_ok(fn() {
+    let base: Target = {x: 0, Y: "base"};
+    let updated = base <~ provider.source.{y as Y};
+    fail!("update", updated.Y)
+});
+
+def notice: Fn() -> Result(Int, String) = fn() { 'Err("receiver evaluated") };
+def receiver: Fn() -> provider.Source = fn() {
+    let warning = notice.should_ok!();
+    provider.source
+};
+export def once = test.should_ok(fn() {
+    let selected: Target = receiver().{x, y as Y};
+    selected
+});

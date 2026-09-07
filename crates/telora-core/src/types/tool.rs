@@ -636,6 +636,7 @@ fn collect_nested_annotation_types(
             )?;
         }
         ExprKind::Unary { operand, .. }
+        | ExprKind::FieldProjection { receiver: operand, .. }
         | ExprKind::Propagate { operand }
         | ExprKind::Field {
             receiver: operand, ..

@@ -102,6 +102,10 @@ fn infer_expr_with(
                 _ => None,
             }
         }
+        ExprKind::FieldProjection { receiver, .. } => {
+            infer_expr_with(receiver, environment, record);
+            None
+        }
         ExprKind::Field { receiver, field } => {
             match infer_expr_with(receiver, environment, record) {
                 Some(TypeDescriptor::Struct(fields)) => fields.get(&field.value).cloned(),

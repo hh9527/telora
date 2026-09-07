@@ -639,6 +639,7 @@ fn expression_references_names(
             expression_references_names(&block.value.result, names, &block_bound)
         }
         ExprKind::Unary { operand, .. }
+        | ExprKind::FieldProjection { receiver: operand, .. }
         | ExprKind::Propagate { operand }
         | ExprKind::Field {
             receiver: operand, ..

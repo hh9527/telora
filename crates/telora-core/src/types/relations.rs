@@ -156,7 +156,7 @@ fn potentially_assignable(actual: &TypeDescriptor, expected: &TypeDescriptor) ->
 }
 
 fn expression_constructs_declared_value(expression: &Expr) -> bool {
-    matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_))
+    matches!(expression.value, ExprKind::Dict(_) | ExprKind::Atom(_) | ExprKind::FieldProjection { .. })
         || matches!(
             &expression.value,
             ExprKind::Call { callee, .. } if matches!(callee.value, ExprKind::Atom(_))

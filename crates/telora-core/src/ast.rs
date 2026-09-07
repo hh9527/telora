@@ -128,6 +128,10 @@ pub enum ExprKind {
         receiver: Box<Expr>,
         field: Identifier,
     },
+    FieldProjection {
+        receiver: Box<Expr>,
+        fields: Vec<(Identifier, Identifier)>,
+    },
     Index {
         receiver: Box<Expr>,
         index: Box<Expr>,

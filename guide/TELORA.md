@@ -156,6 +156,28 @@ Struct spread 用于更新字面量，普通 Dict spread 使用 `Dict(T)` 操作
 求值一次，被覆盖的表达式也会求值。复制的字段保留原始位置，新容器的位置
 来自更新表达式。
 
+### 字段投影
+
+`source.{x, y as Y}` 从具名 struct 选择字段，并可为目标字段指定新名称。
+
+```telora
+type Source = struct {x: Int, y: String, extra: Int};
+type Foo = struct {x: Int, Y: String};
+def select: Fn(Source) -> Foo = fn(source) { source.{x, y as Y} };
+def update = fn(base: Foo, source: Source) {
+    base <~ source.{x, y as Y}
+};
+```
+
+构造时，由类型注解、函数参数、返回值或相等比较另一侧的类型确定目标具名类型；例如
+`let selected: Foo = source.{x, y as Y};`。投影后的字段须完整匹配目标类型。
+用于 `<~` 右侧时，投影提供更新字段子集，结果保持左侧类型。
+
+源字段须存在，目标字段名须唯一，对应值须类型兼容。可把同一个源字段映射
+到多个不同目标名。空投影 `.{}` 可用于构造具名空 struct 或提供空更新。
+接收者只求值一次，所选字段保留原值的位置与类型身份。普通投影构造要求
+目标类型上下文，字段形状本身不决定具名类型。
+
 ### 比较与控制流
 
 六种比较共享一个不可结合的优先级层。需要比较某个比较结果时必须写括号；

@@ -551,7 +551,7 @@ impl Resolver {
                 self.index_expr(right, scopes);
                 None
             }
-            ExprKind::Field { receiver, .. } => {
+            ExprKind::Field { receiver, .. } | ExprKind::FieldProjection { receiver, .. } => {
                 self.index_expr(receiver, scopes);
                 None
             }
