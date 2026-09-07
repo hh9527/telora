@@ -1,8 +1,8 @@
 # RFC 0274: Unified Constructors
 
-- Status: Implemented on the tracking branch. Construction checks and
+- Status: Implemented and merged into main. Construction checks and
   `Unchecked(T)` are carried by [RFC 0275](0275-construction-checks-and-unchecked.md),
-  under the same tracking issue. Integration into main remains a separate decision.
+  under the same tracking issue; that follow-up remains a draft.
 - Tracking: [#161](https://github.com/hh9527/telora/issues/161)
 - Branch: `feat/0161-unified-constructors`
 - Baseline: `83bb8a6`
