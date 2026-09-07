@@ -239,6 +239,11 @@ enum 构造通过 inference variable 和独立的构造约束记录归属、vari
 各自的闭合契约。未解约束不能泛型化，模块推断完成时必须全部解决。VM 继续使用
 Atom/Tagged 表示，复制 payload 的 Val 来源位置不变。
 
+底层表示描述符及工具阶段的 provisional constructor evidence 可以保留内部
+Atom/Tagged 标记；它们不能成为完成后的表达式类型、binding scheme 或模块接口。
+公开 Type 元数据解析、静态反射和 codec 只接受 enum 契约。`std/dyn.kind` 继续
+报告底层值类别，`std/dyn.desc` 返回装箱时的静态契约。
+
 Struct 合并更新复用 Dict 的运行时字段表示。严格推断根据 `<~` 左侧具名 Struct
 确定结果类型；更新字面量先收集 spread 的静态字段集合和覆盖关系，再为最终
 生效的显式字段传递 expected type，并检查字段子集与类型兼容性。初步类型证据

@@ -1886,6 +1886,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
     completed_expressions.sort_by_key(|(location, _)| location.range().start);
     for (location, ty) in completed_expressions {
         let resolved = inference.resolve(ty);
+        if contains_standalone_sum(&resolved) {
+            return Err(FrontendError::from_diagnostic(
+                sources,
+                Diagnostic::error("standalone Atom/Tagged is not a public expression type; use an enum", *location),
+            ));
+        }
         if contains_pending_alternatives(&resolved) {
             return Err(FrontendError::from_diagnostic(
                 sources,
@@ -1978,6 +1984,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
     })).filter(|scheme| validate_publishable_scheme(scheme).is_ok());
     for (name, descriptor) in &binding_types {
         let resolved = inference.resolve(descriptor);
+        if contains_standalone_sum(&resolved) {
+            return Err(frontend_error(source_name, format!(
+                "binding {name:?} has no resolved enum owner",
+            )));
+        }
         if contains_type_variable(&resolved) {
             return Err(frontend_error(
                 source_name,

@@ -4,12 +4,14 @@
 - Tracking: [#160](https://github.com/hh9527/telora/issues/160)
 - Branch: `feat/0273-nominal-enum-constructors`
 - Baseline: `0982e92`
-- Implementation: In progress. Contextual constructors retain complete built-in
+- Implementation: Complete. Contextual constructors retain complete built-in
   enum contracts; quoted payload constructors accept explicit function contracts.
   Public Atom/Tagged constructors and Atom formatting are removed. Debug build
-  and workspace tests pass, including 283 language fixture groups.
+  and workspace tests pass, including 285 language fixture groups.
   Unresolved-owner obligations, branch evidence, propagation and pattern checks
-  are implemented. Static metadata and remaining admission-path review are next.
+  are implemented. Static metadata, reflection and codec admission are migrated.
+  Final acceptance includes deferred constructor-function context and Dyn
+  constructor witnesses. No release binary was built.
   The inventory below describes the baseline.
 - Scope: Remove standalone Atom/Tagged static types. Preserve source syntax,
   runtime value representation, bytecode representation and Val provenance.
@@ -213,3 +215,24 @@ Commit and push each completed stage and report its actual verification state
 on the issue. Intermediate branch commits do not imply the feature is complete.
 Keep main on the existing complete language until final integration. Historical
 RFC bodies remain intact; record relevant supersession in their status areas.
+
+## Implementation Audit
+
+Constructor obligations are separate from public type descriptors. They track
+source locations, tag names and optional authored payload expressions; binding
+an owner propagates context into those payloads. A quoted tag can also acquire
+a function contract from later use, with its result owner resolved through the
+same obligations. Generic generalization, completed expression records, binding
+contracts and resolved graph publication reject unowned constructor types.
+
+Private representation descriptors and shallow tool-stage constructor evidence
+remain available internally. Shallow evidence permits rejecting invalid decorator
+arguments before tool evaluation; it is not a publishable singleton type.
+The VM layout and its reserved representation identities remain unchanged.
+Public metadata decoders, static reflection and codec admission reject standalone
+Atom/Tagged. Runtime ValueKind continues to describe Atom/Tagged storage.
+
+All new behavioral acceptance cases are pure Telora. Existing Rust boundary
+fixtures received source-contract updates where needed. The final debug build,
+workspace tests (269 core, 41 CLI, all remaining suites), 285 language fixture
+groups and whitespace checks passed on the implementation branch.

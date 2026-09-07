@@ -3,7 +3,7 @@ impl<'a> GenericInference<'a> {
         &mut self,
         location: crate::Location,
         tag: &str,
-        payload: Option<(Expr, TypeDescriptor)>,
+        payload: Option<(Option<Expr>, TypeDescriptor)>,
     ) -> TypeDescriptor {
         let owner = self.fresh_variable();
         let TypeDescriptor::Inference(variable) = owner else {
@@ -30,6 +30,23 @@ impl<'a> GenericInference<'a> {
             self.enum_constructors.entry(*target).or_default().extend(obligations);
             return Ok(());
         }
+        if let TypeDescriptor::Function { parameters, result } = target
+            && obligations.iter().all(|obligation| obligation.payload.is_none())
+        {
+            let [parameter] = parameters.as_slice() else {
+                return Err("enum constructor function requires exactly one parameter".into());
+            };
+            self.enum_constructors.remove(&variable);
+            for obligation in obligations {
+                let owner = self.enum_constructor(
+                    obligation.location,
+                    &obligation.tag,
+                    Some((None, parameter.clone())),
+                );
+                self.check(&owner, result)?;
+            }
+            return Ok(());
+        }
         let exposed = self.expose_named(target);
         let body = match &exposed {
             TypeDescriptor::Declared(declared) => declared.body.as_ref(),
@@ -46,7 +63,8 @@ impl<'a> GenericInference<'a> {
             let checked = match (variants.get(&obligation.tag), &obligation.payload) {
                 (Some(None), None) => Ok(()),
                 (Some(Some(expected)), Some((expression, actual))) => {
-                    let contextual = if self.records.contains_key(&expression.location) {
+                    let contextual = if let Some(expression) = expression
+                        && self.records.contains_key(&expression.location) {
                         self.contextualize_authored_literal(expression, expected)?
                     } else {
                         actual.clone()

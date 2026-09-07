@@ -51,7 +51,7 @@ struct GenericInference<'a> {
 struct EnumConstructorObligation {
     location: crate::Location,
     tag: String,
-    payload: Option<(Expr, TypeDescriptor)>,
+    payload: Option<(Option<Expr>, TypeDescriptor)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

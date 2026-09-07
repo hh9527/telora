@@ -4,6 +4,7 @@ import "std/type-desc" as type_desc;
 import "@src/test-support" {expect};
 
 type Status = enum { 'Ready, 'Failed(String) };
+type Make = Fn(String) -> Status;
 type Item = struct {value: Int};
 def pair: for(A) Fn(A, A) -> Tuple([A, A]) = fn(a, b) { (a, b) };
 def identity: for(A) Fn(A) -> A = fn(value) { value };
@@ -56,4 +57,19 @@ export def propagation_context = test.should_ok(fn() {
         'Ok(item + 1)
     };
     expect(step('Ok(1)) == 'Ok(2) && step('Err("reason")) == 'Err("reason"))
+});
+
+export def constructor_witness = test.should_ok(fn() {
+    let make: Make = 'Failed;
+    let packed = dyn.pack(Make, make);
+    expect(match dyn.project_with(Make, packed) {
+        'Some(restored) => restored("reason") == 'Failed("reason"),
+        'None => 'False,
+    })
+});
+
+export def deferred_constructor = test.should_ok(fn() {
+    let make = 'Some;
+    let value: Option(Int) = make(7);
+    expect(value == 'Some(7))
 });

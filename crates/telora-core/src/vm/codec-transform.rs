@@ -244,20 +244,6 @@ fn transform_codec_inner(
         {
             Ok(CodecNode::Existing(value))
         }
-        CodecKind::Atom(expected) => {
-            let actual = view
-                .atom_text(value)
-                .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?;
-            if actual.is_some_and(|actual| actual.as_str() == expected) {
-                Ok(CodecNode::Existing(value))
-            } else {
-                Err(CodecFailure::new(
-                    format!("{path}: expected '{expected}"),
-                    value,
-                    schema.rule,
-                ))
-            }
-        }
         CodecKind::Array(item) => {
             let DecodedValue::Array(handle) = value.value() else {
                 return Err(CodecFailure::new(
@@ -321,42 +307,6 @@ fn transform_codec_inner(
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map(|fields| CodecNode::Dict(fields, value.loc()))
-        }
-        CodecKind::Tagged { tag, payload } => {
-            let DecodedValue::Tagged(handle) = value.value() else {
-                return Err(CodecFailure::new(
-                    format!("{path}: expected '{tag}(payload)"),
-                    value,
-                    schema.rule,
-                ));
-            };
-            let (actual_tag, actual_payload) = view
-                .tagged(handle)
-                .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?;
-            if view
-                .atom_text(actual_tag)
-                .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?
-                .is_none_or(|actual| actual.as_str() != tag)
-            {
-                return Err(CodecFailure::new(
-                    format!("{path}: expected tag '{tag}"),
-                    value,
-                    schema.rule,
-                ));
-            }
-            Ok(CodecNode::Tagged {
-                tag: Box::new(CodecNode::NamedAtom(tag.clone(), value.loc())),
-                payload: Box::new(transform_codec(
-                    payload,
-                    properties,
-                    actual_payload,
-                    direction,
-                    path,
-                    current,
-                    background,
-                )?),
-                loc: value.loc(),
-            })
         }
         CodecKind::Tuple(items) => {
             let (handle, input_is_tuple) = match (direction, value.value()) {

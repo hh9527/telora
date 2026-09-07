@@ -224,10 +224,6 @@ fn generate_json_schema_node(
             vec![("type", schema_string("string", loc))],
             loc,
         )),
-        CodecKind::Atom(tag) if tag == "None" => {
-            Ok(schema_dict(vec![("type", schema_string("null", loc))], loc))
-        }
-        CodecKind::Atom(tag) => Ok(schema_dict(vec![("const", schema_string(tag, loc))], loc)),
         CodecKind::Array(item) => Ok(schema_dict(
             vec![
                 ("type", schema_string("array", loc)),
@@ -248,9 +244,6 @@ fn generate_json_schema_node(
             ],
             loc,
         )),
-        CodecKind::Tagged { payload, .. } => {
-            generate_json_schema_node(payload, properties, data, current, background, links, definitions)
-        }
         CodecKind::Tuple(items) => {
             let schemas = items
                 .iter()
@@ -448,10 +441,8 @@ fn codec_type_name(schema: &CodecType) -> &'static str {
         CodecKind::String => "String",
         CodecKind::Bytes => "Bytes",
         CodecKind::Opaque => "Opaque",
-        CodecKind::Atom(_) => "Atom",
         CodecKind::Array(_) => "Array",
         CodecKind::Dict(_) => "Dict",
-        CodecKind::Tagged { .. } => "Tagged",
         CodecKind::Tuple(_) => "Tuple",
         CodecKind::Struct(_) => "Struct",
         CodecKind::Enum(variants) => {

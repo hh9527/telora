@@ -1,6 +1,9 @@
 # RFC 0268: Remove Untagged Unions
 
 - Status: Accepted
+- Follow-up: [RFC 0273](0273-nominal-enum-constructors.md) requires enum ownership
+  for individual variant constructors as well as common-type joins. Variant
+  syntax and runtime storage are retained; this historical body is unchanged.
 - Partial supersession by [RFC 0269](0269-remove-any.md): The provision retaining explicit Any is superseded by complete Any removal.
 - Tracking: [#155](https://github.com/hh9527/telora/issues/155)
 - Baseline: `f6164be`

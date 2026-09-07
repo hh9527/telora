@@ -530,17 +530,7 @@ fn decode_type_ref_with_visiting(
             require(&["kind"])?;
             TypeDescriptor::Bytes
         }
-        "Atom" => {
-            if fields.iter().copied().eq(["kind"]) {
-                return Ok(TypeDescriptor::AtomValue);
-            }
-            require(&["kind", "tag"])?;
-            let tag = value
-                .dict_get("tag")
-                .and_then(ValueRef::as_atom)
-                .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            TypeDescriptor::Atom(atom_from_name(tag.as_str()))
-        }
+        "Atom" | "Tagged" => return Err(format!("{path}: standalone {kind} is not a supported type; use an enum")),
         "Array" => {
             require(&["item", "kind"])?;
             let item = value
@@ -564,25 +554,6 @@ fn decode_type_ref_with_visiting(
                 shallow_declared_types,
                 visiting_declared,
             )?))
-        }
-        "Tagged" => {
-            require(&["kind", "payload", "tag"])?;
-            let tag = value
-                .dict_get("tag")
-                .and_then(ValueRef::as_atom)
-                .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-            let payload = value
-                .dict_get("payload")
-                .ok_or_else(|| format!("{path}.payload is missing"))?;
-            TypeDescriptor::Tagged {
-                tag: atom_from_name(tag.as_str()),
-                payload: Box::new(decode_type_ref_with_visiting(
-                    payload,
-                    &format!("{path}.payload"),
-                    shallow_declared_types,
-                    visiting_declared,
-                )?),
-            }
         }
         "Tuple" => {
             let field = "items";

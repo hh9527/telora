@@ -1,1 +1,1 @@
-enum has no payload variant 'None
+variant 'None does not accept a payload

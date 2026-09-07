@@ -428,7 +428,8 @@ impl TypeGraph {
     }
 
     fn intern_resolved_descriptor(&mut self, descriptor: &TypeDescriptor) -> Option<AnalysisTypeId> {
-        if contains_type_variable(descriptor) || contains_pending_alternatives(descriptor) {
+        if contains_type_variable(descriptor) || contains_pending_alternatives(descriptor)
+            || contains_standalone_sum(descriptor) {
             return None;
         }
         Some(self.intern_descriptor(descriptor))
@@ -694,17 +695,7 @@ impl TypeGraph {
                 require(&["kind"])?;
                 TypeNode::Bytes
             }
-            "Atom" => {
-                if fields.iter().copied().eq(["kind"]) {
-                    return Ok(TypeNode::AtomValue);
-                }
-                require(&["kind", "tag"])?;
-                let tag = value
-                    .dict_get("tag")
-                    .and_then(ValueRef::as_atom)
-                    .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-                TypeNode::Atom(atom_from_name(tag.as_str()))
-            }
+            "Atom" | "Tagged" => return Err(format!("{path}: standalone {kind} is not a supported type; use an enum")),
             "Array" => {
                 require(&["item", "kind"])?;
                 let item = self.decode_persistent(
@@ -722,22 +713,6 @@ impl TypeGraph {
                     links,
                 )?;
                 TypeNode::Dict(item)
-            }
-            "Tagged" => {
-                require(&["kind", "payload", "tag"])?;
-                let tag = value
-                    .dict_get("tag")
-                    .and_then(ValueRef::as_atom)
-                    .ok_or_else(|| format!("{path}.tag must be an Atom"))?;
-                let payload = self.decode_persistent(
-                    value.dict_get("payload").expect("field exists"),
-                    &format!("{path}.payload"),
-                    links,
-                )?;
-                TypeNode::Tagged {
-                    tag: atom_from_name(tag.as_str()),
-                    payload,
-                }
             }
             "Tuple" => {
                 let field = "items";

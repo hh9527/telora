@@ -154,13 +154,8 @@ enum CodecKind {
     String,
     Bytes,
     Opaque,
-    Atom(String),
     Array(Box<CodecType>),
     Dict(Box<CodecType>),
-    Tagged {
-        tag: String,
-        payload: Box<CodecType>,
-    },
     Tuple(Vec<CodecType>),
     Struct(BTreeMap<String, CodecType>),
     Enum(BTreeMap<String, CodecEnumVariant>),

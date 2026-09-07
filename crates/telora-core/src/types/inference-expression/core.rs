@@ -237,33 +237,7 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::String
             }
             ExprKind::Bytes(_) => TypeDescriptor::Bytes,
-            ExprKind::Atom(name) => {
-                if let Some(function @ TypeDescriptor::Function { .. }) =
-                    expected.map(|ty| self.resolve(ty))
-                {
-                    let TypeDescriptor::Function { parameters, result } = &function else {
-                        unreachable!()
-                    };
-                    let result = self.expose_named(result);
-                    let result = match &result {
-                        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
-                        result => result,
-                    };
-                    let TypeDescriptor::Enum(variants) = result else {
-                        return Err("enum constructor function requires an enum result".into());
-                    };
-                    let Some(Some(payload)) = variants.get(name) else {
-                        return Err(format!("enum has no payload variant '{name}"));
-                    };
-                    let [parameter] = parameters.as_slice() else {
-                        return Err("enum constructor function requires exactly one parameter".into());
-                    };
-                    self.check(parameter, payload)?;
-                    function
-                } else {
-                    self.enum_constructor(expression.location, name, None)
-                }
-            }
+            ExprKind::Atom(name) => self.enum_constructor(expression.location, name, None),
             ExprKind::Array(items) => {
                 let item_expected = match expected.map(|ty| self.resolve(ty)) {
                     Some(TypeDescriptor::Array(item))
@@ -749,7 +723,7 @@ impl<'a> GenericInference<'a> {
                         _ => None,
                     });
                     let payload = self.infer(argument, environment, payload_expected)?;
-                    let owner = self.enum_constructor(expression.location, tag, Some((argument.clone(), payload.clone())));
+                    let owner = self.enum_constructor(expression.location, tag, Some((Some(argument.clone()), payload.clone())));
                     if let Some(expected) = expected {
                         self.check(&owner, expected)?;
                     }
@@ -841,32 +815,6 @@ impl<'a> GenericInference<'a> {
                     resolved_callee
                 };
                 match resolved_callee {
-                    TypeDescriptor::Atom(tag) => {
-                        if arguments.len() != 1 {
-                            return Err(format!(
-                                "tag constructor expects 1 argument, found {}",
-                                arguments.len()
-                            ));
-                        }
-                        let payload_expected = expected
-                            .map(|expected| self.resolve(expected))
-                            .and_then(|expected| match expected {
-                                TypeDescriptor::Enum(variants) => {
-                                    variants.get(tag.name()).and_then(|payload| payload.clone())
-                                }
-                                _ => None,
-                            });
-                        let payload =
-                            self.infer(&arguments[0], environment, payload_expected.as_deref())?;
-                        let result = TypeDescriptor::Tagged {
-                            tag,
-                            payload: Box::new(payload),
-                        };
-                        if let Some(expected) = expected {
-                            self.check(&result, expected)?;
-                        }
-                        self.resolve(&result)
-                    }
                     TypeDescriptor::Function { parameters, result } => {
                         if parameters.len() != arguments.len() {
                             return Err(format!(
