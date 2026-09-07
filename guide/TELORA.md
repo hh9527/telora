@@ -288,7 +288,7 @@ let candidate: Unchecked(Point) = {x: 1, y: 2};
 let point: Point = candidate;
 ```
 
-运行时构造可通过 `@check(func)` 校验候选值。校验函数返回 `Option(BlameError)`：
+声明类型的构造可通过 `@check(func)` 校验候选值。校验函数返回 `Option(BlameError)`：
 None 接受原值，Some(error) 在构造处产生诊断。具名字段 struct 的参数为
 `Unchecked(T)`，newtype 和带载荷 variant 的参数为载荷类型。无载荷 variant
 直接成立，不接受 `@check`。
@@ -304,6 +304,8 @@ let range: Range = {min: 1, max: 3};
 
 校验保留字段的来源位置。读取、复制和传递已完成构造的值不重复校验；
 merge-update 的每个结果分别校验，投影构造的目标值也执行其校验。
+类型计算期间的构造同样执行校验。工具阶段根据依赖准备校验函数及其捕获值，
+在校验就绪后执行相应构造。
 
 `type UserId = struct(Int);` 声明单元素具名 tuple（newtype）。`value.0` 读取
 内部的 Int；外层 UserId 与 Int 是不同类型。newtype 可以参数化，例如

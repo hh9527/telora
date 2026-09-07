@@ -1,0 +1,10 @@
+@check(fn(value) {
+    if value.x > 0 { None } else { Some(blame!("tool candidate rejected", value.x)) }
+})
+type Point = struct {x: Int};
+def choose: for(A) Fn(A) -> A = fn(value) {
+    let invalid: Point = {x: 0};
+    if invalid.x == 0 { value } else { value }
+};
+type Chosen = choose(Int);
+export def value = 2;

@@ -289,6 +289,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .checked_add(1)
             .expect("type constructor slot exceeds u32");
     }
+    stage_pending_construction_checks(module_id, program, &declared_initializer_slots, &mut evaluator)?;
     let trait_ids = program
         .value
         .body
@@ -517,6 +518,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         let mut progressed = false;
         for definition in pending_types.iter().copied().collect::<Vec<_>>() {
             evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+            prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                &static_environment, account, sources, &mut evaluator)?;
             let node = type_dependencies
                 .nodes
                 .iter()
@@ -1078,8 +1081,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         ));
     }
 
+    evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+        &static_environment, account, sources, &mut evaluator)?;
     for binding in &program.value.body.value.bindings {
         evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
+        evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
+            account, sources, &mut evaluator, false)?;
         let inferred_expression = infer_expr_recorded(
             &binding.value.value,
             &static_environment,
@@ -1332,7 +1340,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
 
     evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
     evaluate_construction_checks(source_name, program, &tool_values, &static_environment,
-        account, sources, &mut evaluator)?;
+        account, sources, &mut evaluator, true)?;
     let local_type_properties = evaluate_declared_properties(
         source_name,
         program,

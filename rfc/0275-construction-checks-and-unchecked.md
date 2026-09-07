@@ -12,15 +12,18 @@
   branch and propagate checker execution failures. Checked casts enforce nested
   construction checks and unchecked-to-checked conversion. String parsing and its
   codec bridge enforce nested checks and preserve input-string provenance.
-  Remaining dynamic boundary auditing and complete tool-stage scheduling remain pending.
-- Validation: debug build and workspace tests pass; 364 language fixture groups
+  Tool-stage construction prepares checks and their forward value dependencies
+  before metadata and binding evaluation; pending checks block construction.
+  The final dynamic-boundary, recursion and cross-module acceptance audit remains pending.
+- Validation: debug build and workspace tests pass; 367 language fixture groups
   pass, including opaque access rejection, intrinsic argument contracts, deferred
   error construction, warnings returning None, cross-module subject origins,
   unchecked identity and fields, generic conversion, Dyn isolation, check signature
   rejection, construction rejection and observable check invocation counts, plus
   codec rejection, nested untagged trials, ambiguity, checker execution failure,
   checked cast rejection, same-type cast invocation counts, parsing checks,
-  text-bridge untagged trials and cross-module parsed-field provenance.
+  text-bridge untagged trials, cross-module parsed-field provenance, early and
+  source-order tool construction rejection and forward checker dependencies.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
   codec field constraints; see the compatibility analysis below.
@@ -214,6 +217,11 @@ First implement BlameError and its provenance/failure protocol, migrate codec
 errors, and add focused language examples. Then implement unchecked identity and observation, followed
 by check registration and constructor enforcement. Integrate merge-update,
 projection, codecs, tool evaluation and dynamic boundaries before acceptance.
+
+After the complete functional implementation is committed and pushed, compare
+performance against a recorded baseline and profile the observed regressions.
+Cover frontend/module loading and runtime construction/codec workloads, recording
+the causes and measurements before deciding on optimizations.
 
 Use the repository's existing declaration identity, typed-property scheduling,
 constructor evidence and Val provenance mechanisms where they satisfy the

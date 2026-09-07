@@ -5,6 +5,8 @@ struct ToolEvaluator<'a> {
     work: Heap,
     inference_context: Option<ToolInferenceContext>,
     inference_depth: usize,
+    registered_construction_checks: BTreeSet<PropertyKey>,
+    construction_checks_complete: bool,
 }
 
 struct ToolInferenceContext {
@@ -59,6 +61,8 @@ impl<'a> ToolEvaluator<'a> {
             work,
             inference_context: None,
             inference_depth: 0,
+            registered_construction_checks: BTreeSet::new(),
+            construction_checks_complete: false,
         }
     }
 

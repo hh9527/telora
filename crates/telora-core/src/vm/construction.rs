@@ -83,6 +83,10 @@ fn construction_check_action(
             input.sequence_get(0).map_or(value, |payload| payload.runtime()))
     };
     let Some(mut callback) = view.property(key) else { return Ok(None); };
+    if matches!(callback.value(), DecodedValue::BuiltinAtom(BuiltinAtom::None)) {
+        return Err(error(RuntimeErrorKind::TypeMismatch,
+            "construction check is not initialized", function, pc));
+    }
     let arguments = id.arguments().to_vec();
     let metadata_start = current.allocation_count();
     let mut argument = argument;
