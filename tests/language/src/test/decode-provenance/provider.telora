@@ -4,7 +4,7 @@ export def text = "[\"wrong\",\"wrong\"]";
 export def parse_value = fn() {
     match json.parse(text) {
         Ok(value) => value,
-        Err(error) => fail!(error.message, error.value),
+        Err(error) => raise!(error),
     }
 };
 export def parsed = parse_value();

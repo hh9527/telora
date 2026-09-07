@@ -1,5 +1,13 @@
 use crate::source::{Located, Location};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlameAction {
+    Build,
+    Raise,
+    Warn,
+    Fail,
+}
+
 pub type Identifier = Located<String>;
 pub type Program = Located<ProgramKind>;
 pub type Block = Located<BlockKind>;
@@ -105,6 +113,7 @@ pub enum ExprKind {
         message: Box<Expr>,
     },
     Raise {
+        action: BlameAction,
         message: Box<Expr>,
         subjects: Vec<Expr>,
     },

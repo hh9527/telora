@@ -536,6 +536,11 @@ impl Val {
     }
 
     pub(crate) fn rebase_generated(self, call_site: Option<Loc>) -> Self {
+        // Dyn carries the erased value's origin, including an absent origin.
+        // Returning the wrapper must not replace it with the packing call site.
+        if matches!(self.value(), DecodedValue::Dyn(_)) {
+            return self;
+        }
         match self.meta.provenance() {
             Provenance::Original => self,
             Provenance::Unknown | Provenance::Generated => self.with_loc(call_site),

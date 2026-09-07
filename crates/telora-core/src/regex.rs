@@ -318,14 +318,6 @@ pub(crate) fn native_prepare(context: &mut CallContext<'_, '_>) -> Result<(), Na
     context.copy(context.result(), context.argument(0)?)
 }
 
-fn set_error(context: &mut CallContext<'_, '_>, message: String) -> Result<(), NativeError> {
-    let tag = context.scratch()?;
-    context.set_atom(tag, "Err")?;
-    let message_register = context.scratch()?;
-    context.set_string(message_register, message)?;
-    context.make_tagged(context.result(), tag, message_register)
-}
-
 fn execute_plan(plan: &ParsePlan, input: &str) -> Result<ParsedValue, String> {
     match plan {
         ParsePlan::String => Ok(ParsedValue::String(input.to_owned())),
@@ -376,57 +368,6 @@ pub(crate) fn parse_value(
 ) -> Result<ParsedValue, String> {
     let plan = parse_plan(metadata, property_type).map_err(|error| error.message)?;
     execute_plan(&plan, input)
-}
-
-fn materialize(
-    context: &mut CallContext<'_, '_>,
-    value: ParsedValue,
-    output: crate::lir::RegisterId,
-) -> Result<(), NativeError> {
-    match value {
-        ParsedValue::String(value) => context.set_string(output, value),
-        ParsedValue::Int(value) => context.set_int(output, value),
-        ParsedValue::Float(value) => context.set_float(output, value),
-        ParsedValue::None => context.set_none(output),
-        ParsedValue::Some(value) => {
-            let payload = context.scratch()?;
-            materialize(context, *value, payload)?;
-            let tag = context.scratch()?;
-            context.set_atom(tag, "Some")?;
-            context.make_tagged(output, tag, payload)
-        }
-        ParsedValue::Struct(fields) => {
-            let mut registers = Vec::with_capacity(fields.len());
-            for (name, value) in fields {
-                let register = context.scratch()?;
-                materialize(context, value, register)?;
-                registers.push((name, register));
-            }
-            context.make_dict(output, &registers)
-        }
-    }
-}
-
-pub(crate) fn native_parse(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
-    let property_type = context
-        .value(context.argument(0)?)?
-        .declared_type_id()
-        .ok_or_else(|| NativeError::new("std/string.parse_with expects ParseBy Type metadata"))?;
-    let metadata = context.value(context.argument(1)?)?;
-    let input = context
-        .value(context.argument(2)?)?
-        .as_str()
-        .ok_or_else(|| NativeError::new("std/string.parse expects String"))?
-        .to_owned();
-    let parsed = match parse_value(metadata, &input, property_type) {
-        Ok(value) => value,
-        Err(message) => return set_error(context, message),
-    };
-    let value = context.scratch()?;
-    materialize(context, parsed, value)?;
-    let tag = context.scratch()?;
-    context.set_atom(tag, "Ok")?;
-    context.make_tagged(context.result(), tag, value)
 }
 
 #[cfg(test)]

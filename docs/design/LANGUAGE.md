@@ -639,6 +639,20 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 
 ### 7.1 Struct、Enum 和 typed property decorator
 
+`Unchecked(T)` 是具名字段 struct T 的候选值类型，保留字段类型、泛型参数和
+原值来源。它满足 `Unchecked(Unchecked(T)) = Unchecked(T)`。需要 T 的上下文
+完成候选值的构造；Dyn 投影保持两者的类型身份区别。
+
+`@check(func)` 为 struct、newtype 或带载荷 enum variant 定义构造校验。
+具名字段 struct 的校验参数为 `Unchecked(T)`，newtype 与 variant 的校验参数
+为载荷类型；返回 `Option(BlameError)`，None 接受原候选值，Some 拒绝构造。
+无载荷 variant 直接成立，不接受校验装饰器。没有校验的候选值直接完成构造。
+
+普通构造的拒绝产生失败诊断，codec 解码的拒绝返回 `Err(BlameError)`。
+校验覆盖泛型函数体、工具阶段、merge-update 和投影中的每次新构造；嵌套值
+先完成自身校验，再校验外层候选值。读取、复制、编码和传递已构造的值不重复
+校验。运行时用类型见证实例化泛型函数体内的构造目标，并保留规则与输入来源。
+
 `type A = struct(B);` 声明单元素具名 tuple（newtype），具有独立的 nominal
 identity。`a.0` 返回 B，并保留载荷的类型身份和来源；其他位置索引不成立。
 newtype 和 B 不存在隐式包装或解包转换。其元数据解析后的 kind 为 Newtype，
@@ -1074,9 +1088,9 @@ type ScalarValue = enum {
 运行时文本解析使用同一边界：
 
 ```telora
-json.parse(text)  # Result(Value, codec.DecodeError)
-yaml.parse(text)  # Result(Value, codec.DecodeError)
-toml.parse(text)  # Result(Value, codec.DecodeError)
+json.parse(text)  # Result(Value, codec.BlameError)
+yaml.parse(text)  # Result(Value, codec.BlameError)
+toml.parse(text)  # Result(Value, codec.BlameError)
 ```
 
 Typed model 与 Value 之间只通过 codec 重建数据图：
@@ -1196,14 +1210,14 @@ receiver.ident!(arguments...) == ident!(receiver, arguments...)
 `fail!` 向运行时传递消息和 subjects，运行时读取 subjects 的来源并记录诊断。
 这些参数各求值一次，诊断的产生不需要构造语言级错误值。
 
-解码使用公开的 `codec.DecodeError`，字段为 `message: String`、`value: Value`。
-`codec.decode` 与 `json.decode` 返回 `Result(A, DecodeError)`，失败本身不产生诊断。
+解码使用不可观察的 native `codec.BlameError`，保存消息和失败值的来源。
+`codec.decode` 与 `json.decode` 返回 `Result(A, BlameError)`，失败本身不产生诊断。
 错误保留当前解码 Value，调用方可以继续试探，或显式使用其来源产生诊断：
 
 ```telora
 match codec.decode(User, raw) {
     Ok(user) => user,
-    Err(error) => fail!(error.message, error.value),
+    Err(error) => raise!(error),
 }
 ```
 
@@ -1345,7 +1359,7 @@ Tool stage 执行 annotation、type initializer、decorator、module interface �
 普通值使用时，该值会保留到运行时。
 
 `codec.decode(Target, value)` 的首个参数是受检查的 `TypeOf(Target)`；
-解码返回 `Result(Target, codec.DecodeError)`。编码直接返回 `Value`，失败产生诊断，
+解码返回 `Result(Target, codec.BlameError)`。编码直接返回 `Value`，失败产生诊断，
 并保留失败值和编码规则的来源位置。
 `codec.encode(Value, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
 已经携带的 nominal witness 选择 schema。Dyn 中的模型需先投影到具体类型。

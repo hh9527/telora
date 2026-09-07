@@ -786,7 +786,7 @@ impl<'a> GenericInference<'a> {
             && !matches!(expected, TypeDescriptor::Declared(_))
         {
             if matches!(expected, TypeDescriptor::Inference(_)) {
-                return self.unify(expected, &TypeDescriptor::Declared(actual.clone()));
+                return self.unify(&TypeDescriptor::Declared(actual.clone()), expected);
             }
             return self.check(&actual.body, expected);
         }

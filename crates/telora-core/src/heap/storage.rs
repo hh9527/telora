@@ -46,7 +46,6 @@ impl Heap {
         self.memoized_interpreters.values().map(HashMap::len).sum()
     }
 
-    #[cfg(test)]
     pub(crate) fn allocation_count(&self) -> usize {
         self.objects.len()
     }
@@ -252,7 +251,7 @@ impl Heap {
         if self.storage != Storage::Work {
             return Err(HeapError("property staging requires a Work world"));
         }
-        if value.type_id() != Some(key.property_type()) {
+        if key.property_type().is_some_and(|ty| value.type_id() != Some(ty)) {
             return Err(HeapError(
                 "staged property runtime witness does not match its property TypeId",
             ));

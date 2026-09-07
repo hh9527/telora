@@ -1,0 +1,14 @@
+import "std/array" as array;
+
+@check(fn(value) {
+    if value.rank < 0 { Some(blame!("negative rank", value.rank)) }
+    else if array.all(value.children, fn(child) { child.rank < value.rank }) { None }
+    else { Some(blame!("child rank must decrease", value.children)) }
+})
+type Tree(T) = struct {value: T, rank: Int, children: Array(Tree(T))};
+
+def rebuild: for(T) Fn(Tree(T)) -> Tree(T) = fn(tree) {
+    {value: tree.value, rank: tree.rank, children: array.map(tree.children, rebuild)}
+};
+
+export {Tree, rebuild};

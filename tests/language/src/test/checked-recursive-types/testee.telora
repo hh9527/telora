@@ -1,0 +1,37 @@
+import "std/test" as test;
+import "std/json" as json;
+import "std/codec" as codec;
+import "std/dyn" as dyn;
+import "./reexport" {Tree, rebuild};
+import "@src/test-support" {expect};
+
+export def rebuilt = test.should_ok(fn() {
+    let tree: Tree(String) = {value: "root", rank: 2, children: [
+        {value: "leaf", rank: 1, children: []},
+    ]};
+    let copy = rebuild(tree);
+    expect(copy == tree && dyn.project_with(Tree(String), dyn.pack(Tree(String), copy)) == Some(tree))
+});
+export def parent_rejected = test.should_fail_with(fn() {
+    let tree: Tree(String) = {value: "root", rank: 1, children: [
+        {value: "leaf", rank: 1, children: []},
+    ]};
+    tree
+}, "child rank must decrease");
+export def decoded = test.should_ok(fn() {
+    let text = "{\"value\":\"root\",\"rank\":2,\"children\":[{\"value\":\"leaf\",\"rank\":1,\"children\":[]}]}";
+    let tree = match json.decode(Tree(String), text) { Ok(value) => value, Err(error) => raise!(error) };
+    expect(rebuild(tree) == tree && codec.encode(codec.Value, tree) == match json.parse(text) {
+        Ok(value) => value, Err(error) => raise!(error),
+    })
+});
+export def decode_rejected = test.should_ok(fn() {
+    expect(match json.decode(Tree(String), "{\"value\":\"root\",\"rank\":0,\"children\":[{\"value\":\"leaf\",\"rank\":1,\"children\":[]}]}") {
+        Ok(_) => False, Err(_) => True,
+    })
+});
+export def candidate = test.should_ok(fn() {
+    let candidate: Unchecked(Tree(String)) = {value: "root", rank: 1, children: []};
+    let tree = rebuild(candidate);
+    expect(tree.rank == 1)
+});

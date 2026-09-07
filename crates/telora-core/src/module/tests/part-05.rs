@@ -373,7 +373,7 @@
                import "std/result" as result;
                match codec.decode(Types.Node, data) {
                    Ok(value) => value,
-                   Err(error) => fail!(error.message, error.value),
+                   Err(error) => raise!(error),
                }"#,
         )
         .unwrap();

@@ -307,10 +307,15 @@ fn infer_tool_expression_evidence(
     evaluator: &mut ToolEvaluator,
 ) -> Result<ToolExpressionEvidence, String> {
     let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
-    if !context.supports_constructors {
+    if !matches!(expected, Some(TypeDescriptor::Function { .. })) && !context.supports_constructors {
         return Ok(ToolExpressionEvidence {
             descriptors: HashMap::new(),
             value_constructors: HashMap::new(),
+            calls: HashMap::new(), runtime_types: BTreeMap::new(),
+            parameters: HashMap::new(), lexical_types: HashMap::new(),
+            inferred_scopes: HashMap::new(),
+            families: HashMap::new(), not_families: HashMap::new(),
+            members: HashMap::new(), interpolations: HashMap::new(),
         });
     }
     let mut annotations = HashMap::new();
@@ -365,10 +370,38 @@ fn infer_tool_expression_evidence(
     }
     // The caller decides whether incomplete metadata may defer a failed
     // inference pass; typed tool expressions require successful evidence.
+    let mut parameters = HashMap::new();
+    let mut lexical_types = HashMap::new();
+    let root_scheme = context.hir.definitions().iter().find(|definition| {
+        definition.value.and_then(|value| context.hir.expression(value)).is_some_and(|value| value.location == expression.location)
+    }).and_then(|definition| inference.scheme(&definition.name));
+    if let Some(scheme) = root_scheme.as_ref().filter(|scheme| Some(&scheme.body) == expected && !scheme.parameters.is_empty())
+    {
+        inference.push_lexical_evidence("<tool>", scheme);
+        parameters.insert(expression.location, scheme.constraints.iter().enumerate()
+            .map(|(index, constraint)| {
+                let name = evidence_parameter_name("<tool>", index);
+                if constraint.capability == TypeCapability::RuntimeType {
+                    lexical_types.insert(constraint.parameter, name.clone());
+                }
+                name
+            }).collect());
+    }
     inference.infer(expression, &environment, expected)?;
+    inference.finish_type_constraints().map_err(|(_, message)| message)?;
+    inference.finish_interpolations().map_err(|(_, message)| message)?;
+    parameters.extend(inference.inferred_runtime_scopes.iter().map(|(location, evidence)| {
+        (*location, evidence.iter().map(|evidence| evidence.name.clone()).collect())
+    }));
     let descriptors = inference.records.iter()
         .map(|(location, descriptor)| (*location, inference.normalize(descriptor))).collect();
-    Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors })
+    let runtime_types = inference.runtime_type_evidence.iter()
+        .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor))).collect();
+    Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors,
+        calls: inference.resolved_call_evidence, runtime_types,
+        parameters, lexical_types, inferred_scopes: inference.inferred_runtime_scopes, families: inference.propagation_families,
+        not_families: inference.not_families, members: inference.resolved_trait_members,
+        interpolations: inference.resolved_interpolation_evidence })
 }
 
 fn evaluate_tool_expression(
@@ -439,18 +472,14 @@ fn evaluate_tool_expression_with_debug(
         }
         Err(_) => None,
     };
-    let mut prepared = ToolExpressionEvidence {
-        descriptors: expression_descriptors.into_iter().flat_map(|descriptors| descriptors.iter())
+    let mut prepared = evidence.unwrap_or_default();
+    let mut descriptors: HashMap<_, _> = expression_descriptors.into_iter().flat_map(|descriptors| descriptors.iter())
             .filter(|(location, _)| location.source == expression.location.source
                 && expression.location.start <= location.start
                 && location.end <= expression.location.end)
-            .map(|(location, descriptor)| (*location, descriptor.clone())).collect(),
-        value_constructors: HashMap::new(),
-    };
-    if let Some(evidence) = evidence {
-        prepared.descriptors.extend(evidence.descriptors);
-        prepared.value_constructors = evidence.value_constructors;
-    }
+            .map(|(location, descriptor)| (*location, descriptor.clone())).collect();
+    descriptors.extend(std::mem::take(&mut prepared.descriptors));
+    prepared.descriptors = descriptors;
     evaluate_prepared_tool_expression(
         source_name, expression, bindings, prepared, account, sources, evaluator, observed,
     )
@@ -467,8 +496,27 @@ fn evaluate_prepared_tool_expression(
     evaluator: &mut ToolEvaluator,
     observed: bool,
 ) -> Result<Val, FrontendError> {
-    let ToolExpressionEvidence { descriptors, value_constructors } = evidence;
+    let ToolExpressionEvidence { descriptors, value_constructors, calls, runtime_types,
+        parameters, lexical_types, inferred_scopes, families, not_families, members, interpolations } = evidence;
+    let arities = descriptors.iter().filter_map(|(location, descriptor)| {
+        if let TypeDescriptor::Function { parameters, .. } = descriptor {
+            Some((*location, parameters.len()))
+        } else { None }
+    }).collect();
+    let mut lowered = expression.clone();
+    crate::elaboration::elaborate_tool_expression(&mut lowered, &calls, &arities, &parameters,
+        &families, &not_families, &members, &interpolations);
     let mut bindings = ScopedToolBindings::new(bindings);
+    for (name, descriptor) in runtime_types {
+        let value = evaluator.descriptor(&descriptor)?;
+        let mut parameters = Vec::new();
+        collect_bound_parameters(&descriptor, &mut parameters);
+        let value = if name.starts_with("\0type_argument:") && !parameters.is_empty() {
+            let arity = parameters.iter().map(|parameter| parameter.0 as usize + 1).max().unwrap();
+            evaluator.create_type_family(value, arity, None)?.0
+        } else { value };
+        bindings.insert(name, value);
+    }
     let mut declared_value_owners = HashMap::new();
     for (location, descriptor) in &descriptors {
         let descriptor = if value_constructors.contains_key(location)
@@ -478,17 +526,40 @@ fn evaluate_prepared_tool_expression(
             && expression.location.start <= location.start
             && location.end <= expression.location.end
             && matches!(descriptor, TypeDescriptor::Declared(_))
-            && !type_identity_is_symbolic(descriptor)
         {
-            let key = crate::compiler::declared_owner_link_key(*location);
-            bindings.insert(key.clone(), evaluator.descriptor(descriptor)?);
-            declared_value_owners.insert(*location, key);
+            let key = if type_identity_is_symbolic(descriptor) {
+                format!("\0owner-family:{}:{}", location.start, location.end)
+            } else { crate::compiler::declared_owner_link_key(*location) };
+            let mut owner = ResolvedEvidence::root(key.clone());
+            let mut parameters = Vec::new();
+            collect_bound_parameters(descriptor, &mut parameters);
+            parameters.sort_by_key(|parameter| parameter.0);
+            parameters.dedup();
+            let mut replacements = HashMap::new();
+            for (index, parameter) in parameters.iter().enumerate() {
+                let inferred = inferred_scopes.iter().filter(|(scope, _)| {
+                    scope.source == location.source && scope.start <= location.start && location.end <= scope.end
+                }).filter_map(|(scope, evidence)| evidence.iter().find(|evidence| evidence.target == TypeDescriptor::Bound(*parameter))
+                    .map(|evidence| (scope.end - scope.start, &evidence.name)))
+                    .min_by_key(|(length, _)| *length).map(|(_, name)| name);
+                let Some(name) = inferred.or_else(|| lexical_types.get(parameter)) else { break; };
+                owner.arguments.push(ResolvedEvidence::root(name.clone()));
+                replacements.insert(*parameter, TypeDescriptor::Bound(TypeParameterId(index as u32)));
+            }
+            if owner.arguments.len() != parameters.len() || contains_type_variable(descriptor) { continue; }
+            let descriptor = substitute_bound_parameters(descriptor, &replacements);
+            let value = evaluator.descriptor(&descriptor)?;
+            let value = if owner.arguments.is_empty() { value } else {
+                evaluator.create_type_family(value, owner.arguments.len(), None)?.0
+            };
+            bindings.insert(key, value);
+            declared_value_owners.insert(*location, owner);
         }
     }
     let (function, required) = compile_expression_with_external_bindings(
         source_name,
         "<tool-stage>",
-        expression,
+        &lowered,
         |name| bindings.get(name).is_some(),
         declared_value_owners,
         value_constructors,

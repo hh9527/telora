@@ -139,7 +139,8 @@ fn first_prepared_display(node: &CodecNode) -> Option<(Val, Val, Val)> {
         CodecNode::Dict(fields, _) => fields
             .iter()
             .find_map(|(_, value)| first_prepared_display(value)),
-        CodecNode::Existing(_)
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
+        | CodecNode::Existing(_)
         | CodecNode::Atom(_, _)
         | CodecNode::NamedAtom(_, _)
         | CodecNode::String(_, _) => None,
@@ -173,7 +174,8 @@ fn replace_first_prepared_display(node: &mut CodecNode, text: String) -> bool {
             };
             replace_first_prepared_display(value, text)
         }
-        CodecNode::Existing(_)
+        CodecNode::Refined { .. } | CodecNode::Decode { .. } | CodecNode::Trials { .. } | CodecNode::Reject(_)
+        | CodecNode::Existing(_)
         | CodecNode::Atom(_, _)
         | CodecNode::NamedAtom(_, _)
         | CodecNode::String(_, _) => false,
@@ -444,7 +446,6 @@ fn finish_encode_value(
 fn finish_decode_result(
     result: Result<CodecNode, CodecFailure>,
     input: Val,
-    error_owner: Val,
     return_target: ReturnTarget,
     function: &BytecodeFunction,
     pc: usize,
@@ -453,17 +454,26 @@ fn finish_decode_result(
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
     let (tag, payload) = match result {
-        Ok(node) => (BuiltinAtom::Ok, node),
+        Ok(node) => return drive_codec_decode(CodecDecodeState {
+            check_rejections_as_result: true,
+            tasks: vec![DecodeTask::Node(node)], values: Vec::new(), rejection: None,
+            input, return_target, call_function: Arc::new(function.clone()), call_pc: pc,
+        }, current, background, account),
         Err(failure) => {
             let value = failure.input.unwrap_or(input);
-            (BuiltinAtom::Err, CodecNode::Declared {
-                owner: error_owner,
-                payload: Box::new(CodecNode::Dict(vec![
-                    ("message".into(), CodecNode::String(failure.message, value.loc())),
-                    ("value".into(), CodecNode::Existing(value)),
-                ], value.loc())),
-                loc: value.loc(),
-            })
+            let bytes = logical_value_bytes(4)
+                .and_then(|bytes| bytes.checked_add(failure.message.len() as u64)
+                    .ok_or_else(|| NativeError::allocation_limit("decode error size overflowed")))
+                .map_err(|native_error| allocation_error(native_error.message, function, pc))?;
+            charge_allocation(account, bytes, function, pc)?;
+            let mut opaque = crate::OpaqueValue::new_identity(
+                crate::core::blame_native_type(), failure.message,
+            );
+            opaque.traced = vec![value].into_boxed_slice();
+            let blame = Val::new(
+                DecodedValue::Opaque(current.allocate(Object::Opaque(opaque))), value.loc(),
+            );
+            (BuiltinAtom::Err, CodecNode::Existing(blame))
         }
     };
     finish_codec_payload(tag, payload, input, return_target, function, pc, current, background, account)

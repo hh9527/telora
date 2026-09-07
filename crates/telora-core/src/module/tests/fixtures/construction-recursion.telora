@@ -1,0 +1,14 @@
+import "std/json" as json;
+
+@check(fn(value) {
+    let child = Loop(value + 1);
+    if child.0 > 0 { None } else { None }
+})
+type Loop = struct(Int);
+
+@json.untagged
+type Choice = enum {Recursive(Loop), Fallback(Int)};
+
+def decode: Fn() -> Bool = fn() {
+    match json.decode(Choice, "0") { Ok(_) => True, Err(_) => False }
+};

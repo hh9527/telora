@@ -22,9 +22,8 @@ impl<'a> Compiler<'a> {
         let mut captures = Vec::new();
         let mut registers = Vec::new();
         if let Some(owner) = owner {
-            let register = self.environment.get(&owner).copied()
-                .unwrap_or_else(|| self.load_external_constant(owner.clone(), expression.location));
-            captures.push(owner);
+            let register = self.compile_owner_evidence(&owner, expression.location)?;
+            captures.push("\0constructor-owner".into());
             registers.push(register);
         }
         let name = format!("{}::constructor{}", self.function_name, self.closure_index);
@@ -154,8 +153,14 @@ impl<'a> Compiler<'a> {
                 body.location.start <= owner_location.start
                     && owner_location.end <= body.location.end
             })
-            .map(|(_, owner)| owner)
-            .cloned()
+            .flat_map(|(_, owner)| {
+                let mut names = BTreeSet::new();
+                owner.collect_bindings(&mut names);
+                names
+            })
+            .filter(|name| !bound.contains(name))
+            // 子闭包自己的隐藏参数不属于当前闭包的自由变量。
+            .filter(|name| !name.starts_with("\0trait_evidence:") || self.environment.contains_key(name))
             .collect::<BTreeSet<_>>()
         {
             if captures.contains(&owner) {

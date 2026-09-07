@@ -1,0 +1,59 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+@check(fn(value) {
+    if value.min <= value.max { None } else { Some(blame!("invalid range", value.min, value.max)) }
+})
+type Range = struct {min: Int, max: Int};
+
+@check(fn(value) {
+    if value > 0 { None } else { Some(blame!("positive required", value)) }
+})
+type Positive = struct(Int);
+
+type Choice = enum {
+    @check(fn(value) {
+        if value > 0 { None } else { Some(blame!("positive variant", value)) }
+    })
+    Positive(Int),
+    Empty,
+};
+
+@check(fn(value) {
+    if value.count >= 0 { None } else { Some(blame!("negative count", value.count)) }
+})
+type Box(T) = struct {value: T, count: Int};
+type Input = struct {min: Int, max: Int, other: String};
+
+export def valid = test.should_ok(fn() {
+    let range: Range = {min: 1, max: 3};
+    expect(range.min == 1 && Positive(2).0 == 2 && Choice.Positive(1) != Choice.Empty)
+});
+export def struct_rejection = test.should_fail_with(fn() {
+    let range: Range = {min: 3, max: 1};
+    range
+}, "invalid range");
+export def candidate_rejection = test.should_fail_with(fn() {
+    let candidate: Unchecked(Range) = {min: 4, max: 1};
+    let range: Range = candidate;
+    range
+}, "invalid range");
+export def newtype_rejection = test.should_fail_with(fn() { Positive(0) }, "positive required");
+export def variant_rejection = test.should_fail_with(fn() { Choice.Positive(0) }, "positive variant");
+export def first_class = test.should_fail_with(fn() {
+    let make = Positive;
+    make(-1)
+}, "positive required");
+export def update_rejection = test.should_fail_with(fn() {
+    let range: Range = {min: 1, max: 3};
+    range <~ {min: 4}
+}, "invalid range");
+export def projection_rejection = test.should_fail_with(fn() {
+    let input: Input = {min: 3, max: 1, other: "hi"};
+    let range: Range = input.{min, max};
+    range
+}, "invalid range");
+export def generic_rejection = test.should_fail_with(fn() {
+    let value: Box(String) = {value: "hi", count: -1};
+    value
+}, "negative count");

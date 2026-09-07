@@ -1,0 +1,34 @@
+def minimum: Int = 1;
+
+@check(fn(value) {
+    if value.count >= minimum { None } else { Some(blame!("count below minimum", value.count)) }
+})
+type Box(T) = struct {value: T, count: Int};
+
+@check(fn(value) {
+    if value.count < 5 { None } else { Some(blame!("count too large", value.count)) }
+})
+type Counted(T) = struct(Box(T));
+
+type Choice(T) = enum {
+    @check(fn(value) {
+        if value.count < 5 { None } else { Some(blame!("variant count too large", value.count)) }
+    })
+    Item(Box(T)),
+    Empty,
+};
+
+@check(fn(value) {
+    if value > 0 {
+        let child = Countdown(value - 1);
+        if child.0 >= 0 { None } else { Some(blame!("invalid child", child)) }
+    } else if value == 0 { None } else { Some(blame!("negative countdown", value)) }
+})
+type Countdown = struct(Int);
+
+def consume: for(T) Fn(T) -> Int = fn(value) {
+    let candidate: Box(T) = {value, count: 0};
+    candidate.count
+};
+
+export {Box, Counted, Choice, Countdown, consume};

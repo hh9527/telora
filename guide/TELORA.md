@@ -277,6 +277,38 @@ let result = match Some("hi") {
 
 ## Struct、enum 与模式
 
+`Unchecked(T)` 为具名字段 struct T 提供独立的候选值类型，保留 T 的字段类型
+和泛型参数。候选值可读取字段；需要 T 的上下文将候选值完成构造为 T。
+重复应用保持同一类型：`Unchecked(Unchecked(T))` 等于 `Unchecked(T)`。
+Dyn 保留候选值身份，不能把它直接投影成 T 或另一具名 struct 的候选值。
+
+```telora
+type Point = struct {x: Int, y: Int};
+let candidate: Unchecked(Point) = {x: 1, y: 2};
+let point: Point = candidate;
+```
+
+声明类型的构造可通过 `@check(func)` 校验候选值。校验函数返回 `Option(BlameError)`：
+None 接受原值，Some(error) 在构造处产生诊断。具名字段 struct 的参数为
+`Unchecked(T)`，newtype 和带载荷 variant 的参数为载荷类型。无载荷 variant
+直接成立，不接受 `@check`。
+
+```telora
+@check(fn(value) {
+    if value.min <= value.max { None }
+    else { Some(blame!("invalid range", value.min, value.max)) }
+})
+type Range = struct {min: Int, max: Int};
+let range: Range = {min: 1, max: 3};
+```
+
+校验保留字段的来源位置。读取、复制和传递已完成构造的值不重复校验；
+merge-update 的每个结果分别校验，投影构造的目标值也执行其校验。
+类型计算期间的构造同样执行校验。工具阶段根据依赖准备校验函数及其捕获值，
+在校验就绪后执行相应构造。
+泛型函数体内的构造也执行校验，包括推断出的局部泛型函数和递归构造。
+校验发生在值的构造处，与函数最终返回该值还是返回其他类型无关。
+
 `type UserId = struct(Int);` 声明单元素具名 tuple（newtype）。`value.0` 读取
 内部的 Int；外层 UserId 与 Int 是不同类型。newtype 可以参数化，例如
 `type Box(T) = struct(T);`。载荷为具名类型时，`.0` 保留其具名身份。
@@ -584,16 +616,27 @@ let schema_text = json.stringify(query_schema);
 Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Value` witness，
 返回 Value；只有需要 JSON 文本边界时才调用 `json.stringify` 或
 `json.stringify_pretty`。`yaml.parse` 和 `toml.parse` 同样返回
-`Result(Value, codec.DecodeError)`。`codec.decode` 和 `json.decode` 返回
-`Result(A, codec.DecodeError)`；错误包含 `message: String` 和 `value: Value`。
+`Result(Value, codec.BlameError)`。`codec.decode` 和 `json.decode` 返回
+`Result(A, codec.BlameError)`；错误为不可观察的 native 对象，保留消息和失败值的来源。
 解码试探失败可以作为普通 Result 继续处理。需要产生诊断时使用
-`fail!(error.message, error.value)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
+`raise!(error)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
+解码构造带有 `@check` 的类型时，先校验子值，再校验包含它们的候选值。
+校验返回 `Some(error)` 时，解码返回 `Err(error)`。untagged 解码将这种拒绝视为
+分支不匹配，要求恰好一个分支成功；校验函数主动 `fail!` 则中止执行。
+编码已经校验的值不会重复执行构造校验。
+`string.parse(T, text)` 将文本解析为 T，语法解析失败返回 `Err(ParseError)`，
+成功解析的候选值及其嵌套字段经过构造校验，校验拒绝产生失败诊断。
+使用 `@string.decode_by_parse` 的 codec 文本桥接也执行这些校验，拒绝时返回
+`Err(BlameError)`，可以参与 untagged 分支试探。解析字段的来源是输入字符串。
 静态数据模块保留每个子节点的位置。字符串解析产生的节点保留输入字符串的来源，
 解析消息中的行列描述字符串内容；这些行列不作为 Telora 源码内的偏移。
 
 Value 的每个递归 Array/Object 子节点都具有同一个 canonical TypeId，可以穷尽
 match。`cast!` 只做表示不变的 checked refinement，不能解开 Value variant；
 Value 与领域 model 的 rename/default/flatten 转换只能由 codec 完成。
+`cast!` 形状不匹配时返回 `Err(String)`；形状匹配后，新增的声明类型身份必须通过
+对应的构造校验，包括嵌套字段。校验拒绝产生失败诊断。转换已经校验的同类型值
+不会重复执行校验。
 
 parse 和 decode 的错误可以通过 `match` 恢复或选择其他路径。encode 直接返回
 `Value`；无法编码的输入或有冲突的编码配置产生诊断。Codec 失败不会发布部分结果。
@@ -980,6 +1023,19 @@ Display closure 的普通函数；插值路径只投影固定字段并调用这�
 payload 在复制前预扣，最终输出在分配前按共享节点 memoize 测量。重复引用同一
 fragment 仍按每次展开的长度核算，但拒绝路径不会实际展开指数大小的结果。这套机制
 是静态 dictionary elaboration，不会把模板转换成 Telora 源码。
+
+`blame!(message, subjects...)` 构造 `std/blame.BlameError`，保存 String 消息及任意
+类型原值的来源，不产生诊断。BlameError 是不透明 native 类型，可以保存和跨模块
+传递，其消息和来源不能作为字段读取。`raise!(error)` 发出失败并返回 Never；
+`warn!(error)` 发出 warning、继续执行并返回 `None`，所属 `Option(T)` 的 T 由上下文
+确定。两者都在发出诊断时补上当前 rule 位置，保留创建错误时选择的原值来源。
+`fail!(message, subjects...)` 等价于构造 BlameError 后立即 raise。
+
+```telora
+let error = blame!("invalid value", candidate);
+let observed: Option(Int) = warn!(error);
+raise!(error)
+```
 
 `dbg!` 的 `repr` 是运行时专用、有界且 cycle-safe 的观察文本，不进入 Telora String；
 codec/JSON 是数据交换协议，也不是展示 API。Float 的 debug repr 会保留 `3.0` 和

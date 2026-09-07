@@ -44,6 +44,7 @@ include!("types/metadata.rs");
 include!("types/tool.rs");
 include!("types/tool-bindings.rs");
 include!("types/properties.rs");
+include!("types/construction.rs");
 include!("types/prelude.rs");
 include!("types/inference-state.rs");
 include!("types/inference-variables.rs");

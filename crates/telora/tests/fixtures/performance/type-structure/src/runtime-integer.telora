@@ -1,0 +1,5 @@
+import "std/value" {Value};
+def run: Fn(Int, Int) -> Int = fn(n, total) {
+    if n == 0 { total } else { run(n - 1, total + n) }
+};
+export def result: Value = Value.Int(run(2000, 0));

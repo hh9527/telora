@@ -1,4 +1,23 @@
     #[test]
+    fn unchecked_shares_the_target_slot_and_preserves_the_flag() {
+        let mut store = TypeStore::default();
+        let InternType::Reserved(target) = store.begin(constructor(1024), []) else {
+            unreachable!()
+        };
+        store.seal_shape(target, "Point", TypeShape::Struct(Box::new([]))).unwrap();
+        let slots = store.slots.len();
+        let unchecked = target.unchecked();
+        assert_eq!(unchecked.raw(), target.raw() | (1 << 31));
+        assert_eq!(unchecked.unchecked(), unchecked);
+        assert_eq!(unchecked.checked(), target);
+        assert_eq!(store.get(unchecked), store.get(target));
+        assert_eq!(store.begin(crate::types::unchecked_type_constructor(), [target]), InternType::Existing(unchecked));
+        assert_eq!(store.slots.len(), slots);
+        assert!(store.abort(unchecked).is_err());
+        assert_eq!(TypeId::from_raw(1 << 31), None);
+    }
+
+    #[test]
     fn unresolved_candidates_cannot_acquire_runtime_identity() {
         let mut store = TypeStore::default();
         let pending = TypeDescriptor::PendingAlternatives(vec![

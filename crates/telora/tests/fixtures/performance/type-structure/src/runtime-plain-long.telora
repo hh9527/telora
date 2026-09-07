@@ -1,0 +1,9 @@
+import "std/value" {Value};
+type Box = struct {value: Int};
+def run: Fn(Int, Int) -> Int = fn(n, total) {
+    if n == 0 { total } else {
+        let item: Box = {value: n};
+        run(n - 1, total + item.value)
+    }
+};
+export def result: Value = Value.Int(run(20000, 0));

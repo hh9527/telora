@@ -519,12 +519,19 @@ impl<'a> GenericInference<'a> {
                 self.infer(message, environment, Some(&TypeDescriptor::String))?;
                 TypeDescriptor::Never
             }
-            ExprKind::Raise { message, subjects } => {
-                self.infer(message, environment, Some(&TypeDescriptor::String))?;
+            ExprKind::Raise { action, message, subjects } => {
+                let input = if matches!(action, crate::ast::BlameAction::Raise | crate::ast::BlameAction::Warn) {
+                    TypeDescriptor::Opaque(crate::core::blame_native_type())
+                } else { TypeDescriptor::String };
+                self.infer(message, environment, Some(&input))?;
                 for subject in subjects {
                     self.infer(subject, environment, None)?;
                 }
-                TypeDescriptor::Never
+                match action {
+                    crate::ast::BlameAction::Build => TypeDescriptor::Opaque(crate::core::blame_native_type()),
+                    crate::ast::BlameAction::Warn => option_descriptor(self.fresh_variable()),
+                    _ => TypeDescriptor::Never,
+                }
             }
             ExprKind::Debug { value, .. } => self.infer(value, environment, expected)?,
             ExprKind::TypeAscription { value, target } => {
@@ -862,7 +869,7 @@ impl<'a> GenericInference<'a> {
                             let parameter = &parameters[index];
                             let inference_expected = if index == 1 && model_fields.is_some() {
                                 model_fields.as_ref()
-                            } else if contains_exposed_type_variable(parameter)
+                            } else if contains_exposed_type_variable(&self.normalize(parameter))
                                 && matches!(argument.value, ExprKind::Variable(_))
                                 && !expects_type_value(&self.normalize(parameter))
                             {
@@ -870,7 +877,11 @@ impl<'a> GenericInference<'a> {
                             } else {
                                 Some(parameter)
                             };
-                            let argument_type = self.infer(argument, environment, inference_expected)?;
+                            let mut argument_type = self.infer(argument, environment, inference_expected)?;
+                            if let Some(converted) = self.unchecked_conversion_type(&argument_type, parameter)? {
+                                self.records.insert(argument.location, converted.clone());
+                                argument_type = converted;
+                            }
                             argument_types[index] = argument_type.clone();
                             unresolved_argument_evidence |=
                                 contains_type_variable(&self.normalize(&argument_type));
@@ -992,6 +1003,7 @@ impl<'a> GenericInference<'a> {
                 for constraint in &scheme.constraints {
                     if let Some(target) = replacements.get(&constraint.parameter) {
                         let capability = match &constraint.capability {
+                            TypeCapability::RuntimeType => TypeCapability::RuntimeType,
                             TypeCapability::Trait { id, name } => TypeCapability::Trait {
                                 id: *id,
                                 name: name.clone(),
@@ -1389,6 +1401,10 @@ impl<'a> GenericInference<'a> {
         } else {
             inferred
         };
+        let inferred = match expected {
+            Some(target) => self.unchecked_conversion_type(&inferred, target)?.unwrap_or(inferred),
+            None => inferred,
+        };
         if let Some(expected) = expected
             && !(self.recursive_body_inference_depth > 0
                 && matches!(expression.value, ExprKind::Closure { .. }))
@@ -1403,6 +1419,25 @@ impl<'a> GenericInference<'a> {
         };
         self.records.insert(expression.location, inferred.clone());
         Ok(inferred)
+    }
+
+    fn unchecked_conversion_type(
+        &mut self, actual: &TypeDescriptor, expected: &TypeDescriptor,
+    ) -> Result<Option<TypeDescriptor>, String> {
+        match actual {
+            TypeDescriptor::Declared(candidate) if candidate.id.constructor() == unchecked_type_constructor() => {},
+            TypeDescriptor::Named(_) | TypeDescriptor::Inference(_) => {},
+            _ => return Ok(None),
+        }
+        let TypeDescriptor::Declared(candidate) = self.expose_named(actual) else { return Ok(None); };
+        if candidate.id.constructor() != unchecked_type_constructor() { return Ok(None); }
+        let target = self.expose_named(expected);
+        let Some(target_id) = self.declared_identity(&target) else { return Ok(None); };
+        let source = &candidate.id.arguments()[0];
+        let Some(source_id) = self.declared_identity(source) else { return Ok(None); };
+        if source_id.constructor() != target_id.constructor() { return Ok(None); }
+        self.unify(source, &target)?;
+        Ok(Some(self.normalize(&target)))
     }
 
     // Both operands have been inferred. Only authored constructors receive context;

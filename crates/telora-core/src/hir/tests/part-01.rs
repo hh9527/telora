@@ -1,4 +1,24 @@
     #[test]
+    fn construction_checks_are_not_deferred_property_roots() {
+        let program = parse(
+            "hir.telora",
+            "@check(validate) @decorate(config) type Example = struct {x: Int};\
+             type Choice = enum { @check(memberCheck) @decorate(memberConfig) Item(Int) };",
+        ).unwrap();
+        let hir = HirProgram::resolve(&program,
+            ["Int", "\0telora_struct", "\0telora_enum", "validate", "decorate", "config", "memberCheck", "memberConfig"].map(String::from));
+        assert!(hir.unresolved().next().is_none(), "{:?}", hir.unresolved().collect::<Vec<_>>());
+        for name in ["validate", "memberCheck"] {
+            let reference = hir.references().iter().find(|reference| reference.name == name).unwrap();
+            assert!(!hir.is_property_root(reference.location));
+        }
+        for name in ["config", "memberConfig"] {
+            let reference = hir.references().iter().find(|reference| reference.name == name).unwrap();
+            assert!(hir.is_property_root(reference.location));
+        }
+    }
+
+    #[test]
     fn resolves_slots_shadowing_parameters_patterns_and_externals() {
         let program = parse(
             "hir.telora",

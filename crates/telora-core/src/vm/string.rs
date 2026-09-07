@@ -1,4 +1,31 @@
 #[allow(clippy::too_many_arguments)]
+fn run_string_parse(
+    arguments: &[Val], return_target: ReturnTarget, function: &BytecodeFunction,
+    pc: usize, current: &mut Heap, background: &Heap, account: &mut QuotaAccount,
+) -> Result<VmAction, RuntimeError> {
+    let view = HeapView { current, background: Some(background) };
+    let property = ValueRef { value: arguments[0], view }.declared_type_id()
+        .ok_or_else(|| runtime_type_error("ParseBy Type", &arguments[0], &view, function, pc))?;
+    let metadata = ValueRef { value: arguments[1], view };
+    let input = ValueRef { value: arguments[2], view };
+    let source = input.as_str()
+        .ok_or_else(|| runtime_type_error("String", &arguments[2], &view, function, pc))?;
+    let parsed = match crate::regex::parse_value(metadata, source.as_str(), property) {
+        Ok(parsed) => parsed,
+        Err(message) => return finish_codec_payload(BuiltinAtom::Err,
+            CodecNode::String(message, arguments[2].loc()), arguments[2], return_target,
+            function, pc, current, background, account),
+    };
+    let node = CodecNode::Refined { owner: arguments[1],
+        payload: Box::new(parsed_codec_node(parsed, arguments[2].loc())) };
+    drive_codec_decode(CodecDecodeState {
+        check_rejections_as_result: false,
+        tasks: vec![DecodeTask::Node(node)], values: Vec::new(), rejection: None,
+        input: arguments[2], return_target, call_function: Arc::new(function.clone()), call_pc: pc,
+    }, current, background, account)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_core_string(
     operation: CoreStringFunction,
     arguments: &[Val],
@@ -21,6 +48,8 @@ fn run_core_string(
     };
     let call_loc = instruction_location(function, pc);
     let value = match operation {
+        CoreStringFunction::Parse => return run_string_parse(arguments, return_target,
+            function, pc, current, background, account),
         CoreStringFunction::Length => {
             let length = i64::try_from(argument(0)?.chars().count()).map_err(|_| {
                 error(
@@ -250,4 +279,3 @@ fn normalize_lexical_path(path: &str) -> String {
         components.join("/")
     }
 }
-

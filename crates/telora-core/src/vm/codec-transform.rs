@@ -21,6 +21,12 @@ fn transform_codec_with_input(
     background: &Heap,
     input: Option<Val>,
 ) -> Result<CodecNode, CodecFailure> {
+    if matches!(direction, CodecDirection::Decode) {
+        return Ok(CodecNode::Decode {
+            schema: Box::new(schema.clone()), properties: *properties,
+            value, path: path.to_owned(), input,
+        });
+    }
     transform_codec_inner(schema, properties, value, direction, path, current, background, input)
         .map_err(|mut failure| {
             if failure.input.is_none() {
@@ -74,7 +80,9 @@ fn transform_codec_inner(
                             )
                         })?;
                     crate::regex::parse_value(metadata, source.as_str(), properties.parse_by)
-                        .map(|parsed| parsed_codec_node(parsed, value.loc()))
+                        .map(|parsed| CodecNode::Refined {
+                            owner, payload: Box::new(parsed_codec_node(parsed, value.loc())),
+                        })
                         .map_err(|message| {
                             CodecFailure::new(format!("{path}: {message}"), value, schema.rule)
                         })

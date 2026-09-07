@@ -467,7 +467,12 @@ impl TypeGraph {
                 TypeNode::Bound(parameter) => TypeDescriptor::Bound(*parameter),
                 TypeNode::Named(name) => TypeDescriptor::Named(name.clone()),
                 TypeNode::Declared { id, name, body } => {
-                    let body = build(graph, *body, visiting)?;
+                    // 共享结构从新的具名边界回到当前路径时，保留名义引用。
+                    let body = if visiting.contains(body) {
+                        TypeDescriptor::Never
+                    } else {
+                        build(graph, *body, visiting)?
+                    };
                     TypeDescriptor::Declared(DeclaredTypeDescriptor {
                         id: id.clone(),
                         name: name.clone(),

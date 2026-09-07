@@ -532,14 +532,18 @@ impl Resolver {
             for decorator in &binding.value.decorators {
                 let intrinsic_property = matches!(
                     &decorator.value.callee.value,
-                    ExprKind::Variable(name) if name.value == "property"
+                    ExprKind::Variable(name) if matches!(name.value.as_str(), "property" | "check")
                 );
                 if !intrinsic_property {
                     self.hir.property_roots.insert(decorator.value.callee.location);
                     self.index_expr(&decorator.value.callee, scopes);
                 }
                 for argument in &decorator.value.arguments {
-                    self.hir.property_roots.insert(argument.location);
+                    if !matches!(&decorator.value.callee.value,
+                        ExprKind::Variable(name) if name.value == "check")
+                    {
+                        self.hir.property_roots.insert(argument.location);
+                    }
                     self.index_expr(argument, scopes);
                 }
             }
@@ -614,14 +618,18 @@ impl Resolver {
                         for decorator in &field.value.decorators {
                             let intrinsic_property = matches!(
                                 &decorator.value.callee.value,
-                                ExprKind::Variable(name) if name.value == "property"
+                                ExprKind::Variable(name) if matches!(name.value.as_str(), "property" | "check")
                             );
                             if !intrinsic_property {
                                 self.hir.property_roots.insert(decorator.value.callee.location);
                                 self.index_expr(&decorator.value.callee, scopes);
                             }
                             for argument in &decorator.value.arguments {
-                                self.hir.property_roots.insert(argument.location);
+                                if !matches!(&decorator.value.callee.value,
+                                    ExprKind::Variable(name) if name.value == "check")
+                                {
+                                    self.hir.property_roots.insert(argument.location);
+                                }
                                 self.index_expr(argument, scopes);
                             }
                         }
@@ -646,7 +654,7 @@ impl Resolver {
                 self.index_expr(message, scopes);
                 None
             }
-            ExprKind::Raise { message, subjects } => {
+            ExprKind::Raise { message, subjects, .. } => {
                 self.index_expr(message, scopes);
                 for subject in subjects { self.index_expr(subject, scopes); }
                 None

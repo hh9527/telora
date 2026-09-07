@@ -42,6 +42,7 @@ impl<'a> GenericInference<'a> {
             scheme_scopes: vec![HashMap::new()],
             top_level_inferred_schemes: HashMap::new(),
             inferred_schemes: HashMap::new(),
+            inferred_runtime_scopes: HashMap::new(),
             placeholder_obligations: Vec::new(),
             pending_type_constraints: Vec::new(),
             trait_implementations,
@@ -242,6 +243,9 @@ impl<'a> GenericInference<'a> {
         let TypeDescriptor::Declared(declared) = current else {
             return None;
         };
+        if declared.id.constructor() == unchecked_type_constructor() {
+            return Some(self.normalize(current));
+        }
         let body = if matches!(declared.body.as_ref(), TypeDescriptor::Never) {
             self.declared_bodies.get(&declared.id).unwrap_or(&declared.body)
         } else {
@@ -303,6 +307,10 @@ impl<'a> GenericInference<'a> {
             variables: &mut HashSet<InferenceVariableId>,
         ) -> Option<crate::value::DeclaredTypeId> {
             match ty {
+                TypeDescriptor::Declared(declared) if declared.id.constructor() == unchecked_type_constructor() => {
+                    let TypeDescriptor::Declared(declared) = inference.normalize(ty) else { unreachable!() };
+                    Some(declared.id)
+                }
                 TypeDescriptor::Declared(declared) => Some(declared.id.clone()),
                 TypeDescriptor::Named(name) if named.insert(name.clone()) => inference
                     .named_type(name)
@@ -455,6 +463,7 @@ impl<'a> GenericInference<'a> {
         for constraint in &scheme.constraints {
             if let Some(variable) = variables.get(&constraint.parameter).copied() {
                 let capability = match &constraint.capability {
+                    TypeCapability::RuntimeType => TypeCapability::RuntimeType,
                     TypeCapability::Trait { id, name } => TypeCapability::Trait {
                         id: *id,
                         name: name.clone(),
@@ -737,6 +746,7 @@ impl<'a> GenericInference<'a> {
         descriptor: &TypeDescriptor,
         first_owned_variable: u32,
         location: crate::Location,
+        expression_location: crate::Location,
     ) -> Result<Option<TypeScheme>, String> {
         let descriptor = self.normalize(descriptor);
         let mut variables = Vec::new();
@@ -761,6 +771,9 @@ impl<'a> GenericInference<'a> {
         }
         let mut bound_parameters = Vec::new();
         collect_bound_parameters(&descriptor, &mut bound_parameters);
+        for evidence in self.lexical_type_evidence.iter().chain(self.inferred_runtime_scopes.values().flatten()) {
+            collect_bound_parameters(&evidence.target, &mut bound_parameters);
+        }
         let first_parameter = bound_parameters
             .iter()
             .map(|parameter| parameter.0)
@@ -772,7 +785,7 @@ impl<'a> GenericInference<'a> {
             .enumerate()
             .map(|(index, variable)| (*variable, TypeParameterId(first_parameter + index as u32)))
             .collect::<HashMap<_, _>>();
-        let parameters = variables
+        let parameters: Vec<TypeParameter> = variables
             .iter()
             .enumerate()
             .map(|(index, _)| TypeParameter {
@@ -784,9 +797,28 @@ impl<'a> GenericInference<'a> {
         for (variable, parameter) in &replacements {
             self.variables.set(*variable, TypeDescriptor::Bound(*parameter));
         }
+        let name = format!("inferred:{}:{}", expression_location.start, expression_location.end);
+        let witnesses = parameters.iter().enumerate().map(|(index, parameter)| LexicalTypeEvidence {
+            capability: TypeCapability::RuntimeType,
+            target: TypeDescriptor::Bound(parameter.id),
+            name: evidence_parameter_name(&name, index),
+        }).collect::<Vec<_>>();
+        for constraint in &mut self.pending_type_constraints {
+            if constraint.location.source == expression_location.source
+                && expression_location.start <= constraint.location.start
+                && constraint.location.end <= expression_location.end
+            {
+                constraint.target = bind_inference_variables(&constraint.target, &replacements);
+                constraint.lexical_evidence.extend(witnesses.clone());
+            }
+        }
+        self.inferred_runtime_scopes.insert(expression_location, witnesses);
+        let constraints = parameters.iter().map(|parameter| TypeConstraint {
+            parameter: parameter.id, capability: TypeCapability::RuntimeType, location,
+        }).collect();
         Ok(Some(TypeScheme {
             parameters,
-            constraints: Vec::new(),
+            constraints,
             body: bind_inference_variables(&descriptor, &replacements),
         }))
     }
@@ -996,6 +1028,9 @@ impl<'a> GenericInference<'a> {
                     .iter()
                     .map(|argument| self.normalize(argument))
                     .collect::<Vec<_>>();
+                if declared.id.constructor() == unchecked_type_constructor() {
+                    return unchecked_descriptor(arguments[0].clone());
+                }
                 TypeDescriptor::Declared(DeclaredTypeDescriptor {
                     id: declared.id.reapply(&arguments),
                     name: declared.name.clone(),

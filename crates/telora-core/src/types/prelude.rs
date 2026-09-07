@@ -53,6 +53,10 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         function(vec![metadata.clone()], metadata.clone()),
     );
     prelude.insert(
+        "Unchecked".into(),
+        function(vec![metadata.clone()], metadata.clone()),
+    );
+    prelude.insert(
         "Tuple".into(),
         function(
             vec![TypeDescriptor::Array(Box::new(metadata.clone()))],
@@ -178,6 +182,13 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             scheme(function(
                 vec![witness(bound(0))],
                 witness(witness(bound(0))),
+            )),
+        ),
+        (
+            "Unchecked".into(),
+            scheme(function(
+                vec![witness(bound(0))],
+                witness(unchecked_descriptor(bound(0))),
             )),
         ),
         (
@@ -322,6 +333,46 @@ fn native_type_of_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
     write_native_type_record(context, "TypeOf", &[("instance", instance)])
 }
 
+fn native_unchecked_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
+    let argument = context.argument(0)?;
+    let target = decode_native_type(context.value(argument)?)?;
+    let TypeDescriptor::Declared(declared) = &target else {
+        return Err(NativeError::new("Unchecked expects a named-field struct type"));
+    };
+    if declared.id.constructor() == unchecked_type_constructor() {
+        return context.copy(context.result(), argument);
+    }
+    if !matches!(declared.body.as_ref(), TypeDescriptor::Struct(_)) {
+        return Err(NativeError::new("Unchecked expects a named-field struct type"));
+    }
+    let constructor = unchecked_type_constructor();
+    let id = crate::value::DeclaredTypeId::applied(
+        constructor.module, constructor.local, &[target],
+    );
+    context.make_unchecked_type(id, argument)
+}
+
+pub(crate) fn unchecked_type_constructor() -> crate::TypeConstructorId {
+    crate::TypeConstructorId { module: crate::ModuleId::ANONYMOUS, local: 2 }
+}
+
+pub(crate) fn unchecked_descriptor(target: TypeDescriptor) -> TypeDescriptor {
+    if matches!(&target, TypeDescriptor::Declared(declared)
+        if declared.id.constructor() == unchecked_type_constructor()) {
+        return target;
+    }
+    let body = match &target {
+        TypeDescriptor::Declared(declared) => Arc::clone(&declared.body),
+        _ => Arc::new(TypeDescriptor::Struct(BTreeMap::new())),
+    };
+    let constructor = unchecked_type_constructor();
+    TypeDescriptor::Declared(DeclaredTypeDescriptor {
+        id: crate::value::DeclaredTypeId::applied(constructor.module, constructor.local, &[target]),
+        name: "Unchecked".into(),
+        body,
+    })
+}
+
 fn native_tuple_type(context: &mut CallContext<'_, '_>) -> Result<(), NativeError> {
     let value = context.value(context.argument(0)?)?;
     if value.kind() != ValueKind::Array {
@@ -387,16 +438,7 @@ fn native_checked_cast(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
     match validate_value_ref(&descriptor, context.value(value_register)?, "value") {
         Ok(()) => {
             context.set_atom(tag, "Ok")?;
-            if matches!(descriptor, TypeDescriptor::Declared(_))
-                && context
-                    .value(value_register)?
-                    .declared_value_parts()
-                    .is_none()
-            {
-                context.make_declared_value(payload, type_register, value_register)?;
-            } else {
-                context.copy(payload, value_register)?;
-            }
+            context.copy(payload, value_register)?;
         }
         Err(message) => {
             context.set_atom(tag, "Err")?;
@@ -711,7 +753,11 @@ fn validate_value_ref(
                 let Some((actual, _, _)) = owner.declared_type_parts() else {
                     return Err(format!("{path} has an invalid declared owner"));
                 };
-                if actual != &expected.id {
+                let unchecked_target = actual.constructor() == unchecked_type_constructor()
+                    && actual.arguments().first().is_some_and(|argument| {
+                        matches!(argument, TypeDescriptor::Declared(target) if target.id == expected.id)
+                    });
+                if actual != &expected.id && !unchecked_target {
                     return Err(format!("{path} has a different declared type identity"));
                 }
                 Ok(())

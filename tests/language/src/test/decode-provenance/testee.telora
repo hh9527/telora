@@ -14,7 +14,7 @@ type Renamed = struct {user_count: Int};
 def fail_decode: for(A) Fn(TypeOf(A), codec.Value) -> A = fn(target, value) {
     match codec.decode(target, value) {
         Ok(value) => value,
-        Err(error) => fail!(error.message, error.value),
+        Err(error) => raise!(error),
     }
 };
 def second: Fn(codec.Value) -> codec.Value = fn(value) {
@@ -35,13 +35,13 @@ export def missing = test.should_ok(fn() {
 export def empty = test.should_ok(fn() {
     match json.decode(Item, provider.empty) {
         Ok(value) => value,
-        Err(error) => fail!(error.message, error.value),
+        Err(error) => raise!(error),
     }
 });
 export def escaped = test.should_ok(fn() {
     match json.decode(Item, provider.escaped) {
         Ok(value) => value,
-        Err(error) => fail!(error.message, error.value),
+        Err(error) => raise!(error),
     }
 });
 export def unicode = test.should_ok(fn() {

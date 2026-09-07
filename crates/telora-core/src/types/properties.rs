@@ -473,7 +473,7 @@ fn binding_has_member_decorators(binding: &Binding) -> bool {
     declared_member_fields(binding).is_some_and(|members| {
         members
             .iter()
-            .any(|member| !member.value.decorators.is_empty())
+            .any(|member| member.value.decorators.iter().any(|decorator| !intrinsic_check_marker(decorator)))
     })
 }
 
@@ -505,7 +505,8 @@ fn declared_property_evidence(
 ) -> Result<Vec<TypePropertyEvidence>, FrontendError> {
     let mut evidence = BTreeMap::new();
     for binding in &program.value.body.value.bindings {
-        if binding.value.decorators.is_empty() && !binding_has_member_decorators(binding) {
+        if !binding.value.decorators.iter().any(|decorator| !intrinsic_check_marker(decorator))
+            && !binding_has_member_decorators(binding) {
             continue;
         }
         validate_decorated_binding(binding, sources)?;
@@ -513,7 +514,7 @@ fn declared_property_evidence(
             .and_then(type_value_descriptor)
             .expect("decorated type has a concrete Type descriptor");
         let target_type = evaluator.declared_type_id(tool_values[&binding.value.name.value])?;
-        for decorator in &binding.value.decorators {
+        for decorator in binding.value.decorators.iter().filter(|decorator| !intrinsic_check_marker(decorator)) {
             let property = if intrinsic_property_marker(decorator) {
                 environment.get("PropertyAttr").and_then(type_value_descriptor)
                     .ok_or_else(|| FrontendError::from_diagnostic(sources, Diagnostic::error(
@@ -645,7 +646,7 @@ fn evaluate_declared_properties(
             .value
             .decorators
             .iter()
-            .filter(|decorator| !intrinsic_property_marker(decorator))
+            .filter(|decorator| !intrinsic_property_marker(decorator) && !intrinsic_check_marker(decorator))
             .collect::<Vec<_>>();
         if type_decorators.is_empty() && !binding_has_member_decorators(binding) {
             continue;
@@ -700,6 +701,7 @@ fn evaluate_declared_properties(
             let index = u32::try_from(index)
                 .map_err(|_| frontend_error(source_name, "declared type has too many members"))?;
             for decorator in &member.value.decorators {
+                if intrinsic_check_marker(decorator) { continue; }
                 if intrinsic_property_marker(decorator) {
                     return Err(FrontendError::from_diagnostic(
                         sources,

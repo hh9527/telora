@@ -3,6 +3,7 @@ struct GenericInference<'a> {
     scheme_scopes: Vec<HashMap<String, Option<TypeScheme>>>,
     top_level_inferred_schemes: HashMap<String, TypeScheme>,
     inferred_schemes: HashMap<crate::Location, TypeScheme>,
+    inferred_runtime_scopes: HashMap<crate::Location, Vec<LexicalTypeEvidence>>,
     placeholder_obligations: Vec<(InferenceVariableId, crate::Location, String)>,
     pending_type_constraints: Vec<PendingTypeConstraint>,
     trait_implementations: &'a [TraitImplementation],

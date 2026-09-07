@@ -131,6 +131,7 @@ impl<'a> GenericInference<'a> {
                 &inferred,
                 first_owned_variable,
                 binding.value.name.location,
+                binding.value.value.location,
             )?;
             let descriptor = scheme
                 .as_ref()
@@ -245,6 +246,7 @@ impl<'a> GenericInference<'a> {
                         &inferred,
                         first_owned_variable,
                         binding.value.name.location,
+                        binding.value.value.location,
                     )?
                 } else {
                     None

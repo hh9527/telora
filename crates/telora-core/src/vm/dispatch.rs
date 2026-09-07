@@ -42,7 +42,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         | Opcode::MakeClosure { dst, .. } => Some(*dst),
         Opcode::Call { base, .. } => Some(*base),
         Opcode::Panic { message } => Some(*message),
-        Opcode::Raise { message, .. } => Some(*message),
+        Opcode::Raise { dst, .. } => Some(*dst),
         Opcode::SealFunc { .. }
         | Opcode::SealTypeSlot { .. }
         | Opcode::AssertTypeSlotReady { .. }
@@ -427,7 +427,9 @@ fn drive_vm_action(
                             return Ok(DriveOutcome::Pending);
                         }
                         crate::heap::RuntimePrototype::Native(native) => match native.kind() {
-                            NativeKind::Synchronous => {
+                            NativeKind::Synchronous | NativeKind::CheckedCast => {
+                                let cast_owner = matches!(native.kind(), NativeKind::CheckedCast)
+                                    .then(|| arguments[0]);
                                 let mut context = CallContext::new(
                                     current,
                                     Some(background),
@@ -461,14 +463,17 @@ fn drive_vm_action(
                                         call_pc,
                                     )
                                 })?;
-                                VmAction::Return {
+                                if let Some(owner) = cast_owner {
+                                    start_checked_cast(owner, value, return_target, call_function,
+                                        call_pc, current, background, account)?
+                                } else { VmAction::Return {
                                     value: value.with_loc(
                                         value
                                             .loc()
                                             .or(instruction_location(&call_function, call_pc)),
                                     ),
                                     return_target,
-                                }
+                                } }
                             }
                             NativeKind::CoreArray(function) => start_array_continuation(
                                 function,

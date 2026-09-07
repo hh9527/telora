@@ -142,6 +142,10 @@ pub(crate) struct Heap {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum PropertyKey {
+    Construction {
+        constructor: crate::TypeConstructorId,
+        variant: Option<u32>,
+    },
     Ty {
         ty: crate::TypeId,
         property_ty: crate::TypeId,
@@ -159,11 +163,12 @@ pub(crate) enum PropertyKey {
 }
 
 impl PropertyKey {
-    pub(crate) const fn property_type(self) -> crate::TypeId {
+    pub(crate) const fn property_type(self) -> Option<crate::TypeId> {
         match self {
+            Self::Construction { .. } => None,
             Self::Ty { property_ty, .. }
             | Self::Field { property_ty, .. }
-            | Self::Variant { property_ty, .. } => property_ty,
+            | Self::Variant { property_ty, .. } => Some(property_ty),
         }
     }
 }

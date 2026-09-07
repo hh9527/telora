@@ -17,6 +17,20 @@ pub(crate) fn shared_type_store() -> SharedTypeStore {
 pub struct TypeId(u32);
 
 impl TypeId {
+    const UNCHECKED: u32 = 1 << 31;
+
+    pub(crate) const fn unchecked(self) -> Self {
+        Self(self.0 | Self::UNCHECKED)
+    }
+
+    pub(crate) const fn checked(self) -> Self {
+        Self(self.0 & !Self::UNCHECKED)
+    }
+
+    pub(crate) const fn is_unchecked(self) -> bool {
+        self.0 & Self::UNCHECKED != 0
+    }
+
     pub const FIRST_DYNAMIC: u32 = crate::FIRST_DYNAMIC_MODULE_LOCAL;
 
     pub const fn builtin(raw: u32) -> Self {
@@ -28,20 +42,19 @@ impl TypeId {
     }
 
     pub(crate) const fn from_raw(raw: u32) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
+        if raw & !Self::UNCHECKED == 0 { None } else { Some(Self(raw)) }
     }
 
     fn from_index(index: usize) -> Self {
         let index = u32::try_from(index).expect("type store exceeds u32 ID space");
-        Self(
-            Self::FIRST_DYNAMIC
-                .checked_add(index)
-                .expect("type store exceeds u32 ID space"),
-        )
+        let raw = Self::FIRST_DYNAMIC.checked_add(index)
+            .filter(|raw| *raw < Self::UNCHECKED)
+            .expect("type store exceeds 31-bit ID space");
+        Self(raw)
     }
 
     fn index(self) -> Option<usize> {
-        self.0
+        self.checked().0
             .checked_sub(Self::FIRST_DYNAMIC)
             .map(|index| index as usize)
     }
@@ -137,9 +150,14 @@ impl TypeStore {
         constructor: TypeConstructorId,
         arguments: impl Into<Box<[TypeId]>>,
     ) -> InternType {
+        let arguments = arguments.into();
+        if constructor == crate::types::unchecked_type_constructor() {
+            assert_eq!(arguments.len(), 1, "Unchecked has exactly one target type");
+            return InternType::Existing(arguments[0].unchecked());
+        }
         let key = TypeInternKey::Nominal {
             constructor,
-            arguments: arguments.into(),
+            arguments,
         };
         let hash = self.hash(&key);
         if let Some(entry) = self.intern.get(hash, |entry| entry.key == key) {
@@ -188,7 +206,7 @@ impl TypeStore {
     }
 
     pub(crate) fn is_pending(&self, id: TypeId) -> bool {
-        matches!(self.slot(id), Ok(TypeSlot::Pending(_)))
+        !id.is_unchecked() && matches!(self.slot(id), Ok(TypeSlot::Pending(_)))
     }
 
     pub(crate) fn intern_descriptor(
@@ -424,6 +442,9 @@ impl TypeStore {
     }
 
     fn slot_mut(&mut self, id: TypeId) -> Result<&mut TypeSlot, &'static str> {
+        if id.is_unchecked() {
+            return Err("Unchecked shares its target type slot");
+        }
         id.index()
             .and_then(|index| self.slots.get_mut(index))
             .ok_or("TypeId is not allocated by this store")

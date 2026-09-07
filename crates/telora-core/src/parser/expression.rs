@@ -610,6 +610,9 @@ impl<'a> Lowerer<'a> {
                 | "try_unwrap"
                 | "unwrap"
                 | "fail"
+                | "blame"
+                | "raise"
+                | "warn"
         ) {
             return if matches!(name, "file" | "line") {
                 Err(self.error(
@@ -677,8 +680,8 @@ impl<'a> Lowerer<'a> {
             self.lower_check(name, arguments, invocation)
         } else if matches!(name, "try_unwrap" | "unwrap") {
             self.lower_unwrap(name, arguments, invocation)
-        } else if name == "fail" {
-            self.lower_fail(arguments, invocation)
+        } else if matches!(name, "fail" | "blame" | "raise" | "warn") {
+            self.lower_blame(name, arguments, invocation)
         } else {
             if arguments.len() != 1 {
                 return Err(self.error(
@@ -750,14 +753,22 @@ impl<'a> Lowerer<'a> {
         let location = self.location(node);
         let mut arguments = arguments.into_iter();
         let message = arguments.next().expect("blame message was checked");
+        let action = match name {
+            "blame" => crate::ast::BlameAction::Build,
+            "raise" => crate::ast::BlameAction::Raise,
+            "warn" => crate::ast::BlameAction::Warn,
+            _ => crate::ast::BlameAction::Fail,
+        };
+        if matches!(action, crate::ast::BlameAction::Raise | crate::ast::BlameAction::Warn)
+            && arguments.len() != 0
+        {
+            return Err(self.error(node, format!("{name}! expects exactly one BlameError")));
+        }
         Ok(located(ExprKind::Raise {
+            action,
             message: Box::new(message),
             subjects: arguments.collect(),
         }, location))
-    }
-
-    fn lower_fail(&self, arguments: Vec<Expr>, node: NodeRef) -> Result<Expr, Diagnostic> {
-        self.lower_blame("fail", arguments, node)
     }
 
     fn lower_check(

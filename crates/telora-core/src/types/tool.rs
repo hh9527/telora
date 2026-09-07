@@ -5,6 +5,8 @@ struct ToolEvaluator<'a> {
     work: Heap,
     inference_context: Option<ToolInferenceContext>,
     inference_depth: usize,
+    registered_construction_checks: BTreeSet<PropertyKey>,
+    construction_checks_complete: bool,
 }
 
 struct ToolInferenceContext {
@@ -30,9 +32,19 @@ fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
     }).map(|binding| binding.value.name.value.clone()).collect()
 }
 
+#[derive(Default)]
 struct ToolExpressionEvidence {
     descriptors: HashMap<crate::Location, TypeDescriptor>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
+    calls: HashMap<crate::Location, Vec<ResolvedEvidence>>,
+    runtime_types: BTreeMap<String, TypeDescriptor>,
+    parameters: HashMap<crate::Location, Vec<String>>,
+    lexical_types: HashMap<TypeParameterId, String>,
+    inferred_scopes: HashMap<crate::Location, Vec<LexicalTypeEvidence>>,
+    families: HashMap<crate::Location, PropagationFamily>,
+    not_families: HashMap<crate::Location, NotFamily>,
+    members: HashMap<crate::Location, ResolvedEvidence>,
+    interpolations: HashMap<crate::Location, ResolvedEvidence>,
 }
 
 impl ToolInferenceContext {
@@ -137,6 +149,8 @@ impl<'a> ToolEvaluator<'a> {
             work,
             inference_context: None,
             inference_depth: 0,
+            registered_construction_checks: BTreeSet::new(),
+            construction_checks_complete: false,
         }
     }
 
@@ -204,9 +218,10 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("Array", 1, native_array_type),
             NativeFunction::new("Dict", 1, native_dict_type),
             NativeFunction::new("TypeOf", 1, native_type_of_type),
+            NativeFunction::new("Unchecked", 1, native_unchecked_type),
             NativeFunction::new("Tuple", 1, native_tuple_type),
             NativeFunction::new("Func", 2, native_function_type),
-            NativeFunction::new("\0telora_cast", 2, native_checked_cast),
+            NativeFunction::checked_cast(native_checked_cast),
             NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
         ] {
             values.insert(
@@ -824,7 +839,7 @@ fn collect_nested_annotation_types(
             debug_sink,
             annotations,
         )?,
-        ExprKind::Raise { message, subjects } => {
+        ExprKind::Raise { message, subjects, .. } => {
             for value in std::iter::once(message.as_ref()).chain(subjects.iter()) {
                 collect_nested_annotation_types(source_name, value, bindings, account,
                     sources, debug_sink, annotations)?;

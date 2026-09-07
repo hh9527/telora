@@ -1,0 +1,3 @@
+@check(fn(value) { True })
+type Positive = struct(Int);
+export {Positive};

@@ -2,56 +2,43 @@ import "std/codec" as codec;
 import "std/json" as json;
 import "std/yaml" as yaml;
 import "std/toml" as toml;
-import "std/string" as string;
 import "std/test" as test;
 import "@src/test-support" {expect};
 
-export def yaml_error_keeps_input = test.should_ok(fn() {
+export def yaml_error_keeps_input = test.should_fail_with(fn() {
     let input = "a: [";
-    let checked: Result(codec.Value, codec.DecodeError) = yaml.parse(input);
-    expect(match checked {
-        Err(error) => error.value == codec.Value.String(input) && string.length(error.message) > 0,
-        Ok(_) => False,
-    })
-});
+    let checked: Result(codec.Value, codec.BlameError) = yaml.parse(input);
+    match checked { Err(error) => raise!(error), Ok(_) => 0 }
+}, "<yaml string>");
 
-export def toml_error_keeps_input = test.should_ok(fn() {
+export def toml_error_keeps_input = test.should_fail_with(fn() {
     let input = "a = [";
-    let checked: Result(codec.Value, codec.DecodeError) = toml.parse(input);
-    expect(match checked {
-        Err(error) => error.value == codec.Value.String(input) && string.length(error.message) > 0,
-        Ok(_) => False,
-    })
-});
+    let checked: Result(codec.Value, codec.BlameError) = toml.parse(input);
+    match checked { Err(error) => raise!(error), Ok(_) => 0 }
+}, "<toml string>");
 
 type Item = struct {count: Int};
 type Items = struct {items: Array(Item)};
 @json.untagged
 type NumberOrText = enum {Number(Int), Text(String)};
 
-export def nested_subject = test.should_ok(fn() {
+export def nested_subject = test.should_fail_with(fn() {
     let bad: codec.Value = codec.Value.String("wrong");
     let input: codec.Value = codec.Value.Object({items: codec.Value.Array([
         codec.Value.Object({count: codec.Value.Int(1)}),
         codec.Value.Object({count: bad}),
     ])});
-    expect(match codec.decode(Items, input) {
-        Err(error) => error.value == bad && string.contains(error.message, "items[1].count"),
-        Ok(_) => False,
-    })
-});
+    match codec.decode(Items, input) { Err(error) => raise!(error), Ok(_) => 0 }
+}, "items[1].count");
 
-export def missing_subject = test.should_ok(fn() {
+export def missing_subject = test.should_fail_with(fn() {
     let parent: codec.Value = codec.Value.Object({});
-    expect(match codec.decode(Item, parent) {
-        Err(error) => error.value == parent && string.contains(error.message, "missing required field"),
-        Ok(_) => False,
-    })
-});
+    match codec.decode(Item, parent) { Err(error) => raise!(error), Ok(_) => 0 }
+}, "missing required field");
 
 export def recover_and_compose = test.should_ok(fn() {
     let input: codec.Value = codec.Value.String("hello");
-    let decoded: Result(String, codec.DecodeError) = match codec.decode(Int, input) {
+    let decoded: Result(String, codec.BlameError) = match codec.decode(Int, input) {
         Ok(_) => Ok("number"),
         Err(_) => codec.decode(String, input),
     };
@@ -61,27 +48,18 @@ export def recover_and_compose = test.should_ok(fn() {
     })
 });
 
-export def untagged_failure = test.should_ok(fn() {
+export def untagged_failure = test.should_fail_with(fn() {
     let input: codec.Value = codec.Value.Array([]);
-    expect(match codec.decode(NumberOrText, input) {
-        Err(error) => error.value == input && string.contains(error.message, "matches no untagged"),
-        Ok(_) => False,
-    })
-});
+    match codec.decode(NumberOrText, input) { Err(error) => raise!(error), Ok(_) => 0 }
+}, "matches no untagged");
 
-export def syntax_subject = test.should_ok(fn() {
+export def syntax_subject = test.should_fail_with(fn() {
     let text = "{invalid";
-    expect(match json.decode(Item, text) {
-        Err(error) => error.value == codec.Value.String(text) && string.contains(error.message, "<json string>"),
-        Ok(_) => False,
-    })
-});
+    match json.decode(Item, text) { Err(error) => raise!(error), Ok(_) => 0 }
+}, "<json string>");
 
-export def authored_error = test.should_ok(fn() {
-    let error: codec.DecodeError = {message: "custom decoder", value: codec.Value.Int(42)};
-    let result: Result(Int, codec.DecodeError) = Err(error);
-    expect(match result {
-        Err(error) => error.message == "custom decoder" && error.value == codec.Value.Int(42),
-        Ok(_) => False,
-    })
-});
+export def authored_error = test.should_fail_with(fn() {
+    let error: codec.BlameError = blame!("custom decoder", codec.Value.Int(42));
+    let result: Result(Int, codec.BlameError) = Err(error);
+    match result { Err(error) => raise!(error), Ok(_) => 0 }
+}, "custom decoder");

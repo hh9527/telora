@@ -18,7 +18,7 @@ struct Compiler<'a> {
     promoted_types: HashSet<String>,
     external_bindings: HashSet<String>,
     type_family_values: BTreeMap<String, crate::types::TypeFamilyTemplate>,
-    declared_value_owners: HashMap<Location, String>,
+    declared_value_owners: HashMap<Location, crate::types::ResolvedEvidence>,
     value_constructors: HashMap<Location, crate::types::ValueConstructor>,
     static_funcs: HashMap<String, crate::FuncId>,
     source_file: Option<&'a SourceFile>,
