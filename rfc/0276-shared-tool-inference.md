@@ -1,7 +1,6 @@
 # RFC 0276: Shared Tool Inference and Static Property Evidence
 
-- Status: Implementation verified on local branch `perf/shared-tool-inference`;
-  local main integration pending.
+- Status: Implemented and merged into local `main`; not pushed.
 - Baseline: 58f0b8c, after RFC 0274.
 - Related: RFC 0260, RFC 0274, RFC 0275.
 
@@ -532,7 +531,8 @@ or per-expression inference-environment copy.
   including language acceptance. The release build and diff checks passed.
   Temporary inference instrumentation is absent.
 - Fresh origin/main is 915ffe4, already an ancestor of the optimization branch.
-  Local main integration is the remaining delivery step; nothing is pushed.
+  Local main was fast-forwarded from 58f0b8c to 23827d9, preserving that main
+  history and all optimization commits. Nothing is pushed.
 
 Release scaling measurements use the 915ffe4 baseline binary, identical inputs,
 one warmup and three sequential samples per case (median seconds):
@@ -557,3 +557,10 @@ these query measurements are individual samples, not medians. The query uses
 relative `-C ../lab-ws/lab-ontology/ontology` spelling fails workspace membership
 validation before inference on both 915ffe4 and the optimized build. That
 separate path-validation issue is unchanged by this optimization.
+
+After the fast-forward merge, `cargo test --workspace` passed again on local
+main (308 core tests and 41 CLI tests, including language acceptance), and
+`cargo build --release` succeeded. Two sequential post-merge query samples took
+4.40 s and 4.63 s, with peak RSS 302060 KB and 302072 KB (exit 0). The only
+subsequent change is this documentation of integration and verification; the
+implementation is the tested 23827d9 tree. The work is merged locally, not pushed.
