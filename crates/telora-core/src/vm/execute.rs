@@ -912,21 +912,25 @@ impl Vm {
                                     pc,
                                 )?;
                             }
-                            Opcode::ConcatArrays { dst, arrays } => {
+                            Opcode::ConcatArrays { dst, arrays }
+                            | Opcode::ConcatTuples { dst, tuples: arrays } => {
+                                let is_tuple = matches!(instruction, Opcode::ConcatTuples { .. });
                                 let arrays = read_many(&registers, arrays, function, pc)?;
                                 let mut values = Vec::new();
                                 for array in arrays {
-                                    let DecodedValue::Array(handle) = array.value() else {
-                                        return Err(runtime_type_error(
-                                            "Array spread operand",
+                                    let handle = match (is_tuple, array.value()) {
+                                        (false, DecodedValue::Array(handle))
+                                        | (true, DecodedValue::Tuple(handle)) => handle,
+                                        _ => return Err(runtime_type_error(
+                                            if is_tuple { "Tuple spread operand" } else { "Array spread operand" },
                                             &array,
                                             &view,
                                             function,
                                             pc,
-                                        ));
+                                        )),
                                     };
                                     values.extend_from_slice(
-                                        view.sequence(handle, false).map_err(|heap_error| {
+                                        view.sequence(handle, is_tuple).map_err(|heap_error| {
                                             error(
                                                 RuntimeErrorKind::InvalidBytecode,
                                                 heap_error.to_string(),
@@ -941,15 +945,16 @@ impl Vm {
                                         allocation_error(native_error.message, function, pc)
                                     })?;
                                 charge_allocation(account, bytes, function, pc)?;
+                                let value = if is_tuple {
+                                    DecodedValue::Tuple(current.allocate(crate::heap::Object::Tuple(values.into())))
+                                } else {
+                                    DecodedValue::Array(current.allocate(crate::heap::Object::Array(values.into())))
+                                };
                                 write_register(
                                     &mut registers,
                                     *dst,
                                     Val::new(
-                                        DecodedValue::Array(
-                                            current.allocate(crate::heap::Object::Array(
-                                                values.into(),
-                                            )),
-                                        ),
+                                        value,
                                         instruction_location(function, pc),
                                     ),
                                     function,

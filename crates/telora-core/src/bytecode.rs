@@ -150,6 +150,10 @@ pub enum Instruction {
         dst: Register,
         arrays: Vec<Register>,
     },
+    ConcatTuples {
+        dst: Register,
+        tuples: Vec<Register>,
+    },
     MakeTuple {
         dst: Register,
         items: Vec<Register>,
@@ -376,6 +380,10 @@ pub enum Opcode {
     ConcatArrays {
         dst: Register,
         arrays: Vec<Register>,
+    },
+    ConcatTuples {
+        dst: Register,
+        tuples: Vec<Register>,
     },
     MakeTuple {
         dst: Register,
@@ -748,6 +756,7 @@ fn link_instruction(instruction: Instruction, links: &mut LinkingTable) -> Opcod
         }
         Instruction::MakeArray { dst, items } => Opcode::MakeArray { dst, items },
         Instruction::ConcatArrays { dst, arrays } => Opcode::ConcatArrays { dst, arrays },
+        Instruction::ConcatTuples { dst, tuples } => Opcode::ConcatTuples { dst, tuples },
         Instruction::MakeTuple { dst, items } => Opcode::MakeTuple { dst, items },
         Instruction::InterpolateString { dst, parts } => Opcode::InterpolateString { dst, parts },
         Instruction::MakeDict { dst, fields } => Opcode::MakeDict {

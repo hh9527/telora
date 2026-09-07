@@ -1,0 +1,5 @@
+type A = struct {x: Int};
+type B = struct {x: Int};
+def item: A = {x: 1};
+def source = (item,);
+export def result: Tuple([B]) = (...source);

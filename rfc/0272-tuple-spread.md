@@ -1,6 +1,11 @@
 # RFC 0272: Tuple Spread
 
 - Status: Accepted
+- Implementation: Complete. Debug build and `cargo test --workspace` passed,
+  including 269 core tests, 41 CLI tests and 267 language fixture groups.
+  New Telora fixtures verify flattened types, contextual nominal elements,
+  operand rejection, provenance and ordered single evaluation of empty and
+  nonempty spreads.
 - Tracking: [#159](https://github.com/hh9527/telora/issues/159)
 - Baseline: `4faf8e7`
 

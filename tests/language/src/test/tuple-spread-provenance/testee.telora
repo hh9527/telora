@@ -1,0 +1,18 @@
+import "std/test" as test;
+import "./provider" as provider;
+def copied = (...provider.pair, 3);
+export def original = test.should_ok(fn() { fail!("original", copied.0) });
+export def container = test.should_ok(fn() { fail!("container", copied) });
+
+def notice: Fn(String) -> Result(Int, String) = fn(message) { 'Err(message) };
+def item: Fn(String) -> Tuple([Int]) = fn(message) {
+    let warning = notice.should_ok!(message);
+    (1,)
+};
+def empty: Fn(String) -> Tuple([]) = fn(message) {
+    let warning = notice.should_ok!(message);
+    ()
+};
+export def order = test.should_ok(fn() {
+    (...item("first"), ...empty("middle"), ...item("last"))
+});

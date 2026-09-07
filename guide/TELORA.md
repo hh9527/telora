@@ -386,6 +386,24 @@ type Pair = Tuple([Int, String]);
 `value.1.0` 表示 `(value.1).0`，并且可以与字段选择、索引和调用组合。已知的
 越界位置属于分析错误。`Fn(A) -> Array(Tuple([B, C]))` 等嵌套形式合法。
 
+Tuple 字面量支持 `...` 展开：
+
+```telora
+let pair = (1, "hi");
+let values = (...pair, 'True.ty!(Bool), 3);
+# values: Tuple([Int, String, Bool, Int])
+```
+
+每个 spread 操作数须具有静态已知的 Tuple 类型；展开保留各位置的独立类型。
+可组合多个 spread，空 Tuple 贡献零个元素。`(...pair)` 和 `(...pair,)` 都构造
+展开后的 Tuple，`(pair)` 是普通分组，`(pair,)` 是包含 pair 的单元素 Tuple。
+展开只进行一层，普通 tuple-valued 元素保持嵌套。
+
+目标 Tuple 类型按展开后的位置提供上下文，包括 spread 中直接书写的字面量；
+展开后的长度和每个元素类型须符合目标契约。操作数按源码顺序各求值一次，
+空 spread 也会求值，复制元素保留原始位置和具名身份。Array spread 与 Tuple
+spread 分别接受 Array 和 Tuple，不进行动态长度转换。
+
 ## TypeMetadata family
 
 类型是一等元数据值。`Type` 是任意有效 TypeMetadata 的类型；`TypeOf(A)` 是

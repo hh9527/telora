@@ -82,7 +82,7 @@ primary:
 | ?6 if_let_expr
 | ?7 do_expr
 | legacy_interpreter_expr
-| '(' [expression (?1 ',' expression)* [',']] ')' @paren_expr
+| '(' [array_item (?1 ',' array_item)* [',']] ')' @paren_expr
 | '[' [array_item (?2 ',' array_item)* [',']] ']' @array_expr
 | braced
 | ?3 function_contract

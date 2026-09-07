@@ -1,0 +1,1 @@
+export def result = fn(value) { (...value, 3) };

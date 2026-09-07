@@ -66,7 +66,10 @@ impl<'a> Lowerer<'a> {
             }
             Rule::ParenExpr => {
                 let items = self.expression_children(node)?;
-                if items.len() == 1 && self.token_children(node, Token::Comma).next().is_none() {
+                if items.len() == 1
+                    && !matches!(items[0].value, ExprKind::Spread(_))
+                    && self.token_children(node, Token::Comma).next().is_none()
+                {
                     return Ok(items.into_iter().next().unwrap());
                 }
                 ExprKind::Tuple(items)

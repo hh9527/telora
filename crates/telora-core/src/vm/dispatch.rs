@@ -25,6 +25,7 @@ fn recoverable_instruction_destination(instruction: &Opcode) -> Option<Register>
         | Opcode::LessThanOrEqual { dst, .. }
         | Opcode::MakeArray { dst, .. }
         | Opcode::ConcatArrays { dst, .. }
+        | Opcode::ConcatTuples { dst, .. }
         | Opcode::MakeTuple { dst, .. }
         | Opcode::InterpolateString { dst, .. }
         | Opcode::MakeDict { dst, .. }

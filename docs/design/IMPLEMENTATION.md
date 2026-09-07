@@ -250,6 +250,13 @@ Struct 合并更新复用 Dict 的运行时字段表示。严格推断根据 `<~
 `MakeDict`；普通构造沿用 `OwnDeclared` 附加目标身份。字段值直接复制，
 保持来源位置，投影无需额外 VM 指令。
 
+Tuple spread 复用 `Spread` AST 项。初步推断按静态 Tuple 形状展开位置类型；
+严格推断和上下文字面量检查按展开后的下标分配 expected type。编译器将普通
+元素构造成单元素 Tuple，将 spread 操作数作为完整 Tuple 片段，最终发出
+`ConcatTuples`。VM 与 `ConcatArrays` 共享有序复制及配额核算逻辑，分别检查
+Tuple/Array 表示并创建对应容器；元素直接复制 Val。无 spread 的 Tuple 仍
+通过 `MakeTuple` 构造。
+
 `Dyn.project_with` 对目标 witness 和 package descriptor 直接执行
 `TypeGraph::decode_persistent + canonicalize`。它先为 declared node 建立 canonical
 TypeId，再闭合递归边；不能先降成扁平 `TypeDescriptor`，否则 `Option(Node)` 一类

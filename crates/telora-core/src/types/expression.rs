@@ -46,8 +46,22 @@ fn infer_expr_with(
                 .map(|item| TypeDescriptor::Array(Box::new(item)))
         }
         ExprKind::Tuple(items) => {
-            let items = items.iter().map(|item| infer_expr_with(item, environment, record)).collect::<Vec<_>>();
-            items.into_iter().collect::<Option<Vec<_>>>().map(TypeDescriptor::Tuple)
+            let mut types = Vec::new();
+            let mut complete = true;
+            for item in items {
+                if let ExprKind::Spread(operand) = &item.value {
+                    if let Some(TypeDescriptor::Tuple(items)) = infer_expr_with(operand, environment, record) {
+                        types.extend(items);
+                    } else {
+                        complete = false;
+                    }
+                } else if let Some(ty) = infer_expr_with(item, environment, record) {
+                    types.push(ty);
+                } else {
+                    complete = false;
+                }
+            }
+            complete.then_some(TypeDescriptor::Tuple(types))
         }
         ExprKind::Dict(fields) if fields.iter().any(|field| field.value.name.is_none()) => {
             let items = fields.iter().map(|field| {

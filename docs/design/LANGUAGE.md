@@ -177,6 +177,19 @@ let entry: Tuple([String, Int]) = ("port", 8080);
 `Tuple` 是接收单个 TypeMetadata Array 的普通元数据构造器。该形式在类型 alias、
 显式元数据表达式和受限契约中一致；`Tuple(A, B)` 不是 Tuple 类型的另一种写法。
 
+Tuple 字面量的 spread 按位置拼接静态已知的 Tuple：
+`(...pair, 'True.ty!(Bool), 3)` 展开 pair 后追加 Bool 和 Int 元素。每个位置
+保持独立类型，多个 spread 按书写顺序展开一层；空 Tuple 不贡献元素，普通
+tuple-valued 元素保持嵌套。Array、Dict、Dyn 和未知形状的类型变量不提供
+Tuple spread 所需的固定长度证据。
+
+`(...pair)` 和 `(...pair,)` 都是 Tuple 构造；普通 `(value)` 是分组，
+`(value,)` 是单元素 Tuple。目标 Tuple 契约按展开后的下标传递元素上下文，
+包括 spread 中直接书写的 tuple 字面量，最终完整长度和逐位置类型均须匹配。
+非字面量 spread 操作数须自行提供静态 Tuple 形状，外层目标不猜测其长度。
+操作数从左到右各求值一次，空 spread 仍求值；元素 Val 的来源和名义身份
+被复制保留，新容器采用整个 Tuple 构造表达式的位置。
+
 Record 字面量与 `Dict(T)` 在运行时都使用 String key 的 Dict 表示，但静态意义不同：
 
 ```telora

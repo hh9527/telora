@@ -101,6 +101,22 @@ impl<'a> Compiler<'a> {
                 Err(self.error_at(expression.location, "spread is only valid in a collection"))
             }
             ExprKind::Tuple(items) => {
+                if items.iter().any(|item| matches!(item.value, ExprKind::Spread(_))) {
+                    let mut tuples = Vec::with_capacity(items.len());
+                    for item in items {
+                        if let ExprKind::Spread(operand) = &item.value {
+                            tuples.push(self.compile_expr(operand)?);
+                        } else {
+                            let value = self.compile_expr(item)?;
+                            let dst = self.allocate();
+                            self.emit(Operation::MakeTuple { dst, items: vec![value] }, item.location);
+                            tuples.push(dst);
+                        }
+                    }
+                    let dst = self.allocate();
+                    self.emit(Operation::ConcatTuples { dst, tuples }, expression.location);
+                    return Ok(dst);
+                }
                 let items = self.compile_many(items)?;
                 let dst = self.allocate();
                 self.emit(Operation::MakeTuple { dst, items }, expression.location);

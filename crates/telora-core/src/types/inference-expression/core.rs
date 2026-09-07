@@ -1,4 +1,44 @@
 impl<'a> GenericInference<'a> {
+    fn infer_tuple_items(
+        &mut self,
+        items: &[Expr],
+        environment: &HashMap<String, TypeDescriptor>,
+        expected: Option<&[TypeDescriptor]>,
+    ) -> Result<Vec<TypeDescriptor>, String> {
+        let mut types = Vec::new();
+        for item in items {
+            if let ExprKind::Spread(operand) = &item.value {
+                let spread = if let ExprKind::Tuple(nested) = &operand.value {
+                    let remaining = expected.map(|types_expected| {
+                        &types_expected[types.len().min(types_expected.len())..]
+                    });
+                    let nested_types = self.infer_tuple_items(nested, environment, remaining)?;
+                    self.records.insert(
+                        operand.location,
+                        TypeDescriptor::Tuple(nested_types.clone()),
+                    );
+                    nested_types
+                } else {
+                    let ty = self.infer(operand, environment, None)?;
+                    let TypeDescriptor::Tuple(spread) = self.resolve(&ty) else {
+                        return Err("tuple spread requires a statically known Tuple".into());
+                    };
+                    spread
+                };
+                for ty in spread {
+                    if let Some(target) = expected.and_then(|expected| expected.get(types.len())) {
+                        self.check(&ty, target)?;
+                    }
+                    types.push(ty);
+                }
+            } else {
+                let target = expected.and_then(|expected| expected.get(types.len()));
+                types.push(self.infer(item, environment, target)?);
+            }
+        }
+        Ok(types)
+    }
+
     fn infer_field_projection(
         &mut self,
         receiver: &Expr,
@@ -239,22 +279,12 @@ impl<'a> GenericInference<'a> {
             ExprKind::Spread(operand) => self.infer(operand, environment, expected)?,
             ExprKind::Tuple(items) => {
                 let item_expected = match expected.map(|ty| self.resolve(ty)) {
-                    Some(TypeDescriptor::Tuple(expected_items))
-                        if expected_items.len() == items.len() =>
-                    {
-                        expected_items
-                    }
-                    _ => Vec::new(),
+                    Some(TypeDescriptor::Tuple(expected_items)) => Some(expected_items),
+                    _ => None,
                 };
-                TypeDescriptor::Tuple(
-                    items
-                        .iter()
-                        .enumerate()
-                        .map(|(index, item)| {
-                            self.infer(item, environment, item_expected.get(index))
-                        })
-                        .collect::<Result<_, _>>()?,
-                )
+                TypeDescriptor::Tuple(self.infer_tuple_items(
+                    items, environment, item_expected.as_deref(),
+                )?)
             }
             ExprKind::Dict(fields) => {
                 let has_spread = fields.iter().any(|field| field.value.name.is_none());
@@ -1376,12 +1406,37 @@ impl<'a> GenericInference<'a> {
                     join_all_types(types)
                 }))
             }
-            (ExprKind::Tuple(items), TypeDescriptor::Tuple(types)) if items.len() == types.len() => {
-                TypeDescriptor::Tuple(
-                    items.iter().zip(types).map(|(item, ty)| {
-                        self.contextualize_authored_literal(item, ty)
-                    }).collect::<Result<_, _>>()?,
-                )
+            (ExprKind::Tuple(items), TypeDescriptor::Tuple(types)) => {
+                let mut result = Vec::new();
+                for item in items {
+                    if let ExprKind::Spread(operand) = &item.value {
+                        let TypeDescriptor::Tuple(spread) =
+                            self.resolve(&self.records[&operand.location])
+                        else {
+                            return Ok(actual);
+                        };
+                        let Some(slice) = types.get(result.len()..result.len() + spread.len()) else {
+                            return Ok(actual);
+                        };
+                        let contextual = self.contextualize_authored_literal(
+                            operand,
+                            &TypeDescriptor::Tuple(slice.to_vec()),
+                        )?;
+                        let TypeDescriptor::Tuple(spread) = contextual else {
+                            return Ok(actual);
+                        };
+                        result.extend(spread);
+                    } else {
+                        let Some(ty) = types.get(result.len()) else {
+                            return Ok(actual);
+                        };
+                        result.push(self.contextualize_authored_literal(item, ty)?);
+                    }
+                }
+                if result.len() != types.len() {
+                    return Ok(actual);
+                }
+                TypeDescriptor::Tuple(result)
             }
             (ExprKind::Dict(fields), TypeDescriptor::Struct(types)) => {
                 let mut result = BTreeMap::new();
