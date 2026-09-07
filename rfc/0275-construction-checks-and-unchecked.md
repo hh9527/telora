@@ -9,14 +9,17 @@
   cover structs, newtypes, payload variants, first-class constructors, generic
   instances, merge-update and projection. Codec decoding executes nested and variant
   checks through VM continuations; untagged trials require exactly one successful
-  branch and propagate checker execution failures. Dynamic construction boundaries
-  and complete tool-stage scheduling remain pending.
-- Validation: debug build and workspace tests pass; 361 language fixture groups
+  branch and propagate checker execution failures. Checked casts enforce nested
+  construction checks and unchecked-to-checked conversion. String parsing and its
+  codec bridge, remaining dynamic boundary auditing and complete tool-stage
+  scheduling remain pending.
+- Validation: debug build and workspace tests pass; 362 language fixture groups
   pass, including opaque access rejection, intrinsic argument contracts, deferred
   error construction, warnings returning None, cross-module subject origins,
   unchecked identity and fields, generic conversion, Dyn isolation, check signature
   rejection, construction rejection and observable check invocation counts, plus
-  codec rejection, nested untagged trials, ambiguity and checker execution failure.
+  codec rejection, nested untagged trials, ambiguity, checker execution failure,
+  checked cast rejection and same-type cast invocation counts.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
   codec field constraints; see the compatibility analysis below.

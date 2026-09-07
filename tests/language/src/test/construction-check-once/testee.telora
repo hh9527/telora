@@ -5,8 +5,9 @@ import "@src/test-support" {expect};
 export def copies = test.should_ok(fn() {
     let point: Point = {x: 1};
     let copy: Point = point;
+    let refined = match copy.cast!(Point) { Ok(value) => value, Err(error) => fail!(error) };
     let pass: Fn(Point) -> Point = fn(value) { value };
-    let values: Array(Point) = [point, copy, pass(copy)];
+    let values: Array(Point) = [point, refined, pass(copy)];
     expect(values[0].x + values[1].x + values[2].x == 3)
 });
 

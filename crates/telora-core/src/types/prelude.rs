@@ -438,16 +438,7 @@ fn native_checked_cast(context: &mut CallContext<'_, '_>) -> Result<(), NativeEr
     match validate_value_ref(&descriptor, context.value(value_register)?, "value") {
         Ok(()) => {
             context.set_atom(tag, "Ok")?;
-            if matches!(descriptor, TypeDescriptor::Declared(_))
-                && context
-                    .value(value_register)?
-                    .declared_value_parts()
-                    .is_none()
-            {
-                context.make_declared_value(payload, type_register, value_register)?;
-            } else {
-                context.copy(payload, value_register)?;
-            }
+            context.copy(payload, value_register)?;
         }
         Err(message) => {
             context.set_atom(tag, "Err")?;
@@ -762,7 +753,11 @@ fn validate_value_ref(
                 let Some((actual, _, _)) = owner.declared_type_parts() else {
                     return Err(format!("{path} has an invalid declared owner"));
                 };
-                if actual != &expected.id {
+                let unchecked_target = actual.constructor() == unchecked_type_constructor()
+                    && actual.arguments().first().is_some_and(|argument| {
+                        matches!(argument, TypeDescriptor::Declared(target) if target.id == expected.id)
+                    });
+                if actual != &expected.id && !unchecked_target {
                     return Err(format!("{path} has a different declared type identity"));
                 }
                 Ok(())

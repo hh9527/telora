@@ -116,7 +116,7 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("Unchecked", 1, native_unchecked_type),
             NativeFunction::new("Tuple", 1, native_tuple_type),
             NativeFunction::new("Func", 2, native_function_type),
-            NativeFunction::new("\0telora_cast", 2, native_checked_cast),
+            NativeFunction::checked_cast(native_checked_cast),
             NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
         ] {
             values.insert(

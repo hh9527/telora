@@ -1,5 +1,6 @@
 #[derive(Debug)]
 struct CodecDecodeState {
+    check_rejections_as_result: bool,
     tasks: Vec<DecodeTask>,
     values: Vec<Val>,
     rejection: Option<Val>,
@@ -16,6 +17,7 @@ enum DecodeBuild {
 
 #[derive(Debug)]
 enum DecodeTask {
+    Refine { descriptor: crate::types::TypeDescriptor, value: Val },
     Node(CodecNode),
     Build { kind: DecodeBuild, count: usize, loc: Option<crate::Loc> },
     Own { owner: Val, loc: Option<crate::Loc> },
@@ -48,6 +50,10 @@ impl NativeContinuation for CodecDecodeContinuation {
     ) -> Result<VmAction, RuntimeError> {
         let view = HeapView { current, background: Some(background) };
         propagate_data_failures(&[value], &view, &self.state.call_function, self.state.call_pc)?;
+        if !self.state.check_rejections_as_result {
+            self.state.values.push(value);
+            return drive_codec_decode(self.state, current, background, account);
+        }
         let result = ValueRef { value, view };
         let (tag, payload) = result.tagged_parts().ok_or_else(|| runtime_type_error(
             "construction Result", &value, &view, &self.state.call_function, self.state.call_pc,
@@ -127,6 +133,9 @@ fn drive_codec_decode(
         };
         consume_fuel(account, function, pc)?;
         match task {
+            DecodeTask::Refine { descriptor, value } => {
+                expand_cast_refinement(&mut state, descriptor, value, current, background, account)?;
+            }
             DecodeTask::Node(CodecNode::Decode { schema, properties, value, path, input }) => {
                 let node = transform_codec_inner(&schema, &properties, value, CodecDirection::Decode,
                     &path, current, background, input).unwrap_or_else(|mut failure| {
@@ -194,13 +203,14 @@ fn drive_codec_decode(
                 let target = HeapView { current, background: Some(background) }.declared_type_id(owner)
                     .map_err(|err| error(RuntimeErrorKind::TypeMismatch, err.to_string(), function, pc))?;
                 let mut pending = Some(state);
+                let return_result = pending.as_ref().unwrap().check_rejections_as_result;
                 let action = construction_check_action(owner, value, target, || {
                     ReturnTarget::Native(Box::new(CodecDecodeContinuation {
                         state: pending.take().expect("decode state"),
                         trace_frame: RuntimeFrame { function: "codec.decode".into(), instruction: pc,
                             origin: function.origin_at(pc) },
                     }))
-                }, true, Arc::clone(&call_function), pc, current, background, account)?;
+                }, return_result, Arc::clone(&call_function), pc, current, background, account)?;
                 if let Some(action) = action { return Ok(action); }
                 state = pending.expect("unchecked construction has no callback");
                 state.values.push(value.with_type_id(target));

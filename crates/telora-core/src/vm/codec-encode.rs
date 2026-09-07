@@ -455,6 +455,7 @@ fn finish_decode_result(
 ) -> Result<VmAction, RuntimeError> {
     let (tag, payload) = match result {
         Ok(node) => return drive_codec_decode(CodecDecodeState {
+            check_rejections_as_result: true,
             tasks: vec![DecodeTask::Node(node)], values: Vec::new(), rejection: None,
             input, return_target, call_function: Arc::new(function.clone()), call_pc: pc,
         }, current, background, account),

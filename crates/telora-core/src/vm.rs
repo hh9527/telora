@@ -36,6 +36,7 @@ include!("vm/dyn.rs");
 include!("vm/model-type.rs");
 include!("vm/codec-entry.rs");
 include!("vm/codec-decode.rs");
+include!("vm/checked-cast.rs");
 include!("vm/codec-encode.rs");
 include!("vm/codec-type.rs");
 include!("vm/codec-transform.rs");

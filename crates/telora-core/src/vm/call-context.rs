@@ -452,33 +452,6 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         self.set(destination, Val::unknown(value))
     }
 
-    pub(crate) fn make_declared_value(
-        &mut self,
-        destination: RegisterId,
-        owner: RegisterId,
-        payload: RegisterId,
-    ) -> Result<(), NativeError> {
-        let owner = self.owned(owner)?;
-        if matches!(owner.value(), DecodedValue::SymbolicType(_)) {
-            return Err(NativeError::new(
-                "symbolic type metadata cannot own a runtime value",
-            ));
-        }
-        if !matches!(owner.value(), DecodedValue::DeclaredType(_)) {
-            return Err(NativeError::new(
-                "declared value owner is not a declared Type",
-            ));
-        }
-        let payload = self.owned(payload)?;
-        let type_id = HeapView {
-            current: self.current,
-            background: self.background,
-        }
-        .declared_type_id(owner)
-        .map_err(|error| NativeError::new(error.to_string()))?;
-        self.set(destination, payload.with_type_id(type_id))
-    }
-
     pub fn copy(&mut self, destination: RegisterId, source: RegisterId) -> Result<(), NativeError> {
         let value = self.owned(source)?;
         self.set(destination, value)

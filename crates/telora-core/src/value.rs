@@ -724,6 +724,7 @@ impl CoreArrayFunction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeKind {
     Synchronous,
+    CheckedCast,
     CoreArray(CoreArrayFunction),
     CoreModel(CoreModelFunction),
     CoreBuiltinType(CoreBuiltinTypeFunction),
@@ -751,6 +752,13 @@ pub struct NativeFunction {
 }
 
 impl NativeFunction {
+    pub(crate) const fn checked_cast(callback: NativeCallback) -> Self {
+        Self {
+            name: "\0telora_cast", arity: 2, callback,
+            kind: NativeKind::CheckedCast, native_type_local: None,
+        }
+    }
+
     pub const fn new(name: &'static str, arity: usize, callback: NativeCallback) -> Self {
         Self {
             name,

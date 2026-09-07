@@ -626,6 +626,9 @@ Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Va
 Value 的每个递归 Array/Object 子节点都具有同一个 canonical TypeId，可以穷尽
 match。`cast!` 只做表示不变的 checked refinement，不能解开 Value variant；
 Value 与领域 model 的 rename/default/flatten 转换只能由 codec 完成。
+`cast!` 形状不匹配时返回 `Err(String)`；形状匹配后，新增的声明类型身份必须通过
+对应的构造校验，包括嵌套字段。校验拒绝产生失败诊断。转换已经校验的同类型值
+不会重复执行校验。
 
 parse 和 decode 的错误可以通过 `match` 恢复或选择其他路径。encode 直接返回
 `Value`；无法编码的输入或有冲突的编码配置产生诊断。Codec 失败不会发布部分结果。
