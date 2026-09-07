@@ -224,7 +224,15 @@ impl<'a> GenericInference<'a> {
                 } else if items.is_empty() && self.delayed_initializer_depth > 0 {
                     self.fresh_variable()
                 } else {
-                    join_all_types(item_types)
+                    if item_types.iter().any(|ty| contains_type_variable(&self.resolve(ty))) {
+                        // Empty spreads contribute an element variable, not an alternative
+                        // to the concrete element evidence in the surrounding array.
+                        let arrays = item_types.iter()
+                            .map(|ty| TypeDescriptor::Array(Box::new(ty.clone())))
+                            .collect::<Vec<_>>();
+                        self.merge_structural_join_evidence(&arrays)?;
+                    }
+                    join_all_types(item_types.iter().map(|ty| self.resolve(ty)).collect())
                 };
                 TypeDescriptor::Array(Box::new(item))
             }

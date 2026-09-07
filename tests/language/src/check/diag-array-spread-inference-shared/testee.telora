@@ -1,0 +1,6 @@
+export def result = {
+    let empty = [];
+    let numbers = [...empty, 1];
+    let texts = [...empty, "wrong"];
+    (numbers, texts)
+};
