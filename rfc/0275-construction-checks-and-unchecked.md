@@ -1,10 +1,10 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
-- Status: Draft; design questions below must be resolved before dependent implementation.
+- Status: Accepted core contracts; implementation in progress.
 - Tracking: [#168](https://github.com/hh9527/telora/issues/168)
 - Supersession target: [#143](https://github.com/hh9527/telora/issues/143),
   codec field constraints; see the compatibility analysis below.
-- Branch: `feat/0161-unified-constructors`
+- Branch: `feat/0168-construction-checks`
 - Depends on: [RFC 0274](0274-unified-constructors-and-checks.md).
 - Related: RFC 0237, RFC 0248, RFC 0258, RFC 0259, RFC 0269, RFC 0270, RFC 0271.
 - Origin: the construction-check stage of RFC 0274 is moved here at the user's
@@ -24,8 +24,9 @@ enum constructors, member name resolution and generic inference independently.
 
 ## Scope
 
-Support `@check(func)` on named-field structs, newtype structs and individual
-enum variants. Whole-enum checks remain deferred. Newtypes retain positional
+Support `@check(func)` on named-field structs, newtype structs and payload-bearing
+enum variants. Unit variants are unconditionally valid and reject `@check`.
+Whole-enum checks remain deferred. Newtypes retain positional
 payload access through `.0`; general named tuples remain outside this scope.
 
 Members remain public. Validation is part of construction, so users do not need
@@ -39,20 +40,37 @@ removes only the outer check guarantee: a field declared as another checked
 type still contains a valid value of that field type. It must preserve the
 candidate's nominal origin and generic arguments while remaining distinct from T.
 
-An unchecked value may not become T through implicit conversion, an arbitrary
-metadata witness, static ascription or Dyn projection. Successful construction
-performs the final wrapping under compiler/runtime control.
+For named-field structs, `Unchecked(T)` exposes T's statically checked fields
+without claiming its outer invariant. It can be used as a public intermediate
+value. A context requiring T implicitly completes construction: invoke T's check
+if present, then publish the original candidate as T. Without a check, this
+conversion succeeds directly. Static ascription, Dyn and metadata may not bypass
+this construction step. No extra runtime wrapper allocation is required merely
+to distinguish unchecked and checked identity.
 
-The exact construction and observation API needs to be settled below. In
-particular, supporting the same shape does not by itself authorize every field
-projection, pattern or codec operation available on T.
+Newtypes and payload variants use their payload type U directly as the check
+input; they do not need an Unchecked(T) wrapper. U already satisfies its own
+type's guarantees. The outer check decides whether U may constitute the newtype
+or selected variant and does not rerun U's checks.
 
 ## Construction Protocol
 
 Construction evaluates and type-checks inputs, forms an unchecked candidate,
 invokes the declaration-bound check, and publishes T only after success.
-Ordinary construction failure produces a diagnostic. Codec decoding returns
-its typed DecodeError on validation failure, preserving the original input Value.
+Check functions return `Option(BlameError)`: None accepts the original candidate;
+Some(error) rejects it. Checks do not transform or replace the candidate.
+The exact signatures are:
+
+| Declaration | Check contract |
+| --- | --- |
+| `type T = struct { ... };` | `Fn(Unchecked(T)) -> Option(BlameError)` |
+| `type T = struct(U);` | `Fn(U) -> Option(BlameError)` |
+| `type T = enum { A(U) };`, on A | `Fn(U) -> Option(BlameError)` |
+| Unit variant | No check; direct construction |
+
+Ordinary construction rejection raises the returned error at the construction
+boundary. Codec decoding returns `Result(T, BlameError)` and can try another
+untagged alternative without generating a diagnostic for each rejected candidate.
 
 All creation paths must enforce this protocol:
 
@@ -72,32 +90,52 @@ the candidate records the construction position for its container. A check
 failure must preserve the distinction between input origin, construction site
 and the check's own failure site wherever those locations are available.
 
-## Decisions Required Before Implementation
+## BlameError and Provenance
 
-The following questions are carried forward from RFC 0274; moving this work to
-a separate RFC does not silently decide them.
+BlameError is an ordinary nominal struct, not the historical native diagnostic
+type with the same name:
 
-1. Define the supported T domains and exact unchecked API. Named-field access,
-   newtype `.0`, constructor patterns, reflection, equality and explicit conversion
-   need consistent rules. Decide whether unchecked values can be authored outside
-   check functions and what public operations, if any, construct them.
-2. Decide whether newtype checks receive `Unchecked(T)` or the payload directly.
-   Specify variant check inputs without inventing standalone variant types, and
-   define when a unit variant's check runs.
-3. Choose a concrete error contract. `Option(Error)` is a design placeholder;
-   no standard Error type has been established by that notation. Specify success,
-   rejection and a check function that itself raises a diagnostic.
-4. Specify ordinary failure diagnostics and conversion into codec DecodeError,
-   including which input Value is retained for nested and untagged decoding.
-5. Define registration and execution phases. Check expressions may reference
+```telora
+type BlameError = struct {message: String, labels: Array(Dyn)};
+```
+
+It replaces DecodeError in codec and the JSON/TOML/YAML error interfaces. The
+initial public definition lives in `std/blame`, and codec/format modules expose
+the same declaration through reexports. AccessError and ResolveError are outside
+this replacement unless integration proves a change necessary.
+
+Each label is the type-erased original Val, retaining its source location and
+value identity. Dyn packing, copying an error, and publishing it across heaps
+must preserve that origin. The location of the error object or labels array
+must not overwrite any individual label. This works for original semantic Value
+inputs and for candidate fields of arbitrary static types.
+
+Creating or returning BlameError does not emit a diagnostic and does not attach
+the current rule location. `fail!(error)` recognizes the nominal BlameError
+contract, uses its message and ordered labels, and adds the actual failure
+boundary's rule location. Existing message-and-subject fail calls remain valid.
+Empty labels are valid and produce a rule-only failure. Multiple labels retain
+their individual origins; unavailable locations remain unavailable rather than
+being replaced with the error allocation site.
+
+Codec structural errors retain the Value at the point decoding failed as an
+erased label. Check rejections retain the labels selected by the checker, so
+cross-field constraints can identify each relevant field. Untagged trials keep
+errors as values until the enclosing boundary chooses to return or raise one.
+An explicit fail inside a checker remains an execution failure; normal rejection
+uses Some(BlameError). Quota exhaustion is not a candidate mismatch.
+
+## Integration Requirements
+
+1. Define registration and execution phases. Check expressions may reference
    declarations, generic parameters, imported helpers and recursive types. The
    module/metadata scheduler must make the required evidence available before use.
-6. Define recursion behavior when checks construct further checked values.
+2. Define recursion behavior when checks construct further checked values.
    Reentrancy must neither bypass checks nor create an unbounded host recursion
    path outside normal quota accounting.
-7. Define how generic metadata, reflection, publication and codec plans retain
+3. Define how generic metadata, reflection, publication and codec plans retain
    check functions and their captured values across heaps and module boundaries.
-8. Audit all dynamic and metadata operations that could manufacture T, including
+4. Audit all dynamic and metadata operations that could manufacture T, including
    checked casts and Dyn projection. Reading a valid checked value and creating a
    new one must remain distinguishable.
 
@@ -124,10 +162,10 @@ must be treated separately before closing #143 as superseded.
 Carry forward #143's requirements for checker signature diagnostics, original
 field provenance, atomic failure without partial object publication, consistent
 shared codec behavior, and stable check-function identity across module/heap
-publication and codec plan reuse. Returning a message for a cross-field check
-does not itself identify a failing field: the error contract must settle how to
-associate that rejection with the original field Value and retain a structured
-reference suitable for the future documentation support tracked by #138.
+publication and codec plan reuse. BlameError labels identify original fields
+for cross-field checks without encoding locations into message strings. Preserve
+a structured diagnostic boundary suitable for future documentation references
+tracked by #138.
 
 Acceptance must demonstrate unchanged successful values and schema shape,
 rejection of invalid decoded and directly constructed candidates, preserved
@@ -137,8 +175,8 @@ independent directional constraint API was implemented.
 
 ### Delivery Sequence
 
-First settle the above contracts and add focused language examples for their
-observable results. Then implement unchecked identity and observation, followed
+First implement BlameError and its provenance/failure protocol, migrate codec
+errors, and add focused language examples. Then implement unchecked identity and observation, followed
 by check registration and constructor enforcement. Integrate merge-update,
 projection, codecs, tool evaluation and dynamic boundaries before acceptance.
 
@@ -149,15 +187,16 @@ substitution, imports, reexports and module graph cycles.
 
 ## Acceptance
 
-- Positive and negative `.telora` cases cover structs, newtypes, payload variants
-  and unit variants, with explicit and inferred generic arguments.
+- Positive and negative `.telora` cases cover structs, newtypes and payload variants
+  with explicit and inferred generic arguments. Unit variants construct directly
+  and reject check decorators.
 - Exported, imported, reexported and first-class constructors enforce the same check.
 - Every creation path listed above is covered, including nested checked fields,
   intermediate merge failures and projection into a checked target.
-- Copying and reading checked values do not repeat checks; unchecked values cannot
-  escape as checked values through any static, dynamic or metadata operation.
+- Copying and reading checked values do not repeat checks; unchecked-to-checked
+  conversions execute the required check at every static, dynamic or metadata boundary.
 - Diagnostics preserve input and construction provenance. Codec rejection retains
-  the appropriate original Value and supports untagged trial decoding.
+  the appropriate original values as Dyn labels and supports untagged trial decoding.
 - Recursive checks obey normal fuel and resource limits. Cross-heap publication
   preserves captured check functions and nominal identities.
 - Guides describe implemented behavior positively. Historical RFCs are not rewritten
