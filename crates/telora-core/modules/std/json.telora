@@ -9,8 +9,8 @@ native stringify_pretty: Fn(Int) -> Fn(Value) -> String;
 native schema_with: Fn(codec.Properties, Type, TypeOf(Value)) -> Value;
 def decode: for(A) Fn(TypeOf(A), String) -> Result(A, DecodeError) = fn(target, text) {
     match parse(text) {
-        'Ok(value) => codec.decode(target, value),
-        'Err(error) => 'Err(error),
+        Ok(value) => codec.decode(target, value),
+        Err(error) => Err(error),
     }
 };
 def schema: Fn(Type) -> Value = fn(target) {

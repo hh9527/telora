@@ -26,10 +26,14 @@
   their contracts and provenance, and authored imports take precedence over
   prelude fallbacks. Property markers accept typed tool-stage PropertyTarget
   expressions, including aliases and computed values, with nominal validation.
-  Quoted-syntax removal and checks remain pending.
+  Standard-library sources and examples use named enum members throughout.
+  Quoted-syntax removal in the parser, remaining fixtures and documentation,
+  and construction checks remain pending.
   Wildcard member selectors are deferred; this delivery uses explicit member lists.
 - Validation: PropertyTarget passed debug build, workspace tests and 333 language fixture groups,
   including computed markers, aliases, nominal rejection and marker arity.
+  The standard-library syntax migration passed debug build and workspace tests;
+  migrated application, reflection and analytics examples passed module checking.
   New behavior is tested in
   `.telora`; no release binary was built.
 

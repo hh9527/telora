@@ -44,15 +44,15 @@ def configure_sources: Fn(Array(String), Dict(rt.DataSrc)) -> Dict(rt.DataSrc) =
         let unique = array.all(declared, fn(name) {
             array.length(array.filter(declared, fn(other) { other == name })) == 1
         });
-        if unique == 'False {
+        if unique == False {
             fail!("entry ContextConfig.sources must contain unique names")
         } else if array.all(declared, fn(name) {
             array.any(provided, fn(other) { other == name })
-        }) == 'False {
+        }) == False {
             fail!("a source declared by entry ContextConfig was not provided", declared, provided)
         } else if array.all(provided, fn(name) {
             array.any(declared, fn(other) { other == name })
-        }) == 'False {
+        }) == False {
             fail!("an undeclared source was provided", declared, provided)
         } else {
             sources
@@ -66,7 +66,7 @@ def declared_ees: Fn(Array(ees.Model)) -> Dict(String) = fn(models) {
             other.0 == declaration.0
         })) == 1
     });
-    if unique == 'False {
+    if unique == False {
         fail!("EES model declarations must contain unique non-empty names")
     } else {
         dict.from_pairs(pairs)
@@ -75,23 +75,23 @@ def declared_ees: Fn(Array(ees.Model)) -> Dict(String) = fn(models) {
 
 def diagnostics: Fn(Array(rt.Diagnostic)) -> Array(Value) = fn(found) {
     array.map(found, fn(diagnostic) {
-        'Object({message: 'String(diagnostic.message)})
+        Value.Object({message: Value.String(diagnostic.message)})
     })
 };
 
 def success_response: Fn(Value, Array(Value)) -> String = fn(value, found) {
-    string.join([json.stringify('Object({
+    string.join([json.stringify(Value.Object({
         ok: value,
-        error: 'False,
-        diagnostics: 'Array(found),
+        error: Value.False,
+        diagnostics: Value.Array(found),
     })), ""], "\n")
 };
 
 def failure_response: Fn(Array(Value)) -> String = fn(found) {
-    string.join([json.stringify('Object({
-        ok: 'None,
-        error: 'True,
-        diagnostics: 'Array(found),
+    string.join([json.stringify(Value.Object({
+        ok: Value.None,
+        error: Value.True,
+        diagnostics: Value.Array(found),
     })), ""], "\n")
 };
 
@@ -118,7 +118,7 @@ def remove_pending: Fn(Array(Pending), String) -> Array(Pending) = fn(pending, i
 
 def maybe_exit: Fn(State, Array(rt.SystemEffect)) -> Transition = fn(state, effects) {
     if state.eof && array.length(state.requests) == 0 && array.length(state.pending) == 0 {
-        (state, array.push(effects, 'Exit(0)))
+        (state, array.push(effects, rt.SystemEffect.Exit(0)))
     } else {
         (state, effects)
     }
@@ -126,10 +126,10 @@ def maybe_exit: Fn(State, Array(rt.SystemEffect)) -> Transition = fn(state, effe
 
 def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id, event) {
     match rt.with_diagnostics(state.service.reduce)((state.service.state, event)) {
-        'Err(found) => {
+        Err(found) => {
             let current = match find_request(state.requests, active_id) {
-                'Some(current) => current,
-                'None => fail!("actor reducer failed for an unknown request", active_id),
+                Some(current) => current,
+                None => fail!("actor reducer failed for an unknown request", active_id),
             };
             let state: State = {
                 service: state.service,
@@ -138,12 +138,12 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
                 pending: state.pending,
                 eof: state.eof,
             };
-            maybe_exit(state, ['Output(failure_response(array.concat([
+            maybe_exit(state, [rt.SystemEffect.Output(failure_response(array.concat([
                 current.diagnostics,
                 diagnostics(found),
             ])))])
         },
-        'Ok(observed) => {
+        Ok(observed) => {
             let requests = add_diagnostics(state.requests, active_id, diagnostics(observed.1));
             let service: actor.Service = {
                 state: observed.0.0,
@@ -152,8 +152,8 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
             let initial: Collected = {requests, pending: state.pending, effects: []};
             let collected = array.fold(observed.0.1, initial, fn(found, effect) {
                 match effect {
-                    'EesCall(call) => {
-                        if find_request(found.requests, call.request_id) == 'None {
+                    actor.Effect.EesCall(call) => {
+                        if find_request(found.requests, call.request_id) == None {
                             fail!("actor emitted EesCall for an unknown request", call.request_id)
                         } else if array.any(found.pending, fn(item) { item.id == call.id }) {
                             fail!("actor reused an active EES call id", call.id)
@@ -164,7 +164,7 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
                                     id: call.id,
                                     request_id: call.request_id,
                                 }),
-                                effects: array.push(found.effects, 'EesCall({
+                                effects: array.push(found.effects, rt.SystemEffect.EesCall({
                                     actor: call.request.0,
                                     input: call.request.2,
                                     key: call.id,
@@ -173,9 +173,9 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
                             }
                         }
                     },
-                    'Reply(reply) => match find_request(found.requests, reply.request_id) {
-                        'None => fail!("actor replied to an unknown request", reply.request_id),
-                        'Some(current) => if array.any(found.pending, fn(item) {
+                    actor.Effect.Reply(reply) => match find_request(found.requests, reply.request_id) {
+                        None => fail!("actor replied to an unknown request", reply.request_id),
+                        Some(current) => if array.any(found.pending, fn(item) {
                             item.request_id == reply.request_id
                         }) {
                             fail!("actor replied while EES calls were still active", reply.request_id)
@@ -183,7 +183,7 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
                             {
                                 requests: remove_request(found.requests, reply.request_id),
                                 pending: found.pending,
-                                effects: array.push(found.effects, 'Output(success_response(
+                                effects: array.push(found.effects, rt.SystemEffect.Output(success_response(
                                     reply.value,
                                     current.diagnostics,
                                 ))),
@@ -209,7 +209,7 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
 export def config:
     Fn(rt.Env, MainType) -> Tuple([rt.SystemCaps, Initializer]) =
     fn(env, main) {
-        let _mode: Bool = if env.mode == 'Serve { 'True } else {
+        let _mode: Bool = if env.mode == rt.EntryMode.Serve { True } else {
             fail!("serve Entry policy requires Serve mode")
         };
         let data_srcs = configure_sources(main.config.sources, env.sources);
@@ -227,7 +227,7 @@ export def config:
                 ees_vars: main.ees.vars,
                 text_srcs: {},
                 vars: main.config.envs,
-                stdin: 'Lined,
+                stdin: rt.Stdin.Lined,
             },
             fn(resources, main) {
                 let values = dict.map_values(resources.data, fn(item) { item.data });
@@ -237,12 +237,12 @@ export def config:
                     next_request: 0,
                     requests: [],
                     pending: [],
-                    eof: 'False,
+                    eof: False,
                 };
                 let reduce: Reducer = fn(state, event) {
                     match event {
-                        'Initialize => (state, []),
-                        'StdinLine('Some(line)) => {
+                        rt.SystemEvent.Initialize => (state, []),
+                        rt.SystemEvent.StdinLine(Some(line)) => {
                             let input = json.parse(line) |> result.unwrap;
                             let id = string.join([
                                 "request-",
@@ -255,23 +255,23 @@ export def config:
                                 pending: state.pending,
                                 eof: state.eof,
                             };
-                            advance(state, id, 'Request({id, input}))
+                            advance(state, id, actor.Event.Request({id, input}))
                         },
-                        'StdinLine('None) => maybe_exit(
+                        rt.SystemEvent.StdinLine(None) => maybe_exit(
                             {
                                 service: state.service,
                                 next_request: state.next_request,
                                 requests: state.requests,
                                 pending: state.pending,
-                                eof: 'True,
+                                eof: True,
                             },
                             [],
                         ),
-                        'EesReply(reply) => match array.find(state.pending, fn(item) {
+                        rt.SystemEvent.EesReply(reply) => match array.find(state.pending, fn(item) {
                             item.id == reply.key
                         }) {
-                            'None => fail!("actor received an unknown EES reply", reply.key),
-                            'Some(pending) => {
+                            None => fail!("actor received an unknown EES reply", reply.key),
+                            Some(pending) => {
                                 let state: State = {
                                     service: state.service,
                                     next_request: state.next_request,
@@ -280,11 +280,11 @@ export def config:
                                     eof: state.eof,
                                 };
                                 match find_request(state.requests, pending.request_id) {
-                                    'None => maybe_exit(state, []),
-                                    'Some(_) => advance(
+                                    None => maybe_exit(state, []),
+                                    Some(_) => advance(
                                         state,
                                         pending.request_id,
-                                        'EesReply({
+                                        actor.Event.EesReply({
                                             id: pending.id,
                                             request_id: pending.request_id,
                                             result: reply.result,

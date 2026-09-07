@@ -9,14 +9,14 @@ type ShowState = Result(Array(String), String);
 type Field = Tuple([String, Dyn]);
 
 def reject: Fn(Dyn, String) -> ShowResult = fn(value, message) {
-    'Err(message)
+    Err(message)
 };
 
 def logical_kind: Fn(Type) -> TypeDescKind = fn(ty) {
     match desc.kind(ty) {
-        'Ref => match desc.resolve(ty) {
-            'Ok(target) => logical_kind(target),
-            'Err(_) => 'Ref,
+        TypeDescKind.Ref => match desc.resolve(ty) {
+            Ok(target) => logical_kind(target),
+            Err(_) => TypeDescKind.Ref,
         },
         kind => kind,
     }
@@ -29,23 +29,23 @@ def append: Fn(Array(String), String) -> Array(String) = fn(items, item) {
 def finish_parts: Fn(FoldControl(ShowState, ShowState), String, String) -> ShowResult =
     fn(control, open, close) {
         let state = match control {
-            'Continue(value) => value,
-            'Break(value) => value,
+            FoldControl.Continue(value) => value,
+            FoldControl.Break(value) => value,
         };
         match state {
-            'Err(error) => 'Err(error),
-            'Ok(parts) => 'Ok(`\{open}\{strings.join(parts, ", ")}\{close}`),
+            Err(error) => Err(error),
+            Ok(parts) => Ok(`\{open}\{strings.join(parts, ", ")}\{close}`),
         }
     };
 
 def show_items: Fn(Array(Dyn), String, String) -> ShowResult = fn(values, open, close) {
     finish_parts(
-        arrays.fold_control@[Dyn, ShowState, ShowState](values, 'Ok([]), fn(state, value) {
+        arrays.fold_control@[Dyn, ShowState, ShowState](values, Ok([]), fn(state, value) {
             match state {
-                'Err(error) => 'Break('Err(error)),
-                'Ok(parts) => match show_dyn(value) {
-                    'Err(error) => 'Break('Err(error)),
-                    'Ok(rendered) => 'Continue('Ok(append(parts, rendered))),
+                Err(error) => FoldControl.Break(Err(error)),
+                Ok(parts) => match show_dyn(value) {
+                    Err(error) => FoldControl.Break(Err(error)),
+                    Ok(rendered) => FoldControl.Continue(Ok(append(parts, rendered))),
                 },
             }
         }),
@@ -56,13 +56,13 @@ def show_items: Fn(Array(Dyn), String, String) -> ShowResult = fn(values, open, 
 
 def show_fields: Fn(Array(Field)) -> ShowResult = fn(fields) {
     finish_parts(
-        arrays.fold_control@[Field, ShowState, ShowState](fields, 'Ok([]), fn(state, field) {
+        arrays.fold_control@[Field, ShowState, ShowState](fields, Ok([]), fn(state, field) {
             match state {
-                'Err(error) => 'Break('Err(error)),
-                'Ok(parts) => match field {
+                Err(error) => FoldControl.Break(Err(error)),
+                Ok(parts) => match field {
                     (name, value) => match show_dyn(value) {
-                        'Err(error) => 'Break('Err(error)),
-                        'Ok(rendered) => 'Continue('Ok(append(parts, `\{name}: \{rendered}`))),
+                        Err(error) => FoldControl.Break(Err(error)),
+                        Ok(rendered) => FoldControl.Continue(Ok(append(parts, `\{name}: \{rendered}`))),
                     },
                 },
             }
@@ -74,13 +74,13 @@ def show_fields: Fn(Array(Field)) -> ShowResult = fn(fields) {
 
 def show_tagged: Fn(Dyn) -> ShowResult = fn(value) {
     match dyn.tag(value) {
-        'Err(error) => 'Err(error.message),
-        'Ok(tag) => match dyn.payload(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok('None) => 'Ok(`'\{tag}`),
-            'Ok('Some(payload)) => match show_dyn(payload) {
-                'Err(error) => 'Err(error),
-                'Ok(rendered) => 'Ok(`'\{tag}(\{rendered})`),
+        Err(error) => Err(error.message),
+        Ok(tag) => match dyn.payload(value) {
+            Err(error) => Err(error.message),
+            Ok(None) => Ok(`'\{tag}`),
+            Ok(Some(payload)) => match show_dyn(payload) {
+                Err(error) => Err(error),
+                Ok(rendered) => Ok(`'\{tag}(\{rendered})`),
             },
             _ => panic!("invalid tagged payload result"),
         },
@@ -95,37 +95,35 @@ def quote: Fn(String) -> String = fn(value) {
 
 def show_dyn: Fn(Dyn) -> ShowResult = fn(value) {
     match logical_kind(dyn.desc(value)) {
-        'Int => match dyn.check_int(value) {
-            'None => reject(value, "invalid Int package"),
-            'Some(number) => 'Ok(`\{number}`),
+        TypeDescKind.Int => match dyn.check_int(value) {
+            None => reject(value, "invalid Int package"),
+            Some(number) => Ok(`\{number}`),
         },
-        'Float => match dyn.check_float(value) {
-            'None => reject(value, "invalid Float package"),
-            'Some(number) => 'Ok(`\{number}`),
+        TypeDescKind.Float => match dyn.check_float(value) {
+            None => reject(value, "invalid Float package"),
+            Some(number) => Ok(`\{number}`),
         },
-        'String => match dyn.check_string(value) {
-            'None => reject(value, "invalid String package"),
-            'Some(text) => 'Ok(quote(text)),
+        TypeDescKind.String => match dyn.check_string(value) {
+            None => reject(value, "invalid String package"),
+            Some(text) => Ok(quote(text)),
         },
-        'Array => match dyn.array_items(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(items) => show_items(items, "[", "]"),
+        TypeDescKind.Array => match dyn.array_items(value) {
+            Err(error) => Err(error.message),
+            Ok(items) => show_items(items, "[", "]"),
         },
-        'Tuple => match dyn.tuple_items(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(items) => show_items(items, "(", ")"),
+        TypeDescKind.Tuple => match dyn.tuple_items(value) {
+            Err(error) => Err(error.message),
+            Ok(items) => show_items(items, "(", ")"),
         },
-        'Struct => match dyn.fields(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(fields) => show_fields(fields),
+        TypeDescKind.Struct => match dyn.fields(value) {
+            Err(error) => Err(error.message),
+            Ok(fields) => show_fields(fields),
         },
-        'Dict => match dyn.fields(value) {
-            'Err(error) => 'Err(error.message),
-            'Ok(fields) => show_fields(fields),
+        TypeDescKind.Dict => match dyn.fields(value) {
+            Err(error) => Err(error.message),
+            Ok(fields) => show_fields(fields),
         },
-        'Atom => show_tagged(value),
-        'Tagged => show_tagged(value),
-        'Enum => show_tagged(value),
+        TypeDescKind.Enum => show_tagged(value),
         kind => reject(value, "unsupported my_show descriptor"),
     }
 };

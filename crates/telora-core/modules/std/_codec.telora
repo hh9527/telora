@@ -1,4 +1,4 @@
-type RenameCase = enum {'CamelCase};
+type RenameCase = enum {CamelCase};
 
 @property(PropertyTarget.Type)
 type JsonRenameAll = struct {case: RenameCase};
@@ -8,11 +8,11 @@ type JsonUntagged = struct {};
 
 def rename_all: Fn(RenameCase) -> Fn(Type, Option(JsonRenameAll)) -> JsonRenameAll = fn(case) {
     fn(target, previous) {
-        if case == 'CamelCase {
+        if case == RenameCase.CamelCase {
             let property: JsonRenameAll = {case};
             property
         } else {
-            fail!("std/json.rename_all currently expects 'CamelCase")
+            fail!("std/json.rename_all expects RenameCase.CamelCase")
         }
     }
 };

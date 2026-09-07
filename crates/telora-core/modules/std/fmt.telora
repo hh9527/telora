@@ -26,22 +26,22 @@ native render: Fn(Fmt) -> String;
 
 def project_string: Fn(Dyn) -> Fmt = fn(value) {
     match dyn.project_with(String, value) {
-        'Some(value) => from_string(value),
-        'None => fail!("prepared Display expected String", value),
+        Some(value) => from_string(value),
+        None => fail!("prepared Display expected String", value),
     }
 };
 
 def project_int: Fn(Dyn) -> Fmt = fn(value) {
     match dyn.project_with(Int, value) {
-        'Some(value) => from_int(value),
-        'None => fail!("prepared Display expected Int", value),
+        Some(value) => from_int(value),
+        None => fail!("prepared Display expected Int", value),
     }
 };
 
 def project_float: Fn(Dyn) -> Fmt = fn(value) {
     match dyn.project_with(Float, value) {
-        'Some(value) => from_float(value),
-        'None => fail!("prepared Display expected Float", value),
+        Some(value) => from_float(value),
+        None => fail!("prepared Display expected Float", value),
     }
 };
 
@@ -49,20 +49,20 @@ decl display_for: Fn(Type) -> Fn(Dyn) -> Fmt;
 def display_for = fn(target) {
     let target_kind = type_desc.kind(target);
     let resolved = match target_kind {
-        'Ref => match type_desc.resolve(target) {
-            'Ok(value) => value,
-            'Err(error) => fail!(error.message, target),
+        type_desc.TypeDescKind.Ref => match type_desc.resolve(target) {
+            Ok(value) => value,
+            Err(error) => fail!(error.message, target),
         },
         _ => target,
     };
     match type_desc.kind(resolved) {
-        'String => project_string,
-        'Int => project_int,
-        'Float => project_float,
+        type_desc.TypeDescKind.String => project_string,
+        type_desc.TypeDescKind.Int => project_int,
+        type_desc.TypeDescKind.Float => project_float,
         _ => match target_kind {
-            'Ref => match type_property.get_type_prop(target, DisplayBy) {
-                'Some(property) => property.display,
-                'None => fail!("Display template field has no Display capability", target),
+            type_desc.TypeDescKind.Ref => match type_property.get_type_prop(target, DisplayBy) {
+                Some(property) => property.display,
+                None => fail!("Display template field has no Display capability", target),
             },
             _ => fail!("Display template field has no Display capability", target),
         },
@@ -73,8 +73,8 @@ def prepare_display: Fn(Type, DisplayTemplate) -> Fn(Dyn) -> Fmt = fn(target, te
     let fields = type_desc.fields(target);
     let displays: Array(Fn(Dyn) -> Fmt) = array.map(template.fields, fn(name) {
         let field = match array.find(fields, fn(field) { field.name == name }) {
-            'Some(field) => field,
-            'None => fail!(`Display template references unknown field "\{name}"`, target, name),
+            Some(field) => field,
+            None => fail!(`Display template references unknown field "\{name}"`, target, name),
         };
         let display = display_for(field.ty);
         fn(value) {
