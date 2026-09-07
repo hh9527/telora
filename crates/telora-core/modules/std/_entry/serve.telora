@@ -209,7 +209,7 @@ def advance: Fn(State, String, actor.Event) -> Transition = fn(state, active_id,
 export def config:
     Fn(rt.Env, MainType) -> Tuple([rt.SystemCaps, Initializer]) =
     fn(env, main) {
-        let _mode = if env.mode == 'Serve { 'True } else {
+        let _mode: Bool = if env.mode == 'Serve { 'True } else {
             fail!("serve Entry policy requires Serve mode")
         };
         let data_srcs = configure_sources(main.config.sources, env.sources);

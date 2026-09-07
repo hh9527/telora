@@ -233,6 +233,12 @@ member snapshot。整个声明的 effective heads 在失败检查后一次复制
 名义值需要 canonical `TypeId` 一致，再按表示递归比较；循环图使用 visited pair 防止
 无限递归；函数和 opaque value 使用各自的不透明身份规则。来源位置不参与相等。
 
+enum 构造通过 inference variable 和独立的构造约束记录归属、variant 名称、payload
+证据及源码位置。绑定归属时检查完整 enum 契约，并把 payload 上下文传入直接构造的
+嵌套值。分支和完整调用复用既有证据合并机制；Option/Result 传播和布尔操作符也提供
+各自的闭合契约。未解约束不能泛型化，模块推断完成时必须全部解决。VM 继续使用
+Atom/Tagged 表示，复制 payload 的 Val 来源位置不变。
+
 Struct 合并更新复用 Dict 的运行时字段表示。严格推断根据 `<~` 左侧具名 Struct
 确定结果类型；更新字面量先收集 spread 的静态字段集合和覆盖关系，再为最终
 生效的显式字段传递 expected type，并检查字段子集与类型兼容性。初步类型证据

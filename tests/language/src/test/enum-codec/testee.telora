@@ -19,6 +19,8 @@ type FixtureScalar = enum {'Text(String), 'Count(Int)};
 type NullableScalar = enum {'Null, 'Text(String), 'Count(Int), 'Flag(Bool)};
 type FixtureEnvelope = struct {event: FixtureEvent};
 type Choice = enum {'None, 'Number(Int)};
+type WrongUnit = enum {'Other, 'Number};
+type WrongPayload = enum {'None(Int), 'Number(String)};
 @json.untagged
 type Ambiguous = enum {'OtherText(String), 'Text(String)};
 @json.rename_all('CamelCase)
@@ -72,10 +74,10 @@ export def verified_case = test.should_ok(fn() {
             codec.encode(codec.Value, "hello"),
         ) |> results.unwrap;
         let checks = [
-            expect(!results.is_ok('Other.cast!(Choice))),
-            expect(!results.is_ok('Number.cast!(Choice))),
-            expect(!results.is_ok('None(1).cast!(Choice))),
-            expect(!results.is_ok('Number("one").cast!(Choice))),
+            expect(!results.is_ok('Other.ty!(WrongUnit).cast!(Choice))),
+            expect(!results.is_ok('Number.ty!(WrongUnit).cast!(Choice))),
+            expect(!results.is_ok('None(1).ty!(WrongPayload).cast!(Choice))),
+            expect(!results.is_ok('Number("one").ty!(WrongPayload).cast!(Choice))),
             expect(!results.is_ok(no_match)),
             expect(!results.is_ok(ambiguous)),
             expect(string.contains(schema_text, "userId")),

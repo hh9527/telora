@@ -1856,6 +1856,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .map_err(|(location, message)| {
             FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
         })?;
+    inference.finish_enum_constructors().map_err(|(location, message)| {
+        FrontendError::from_diagnostic(sources, Diagnostic::error(message, location))
+    })?;
     for (name, location, descriptor, first_owned_variable) in delayed_bindings {
         if let Some(query) = &inference.query {
             query.check().map_err(|error| {

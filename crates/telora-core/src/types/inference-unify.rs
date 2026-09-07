@@ -18,6 +18,9 @@ impl<'a> GenericInference<'a> {
     fn require_not_operand(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
         match self.resolve(ty) {
             TypeDescriptor::Inference(variable) => {
+                if self.enum_constructors.contains_key(&variable) {
+                    return self.bind_inference_variable(variable, &normalized_bool_descriptor());
+                }
                 self.not_variables.insert(variable);
                 Ok(())
             }
@@ -61,6 +64,7 @@ impl<'a> GenericInference<'a> {
         if self.occurs(variable, &ty) {
             return Err(format!("infinite type for ?{}", variable.0));
         }
+        self.bind_enum_constructors(variable, &ty)?;
         if self.numeric_variables.contains(&variable) {
             match &ty {
                 TypeDescriptor::Inference(target) => {

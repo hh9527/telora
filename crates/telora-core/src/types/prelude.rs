@@ -73,7 +73,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             name.into(),
             function(
                 vec![
-                    TypeDescriptor::Bound(TypeParameterId(0)),
+                    model_context_descriptor(),
                     TypeDescriptor::Bound(TypeParameterId(1)),
                 ],
                 metadata.clone(),
@@ -96,7 +96,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         "\0telora_warn".into(),
         function(
             vec![TypeDescriptor::String, TypeDescriptor::Bound(TypeParameterId(0))],
-            TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
+            option_descriptor(TypeDescriptor::Never),
         ),
     );
     prelude.insert(
@@ -137,11 +137,11 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
     HashMap::from([
         (
             "\0telora_struct".into(),
-            scheme(function(vec![bound(0), bound(1)], TypeDescriptor::Type)),
+            scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
             "\0telora_enum".into(),
-            scheme(function(vec![bound(0), bound(1)], TypeDescriptor::Type)),
+            scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
             "\0telora_pack_dyn".into(),
@@ -198,7 +198,7 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             "\0telora_warn".into(),
             scheme(function(
                 vec![TypeDescriptor::String, bound(0)],
-                TypeDescriptor::Atom(Atom::Builtin(BuiltinAtom::None)),
+                option_descriptor(TypeDescriptor::Never),
             )),
         ),
     ])
@@ -258,6 +258,13 @@ fn fold_control_descriptor(state: TypeDescriptor, result: TypeDescriptor) -> Typ
     TypeDescriptor::Enum(BTreeMap::from([
         ("Break".into(), Some(Box::new(result))),
         ("Continue".into(), Some(Box::new(state))),
+    ]))
+}
+
+fn model_context_descriptor() -> TypeDescriptor {
+    TypeDescriptor::Struct(BTreeMap::from([
+        ("kind".into(), TypeDescriptor::Enum(BTreeMap::from([("Type".into(), None)]))),
+        ("name".into(), TypeDescriptor::String),
     ]))
 }
 

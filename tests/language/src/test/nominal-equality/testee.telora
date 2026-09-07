@@ -49,8 +49,8 @@ export def dictionaries = test.should_ok(fn() {
     expect(values == {entry: {value: 42}} && {entry: {value: 42}} == values)
 });
 export def tagged_payload = test.should_ok(fn() {
-    expect('Some([item]) == 'Some([{value: 42}])
-        && 'Some([{value: 42}]) == 'Some([item]))
+    expect('Some([item]).ty!(Option(Array(Item))) == 'Some([{value: 42}])
+        && 'Some([{value: 42}]) == 'Some([item]).ty!(Option(Array(Item))))
 });
 export def existing_anonymous = test.should_ok(fn() {
     let raw = {value: 42};

@@ -62,7 +62,7 @@ success_all="$workspace/src/generated/check-success-all.telora"
             success_index=$((success_index + 1))
         fi
     done
-    echo "export def all_loaded = 'True;"
+    echo "export def all_loaded: Bool = 'True;"
 } >"$success_all"
 
 diagnostics_all="$workspace/src/generated/check-diagnostics-all.telora"
@@ -77,7 +77,7 @@ diagnostics_all="$workspace/src/generated/check-diagnostics-all.telora"
             diagnostic_index=$((diagnostic_index + 1))
         fi
     done
-    echo "export def all_loaded = 'True;"
+    echo "export def all_loaded: Bool = 'True;"
 } >"$diagnostics_all"
 
 generated="$workspace/src/generated/check-all.telora"

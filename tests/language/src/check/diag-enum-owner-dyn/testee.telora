@@ -1,0 +1,2 @@
+import "std/dyn" as dyn;
+export def value = dyn.pack(Dyn, 'Ready);

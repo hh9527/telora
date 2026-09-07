@@ -1,0 +1,5 @@
+type State = struct {flag: Bool};
+export def value = {
+    let state: State = {flag: 'True};
+    state <~ {flag: 'Ready, ...state}
+};

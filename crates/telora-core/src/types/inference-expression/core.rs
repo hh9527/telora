@@ -156,8 +156,7 @@ impl<'a> GenericInference<'a> {
         });
         let structural_expected = expected_declared
             .as_ref()
-            .filter(|_| constructs_declared_value
-                && !matches!(expression.value, ExprKind::FieldProjection { .. }))
+            .filter(|_| matches!(expression.value, ExprKind::Dict(_)))
             .map(|declared| declared.body.as_ref());
         let mut result =
             self.infer_inner(expression, environment, structural_expected.or(expected));
@@ -262,7 +261,7 @@ impl<'a> GenericInference<'a> {
                     self.check(parameter, payload)?;
                     function
                 } else {
-                    TypeDescriptor::Atom(atom_from_name(name))
+                    self.enum_constructor(expression.location, name, None)
                 }
             }
             ExprKind::Array(items) => {
@@ -736,6 +735,30 @@ impl<'a> GenericInference<'a> {
                 self.project_tuple(&receiver, index.value)?
             }
             ExprKind::Call { callee, arguments } => {
+                if let ExprKind::Atom(tag) = &callee.value {
+                    let [argument] = arguments.as_slice() else {
+                        return Err(format!("tag constructor expects 1 argument, found {}", arguments.len()));
+                    };
+                    let target = expected.map(|ty| self.expose_named(ty));
+                    let target_body = target.as_ref().map(|ty| match ty {
+                        TypeDescriptor::Declared(declared) => declared.body.as_ref(),
+                        ty => ty,
+                    });
+                    let payload_expected = target_body.and_then(|ty| match ty {
+                        TypeDescriptor::Enum(variants) => variants.get(tag).and_then(Option::as_deref),
+                        _ => None,
+                    });
+                    let payload = self.infer(argument, environment, payload_expected)?;
+                    let owner = self.enum_constructor(expression.location, tag, Some((argument.clone(), payload.clone())));
+                    if let Some(expected) = expected {
+                        self.check(&owner, expected)?;
+                    }
+                    self.records.insert(callee.location, TypeDescriptor::Function {
+                        parameters: vec![payload], result: Box::new(owner.clone()),
+                    });
+                    self.records.insert(expression.location, owner.clone());
+                    return Ok(self.resolve(&owner));
+                }
                 if let Some(result) =
                     self.infer_trait_call(callee, arguments, environment, expected)
                 {
@@ -789,6 +812,22 @@ impl<'a> GenericInference<'a> {
                             .iter()
                             .any(|argument| matches!(argument.value, TypeArgumentKind::Infer))
                 );
+                let model_fields = if matches!(&callee.value, ExprKind::Variable(name)
+                    if name.value == "\0telora_enum")
+                    && let Some(Expr { value: ExprKind::Dict(fields), .. }) = arguments.get(1)
+                {
+                    Some(TypeDescriptor::Struct(fields.iter().filter_map(|field| {
+                        let name = field.value.name.as_ref()?;
+                        let ty = if matches!(&field.value.value.value, ExprKind::Atom(tag) if tag == "None") {
+                            option_descriptor(TypeDescriptor::Type)
+                        } else {
+                            TypeDescriptor::Type
+                        };
+                        Some((name.value.clone(), ty))
+                    }).collect()))
+                } else {
+                    None
+                };
                 let callee = self.infer(callee, environment, None)?;
                 let resolved_callee = self.resolve(&callee);
                 let resolved_callee = if let TypeDescriptor::Inference(variable) = resolved_callee {
@@ -853,7 +892,9 @@ impl<'a> GenericInference<'a> {
                         for index in argument_order {
                             let argument = &arguments[index];
                             let parameter = &parameters[index];
-                            let inference_expected = if contains_exposed_type_variable(parameter)
+                            let inference_expected = if index == 1 && model_fields.is_some() {
+                                model_fields.as_ref()
+                            } else if contains_exposed_type_variable(parameter)
                                 && matches!(argument.value, ExprKind::Variable(_))
                             {
                                 None
@@ -1407,6 +1448,14 @@ impl<'a> GenericInference<'a> {
         expected: &TypeDescriptor,
     ) -> Result<TypeDescriptor, String> {
         let actual = self.resolve(&self.records[&expression.location]);
+        if let TypeDescriptor::Inference(variable) = &actual
+            && self.enum_constructors.contains_key(variable)
+        {
+            if !matches!(self.resolve(expected), TypeDescriptor::Inference(_)) {
+                self.check(&actual, expected)?;
+            }
+            return Ok(self.resolve(&actual));
+        }
         if self.declared_identity(&actual).is_some() {
             return Ok(actual);
         }

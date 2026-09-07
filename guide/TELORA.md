@@ -71,8 +71,8 @@ telora query exports @src/app
 1e6                        # 带十进制指数的 Float
 "text"                     # String
 b"bytes"                   # Bytes
-'Ready                     # Atom
-'True                      # Bool 是封闭的 Atom 类型
+'Ready                     # variant 构造，需要 enum 上下文
+'True.ty!(Bool)            # Bool 的 True variant
 'Some(1)                   # 带标签的值
 (1, "one")                # Tuple 值
 [1, 2, 3]                  # Array
@@ -107,7 +107,7 @@ left >= right
 
 相等和不等要求两侧具有同一静态语义类型；已知类型或形状不兼容时会在前端报错，
 而不是返回 False。普通复合值保持结构相等语义，两个具名 struct/enum 值还要求
-相同的名义类型。dict、Atom 或 Tagged 字面量可以从另一侧获得 exact nominal
+相同的名义类型。dict 字面量或 variant 构造可以从另一侧获得 exact nominal
 context，例如 `wrapper == 'Box("x")` 和 `'Box("x") == wrapper`；不需要先单独
 标注字面量。同一 enum 契约内的不同运行时 variant 可以比较并返回 False。
 有序比较只接受类型相同的
@@ -243,12 +243,12 @@ let explicit = result.map@[Int, String, Int]('Err("bad"), fn(value) { value });
 ```
 
 推断会综合完整泛型调用中的证据。当另一个实参能够确定外围 enum 时，单独一个
-封闭 Atom 实参不会过早地把共享参数固定为其 singleton 类型。例如，`'Base`
+variant 构造会等待该 enum 的证据。例如，`'Base`
 实参和 `Array(NodeId)` 实参可以共同推断出 `NodeId`。只有完整调用仍确实存在
 歧义或约束不足时，才使用显式 `@[...]`。
 
-匿名 Struct 实参同样参与完整调用上下文。泛型回调结果可以拓宽较早 seed 中的
-singleton Atom 字段和空集合字段。因此，下列 fold 会直接推断出 `flag: Bool`
+匿名 Struct 实参同样参与完整调用上下文。泛型回调结果可以确定较早 seed 中的
+variant 构造字段和空集合字段。因此，下列 fold 会直接推断出 `flag: Bool`
 和 `items: Array(Int)`：
 
 ```telora
@@ -261,8 +261,8 @@ array.fold([1, 2, 3], {flag: 'False, items: []}, fn(state, item) {
 `@[Ty]`，可以为不同 variant 提供完整的 enum 契约。编译器按此契约检查每个分支
 和 payload，并要求字段的类型具有唯一的补全方式。
 
-Telora 在拓宽结果之前合并分支证据：泛型代码中的 `if` 若为同一个预期 enum
-结果贡献不同的窄 variant，会先 join 它们，再拓宽为该 enum。例如，有类型的
+Telora 合并分支证据：泛型代码中的 `if` 若为同一个预期 enum
+结果贡献不同的 variant 构造，会按共同 enum 契约检查它们。例如，有类型的
 `Array(Option(Output))` fold 可以在一个分支 push `'None`，在另一个分支 push
 `'Some(output)`。当回调仍然约束不足时，带有完整契约的具名辅助函数依然有用。
 
@@ -281,9 +281,24 @@ type Requirement = struct {
 ```
 
 Struct 和 enum 都是封闭的具名声明。不同声明即使结构相同也不是同一个类型；alias、
-import 和 reexport 保留原声明身份。字段使用 `.field`；enum 值使用 Atom 或 Tagged
+import 和 reexport 保留原声明身份。字段使用 `.field`；enum 值使用 quoted variant
 语法。`struct` 和 `enum` 只用于 `type` 的直接初始化，不能作为普通函数调用；
 `@struct`、`@enum` 不是可用的兼容语法。
+
+每个 variant 构造都需要确定所属 enum。类型可以从注解、函数参数、返回契约或
+完整调用中的其他实参推断；也可以显式指定：
+
+```telora
+let entity: Entity = 'Ticket;
+let explicit = 'Agent.ty!(Entity);
+let enabled = 'True.ty!(Bool);
+let some: Fn(Int) -> Option(Int) = 'Some;
+let value = some(7);
+```
+
+没有足够证据的 `let value = 'Ticket;` 会报错，要求提供 enum 上下文。Bool 的
+variant 也遵循这条规则；条件和布尔操作符本身提供 Bool 上下文。模式中的 variant
+根据被匹配值的 enum 检查，不能用模式名称猜测泛型参数的类型。
 
 声明上下文中的记录或 tag 字面量会取得预期类型的声明身份。外部 JSON/TOML/YAML
 数据可以在 `codec.decode` 这类有精确 witness 的解码边界取得
@@ -304,7 +319,7 @@ let projected = dyn.project@[User](package); # Option(User)
 
 `ty!` 必须能在编译期证明目标类型。Dyn 中的值通过显式投影取得具体类型。
 `cast!` 只验证表示并保留原数据图：raw
-Dict/Atom 可以在完整匹配时取得目标 witness，但两个不同具名类型不能按结构互转；
+匿名 Dict 可以在完整匹配时取得目标 struct witness，但两个不同具名类型不能按结构互转；
 String parse、Int/Float 转换、`Value -> model`、rename/default/flatten 都属于 codec，
 不属于 cast。Dyn 投影只在打包时的 canonical 类型与目标完全相同时成功，不做结构猜测。
 
@@ -654,7 +669,7 @@ contextual intrinsic 糖：`value.dbg!("message")` 等价于
 ### 多元素能力目录的类型推断
 
 显式 `Array(ConcreteFamily)` 契约会向每个元素下传完整的 expected item type。多个
-匿名能力记录中的 singleton Atom、不同闭包、`'Some`/`'None` 窄 variant 和空集合
+匿名能力记录中的 variant 构造、不同闭包和空集合
 因此可以直接按同一个 concrete family 检查：
 
 ```telora
@@ -849,8 +864,8 @@ member 调用。`Dyn` 必须先显式投影，插值处需要已确定的类型�
 binary64 的稳定文本表示：最短、可往返、不受
 locale 影响；`3.0` 显示为 `3`，`-0.0` 显示为 `-0`，原始小数或指数拼写不会保留。
 
-没有 `Display` implementation 的 Tagged、Struct、Array、Dict、Tuple、Dyn 或用户值
-不能插值。声明 enum 和 Tagged payload 可以先通过 `match` 得到明确文本；Array/Dict
+没有 `Display` implementation 的 Enum、Struct、Array、Dict、Tuple、Dyn 或用户值
+不能插值。enum 值可以先通过 `match` 得到明确文本；Array/Dict
 也可以显式 `array.map` 后使用 `string.join`。不要为了展示而把 Query binding 插入
 SQL；仍应保持 `{ sql, bindings }` 的参数绑定边界。
 

@@ -9,6 +9,7 @@ type CastA = struct {value: Int};
 type CastB = struct {value: Int};
 type CastAddress = struct {zip: Int};
 type CastNestedUser = struct {address: CastAddress};
+type State = enum {'Ok, 'Err};
 
 decl explicit_identity: for(A) Fn(A) -> A;
 def explicit_identity = fn(value) { value };
@@ -17,8 +18,9 @@ export def record_precedence = test.should_ok(fn() {
     expect({b: 2 + 3 * 4, a: 1}.b == 14)
 });
 
-export def atom_tuples = test.should_ok(fn() {
-    expect(('Ok, 42) == ('Ok, 42) && ('Ok, 42) != ('Err, 42))
+export def enum_tuples = test.should_ok(fn() {
+    let ok: Tuple([State, Int]) = ('Ok, 42);
+    expect(ok == ('Ok, 42) && ok != ('Err, 42))
 });
 
 export def function_identity = test.should_ok(fn() {
@@ -64,7 +66,8 @@ export def string_ordering = test.should_ok(fn() {
 });
 
 export def nested_tuple_equality = test.should_ok(fn() {
-    expect(('Ok, [1, 2]) == ('Ok, [1, 2]) && ('Ok, [1]) != ('Err, [1]))
+    let ok: Tuple([State, Array(Int)]) = ('Ok, [1, 2]);
+    expect(ok == ('Ok, [1, 2]) && ('Ok, [1]).ty!(Tuple([State, Array(Int)])) != ('Err, [1]))
 });
 
 export def recursive_definitions = test.should_ok(fn() {
@@ -160,7 +163,7 @@ export def call_sections = test.should_ok(fn() {
 export def control_flow = test.should_ok(fn() {
     expect({
         let chained = if 'False { 1 } else if 'False { 2 } else if 'True { 3 } else { 4 };
-        let selected = if 'False { 1 } else if let 'Some(value) = 'Some(3) { value } else { 4 };
+        let selected = if 'False { 1 } else if let 'Some(value) = 'Some(3).ty!(Option(Int)) { value } else { 4 };
         let absent_value: Option(Int) = 'None;
         let absent = if let 'Some(value) = absent_value { value + 1 } else { 0 };
         let choose = fn(condition: Bool) {
@@ -180,12 +183,12 @@ export def control_flow = test.should_ok(fn() {
 });
 
 export def tuple_patterns = test.should_ok(fn() {
-    expect(match ('Ok, 42) { ('Ok, value) => value } == 42)
+    expect(match ('True.ty!(Bool), 42) { ('True, value) => value, ('False, value) => value } == 42)
 });
 
 export def variant_patterns = test.should_ok(fn() {
     expect({
-            let Some = 'Some;
+            let Some: Fn(Int) -> Option(Int) = 'Some;
             let option: Option(Int) = Some(42);
             match option { 'None => 0, 'Some(value) => value }
     } == 42)
@@ -240,7 +243,7 @@ export def inferred_propagation = test.should_ok(fn() {
 
 export def nested_propagation = test.should_ok(fn() {
     expect({
-        let outer = fn(value: Option(Int)) {
+        let outer = fn(value: Option(Int)) -> Option(Option(Int)) {
             let inner: Fn(Option(Int)) -> Option(Int) = fn(inner_value) {
                 let item = inner_value?;
                 'Some(item + 1)

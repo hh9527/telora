@@ -4,6 +4,7 @@ import "std/type-desc" as type_desc;
 import "@src/test-support" {expect};
 
 type Status = enum { 'Ready, 'Failed(String) };
+type Item = struct {value: Int};
 def pair: for(A) Fn(A, A) -> Tuple([A, A]) = fn(a, b) { (a, b) };
 def identity: for(A) Fn(A) -> A = fn(value) { value };
 
@@ -38,4 +39,21 @@ export def reflection = test.should_ok(fn() {
     expect(type_desc.kind(dyn.desc(packed)) == 'Enum
         && dyn.kind(packed) == 'Tagged
         && dyn.project_with(Option(Int), packed) == 'Some(value))
+});
+
+export def late_payload_context = test.should_ok(fn() {
+    let item: Item = {value: 7};
+    let option: Option(Array(Item)) = 'Some([item]);
+    let left = pair('Some([{value: 7}]), option);
+    let right = pair(option, 'Some([{value: 7}]));
+    expect(left.0 == right.1 && left.1 == right.0
+        && 'Some([{value: 7}]) == option)
+});
+
+export def propagation_context = test.should_ok(fn() {
+    let step = fn(value: Result(Int, String)) {
+        let item = value?;
+        'Ok(item + 1)
+    };
+    expect(step('Ok(1)) == 'Ok(2) && step('Err("reason")) == 'Err("reason"))
 });

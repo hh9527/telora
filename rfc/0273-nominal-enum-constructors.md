@@ -7,8 +7,9 @@
 - Implementation: In progress. Contextual constructors retain complete built-in
   enum contracts; quoted payload constructors accept explicit function contracts.
   Public Atom/Tagged constructors and Atom formatting are removed. Debug build
-  and workspace tests pass, including 274 language fixture groups.
-  Unresolved-owner obligations and static metadata cleanup remain outstanding.
+  and workspace tests pass, including 283 language fixture groups.
+  Unresolved-owner obligations, branch evidence, propagation and pattern checks
+  are implemented. Static metadata and remaining admission-path review are next.
   The inventory below describes the baseline.
 - Scope: Remove standalone Atom/Tagged static types. Preserve source syntax,
   runtime value representation, bytecode representation and Val provenance.
