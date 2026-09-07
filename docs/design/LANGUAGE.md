@@ -630,6 +630,11 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 
 ### 7.1 Struct、Enum 和 typed property decorator
 
+`type A = struct(B);` 声明单元素具名 tuple（newtype），具有独立的 nominal
+identity。`a.0` 返回 B，并保留载荷的类型身份和来源；其他位置索引不成立。
+newtype 和 B 不存在隐式包装或解包转换。其元数据解析后的 kind 为 Newtype，
+children 包含唯一的载荷类型；JSON codec 使用载荷表示并在成功解码后附加外层身份。
+
 具名 Struct 和 Enum 使用 `type` 的专用声明初始化器：
 
 ```telora

@@ -43,6 +43,7 @@ impl<'a> ToolEvaluator<'a> {
         );
         for function in [
             NativeFunction::core_model(CoreModelFunction::Struct),
+            NativeFunction::core_model(CoreModelFunction::Newtype),
             NativeFunction::core_model(CoreModelFunction::Enum),
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Option),
             NativeFunction::core_builtin_type(CoreBuiltinTypeFunction::Result),

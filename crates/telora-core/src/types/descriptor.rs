@@ -196,6 +196,7 @@ pub enum TypeDescriptor {
         payload: Box<TypeDescriptor>,
     },
     Tuple(Vec<TypeDescriptor>),
+    Newtype(Box<TypeDescriptor>),
     Struct(BTreeMap<String, TypeDescriptor>),
     Enum(BTreeMap<String, Option<Box<TypeDescriptor>>>),
     /// Temporary inference candidates, never a published or runtime type.
@@ -233,6 +234,7 @@ pub(crate) enum TypeExprId {
     Opaque(crate::value::NativeTypeId),
     Atom(String),
     Array(Box<TypeExprId>),
+    Newtype(Box<TypeExprId>),
     Dict(Box<TypeExprId>),
     Tagged(String, Box<TypeExprId>),
     Tuple(Box<[TypeExprId]>),
@@ -275,6 +277,7 @@ impl TypeExprId {
             TypeDescriptor::Opaque(native) => Self::Opaque(native.id()),
             TypeDescriptor::Atom(atom) => Self::Atom(atom.name().to_owned()),
             TypeDescriptor::Array(item) => Self::Array(Box::new(Self::from_descriptor(item))),
+            TypeDescriptor::Newtype(item) => Self::Newtype(Box::new(Self::from_descriptor(item))),
             TypeDescriptor::Dict(item) => Self::Dict(Box::new(Self::from_descriptor(item))),
             TypeDescriptor::Tagged { tag, payload } => Self::Tagged(
                 tag.name().to_owned(),
@@ -351,6 +354,7 @@ impl TypeDescriptor {
             Self::Opaque(native_type) => format!("opaque({})", native_type.qualified_name()),
             Self::Atom(atom) => format!("'{}", atom.name()),
             Self::Array(item) => format!("Array<{}>", item.display_name()),
+            Self::Newtype(item) => format!("struct({})", item.display_name()),
             Self::Dict(item) => format!("Dict<{}>", item.display_name()),
             Self::Tagged { tag, payload } => {
                 format!("'{}({})", tag.name(), payload.display_name())
@@ -428,6 +432,9 @@ fn display_scheme_descriptor(
         TypeDescriptor::Atom(atom) => format!("'{}", atom.name()),
         TypeDescriptor::Array(item) => {
             format!("Array<{}>", display_scheme_descriptor(item, names))
+        }
+        TypeDescriptor::Newtype(item) => {
+            format!("struct({})", display_scheme_descriptor(item, names))
         }
         TypeDescriptor::Dict(item) => {
             format!("Dict<{}>", display_scheme_descriptor(item, names))

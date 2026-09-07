@@ -1,12 +1,19 @@
 # RFC 0274: Unified Constructors and Construction Checks
 
-- Status: Draft; implementation has not started.
+- Status: Draft; stage-one representation implementation is in progress.
 - Tracking: [#161](https://github.com/hh9527/telora/issues/161)
 - Branch: `feat/0161-unified-constructors`
 - Baseline: `83bb8a6`
 - Related: RFC 0236, RFC 0237, RFC 0239, RFC 0270, RFC 0273.
 - Delivery: staged commits and pushes, with progress on #161. Completion does
   not authorize merging into main; integration is a separate decision.
+- Implementation: newtype declaration metadata, canonical identity, positional
+  `.0` access, payload codecs, schema and Dyn tuple observation are implemented
+  on the branch. Callable constructors, constructor patterns, named enum
+  constructors and checks remain pending.
+- Validation: debug build and workspace tests pass for the representation
+  batch, including 288 language fixture groups. New behavior is tested in
+  `.telora`; no release binary was built.
 
 ## Objective
 
@@ -63,7 +70,10 @@ let make: Fn(Int) -> UserId = UserId;
 let boxed: Box(Int) = Box(1);
 ```
 
-A newtype has exactly one payload type and a distinct nominal identity.
+A newtype is a single-element named tuple, with exactly one payload type and
+a distinct nominal identity. `value.0` reads its payload and preserves that
+payload's type and source location. Other indices are rejected statically.
+General multi-element named tuples are outside this implementation scope.
 Wrapping and unwrapping are explicit. Neither the payload nor another newtype
 with an identical payload is implicitly assignable to it. A tuple payload can
 express multiple components without introducing positional multi-field structs.
@@ -104,8 +114,10 @@ wrapping on successful decode. This needs verification against schema and
 decorator contracts before acceptance. Do not automatically inherit payload
 traits such as Display or equality solely from representation equivalence.
 
-Field projection and struct merge-update remain operations on named fields;
-a newtype does not gain a synthetic public field name.
+Named-field projection and struct merge-update remain operations on named
+fields; a newtype exposes its positional member `.0`, not a synthetic named
+field. Its runtime container holds the original payload Val separately from
+the outer declared identity, including when the payload is itself nominal.
 
 ### Acceptance Gate
 

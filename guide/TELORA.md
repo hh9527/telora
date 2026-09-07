@@ -268,6 +268,11 @@ Telora 合并分支证据：泛型代码中的 `if` 若为同一个预期 enum
 
 ## Struct、enum 与模式
 
+`type UserId = struct(Int);` 声明单元素具名 tuple（newtype）。`value.0` 读取
+内部的 Int；外层 UserId 与 Int 是不同类型。newtype 可以参数化，例如
+`type Box(T) = struct(T);`。载荷为具名类型时，`.0` 保留其具名身份。
+JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
+
 ```telora
 type Entity = enum {
     'Ticket,

@@ -506,18 +506,21 @@ fn observe_dyn_structure(
             ))
         }
         CoreDynFunction::TupleItems => {
-            if kind != "Tuple" {
+            if kind != "Tuple" && kind != "Newtype" {
                 return Err(format!("dyn.tuple_items expected Tuple, got {kind}"));
             }
             let DecodedValue::Tuple(handle) = value.value() else {
                 return Err("dyn.tuple_items expected runtime Tuple".into());
             };
-            let DecodedValue::Array(items) = type_field("items")?.value() else {
-                return Err("Tuple.items descriptor must be an Array".into());
+            let descriptors = if kind == "Newtype" {
+                vec![type_field("payload")?]
+            } else {
+                let DecodedValue::Array(items) = type_field("items")?.value() else {
+                    return Err("Tuple.items descriptor must be an Array".into());
+                };
+                view.sequence(items, false)
+                    .map_err(|error| error.to_string())?.to_vec()
             };
-            let descriptors = view
-                .sequence(items, false)
-                .map_err(|error| error.to_string())?;
             let values = view
                 .sequence(handle, true)
                 .map_err(|error| error.to_string())?;
@@ -946,6 +949,7 @@ fn type_desc_children(input: Val, view: &HeapView<'_>) -> Result<Vec<Val>, Strin
     match kind.as_str() {
         "TypeOf" => Ok(vec![get("instance")?]),
         "Array" | "Dict" => Ok(vec![get("item")?]),
+        "Newtype" => Ok(vec![get("payload")?]),
         "Tuple" => {
             let field = "items";
             let DecodedValue::Array(items) = get(field)?.value() else {

@@ -531,7 +531,8 @@ impl<'a> GenericInference<'a> {
                 | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
                     collect(left, right, collected, true, enum_owners);
                 }
-                (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right)) => {
+                (TypeDescriptor::TypeOf(left), TypeDescriptor::TypeOf(right))
+                | (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => {
                     collect(left, right, collected, collection_element, enum_owners);
                 }
                 (
@@ -814,6 +815,9 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Array(item) => {
                 TypeDescriptor::Array(Box::new(self.instantiate_with(item, variables)))
             }
+            TypeDescriptor::Newtype(item) => {
+                TypeDescriptor::Newtype(Box::new(self.instantiate_with(item, variables)))
+            }
             TypeDescriptor::Dict(item) => {
                 TypeDescriptor::Dict(Box::new(self.instantiate_with(item, variables)))
             }
@@ -887,6 +891,7 @@ impl<'a> GenericInference<'a> {
                 })
             }
             TypeDescriptor::Array(item) => TypeDescriptor::Array(Box::new(self.resolve(item))),
+            TypeDescriptor::Newtype(item) => TypeDescriptor::Newtype(Box::new(self.resolve(item))),
             TypeDescriptor::Dict(item) => TypeDescriptor::Dict(Box::new(self.resolve(item))),
             TypeDescriptor::TypeOf(instance) => {
                 TypeDescriptor::TypeOf(Box::new(self.resolve(instance)))
@@ -944,6 +949,7 @@ impl<'a> GenericInference<'a> {
                     || self.occurs(variable, &declared.body)
             }
             TypeDescriptor::Array(item) => self.occurs(variable, &item),
+            TypeDescriptor::Newtype(item) => self.occurs(variable, &item),
             TypeDescriptor::Dict(item) => self.occurs(variable, &item),
             TypeDescriptor::TypeOf(instance) => self.occurs(variable, &instance),
             TypeDescriptor::Tagged { payload, .. } => self.occurs(variable, &payload),

@@ -552,8 +552,9 @@ fn contextualize_declared_type_tokens(
         };
         if tokens[equal] == Token::Equal
             && tokens[initializer] == Token::Identifier
-            && tokens[brace] == Token::LBrace
             && let Some(kind) = classify(initializer)
+            && (tokens[brace] == Token::LBrace
+                || (kind == Token::StructInitializer && tokens[brace] == Token::LParen))
         {
             tokens[initializer] = kind;
         }

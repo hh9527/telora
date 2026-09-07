@@ -262,6 +262,9 @@ fn generate_json_schema_node(
                 loc,
             ))
         }
+        CodecKind::Newtype(payload) => generate_json_schema_node(
+            payload, properties, data, current, background, links, definitions,
+        ),
         CodecKind::Struct(fields) => {
             let view = HeapView {
                 current,
@@ -444,6 +447,7 @@ fn codec_type_name(schema: &CodecType) -> &'static str {
         CodecKind::Array(_) => "Array",
         CodecKind::Dict(_) => "Dict",
         CodecKind::Tuple(_) => "Tuple",
+        CodecKind::Newtype(_) => "Newtype",
         CodecKind::Struct(_) => "Struct",
         CodecKind::Enum(variants) => {
             let _ = variants;

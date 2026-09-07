@@ -636,7 +636,13 @@ impl<'a> Lowerer<'a> {
                 });
                 let declared_initializer =
                     initializer.and_then(|initializer| match self.rule(initializer) {
-                        Some(Rule::StructInitializer) => Some(DeclaredInitializerKind::Struct),
+                        Some(Rule::StructInitializer) => {
+                            Some(if self.first_token(initializer, Token::LParen).is_ok() {
+                                DeclaredInitializerKind::Newtype
+                            } else {
+                                DeclaredInitializerKind::Struct
+                            })
+                        }
                         Some(Rule::EnumInitializer) => Some(DeclaredInitializerKind::Enum),
                         _ => None,
                     });

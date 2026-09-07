@@ -360,6 +360,33 @@ fn transform_codec_inner(
                 CodecDirection::Encode => CodecNode::Array(nodes, value.loc()),
             })
         }
+        CodecKind::Newtype(payload) => {
+            let raw = match direction {
+                CodecDirection::Decode => value,
+                CodecDirection::Encode => {
+                    let DecodedValue::Tuple(handle) = value.value() else {
+                        return Err(CodecFailure::new(
+                            format!("{path}: expected newtype payload container"), value, schema.rule,
+                        ));
+                    };
+                    let values = view.sequence(handle, true)
+                        .map_err(|error| CodecFailure::new(error.to_string(), value, schema.rule))?;
+                    let [payload] = values else {
+                        return Err(CodecFailure::new(
+                            format!("{path}: expected one newtype payload"), value, schema.rule,
+                        ));
+                    };
+                    *payload
+                }
+            };
+            let node = transform_codec_with_input(
+                payload, properties, raw, direction, path, current, background, input,
+            )?;
+            Ok(match direction {
+                CodecDirection::Decode => CodecNode::Tuple(vec![node], value.loc()),
+                CodecDirection::Encode => node,
+            })
+        }
         CodecKind::Struct(fields) => transform_codec_struct(
             schema,
             properties,

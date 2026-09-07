@@ -85,6 +85,10 @@ JSON null、boolean、number 和 string。
 查询其分支。`dyn.kind` 描述底层值表示，所以 enum 值可以返回 Atom 或 Tagged。
 `dyn.desc` 保留装箱时的 enum 契约，投影使用明确的目标类型身份。
 
+newtype 的具名类型返回 Ref；解析引用后，kind 为 Newtype，children 包含唯一的
+载荷类型。`dyn.tuple_items` 可读取其单个载荷，并保留载荷自己的类型身份。
+newtype 的 JSON 表示和 schema 使用载荷契约。
+
 ## 执行与效果
 
 - `std/entry`：构造 Host 可选择的 `Eval`、`Run(State)` 和 `Serve(State)` 值。

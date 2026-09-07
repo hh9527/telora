@@ -210,6 +210,12 @@ handle 的 work bit 让复制器无需间接查询即可区分 Main 与 Work 引
 
 Heap 是按 storage scope 管理的对象、text、shape、静态函数、类型 witness 和 typed
 property 集合。
+
+Newtype 在类型描述符、分析图和 canonical type store 中具有独立的 Newtype 节点。
+其值使用单元素 Tuple 容器保存载荷 Val，外层容器携带具名 TypeId；`.0` 复制内部
+Val，所以嵌套具名载荷的身份和位置不被外层构造覆盖。codec 对外使用载荷表示，
+decode 分别建立载荷容器与外层身份，encode 先验证外层身份再读取载荷。
+
 String/Atom 与 Dict shape 分别 intern；复合值不可变。Host 对值的观察通过借用式
 `ValueRef` 和受控转换完成，不存在一份与 VM 图竞争的 legacy/owned Host value model。
 

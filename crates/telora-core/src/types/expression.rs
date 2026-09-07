@@ -139,6 +139,10 @@ fn infer_expr_with(
         }
         ExprKind::TupleProjection { receiver, index } => {
             match infer_expr_with(receiver, environment, record) {
+                Some(TypeDescriptor::Declared(declared)) if index.value == 0 => match declared.body.as_ref() {
+                    TypeDescriptor::Newtype(payload) => Some(payload.as_ref().clone()),
+                    _ => None,
+                },
                 Some(TypeDescriptor::Tuple(items)) => items.get(index.value).cloned(),
                 _ => None,
             }
@@ -319,6 +323,9 @@ fn substitute_bound_parameters(
         }
         TypeDescriptor::Array(item) => {
             TypeDescriptor::Array(Box::new(substitute_bound_parameters(item, replacements)))
+        }
+        TypeDescriptor::Newtype(item) => {
+            TypeDescriptor::Newtype(Box::new(substitute_bound_parameters(item, replacements)))
         }
         TypeDescriptor::Dict(item) => {
             TypeDescriptor::Dict(Box::new(substitute_bound_parameters(item, replacements)))

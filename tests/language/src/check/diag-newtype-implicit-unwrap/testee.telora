@@ -1,0 +1,2 @@
+type UserId = struct(Int);
+export def invalid: Fn(UserId) -> Int = fn(value) { value };

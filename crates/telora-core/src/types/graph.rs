@@ -40,6 +40,7 @@ pub enum TypeNode {
         payload: AnalysisTypeId,
     },
     Tuple(Vec<AnalysisTypeId>),
+    Newtype(AnalysisTypeId),
     Struct(BTreeMap<String, AnalysisTypeId>),
     Enum(BTreeMap<String, Option<AnalysisTypeId>>),
     PendingAlternatives(Vec<AnalysisTypeId>),
@@ -140,6 +141,7 @@ impl TypeGraph {
                 TypeNode::Struct(_) => {
                     return Some(crate::ast::DeclaredInitializerKind::Struct);
                 }
+                TypeNode::Newtype(_) => return Some(crate::ast::DeclaredInitializerKind::Newtype),
                 TypeNode::Enum(_) => return Some(crate::ast::DeclaredInitializerKind::Enum),
                 _ => return None,
             }
@@ -209,6 +211,8 @@ impl TypeGraph {
                 }
                 TypeNode::Array(item) => visit(graph, *item, store, canonical, visiting)
                     .map(|item| store.intern_structural(TypeShape::Array(item))),
+                TypeNode::Newtype(item) => visit(graph, *item, store, canonical, visiting)
+                    .map(|item| store.intern_structural(TypeShape::Newtype(item))),
                 TypeNode::Dict(item) => visit(graph, *item, store, canonical, visiting)
                     .map(|item| store.intern_structural(TypeShape::Dict(item))),
                 TypeNode::Tagged { tag, payload } => {
@@ -275,6 +279,9 @@ impl TypeGraph {
         ) -> Result<TypeShape, String> {
             match graph.node(root) {
                 TypeNode::Ref(target) => nominal_shape(graph, *target, store, canonical, visiting),
+                TypeNode::Newtype(payload) => {
+                    visit(graph, *payload, store, canonical, visiting).map(TypeShape::Newtype)
+                }
                 TypeNode::Struct(fields) => fields
                     .iter()
                     .map(|(name, field)| {
@@ -293,7 +300,7 @@ impl TypeGraph {
                     })
                     .collect::<Result<Vec<_>, _>>()
                     .map(|variants| TypeShape::Enum(variants.into())),
-                _ => Err("nominal type body must be a struct or enum".into()),
+                _ => Err("nominal type body must be a struct, newtype or enum".into()),
             }
         }
 
@@ -382,6 +389,7 @@ impl TypeGraph {
             TypeDescriptor::Opaque(native_type) => TypeNode::Opaque(native_type.clone()),
             TypeDescriptor::Atom(atom) => TypeNode::Atom(atom.clone()),
             TypeDescriptor::Array(item) => TypeNode::Array(self.intern_descriptor(item)),
+            TypeDescriptor::Newtype(item) => TypeNode::Newtype(self.intern_descriptor(item)),
             TypeDescriptor::Dict(item) => TypeNode::Dict(self.intern_descriptor(item)),
             TypeDescriptor::Tagged { tag, payload } => TypeNode::Tagged {
                 tag: tag.clone(),
@@ -481,6 +489,9 @@ impl TypeGraph {
                 TypeNode::Atom(atom) => TypeDescriptor::Atom(atom.clone()),
                 TypeNode::Array(item) => {
                     TypeDescriptor::Array(Box::new(build(graph, *item, visiting)?))
+                }
+                TypeNode::Newtype(item) => {
+                    TypeDescriptor::Newtype(Box::new(build(graph, *item, visiting)?))
                 }
                 TypeNode::Dict(item) => {
                     TypeDescriptor::Dict(Box::new(build(graph, *item, visiting)?))
@@ -731,6 +742,15 @@ impl TypeGraph {
                 }
                 TypeNode::Tuple(values)
             }
+            "Newtype" => {
+                require(&["kind", "payload"])?;
+                let payload = self.decode_persistent(
+                    value.dict_get("payload").expect("field exists"),
+                    &format!("{path}.payload"),
+                    links,
+                )?;
+                TypeNode::Newtype(payload)
+            }
             "Struct" => {
                 require(&["fields", "kind"])?;
                 let values = value.dict_get("fields").expect("field exists");
@@ -827,6 +847,7 @@ impl TypeGraph {
             }
             TypeNode::Atom(atom) => format!("'{}", atom.name()),
             TypeNode::Array(item) => format!("Array<{}>", self.display_with(*item, active)),
+            TypeNode::Newtype(item) => format!("struct({})", self.display_with(*item, active)),
             TypeNode::Dict(item) => format!("Dict<{}>", self.display_with(*item, active)),
             TypeNode::Tagged { tag, payload } => {
                 format!("'{}({})", tag.name(), self.display_with(*payload, active))
@@ -899,6 +920,7 @@ impl TypeGraph {
             (TypeNode::TypeOf(a), TypeNode::TypeOf(e)) => self.assignable_with(*a, *e, visited),
             (TypeNode::Atom(_), TypeNode::AtomValue) => true,
             (TypeNode::Array(a), TypeNode::Array(e)) => self.assignable_with(*a, *e, visited),
+            (TypeNode::Newtype(a), TypeNode::Newtype(e)) => self.assignable_with(*a, *e, visited),
             (TypeNode::Dict(a), TypeNode::Dict(e)) => self.assignable_with(*a, *e, visited),
             (TypeNode::Struct(fields), TypeNode::Dict(expected)) => fields
                 .values()

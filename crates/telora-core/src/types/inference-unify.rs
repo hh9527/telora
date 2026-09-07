@@ -287,6 +287,7 @@ impl<'a> GenericInference<'a> {
                 Ok(())
             }
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right)) => self.unify(left, right),
+            (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => self.unify(left, right),
             (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => self.unify(left, right),
             (
                 TypeDescriptor::Tagged {
@@ -416,6 +417,9 @@ impl<'a> GenericInference<'a> {
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right)) => Ok(
                 TypeDescriptor::Array(Box::new(self.refine_argument_nominal_context(left, right)?)),
             ),
+            (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right)) => Ok(
+                TypeDescriptor::Newtype(Box::new(self.refine_argument_nominal_context(left, right)?)),
+            ),
             (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => Ok(
                 TypeDescriptor::Dict(Box::new(self.refine_argument_nominal_context(left, right)?)),
             ),
@@ -495,6 +499,7 @@ impl<'a> GenericInference<'a> {
                 }
             }
             (TypeDescriptor::Array(left), TypeDescriptor::Array(right))
+            | (TypeDescriptor::Newtype(left), TypeDescriptor::Newtype(right))
             | (TypeDescriptor::Dict(left), TypeDescriptor::Dict(right)) => {
                 self.unify_equality(left, right)
             }
@@ -779,6 +784,7 @@ impl<'a> GenericInference<'a> {
                 }
             }
             (TypeDescriptor::Array(actual), TypeDescriptor::Array(expected))
+            | (TypeDescriptor::Newtype(actual), TypeDescriptor::Newtype(expected))
             | (TypeDescriptor::Dict(actual), TypeDescriptor::Dict(expected))
             | (TypeDescriptor::TypeOf(actual), TypeDescriptor::TypeOf(expected)) => {
                 return self.check(actual, expected);
@@ -865,6 +871,9 @@ impl<'a> GenericInference<'a> {
             TypeDescriptor::Array(item) => {
                 TypeDescriptor::Array(Box::new(self.freshen_runtime_never_leaves(item)))
             }
+            TypeDescriptor::Newtype(item) => {
+                TypeDescriptor::Newtype(Box::new(self.freshen_runtime_never_leaves(item)))
+            }
             TypeDescriptor::Dict(item) => {
                 TypeDescriptor::Dict(Box::new(self.freshen_runtime_never_leaves(item)))
             }
@@ -941,6 +950,21 @@ impl<'a> GenericInference<'a> {
         index: usize,
     ) -> Result<TypeDescriptor, String> {
         match self.expose_named(receiver) {
+            TypeDescriptor::Declared(declared)
+                if matches!(declared.body.as_ref(), TypeDescriptor::Newtype(_)) =>
+            {
+                let TypeDescriptor::Newtype(payload) = declared.body.as_ref() else {
+                    unreachable!()
+                };
+                if index == 0 {
+                    Ok(payload.as_ref().clone())
+                } else {
+                    Err(format!(
+                        "newtype {} has no item at index {index}; its payload is .0",
+                        declared.name,
+                    ))
+                }
+            }
             TypeDescriptor::Tuple(items) => items.get(index).cloned().ok_or_else(|| {
                 format!(
                     "Tuple of length {} has no item at index {index}",

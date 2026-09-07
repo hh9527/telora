@@ -45,6 +45,7 @@ pub struct BindingData {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeclaredInitializerKind {
     Struct,
+    Newtype,
     Enum,
 }
 

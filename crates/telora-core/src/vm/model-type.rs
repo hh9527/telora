@@ -157,6 +157,7 @@ enum CodecKind {
     Array(Box<CodecType>),
     Dict(Box<CodecType>),
     Tuple(Vec<CodecType>),
+    Newtype(Box<CodecType>),
     Struct(BTreeMap<String, CodecType>),
     Enum(BTreeMap<String, CodecEnumVariant>),
     Function,

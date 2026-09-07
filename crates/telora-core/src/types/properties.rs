@@ -82,7 +82,7 @@ fn property_capability(
 
 fn owner_capability(owner: PropertyOwnerKind) -> u32 {
     match owner {
-        PropertyOwnerKind::Ty(crate::ast::DeclaredInitializerKind::Struct) => {
+        PropertyOwnerKind::Ty(crate::ast::DeclaredInitializerKind::Struct | crate::ast::DeclaredInitializerKind::Newtype) => {
             PROPERTY_CAP_TYPE | PROPERTY_CAP_STRUCT_TYPE
         }
         PropertyOwnerKind::Ty(crate::ast::DeclaredInitializerKind::Enum) => {
@@ -606,7 +606,7 @@ fn evaluate_declared_properties(
             .and_then(type_value_descriptor)
             .expect("decorated type has a concrete Type descriptor");
         let owner_kind = match binding.value.declared_initializer {
-            Some(crate::ast::DeclaredInitializerKind::Struct) => PropertyOwnerKind::Field,
+            Some(crate::ast::DeclaredInitializerKind::Struct | crate::ast::DeclaredInitializerKind::Newtype) => PropertyOwnerKind::Field,
             Some(crate::ast::DeclaredInitializerKind::Enum) => PropertyOwnerKind::Variant,
             None => unreachable!("decorated binding was validated as nominal"),
         };

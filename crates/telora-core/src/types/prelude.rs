@@ -68,7 +68,7 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             metadata.clone(),
         ),
     );
-    for name in ["\0telora_struct", "\0telora_enum"] {
+    for name in ["\0telora_struct", "\0telora_newtype", "\0telora_enum"] {
         prelude.insert(
             name.into(),
             function(
@@ -141,6 +141,10 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
         ),
         (
             "\0telora_enum".into(),
+            scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
+        ),
+        (
+            "\0telora_newtype".into(),
             scheme(function(vec![model_context_descriptor(), bound(1)], TypeDescriptor::Type)),
         ),
         (
@@ -576,6 +580,17 @@ fn decode_type_ref_with_visiting(
                 .collect::<Result<Vec<_>, _>>()?;
             TypeDescriptor::Tuple(values)
         }
+        "Newtype" => {
+            require(&["kind", "payload"])?;
+            let payload = value.dict_get("payload")
+                .ok_or_else(|| format!("{path}.payload is missing"))?;
+            TypeDescriptor::Newtype(Box::new(decode_type_ref_with_visiting(
+                payload,
+                &format!("{path}.payload"),
+                shallow_declared_types,
+                visiting_declared,
+            )?))
+        }
         "Struct" => {
             require(&["fields", "kind"])?;
             let fields_value = value
@@ -726,6 +741,12 @@ fn validate_value_ref(
             Ok(())
         }
         TypeDescriptor::Atom(expected) => Err(format!("{path} must be '{}", expected.name())),
+        TypeDescriptor::Newtype(payload) => {
+            if value.kind() != ValueKind::Tuple || value.sequence_len() != Some(1) {
+                return Err(format!("{path} must be a newtype payload container"));
+            }
+            validate_value_ref(payload, value.sequence_get(0).expect("one payload"), path)
+        }
         TypeDescriptor::Array(item) => {
             if value.kind() != ValueKind::Array {
                 return Err(format!("{path} must be an Array"));
@@ -849,7 +870,7 @@ fn collect_declared_bodies(
         TypeDescriptor::Declared(declared) => {
             if matches!(
                 declared.body.as_ref(),
-                TypeDescriptor::Struct(_) | TypeDescriptor::Enum(_)
+                TypeDescriptor::Struct(_) | TypeDescriptor::Newtype(_) | TypeDescriptor::Enum(_)
             ) {
                 bodies
                     .entry(declared.id.clone())
@@ -865,6 +886,7 @@ fn collect_declared_bodies(
         }
         TypeDescriptor::TypeOf(inner)
         | TypeDescriptor::Array(inner)
+        | TypeDescriptor::Newtype(inner)
         | TypeDescriptor::Dict(inner) => visit(inner, bodies, visiting),
         TypeDescriptor::Tagged { payload, .. } => visit(payload, bodies, visiting),
         TypeDescriptor::Tuple(items) | TypeDescriptor::PendingAlternatives(items) => {

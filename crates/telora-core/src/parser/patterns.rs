@@ -337,6 +337,19 @@ impl<'a> Lowerer<'a> {
 
     fn declared_type_initializer(&self, node: NodeRef) -> Result<(Expr, Decorator), Diagnostic> {
         let (operation, members) = match self.rule(node) {
+            Some(Rule::StructInitializer) if self.first_token(node, Token::LParen).is_ok() => {
+                let payload = self.children(node)
+                    .find(|child| self.is_expression(*child))
+                    .ok_or_else(|| self.error(node, "newtype has no payload type"))?;
+                ("\0telora_newtype", vec![located(
+                    DictFieldKind {
+                        decorators: Vec::new(),
+                        name: Some(located("payload".to_owned(), self.location(payload))),
+                        value: self.expression(payload)?,
+                    },
+                    self.location(payload),
+                )])
+            }
             Some(Rule::StructInitializer) => {
                 let mut fields = Vec::new();
                 let mut names = std::collections::HashSet::new();

@@ -35,7 +35,7 @@ type_parameter: Identifier [':' trait_bound ('+' trait_bound)*];
 trait_bound: contract;
 type_binding: decorator* 'type' Identifier [type_parameters] '=' type_initializer ';';
 type_initializer^: struct_initializer | enum_initializer | expression;
-struct_initializer: StructInitializer '{' [struct_initializer_field (?1 ',' struct_initializer_field)* [',']] '}';
+struct_initializer: StructInitializer ('{' [struct_initializer_field (?1 ',' struct_initializer_field)* [',']] '}' | '(' expression ')');
 struct_initializer_field: decorator* Identifier ':' expression;
 enum_initializer: EnumInitializer '{' [enum_initializer_variant (?1 ',' enum_initializer_variant)* [',']] '}';
 enum_initializer_variant: decorator* Atom ['(' expression ')'];
