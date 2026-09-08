@@ -163,20 +163,20 @@
             )
         }
 
-        let forward = declarations("native type First @7; native type Second @2; First").unwrap();
-        let reversed = declarations("native type Second @2; native type First @7; First").unwrap();
+        let forward = declarations("native type First @7; native type Second @2; (First).type").unwrap();
+        let reversed = declarations("native type Second @2; native type First @7; (First).type").unwrap();
         assert_eq!(forward.get(&2).unwrap().1, reversed.get(&2).unwrap().1);
         assert_eq!(forward.get(&7).unwrap().1, reversed.get(&7).unwrap().1);
 
         let duplicate =
-            declarations("native type First @7; native type Second @7; First").unwrap_err();
+            declarations("native type First @7; native type Second @7; (First).type").unwrap_err();
         assert!(
             duplicate
                 .to_string()
                 .contains("duplicate native type slot @7")
         );
 
-        let overflow = declarations("native type Huge @4294967296; Huge").unwrap_err();
+        let overflow = declarations("native type Huge @4294967296; (Huge).type").unwrap_err();
         assert!(overflow.to_string().contains("must fit the u32 range"));
     }
 
@@ -313,7 +313,7 @@
     }
 
     #[test]
-    fn metadata_only_helpers_are_erased_but_runtime_helpers_are_retained() {
+    fn metadata_helpers_cannot_define_types_but_remain_runtime_data_functions() {
         let directory = fixture_dir();
         fs::write(
             directory.join("erased.telora"),
@@ -329,21 +329,14 @@
             Quota::with_fuel(100_000),
             sink.clone(),
         )
-        .unwrap();
-        assert_eq!(sink.events.lock().unwrap().len(), 1);
-        assert_eq!(
-            erased
-                .execute_with_quota(Quota::new(0, 1_000, 0))
-                .unwrap()
-                .to_string(),
-            "0"
-        );
-        assert_eq!(sink.events.lock().unwrap().len(), 1);
+        .err().expect("metadata helper cannot define a static type");
+        assert!(erased.to_string().contains("metadata data cannot become a type"));
+        assert!(sink.events.lock().unwrap().is_empty());
 
         fs::write(
             directory.join("retained.telora"),
             r#"def observe: for(A) Fn(A) -> A = fn(value) { dbg!(value, "observed") };
-               type Observed = observe(Int);
+               let observed = observe(Int.type);
                observe(1)"#,
         )
         .unwrap();
@@ -354,11 +347,11 @@
             sink.clone(),
         )
         .unwrap();
-        assert_eq!(sink.events.lock().unwrap().len(), 2);
+        assert_eq!(sink.events.lock().unwrap().len(), 0);
         retained
             .execute_with_quota_and_debug_sink(Quota::with_fuel(2), sink.clone())
             .unwrap();
-        assert_eq!(sink.events.lock().unwrap().len(), 3);
+        assert_eq!(sink.events.lock().unwrap().len(), 2);
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -367,22 +360,24 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"type Observed = dbg!(Int);
+            r#"let observed = dbg!(Int.type);
                0"#,
         )
         .unwrap();
         let sink = Arc::new(CapturingDebugSink::default());
-        load_module_with_quota_and_debug_sink(
+        let module = load_module_with_quota_and_debug_sink(
             directory.join("main.telora"),
             BTreeMap::new(),
             Quota::new(1, 1_000, u64::MAX),
             sink.clone(),
         )
         .unwrap();
+        assert!(sink.events.lock().unwrap().is_empty());
+        module.execute_with_quota_and_debug_sink(Quota::with_fuel(1), sink.clone()).unwrap();
         assert_eq!(
             sink.events.lock().unwrap().len(),
             1,
-            "only authoritative MetadataInit is observable and charged"
+            "metadata data is observed only during execution"
         );
         fs::remove_dir_all(directory).unwrap();
     }

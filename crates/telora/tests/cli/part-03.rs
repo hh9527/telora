@@ -113,7 +113,7 @@ fn run_with_sqlite_query_actor_drives_an_ees_call() {
     drop(connection);
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/entry" as entry;
 import "std/ees" as effect;
 
@@ -125,7 +125,7 @@ def ees: effect.Config = {
 };
 
 type State = enum {Ready, Waiting};
-export def run = entry.run(State, config, ees, fn(ctx) {
+export def run = entry.run((State).type, config, ees, fn(ctx) {
     let initial: State = State.Ready;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
@@ -145,7 +145,7 @@ export def run = entry.run(State, config, ees, fn(ctx) {
         }
     };
     (initial, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);
@@ -187,13 +187,13 @@ fn run_actor_can_sequence_multiple_ees_replies_through_explicit_state() {
     drop(connection);
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/entry" as entry;
 import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = enum {Ready, WaitingFirst(String), WaitingSecond(String)};
-export def run = entry.run(State, config, ees, fn(ctx) {
+export def run = entry.run((State).type, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match (state, event) {
             (State.Ready, actor.Event.Request(request)) => (
@@ -217,7 +217,7 @@ export def run = entry.run(State, config, ees, fn(ctx) {
     };
     let initial: State = State.Ready;
     (initial, reduce)
-});"#,
+});"###,
     )
     .unwrap();
 
@@ -270,7 +270,7 @@ import "std/ees" as effect;
 def config: entry.ContextConfig = {{sources: [], envs: [], args: False}};
 def ees: effect.Config = {{vars: {{}}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]}};
 type State = struct {{}};
-export def run = entry.run(State, config, ees, fn(ctx) {{
+export def run = entry.run(State.type, config, ees, fn(ctx) {{
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {{
         match event {{
             actor.Event.Request(request) => {{
@@ -308,7 +308,7 @@ fn ees_variables_are_declared_required_and_fully_matched() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/entry" as entry;
 import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
@@ -318,7 +318,7 @@ def ees: effect.Config = {
 };
 
 type State = struct {};
-export def run = entry.run(State, config, ees, fn(ctx) {
+export def run = entry.run((State).type, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (state, [actor.reply(request.id, Value.None)]),
@@ -326,7 +326,7 @@ export def run = entry.run(State, config, ees, fn(ctx) {
         }
     };
     ({}, reduce)
-});"#,
+});"###,
     )
     .unwrap();
 
@@ -371,7 +371,7 @@ fn serve_with_sqlite_query_actor_correlates_concurrent_calls() {
     drop(connection);
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/array" as array;
 import "std/entry" as entry;
 import "std/ees" as effect;
@@ -380,7 +380,7 @@ def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "use
 
 import "std/value" {ScalarValue};
 type State = struct {pending: Array(String)};
-export def serve = entry.serve(State, config, ees, fn(ctx) {
+export def serve = entry.serve((State).type, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => {
@@ -408,7 +408,7 @@ export def serve = entry.serve(State, config, ees, fn(ctx) {
         }
     };
     ({pending: []}, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     let mut child = telora(&cwd)
@@ -469,7 +469,7 @@ fn application_imos_actor_with_package_name_stays_in_its_bound_root() {
     .unwrap();
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/dict" as dict;
 import "std/entry" as entry;
 import "std/ees" as effect;
@@ -480,7 +480,7 @@ def ees: effect.Config = {
 };
 
 type State = enum {Ready, Waiting};
-export def run = entry.run(State, config, ees, fn(ctx) {
+export def run = entry.run((State).type, config, ees, fn(ctx) {
     let plan = match dict.get(ctx.sources, "plan") {
         Some(value) => value,
         None => fail!("missing plan"),
@@ -504,7 +504,7 @@ export def run = entry.run(State, config, ees, fn(ctx) {
     };
     let initial: State = State.Ready;
     (initial, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     let output = telora(&cwd)
@@ -542,13 +542,13 @@ fn application_cannot_address_the_package_actor_without_its_own_binding() {
     rusqlite::Connection::open(&database).unwrap();
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/entry" as entry;
 import "std/ees" as effect;
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
 def ees: effect.Config = {vars: {}, models: [effect.sqlite_model("catalog", "user-data:catalog.sqlite")]};
 type State = struct {};
-export def run = entry.run(State, config, ees, fn(ctx) {
+export def run = entry.run((State).type, config, ees, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (
@@ -563,7 +563,7 @@ export def run = entry.run(State, config, ees, fn(ctx) {
         }
     };
     ({}, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     let output = telora(&cwd)

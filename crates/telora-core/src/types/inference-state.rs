@@ -25,6 +25,7 @@ struct GenericInference<'a> {
     builtin_tuple_available: bool,
     query: Option<crate::query::QueryContext>,
     closure_inference_depth: usize,
+    type_syntax_depth: usize,
     delayed_initializer_depth: usize,
     recursive_body_inference_depth: usize,
     numeric_variables: HashSet<InferenceVariableId>,

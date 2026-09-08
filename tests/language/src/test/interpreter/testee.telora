@@ -15,7 +15,7 @@ def int_equal: Fn(Dyn, Dyn) -> Bool = fn(left, right) {
 def equal: for(A) Fn(TypeOf(A)) -> Fn(A, A) -> Bool = interpreter!(int_equal);
 
 def consume_string: Fn(Dyn) -> Bool = fn(value) {
-    match dyn.project_with(String, value) {
+    match dyn.project_with((String).type, value) {
         Some(_) => True,
         None => False,
     }
@@ -25,13 +25,13 @@ def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume_string);
 
 export def verified_case = test.should_ok(fn() {
-    let first_int = first(Int);
-    let repeated_int = first(Int);
-    let first_string = first(String);
-    let second_int = second(Int);
-    let verified = equal@[Int](Int)(1, 1)
-        && !equal@[Int](Int)(1, 2)
-        && equal(Int)(2, 2)
+    let first_int = first((Int).type);
+    let repeated_int = first((Int).type);
+    let first_string = first((String).type);
+    let second_int = second((Int).type);
+    let verified = equal@[Int]((Int).type)(1, 1)
+        && !equal@[Int]((Int).type)(1, 2)
+        && equal((Int).type)(2, 2)
         && first_int == repeated_int
         && !first_int(1)
         && first_string("text")

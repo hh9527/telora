@@ -22,7 +22,7 @@ type EncodeByDisplay = struct {};
 type ParseError = struct {message: String, value: String};
 native parse_with: for(A) Fn(Type, TypeOf(A), String) -> Result(A, String);
 def parse: for(A) Fn(TypeOf(A), String) -> Result(A, ParseError) = fn(target, input) {
-    match parse_with(ParseBy, target, input) {
+    match parse_with(ParseBy.type, target, input) {
         Ok(value) => Ok(value),
         Err(message) => Err({message, value: input}),
     }

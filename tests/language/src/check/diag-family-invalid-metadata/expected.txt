@@ -1,1 +1,1 @@
-produced invalid metadata
+computed metadata cannot become a type

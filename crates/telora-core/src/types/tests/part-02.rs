@@ -96,8 +96,8 @@
             assert!(analyze_with_natives(source, &[]).err().unwrap().to_string().contains("no common type"));
         }
 
-        let metadata = analyze_with_natives("if Bool.True { Int } else { String }", &[]).unwrap();
-        let reversed = analyze_with_natives("if Bool.True { String } else { Int }", &[]).unwrap();
+        let metadata = analyze_with_natives("if Bool.True { Int.type } else { String.type }", &[]).unwrap();
+        let reversed = analyze_with_natives("if Bool.True { String.type } else { Int.type }", &[]).unwrap();
         assert_eq!(metadata.display(metadata.result_type), "Type");
         assert_eq!(reversed.display(reversed.result_type), "Type");
 
@@ -134,8 +134,8 @@
                 "String",
             ),
             (
-                "if Bool.True { Int } else { Array(String) }",
-                "if Bool.True { Array(String) } else { Int }",
+                "if Bool.True { Int.type } else { Array(String).type }",
+                "if Bool.True { Array(String).type } else { Int.type }",
                 "Type",
             ),
         ] {

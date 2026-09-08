@@ -285,6 +285,18 @@ impl<'a> GenericInference<'a> {
                 let item = self.variables.structure_edge(item);
                 TypeDescriptor::Inference(self.variables.structure_node(InferenceConstructor::Array, &[item]))
             }
+            ExprKind::TypeMetadata(operand) => {
+                let inferred = self.infer(operand, environment, Some(&TypeDescriptor::Type))?;
+                self.local_annotations.get(&expression.location)
+                    .map(|target| TypeDescriptor::TypeOf(Box::new(target.clone())))
+                    .unwrap_or(inferred)
+            }
+            ExprKind::TypeSyntax(operand) => {
+                self.type_syntax_depth += 1;
+                let result = self.infer(operand, environment, Some(&TypeDescriptor::Type));
+                self.type_syntax_depth -= 1;
+                result?
+            }
             ExprKind::Spread(operand) => self.infer(operand, environment, expected)?,
             ExprKind::Tuple(items) => {
                 let item_expected = match expected.map(|ty| self.normalize(ty)) {
@@ -1380,8 +1392,22 @@ impl<'a> GenericInference<'a> {
                 }
             }
         };
-        if let Some(constructor) = self.member_constructor_reference(expression) {
+        if let Some(constructor) = self.member_constructor_reference(expression)
+            && (!matches!(constructor, ValueConstructor::Newtype)
+                || (self.type_syntax_depth == 0
+                    && !self.type_facet_locations.contains(&expression.location)
+                    && !expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))))
+        {
             self.value_constructors.insert(expression.location, constructor);
+        }
+        if self.type_syntax_depth == 0
+            && !self.hir.is_tool_root(expression.location)
+            && !self.type_facet_locations.contains(&expression.location)
+            && matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. })
+            && self.declared_constructor_reference(expression)
+            && expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))
+        {
+            return Err("a type cannot be used as metadata data implicitly; use '.type'".into());
         }
         let inferred = if matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. } | ExprKind::TypeApply { .. })
             && self.declared_constructor_reference(expression)

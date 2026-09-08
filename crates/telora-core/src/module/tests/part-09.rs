@@ -6,7 +6,7 @@
         let main = directory.join("main.telora");
         fs::write(
             &model,
-            r#"import "std/array" as array;
+            r###"import "std/array" as array;
                    import "std/dyn" as dyn;
                    import "std/type-desc" as type_desc;
 
@@ -30,7 +30,7 @@
                    @prepare("ready")
                    type Target = struct { name: String };
 
-                   export { Prepared, Target };"#,
+                   export { Prepared, Target };"###,
         )
         .unwrap();
         fs::write(
@@ -49,9 +49,9 @@
                    def prepared: for(P, T: Property(P)) Fn(TypeOf(T), TypeOf(P)) -> P = fn(target, property) {
                        type_property.evidence(target, property)
                    };
-                   def first = prepared(direct.Target, direct.Prepared);
-                   def second = prepared@[facade.Prepared, facade.Target](facade.Target, facade.Prepared);
-                   def value = dyn.pack(direct.Target, { name: "Ada" });
+                   def first = prepared(direct.Target.type, direct.Prepared.type);
+                   def second = prepared@[facade.Prepared, facade.Target](facade.Target.type, facade.Prepared.type);
+                   def value = dyn.pack(direct.Target.type, { name: "Ada" });
                    export def output = {
                        same_function: first.run == second.run,
                        rendered: first.run(value),
@@ -104,9 +104,9 @@
         fs::write(
             &main,
             source(
-                r#"match type_property.get_type_prop(Endpoint, fmt.DisplayBy) {
-        Some(property) => property.display(dyn.pack(Endpoint, endpoint)),
-        None => fail!("missing DisplayBy", Endpoint),
+                r#"match type_property.get_type_prop(Endpoint.type, fmt.DisplayBy.type) {
+        Some(property) => property.display(dyn.pack(Endpoint.type, endpoint)),
+        None => fail!("missing DisplayBy", Endpoint.type),
     }"#,
             ),
         )
@@ -116,7 +116,7 @@
 
         fs::write(
             &main,
-            source("codec.encode(codec.Value, endpoint)"),
+            source("codec.encode(codec.Value.type, endpoint)"),
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 200_000).unwrap();
@@ -158,7 +158,7 @@
                 .get(rule_location.source)
                 .slice(rule_location)
                 .as_deref(),
-            Some("codec.encode(codec.Value, endpoint)")
+            Some("codec.encode(codec.Value.type, endpoint)")
         );
         let implementation = error
             .implementation_rule_location()
@@ -392,12 +392,12 @@ export def observed = rt.with_diagnostics(spin)(0);
 fn encoding_failure_retains_nested_subject_and_rule_locations() {
     let directory = fixture_dir();
     let path = directory.join("main.telora");
-    fs::write(&path, r#"
+    fs::write(&path, r###"
 import "std/codec" as codec;
 type Action = struct {run: Fn(Int) -> Int};
 let action: Action = {run: fn(value) { value }};
-codec.encode(codec.Value, action)
-"#).unwrap();
+codec.encode((codec.Value).type, action)
+"###).unwrap();
     let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
     let error = module.execute(100_000).unwrap_err();
     assert!(error.message.contains("$.run: Function has no JSON codec"), "{error}");

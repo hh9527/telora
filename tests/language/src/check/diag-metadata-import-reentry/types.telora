@@ -1,0 +1,1 @@
+export def metadata: TypeOf(Int) = Int.type;

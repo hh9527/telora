@@ -32,11 +32,11 @@ def verify: Fn(actor.Service) -> Bool = fn(service) {
 };
 
 export def run_state = test.should_ok(fn() {
-    let wrapper = entry.run(State, config, ees.none, prepare);
+    let wrapper = entry.run((State).type, config, ees.none, prepare);
     expect(verify(wrapper.start({sources: {}, env: {}, args: []})))
 });
 
 export def serve_state = test.should_ok(fn() {
-    let wrapper = entry.serve(State, config, ees.none, prepare);
+    let wrapper = entry.serve((State).type, config, ees.none, prepare);
     expect(verify(wrapper.start({sources: {}, env: {}, args: []})))
 });

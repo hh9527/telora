@@ -32,11 +32,11 @@ type Record = struct { @field value: Int };
 type Choice = enum { @variant Item(Int) };
 
 export def capabilities = test.should_ok(fn() {
-    expect(match property.get_type_prop(Record, General) { Some(value) => value.value == 1, None => False }
-        && match property.get_type_prop(Record, StructOnly) { Some(value) => value.value == 2, None => False }
-        && match property.get_type_prop(Choice, EnumOnly) { Some(value) => value.value == 3, None => False }
-        && match property.get_field_prop(Record, 0, MemberOnly) { Some(value) => value.value == 4, None => False }
-        && match property.get_variant_prop(Choice, 0, MemberOnly) { Some(value) => value.value == 5, None => False })
+    expect(match property.get_type_prop((Record).type, (General).type) { Some(value) => value.value == 1, None => False }
+        && match property.get_type_prop((Record).type, (StructOnly).type) { Some(value) => value.value == 2, None => False }
+        && match property.get_type_prop((Choice).type, (EnumOnly).type) { Some(value) => value.value == 3, None => False }
+        && match property.get_field_prop((Record).type, 0, (MemberOnly).type) { Some(value) => value.value == 4, None => False }
+        && match property.get_variant_prop((Choice).type, 0, (MemberOnly).type) { Some(value) => value.value == 5, None => False })
 });
 
 export def enum_identity = test.should_ok(fn() {

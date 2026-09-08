@@ -113,7 +113,7 @@ fn discarded_expressions_are_checked_and_metadata_arguments_stay_data() {
         "def f: Fn() -> Int = fn() { 1; }; f",
         "do { 1; let a = ; }",
         "do { 1 2 }",
-        "type Wrong = Array(()); 0",
+        "def accept: Fn(Unit) -> Type = fn(value) { Int.type }; type Wrong = accept(()); 0",
         "1;",
     ] {
         assert!(
@@ -124,10 +124,10 @@ fn discarded_expressions_are_checked_and_metadata_arguments_stay_data() {
     analyze_source(
         "metadata-data.telora",
         r#"
-        def accept: Fn(Unit) -> Type = fn(value) { Int };
-        type Number = accept(());
-        let value: Number = 1;
-        value
+        def accept: Fn(Unit) -> Type = fn(value) { Int.type };
+        type Units = Array(());
+        let values: Units = [()];
+        accept(())
     "#,
     )
     .unwrap();

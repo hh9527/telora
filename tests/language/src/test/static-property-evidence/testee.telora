@@ -7,11 +7,11 @@ def constrained: for(T: Property(model.Label)) Fn(TypeOf(T)) -> Bool = fn(target
 
 export def constrained_trait = test.should_ok(fn() {
     let item: model.Item = {id: 42};
-    expect(model.name(item) == "named" && constrained(model.Item))
+    expect(model.name(item) == "named" && constrained((model.Item).type))
 });
 
 export def materialized_record = test.should_ok(fn() {
-    expect(match property.get_type_prop(model.Item, model.Label) {
+    expect(match property.get_type_prop((model.Item).type, (model.Label).type) {
         Some(label) => label.text == "ready",
         None => False,
     })

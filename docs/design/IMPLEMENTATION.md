@@ -94,6 +94,14 @@ Module body 与普通 block body 使用独立语法规则，只有后者接受�
 影响。Prelude 的静态投影与工具值环境同时提供 `Unit` 别名；两者复用现有 Tuple
 descriptor、TypeId 和值表示，不增加 Unit runtime kind。普通调用实参不做该转换。
 
+RFC 0277 第二阶段增加 `TypeSyntax` / `TypeMetadata` AST 边界。显式类型位置的
+非空 Tuple 降低到内部结构构造器，Fn 也使用内部绑定，均不受公开 Tuple/Func 名称
+遮蔽影响。HIR 保留边界并解析其引用；静态/数据检查使用声明身份、泛型参数和模块接口，
+而非名称大小写或 TypeOf 值内容。类型角色在导入和再导出时保留。
+普通函数和元数据数据不能进入静态类型表达式。`.type` 的结果保留精确 TypeOf 见证；
+不增加运行时 kind、VM 指令或推导环境副本。恢复分析将非法类型表达式标记为冲突，
+阻止执行其 helper，同时继续独立定义的分析。Property 仍是独立的带外查询。
+
 ## 3. 模块图、骨架和静态身份
 
 crate mode 在构造 `ModuleResolver` 前执行 package preparation：向上发现

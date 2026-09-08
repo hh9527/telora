@@ -15,13 +15,16 @@ fn atom_constant(name: &str) -> Constant {
 }
 
 pub(crate) fn function_contract_arity(contract: &Expr) -> Option<u32> {
+    if let ExprKind::TypeSyntax(inner) = &contract.value {
+        return function_contract_arity(inner);
+    }
     let ExprKind::Call { callee, arguments } = &contract.value else {
         return None;
     };
     let ExprKind::Variable(name) = &callee.value else {
         return None;
     };
-    if name.value != "Func" || arguments.len() != 2 {
+    if !matches!(name.value.as_str(), "Func" | "\0telora_function_type") || arguments.len() != 2 {
         return None;
     }
     let ExprKind::Array(parameters) = &arguments[0].value else {
@@ -67,7 +70,8 @@ fn free_expr(expression: &Expr, bound: &HashSet<String>, free: &mut BTreeSet<Str
                 free_expr(item, bound, free);
             }
         }
-        ExprKind::Spread(operand) => free_expr(operand, bound, free),
+        ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand)
+        | ExprKind::Spread(operand) => free_expr(operand, bound, free),
         ExprKind::InterpolatedString(parts) => {
             for part in parts {
                 if let StringPartKind::Expression(expression) = &part.value {
@@ -253,7 +257,8 @@ pub(crate) fn collect_runtime_names(expression: &Expr, names: &mut HashSet<Strin
                 collect_runtime_names(item, names);
             }
         }
-        ExprKind::Spread(operand) => collect_runtime_names(operand, names),
+        ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand)
+        | ExprKind::Spread(operand) => collect_runtime_names(operand, names),
         ExprKind::InterpolatedString(parts) => {
             for part in parts {
                 if let StringPartKind::Expression(expression) = &part.value {

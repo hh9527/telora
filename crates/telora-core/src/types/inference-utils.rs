@@ -541,7 +541,8 @@ fn expression_references_names(
         ExprKind::Array(items) | ExprKind::Tuple(items) => items
             .iter()
             .any(|item| expression_references_names(item, names, bound)),
-        ExprKind::Spread(operand) => expression_references_names(operand, names, bound),
+        ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand)
+        | ExprKind::Spread(operand) => expression_references_names(operand, names, bound),
         ExprKind::Dict(fields) => fields
             .iter()
             .any(|field| expression_references_names(&field.value.value, names, bound)),

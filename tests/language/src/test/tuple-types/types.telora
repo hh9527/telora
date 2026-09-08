@@ -1,0 +1,2 @@
+export type pair = (Int, String);
+export type Wrapped = struct(Int);

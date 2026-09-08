@@ -195,7 +195,8 @@ impl Elaborator<'_> {
                     self.expression(item);
                 }
             }
-            ExprKind::Spread(operand) => self.expression(operand),
+            ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand)
+            | ExprKind::Spread(operand) => self.expression(operand),
             ExprKind::Dict(fields) => {
                 for field in fields {
                     self.expression(&mut field.value.value);

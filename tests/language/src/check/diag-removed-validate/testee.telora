@@ -1,1 +1,1 @@
-export def invalid = validate(Int, 1);
+export def invalid = validate((Int).type, 1);

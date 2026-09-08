@@ -9,4 +9,4 @@ def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) {
 type Item = struct {id: Int};
 
 def requires: for(T: Property(Label)) Fn(TypeOf(T)) -> Int = fn(target) { 1 };
-export def invalid: String = requires(Item);
+export def invalid: String = requires((Item).type);

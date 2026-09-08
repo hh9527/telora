@@ -27,18 +27,18 @@ export def verified_case = test.should_ok(fn() {
     let explicit: ExplicitEndpoint = {host: "localhost", port: 8080};
     let service: Service = {name: "api", endpoint, ratio: -0.0};
     let verified = {
-        let endpoint_property = type_property.get_type_prop(Endpoint, fmt.DisplayBy);
+        let endpoint_property = type_property.get_type_prop((Endpoint).type, (fmt.DisplayBy).type);
         let property_valid = match endpoint_property {
             Some(property) => results.is_ok(property.cast!(fmt.DisplayBy)),
             None => False,
         };
-        fmt.render(fmt.display(Endpoint, endpoint)) == "localhost:8080"
+        fmt.render(fmt.display((Endpoint).type, endpoint)) == "localhost:8080"
             && fmt.render(fmt.Display.display(endpoint)) == "localhost:8080"
-            && fmt.render(fmt.display(Service, service))
+            && fmt.render(fmt.display((Service).type, service))
                 == "api@localhost:8080 {ready} -0 api"
             && `endpoint=\{explicit}` == "endpoint=explicit(localhost:8080)"
             && property_valid
-            && match type_property.get_type_prop(Plain, fmt.DisplayBy) {
+            && match type_property.get_type_prop((Plain).type, (fmt.DisplayBy).type) {
                 Some(_) => False,
                 None => True,
             }

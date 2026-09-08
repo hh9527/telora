@@ -25,7 +25,7 @@ export def constructor_function = test.should_ok(fn() {
     let failed: Fn(String) -> Status = Status.Failed;
     expect(identity(some)(7) == Some(7)
         && failed("reason") == Status.Failed("reason")
-        && dyn.project_with(Status, dyn.pack(Status, failed("reason")))
+        && dyn.project_with((Status).type, dyn.pack((Status).type, failed("reason")))
             == Some(Status.Failed("reason")))
 });
 
@@ -38,10 +38,10 @@ export def sibling_evidence = test.should_ok(fn() {
 
 export def reflection = test.should_ok(fn() {
     let value: Option(Int) = Some(7);
-    let packed = dyn.pack(Option(Int), value);
+    let packed = dyn.pack((Option(Int)).type, value);
     expect(type_desc.kind(dyn.desc(packed)) == type_desc.TypeDescKind.Enum
         && dyn.kind(packed) == dyn.ValueKind.Tagged
-        && dyn.project_with(Option(Int), packed) == Some(value))
+        && dyn.project_with((Option(Int)).type, packed) == Some(value))
 });
 
 export def late_payload_context = test.should_ok(fn() {
@@ -63,8 +63,8 @@ export def propagation_context = test.should_ok(fn() {
 
 export def constructor_witness = test.should_ok(fn() {
     let make: Make = Status.Failed;
-    let packed = dyn.pack(Make, make);
-    expect(match dyn.project_with(Make, packed) {
+    let packed = dyn.pack((Make).type, make);
+    expect(match dyn.project_with((Make).type, packed) {
         Some(restored) => restored("reason") == Status.Failed("reason"),
         None => False,
     })

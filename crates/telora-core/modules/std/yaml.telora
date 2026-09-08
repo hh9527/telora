@@ -3,7 +3,7 @@ import "std/codec" { BlameError };
 
 native parse_raw: Fn(TypeOf(Value), String) -> Result(Value, BlameError);
 def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
-    parse_raw(Value, text)
+    parse_raw(Value.type, text)
 };
 
 export { parse, BlameError };

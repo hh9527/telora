@@ -59,7 +59,7 @@ export def dictionaries = test.should_ok(fn() {
 export def derived_display = test.should_ok(fn() {
     let endpoint: Endpoint = {host: "localhost", port: 8080};
     expect(
-        fmt.render(fmt.display(Endpoint, endpoint)) == "localhost:8080"
+        fmt.render(fmt.display((Endpoint).type, endpoint)) == "localhost:8080"
     )
 });
 
@@ -77,15 +77,15 @@ export def format_fragments = test.should_ok(fn() {
 
 export def codec_and_schema = test.should_ok(fn() {
     expect({
-        let boolean = codec.decode(Bool, codec.encode(codec.Value, True.ty!(Bool)))
+        let boolean = codec.decode((Bool).type, codec.encode((codec.Value).type, True.ty!(Bool)))
             |> result.unwrap;
-        let none = codec.decode(Option(Int), codec.encode(codec.Value, None.ty!(Option(Int))))
+        let none = codec.decode((Option(Int)).type, codec.encode((codec.Value).type, None.ty!(Option(Int))))
             |> result.unwrap;
-        let some = codec.decode(Option(Int), codec.encode(codec.Value, 3))
+        let some = codec.decode((Option(Int)).type, codec.encode((codec.Value).type, 3))
             |> result.unwrap;
-        let encoded = codec.encode(codec.Value, 4);
-        let bool_schema = json.stringify(json.schema(Bool));
-        let option_schema = json.stringify(json.schema(Option(Int)));
+        let encoded = codec.encode((codec.Value).type, 4);
+        let bool_schema = json.stringify(json.schema((Bool).type));
+        let option_schema = json.stringify(json.schema((Option(Int)).type));
         boolean
             && none == None
             && some == Some(3)

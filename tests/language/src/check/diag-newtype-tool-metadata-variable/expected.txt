@@ -1,1 +1,1 @@
-expected Func, got Type
+computed metadata cannot become a type

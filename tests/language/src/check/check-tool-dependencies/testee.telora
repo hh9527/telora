@@ -3,17 +3,17 @@ import "std/array" as array;
 
 @check(validate)
 type Point = struct {x: Int};
-type Early = Tuple(array.map([Int], fn(item) {
+def early = array.map([Int.type], fn(item) {
     let candidate: Point = {x: 2};
     if candidate.x == 2 { item } else { item }
-}));
+});
 def choose: for(A) Fn(A) -> A = fn(value) {
     let candidate: Point = {x: 2};
     if candidate.x == 2 { value } else { value }
 };
-type Chosen = choose(Int);
+def chosen = choose(Int.type);
 def validate: Fn(Unchecked(Point)) -> Option(BlameError) = fn(value) {
     if value.x >= minimum { None } else { Some(blame!("below minimum", value.x)) }
 };
 def minimum: Int = 1;
-export {Chosen, Early};
+export {chosen, early};

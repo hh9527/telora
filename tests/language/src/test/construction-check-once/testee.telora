@@ -11,12 +11,12 @@ export def copies = test.should_ok(fn() {
     let refined = match copy.cast!(Point) { Ok(value) => value, Err(error) => fail!(error) };
     let pass: Fn(Point) -> Point = fn(value) { value };
     let values: Array(Point) = [point, refined, pass(copy)];
-    let encoded = codec.encode(codec.Value, point);
-    let schema = json.schema(Point);
+    let encoded = codec.encode((codec.Value).type, point);
+    let schema = json.schema((Point).type);
     expect(values[0].x + values[1].x + values[2].x == 3
         && encoded == codec.Value.Object({x: codec.Value.Int(1)})
         && match schema { codec.Value.Object(_) => True, _ => False }
-        && dyn.project_with(Point, dyn.pack(Point, point)) == Some(point))
+        && dyn.project_with((Point).type, dyn.pack((Point).type, point)) == Some(point))
 });
 
 export def merge_chain = test.should_ok(fn() {

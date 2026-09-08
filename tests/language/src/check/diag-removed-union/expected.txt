@@ -1,1 +1,1 @@
-unknown binding "union"
+computed metadata cannot become a type

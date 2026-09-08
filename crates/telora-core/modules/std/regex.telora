@@ -11,7 +11,7 @@ native prepare: Fn(Regex, Type, TypeDesc) -> Regex;
 
 def parse_by: Fn(Regex) -> Fn(TypeDesc, Option(ParseBy)) -> ParseBy = fn(regex) {
     fn(target, previous) {
-        let property: ParseBy = {regex: prepare(regex, ParseBy, target)};
+        let property: ParseBy = {regex: prepare(regex, ParseBy.type, target)};
         property
     }
 };

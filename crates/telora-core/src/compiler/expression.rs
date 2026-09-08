@@ -126,6 +126,7 @@ impl<'a> Compiler<'a> {
                 self.emit(Operation::MakeArray { dst, items }, expression.location);
                 Ok(dst)
             }
+            ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand) => self.compile_expr(operand),
             ExprKind::Spread(_) => {
                 Err(self.error_at(expression.location, "spread is only valid in a collection"))
             }

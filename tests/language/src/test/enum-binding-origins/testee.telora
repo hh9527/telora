@@ -11,8 +11,8 @@ export def verified = test.should_ok(fn() {
     let b = Direct.Model(2);
     let c = bridge.Namespace.Model.Model(3);
     let d = bridge.Alias.Model@[Int](4);
-    expect(codec.encode(Value.Value, a) == Value.Value.Object({Model: Value.Value.Int(1)})
-        && codec.encode(Value.Value, b) == Value.Value.Object({Model: Value.Value.Int(2)})
-        && codec.encode(Value.Value, c) == Value.Value.Object({Model: Value.Value.Int(3)})
-        && codec.encode(Value.Value, d) == Value.Value.Object({Model: Value.Value.Int(4)}))
+    expect(codec.encode((Value.Value).type, a) == Value.Value.Object({Model: Value.Value.Int(1)})
+        && codec.encode((Value.Value).type, b) == Value.Value.Object({Model: Value.Value.Int(2)})
+        && codec.encode((Value.Value).type, c) == Value.Value.Object({Model: Value.Value.Int(3)})
+        && codec.encode((Value.Value).type, d) == Value.Value.Object({Model: Value.Value.Int(4)}))
 });

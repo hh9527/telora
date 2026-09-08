@@ -146,7 +146,8 @@ export def call_sections = test.should_ok(fn() {
         let twice = add\(_0, _0);
         let increment = fn(value) { value + 1 };
         let apply = fn(callback, value) { callback(value) };
-        let array_type = Array\(_);
+        let describe = fn(metadata: Type) { type_desc.kind(metadata) };
+        let describe_type = describe\(_);
         let second = fn(first, second) { second };
         let make: Fn() -> Fn(Int) -> Int = fn() { fn(value) { value } };
         let reevaluated = second\(_, make());
@@ -155,7 +156,7 @@ export def call_sections = test.should_ok(fn() {
             && twice(21) == 42
             && (40 |> add\(_, 2)) == 42
             && apply(increment\(_), 41) == 42
-            && type_desc.kind(array_type(Int)) == type_desc.TypeDescKind.Array
+            && describe_type(Array(Int).type) == type_desc.TypeDescKind.Array
             && reevaluated(1) != reevaluated(2)
     })
 });

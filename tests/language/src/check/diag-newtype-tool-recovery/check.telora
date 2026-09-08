@@ -2,6 +2,6 @@ import "@src/support" as support;
 import "std/value" { Value };
 
 export def check: Fn(Value) -> Value = fn(actual) {
-    support.bool_value(support.failed_with(actual, "String")
+    support.bool_value(support.failed_with(actual, "computed metadata cannot become a type")
         && !support.stream_contains_string_field(actual, "stdout", "message", "tool-stage"))
 };

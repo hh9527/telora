@@ -7,9 +7,7 @@ import "@src/test/newtype-tool-stage/generic" as generic;
 import "@src/test/newtype-tool-stage/generic" { Box as ImportedBox };
 
 type Wrapped = struct(Type);
-type Direct = Wrapped(Int).0;
 type Box(T) = struct(T);
-type Generic = Box@[Type](String).0;
 def wrap: Fn(Type) -> Wrapped = fn(value) { Wrapped(value) };
 def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
     let Box(payload) = value;
@@ -18,22 +16,11 @@ def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
 def apply: Fn(Fn(Type) -> Wrapped, Type) -> Wrapped = fn(make, value) { make(value) };
 def make = Wrapped;
 def make_generic: for(T) Fn(T) -> Box(T) = Box;
-def metadata_factory: Fn(Type) -> TypeOf(Wrapped) = fn(value) { Wrapped };
+def metadata_factory: Fn(Type) -> TypeOf(Wrapped) = fn(value) { Wrapped.type };
 def typed_make = do {
     let make: Fn(Type) -> Wrapped = Wrapped;
     make
 };
-type FromHelper = wrap(Int).0;
-type FromGenericHelper = unbox(Box@[Type](Int));
-type FromFirstClass = apply(Wrapped, String).0;
-type FromImport = generic.Box@[Type](Int).0;
-type FromSelectiveImport = ImportedBox@[Type](String).0;
-type FromAlias = make(Int).0;
-type FromGenericAlias = make_generic@[Type](String).0;
-type FromCodec = if codec.encode(Value, Box@[Int](42)) == Value.Int(42) { Int } else { String };
-type FromTypedLet = typed_make(Int).0;
-type FromAliasCodec = if codec.encode(Value, make_generic@[Int](42)) == Value.Int(42) { Int } else { String };
-type FromMetadataFunction = metadata_factory(Int);
 
 type Count = struct(Int);
 @property(PropertyTarget.Type)
@@ -47,31 +34,30 @@ def stamp: Fn(Count) -> Fn(Type, Option(Stamp)) -> Stamp = fn(count) {
 @stamp(Count(45))
 type Annotated = struct { value: Int };
 
-export def direct = test.should_ok(fn() {
-    let value: Direct = 42;
-    expect(value == 42)
-});
-
 export def decorator_argument = test.should_ok(fn() {
-    expect(match property.get_type_prop(Annotated, Stamp) {
+    expect(match property.get_type_prop(Annotated.type, Stamp.type) {
         Some(stamp) => stamp.value == 45,
         None => False,
     })
 });
 
-export def helpers = test.should_ok(fn() {
-    let first: FromHelper = 1;
-    let second: FromGenericHelper = 2;
-    let third: FromFirstClass = "ok";
-    let fourth: Generic = "ok";
-    let fifth: FromImport = generic.value;
-    let sixth: FromSelectiveImport = "ok";
-    let seventh: FromAlias = 8;
-    let eighth: FromGenericAlias = "ok";
-    let ninth: FromCodec = 42;
-    let tenth: FromTypedLet = 43;
-    let eleventh: FromAliasCodec = 44;
-    let metadata: FromMetadataFunction = Wrapped(Int);
-    expect(first + second == 3 && third == fourth && fifth == 7 && sixth == third
-        && seventh == 8 && eighth == third && ninth == 42 && tenth == 43 && eleventh == 44)
+export def metadata_helpers = test.should_ok(fn() {
+    let direct = Wrapped(Int.type).0;
+    let from_helper = wrap(Int.type).0;
+    let from_generic = unbox(Box@[Type](String.type));
+    let from_first_class = apply(Wrapped, String.type).0;
+    let from_import = generic.Box@[Type](Int.type).0;
+    let from_selective = ImportedBox@[Type](String.type).0;
+    let from_alias = make(Int.type).0;
+    let from_generic_alias = make_generic@[Type](String.type).0;
+    let from_codec = if codec.encode(Value.type, Box@[Int](42)) == Value.Int(42) {
+        Int.type
+    } else { String.type };
+    let from_typed = typed_make(Int.type).0;
+    let witness: TypeOf(Wrapped) = metadata_factory(Int.type);
+    expect(direct == Int.type && from_helper == direct && from_import == direct
+        && from_alias == direct && from_codec == direct && from_typed == direct
+        && from_generic == String.type && from_first_class == from_generic
+        && from_selective == from_generic && from_generic_alias == from_generic
+        && witness == Wrapped.type && generic.value == 7)
 });

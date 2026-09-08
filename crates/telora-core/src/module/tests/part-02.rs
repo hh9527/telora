@@ -42,12 +42,7 @@
         fs::write(directory.join("user.json"), r#"{"name":"Ada","age":"old"}"#).unwrap();
         fs::write(
             directory.join("main.telora"),
-            "import \"./user.json\" { data as user };\n\
-             import \"std/codec\" as codec;\n\
-             import \"std/result\" as result;\n\
-             type User = struct {name: String, age: Int};\n\
-             let checked = match codec.decode(User, user) { Ok(value) => value, Err(error) => raise!(error) };\n\
-             checked",
+            "import \"./user.json\" { data as user };\nimport \"std/codec\" as codec;\nimport \"std/result\" as result;\ntype User = struct {name: String, age: Int};\nlet checked = match codec.decode((User).type, user) { Ok(value) => value, Err(error) => raise!(error) };\nchecked",
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();

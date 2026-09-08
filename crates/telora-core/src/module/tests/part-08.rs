@@ -21,7 +21,7 @@ import "std/result" as result;
 import "./project.json" { data as project };
 def initial: Array(validation.DiagnosticRecord) = [];
 import "std/codec" as codec;
-def checked_input = codec.decode(validation.Project, project) |> result.unwrap;
+def checked_input = codec.decode(validation.Project.type, project) |> result.unwrap;
 def output = match validation.validate_project(checked_input, initial) {
     (checked, diagnostics) => {
         count: arrays.length(diagnostics),
@@ -61,7 +61,7 @@ export { output };"#,
     fn fail_intrinsic_preserves_data_and_authored_rule_locations() {
         let directory = fixture_dir();
         fs::write(directory.join("user.json"), r#"{"age":42}"#).unwrap();
-        let source = r#"import "./user.json" { data as user };
+        let source = r###"import "./user.json" { data as user };
 import "std/codec" as codec;
 import "std/result" as result;
 import "std/dyn" as dyn;
@@ -73,8 +73,8 @@ def inspect_i: Fn(Dyn) -> Int = fn(value) {
     }
 };
 def inspect: for(A) Fn(TypeOf(A)) -> Fn(A) -> Int = interpreter!(inspect_i);
-let checked = codec.decode(User, user) |> result.unwrap;
-inspect(User)(checked)"#;
+let checked = codec.decode((User).type, user) |> result.unwrap;
+inspect((User).type)(checked)"###;
         fs::write(directory.join("main.telora"), source).unwrap();
 
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -92,7 +92,7 @@ inspect(User)(checked)"#;
         let rule = error.rule_location().expect("blame rule location");
         assert_eq!(
             module.sources.get(rule.source).slice(rule).as_deref(),
-            Some("inspect(User)(checked)")
+            Some("inspect((User).type)(checked)")
         );
         let implementation = error
             .implementation_rule_location()

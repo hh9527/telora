@@ -25,7 +25,7 @@ export def nested_context = test.should_ok(fn() {
     expect(values == [Scalar.Integer(42), Scalar.Text("text")].ty!(Array(Scalar)))
 });
 export def untagged_codec = test.should_ok(fn() {
-    match json.decode(Wire, "42") {
+    match json.decode((Wire).type, "42") {
         Ok(decoded) => expect(decoded == Wire.Integer(42)),
         Err(_) => fail!("decode failed"),
     }

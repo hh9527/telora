@@ -19,9 +19,9 @@ type TypeChoice = enum { Selected(Type), Empty };
 type Lowercase = enum { done, pending };
 import Lowercase.{done, pending};
 import TypeChoice.{Selected as Choose, Empty as NoChoice};
-type Chosen = match Choose(Int) {
+def chosen = match Choose(Int.type) {
     Choose(value) => value,
-    NoChoice => String,
+    NoChoice => String.type,
 };
 import Event.{Progress, Finished as Done};
 import Message.{Data, Empty};
@@ -100,8 +100,7 @@ export def qualified = test.should_ok(fn() {
 });
 
 export def tool_stage = test.should_ok(fn() {
-    let value: Chosen = 54;
-    expect(value == 54)
+    expect(chosen == Int.type)
 });
 
 export def first_class = test.should_ok(fn() {
@@ -129,11 +128,11 @@ export def builtin = test.should_ok(fn() {
 });
 
 export def ownership = test.should_ok(fn() {
-    let make = dyn.pack(EventConstructor, Event.Progress);
-    expect(codec.encode(Value, Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
-        && codec.encode(Value, Event.Finished) == Value.String("Finished")
-        && match dyn.project_with(EventConstructor, make) {
-            Option.Some(make) => codec.encode(Value, make(48)) == Value.Object({Progress: Value.Int(48)}),
+    let make = dyn.pack((EventConstructor).type, Event.Progress);
+    expect(codec.encode((Value).type, Event.Progress(47)) == Value.Object({Progress: Value.Int(47)})
+        && codec.encode((Value).type, Event.Finished) == Value.String("Finished")
+        && match dyn.project_with((EventConstructor).type, make) {
+            Option.Some(make) => codec.encode((Value).type, make(48)) == Value.Object({Progress: Value.Int(48)}),
             Option.None => Bool.False,
         })
 });
@@ -145,13 +144,13 @@ export def imported = test.should_ok(fn() {
     let d = bridge.Status.Finished;
     let e = bridge.Packet.Data(51);
     let f = bridge.model.Event.Progress(52);
-    expect(codec.encode(Value, a) == Value.Object({Progress: Value.Int(49)})
-        && codec.encode(Value, b) == Value.Object({Progress: Value.Int(50)})
-        && codec.encode(Value, c) == Value.Object({Data: Value.String("ok")})
-        && codec.encode(Value, d) == Value.String("Finished")
-        && codec.encode(Value, e) == Value.Object({Data: Value.Int(51)})
-        && codec.encode(Value, f) == Value.Object({Progress: Value.Int(52)})
-        && codec.encode(Value, model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
+    expect(codec.encode((Value).type, a) == Value.Object({Progress: Value.Int(49)})
+        && codec.encode((Value).type, b) == Value.Object({Progress: Value.Int(50)})
+        && codec.encode((Value).type, c) == Value.Object({Data: Value.String("ok")})
+        && codec.encode((Value).type, d) == Value.String("Finished")
+        && codec.encode((Value).type, e) == Value.Object({Data: Value.Int(51)})
+        && codec.encode((Value).type, f) == Value.Object({Progress: Value.Int(52)})
+        && codec.encode((Value).type, model.progress(53)) == Value.Object({Progress: Value.Int(53)}))
 });
 
 export def patterns = test.should_ok(fn() {

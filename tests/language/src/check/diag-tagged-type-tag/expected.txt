@@ -1,1 +1,1 @@
-unknown binding "Tagged"
+computed metadata cannot become a type

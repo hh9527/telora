@@ -1,2 +1,2 @@
-def broken: Fn(Type) -> Type = fn(Item) { Array(1) };
+def broken: Fn(Type) -> Type = fn(Item) { (Array(1)).type };
 export {broken};

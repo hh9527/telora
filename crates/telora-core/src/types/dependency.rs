@@ -1,63 +1,4 @@
-fn expression_dependencies(hir: &HirProgram, root: HirExpressionId) -> Vec<HirDefinitionId> {
-    expression_dependencies_with_properties(hir, root, true)
-}
-
-fn expression_dependencies_with_properties(
-    hir: &HirProgram,
-    root: HirExpressionId,
-    include_properties: bool,
-) -> Vec<HirDefinitionId> {
-    let mut dependencies = Vec::new();
-    let mut pending = vec![root];
-    while let Some(id) = pending.pop() {
-        let expression = hir.expression(id).expect("HIR expression exists");
-        if !include_properties && hir.is_property_root(expression.location) { continue; }
-        if let Some(reference) = expression.reference.and_then(|id| hir.reference(id))
-            && let HirResolution::Definition(dependency) = reference.resolution
-        {
-            dependencies.push(dependency);
-        }
-        pending.extend(hir.expression_children(id));
-    }
-    dependencies.sort_unstable();
-    dependencies.dedup();
-    dependencies
-}
-
-fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
-    let root = hir
-        .definition(definition)
-        .and_then(|definition| definition.value)
-        .expect("type definition has a value expression");
-    expression_dependencies(hir, root)
-}
-
-fn type_definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
-    let root = hir.definition(definition).and_then(|definition| definition.value)
-        .expect("type definition has a value expression");
-    expression_dependencies_with_properties(hir, root, false)
-}
-
-fn type_dependency_graph(
-    hir: &HirProgram,
-    type_definitions: &HashSet<HirDefinitionId>,
-) -> SemanticDependencyGraph {
-    let mut nodes = type_definitions
-        .iter()
-        .copied()
-        .map(|definition| SemanticDependencyNode {
-            definition,
-            dependencies: type_definition_dependencies(hir, definition)
-                .into_iter()
-                .filter(|dependency| type_definitions.contains(dependency))
-                .collect(),
-        })
-        .collect::<Vec<_>>();
-    nodes.sort_by_key(|node| node.definition);
-    SemanticDependencyGraph { nodes }
-}
-
-fn tool_value_dependencies(hir: &HirProgram, program: &Program) -> HashSet<String> {
+fn tool_value_dependencies(hir: &HirProgram) -> HashSet<String> {
     let mut needed = HashSet::new();
     let mut frontier = Vec::new();
     for expression in hir.expressions() {
@@ -71,18 +12,6 @@ fn tool_value_dependencies(hir: &HirProgram, program: &Program) -> HashSet<Strin
                 break;
             }
             parent = expression.parent;
-        }
-    }
-    // Constraint syntax is not part of runtime HIR, but its metadata arguments
-    // can refer to ordinary helper bindings too.
-    for bound in program.value.body.value.bindings.iter()
-        .flat_map(|binding| binding.value.type_parameter_bounds.iter().flatten())
-    {
-        let inputs = HirProgram::resolve_expression(bound, Vec::new());
-        for reference in inputs.unresolved() {
-            frontier.extend(hir.definitions().iter()
-                .filter(|definition| definition.top_level && definition.name == reference.name)
-                .map(|definition| definition.id));
         }
     }
     while let Some(id) = frontier.pop() {
@@ -259,6 +188,13 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .filter(|name| !authored_names.contains(name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
+    let mut boundary = TypeBoundary::new(&hir, external_interfaces);
+    boundary.external_data.extend(external_roots.keys().cloned());
+    boundary.bindings(&program.value.body.value.bindings);
+    if program.value.authored_result { boundary.data_expression(&program.value.body.value.result); }
+    if let Some(diagnostic) = boundary.diagnostics.first().cloned() {
+        return Err(FrontendError::from_diagnostic(sources, diagnostic));
+    }
     let prelude_names = prelude
         .types
         .keys()
@@ -1077,7 +1013,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
     }
 
     evaluator.refresh_inference_context(&static_environment, &binding_schemes, &declared_types);
-    let tool_dependencies = tool_value_dependencies(&hir, program);
+    let tool_dependencies = tool_value_dependencies(&hir);
     prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
         &static_environment, account, sources, &mut evaluator)?;
     for binding in &program.value.body.value.bindings {
@@ -2173,13 +2109,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
         member_constructors: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
                 Some((field.value.name.as_ref()?.value.clone(),
-                    inference.member_constructor_reference(&field.value.value)?))
+                    inference.member_constructor_reference(&field.value.value)
+                        .or_else(|| matches!(boundary.role(&field.value.value), SurfaceRole::Constructor)
+                            .then_some(ValueConstructor::Newtype))?))
             }).collect(),
             _ => BTreeMap::new(),
         },
         type_declarations: match &program.value.body.value.result.value {
             ExprKind::Dict(fields) => fields.iter().filter_map(|field| {
-                inference.declared_constructor_reference(&field.value.value)
+                matches!(boundary.role(&field.value.value), SurfaceRole::Type | SurfaceRole::Constructor)
                     .then(|| field.value.name.as_ref().map(|name| name.value.clone())).flatten()
             }).collect(),
             _ => BTreeSet::new(),

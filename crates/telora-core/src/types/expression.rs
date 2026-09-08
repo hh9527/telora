@@ -88,6 +88,12 @@ fn infer_expr_with(
             fields.into_iter().collect::<Option<BTreeMap<_, _>>>().map(TypeDescriptor::Struct)
         }
         ExprKind::Block(block) => infer_block_with(block, environment, record),
+        ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand) => {
+            match infer_expr_with(operand, environment, record) {
+                Some(TypeDescriptor::Type) => None,
+                inferred => inferred,
+            }
+        }
         ExprKind::Spread(operand) | ExprKind::Unary { operand, .. } | ExprKind::Propagate { operand } =>
             infer_expr_with(operand, environment, record),
         ExprKind::Return { value } => {

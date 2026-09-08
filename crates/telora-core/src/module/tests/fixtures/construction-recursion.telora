@@ -10,5 +10,5 @@ type Loop = struct(Int);
 type Choice = enum {Recursive(Loop), Fallback(Int)};
 
 def decode: Fn() -> Bool = fn() {
-    match json.decode(Choice, "0") { Ok(_) => True, Err(_) => False }
+    match json.decode(Choice.type, "0") { Ok(_) => True, Err(_) => False }
 };

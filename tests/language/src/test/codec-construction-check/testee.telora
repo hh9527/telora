@@ -31,43 +31,43 @@ type Aborting = struct(Int);
 type AbortTrial = enum {First(Aborting), Second(Int)};
 
 export def newtype = test.should_ok(fn() {
-    expect(match json.decode(Positive, "2") { Ok(value) => value.0 == 2, Err(_) => False })
+    expect(match json.decode(Positive.type, "2") { Ok(value) => value.0 == 2, Err(_) => False })
 });
 export def rejection_is_a_value = test.should_ok(fn() {
-    expect(match json.decode(Positive, "0") { Ok(_) => False, Err(_) => True })
+    expect(match json.decode(Positive.type, "0") { Ok(_) => False, Err(_) => True })
 });
 export def raise_rejection = test.should_fail_with(fn() {
-    match json.decode(Positive, "0") { Ok(value) => value, Err(error) => raise!(error) }
+    match json.decode(Positive.type, "0") { Ok(value) => value, Err(error) => raise!(error) }
 }, "positive required");
 export def nested_rejection = test.should_ok(fn() {
-    expect(match json.decode(Container, "{\"item\":0}") { Ok(_) => False, Err(_) => True })
+    expect(match json.decode((Container).type, "{\"item\":0}") { Ok(_) => False, Err(_) => True })
 });
 export def untagged_payload = test.should_ok(fn() {
-    expect(match json.decode(Signed, "-2") {
+    expect(match json.decode((Signed).type, "-2") {
         Ok(Signed.Negative(value)) => value.0 == -2,
         _ => False,
     })
 });
 export def untagged_variant = test.should_ok(fn() {
-    expect(match json.decode(VariantChecked, "2") {
+    expect(match json.decode((VariantChecked).type, "2") {
         Ok(VariantChecked.Positive(value)) => value == 2,
         _ => False,
     })
 });
 export def untagged_no_match = test.should_fail_with(fn() {
-    match json.decode(Signed, "0") { Ok(value) => value, Err(error) => raise!(error) }
+    match json.decode((Signed).type, "0") { Ok(value) => value, Err(error) => raise!(error) }
 }, "matches no untagged Enum variant");
 export def valid_encoding = test.should_ok(fn() {
-    let value = match json.decode(Positive, "3") { Ok(value) => value, Err(error) => raise!(error) };
-    expect(codec.encode(codec.Value, value) == codec.Value.Int(3))
+    let value = match json.decode(Positive.type, "3") { Ok(value) => value, Err(error) => raise!(error) };
+    expect(codec.encode((codec.Value).type, value) == codec.Value.Int(3))
 });
 
 export def ambiguity_preserved = test.should_fail_with(fn() {
-    match json.decode(Ambiguous, "2") { Ok(value) => value, Err(error) => raise!(error) }
+    match json.decode((Ambiguous).type, "2") { Ok(value) => value, Err(error) => raise!(error) }
 }, "ambiguously matches multiple");
 
 export def nested_trials = test.should_ok(fn() {
-    let decoded = match json.decode(SignedContainer, "{\"items\":[2,-3]}") {
+    let decoded = match json.decode((SignedContainer).type, "{\"items\":[2,-3]}") {
         Ok(value) => value,
         Err(error) => raise!(error),
     };
@@ -78,5 +78,5 @@ export def nested_trials = test.should_ok(fn() {
 });
 
 export def execution_failure_aborts_trials = test.should_fail_with(fn() {
-    match json.decode(AbortTrial, "2") { Ok(_) => True, Err(_) => True }
+    match json.decode((AbortTrial).type, "2") { Ok(_) => True, Err(_) => True }
 }, "checker execution failed");

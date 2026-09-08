@@ -75,6 +75,8 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
             metadata.clone(),
         ),
     );
+    prelude.insert("\0telora_tuple_type".into(), prelude["Tuple"].clone());
+    prelude.insert("\0telora_function_type".into(), prelude["Func"].clone());
     for name in ["\0telora_struct", "\0telora_newtype", "\0telora_enum"] {
         prelude.insert(
             name.into(),

@@ -1,3 +1,62 @@
+fn expression_dependencies(hir: &HirProgram, root: HirExpressionId) -> Vec<HirDefinitionId> {
+    expression_dependencies_with_properties(hir, root, true)
+}
+
+fn expression_dependencies_with_properties(
+    hir: &HirProgram,
+    root: HirExpressionId,
+    include_properties: bool,
+) -> Vec<HirDefinitionId> {
+    let mut dependencies = Vec::new();
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let expression = hir.expression(id).expect("HIR expression exists");
+        if !include_properties && hir.is_property_root(expression.location) { continue; }
+        if let Some(reference) = expression.reference.and_then(|id| hir.reference(id))
+            && let HirResolution::Definition(dependency) = reference.resolution
+        {
+            dependencies.push(dependency);
+        }
+        pending.extend(hir.expression_children(id));
+    }
+    dependencies.sort_unstable();
+    dependencies.dedup();
+    dependencies
+}
+
+fn definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
+    let root = hir
+        .definition(definition)
+        .and_then(|definition| definition.value)
+        .expect("type definition has a value expression");
+    expression_dependencies(hir, root)
+}
+
+fn type_definition_dependencies(hir: &HirProgram, definition: HirDefinitionId) -> Vec<HirDefinitionId> {
+    let root = hir.definition(definition).and_then(|definition| definition.value)
+        .expect("type definition has a value expression");
+    expression_dependencies_with_properties(hir, root, false)
+}
+
+fn type_dependency_graph(
+    hir: &HirProgram,
+    type_definitions: &HashSet<HirDefinitionId>,
+) -> SemanticDependencyGraph {
+    let mut nodes = type_definitions
+        .iter()
+        .copied()
+        .map(|definition| SemanticDependencyNode {
+            definition,
+            dependencies: type_definition_dependencies(hir, definition)
+                .into_iter()
+                .filter(|dependency| type_definitions.contains(dependency))
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by_key(|node| node.definition);
+    SemanticDependencyGraph { nodes }
+}
+
 struct TypeDependencyPlan<'a> {
     graph: &'a SemanticDependencyGraph,
     positions: HashMap<HirDefinitionId, usize>,

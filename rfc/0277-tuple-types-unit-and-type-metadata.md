@@ -1,6 +1,6 @@
 # RFC 0277: Tuple Types, Unit, and Explicit Type Metadata
 
-- Status: Stage 1 committed locally. Stage 2 accepted; implementation in progress.
+- Status: Implemented and verified (stages 1 and 2).
 - Baseline: Current [language design](../docs/design/LANGUAGE.md), sections 3,
   4, 6 and 7, and [type concepts](../docs/design/CONCEPT.md).
 - Related: RFC 0219 (Function notation and Tuple contracts), RFC 0272 (Tuple
@@ -97,9 +97,56 @@ stage 1 only.
 
 No release performance measurement was made for stage 1; the broader type/data
 inference changes and their performance acceptance remain part of stage 2.
-Implementation and editor-submodule changes remain uncommitted and unpushed.
+Stage 1 implementation was committed as `cca4672`; its editor grammar was
+committed in the submodule as `54515d6` and tracked by parent `f2304b9`.
 
-## Current Baseline
+### Stage 2 Implementation
+
+Acceptance of the one-way boundary was committed as `b6ff56e` before this stage.
+`TypeSyntax` and `TypeMetadata` preserve explicit frontend boundaries. Tuple
+contracts and Fn syntax lower through hygienic internal structural constructors.
+Static type roles follow HIR declaration identities, type parameters and module
+interfaces, including imports and reexports. Host-supplied metadata alone does
+not grant a type role, even when it shadows a builtin name.
+
+The boundary is checked before type skeleton evaluation. Recovery rejects
+metadata-to-type helpers without executing them and continues independent work.
+`.type` publishes an exact `TypeOf(T)` witness. Newtype callable facets remain
+available separately; metadata access must not mark an imported newtype as a
+value-constructor closure. Constraint references are resolved in HIR once rather
+than rebuilding separate HIR for their dependency scan. The shared inference
+solver and runtime representation are unchanged.
+
+Standard-library metadata consumers, executable examples and acceptance fixtures
+use explicit metadata data. Removed programmable type initializers have focused
+rejection coverage; ordinary metadata helper and constructor tests remain.
+The language, implementation and concept SSOTs and public guides document stage 2.
+
+Final `cargo test --workspace` passes: 318 core tests, 41 CLI tests including
+377 language acceptance fixtures, and all remaining workspace and doc-test
+suites. All 13 tree-sitter corpus tests pass. `cargo build --release`, parent and
+submodule diff checks, and the source-size gate pass. Explicit regression tests
+cover imported newtype metadata identity, tuple/Fn hygiene, recovery without
+executing rejected helpers, and host metadata shadowing builtin type names.
+
+Release verification uses a temporary copy of the ontology workspace, not edits
+to the original project: seven bare metadata arguments required `.type`.
+An initial successful `check @test/query` took 4.71 s with peak RSS 302744 KiB.
+A generated workload with 400 nested tuple type aliases took 0.43 s with peak RSS
+40348 KiB. With the final verified release, ontology repeat runs took 4.66 s /
+302948 KiB and 4.50 s / 303012 KiB; the tuple workload took 0.46 s / 40096 KiB.
+These are acceptance measurements, not a claim of speedup against
+the earlier 4.4-4.6 s baseline. The original relative `-C ../lab-ws/...` form
+fails workspace containment validation in this environment; an absolute path
+reaches the analysis normally. Fixing that unrelated path issue is out of scope.
+
+The existing repository-wide `cargo fmt --all --check` reports pre-existing
+formatting differences, including untouched `source_arg.rs` and `bytecode.rs`.
+New boundary/checker test files are rustfmt-formatted; unrelated formatting is
+not rewritten. The source-size gate passes after moving dependency-graph helpers
+to the existing dependency-plan module.
+
+## Original Baseline
 
 Today `Tuple([A, B])` calls an ordinary metadata constructor with one Array
 argument. Bare types also serve as first-class metadata values. `Type` describes
@@ -244,7 +291,7 @@ effects, provenance and execution quotas. A semicolon is not an erasure request.
 
 ## Compatibility and Open Decisions
 
-### Stage 2 Compatibility Audit
+### Historical Compatibility Audit
 
 Implementation preparation confirms that the metadata-to-type bridge is used
 by existing programs, not merely a hypothetical reflection feature.
@@ -254,7 +301,8 @@ through ordinary helpers, projections, imported constructors and conditionals.
 `TypeOf(A)` witnesses. Removing computed type initializers would remove tested
 capabilities in addition to changing tuple notation.
 
-The recommended migration boundary below is pending confirmation:
+The earlier migration proposal below is retained as discussion history. Its
+reverse-bridge rows were rejected by the staged acceptance above:
 
 | Surface | Proposed stage 2 treatment |
 | --- | --- |

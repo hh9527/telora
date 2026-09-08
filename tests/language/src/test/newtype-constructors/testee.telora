@@ -16,7 +16,7 @@ type WrappedItem = struct(Item);
 type Maybe = struct(Option(Int));
 def box: for(T) Fn(T) -> Box(T) = fn(value) { Box(value) };
 def apply: for(A, B) Fn(Fn(A) -> B, A) -> B = fn(make, value) { make(value) };
-def metadata_factory: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId };
+def metadata_factory: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId.type };
 def identity: for(T) Fn(T) -> T = fn(value) { value };
 def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
     let Box(payload) = value;
@@ -25,7 +25,7 @@ def unbox: for(T) Fn(Box(T)) -> T = fn(value) {
 
 export def direct = test.should_ok(fn() {
     let id = UserId(7);
-    expect(id.0 == 7 && codec.encode(Value, id) == Value.Int(7))
+    expect(id.0 == 7 && codec.encode((Value).type, id) == Value.Int(7))
 });
 
 export def first_class = test.should_ok(fn() {
@@ -43,20 +43,20 @@ export def generic = test.should_ok(fn() {
 
 export def generic_forwarding = test.should_ok(fn() {
     let id = box(UserId(13));
-    expect(id.0.0 == 13 && codec.encode(Value, id) == Value.Int(13))
+    expect(id.0.0 == 13 && codec.encode((Value).type, id) == Value.Int(13))
 });
 
 export def type_facet = test.should_ok(fn() {
-    let metadata: Type = UserId;
-    let boxed: Type = Box(Int);
-    let family: Fn(Type) -> Type = Box;
+    let metadata: Type = UserId.type;
+    let boxed: Type = Box(Int).type;
+    let family: Fn(Type) -> Type = fn(metadata) { metadata };
     expect(type_desc.kind(metadata) == type_desc.TypeDescKind.Ref && type_desc.kind(boxed) == type_desc.TypeDescKind.Ref
-        && type_desc.kind(family(Int)) == type_desc.TypeDescKind.Ref)
+        && type_desc.kind(family(boxed)) == type_desc.TypeDescKind.Ref)
 });
 
 export def constructor_dyn = test.should_ok(fn() {
-    let packed = dyn.pack(IdConstructor, UserId);
-    expect(match dyn.project_with(IdConstructor, packed) {
+    let packed = dyn.pack((IdConstructor).type, UserId);
+    expect(match dyn.project_with((IdConstructor).type, packed) {
         Some(make) => make(14).0 == 14,
         None => False,
     })
@@ -75,9 +75,9 @@ export def imported = test.should_ok(fn() {
 
 export def ordinary_metadata_function = test.should_ok(fn() {
     let metadata = metadata_factory(0);
-    let local: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId };
+    let local: Fn(Int) -> TypeOf(UserId) = fn(value) { UserId.type };
     let local_metadata = local(1);
-    let witness: TypeOf(UserId) = UserId;
+    let witness: TypeOf(UserId) = UserId.type;
     expect(type_desc.kind(identity(metadata)) == type_desc.TypeDescKind.Ref
         && type_desc.kind(identity(local_metadata)) == type_desc.TypeDescKind.Ref
         && type_desc.kind(identity(witness)) == type_desc.TypeDescKind.Ref

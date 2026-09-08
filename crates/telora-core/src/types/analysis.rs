@@ -260,6 +260,30 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         .into_iter().flatten().collect::<Vec<_>>();
     let mut diagnostics = initial_diagnostics;
     let mut facts: BTreeMap<HirDefinitionId, SemanticFact<AnalysisTypeId>> = BTreeMap::new();
+    let mut boundary = TypeBoundary::new(&hir, control.external_interfaces);
+    boundary.external_data.extend(external_roots.keys().cloned());
+    boundary.bindings(&recovered.bindings);
+    for diagnostic in boundary.diagnostics {
+        let id = if let Some(index) = diagnostics.iter().position(|existing| existing == &diagnostic) {
+            DiagnosticId::from_index(index)
+        } else {
+            let id = DiagnosticId::from_index(diagnostics.len());
+            diagnostics.push(diagnostic.clone());
+            id
+        };
+        if let Some(location) = diagnostic.labels.first().map(|label| label.location) {
+            for (definition, binding) in &bindings {
+                if binding.location.source == location.source
+                    && binding.location.start <= location.start && location.end <= binding.location.end
+                {
+                    let mut fact = SemanticFact::conflicted(None, Conflict::IncompatibleContract);
+                    fact.diagnostics.push(id);
+                    facts.insert(*definition, fact);
+                    break;
+                }
+            }
+        }
+    }
     let mut definition_schemes = BTreeMap::new();
     for (definition, import) in unavailable_dependencies {
         let cause = FactIdentity::HirDefinition(import);

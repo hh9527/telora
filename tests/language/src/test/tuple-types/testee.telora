@@ -1,0 +1,29 @@
+import "std/test" as test;
+import "std/type-desc" as desc;
+import "./types" {pair as Pair, Wrapped};
+import "@src/test-support" {expect};
+
+type Nested = ((Int, String), (Bool,), ());
+def swap: Fn((Int, String)) -> (String, Int) = fn(pair) { (pair.1, pair.0) };
+export def values = test.should_ok(fn() {
+    let value: Pair = (1, "one");
+    let nested: Nested = (value, (True,), ());
+    let Tuple = 1;
+    let Func = 2;
+    let typed: (Int, String) = value.ty!((Int, String));
+    let callable: Fn(Int) -> Int = fn(x) { x };
+    let make = Wrapped;
+    expect(swap(typed) == ("one", 1) && nested.1.0 && nested.2 == ()
+        && callable(Tuple) + Func == 3 && make(4).0 == 4)
+});
+export def metadata = test.should_ok(fn() {
+    let witness: TypeOf(Pair) = (Int, String).type;
+    let items = (Int.type, String.type);
+    let singleton: Type = (Int,).type;
+    let number: Type = Int.type;
+    expect(witness == Pair.type);
+    expect(desc.children(witness) == [items.0, items.1]);
+    expect(().type == Unit.type);
+    expect(singleton != number);
+    expect(Wrapped.type == Wrapped.type)
+});

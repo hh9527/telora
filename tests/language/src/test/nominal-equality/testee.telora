@@ -58,8 +58,8 @@ export def existing_anonymous = test.should_ok(fn() {
         && (item, 1) != (raw, 1) && (raw, 1) != (item, 1))
 });
 export def dynamic_boundary = test.should_ok(fn() {
-    let dynamic = dyn.pack(Item, item);
-    expect(match dyn.project_with(Item, dynamic) {
+    let dynamic = dyn.pack((Item).type, item);
+    expect(match dyn.project_with((Item).type, dynamic) {
         Some(value) => value == item,
         None => False,
     })

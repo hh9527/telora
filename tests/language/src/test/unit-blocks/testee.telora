@@ -10,7 +10,7 @@ def early: Fn() -> Int = fn() { 1; return 42; };
 export def identity = test.should_ok(fn() {
     let a: Empty = zero();
     let b: Old = one(a);
-    expect(a == () && b == () && Unit == Empty && Empty == Old);
+    expect(a == () && b == () && (Unit).type == (Empty).type && (Empty).type == (Old).type);
 });
 
 export def tails = test.should_ok(fn() {

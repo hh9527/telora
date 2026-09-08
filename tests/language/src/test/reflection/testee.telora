@@ -15,18 +15,18 @@ export def verified_case = test.should_ok(fn() {
 
     {
         let user: User = {name: "Ada", age: 42};
-        let user_dyn = dyn.pack(User, user);
-        let int_dyn = dyn.pack(Int, 41);
-        let string_dyn = dyn.pack(String, "text");
-        let float_dyn = dyn.pack(Float, 1.5);
-        let bytes_dyn = dyn.pack(Bytes, b"ab");
+        let user_dyn = dyn.pack((User).type, user);
+        let int_dyn = dyn.pack((Int).type, 41);
+        let string_dyn = dyn.pack((String).type, "text");
+        let float_dyn = dyn.pack((Float).type, 1.5);
+        let bytes_dyn = dyn.pack((Bytes).type, b"ab");
         let identity: Fn(Int) -> Int = fn(value) { value };
-        let function_dyn = dyn.pack(Unary, identity);
-        let nominal_dyn = dyn.pack(A, {value: 7});
-        let numbers_dyn = dyn.pack(Array(Int), [1, 2]);
-        let tuple_dyn = dyn.pack(Tuple([Int, String]), (1, "one"));
+        let function_dyn = dyn.pack((Unary).type, identity);
+        let nominal_dyn = dyn.pack((A).type, {value: 7});
+        let numbers_dyn = dyn.pack((Array(Int)).type, [1, 2]);
+        let tuple_dyn = dyn.pack((Tuple([Int, String])).type, (1, "one"));
         let root: Node = {value: 1, children: [{value: 2, children: []}]};
-        let root_dyn = dyn.pack(Node, root);
+        let root_dyn = dyn.pack((Node).type, root);
         let children_dyn = dyn.field(root_dyn, "children") |> results.unwrap;
         let child_dyns = dyn.array_items(children_dyn) |> results.unwrap;
         let expected_user_fields: Array(Tuple([String, dyn.ValueKind])) = [
@@ -38,11 +38,11 @@ export def verified_case = test.should_ok(fn() {
             dyn.field(child, "value") |> results.unwrap |> dyn.check_int
         });
         let message: Event = Event.Message("ready");
-        let message_dyn = dyn.pack(Event, message);
+        let message_dyn = dyn.pack((Event).type, message);
         let message_index = dyn.get_variant_index(message_dyn);
         let message_payload = dyn.get_variant_payload(message_dyn, message_index);
         let message_tag = dyn.tag(message_dyn) |> results.unwrap;
-        let user_ok = dyn.desc(user_dyn) == User
+        let user_ok = dyn.desc(user_dyn) == (User).type
             && dyn.kind(user_dyn) == dyn.ValueKind.Dict
             && dyn.check_int(dyn.get_field_value(user_dyn, 0)) == Some(42)
             && dyn.check_string(dyn.get_field_value(user_dyn, 1)) == Some("Ada");
@@ -53,16 +53,16 @@ export def verified_case = test.should_ok(fn() {
             && dyn.check_string(string_dyn) == Some("text")
             && dyn.check_float(float_dyn) == Some(1.5)
             && dyn.check_bytes(bytes_dyn) == Some(b"ab")
-            && dyn.project_with(Int, int_dyn) == Some(41)
+            && dyn.project_with((Int).type, int_dyn) == Some(41)
             && dyn.project@[Int](int_dyn) == Some(41)
-            && dyn.project_with(Float, int_dyn) == None
-            && match dyn.project_with(A, nominal_dyn) {
+            && dyn.project_with((Float).type, int_dyn) == None
+            && match dyn.project_with((A).type, nominal_dyn) {
                 Some(value) => value.value == 7,
                 None => False,
             }
-            && dyn.project_with(B, nominal_dyn) == None
+            && dyn.project_with((B).type, nominal_dyn) == None
             && int_dyn == int_dyn
-            && int_dyn != dyn.pack(Int, 41);
+            && int_dyn != dyn.pack((Int).type, 41);
         let structural_ok = array.map(dyn.fields(user_dyn) |> results.unwrap, fn(pair) {
             match pair { (name, value) => (name, dyn.kind(value)) }
         }) == expected_user_fields

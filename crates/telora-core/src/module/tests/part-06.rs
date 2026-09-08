@@ -4,7 +4,7 @@
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"import "std/array" as array;
+            r###"import "std/array" as array;
                import "std/codec" as codec;
                import "std/dict" as dict;
                import "std/dyn" as dyn;
@@ -30,10 +30,10 @@
                let mapped_dict: Dict(Node) = dict.map_values(indexed, identity);
                let maybe: Option(Node) = option.map(Some(root), identity);
                let outcome: NodeResult = result.map(Ok(root), identity);
-               let packed = dyn.pack(Node, root);
+               let packed = dyn.pack((Node).type, root);
                let decoded: Node = codec.decode(
-                   Node,
-                   codec.encode(codec.Value, root),
+                   (Node).type,
+                   codec.encode((codec.Value).type, root),
                ) |> result.unwrap;
                export def output = {
                    sum,
@@ -43,9 +43,9 @@
                    outcome,
                    dyn_kind: dyn.kind(packed),
                    decoded,
-                   display: fmt.render(fmt.display(Node, root)),
-                   schema: json.schema(Node),
-               };"#,
+                   display: fmt.render(fmt.display((Node).type, root)),
+                   schema: json.schema((Node).type),
+               };"###,
         )
         .unwrap();
 
@@ -81,10 +81,10 @@
 
         fs::write(
             &main,
-            r#"import "std/fmt" as fmt;
+            r###"import "std/fmt" as fmt;
                @fmt.display_by("{next}")
                type Loop = struct {next: Loop};
-               export {Loop};"#,
+               export {Loop};"###,
         )
         .unwrap();
         let error = load_module(&main, BTreeMap::new(), 1_000_000).unwrap_err();
@@ -102,7 +102,7 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("types.telora"),
-            r#"type IntValue = struct {value: Int};
+            r###"type IntValue = struct {value: Int};
                type StringValue = struct {value: String};
                type Val = enum {Int(IntValue), Str(StringValue)};
                type BinaryNode = struct {left: Expr, right: Expr};
@@ -118,12 +118,12 @@
                    entity: Entity,
                    relation: Relation(Mapping),
                };
-               export {Expr, Val, Mapping, Relation, RelationUse};"#,
+               export {Expr, Val, Mapping, Relation, RelationUse};"###,
         )
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types" as types;
+            r###"import "./types" as types;
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
@@ -137,10 +137,10 @@
                    })}},
                };
                 {
-                    encoded: codec.encode(codec.Value, relation)
+                    encoded: codec.encode((codec.Value).type, relation)
                        |> json.stringify,
-                    schema: json.schema(Use),
-                }"#,
+                    schema: json.schema((Use).type),
+                }"###,
         )
         .unwrap();
 
@@ -158,10 +158,10 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("types.telora"),
-            r#"type Call = struct {args: Array(Expr)};
+            r###"type Call = struct {args: Array(Expr)};
                type Expr = enum {Int(Int), Call(Call)};
                type Plan = struct {grouping: Array(Expr)};
-               export {Expr, Plan};"#,
+               export {Expr, Plan};"###,
         )
         .unwrap();
         fs::write(
@@ -184,7 +184,7 @@
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./types" as types;
+            r###"import "./types" as types;
                import "./creator" as creator;
                import "std/codec" as codec;
                import "std/result" as result;
@@ -195,12 +195,12 @@
                ]});
                let produced: types.Plan = creator.make_plan(expr);
                let direct: types.Plan = {grouping: [expr]};
-               let direct_encoded = codec.encode(Value, direct);
-               let produced_encoded = codec.encode(Value, produced);
+               let direct_encoded = codec.encode((Value).type, direct);
+               let produced_encoded = codec.encode((Value).type, produced);
                {
-                   direct: codec.decode(types.Plan, direct_encoded) |> result.unwrap,
-                   produced: codec.decode(types.Plan, produced_encoded) |> result.unwrap,
-               }"#,
+                   direct: codec.decode(types.Plan.type, direct_encoded) |> result.unwrap,
+                   produced: codec.decode(types.Plan.type, produced_encoded) |> result.unwrap,
+               }"###,
         )
         .unwrap();
 
@@ -217,7 +217,7 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("types.telora"),
-            r#"import "std/codec" as codec;
+            r###"import "std/codec" as codec;
                type Binary = struct {left: Expr, right: Expr};
                type Expr = enum {Lit(Int), Add(Binary)};
                type Payload(A, B, C, D, E, F, G) = struct {
@@ -227,9 +227,9 @@
                    Int, String, Bool, Float, Expr, Array(Int), Option(String)
                );
                def encode_rejection = fn(value: Rejection) {
-                   codec.encode(codec.Value, value)
+                   codec.encode((codec.Value).type, value)
                };
-               export {Expr, Rejection, encode_rejection};"#,
+               export {Expr, Rejection, encode_rejection};"###,
         )
         .unwrap();
         fs::write(
@@ -282,7 +282,7 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("expr.telora"),
-            r#"type Binary = struct {left: Expr, right: Expr};
+            r###"type Binary = struct {left: Expr, right: Expr};
                type Expr = enum {Lit(Int), Add(Binary)};
                def lit: Fn(Int) -> Expr = fn(value) { Expr.Lit(value) };
                def add: Fn(Expr, Expr) -> Expr = fn(left, right) {
@@ -294,7 +294,7 @@
                        Expr.Add({left, right}) => 1 + depth(left) + depth(right),
                    }
                };
-               export {Binary, Expr, lit, add, depth};"#,
+               export {Binary, Expr, lit, add, depth};"###,
         )
         .unwrap();
 
@@ -320,7 +320,7 @@
                    expr.lit(1),
                    expr.add(expr.lit(2), expr.lit(3)),
                );
-               export def output = (expr.depth(value), has_ref(expr.Expr, 8));"#,
+               export def output = (expr.depth(value), has_ref(expr.Expr.type, 8));"#,
         )
         .unwrap();
         let whole = load_module(directory.join("whole.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -371,12 +371,12 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/codec" as codec;
+            r###"import "std/codec" as codec;
                import "std/result" as result;
                type Forward = struct {next: Later};
-               let premature = codec.decode(Forward, codec.encode(codec.Value, {next: 1}));
+               let premature = codec.decode((Forward).type, codec.encode((codec.Value).type, {next: 1}));
                type Later = Int;
-               premature"#,
+               premature"###,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -393,10 +393,10 @@
         let invalid_path = directory.join("invalid.telora");
         fs::write(&invalid_path, "Option(1)").unwrap();
         let invalid = load_module(&invalid_path, BTreeMap::new(), 100_000).unwrap_err();
-        assert!(invalid.message.contains("cannot unify Int with Type"));
+        assert!(invalid.message.contains("a type constructor application is not data"));
 
         let quota_path = directory.join("quota.telora");
-        fs::write(&quota_path, "Result(String, Int)").unwrap();
+        fs::write(&quota_path, "Result(String, Int).type").unwrap();
         let module = load_module(&quota_path, BTreeMap::new(), 100_000).unwrap();
         let mut account = QuotaAccount::new(Quota::new(10, 1_000, 0));
         let error = Vm::new()
@@ -533,11 +533,7 @@
         .unwrap();
         fs::write(
             &main,
-            "import \"./model\" as model;\
-             type Local = String;\
-             type Uses = model.Good;\
-             type Down = Array(Uses);\
-             export { Local as output };",
+            "import \"./model\" as model;type Local = String;type Uses = model.Good;type Down = Array(Uses);export { Local as output };",
         )
         .unwrap();
         let snapshot = recovery_engine().recover_workspace(&main).unwrap();

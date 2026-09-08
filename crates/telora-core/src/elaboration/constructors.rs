@@ -83,7 +83,8 @@ pub(crate) fn lower_constructor_patterns(
                 lower_constructor_patterns(&mut field.value.value, constructors);
             }
         }
-        ExprKind::Spread(value)
+        ExprKind::TypeSyntax(value) | ExprKind::TypeMetadata(value)
+        | ExprKind::Spread(value)
         | ExprKind::Unary { operand: value, .. }
         | ExprKind::Propagate { operand: value }
         | ExprKind::Return { value }

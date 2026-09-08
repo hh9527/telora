@@ -4,9 +4,9 @@ import "std/json" as json;
 import "../parse-construction-check/testee" {Endpoint};
 import "./provider" as provider;
 
-export def parsed = test.should_ok(fn() { string.parse(Endpoint, provider.text) });
+export def parsed = test.should_ok(fn() { string.parse((Endpoint).type, provider.text) });
 export def decoded = test.should_ok(fn() {
-    match json.decode(Endpoint, provider.json_text) {
+    match json.decode((Endpoint).type, provider.json_text) {
         Ok(value) => value, Err(error) => raise!(error),
     }
 });

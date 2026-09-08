@@ -14,8 +14,8 @@ def source: Source = {x: 1, y: "hi", extra: 3};
 export def construct = test.should_ok(fn() {
     let selected: Foo = source.{x, y as Y,};
     expect(selected.x == 1 && selected.Y == "hi"
-        && dyn.project_with(Foo, dyn.pack(Foo, selected)) == Some(selected)
-        && dyn.project_with(Twin, dyn.pack(Foo, selected)) == None)
+        && dyn.project_with((Foo).type, dyn.pack((Foo).type, selected)) == Some(selected)
+        && dyn.project_with((Twin).type, dyn.pack((Foo).type, selected)) == None)
 });
 
 export def update = test.should_ok(fn() {

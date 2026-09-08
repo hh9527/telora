@@ -14,10 +14,10 @@ export def fields = test.should_ok(fn() {
 
 export def nominal_identity = test.should_ok(fn() {
     let candidate: Unchecked(Point) = {x: 1, y: 2};
-    let packed = dyn.pack(Unchecked(Point), candidate);
-    expect(dyn.project_with(Point, packed) == None
-        && dyn.project_with(Unchecked(Other), packed) == None
-        && match dyn.project_with(Unchecked(Point), packed) {
+    let packed = dyn.pack((Unchecked(Point)).type, candidate);
+    expect(dyn.project_with((Point).type, packed) == None
+        && dyn.project_with((Unchecked(Other)).type, packed) == None
+        && match dyn.project_with((Unchecked(Point)).type, packed) {
             Some(value) => value.x == 1,
             None => False,
         })
@@ -25,10 +25,10 @@ export def nominal_identity = test.should_ok(fn() {
 
 export def generic_identity = test.should_ok(fn() {
     let candidate: Unchecked(Box(Int)) = {value: 3};
-    let packed = dyn.pack(Unchecked(Box(Int)), candidate);
+    let packed = dyn.pack((Unchecked(Box(Int))).type, candidate);
     expect(candidate.value == 3
-        && dyn.project_with(Box(Int), packed) == None
-        && dyn.project_with(Unchecked(Box(String)), packed) == None)
+        && dyn.project_with((Box(Int)).type, packed) == None
+        && dyn.project_with((Unchecked(Box(String))).type, packed) == None)
 });
 
 export def finish_candidate = test.should_ok(fn() {
@@ -36,8 +36,8 @@ export def finish_candidate = test.should_ok(fn() {
     let point: Point = candidate;
     let accept: Fn(Point) -> Int = fn(point) { point.x + point.y };
     expect(accept(candidate) == 9 && point.x == 4
-        && dyn.project_with(Point, dyn.pack(Point, point)) == Some(point)
-        && dyn.project_with(Point, dyn.pack(Unchecked(Point), candidate)) == None)
+        && dyn.project_with((Point).type, dyn.pack((Point).type, point)) == Some(point)
+        && dyn.project_with((Point).type, dyn.pack((Unchecked(Point)).type, candidate)) == None)
 });
 
 export def imported_generic = test.should_ok(fn() {
@@ -50,9 +50,9 @@ export def imported_generic = test.should_ok(fn() {
 
 export def idempotent = test.should_ok(fn() {
     let candidate: Unchecked(Unchecked(Point)) = {x: 8, y: 9};
-    let packed = dyn.pack(Unchecked(Point), candidate);
-    expect(Unchecked(Unchecked(Point)) == Unchecked(Point)
-        && match dyn.project_with(Unchecked(Unchecked(Point)), packed) {
+    let packed = dyn.pack((Unchecked(Point)).type, candidate);
+    expect((Unchecked(Unchecked(Point))).type == (Unchecked(Point)).type
+        && match dyn.project_with((Unchecked(Unchecked(Point))).type, packed) {
             Some(value) => value.x == 8 && value.y == 9,
             None => False,
         })

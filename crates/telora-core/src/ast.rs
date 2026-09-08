@@ -97,6 +97,8 @@ pub enum ExprKind {
     Array(Vec<Expr>),
     Spread(Box<Expr>),
     Tuple(Vec<Expr>),
+    TypeSyntax(Box<Expr>),
+    TypeMetadata(Box<Expr>),
     Dict(Vec<DictField>),
     Block(Block),
     Unary {

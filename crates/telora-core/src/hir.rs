@@ -543,6 +543,19 @@ impl Resolver {
             .map(|parameter| self.external_names.insert(parameter.value.clone()))
             .collect::<Vec<_>>();
         let expression = self.index_expr(expression, scopes);
+        if self.static_expressions {
+            self.expression_stack.push(expression);
+            for bounds in &binding.value.type_parameter_bounds {
+                for bound in bounds {
+                    if let ExprKind::Call { callee, arguments } = &bound.value
+                        && matches!(&callee.value, ExprKind::Variable(name) if name.value == "Property")
+                    {
+                        for argument in arguments { self.index_tool_expr(argument, scopes); }
+                    } else { self.index_tool_expr(bound, scopes); }
+                }
+            }
+            self.expression_stack.pop();
+        }
         if self.static_expressions && binding.value.kind == BindingKind::Type {
             self.expression_stack.push(expression);
             for decorator in &binding.value.decorators {
@@ -622,6 +635,10 @@ impl Resolver {
                 for item in items {
                     self.index_expr(item, scopes);
                 }
+                None
+            }
+            ExprKind::TypeSyntax(operand) | ExprKind::TypeMetadata(operand) => {
+                self.index_tool_expr(operand, scopes);
                 None
             }
             ExprKind::Spread(operand) => {

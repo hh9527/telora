@@ -3,17 +3,17 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/dyn" as dyn;
-               let int_value = dyn.pack(Int, 41);
-               let string_value = dyn.pack(String, "text");
-               let float_value = dyn.pack(Float, 1.5);
-               let bytes_value = dyn.pack(Bytes, b"ab");
+            r###"import "std/dyn" as dyn;
+               let int_value = dyn.pack((Int).type, 41);
+               let string_value = dyn.pack((String).type, "text");
+               let float_value = dyn.pack((Float).type, 1.5);
+               let bytes_value = dyn.pack((Bytes).type, b"ab");
                type Unary = Func([Int], Int);
                type A = struct {value: Int};
                type B = struct {value: Int};
                let identity: Fn(Int) -> Int = fn(value) { value };
-               let func_value = dyn.pack(Unary, identity);
-               let nominal = dyn.pack(A, {value: 7});
+               let func_value = dyn.pack((Unary).type, identity);
+               let nominal = dyn.pack((A).type, {value: 7});
                let captured = fn() { int_value };
                {
                    int_type: dyn.desc(int_value),
@@ -24,15 +24,15 @@
                    string_value: dyn.check_string(string_value),
                    float_value: dyn.check_float(float_value),
                    bytes_value: dyn.check_bytes(bytes_value),
-                   projected_int: dyn.project_with(Int, int_value),
+                   projected_int: dyn.project_with((Int).type, int_value),
                    projected_sugar: dyn.project@[Int](int_value),
-                   projected_wrong: dyn.project_with(Float, int_value),
-                   projected_nominal: dyn.project_with(A, nominal),
-                   projected_conflict: dyn.project_with(B, nominal),
+                   projected_wrong: dyn.project_with((Float).type, int_value),
+                   projected_nominal: dyn.project_with((A).type, nominal),
+                   projected_conflict: dyn.project_with((B).type, nominal),
                    same_identity: int_value == int_value,
-                   different_identity: int_value == dyn.pack(Int, 41),
+                   different_identity: int_value == dyn.pack((Int).type, 41),
                    values: [captured(), string_value],
-               }"#,
+               }"###,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -84,8 +84,8 @@
 
         fs::write(
             directory.join("invalid.telora"),
-            r#"import "std/dyn" as dyn;
-               dyn.pack@[Int](Int, "wrong")"#,
+            r###"import "std/dyn" as dyn;
+               dyn.pack@[Int]((Int).type, "wrong")"###,
         )
         .unwrap();
         let error =
@@ -133,25 +133,25 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/dyn" as dyn;
+            r###"import "std/dyn" as dyn;
                def consume: Fn(Dyn) -> Bool = fn(value) {
-                   match dyn.project_with(String, value) {
+                   match dyn.project_with((String).type, value) {
                        Some(_) => True,
                        None => False,
                    }
                };
                def first: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume);
                def second: for(A) Fn(TypeOf(A)) -> Fn(A) -> Bool = interpreter!(consume);
-               let first_int = first(Int);
-               let repeated_int = first(Int);
-               let first_string = first(String);
-               let second_int = second(Int);
+               let first_int = first((Int).type);
+               let repeated_int = first((Int).type);
+               let first_string = first((String).type);
+               let second_int = second((Int).type);
                {
                    same_key: first_int == repeated_int,
                    int_projection: first_int(1),
                    string_projection: first_string("text"),
                    different_interpreter: first_int == second_int,
-               }"#,
+               }"###,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 200_000).unwrap();
@@ -251,8 +251,9 @@
                pair"#,
         )
         .unwrap();
-        let types = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(types.execute(100_000).unwrap().to_string(), "(1, \"one\")");
+        let error = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000)
+            .err().expect("computed metadata must not define a type");
+        assert!(error.to_string().contains("computed metadata cannot become a type"));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -262,9 +263,9 @@
         let path = directory.join("main.telora");
         fs::write(
             &path,
-            r#"import "std/json" as json;
+            r###"import "std/json" as json;
                type Shape = enum {Number(Int), Strings(Array(String)), Pair(Tuple([Int, String]))};
-               json.stringify(json.schema(Shape))"#,
+               json.stringify(json.schema((Shape).type))"###,
         )
         .unwrap();
         let module = load_module(&path, BTreeMap::new(), 100_000).unwrap();
@@ -293,14 +294,14 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("Types.telora"),
-            r#"import "std/json" as json;
+            r###"import "std/json" as json;
                type Node = struct {
                    value: Int,
                    children: Array(Node),
                };
                type Left = struct {right: Option(Right)};
                type Right = struct {left: Option(Left)};
-               {Node: Node, Left: Left, Right: Right}"#,
+               export {Node, Left, Right};"###,
         )
         .unwrap();
         let types_module =
@@ -326,24 +327,24 @@
 
         fs::write(
             directory.join("main.telora"),
-            r#"import "./Types" as Types;
+            r###"import "./Types" as Types;
                import "std/codec" as codec;
                import "std/json" as json;
                import "std/result" as result;
-               let node = codec.decode(Types.Node, codec.encode(codec.Value, {
+               let node = codec.decode(Types.Node.type, codec.encode((codec.Value).type, {
                    value: 1,
                    children: [{value: 2, children: []}],
                })) |> result.unwrap;
-               let pair = codec.decode(Types.Left, codec.encode(codec.Value, {
+               let pair = codec.decode(Types.Left.type, codec.encode((codec.Value).type, {
                    right: {left: None.ty!(Option(Types.Left))},
                })) |> result.unwrap;
                {
                    node: node,
-                   encoded: codec.encode(codec.Value, node),
+                   encoded: codec.encode((codec.Value).type, node),
                    pair: pair,
-                   schema: json.stringify(json.schema(Types.Node)),
-                   mutual_schema: json.stringify(json.schema(Types.Left)),
-               }"#,
+                   schema: json.stringify(json.schema(Types.Node.type)),
+                   mutual_schema: json.stringify(json.schema(Types.Left.type)),
+               }"###,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -371,7 +372,7 @@
                import "./Types" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
-               match codec.decode(Types.Node, data) {
+               match codec.decode(Types.Node.type, data) {
                    Ok(value) => value,
                    Err(error) => raise!(error),
                }"#,
@@ -385,10 +386,10 @@
 
         fs::write(
             directory.join("leak.telora"),
-            r#"import "./Types" as Types;
+            r###"import "./Types" as Types;
                import "std/codec" as codec;
                import "std/result" as result;
-               codec.encode(codec.Value, Types.Node)"#,
+               codec.encode((codec.Value).type, Types.Node.type)"###,
         )
         .unwrap();
         let leak = load_module(directory.join("leak.telora"), BTreeMap::new(), 100_000).unwrap();

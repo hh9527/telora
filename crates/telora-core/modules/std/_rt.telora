@@ -18,7 +18,7 @@ native call_with_diagnostics:
 def with_diagnostics:
     for(A, R) Fn(Fn(A) -> R)
         -> Fn(A) -> Result(Tuple([R, Array(Diagnostic)]), Array(Diagnostic)) =
-    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, Diagnostic, Severity, Label, SourceRange) } };
+    fn(callable) { fn(argument) { call_with_diagnostics(callable, argument, (Diagnostic).type, (Severity).type, (Label).type, (SourceRange).type) } };
 
 type Platform = struct {
     os: String,

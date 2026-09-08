@@ -1,1 +1,1 @@
-closure annotation is invalid
+computed metadata cannot become a type

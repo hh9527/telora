@@ -14,12 +14,12 @@ type Properties = struct {
     json_untagged: Type,
 };
 def properties: Properties = {
-    parse_by: ParseBy,
-    decode_by_parse: DecodeByParse,
-    encode_by_display: EncodeByDisplay,
-    display_by: DisplayBy,
-    json_rename_all: JsonRenameAll,
-    json_untagged: JsonUntagged,
+    parse_by: ParseBy.type,
+    decode_by_parse: DecodeByParse.type,
+    encode_by_display: EncodeByDisplay.type,
+    display_by: DisplayBy.type,
+    json_rename_all: JsonRenameAll.type,
+    json_untagged: JsonUntagged.type,
 };
 native decode_with: for(A) Fn(Properties, TypeOf(A), Value) -> Result(A, BlameError);
 native encode_with: for(A) Fn(Properties, TypeOf(Value), A) -> Value;

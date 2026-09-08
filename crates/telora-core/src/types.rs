@@ -39,6 +39,7 @@ include!("types/environment.rs");
 include!("types/traits.rs");
 include!("types/analysis.rs");
 include!("types/dependency.rs");
+include!("types/type-boundary.rs");
 include!("types/dependency-plan.rs");
 include!("types/metadata.rs");
 include!("types/tool.rs");

@@ -227,10 +227,13 @@ fn interpreter_syntax_plan(
 }
 
 fn function_contract_parts(contract: &Expr) -> Option<(&[Expr], &Expr)> {
+    if let ExprKind::TypeSyntax(inner) = &contract.value {
+        return function_contract_parts(inner);
+    }
     let ExprKind::Call { callee, arguments } = &contract.value else {
         return None;
     };
-    if !is_variable(callee, "Func") {
+    if !is_variable(callee, "Func") && !is_variable(callee, "\0telora_function_type") {
         return None;
     }
     let [parameters, result] = arguments.as_slice() else {
@@ -324,4 +327,3 @@ fn placeholder_variable(index: usize, location: Location) -> Expr {
         location,
     )
 }
-

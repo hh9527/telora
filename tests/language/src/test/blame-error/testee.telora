@@ -6,7 +6,7 @@ import "./provider" as provider;
 
 export def identity = test.should_ok(fn() {
     let error: BlameError = provider.error;
-    expect(dyn.project_with(BlameError, dyn.pack(BlameError, error)) == Some(provider.error))
+    expect(dyn.project_with((BlameError).type, dyn.pack((BlameError).type, error)) == Some(provider.error))
 });
 
 export def empty = test.should_ok(fn() {

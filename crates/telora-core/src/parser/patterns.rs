@@ -187,14 +187,15 @@ impl<'a> Lowerer<'a> {
         location: Location,
     ) -> Expr {
         let parameters = located(ExprKind::Array(parameters), location);
-        let callee_name = located("Func".to_owned(), location);
-        located(
+        let callee_name = located("\0telora_function_type".to_owned(), location);
+        let expression = located(
             ExprKind::Call {
                 callee: Box::new(located(ExprKind::Variable(callee_name), location)),
                 arguments: vec![parameters, result],
             },
             location,
-        )
+        );
+        located(ExprKind::TypeSyntax(Box::new(expression)), location)
     }
 
     fn unit_type_expression(&self, location: Location) -> Expr {
@@ -205,18 +206,59 @@ impl<'a> Lowerer<'a> {
     }
 
     fn type_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
-        let expression = self.expression(node)?;
-        if matches!(&expression.value, ExprKind::Tuple(items) if items.is_empty()) {
-            Ok(self.unit_type_expression(expression.location))
-        } else {
-            Ok(expression)
-        }
+        self.normalize_type_expression(self.expression(node)?)
+    }
+
+    fn normalize_type_expression(&self, expression: Expr) -> Result<Expr, Diagnostic> {
+        let location = expression.location;
+        let value = match expression.value {
+            ExprKind::TypeSyntax(_) => return Ok(expression),
+            ExprKind::Variable(_) | ExprKind::Field { .. } => expression,
+            ExprKind::Tuple(items) => {
+                if items.is_empty() {
+                    self.unit_type_expression(location)
+                } else {
+                    let items = items.into_iter().map(|item| self.normalize_type_expression(item))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    located(ExprKind::Call {
+                        callee: Box::new(located(ExprKind::Variable(located("\0telora_tuple_type".into(), location)), location)),
+                        arguments: vec![located(ExprKind::Array(items), location)],
+                    }, location)
+                }
+            }
+            ExprKind::Call { callee, arguments } => {
+                let arguments = arguments.into_iter().map(|argument| {
+                    if let ExprKind::Array(items) = argument.value {
+                        let items = items.into_iter().map(|item| self.normalize_type_expression(item))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(located(ExprKind::Array(items), argument.location))
+                    } else {
+                        self.normalize_type_expression(argument)
+                    }
+                }).collect::<Result<Vec<_>, Diagnostic>>()?;
+                located(ExprKind::Call { callee, arguments }, location)
+            }
+            _ => return Err(Diagnostic::error(
+                "a static type requires a type declaration, constructor or family; computed metadata cannot become a type",
+                location,
+            )),
+        };
+        Ok(located(ExprKind::TypeSyntax(Box::new(value)), location))
     }
 
     fn contract_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
         let location = self.location(node);
         match self.rule(node) {
-            Some(Rule::UnitContract) => Ok(self.unit_type_expression(location)),
+            Some(Rule::UnitContract) => {
+                let mut items = self.rule_children(node)
+                    .map(|child| self.contract_expression(child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if items.len() == 1 && self.token_children(node, Token::Comma).next().is_none() {
+                    Ok(items.pop().unwrap())
+                } else {
+                    self.normalize_type_expression(located(ExprKind::Tuple(items), location))
+                }
+            }
             Some(Rule::Contract) => {
                 let inner = self
                     .first_rule(node)

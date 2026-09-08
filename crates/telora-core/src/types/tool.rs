@@ -250,6 +250,8 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("Unchecked", 1, native_unchecked_type),
             NativeFunction::new("Tuple", 1, native_tuple_type),
             NativeFunction::new("Func", 2, native_function_type),
+            NativeFunction::new("\0telora_tuple_type", 1, native_tuple_type),
+            NativeFunction::new("\0telora_function_type", 2, native_function_type),
             NativeFunction::checked_cast(native_checked_cast),
             NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
         ] {
@@ -757,7 +759,20 @@ fn collect_nested_annotation_types(
                 )?;
             }
         }
-        ExprKind::Spread(operand) => collect_nested_annotation_types(
+        ExprKind::TypeMetadata(operand) => {
+            let mut target = operand.as_ref();
+            while let ExprKind::TypeSyntax(inner) = &target.value { target = inner; }
+            let metadata = if let ExprKind::Variable(name) = &target.value
+                && let Some(value) = bindings.get(&name.value)
+            { *value } else {
+                evaluate_tool_expression(source_name, operand, bindings, account, sources, debug_sink)?
+            };
+            let descriptor = debug_sink.decode_type(metadata, "Type").map_err(|message| {
+                FrontendError::from_diagnostic(sources, Diagnostic::error(message, expression.location))
+            })?;
+            annotations.insert(expression.location, descriptor);
+        }
+        ExprKind::TypeSyntax(operand) | ExprKind::Spread(operand) => collect_nested_annotation_types(
             source_name,
             operand,
             bindings,

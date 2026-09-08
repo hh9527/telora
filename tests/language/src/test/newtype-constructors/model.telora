@@ -2,4 +2,4 @@ export type External = struct(Int);
 export type Packet(T) = struct(T);
 export def create = External;
 export def wrap: for(T) Fn(T) -> Packet(T) = Packet;
-export def metadata: TypeOf(External) = External;
+export def metadata: TypeOf(External) = External.type;

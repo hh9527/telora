@@ -5,7 +5,7 @@ import "@src/test-support" { expect };
 import "std/prelude" { Some as ImportedSome, None as ImportedNone };
 import "@src/test/prelude-constructors/model" as model;
 
-type Chosen = match Some(Int) { Some(value) => value, None => String };
+def chosen = match Some(Int.type) { Some(value) => value, None => String.type };
 
 export def values = test.should_ok(fn() {
     let yes: Bool = True;
@@ -13,8 +13,7 @@ export def values = test.should_ok(fn() {
     let none: Option(Int) = None;
     let success = Ok@[Int, String](2);
     let failure: Result(Int, String) = Err("bad");
-    let chosen: Chosen = 3;
-    expect(yes && !False && chosen == 3
+    expect(yes && !False && chosen == Int.type
         && match some { Some(value) => value == 1, None => False }
         && match none { None => True, Some(_) => False }
         && match success { Ok(value) => value == 2, Err(_) => False }

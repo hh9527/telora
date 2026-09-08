@@ -14,10 +14,10 @@ def decode: for(A) Fn(TypeOf(A), String) -> Result(A, BlameError) = fn(target, t
     }
 };
 def schema: Fn(Type) -> Value = fn(target) {
-    schema_with(codec.properties, target, Value)
+    schema_with(codec.properties, target, Value.type)
 };
 def parse: Fn(String) -> Result(Value, BlameError) = fn(text) {
-    parse_raw(Value, text)
+    parse_raw(Value.type, text)
 };
 export {
     parse,

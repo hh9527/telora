@@ -271,6 +271,10 @@ Telora 工具链和 `telora-core` 不依赖 component 内部类型。
 在工具阶段计算它。Static checking、runtime validation、codec、schema、formatting
 capability 和用户态 interpreter 可以共享同一份 TypeMetadata。
 
+表面语言用 `T.type` 单向取得元数据数据，结果为 `TypeOf(T)`。类型由声明、结构
+构造器和参数化类型族产生；普通函数计算的元数据不能反向成为静态类型。`let` / `def`
+绑定数据，`type` 绑定类型；模块接口保留这一身份，不以大小写或元数据内容判定。
+
 ### `Type`
 
 `Type` 是有效 TypeMetadata 值的静态 metatype。它证明一个值是有效元数据，但不
@@ -297,8 +301,8 @@ Bound 身份只在所属 scheme 内有意义，不能按内部编号跨 scheme �
 
 **TypeMetadata family（类型元数据族）**是由参数化 `type` 声明建立的、可命名的
 rank-1 metadata witness 关系。例如 `type Box(A) = ...` 使 `Box(A)` 可以出现在
-contract 中，并使值 `Box` 具有
-`for(A) Fn(TypeOf(A)) -> TypeOf(Box(A))` 的精确 scheme。
+contract 中，并通过 `Box(A).type` 取得 `TypeOf(Box(A))`。内部仍保留参数化 witness
+scheme，但不能将类型族作为接收元数据的普通函数。newtype 的值构造器是独立的可调用能力。
 
 Family 声明以刚性 Bound 参数求值一次并发布符号模板；application 只替换模板中的
 Bound，不按 concrete 参数重跑声明 body。这个限制使泛型 contract 与值级结果保持

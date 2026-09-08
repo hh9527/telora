@@ -29,13 +29,13 @@
         fs::write(&data, r#"{"name":"Telora"}"#).unwrap();
         fs::write(
             &main,
-            r#"import "std/result" as result;
+            r###"import "std/result" as result;
                import "std/codec" as codec;
                import "./data.json" { data };
                type Input = struct {name: String};
-               let checked = codec.decode(Input, data) |> result.unwrap;
+               let checked = codec.decode((Input).type, data) |> result.unwrap;
                let output = fail!("invalid name", checked.name);
-               export { output };"#,
+               export { output };"###,
         )
         .unwrap();
 
@@ -243,14 +243,14 @@ export def output = match array.get(array.map([1, 2, 3], transform), 0) {
         let main = directory.join("main.telora");
         fs::write(
             &dependency,
-            r#"type Plan(Revision) = struct { revision: Revision };
+            r###"type Plan(Revision) = struct { revision: Revision };
 def ensure_plan: for(Revision) Fn(Plan(Revision), Plan(Revision)) -> Plan(Revision) = fn(left, right) {
     fail!("cross polymorphic", left)
 };
 def ensure_int: Fn(Int, Int) -> Int = fn(left, right) {
     fail!("cross monomorphic", left)
 };
-export { Plan, ensure_plan, ensure_int };"#,
+export { Plan, ensure_plan, ensure_int };"###,
         )
         .unwrap();
         fs::write(
@@ -433,7 +433,7 @@ export def output = (compared, selected);"#,
         .unwrap();
         fs::write(
             directory.join("main.telora"),
-            r#"import "./data.json" as json_module;
+            r###"import "./data.json" as json_module;
                import "./data.yaml" as yaml_module;
                import "./data.toml" as toml_module;
                import "./data.json" { data as json_data };
@@ -462,8 +462,8 @@ export def output = (compared, selected);"#,
                def json: Dict(Value) = match json_data {Value.Object(fields) => fields, _ => {}};
                def yaml: Dict(Value) = match yaml_data {Value.Object(fields) => fields, _ => {}};
                def toml: Dict(Value) = match toml_data {Value.Object(fields) => fields, _ => {}};
-               def encoded_identity = codec.encode(Value, json_data);
-               def decoded_identity = codec.decode(Value, encoded_identity) |> result.unwrap;
+               def encoded_identity = codec.encode((Value).type, json_data);
+               def decoded_identity = codec.decode((Value).type, encoded_identity) |> result.unwrap;
                export def output = {
                    json_module,
                    yaml_module,
@@ -476,7 +476,7 @@ export def output = (compared, selected);"#,
                        classify(toml.date), classify(toml.time), classify(toml.local),
                        classify(toml.offset),
                    ],
-               };"#,
+               };"###,
         )
         .unwrap();
 
@@ -597,7 +597,7 @@ export def output = (compared, selected);"#,
 
         fs::write(
             &main,
-            r#"import "std/codec" as codec; codec.encode(codec.Value, value)"#,
+            r###"import "std/codec" as codec; codec.encode((codec.Value).type, value)"###,
         )
         .unwrap();
         let encoded = load_module(
@@ -621,8 +621,8 @@ export def output = (compared, selected);"#,
 
         for source in [
             r#"import "std/json" as json; json.parse("")"#,
-            r#"import "std/json" as json; json.decode(Int, "\"wrong\"")"#,
-            r#"import "std/codec" as codec; codec.decode(Int, codec.Value.String("wrong"))"#,
+            r###"import "std/json" as json; json.decode((Int).type, "\"wrong\"")"###,
+            r###"import "std/codec" as codec; codec.decode((Int).type, codec.Value.String("wrong"))"###,
         ] {
             fs::write(&main, source).unwrap();
             let failed_decode = load_module(&main, BTreeMap::new(), 100_000).unwrap();

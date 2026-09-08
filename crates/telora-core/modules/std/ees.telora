@@ -33,7 +33,7 @@ def sqlite_query: Fn(String, String, Array(ScalarValue)) -> Request = fn(actor, 
     request(
         actor,
         "Query",
-        codec.encode(codec.Value, {sql, bindings}),
+        codec.encode(codec.Value.type, {sql, bindings}),
     )
 };
 

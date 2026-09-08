@@ -35,14 +35,14 @@ export def inferred_candidate_rejected = test.should_fail_with(fn() {
 export def unconstrained_identity = test.should_ok(fn() {
     let candidate: Unchecked(Box(String)) = {value: "hi", count: 0};
     let copy = identity(candidate);
-    expect(dyn.project_with(Box(String), dyn.pack(Unchecked(Box(String)), copy)) == None)
+    expect(dyn.project_with((Box(String)).type, dyn.pack((Unchecked(Box(String))).type, copy)) == None)
 });
 
 export def wire_contract = test.should_ok(fn() {
     let checked: Box(String) = {value: "hi", count: 2};
     let plain: Plain = {value: "hi", count: 2};
-    expect(json.schema(Box(String)) == json.schema(Plain)
-        && codec.encode(codec.Value, checked) == codec.encode(codec.Value, plain))
+    expect(json.schema((Box(String)).type) == json.schema((Plain).type)
+        && codec.encode((codec.Value).type, checked) == codec.encode((codec.Value).type, plain))
 });
 
 export def imported_generic = test.should_ok(fn() {
@@ -67,18 +67,18 @@ export def callback = test.should_fail_with(fn() {
     array.map([2, 0], make)
 }, "count below minimum");
 export def codec_generic = test.should_fail_with(fn() {
-    match json.decode(Box(String), "{\"value\":\"hi\",\"count\":0}") {
+    match json.decode((Box(String)).type, "{\"value\":\"hi\",\"count\":0}") {
         Ok(value) => value, Err(error) => raise!(error),
     }
 }, "count below minimum");
 export def dyn_candidate = test.should_ok(fn() {
     let value: Unchecked(Box(String)) = {value: "hi", count: 0};
-    let packed = dyn.pack(Unchecked(Box(String)), value);
-    expect(dyn.project_with(Box(String), packed) == None)
+    let packed = dyn.pack((Unchecked(Box(String))).type, value);
+    expect(dyn.project_with((Box(String)).type, packed) == None)
 });
 export def dyn_pack_checks = test.should_fail_with(fn() {
     let value: Unchecked(Box(String)) = {value: "hi", count: 0};
-    dyn.pack(Box(String), value)
+    dyn.pack((Box(String)).type, value)
 }, "count below minimum");
 export def recursive_check = test.should_ok(fn() {
     expect(Countdown(100).0 == 100)

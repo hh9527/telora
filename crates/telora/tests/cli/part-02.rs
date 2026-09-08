@@ -26,7 +26,7 @@ fn run_context_admits_declared_sources_env_and_args() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/array" as array;
 import "std/dict" as dict;
 import "std/ees" as ees;
@@ -38,7 +38,7 @@ def config: entry.ContextConfig = {
     envs: ["TELORA_CONTEXT_TEST"],
     args: True,
 };
-export def run = entry.run(State, config, ees.none, fn(ctx) {
+export def run = entry.run((State).type, config, ees.none, fn(ctx) {
     let source_ok = match dict.get(ctx.sources, "request") {
         Some(Value.Int(value)) => value == 7,
         _ => False,
@@ -53,7 +53,7 @@ export def run = entry.run(State, config, ees.none, fn(ctx) {
         }
     };
     (initial, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     let input = cwd.join("request.json");
@@ -85,12 +85,12 @@ fn run_context_rejects_undeclared_inputs() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run(State, config, ees.none, fn(ctx) {
+export def run = entry.run((State).type, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (state, [actor.reply(request.id, Value.None)]),
@@ -98,7 +98,7 @@ export def run = entry.run(State, config, ees.none, fn(ctx) {
         }
     };
     ({}, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     let input = cwd.join("request.json");
@@ -134,12 +134,12 @@ fn serve_stdio_reuses_one_typed_state() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/app.telora"),
-        r#"import "std/actor" as actor; import "std/value" {Value};
+        r###"import "std/actor" as actor; import "std/value" {Value};
 import "std/ees" as ees;
 import "std/entry" as entry;
 type State = struct {next: Int};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def serve = entry.serve(State, config, ees.none, fn(ctx) {
+export def serve = entry.serve((State).type, config, ees.none, fn(ctx) {
     let initial: State = {next: 1};
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
@@ -151,7 +151,7 @@ export def serve = entry.serve(State, config, ees.none, fn(ctx) {
         }
     };
     (initial, reduce)
-});"#,
+});"###,
     )
     .unwrap();
     refresh_fixture_workspace(&cwd);

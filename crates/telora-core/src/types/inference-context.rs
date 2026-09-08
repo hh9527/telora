@@ -64,6 +64,7 @@ impl<'a> GenericInference<'a> {
             builtin_tuple_available,
             query,
             closure_inference_depth: 0,
+            type_syntax_depth: 0,
             delayed_initializer_depth: 0,
             recursive_body_inference_depth: 0,
             numeric_variables: HashSet::new(),

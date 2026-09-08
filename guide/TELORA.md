@@ -118,8 +118,8 @@ let answer: Int = do { 1; 42 };
 分号不会吞掉失败，也不会把 `return` 或 `Never` 路径改成正常返回。裸 `{}` 仍是
 字典；顶层模块不允许表达式语句。`Fn()` 没有参数，`Fn(())` 有一个 Unit 参数。
 
-非空元组类型仍使用 `Tuple([A, B])`。普通元数据调用写作 `Array(Unit)`；其中的
-数据实参 `()` 不会自动解释为类型。`.type` 和非空元组类型新语法尚未实现。
+非空元组类型写作 `(A, B)`，也保留 `Tuple([A, B])`。普通元数据实参需要显式 `.type`；其中的
+数据实参 `()` 不会自动解释为类型。`Array(())` 则是类型构造，其实参属于类型位置。
 
 ### 比较与算术
 
@@ -253,7 +253,7 @@ def map_pair: Fn(Int, String) -> Tuple([String, Int]) =
 type Unary = Func([Int], String);
 ```
 
-`Fn(Int) -> String` 与 `Func([Int], String)` 产生相同的规范函数元数据。
+`Fn(Int) -> String` 与 `Func([Int], String)` 表示相同函数类型，取元数据需要 `.type`。
 
 泛型调用默认推断类型实参，也可以使用显式的 `@[...]` 应用：
 
@@ -344,8 +344,8 @@ JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 
 值位置的类型声明名称提供构造器函数：`UserId(1)` 构造 UserId，
 `let make = UserId;` 可将构造器作为函数传递。`Box(1)` 推断载荷类型，
-`Box@[Int](1)` 显式指定类型参数。类型注解、Type 参数以及显式的 Type 值契约
-使用同一声明的类型用途，例如 `let ty: Type = UserId;`。import 和 reexport
+`Box@[Int](1)` 显式指定类型参数。类型注解使用裸类型名；普通 Type 参数或 Type 值契约
+必须显式取得元数据，例如 `let ty: Type = UserId.type;`。import 和 reexport
 保留声明的这两个用途；普通 Type 变量与返回 Type 的函数保持其值契约。
 
 构造器模式按声明解构 newtype：`let UserId(value) = id;` 读取载荷，
@@ -353,9 +353,9 @@ JSON 编解码使用载荷的表示，成功解码后得到目标 newtype。
 模式可以嵌套，支持泛型和模块限定名称，例如 `Box(UserId(value))` 与
 `model.UserId(value)`。模式中的构造器名称引用类型声明；载荷保留自己的类型。
 
-类型计算和 decorator 参数也可以使用构造器。例如
-`type Wrapped = struct(Type); type Selected = Wrapped(Int).0;` 中 Selected
-表示 Int。类型上下文决定声明的类型用途，值上下文提供构造器函数。
+元数据计算和 decorator 参数也可以使用构造器。例如
+`type Wrapped = struct(Type); let metadata = Wrapped(Int.type).0;` 得到元数据数据。
+它不能用于 `type Selected = metadata;`；静态类型必须来自声明、结构构造器或类型族。
 
 enum 成员通过类型名称引用：`type Event = enum { Progress(Int), Finished };`
 声明后，`Event.Progress(1)` 构造带载荷的值，`Event.Finished` 表示无载荷的值。
@@ -529,15 +529,17 @@ array.enumerate(["a", "b"])   # [(0, "a"), (1, "b")]
 
 ## Tuple 元数据
 
-Tuple 值和 Tuple TypeMetadata 是普通值的两种不同用途：
+Tuple 类型、Tuple 数据和类型元数据分别写作：
 
 ```telora
-let pair: Tuple([Int, String]) = (1, "one");
+let pair: (Int, String) = (1, "one");
 let number: Int = pair.0;
-type Pair = Tuple([Int, String]);
+type Pair = (Int, String);
+let metadata: TypeOf(Pair) = Pair.type;
+let metadata_items = (Int.type, String.type);
 ```
 
-`Tuple` 恰好接收一个实参，即 TypeMetadata 的 Array：`Tuple([A, B])`。Tuple
+`(A,)` 是单元素类型，`(A)` 是分组；`Tuple([A, B])` 仍可使用，但列表不能由普通函数计算。Tuple
 值使用非负整数字面量投影，例如 `pair.0`。投影是可组合的后缀操作：
 `value.1.0` 表示 `(value.1).0`，并且可以与字段选择、索引和调用组合。已知的
 越界位置属于分析错误。`Fn(A) -> Array(Tuple([B, C]))` 等嵌套形式合法。
@@ -562,8 +564,13 @@ spread 分别接受 Array 和 Tuple，不进行动态长度转换。
 
 ## TypeMetadata family
 
-类型是一等元数据值。`Type` 是任意有效 TypeMetadata 的类型；`TypeOf(A)` 是
-描述 `A` 的元数据的精确证据。
+`A.type` 是描述类型 A 的一等元数据值。`Type` 是任意有效 TypeMetadata 的类型；
+`TypeOf(A)` 是描述 `A` 的元数据的精确证据。裸类型不能进入数据实参；例如
+`json.decode(User.type, text)`，不能写成 `json.decode(User, text)`。
+
+`let` / `def` 绑定数据，`type` 绑定类型。元数据可以由普通函数传递、返回和组合，
+但不能反向变成静态类型：`let m = Int.type; type Bad = m;` 非法，普通函数返回
+`TypeOf(Int)` 也不能用于 annotation。类型名称的大小写不参与判定。
 
 参数化声明定义可复用的 TypeMetadata family：
 
@@ -576,7 +583,7 @@ type Capability(Id, Input, Output) = struct {
 type TicketCapability = Capability(TicketId, Request, TicketPlan);
 ```
 
-family 在值位置也是普通的有类型元数据能力。family 必须接收全部参数，其阶数
+family 应用通过 `Family(A).type` 获得元数据，不是可接收元数据的普通函数。family 必须接收全部参数，其阶数
 为 rank-1，并且不能是 higher-kinded。无环的 family 可以引用同一模块中的具体
 类型或另一个 family，且不受声明顺序影响：
 
@@ -631,15 +638,15 @@ type Query = struct {
 
 let raw = json.parse("{\"subject\":\"orders\",\"limit\":20}")
     |> result.unwrap;
-let query: Query = codec.decode(Query, raw) |> result.unwrap;
-let encoded: Value = codec.encode(Value, query);
+let query: Query = codec.decode(Query.type, raw) |> result.unwrap;
+let encoded: Value = codec.encode(Value.type, query);
 let compact: String = json.stringify(encoded);
 let pretty: String = encoded |> json.stringify_pretty(2);
-let query_schema = json.schema(Query);
+let query_schema = json.schema(Query.type);
 let schema_text = json.stringify(query_schema);
 ```
 
-也可以用 `json.decode(Query, text)` 直接把 JSON 文本解码成 `Query`。两条路径的
+也可以用 `json.decode(Query.type, text)` 直接把 JSON 文本解码成 `Query`。两条路径的
 区别是边界位置：`json.parse` 只解析文本并返回 Value；`codec.decode` 对已经存在的
 Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Value` witness，
 返回 Value；只有需要 JSON 文本边界时才调用 `json.stringify` 或
@@ -761,7 +768,7 @@ trait Describe {
 
 impl(T: Property(fmt.DisplayBy)) Describe for T {
     describe: fn(value) {
-        fmt.render(fmt.display(T, value))
+        fmt.render(fmt.display(T.type, value))
     },
 };
 
@@ -928,7 +935,7 @@ type Renderer(Context) = struct {
 
 ### 复杂 family 值的 codec witness
 
-`codec.encode(Value, value)` 的首个参数固定为公共 Value witness；编码直接返回
+`codec.encode(Value.type, value)` 的首个参数固定为公共 Value witness；编码直接返回
 `Value`，失败产生诊断。codec 从输入
 已经携带的 canonical witness 读取 source schema。对于参数很多的 concrete family，
 规范做法仍是在定义模块中建立一次 concrete type alias，并导出 alias 或有类型的
@@ -941,7 +948,7 @@ import "std/value" { Value };
 type Snapshot = PipelineSnapshot(Stage, Input, Expr, Plan, Output);
 
 def encode_snapshot = fn(value: Snapshot) {
-    codec.encode(Value, value)
+    codec.encode(Value.type, value)
 };
 
 export { Snapshot, encode_snapshot };

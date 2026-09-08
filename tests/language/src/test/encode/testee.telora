@@ -10,14 +10,14 @@ type Collision = struct {foo_bar: Int, fooBar: Int};
 
 export def direct_value = test.should_ok(fn() {
     let item: Item = {count: 3};
-    let value: codec.Value = codec.encode(codec.Value, item);
+    let value: codec.Value = codec.encode((codec.Value).type, item);
     expect(value == codec.Value.Object({count: codec.Value.Int(3)}))
 });
 
 export def value_identity = test.should_ok(fn() {
     let input: codec.Value = codec.Value.Array([codec.Value.Int(1), codec.Value.String("two")]);
-    let encoded: codec.Value = codec.encode(codec.Value, input);
-    expect(encoded == input && match codec.decode(codec.Value, encoded) {
+    let encoded: codec.Value = codec.encode((codec.Value).type, input);
+    expect(encoded == input && match codec.decode((codec.Value).type, encoded) {
         Ok(value) => value == input,
         Err(_) => False,
     })
@@ -25,14 +25,14 @@ export def value_identity = test.should_ok(fn() {
 
 export def unsupported_field = test.should_fail_with(fn() {
     let action: Action = {run: fn(value) { value }};
-    codec.encode(codec.Value, action)
+    codec.encode((codec.Value).type, action)
 }, "Function has no JSON codec");
 
 export def invalid_configuration = test.should_fail_with(fn() {
     let value: Collision = {foo_bar: 1, fooBar: 2};
-    codec.encode(codec.Value, value)
+    codec.encode((codec.Value).type, value)
 }, "duplicate external field name");
 
 export def unsupported_type_value = test.should_fail_with(fn() {
-    codec.encode(codec.Value, Item)
+    codec.encode((codec.Value).type, (Item).type)
 }, "cannot encode Type");

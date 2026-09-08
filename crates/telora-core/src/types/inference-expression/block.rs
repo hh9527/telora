@@ -1,15 +1,14 @@
 impl<'a> GenericInference<'a> {
     fn is_builtin_tuple(&self, expression: &Expr) -> bool {
-        if !self.builtin_tuple_available {
-            return false;
-        }
         self.hir
             .expression_ids_at(expression.location)
             .filter_map(|id| self.hir.expression(id))
             .filter_map(|expression| expression.reference)
             .filter_map(|id| self.hir.reference(id))
             .any(|reference| {
-                reference.name == "Tuple" && reference.resolution == HirResolution::External
+                reference.resolution == HirResolution::External
+                    && (reference.name == "\0telora_tuple_type"
+                        || (self.builtin_tuple_available && reference.name == "Tuple"))
             })
     }
 

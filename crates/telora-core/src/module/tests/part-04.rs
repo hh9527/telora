@@ -6,14 +6,14 @@
         fs::write(&data, r#"{"value":42}"#).unwrap();
         fs::write(
             &main,
-            r#"import "./data.json" { data };
+            r###"import "./data.json" { data };
                import "std/codec" as codec;
                import "std/result" as result;
                type Box(Item) = struct {value: Item};
-               match codec.decode(Box(String), data) {
+               match codec.decode((Box(String)).type, data) {
                    Ok(value) => value,
                    Err(error) => raise!(error),
-               }"#,
+               }"###,
         )
         .unwrap();
 
@@ -47,10 +47,10 @@
         let main = directory.join("main.telora");
         fs::write(
             &main,
-            r#"type Ty(Item) = struct {value: Item};
+            r###"type Ty(Item) = struct {value: Item};
                type A = Ty(String);
                type B = Ty(String);
-               {A: A, B: B}"#,
+               {A: (A).type, B: (B).type}"###,
         )
         .unwrap();
 
@@ -140,8 +140,9 @@
                pair"#,
         )
         .unwrap();
-        let types = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(types.execute(100_000).unwrap().to_string(), "(1, \"one\")");
+        let error = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000)
+            .err().expect("computed metadata must not define a type");
+        assert!(error.to_string().contains("computed metadata cannot become a type"));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -150,17 +151,17 @@
         let directory = fixture_dir();
         let data = directory.join("data.json");
         let main = directory.join("main.telora");
-        let source = r#"import "std/array" as arrays;
+        let source = r###"import "std/array" as arrays;
                         import "std/codec" as codec;
                         import "std/result" as result;
                         import "./data.json" { data };
-                        let data = codec.decode(Array(Int), data) |> result.unwrap;
+                        let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
                         let values = arrays.push(data, APPENDED);
                         arrays.map(values, fn(value) {
                             if value == TARGET {
                                 fail!("selected value", value)
                             } else { value }
-                        })"#;
+                        })"###;
 
         fs::write(&data, "[1]").unwrap();
         fs::write(
@@ -359,12 +360,9 @@
                pair"#,
         )
         .unwrap();
-        let types = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000).unwrap();
-        assert_eq!(
-            types.analysis.display(types.analysis.result_type),
-            "(String, Int)"
-        );
-        assert_eq!(types.execute(100_000).unwrap().to_string(), "(\"ten\", 10)");
+        let error = load_module(directory.join("types.telora"), BTreeMap::new(), 100_000)
+            .err().expect("computed metadata must not define a type");
+        assert!(error.to_string().contains("computed metadata cannot become a type"));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -377,15 +375,15 @@
 
         fs::write(
             &main,
-            r#"import "std/array" as arrays;
+            r###"import "std/array" as arrays;
                import "std/codec" as codec;
                import "std/result" as result;
                import "./data.json" { data };
-               let data = codec.decode(Array(Int), data) |> result.unwrap;
+               let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
                match arrays.get(data, 0) {
                    Some(value) => fail!("selected", value),
                    None => 0,
-               }"#,
+               }"###,
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
@@ -398,18 +396,18 @@
 
         fs::write(
             &main,
-            r#"import "std/array" as arrays;
+            r###"import "std/array" as arrays;
                import "std/codec" as codec;
                import "std/result" as result;
                import "./data.json" { data };
-               let data = codec.decode(Array(Int), data) |> result.unwrap;
+               let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
                let indexed = arrays.enumerate(data);
                arrays.map(indexed, fn(entry) {
                    let (index, value) = entry;
                    if value == 10 {
                        fail!("selected", value)
                    } else { index }
-               })"#,
+               })"###,
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
@@ -422,17 +420,17 @@
 
         fs::write(
             &main,
-            r#"import "std/array" as arrays;
+            r###"import "std/array" as arrays;
                import "std/codec" as codec;
                import "std/result" as result;
                import "./data.json" { data };
-               let data = codec.decode(Array(Int), data) |> result.unwrap;
+               let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
                let indexed = arrays.enumerate(data);
                let first = arrays.get(indexed, 0);
                match first {
                    Some((index, value)) => fail!("index", index),
                    None => 0,
-               }"#,
+               }"###,
         )
         .unwrap();
         let module = load_module(&main, BTreeMap::new(), 100_000).unwrap();
@@ -450,24 +448,24 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("main.telora"),
-            r#"import "std/codec" as codec;
+            r###"import "std/codec" as codec;
                import "std/result" as result;
                type User = struct {name: String};
-               let as_value = fn(value) { codec.encode(codec.Value, value) };
-               let decoded = codec.decode(User, as_value({name: "Ada"}));
-               let encoded = codec.encode(codec.Value, {name: "Lin"});
+               let as_value = fn(value) { codec.encode((codec.Value).type, value) };
+               let decoded = codec.decode((User).type, as_value({name: "Ada"}));
+               let encoded = codec.encode((codec.Value).type, {name: "Lin"});
                let checked = {name: "Grace"}.cast!(User);
                let invalid = {name: 1}.cast!(User);
                let formatted = result.map_err(
-                   codec.decode(User, as_value({name: 1})),
+                   codec.decode((User).type, as_value({name: 1})),
                    fn(error) { "decode rejected" },
                );
                let chained = result.flat_map(
-                   result.map_err(codec.decode(User, as_value({name: "Mira"})), fn(error) { "decode rejected" }),
+                   result.map_err(codec.decode((User).type, as_value({name: "Mira"})), fn(error) { "decode rejected" }),
                    fn(user) { user.cast!(User) },
                );
                let name = result.unwrap(result.map(
-                   codec.decode(User, as_value({name: "Kai"})),
+                   codec.decode((User).type, as_value({name: "Kai"})),
                    fn(user) { user.name },
                ));
                {
@@ -478,7 +476,7 @@
                    formatted: formatted,
                    chained: chained,
                    name: name,
-               }"#,
+               }"###,
         )
         .unwrap();
         let module = load_module(directory.join("main.telora"), BTreeMap::new(), 100_000).unwrap();
@@ -535,10 +533,10 @@
 
         fs::write(
             directory.join("wrong-encode.telora"),
-            r#"import "std/codec" as codec;
+            r###"import "std/codec" as codec;
                type User = struct {name: String};
                let user: User = {name: 1};
-               codec.encode(codec.Value, user)"#,
+               codec.encode((codec.Value).type, user)"###,
         )
         .unwrap();
         let error = load_module(
@@ -551,8 +549,8 @@
 
         fs::write(
             directory.join("erased.telora"),
-            r#"import "std/codec" as codec;
-               let metadata: Type = Int; codec.decode(metadata, codec.Value.Int(1))"#,
+            r###"import "std/codec" as codec;
+               let metadata: Type = (Int).type; codec.decode(metadata, codec.Value.Int(1))"###,
         )
         .unwrap();
         let error =

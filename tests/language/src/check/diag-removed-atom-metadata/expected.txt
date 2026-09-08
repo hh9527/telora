@@ -1,1 +1,1 @@
-standalone Atom is not a supported type
+computed metadata cannot become a type

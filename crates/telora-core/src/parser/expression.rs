@@ -309,7 +309,7 @@ impl<'a> Lowerer<'a> {
                     .find(|child| {
                         matches!(
                             self.rule(*child),
-                            Some(Rule::PostfixIntrinsicSuffix | Rule::ProjectionSuffix | Rule::FieldProjectionSuffix)
+                            Some(Rule::PostfixIntrinsicSuffix | Rule::ProjectionSuffix | Rule::FieldProjectionSuffix | Rule::MetadataSuffix)
                         )
                     })
                     .ok_or_else(|| self.error(node, "dot postfix expression has no suffix"))?;
@@ -322,7 +322,9 @@ impl<'a> Lowerer<'a> {
                     );
                 }
                 let receiver = Box::new(receiver_expression);
-                if self.rule(suffix) == Some(Rule::FieldProjectionSuffix) {
+                if self.rule(suffix) == Some(Rule::MetadataSuffix) {
+                    ExprKind::TypeMetadata(Box::new(self.normalize_type_expression(*receiver)?))
+                } else if self.rule(suffix) == Some(Rule::FieldProjectionSuffix) {
                     let mut fields = Vec::new();
                     for entry in self.rule_children(suffix)
                         .filter(|child| self.rule(*child) == Some(Rule::FieldProjectionEntry))
@@ -648,7 +650,7 @@ impl<'a> Lowerer<'a> {
             }
             let mut arguments = arguments.into_iter();
             let value = arguments.next().expect("two arguments");
-            let target = arguments.next().expect("two arguments");
+            let target = self.normalize_type_expression(arguments.next().expect("two arguments"))?;
             Ok(located(
                 ExprKind::TypeAscription {
                     value: Box::new(value),
@@ -668,7 +670,7 @@ impl<'a> Lowerer<'a> {
             }
             let mut arguments = arguments.into_iter();
             let value = arguments.next().expect("two arguments");
-            let target = arguments.next().expect("two arguments");
+            let target = self.normalize_type_expression(arguments.next().expect("two arguments"))?;
             Ok(located(
                 ExprKind::CheckedCast {
                     value: Box::new(value),

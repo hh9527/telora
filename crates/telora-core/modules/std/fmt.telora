@@ -25,21 +25,21 @@ native concat: Fn(Array(String), Array(Fmt)) -> Fmt;
 native render: Fn(Fmt) -> String;
 
 def project_string: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(String, value) {
+    match dyn.project_with(String.type, value) {
         Some(value) => from_string(value),
         None => fail!("prepared Display expected String", value),
     }
 };
 
 def project_int: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(Int, value) {
+    match dyn.project_with(Int.type, value) {
         Some(value) => from_int(value),
         None => fail!("prepared Display expected Int", value),
     }
 };
 
 def project_float: Fn(Dyn) -> Fmt = fn(value) {
-    match dyn.project_with(Float, value) {
+    match dyn.project_with(Float.type, value) {
         Some(value) => from_float(value),
         None => fail!("prepared Display expected Float", value),
     }
@@ -60,7 +60,7 @@ def display_for = fn(target) {
         type_desc.TypeDescKind.Int => project_int,
         type_desc.TypeDescKind.Float => project_float,
         _ => match target_kind {
-            type_desc.TypeDescKind.Ref => match type_property.get_type_prop(target, DisplayBy) {
+            type_desc.TypeDescKind.Ref => match type_property.get_type_prop(target, DisplayBy.type) {
                 Some(property) => property.display,
                 None => fail!("Display template field has no Display capability", target),
             },
@@ -99,7 +99,7 @@ def display_by: Fn(String) -> Fn(TypeDesc, Option(DisplayBy)) -> DisplayBy = fn(
 };
 
 def display: for(A: Property(DisplayBy)) Fn(TypeOf(A), A) -> Fmt = fn(target, value) {
-    let property = type_property.evidence(target, DisplayBy);
+    let property = type_property.evidence(target, DisplayBy.type);
     property.display(dyn.pack(target, value))
 };
 
@@ -113,7 +113,7 @@ impl Display for Int { display: from_int };
 impl Display for Float { display: from_float };
 
 impl(T: Property(DisplayBy)) Display for T {
-    display: fn(value) { display(T, value) },
+    display: fn(value) { display(T.type, value) },
 };
 
 export {

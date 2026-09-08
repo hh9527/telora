@@ -69,7 +69,7 @@
         );
 
         let invalid = analyze_source("invalid-family.telora", "type Broken(A) = 1; 0").unwrap_err();
-        assert!(invalid.message.contains("produced invalid metadata"));
+        assert!(invalid.message.contains("computed metadata cannot become a type"));
 
         let direct =
             analyze_source("recursive-family.telora", "type Loop(A) = Loop(A); 0").unwrap_err();
@@ -349,7 +349,7 @@
     }
 
     #[test]
-    fn partial_type_evaluation_accepts_explicit_linked_capabilities() {
+    fn partial_type_evaluation_rejects_metadata_without_a_type_interface() {
         let mut heap = Heap::work();
         let root = heap
             .type_descriptor_value(None, &TypeDescriptor::Int)
@@ -369,8 +369,8 @@
             .find(|definition| definition.name == "Linked")
             .unwrap();
         let fact = &partial.definition_facts[&linked.id];
-        assert_eq!(fact.state, FactState::Known);
-        assert_eq!(partial.types.node(fact.value.unwrap()), &TypeNode::Int);
+        assert_eq!(fact.state, FactState::Conflicted(Conflict::IncompatibleContract));
+        assert!(fact.value.is_none());
         assert!(partial.hir.references().iter().any(|reference| {
             reference.name == "LinkedType"
                 && reference.resolution == crate::hir::HirResolution::External
@@ -405,7 +405,7 @@
         assert!(!erased.constants().is_empty());
 
         let retained =
-            crate::compile_source("test", "type User = struct {name: String}; User").unwrap();
+            crate::compile_source("test", "type User = struct {name: String}; User.type").unwrap();
         assert!(
             retained
                 .constants()
@@ -413,6 +413,6 @@
                 .all(|constant| matches!(constant, crate::bytecode::Constant::Placeholder))
         );
         let witness =
-            crate::run_source("test", "type User = struct {name: String}; User", 100_000).unwrap();
+            crate::run_source("test", "type User = struct {name: String}; User.type", 100_000).unwrap();
         assert_eq!(witness.value().kind(), crate::ValueKind::Type);
     }

@@ -1,0 +1,3 @@
+def build_type: Fn(Type) -> Type = fn(metadata) { metadata };
+type Invalid = build_type(Int.type);
+export def value = 1;

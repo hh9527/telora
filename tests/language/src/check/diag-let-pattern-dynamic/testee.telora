@@ -1,7 +1,7 @@
 import "std/dyn" as dyn;
 
 export def invalid = {
-    let pair = dyn.pack(Tuple([Int, Int]), (1, 2));
+    let pair = dyn.pack((Tuple([Int, Int])).type, (1, 2));
     let (left, right) = pair;
     left
 };

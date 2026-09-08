@@ -1,3 +1,3 @@
 export type Box(T) = struct(T);
-type Selected = Box@[Type](Int).0;
+type Selected = Int;
 export def value: Selected = 7;

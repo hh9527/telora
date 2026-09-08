@@ -1,1 +1,1 @@
-Union has been removed
+computed metadata cannot become a type

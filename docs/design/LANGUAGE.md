@@ -171,11 +171,12 @@ Option variant 和空集合都按完整的共同契约检查。
 Tuple 是固定长度的异质积：
 
 ```telora
-let entry: Tuple([String, Int]) = ("port", 8080);
+let entry: (String, Int) = ("port", 8080);
 ```
 
-`Tuple` 是接收单个 TypeMetadata Array 的普通元数据构造器。该形式在类型 alias、
-显式元数据表达式和受限契约中一致；`Tuple(A, B)` 不是 Tuple 类型的另一种写法。
+类型位置的 `(A, B)` 构造 Tuple 类型；数据位置的 `(a, b)` 构造 Tuple 数据。
+`(A,)` 是单元素 Tuple 类型，`(A)` 只是分组。旧的 `Tuple([A, B])` 保留为
+静态类型构造写法，参数必须是语法上明确的类型列表，不能由普通函数计算。
 
 空 Tuple 值写作 `()`，其类型也可在显式类型槽位写作 `()`。Prelude 中的 `Unit`
 是该结构类型的别名，与 `Tuple([])` 身份相同，不创建新的 nominal 类型：
@@ -187,9 +188,10 @@ let alias: Unit = value;
 ```
 
 该类型记法适用于 annotation 根、type initializer 根、声明的 member 类型、显式
-类型实参和受限契约（含嵌套参数）；普通表达式调用的实参仍是数据。因此通用元数据
-表达式使用 `Array(Unit)`，不把 `Array(())` 的空 Tuple 数据隐式改成类型。
-非空 Tuple 类型仍写作 `Tuple([A, B])`；类型与元数据的现有边界不变。
+类型实参、`ty!` / `cast!` 目标和受限契约（含嵌套参数）。`Array(())` 表示
+空 Tuple 的 Array 类型，`Array(()).type` 才是其元数据。普通函数的实参仍是数据。
+`(Int, String).type` 是 Tuple 类型的元数据，`(Int.type, String.type)` 是元数据
+组成的 Tuple 数据。混合类型和数据的 `(Int, 1)` 非法。类型 Tuple 的 spread 暂不支持。
 
 Tuple 字面量的 spread 按位置拼接静态已知的 Tuple：
 `(...pair, True, 3)` 展开 pair 后追加 Bool 和 Int 元素。每个位置
@@ -528,9 +530,9 @@ Native opaque type 具有由注册模块和 slot 决定的名义身份，普通�
 
 ### 6.1 函数契约和 rank-1 多态
 
-函数契约使用专用的 `Fn(P1, ..., Pn) -> R` 记法。它精确降解为普通元数据构造
-`Func([P1, ..., Pn], R)`；`Fn` 不是值环境中的 callable，`Func` 才是构造函数元数据的
-普通内建 callable。参数和结果位置都递归接受完整契约记法，例如：
+函数契约使用专用的 `Fn(P1, ..., Pn) -> R` 记法，降解到不受变量遮蔽影响的内部
+类型构造器。它与静态类型写法 `Func([P1, ..., Pn], R)` 表示相同类型；二者都不是
+普通数据函数。参数和结果位置都递归接受完整契约记法，例如：
 
 ```telora
 Fn(A) -> Tuple([B, C])
@@ -607,8 +609,8 @@ impl Display for Endpoint {
 
 impl(T: Property(DisplayBy)) Display for T {
     display: fn(value) {
-        let property = type_property.evidence(T, DisplayBy);
-        property.display(dyn.pack(T, value))
+        let property = type_property.evidence(T.type, DisplayBy.type);
+        property.display(dyn.pack(T.type, value))
     },
 };
 
@@ -642,8 +644,8 @@ type。
 
 ## 7. 类型元数据
 
-Telora 的类型不是仅存在于编译器中的标签。类型声明求值一个表达式，结果必须是
-规范 TypeMetadata。理解该模型需要区分：
+类型由声明、受信任的结构类型构造器或参数化类型族产生。`T.type` 将静态类型
+单向投影成规范元数据，结果为精确的 `TypeOf(T)`，可赋给 `Type`。理解该模型需要区分：
 
 ```text
 Type       任意有效 TypeMetadata 值的静态类型
@@ -656,21 +658,27 @@ TypeDesc   用户态解释器观察的擦除后 descriptor 视图
 暴露规范 descriptor 视图。声明类型以 `TypeDescKind.Ref` 暴露，通过 `resolve` 获得其结构 descriptor；
 property 由独立的 property registry 按目标与 property 类型查询。
 
-内建元数据构造器也是普通 callable 值：
+类型构造及其显式元数据投影：
 
 ```telora
-Array(String)
-Func([Int, Int], Int)
-Option(String)
+Array(String).type
+(Fn(Int, Int) -> Int).type
+Option(String).type
 ```
 
 规范函数元数据的公开 descriptor kind 是 `TypeDescKind.Func`，其 `parameters` 是 TypeMetadata
 Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函数元数据的 kind
 观察分别返回各自 kind enum 的 `Func` 成员。`Function` 不具有语言保留意义，可以作为普通领域标识符使用。
 
-类型 annotation、decorator property 和 `type` initializer 在工具阶段由同一套 VM 求值。工具
-阶段与程序阶段共享函数语义、值模型、fuel 和失败规则；区别在于 Host 调用它们的
-目的和允许发布的结果，而不是存在第二门类型级语言。
+`let` / `def` 绑定数据，`type` 绑定类型。类型角色由解析后的声明身份和模块接口决定，
+不依赖大小写或运行时 `TypeOf` 内容。`export { T }` 保留类型身份；导出 `T.type`
+得到的普通数据不能再用于静态类型位置。`.type` 是关键字后缀，不是字段查询，不能用于
+普通数据，也不触发无关 property provider 求值。
+
+普通函数可以传递、返回和组合元数据，但不能用其结果定义类型或类型 annotation。
+`type T = build_type(...)`、`type T = metadata` 和 `type T = Int.type` 都被拒绝。
+结构类型仍可复用工具阶段 VM 的受信任构造机制；必须先验证类型/数据边界，不允许执行
+任意用户 helper 来决定类型骨架。Property 是带外信息，不改变此边界。
 
 ### 7.1 Struct、Enum 和 typed property decorator
 
@@ -698,8 +706,9 @@ children 包含唯一的载荷类型；JSON codec 使用载荷表示并在成功
 `let A(value) = a;` 绑定载荷，`a.0` 直接读取同一载荷。
 
 构造器也可以用于工具阶段。`type Wrapped = struct(Type);` 后的
-`type Selected = Wrapped(Int).0;` 得到 Int 类型；工具函数和 decorator 参数
-可以构造、传递和读取 newtype 值，遵守同样的具名身份与类型上下文规则。
+`let metadata = Wrapped(Int.type).0;` 得到描述 Int 的元数据数据，不能反向用于
+`type Selected = metadata;`。工具函数和 decorator 参数可以构造、传递和读取
+newtype 值，遵守同样的具名身份与类型上下文规则。
 
 enum 的成员名称提供值构造器。对于
 `type Event = enum { Progress(Int), Finished };`，`Event.Progress` 的类型是
@@ -712,7 +721,8 @@ enum；同形的另一个具名 enum 不改变该身份。泛型成员的契约�
 限定链逐级解析，例如 `Model.Model.Data(1)` 中前两级分别表示模块和类型。
 
 newtype 声明在值位置提供 `Fn(B) -> A` 构造器；`A(value)`、函数传递和显式
-泛型应用遵循普通函数契约。类型位置和预期 Type 的参数使用声明的类型用途。
+泛型应用遵循普通函数契约。类型位置使用声明的类型用途；普通 Type 参数必须
+显式传入 `A.type`，不能靠预期类型把裸 A 隐式转为元数据。
 模块接口保留导出名称的类型声明身份，因此限定引用、导入别名和再导出都能保留
 这两个用途。普通 Type 值以及返回 Type 的普通函数不因其返回契约而成为构造器。
 
@@ -775,7 +785,7 @@ Struct/Enum 及其直接 member。
 
 ```telora
 import "std/type-property" as type_property;
-let property: Option(DisplayBy) = type_property.get_type_prop(Endpoint, DisplayBy);
+let property: Option(DisplayBy) = type_property.get_type_prop(Endpoint.type, DisplayBy.type);
 ```
 
 member 查询分别是 `get_field_prop(Owner, index, P)` 和
@@ -803,11 +813,11 @@ def wrap: for(Item) Fn(Item) -> Box(Item) = fn(value) {
 };
 ```
 
-`Box` 同时具有两个表面：
+类型族应用和元数据投影分别写作：
 
 ```text
 类型位置  Box(A)
-值位置    for(A) Fn(TypeOf(A)) -> TypeOf(Box(A))
+元数据    Box(A).type : TypeOf(Box(A))
 ```
 
 声明 body 使用刚性符号参数求值一次，产生规范模板；`Box(String)` 对模板做避免捕获
@@ -821,7 +831,7 @@ import 保留精确 scheme。Family 可达的本地 TypeMetadata 依赖按语义
 顺序不影响结果。
 
 Family 声明可以捕获已经封闭的非参数化递归 concrete type，但不能依赖同模块的
-普通 helper；可以依赖内建 metadata 构造器和 imported metadata 能力。这一边界
+普通 helper；可以依赖内建类型构造器和 imported 类型声明/类型族。这一边界
 避免把普通源码求值顺序或尚未 sealing 的 recursive reference 带入符号模板。
 
 名义 Struct/Enum family 可以直接以完全相同、顺序不变的参数自递归：
@@ -900,7 +910,7 @@ let truth = ty!(True, Bool);
 let checked = raw.cast!(User);             // Result(User, String)
 
 import "std/dyn" as dyn;
-let exact = dyn.project_with(User, package); // Option(User)
+let exact = dyn.project_with(User.type, package); // Option(User)
 let exact_sugar = dyn.project@[User](package);
 ```
 
@@ -1131,8 +1141,8 @@ toml.parse(text)  # Result(Value, codec.BlameError)
 Typed model 与 Value 之间只通过 codec 重建数据图：
 
 ```telora
-let model = codec.decode(Model, request) |> result.unwrap;
-let value = codec.encode(Value, model);
+let model = codec.decode(Model.type, request) |> result.unwrap;
+let value = codec.encode(Value.type, model);
 ```
 
 `cast!` 只做表示不变的 checked refinement，不移除 Value variant、不解析 String，也
@@ -1250,7 +1260,7 @@ receiver.ident!(arguments...) == ident!(receiver, arguments...)
 错误保留当前解码 Value，调用方可以继续试探，或显式使用其来源产生诊断：
 
 ```telora
-match codec.decode(User, raw) {
+match codec.decode(User.type, raw) {
     Ok(user) => user,
     Err(error) => raise!(error),
 }
@@ -1393,10 +1403,10 @@ Tool stage 执行 annotation、type initializer、decorator、module interface �
 静态 annotation 和 witness 默认从程序执行中擦除；当程序显式把 TypeMetadata 当作
 普通值使用时，该值会保留到运行时。
 
-`codec.decode(Target, value)` 的首个参数是受检查的 `TypeOf(Target)`；
+`codec.decode(Target.type, value)` 的首个参数是受检查的 `TypeOf(Target)`；
 解码返回 `Result(Target, codec.BlameError)`。编码直接返回 `Value`，失败产生诊断，
 并保留失败值和编码规则的来源位置。
-`codec.encode(Value, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
+`codec.encode(Value.type, model)` 的首个参数固定为 canonical `TypeOf(Value)`，并从 model
 已经携带的 nominal witness 选择 schema。Dyn 中的模型需先投影到具体类型。
 复杂 concrete family 的定义模块应拥有一次完整实例化，并导出 concrete
 alias 或 typed boundary function：
@@ -1405,7 +1415,7 @@ alias 或 typed boundary function：
 type Rejection = RejectionPayload(Entity, Dimension, Intent, Expr, Plan, Sql);
 
 def encode_rejection = fn(value: Rejection) {
-    codec.encode(Value, value)
+    codec.encode(Value.type, value)
 };
 
 export { Rejection, encode_rejection };

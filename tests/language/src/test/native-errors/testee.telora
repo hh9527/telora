@@ -5,7 +5,7 @@ import "std/test" as test;
 import "@src/test-support" {expect};
 
 export def dyn_error_keeps_input = test.should_ok(fn() {
-    let input = dyn.pack(Int, 42);
+    let input = dyn.pack((Int).type, 42);
     let checked: Result(Array(Dyn), dyn.AccessError) = dyn.array_items(input);
     expect(match checked {
         Err(error) => dyn.check_int(error.value) == Some(42)
@@ -15,9 +15,9 @@ export def dyn_error_keeps_input = test.should_ok(fn() {
 });
 
 export def type_error_keeps_input = test.should_ok(fn() {
-    let checked: Result(Type, types.ResolveError) = types.resolve(Int);
+    let checked: Result(Type, types.ResolveError) = types.resolve((Int).type);
     expect(match checked {
-        Err(error) => error.value == Int
+        Err(error) => error.value == (Int).type
             && string.contains(error.message, "not a recursive reference"),
         Ok(_) => False,
     })
@@ -25,7 +25,7 @@ export def type_error_keeps_input = test.should_ok(fn() {
 
 export def parse_error_keeps_input = test.should_ok(fn() {
     let input = "not-an-integer";
-    let checked: Result(Int, string.ParseError) = string.parse(Int, input);
+    let checked: Result(Int, string.ParseError) = string.parse((Int).type, input);
     expect(match checked {
         Err(error) => error.value == input && string.length(error.message) > 0,
         Ok(_) => False,

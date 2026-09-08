@@ -28,19 +28,19 @@ export def nested_subject = test.should_fail_with(fn() {
         codec.Value.Object({count: codec.Value.Int(1)}),
         codec.Value.Object({count: bad}),
     ])});
-    match codec.decode(Items, input) { Err(error) => raise!(error), Ok(_) => 0 }
+    match codec.decode((Items).type, input) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "items[1].count");
 
 export def missing_subject = test.should_fail_with(fn() {
     let parent: codec.Value = codec.Value.Object({});
-    match codec.decode(Item, parent) { Err(error) => raise!(error), Ok(_) => 0 }
+    match codec.decode((Item).type, parent) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "missing required field");
 
 export def recover_and_compose = test.should_ok(fn() {
     let input: codec.Value = codec.Value.String("hello");
-    let decoded: Result(String, codec.BlameError) = match codec.decode(Int, input) {
+    let decoded: Result(String, codec.BlameError) = match codec.decode((Int).type, input) {
         Ok(_) => Ok("number"),
-        Err(_) => codec.decode(String, input),
+        Err(_) => codec.decode((String).type, input),
     };
     expect(match decoded {
         Ok(value) => value == "hello",
@@ -50,12 +50,12 @@ export def recover_and_compose = test.should_ok(fn() {
 
 export def untagged_failure = test.should_fail_with(fn() {
     let input: codec.Value = codec.Value.Array([]);
-    match codec.decode(NumberOrText, input) { Err(error) => raise!(error), Ok(_) => 0 }
+    match codec.decode((NumberOrText).type, input) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "matches no untagged");
 
 export def syntax_subject = test.should_fail_with(fn() {
     let text = "{invalid";
-    match json.decode(Item, text) { Err(error) => raise!(error), Ok(_) => 0 }
+    match json.decode((Item).type, text) { Err(error) => raise!(error), Ok(_) => 0 }
 }, "<json string>");
 
 export def authored_error = test.should_fail_with(fn() {

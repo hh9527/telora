@@ -19,7 +19,7 @@ def branch_left: Scalar = if True { Scalar.Integer(1) } else { Scalar.Text("x") 
 def branch_right: Scalar = if True { Scalar.Text("x") } else { Scalar.Integer(1) };
 def branch_nested = (if True { if False { Scalar.Integer(1) } else { Scalar.Text("x") } } else { Scalar.Integer(1) }).ty!(Scalar);
 def branch_three = (if True { if False { Scalar.Integer(1) } else { Scalar.Text("x") } } else { Scalar.Integer(2) }).ty!(Scalar);
-def metadata_branch = if True { Int } else { String };
+def metadata_branch = if True { (Int).type } else { (String).type };
 
 type RecordKind = enum {Full, Empty, First, Second, Third, Ints, Strings};
 type Record = struct {kind: RecordKind, path: Array(Int)};
@@ -90,7 +90,7 @@ def field_projection = {
     let record = {value: 1};
     let dictionary: Dict(String) = {value: "x"};
     let alternative = if True { {value: 1} } else { {value: 2} };
-    let dynamic = dyn.pack(Int, record.value);
+    let dynamic = dyn.pack((Int).type, record.value);
     (record.value, dictionary.value, alternative.value, dynamic)
 };
 
@@ -104,7 +104,7 @@ def invoke_factory = fn(factory) { factory()() };
 def recover = fn(callback) { callback() };
 def repeated_callback = fn(callback) { (callback(1), callback(2)) };
 
-def metadata_values = (Type, Int, Array(Int));
+def metadata_values = ((Type).type, (Int).type, (Array(Int)).type);
 type Function = Int;
 def domain_function: Function = 1;
 

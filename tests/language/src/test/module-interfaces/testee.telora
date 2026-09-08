@@ -143,8 +143,8 @@ export def reexport_identity = test.should_ok(fn() {
 
 export def opaque_reexport = test.should_ok(fn() {
     expect(
-        type_desc.kind(State) == type_desc.TypeDescKind.Opaque
-            && type_desc.opaque_name(State) == Some("std/hash#HashState")
+        type_desc.kind((State).type) == type_desc.TypeDescKind.Opaque
+            && type_desc.opaque_name((State).type) == Some("std/hash#HashState")
     )
 });
 

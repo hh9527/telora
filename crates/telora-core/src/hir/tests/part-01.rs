@@ -28,7 +28,7 @@
              f(loop(2))",
         )
         .unwrap();
-        let hir = HirProgram::resolve(&program, ["Func".into(), "Int".into(), "Bool".into(), "ext".into()]);
+        let hir = HirProgram::resolve(&program, ["\0telora_function_type".into(), "Int".into(), "Bool".into(), "ext".into()]);
         let unresolved = hir
             .unresolved()
             .map(|reference| reference.name.as_str())

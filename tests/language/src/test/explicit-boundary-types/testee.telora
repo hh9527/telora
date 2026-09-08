@@ -32,10 +32,10 @@ export def explicit_partial_result = test.should_ok(fn() {
 export def cast_and_pack = test.should_ok(fn() {
     let checked: Result(Int, String) = 42.cast!(Int);
     let rejected: Result(Int, String) = "text".cast!(Int);
-    let packed = dyn.pack(IntFunction, fn(value) { value });
+    let packed = dyn.pack((IntFunction).type, fn(value) { value });
     expect(checked == Ok(42)
         && !result.is_ok(rejected)
-        && match dyn.project_with(IntFunction, packed) {
+        && match dyn.project_with((IntFunction).type, packed) {
             Some(function) => function(7) == 7,
             None => False,
         })
