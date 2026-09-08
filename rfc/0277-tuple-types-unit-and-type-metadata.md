@@ -1,6 +1,6 @@
 # RFC 0277: Tuple Types, Unit, and Explicit Type Metadata
 
-- Status: Stage 1 accepted; implementation pending. Stage 2 remains proposed.
+- Status: Stage 1 implemented locally. Stage 2 remains proposed.
 - Baseline: Current [language design](../docs/design/LANGUAGE.md), sections 3,
   4, 6 and 7, and [type concepts](../docs/design/CONCEPT.md).
 - Related: RFC 0219 (Function notation and Tuple contracts), RFC 0272 (Tuple
@@ -40,7 +40,8 @@ Never, current metadata values and nonempty tuple semantics. This stage does
 not wait for the type/data redesign below.
 
 Explicit type slots include annotation roots, type initializer roots, declared
-member types, and restricted contracts (including their nested arguments).
+member types, explicit type arguments, and restricted contracts (including their
+nested arguments).
 An ordinary expression call still passes data arguments: `Array(Unit)` remains
 the spelling usable in general metadata expressions; this stage does not
 reinterpret `Array(())` there or rewrite arguments to user metadata helpers.
@@ -51,6 +52,34 @@ Stage 2 remains proposed: nonempty tuple type notation, `.type`, and the
 type/data boundary with its API migration. The open decisions below block
 stage 2 only. Commit this accepted scope before implementing stage 1; update
 the current design and guide only for the behavior actually implemented.
+
+### Stage 1 Implementation and Verification
+
+The accepted RFC was committed as `e694387` before implementation. Local changes
+add the empty-tuple metadata alias to both prelude projections, lower explicit
+empty type syntax through a non-shadowable internal binding, and admit Unit
+contracts without changing Function arity. Ordinary metadata call arguments
+retain their prior data meaning.
+
+Module and local body grammar rules are now separate. Local expression
+statements lower to hygienic sequential `let` bindings, and normal fallthrough
+synthesizes the existing empty-tuple value. Strict inference and provisional
+projection retain Never from nonreturning initializers. No new runtime value
+kind, instruction or inference-environment copy is introduced.
+
+`cargo test --workspace` passed: 314 core tests, 41 CLI tests including the
+language acceptance suite, and the remaining workspace suites. Five new language
+cases cover metadata identity, block tails, branches and discarded/bound failure.
+Compiler tests check ordered, once-only diagnostic execution and explicit return;
+additional focused Never tests cover failure after tuple destructuring. The
+tree-sitter submodule grammar and generated artifacts are updated; all 12 corpus
+tests pass using a writable temporary cache. Parent and submodule diff checks
+pass. The language design, implementation design and public guide now document
+stage 1 only.
+
+No release performance measurement was made for stage 1; the broader type/data
+inference changes and their performance acceptance remain part of stage 2.
+Implementation and editor-submodule changes remain uncommitted and unpushed.
 
 ## Current Baseline
 
@@ -196,6 +225,37 @@ Discarded expressions are still checked and evaluated, retaining failures,
 effects, provenance and execution quotas. A semicolon is not an erasure request.
 
 ## Compatibility and Open Decisions
+
+### Stage 2 Compatibility Audit
+
+Implementation preparation confirms that the metadata-to-type bridge is used
+by existing programs, not merely a hypothetical reflection feature.
+`tests/language/src/test/newtype-tool-stage/testee.telora` constructs types
+through ordinary helpers, projections, imported constructors and conditionals.
+`std/type-desc` consumes `Type`, while codec and property APIs consume exact
+`TypeOf(A)` witnesses. Removing computed type initializers would remove tested
+capabilities in addition to changing tuple notation.
+
+The recommended migration boundary below is pending confirmation:
+
+| Surface | Proposed stage 2 treatment |
+| --- | --- |
+| `type Pair = (Int, String)` | Construct a structural tuple type. |
+| `let metadata = Pair.type` | Bind data with the exact `TypeOf(Pair)` witness. |
+| `let Pair = (Int, String)` | Reject a type in a data binding; suggest `type`. |
+| `codec.decode(Target, value)` | Pass `Target.type` as metadata data. |
+| `type_property.get_type_prop(T, P)` | Pass `T.type` and `P.type`. |
+| `type T = metadata_factory(Int)` | Preserve tool-stage computation, with explicit `Int.type` input. |
+| `type T = computed_metadata` | Validate and seal metadata at the existing tool-stage declaration boundary. |
+| A runtime metadata value | Do not reinterpret it as an unchecked static type. |
+
+The last three rows require an explicit decision: separating bare types from
+metadata data does not itself specify the reverse bridge. The recommendation
+preserves the existing `type` declaration boundary without inventing another
+conversion operator. It does not authorize implicit conversions in ordinary
+data calls or runtime-dependent static types. Constructor/family callable
+facets, legacy computed `Tuple` calls and type-tuple spread still need their
+detailed migration rules before stage 2 can be marked implemented.
 
 The following must be resolved before accepting the implementation plan:
 

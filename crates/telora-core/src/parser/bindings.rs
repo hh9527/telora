@@ -15,7 +15,7 @@ impl<'a> Lowerer<'a> {
         let root = NodeRef::ROOT;
         let body_node = self
             .rule_children(root)
-            .find(|node| self.rule(*node) == Some(Rule::Body))
+            .find(|node| self.rule(*node) == Some(Rule::ModuleBody))
             .or_else(|| self.first_rule(root))
             .ok_or_else(|| self.error(root, "program has no body"))?;
         let authored_result = self
@@ -126,10 +126,55 @@ impl<'a> Lowerer<'a> {
         } else {
             node
         };
-        let children = self.children(body).collect::<Vec<_>>();
+        let mut children = Vec::new();
+        let mut remaining = Some(body);
+        while let Some(body) = remaining.take() {
+            for child in self.children(body) {
+                if self.rule(child) == Some(Rule::Body) {
+                    remaining = Some(child);
+                } else if !matches!(
+                    self.cst.get(child),
+                    Node::Token(Token::Whitespace | Token::Comment, _)
+                ) {
+                    children.push(child);
+                }
+            }
+        }
         let mut entries = Vec::new();
         let mut result = None;
-        for child in children {
+        for (index, child) in children.iter().copied().enumerate() {
+            if self.is_expression(child) {
+                let expression = self.expression(child)?;
+                let terminated = children.get(index + 1).is_some_and(|next| {
+                    matches!(self.cst.get(*next), Node::Token(Token::Semicolon, _))
+                });
+                if terminated {
+                    if !allow_destructuring {
+                        return Err(self.error(
+                            child,
+                            "expression statements are allowed only inside a local block",
+                        ));
+                    }
+                    let location = self.location(child);
+                    entries.push(BlockEntry::Binding(located(
+                        BindingData {
+                            decorators: Vec::new(),
+                            kind: BindingKind::Let,
+                            declared_initializer: None,
+                            imported_name: None,
+                            name: located(format!("\0discard_{}", location.start), location),
+                            type_parameters: Vec::new(),
+                            type_parameter_bounds: Vec::new(),
+                            annotation: None,
+                            value: expression,
+                        },
+                        location,
+                    )));
+                } else {
+                    result = Some(expression);
+                }
+                continue;
+            }
             match self.rule(child) {
                 Some(
                     Rule::LetBinding
@@ -264,8 +309,6 @@ impl<'a> Lowerer<'a> {
         }
         let result = if let Some(result) = result {
             result
-        } else if allow_destructuring {
-            return Err(self.error(body, "a block requires a result expression"));
         } else {
             located(ExprKind::Tuple(Vec::new()), self.location(body))
         };
@@ -451,7 +494,7 @@ impl<'a> Lowerer<'a> {
                                 && self.cst.span(*child).start > colon_start
                                 && self.cst.span(*child).end <= equal_start
                         })
-                        .map(|child| self.expression(child))
+                        .map(|child| self.type_expression(child))
                         .transpose()?
                 } else {
                     None
@@ -669,7 +712,7 @@ impl<'a> Lowerer<'a> {
                         self.location(node),
                     )
                 } else {
-                    self.expression(
+                    self.type_expression(
                         self.children(node)
                             .find(|child| {
                                 self.is_expression(*child) && self.cst.span(*child).start > start

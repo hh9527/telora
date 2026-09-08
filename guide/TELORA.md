@@ -95,6 +95,34 @@ def increment: Fn(Int) -> Int = fn(value) { value + 1 };
 
 ## 运算符与控制流
 
+### Unit 与 Block 返回值
+
+`()` 是空元组值，也可在明确的类型位置表示空元组类型；`Unit` 是该类型的别名：
+
+```telora
+type Empty = ();
+def nothing: Fn() -> () = fn() {};
+def identity: Fn(()) -> Unit = fn(value: ()) { value };
+```
+
+Block 的无分号尾表达式决定返回值。表达式后加 `;` 会执行并丢弃其结果；没有尾
+表达式时正常返回 `()`，适用于 `do`、函数体及分支 block：
+
+```telora
+let empty: Unit = do {};
+let discarded: () = do { 42; };
+let bindings: Unit = do { let a = 42; };
+let answer: Int = do { 1; 42 };
+```
+
+分号不会吞掉失败，也不会把 `return` 或 `Never` 路径改成正常返回。裸 `{}` 仍是
+字典；顶层模块不允许表达式语句。`Fn()` 没有参数，`Fn(())` 有一个 Unit 参数。
+
+非空元组类型仍使用 `Tuple([A, B])`。普通元数据调用写作 `Array(Unit)`；其中的
+数据实参 `()` 不会自动解释为类型。`.type` 和非空元组类型新语法尚未实现。
+
+### 比较与算术
+
 比较运算符为：
 
 ```telora

@@ -221,6 +221,8 @@ impl<'a> ToolEvaluator<'a> {
             ("Type", TypeDescriptor::Type),
             ("Dyn", TypeDescriptor::Dyn),
             ("Never", TypeDescriptor::Never),
+            ("Unit", TypeDescriptor::Tuple(Vec::new())),
+            ("\0telora_unit_type", TypeDescriptor::Tuple(Vec::new())),
             ("Int", TypeDescriptor::Int),
             ("Float", TypeDescriptor::Float),
             ("String", TypeDescriptor::String),

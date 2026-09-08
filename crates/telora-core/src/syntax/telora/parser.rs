@@ -64,6 +64,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
                 | Token::At
         ) || self.current == Token::Fn && self.peek(1) == Token::Identifier
     }
+    fn predicate_module_body_1(&self) -> bool {
+        self.predicate_body_1()
+    }
     fn predicate_binding_1(&self) -> bool {
         self.current == Token::Native && self.peek(1) == Token::Type
     }
@@ -192,6 +195,9 @@ impl<'a> ParserCallbacks<'a> for Parser<'a> {
     }
     fn predicate_impl_binding_1(&self) -> bool {
         self.peek(1) != Token::RBrace
+    }
+    fn predicate_impl_binding_2(&self) -> bool {
+        self.peek(1) != Token::RParen
     }
     fn predicate_struct_initializer_1(&self) -> bool {
         self.peek(1) != Token::RBrace

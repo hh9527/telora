@@ -84,6 +84,16 @@ Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
 annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中擦除；被普通运行时
 值引用的 TypeMetadata、函数和 closure 则必须保留。
 
+Module body 与普通 block body 使用独立语法规则，只有后者接受表达式语句。CST
+保留分号和后续 body；lowering 迭代展开为顺序绑定，表达式语句使用源码不可命名的
+局部 `let`，复用现有检查和执行机制，不引入新 VM 指令。无尾表达式时合成空 Tuple。
+前置投影和严格推导跟踪不正常完成的初始化表达式，block 仍推导为 `Never`，而非
+将隐式 Unit 当作可达返回值。后续表达式仍接受静态检查。
+
+显式类型槽位的空 `()` 降低为内部空 Tuple 元数据绑定，不受公开 `Unit` 名称遮蔽
+影响。Prelude 的静态投影与工具值环境同时提供 `Unit` 别名；两者复用现有 Tuple
+descriptor、TypeId 和值表示，不增加 Unit runtime kind。普通调用实参不做该转换。
+
 ## 3. 模块图、骨架和静态身份
 
 crate mode 在构造 `ModuleResolver` 前执行 package preparation：向上发现

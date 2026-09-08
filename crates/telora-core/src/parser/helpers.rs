@@ -18,7 +18,7 @@ impl<'a> Lowerer<'a> {
                     .children(argument)
                     .find(|child| self.is_expression(*child))
                     .ok_or_else(|| self.error(argument, "type argument has no expression"))?;
-                let expression = self.expression(expression)?;
+                let expression = self.type_expression(expression)?;
                 let location = expression.location;
                 Ok(located(TypeArgumentKind::Explicit(expression), location))
             })

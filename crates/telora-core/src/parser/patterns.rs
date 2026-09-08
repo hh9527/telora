@@ -173,7 +173,7 @@ impl<'a> Lowerer<'a> {
                                 && self.cst.span(*child).start > self.cst.span(colon).start
                         })
                     })
-                    .map(|annotation| self.expression(annotation))
+                    .map(|annotation| self.type_expression(annotation))
                     .transpose()?;
                 Ok(ClosureParameter { name, annotation })
             })
@@ -197,9 +197,26 @@ impl<'a> Lowerer<'a> {
         )
     }
 
+    fn unit_type_expression(&self, location: Location) -> Expr {
+        located(
+            ExprKind::Variable(located("\0telora_unit_type".to_owned(), location)),
+            location,
+        )
+    }
+
+    fn type_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
+        let expression = self.expression(node)?;
+        if matches!(&expression.value, ExprKind::Tuple(items) if items.is_empty()) {
+            Ok(self.unit_type_expression(expression.location))
+        } else {
+            Ok(expression)
+        }
+    }
+
     fn contract_expression(&self, node: NodeRef) -> Result<Expr, Diagnostic> {
         let location = self.location(node);
         match self.rule(node) {
+            Some(Rule::UnitContract) => Ok(self.unit_type_expression(location)),
             Some(Rule::Contract) => {
                 let inner = self
                     .first_rule(node)
@@ -236,6 +253,7 @@ impl<'a> Lowerer<'a> {
                                 Rule::Contract
                                     | Rule::ContractExpr
                                     | Rule::FunctionContract
+                                    | Rule::UnitContract
                                     | Rule::ContractArray
                             )
                         )
@@ -260,7 +278,7 @@ impl<'a> Lowerer<'a> {
                         .filter(|child| {
                             matches!(
                                 self.rule(*child),
-                                Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                                Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract | Rule::UnitContract)
                             )
                         })
                         .map(|child| self.contract_expression(child))
@@ -274,7 +292,7 @@ impl<'a> Lowerer<'a> {
                     .filter(|child| {
                         matches!(
                             self.rule(*child),
-                            Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract)
+                            Some(Rule::Contract | Rule::ContractExpr | Rule::FunctionContract | Rule::UnitContract)
                         )
                     })
                     .map(|child| self.contract_expression(child))
@@ -348,7 +366,7 @@ impl<'a> Lowerer<'a> {
                     DictFieldKind {
                         decorators: Vec::new(),
                         name: Some(located("payload".to_owned(), self.location(payload))),
-                        value: self.expression(payload)?,
+                        value: self.type_expression(payload)?,
                     },
                     self.location(payload),
                 )])
@@ -377,7 +395,7 @@ impl<'a> Lowerer<'a> {
                         })
                         .ok_or_else(|| self.error(field, "Struct field has no type"))?;
                     let decorators = self.decorators(field)?;
-                    let value = self.expression(value_node)?;
+                    let value = self.type_expression(value_node)?;
                     fields.push(located(
                         DictFieldKind {
                             decorators,
@@ -416,7 +434,7 @@ impl<'a> Lowerer<'a> {
                             .ok_or_else(|| {
                                 self.error(variant, "Enum variant has no payload type")
                             })?;
-                        self.expression(payload)?
+                        self.type_expression(payload)?
                     } else {
                         located(ExprKind::Atom("None".to_owned()), self.location(tag_node))
                     };

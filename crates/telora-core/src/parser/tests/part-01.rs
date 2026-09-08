@@ -18,6 +18,37 @@
             }
         ));
     }
+
+    #[test]
+    fn statement_bodies_keep_bindings_and_tail_syntax_visible() {
+        use crate::syntax::telora::ast::{AstNode, Body};
+
+        for (source, has_tail) in [
+            ("do { 1; # first\n let a = 2; a; }", false),
+            ("do { 1; let a = 2; a }", true),
+        ] {
+            let mut sources = SourceDatabase::default();
+            let id = sources.add("statements.telora", source);
+            let parsed = parse_registered(&sources, id);
+            assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+            let program = parsed.program.unwrap();
+            let ExprKind::Block(block) = &program.value.body.value.result.value else { panic!("expected block"); };
+            assert_eq!(block.value.bindings.len(), if has_tail { 2 } else { 3 });
+            assert!(block.value.bindings[0].value.name.value.starts_with('\0'));
+            let mut pending = vec![NodeRef::ROOT];
+            let body = loop {
+                let node = pending.pop().expect("local body exists");
+                if matches!(parsed.cst.get(node), Node::Rule(Rule::Body, _)) {
+                    break Body::cast(&parsed.cst, node).unwrap();
+                }
+                if matches!(parsed.cst.get(node), Node::Rule(..)) {
+                    pending.extend(parsed.cst.children(node));
+                }
+            };
+            assert_eq!(body.bindings().count(), 1);
+            assert_eq!(body.result().is_some(), has_tail);
+        }
+    }
     #[test]
     fn malformed_else_if_chain_recovers_without_panicking() {
         let mut sources = SourceDatabase::default();

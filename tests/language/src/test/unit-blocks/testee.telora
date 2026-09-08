@@ -1,0 +1,38 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+
+type Empty = ();
+type Old = Tuple([]);
+def zero: Fn() -> () = fn() {};
+def one: Fn(()) -> Unit = fn(value: ()) -> () { value };
+def early: Fn() -> Int = fn() { 1; return 42; };
+
+export def identity = test.should_ok(fn() {
+    let a: Empty = zero();
+    let b: Old = one(a);
+    expect(a == () && b == () && Unit == Empty && Empty == Old);
+});
+
+export def tails = test.should_ok(fn() {
+    let empty = do {};
+    let bindings = do { let a = 42; };
+    let discarded = do { 42; };
+    let tail = do { 1; let a = 2; a + 3 };
+    expect(empty == () && bindings == () && discarded == () && tail == 5);
+    expect(early() == 42);
+});
+
+export def branches = test.should_ok(fn() {
+    let unit = if True { 1; } else {};
+    let value = if False { fail!("unreachable"); } else { 42 };
+    let other = if True { 42 } else { fail!("unreachable"); };
+    expect(unit == () && value == 42 && other == 42);
+});
+
+export def failure = test.should_fail_with(fn() {
+    fail!("discarded failure");
+}, "discarded failure");
+
+export def bound_failure = test.should_fail_with(fn() {
+    let value = fail!("bound failure");
+}, "bound failure");

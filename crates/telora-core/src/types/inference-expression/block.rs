@@ -32,6 +32,7 @@ impl<'a> GenericInference<'a> {
         expected: Option<&TypeDescriptor>,
     ) -> Result<TypeDescriptor, String> {
         let mut environment = ScopedTypeEnvironment::new(environment);
+        let mut diverges = false;
         let declared_contracts = block
             .value
             .bindings
@@ -126,6 +127,7 @@ impl<'a> GenericInference<'a> {
             let inferred = self.infer(&binding.value.value, &environment, None);
             self.delayed_initializer_depth -= 1;
             let inferred = inferred?;
+            diverges |= matches!(&*self.variables.head(&inferred), TypeDescriptor::Never);
             let scheme = self.generalize_local_closure(
                 &inferred,
                 first_owned_variable,
@@ -230,6 +232,7 @@ impl<'a> GenericInference<'a> {
                 self.record_failure_expected_location(expected_location);
             }
             let inferred = inferred?;
+            diverges |= matches!(&*self.variables.head(&inferred), TypeDescriptor::Never);
             if matches!(
                 binding.value.kind,
                 BindingKind::Let | BindingKind::Def | BindingKind::Impl | BindingKind::Import
@@ -268,7 +271,11 @@ impl<'a> GenericInference<'a> {
                 }
             }
         }
-        let result = self.infer(&block.value.result, &environment, expected)?;
+        let result = self.infer(
+            &block.value.result,
+            &environment,
+            if diverges { None } else { expected },
+        )?;
         for (name, descriptor, first_owned_variable) in delayed {
             if let Some(query) = &self.query {
                 query.check().map_err(|error| error.to_string())?;
@@ -281,6 +288,10 @@ impl<'a> GenericInference<'a> {
                 ));
             }
         }
-        Ok(self.normalize(&result))
+        Ok(if diverges {
+            TypeDescriptor::Never
+        } else {
+            self.normalize(&result)
+        })
     }
 }

@@ -74,7 +74,7 @@ impl<'tree> Program<'tree> {
     }
 
     pub fn body(self) -> Option<Body<'tree>> {
-        child_node(self.syntax, Rule::Body).and_then(Body::from_syntax)
+        child_node(self.syntax, Rule::ModuleBody).and_then(Body::from_syntax)
     }
 }
 
@@ -96,15 +96,23 @@ pub struct Body<'tree> {
 
 impl<'tree> Body<'tree> {
     fn from_syntax(syntax: SyntaxNode<'tree>) -> Option<Self> {
-        (syntax.rule() == Some(Rule::Body)).then_some(Self { syntax })
+        matches!(syntax.rule(), Some(Rule::Body | Rule::ModuleBody)).then_some(Self { syntax })
     }
 
     pub fn bindings(self) -> impl Iterator<Item = Binding<'tree>> {
-        self.syntax.children().filter_map(Binding::from_syntax)
+        self.body_chain()
+            .flat_map(|body| body.syntax.children().filter_map(Binding::from_syntax))
     }
 
     pub fn result(self) -> Option<Expr<'tree>> {
-        expression_slots(self.syntax).into_iter().last().flatten()
+        let tail = self.body_chain().last()?;
+        expression_slots(tail.syntax).into_iter().last().flatten()
+    }
+
+    fn body_chain(self) -> impl Iterator<Item = Self> {
+        std::iter::successors(Some(self), |body| {
+            child_node(body.syntax, Rule::Body).and_then(Self::from_syntax)
+        })
     }
 }
 

@@ -244,3 +244,26 @@
         assert_eq!(account.diagnostics().len(), 1);
         assert_eq!(account.diagnostics()[0].message, "discarded");
     }
+
+    #[test]
+    fn expression_statements_preserve_order_failures_and_unit() {
+        let function = compile_source("statements.telora", r#"
+            let notice: Fn(String) -> Result(Int, String) = fn(message) { Result.Err(message) };
+            do {
+                notice.should_ok!("first");
+                let middle = notice.should_ok!("middle");
+                notice.should_ok!("last");
+            }
+        "#).unwrap();
+        let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
+        let value = function.execute_with_account(&mut Vm::new(), &mut account).unwrap();
+        assert_eq!(value.to_string(), "()");
+        assert_eq!(account.diagnostics().iter().map(|diagnostic| diagnostic.message.as_str()).collect::<Vec<_>>(),
+            ["first", "middle", "last"]);
+
+        assert_eq!(run("do { 1; let a = 2; a + 3 }").unwrap().to_string(), "5");
+        assert_eq!(run("let f: Fn() -> Int = fn() { 1; return 42; }; f()").unwrap().to_string(), "42");
+        assert_eq!(run("do { let a: () = (); a; }").unwrap().to_string(), "()");
+        assert!(run("do { fail!(\"stopped\"); 42 }").is_err());
+        assert!(run("do { let a = fail!(\"stopped\"); }").is_err());
+    }

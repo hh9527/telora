@@ -177,6 +177,20 @@ let entry: Tuple([String, Int]) = ("port", 8080);
 `Tuple` 是接收单个 TypeMetadata Array 的普通元数据构造器。该形式在类型 alias、
 显式元数据表达式和受限契约中一致；`Tuple(A, B)` 不是 Tuple 类型的另一种写法。
 
+空 Tuple 值写作 `()`，其类型也可在显式类型槽位写作 `()`。Prelude 中的 `Unit`
+是该结构类型的别名，与 `Tuple([])` 身份相同，不创建新的 nominal 类型：
+
+```telora
+type Empty = ();
+let value: () = ();
+let alias: Unit = value;
+```
+
+该类型记法适用于 annotation 根、type initializer 根、声明的 member 类型、显式
+类型实参和受限契约（含嵌套参数）；普通表达式调用的实参仍是数据。因此通用元数据
+表达式使用 `Array(Unit)`，不把 `Array(())` 的空 Tuple 数据隐式改成类型。
+非空 Tuple 类型仍写作 `Tuple([A, B])`；类型与元数据的现有边界不变。
+
 Tuple 字面量的 spread 按位置拼接静态已知的 Tuple：
 `(...pair, True, 3)` 展开 pair 后追加 Bool 和 Int 元素。每个位置
 保持独立类型，多个 spread 按书写顺序展开一层；空 Tuple 不贡献元素，普通
@@ -337,6 +351,21 @@ let result = {
 };
 ```
 
+普通 block 允许以 `;` 结尾的表达式语句，按顺序各求值一次并丢弃结果。没有尾表达式
+时，正常到达末尾返回 `()`；该规则同样适用于函数体和分支中的 block：
+
+```telora
+do {}                       # Unit
+do { let a = 42; }           # Unit
+do { 42; }                  # Unit
+do { 1; 42 }                # Int，结果为 42
+```
+
+丢弃结果不免除类型检查、失败传播或执行配额。`return`、`fail!`、`panic!` 等
+`Never` 路径不会因尾分号变成 Unit；只有正常 fallthrough 才产生隐式空 Tuple。
+`return expression;` 保留原有语法，`if` 仍须有 `else`。顶层模块不接受表达式语句；
+有歧义的裸 `{}` 仍表示字典，`do {}` 明确表示 block。
+
 当前表面包括算术、比较、短路布尔运算、field selection、调用、pipeline、条件、
 模式匹配、传播和显式返回。主要运算符包括：
 
@@ -481,6 +510,7 @@ Telora 使用结构化静态类型和双向检查。当前公开类型类别包�
 ```text
 Int, Float, String, Bytes
 Array(A), Dict(A), Tuple([...])
+() (Unit)
 Struct, Enum
 Fn(...) -> ...
 Type, TypeOf(A), Dyn, opaque native type
@@ -506,7 +536,12 @@ Native opaque type 具有由注册模块和 slot 决定的名义身份，普通�
 Fn(A) -> Tuple([B, C])
 Fn(Fn(A) -> B) -> Array(Tuple([A, B]))
 Fn(types.Input, Array(types.Item)) -> types.Output
+Fn() -> ()
+Fn(()) -> Unit
 ```
+
+`Fn() -> ()` 没有参数；`Fn(()) -> Unit` 有一个空 Tuple 参数。`Fn` 和调用 arity
+规则不变，不能省略 `Fn`。
 
 契约中的类型名接受模块限定路径；限定路径在参数、结果、嵌套 family 实参和普通
 类型标注中的含义一致。消费者可以用 whole-module alias 保持类型 namespace，

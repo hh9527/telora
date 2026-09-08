@@ -166,7 +166,7 @@ impl<'a> Lowerer<'a> {
                 ExprKind::Closure {
                     parameters: self.parameters(parameters)?,
                     result_annotation: result_annotation
-                        .map(|annotation| self.expression(annotation).map(Box::new))
+                        .map(|annotation| self.type_expression(annotation).map(Box::new))
                         .transpose()?,
                     body: self.block_body(block)?,
                 }

@@ -261,17 +261,20 @@ fn infer_block_with(
     record: &mut impl FnMut(crate::Location, &TypeDescriptor),
 ) -> Option<TypeDescriptor> {
     let mut environment = ScopedTypeEnvironment::new(environment);
+    let mut diverges = false;
     for binding in &block.value.bindings {
         environment.remove(&binding.value.name.value);
     }
     for binding in &block.value.bindings {
         if let Some(annotation) = &binding.value.annotation { infer_expr_with(annotation, &environment, record); }
         let inferred = infer_expr_with(&binding.value.value, &environment, record);
+        diverges |= matches!(inferred, Some(TypeDescriptor::Never));
         if matches!(binding.value.kind, BindingKind::Let | BindingKind::Def | BindingKind::Import) {
             set_projected_type(&mut environment, &binding.value.name.value, inferred);
         }
     }
-    infer_expr_with(&block.value.result, &environment, record)
+    let result = infer_expr_with(&block.value.result, &environment, record);
+    if diverges { Some(TypeDescriptor::Never) } else { result }
 }
 
 fn clear_pattern_types(pattern: &Pattern, environment: &mut dyn MutableTypeEnvironment) {
