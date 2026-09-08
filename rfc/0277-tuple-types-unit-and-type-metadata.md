@@ -1,6 +1,6 @@
 # RFC 0277: Tuple Types, Unit, and Explicit Type Metadata
 
-- Status: Stage 1 implemented locally. Stage 2 remains proposed.
+- Status: Stage 1 committed locally. Stage 2 accepted; implementation in progress.
 - Baseline: Current [language design](../docs/design/LANGUAGE.md), sections 3,
   4, 6 and 7, and [type concepts](../docs/design/CONCEPT.md).
 - Related: RFC 0219 (Function notation and Tuple contracts), RFC 0272 (Tuple
@@ -48,10 +48,28 @@ reinterpret `Array(())` there or rewrite arguments to user metadata helpers.
 Parenthesized grouping around an explicit empty type is transparent. The `()`
 type notation must not depend on whether the public name `Unit` is shadowed.
 
-Stage 2 remains proposed: nonempty tuple type notation, `.type`, and the
-type/data boundary with its API migration. The open decisions below block
-stage 2 only. Commit this accepted scope before implementing stage 1; update
-the current design and guide only for the behavior actually implemented.
+Stage 2 is accepted with the following boundaries. Types are produced only by
+declarations, structural type constructors and parameterized type families.
+Ordinary metadata computations cannot become static types, including in a
+`type` initializer or an annotation. `T.type` is a one-way bridge with result
+`TypeOf(T)`, assignable to `Type`; reflection does not provide the reverse bridge.
+`let` and `def` bind data, while `type` binds types. Metadata-valued locals and
+ordinary function parameters remain data even when their static type is TypeOf.
+
+Type roles follow resolved declarations and module interfaces, not spelling or
+runtime values. Nominal value constructors keep their existing callable facet;
+this is distinct from passing their type metadata. Function notation retains
+`Fn`. Empty tuples follow their explicit enclosing type/data role. Nonempty
+tuple type items recursively occupy type slots. Type-tuple spread is deferred;
+ordinary data tuple spread remains unchanged. Ordinary metadata APIs consume
+explicit `.type` values and cannot modify type skeletons or create static types.
+
+Existing tests for programmable metadata-to-type conversion must become focused
+rejection cases; their existence does not justify preserving the capability.
+Internal canonical type construction may reuse the existing representation and
+trusted machinery, but must not execute arbitrary user helpers to determine a
+type skeleton. The audit and open questions below record the earlier discussion;
+these accepted rules supersede the suggested reverse bridge.
 
 ### Stage 1 Implementation and Verification
 
