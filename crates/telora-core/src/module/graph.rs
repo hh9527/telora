@@ -29,6 +29,7 @@ struct ExportPlan {
 #[derive(Clone, Debug)]
 struct ModuleSkeleton {
     id: ModuleId,
+    source: Option<crate::SourceId>,
     cname: ModuleCName,
     imports: Vec<ImportEdge>,
     exports: Vec<ExportPlan>,
@@ -314,6 +315,7 @@ impl ModuleGraph {
                     .collect();
                 ModuleSkeleton {
                     id,
+                    source: prepared.get(&cname).map(|module| module.source_id),
                     cname,
                     imports,
                     exports: blueprint.exports,

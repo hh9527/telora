@@ -512,3 +512,24 @@ speedup claim. Diamond-400 allocations decreased 0.69%, while peak heap increase
 0.11 MB and RSS median increased 0.91%. Retaining the new graph alongside legacy
 structures has a cost; the later declaration/type migration must eliminate that
 duplication. Detailed evidence is in the measurement appendix.
+
+### Shared artifact consumers checkpoint
+
+The module skeleton now has a source identity edge. Strict loading of that same
+source uses ModuleId directly, without cloning the skeleton or rebuilding its
+declaration/export/import plans for equality checking. Existing non-discovery
+entry validation remains. The source-change regression fixture now exercises a
+workspace/package source snapshot.
+
+Within strict and partial analysis, the tool inference context and enclosing
+analysis share one HIR allocation. The current public Analysis receives ownership
+after the temporary context is released; no HIR tree clone is used at that
+handoff. This removes an ownership transition but does not yet resolve HIR before
+imported value initialization or unify strict-failure recovery with the same
+inference records. Full workspace tests (333 core, 41 CLI including language
+acceptance), release build and diff/source-size checks passed. Ten-sample
+two-order check medians changed by -0.17% to -1.10%, insufficient for a strong
+speedup claim. Property-400 peak heap decreased 35.16 -> 33.83 MB (-3.78%)
+and uninstrumented RSS median 48,036 -> 46,376 KiB (-3.46%). These check
+workloads exercise HIR sharing, not the strict loader's skeleton shortcut.
+The direct type-contract elaboration path remains outstanding.

@@ -284,3 +284,34 @@ Validation logs: `/tmp/rfc0280-import-graph-{workspace,release}.log`.
 All workspace tests passed (333 core, 41 CLI including language acceptance).
 This covers only the import-reference foundation, not full information-graph
 solving, static export/constructor resolution or zero-execution type inference.
+
+## Shared artifact consumers checkpoint, 2026-09-09
+
+Preserved optimized uninstrumented binaries: `/tmp/telora-perf-173/telora-import-graph`
+(`a7fda2b`) and `/tmp/telora-perf-173/telora-shared-artifacts`. Two orderings each
+used one warmup and five samples, without concurrent tests/builds/profilers.
+Pooled medians:
+
+| Case | a7fda2b median ms | Shared artifacts median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 146.36 | 144.76 | -1.10% |
+| property-400 | 581.86 | 576.86 | -0.86% |
+| shared-wide-400 | 430.24 | 427.52 | -0.63% |
+| diamond-400 | 562.68 | 561.71 | -0.17% |
+
+These small timing changes do not establish a clear speedup. Property-400
+allocation calls decreased 2,558,518 -> 2,541,510 (-0.66%), peak heap decreased
+35.16 -> 33.83 MB (-3.78%). Five uninstrumented RSS runs gave medians
+48,036 -> 46,376 KiB (-3.46%). Memory profiling ran separately from timing.
+These `check` workloads use recovery loading and measure HIR sharing; they do
+not quantify the separate removal of strict-loader skeleton reconstruction.
+
+All workspace tests passed (333 core, 41 CLI including language acceptance),
+as did release build and diff/source-size checks. Evidence:
+`/tmp/rfc0280-shared-artifacts-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-{import-graph,shared-artifacts}-property-heap.txt`, raw
+`/tmp/telora-perf-173/{import-graph,shared-artifacts}-property.heap.zst`, and
+`/tmp/rfc0280-shared-artifacts-{workspace,release}.log`.
+This checkpoint shares HIR within each analysis, not yet across the full
+session or strict-failure recovery. Static type-contract elaboration remains
+the next major execution boundary to replace.

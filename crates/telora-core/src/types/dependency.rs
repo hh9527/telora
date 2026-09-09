@@ -167,7 +167,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .map(|binding| binding.value.name.value.as_str())
         .collect::<HashSet<_>>();
-    let hir = HirProgram::resolve_with_member_constructors(
+    let hir = Arc::new(HirProgram::resolve_with_member_constructors(
         program,
         prelude
             .types
@@ -180,7 +180,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             interface.value_binding.as_deref() == Some(name.as_str())
                 && interface.member_constructors.contains_key(*name))
             .map(|(name, _)| name.clone()).collect(),
-    );
+    ));
     let prelude_value_names = prelude
         .types
         .keys()
@@ -2456,6 +2456,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .chain(runtime_roots.keys())
         .cloned()
         .collect();
+    evaluator.inference_context = None;
+    let hir = Arc::try_unwrap(hir).expect("analysis is the remaining HIR owner");
     Ok(Analysis {
         types,
         declared_types,

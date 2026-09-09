@@ -10,7 +10,7 @@ struct ToolEvaluator<'a> {
 }
 
 struct ToolInferenceContext {
-    hir: HirProgram,
+    hir: Arc<HirProgram>,
     interfaces: BTreeMap<String, ModuleInterface>,
     environment: HashMap<String, TypeDescriptor>,
     schemes: HashMap<String, TypeScheme>,
@@ -183,7 +183,7 @@ impl ToolInferenceContext {
     }
 
     fn new(
-        hir: HirProgram,
+        hir: impl Into<Arc<HirProgram>>,
         interfaces: BTreeMap<String, ModuleInterface>,
         environment: HashMap<String, TypeDescriptor>,
         schemes: HashMap<String, TypeScheme>,
@@ -200,7 +200,7 @@ impl ToolInferenceContext {
         let display_trait = interfaces.values().find_map(|interface| interface.display_trait)
             .map(|id| (id, "std/fmt.Display".to_owned()));
         let mut context = Self {
-            hir, interfaces, environment, schemes, named_types, builtin_tuple_available,
+            hir: hir.into(), interfaces, environment, schemes, named_types, builtin_tuple_available,
             dyn_namespaces, declared_bodies: HashMap::new(), trait_implementations,
             type_properties, trait_ids, display_trait, supports_constructors: false,
         };

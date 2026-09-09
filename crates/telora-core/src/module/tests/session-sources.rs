@@ -1,16 +1,15 @@
 #[test]
 fn session_discovery_source_is_reused_after_files_change() {
     let directory = fixture_dir();
-    let path = directory.join("main.telora");
+    fs::create_dir_all(directory.join("src")).unwrap();
+    let path = directory.join("src/main.telora");
     fs::write(
-        directory.join("shared.telora"),
+        directory.join("src/shared.telora"),
         "export def value: Int = 42;",
     )
     .unwrap();
     fs::write(&path, "import \"./shared\" {value}; export {value};").unwrap();
-    let resolver = ModuleResolver::for_root(&path)
-        .unwrap()
-        .with_builtins(builtin_list());
+    let resolver = session_workspace_resolver(&directory, &["@src/main", "@src/shared"]);
     let root = resolver.selected_root().unwrap();
     let mut sources = SourceDatabase::default();
     let graph = ModuleGraph::discover(
@@ -47,7 +46,7 @@ fn session_discovery_source_is_reused_after_files_change() {
     // Neither new text nor a now-invalid dependency can change the session's
     // source identities after discovery. A new session will see those edits.
     fs::write(&path, "this is invalid source").unwrap();
-    fs::write(directory.join("shared.telora"), "this is invalid too").unwrap();
+    fs::write(directory.join("src/shared.telora"), "this is invalid too").unwrap();
     let (_, compiled) = loader.compile_root(root.clone(), BTreeMap::new()).unwrap();
     assert!(
         compiled

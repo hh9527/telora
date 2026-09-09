@@ -363,6 +363,8 @@ impl ModuleLoader {
             prepared
         };
         let source_id = prepared.source_id;
+        let discovered_source = self.main.modules.id(module_id).is_some_and(|id|
+            self.main.modules.module(id).source == Some(source_id));
         let program = prepared.program.as_ref().ok_or_else(|| {
             ModuleError::new(
                 prepared
@@ -384,23 +386,28 @@ impl ModuleLoader {
                     "module {module_id} was not present during module graph discovery"
                 ))
             })?;
-            let skeleton = self.main.modules.module(id).clone();
-            let parsed_blueprint = ModuleBlueprint::from_program(&program).map_err(|message| {
-                ModuleError::new(format!(
-                    "module {module_id} has an invalid skeleton: {message}"
-                ))
-            })?;
-            if skeleton.id != id
-                || skeleton.cname != *module_id
-                || skeleton.exports != parsed_blueprint.exports
-                || skeleton.slots != parsed_blueprint.slots
-            {
-                return Err(ModuleError::new(format!(
-                    "module {module_id} changed after its static skeleton was assigned"
-                )));
+            if !discovered_source {
+                let skeleton = self.main.modules.module(id);
+                let parsed_blueprint = ModuleBlueprint::from_program(&program).map_err(|message| {
+                    ModuleError::new(format!(
+                        "module {module_id} has an invalid skeleton: {message}"
+                    ))
+                })?;
+                if skeleton.id != id
+                    || skeleton.cname != *module_id
+                    || skeleton.exports != parsed_blueprint.exports
+                    || skeleton.slots != parsed_blueprint.slots
+                {
+                    return Err(ModuleError::new(format!(
+                        "module {module_id} changed after its static skeleton was assigned"
+                    )));
+                }
             }
-            Some(skeleton)
+            Some(id)
         };
+        // A discovered source and its declarations are the same session facts,
+        // not two versions needing comparison. Only legacy inputs are checked.
+        let validate_imports = skeleton.is_some() && !discovered_source;
         let has_explicit_exports = program
             .value
             .body
@@ -480,7 +487,7 @@ impl ModuleLoader {
                         binding.value.value.location,
                     )))
                 })?;
-            if skeleton.is_some() {
+            if validate_imports {
                 let imported_module_id = self.main.modules.id(&imported.id).ok_or_else(|| {
                     ModuleError::new(format!(
                         "imported module {} was not present during module graph discovery",
@@ -590,7 +597,7 @@ impl ModuleLoader {
             self.install_trait_impl_roots(module, &mut external_roots)?;
             self.install_type_property_roots(module, &mut external_roots)?;
             let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
-            if skeleton.is_some() {
+            if validate_imports {
                 let target = self.main.modules.id(&provider).ok_or_else(|| {
                     ModuleError::new("prelude was not present during module graph discovery")
                 })?;
@@ -619,7 +626,7 @@ impl ModuleLoader {
         {
             self.install_trait_impl_roots(module, &mut external_roots)?;
             let provider = ModuleCName::Builtin(FMT_MODULE.into());
-            if skeleton.is_some() {
+            if validate_imports {
                 let target = self.main.modules.id(&provider).ok_or_else(|| {
                     ModuleError::new("std/fmt was not present during module graph discovery")
                 })?;
@@ -630,8 +637,8 @@ impl ModuleLoader {
             }
             external_interfaces.insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
         }
-        if let Some(skeleton) = &skeleton
-            && skeleton.imports != graph_imports
+        if let Some(id) = skeleton.filter(|_| validate_imports)
+            && self.main.modules.module(id).imports != graph_imports
         {
             return Err(ModuleError::new(format!(
                 "module {module_id} import graph changed after static discovery"
@@ -724,9 +731,7 @@ impl ModuleLoader {
         }
         let analysis = analyze_program_with_bindings_observed(
             &source_name,
-            skeleton
-                .as_ref()
-                .map_or(ModuleId::ANONYMOUS, |skeleton| skeleton.id),
+            skeleton.unwrap_or(ModuleId::ANONYMOUS),
             ModuleAnalysisContext::Ordinary,
             &program,
             account,
@@ -757,8 +762,8 @@ impl ModuleLoader {
             erased_metadata_bindings = metadata.erased_bindings;
             promoted_types.extend(metadata.type_names);
         }
-        let static_funcs = skeleton.as_ref().map_or_else(HashMap::new, |skeleton| {
-            self.main.modules.static_funcs(skeleton.id)
+        let static_funcs = skeleton.map_or_else(HashMap::new, |id| {
+            self.main.modules.static_funcs(id)
         });
         let function = if promoted_types.is_empty() {
             compile_program_analyzed_in_module(
