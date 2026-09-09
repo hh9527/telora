@@ -158,6 +158,11 @@ CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
 转交给现有公开 Analysis；该转交不复制 HIR。跨阶段的 HIR 预先解析与跨模块声明边
 尚未统一，因此这里不宣称已完成全局 HIR 求解。
 
+已发现模块的 PreparedModule 现在归属于 ModuleId 索引的节点；未发现入口保留独立
+兼容存储。恢复分析借用该节点中的 AST，语义快照输入只携带所需的结果位置，不再
+持有整份 AST 副本。当前 Arc 仍用于跨越递归加载器的借用边界；目标是 session 统一
+持有语法/HIR arena，各阶段仅持 ID 并借用，须继续拆分依赖准备与编译的可变状态。
+
 声明契约的静态展开入口只读取 AST、HIR 名称解析、模块接口、类型环境和符号参数，不接收 VM
 或 heap。已知类型引用、函数、元组、Unit、Array/Dict/TypeOf 直接进入同一个最终
 Analysis 类型图；普通内建名称受遮蔽检查约束。现有 TypeScheme 边界仍会物化描述符。

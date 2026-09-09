@@ -246,7 +246,7 @@
                 path: None,
                 kind: WorkspaceModuleKind::Telora,
                 source: Some(source),
-                program: Some(program),
+                result_location: Some(program.value.body.value.result.location),
                 analysis: Some(analysis),
                 partial: None,
                 interface: None,

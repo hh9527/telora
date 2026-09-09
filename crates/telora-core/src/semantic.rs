@@ -1,4 +1,3 @@
-use crate::ast::Program;
 use crate::hir::{HirDefinitionId, HirProgram, HirResolution};
 use crate::module_id::ModuleCName;
 use crate::source::{Diagnostic, Location, SourceDatabase, SourceId};
@@ -954,7 +953,7 @@ impl WorkspaceSnapshot {
                 path: None,
                 kind: WorkspaceModuleKind::Core,
                 source: None,
-                program: None,
+                result_location: None,
                 analysis: None,
                 partial: None,
                 interface: None,
@@ -1016,10 +1015,7 @@ impl WorkspaceSnapshot {
                 state: input.state,
                 source: input.source,
                 imports,
-                result_location: input
-                    .program
-                    .as_ref()
-                    .map(|program| program.value.body.value.result.location),
+                result_location: input.result_location,
                 result_type,
                 export_schemes: input
                     .analysis
@@ -1434,7 +1430,7 @@ pub(crate) struct SemanticModuleInput {
     pub path: Option<PathBuf>,
     pub kind: WorkspaceModuleKind,
     pub source: Option<SourceId>,
-    pub program: Option<Program>,
+    pub result_location: Option<Location>,
     pub analysis: Option<Analysis>,
     pub partial: Option<PartialAnalysis>,
     pub interface: Option<SemanticModuleInterface>,

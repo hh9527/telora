@@ -750,3 +750,41 @@ Evidence: `/tmp/rfc0280-family-obligations-{core,workspace,release}.log`,
 `/tmp/rfc0280-family-obligations{,-baseline}-heap.txt`, raw
 `/tmp/telora-perf-173/family-obligations{,-baseline}.heap.zst`, and
 `/tmp/rfc0280-qualified-obligation.vFmBa0` (isolated negative CLI input).
+
+## Module-owned syntax facts and minimal semantic handoff, 2026-09-09
+
+Incremental comparison against `a6f9950`: `/tmp/telora-perf-173/telora-family-obligations`
+versus `telora-module-facts` in the same directory, both default optimized release
+without inference profiling. Two opposite version orders, one warmup plus five
+samples each, yield ten pooled samples per workload/version. No builds, tests or
+profilers overlapped timing. Results are end-to-end CLI `check` medians.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 115.27 | 113.03 | -1.94% |
+| typed-types-400 | 268.71 | 269.95 | +0.46% |
+| property-types-400 | 365.73 | 357.24 | -2.32% |
+| shared-wide-400 | 235.04 | 234.75 | -0.12% |
+| module-diamond-400 | 535.41 | 526.45 | -1.67% |
+
+Timing movements are small and do not demonstrate a broad speedup. Prepared syntax
+for discovered modules now lives on the ModuleId-indexed row; undiscovered entry
+paths retain separate compatibility storage. Semantic snapshot inputs carry only
+the required result location rather than a cloned Program. Recovery borrows the
+original Program. Per-module Arc still bridges recursive loader borrowing and is
+explicitly transitional, not the final session-arena ownership model.
+
+Separate property-types-400 heaptrack runs measured allocation calls
+1,767,969 -> 1,751,611 (-0.93%) and peak heap 31.73 -> 29.23 MB (-7.88%).
+Profiler runtime/RSS are not uninstrumented process measurements.
+
+Full workspace passed 358 core, 41 CLI including language acceptance, and all
+other workspace/doc tests. Release and diff/source-size checks passed. Existing
+session source-reuse coverage now checks that discovered syntax resides on its
+ModuleId row and survives backing-file changes without reconstruction.
+
+Evidence: `/tmp/rfc0280-module-facts-{workspace,release}.log`,
+`/tmp/rfc0280-module-facts-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-module-facts-memory-workspace`,
+`/tmp/rfc0280-module-facts{,-baseline}-heap.txt`, raw
+`/tmp/telora-perf-173/module-facts{,-baseline}.heap.zst`.

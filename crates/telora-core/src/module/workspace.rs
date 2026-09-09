@@ -118,7 +118,7 @@ impl WorkspaceBuilder<'_> {
                 self.cycle_members.insert(module_id.clone());
                 return None;
             }
-            let parsed = if let Some(parsed) = self.main.modules.prepared.get(&module_id) {
+            let parsed = if let Some(parsed) = self.main.modules.prepared(&module_id) {
                 Arc::clone(parsed)
             } else {
                 let source = match self.overlays.get(&path).cloned() {
@@ -136,11 +136,11 @@ impl WorkspaceBuilder<'_> {
                     },
                 };
                 let parsed = PreparedModule::parse(&mut self.sources, &module_id, source);
-                self.main.modules.prepared.insert(module_id.clone(), Arc::clone(&parsed));
+                self.main.modules.publish_prepared(&module_id, Arc::clone(&parsed));
                 parsed
             };
             let source_id = parsed.source_id;
-            let program = parsed.program.clone();
+            let program = parsed.program.as_ref();
             let imports = parsed
                 .recovered
                 .bindings
@@ -553,7 +553,7 @@ impl WorkspaceBuilder<'_> {
                     path: Some(path.clone()),
                     kind: WorkspaceModuleKind::Telora,
                     source: Some(source_id),
-                    program,
+                    result_location: program.map(|program| program.value.body.value.result.location),
                     analysis,
                     partial,
                     interface: None,
@@ -628,7 +628,7 @@ impl WorkspaceBuilder<'_> {
                 path: Some(path),
                 kind: parsed.kind,
                 source: Some(source_id),
-                program: None,
+                result_location: None,
                 analysis: None,
                 partial: None,
                 interface: Some(SemanticModuleInterface::new(&interface)),
@@ -908,7 +908,7 @@ fn unavailable_input(key: String, path: PathBuf, kind: WorkspaceModuleKind) -> S
         path: Some(path),
         kind,
         source: None,
-        program: None,
+        result_location: None,
         analysis: None,
         partial: None,
         interface: None,

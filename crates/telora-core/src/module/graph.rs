@@ -30,6 +30,7 @@ struct ExportPlan {
 struct ModuleSkeleton {
     id: ModuleId,
     source: Option<crate::SourceId>,
+    prepared: Option<Arc<PreparedModule>>,
     cname: ModuleCName,
     imports: Vec<ImportEdge>,
     exports: Vec<ExportPlan>,
@@ -47,7 +48,7 @@ struct ModuleBlueprint {
 struct ModuleGraph {
     modules: Vec<ModuleSkeleton>,
     by_cname: HashMap<ModuleCName, ModuleId>,
-    prepared: HashMap<ModuleCName, Arc<PreparedModule>>,
+    undiscovered_prepared: HashMap<ModuleCName, Arc<PreparedModule>>,
     resolved: Vec<Option<ResolvedModule>>,
     import_targets: ImportGraph,
 }
@@ -78,6 +79,21 @@ impl PreparedModule {
 }
 
 impl ModuleGraph {
+    fn prepared(&self, cname: &ModuleCName) -> Option<&Arc<PreparedModule>> {
+        self.id(cname).and_then(|id| self.module(id).prepared.as_ref())
+            .or_else(|| self.undiscovered_prepared.get(cname))
+    }
+
+    fn publish_prepared(&mut self, cname: &ModuleCName, prepared: Arc<PreparedModule>) {
+        if let Some(id) = self.id(cname) {
+            self.modules[id.index()].prepared = Some(prepared);
+        } else {
+            // Direct entry paths without discovery retain their existing source
+            // ownership; they do not invent a discovery identity during loading.
+            self.undiscovered_prepared.insert(cname.clone(), prepared);
+        }
+    }
+
     fn resolve_import(
         &self,
         resolver: &ModuleResolver,
@@ -316,6 +332,7 @@ impl ModuleGraph {
                 ModuleSkeleton {
                     id,
                     source: prepared.get(&cname).map(|module| module.source_id),
+                    prepared: prepared.remove(&cname),
                     cname,
                     imports,
                     exports: blueprint.exports,
@@ -323,7 +340,8 @@ impl ModuleGraph {
                 }
             })
             .collect();
-        Ok(Self { modules, by_cname, prepared, resolved: registered, import_targets })
+        debug_assert!(prepared.is_empty());
+        Ok(Self { modules, by_cname, undiscovered_prepared: HashMap::new(), resolved: registered, import_targets })
     }
 }
 
@@ -941,7 +959,7 @@ fn install_native_modules_observed(
                     path: None,
                     kind: WorkspaceModuleKind::Core,
                     source: Some(source_id),
-                    program: Some(program),
+                    result_location: Some(program.value.body.value.result.location),
                     analysis: Some(analysis),
                     partial: None,
                     interface: None,

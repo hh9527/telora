@@ -275,7 +275,7 @@ impl ModuleLoader {
                             path: Some(path.clone()),
                             kind,
                             source: Some(source_id),
-                            program: None,
+                            result_location: None,
                             analysis: None,
                             partial: None,
                             interface: Some(SemanticModuleInterface::new(&interface)),
@@ -347,7 +347,7 @@ impl ModuleLoader {
         let path = module_source.context_path();
         let synthetic = matches!(module_source, TeloraModuleSource::Synthetic { .. });
         let source_name = module_id.to_string();
-        let prepared = if let Some(prepared) = self.main.modules.prepared.get(module_id) {
+        let prepared = if let Some(prepared) = self.main.modules.prepared(module_id) {
             Arc::clone(prepared)
         } else {
             let source = match module_source {
@@ -359,7 +359,7 @@ impl ModuleLoader {
             };
             let prepared = PreparedModule::parse(&mut self.sources, module_id,
                 crate::document::DocumentText::new(source));
-            self.main.modules.prepared.insert(module_id.clone(), Arc::clone(&prepared));
+            self.main.modules.publish_prepared(module_id, Arc::clone(&prepared));
             prepared
         };
         let source_id = prepared.source_id;
@@ -791,7 +791,7 @@ impl ModuleLoader {
                 path: (!synthetic).then(|| path.to_owned()),
                 kind: WorkspaceModuleKind::Telora,
                 source: Some(source_id),
-                program: Some(program.clone()),
+                result_location: Some(program.value.body.value.result.location),
                 analysis: Some(analysis.clone()),
                 partial: None,
                 interface: None,

@@ -24,7 +24,9 @@ fn session_discovery_source_is_reused_after_files_change() {
         &mut sources,
     )
     .unwrap();
-    let prepared = Arc::clone(&graph.prepared[&root.id]);
+    let id = graph.id(&root.id).unwrap();
+    let prepared = Arc::clone(graph.module(id).prepared.as_ref().unwrap());
+    assert!(graph.undiscovered_prepared.is_empty());
     let source_id = prepared.source_id;
     let mut main = MainWorld::with_modules(graph);
     let debug_sink: Arc<dyn DebugSink> = Arc::new(DiscardDebugSink);
@@ -57,7 +59,7 @@ fn session_discovery_source_is_reused_after_files_change() {
     );
     assert!(Arc::ptr_eq(
         &prepared,
-        &loader.main.modules.prepared[&root.id]
+        loader.main.modules.prepared(&root.id).unwrap()
     ));
     assert_eq!(
         loader.semantic_inputs[&root.id.to_string()].source,
@@ -103,7 +105,7 @@ fn session_discovery_retains_invalid_overlay_for_recovery() {
         &mut sources,
     )
     .unwrap();
-    let parsed = &graph.prepared[&root.id];
+    let parsed = graph.prepared(&root.id).unwrap();
     assert!(graph.id(&root.id).is_some());
     assert!(parsed.program.is_none());
     assert!(!parsed.diagnostics.is_empty());
@@ -146,7 +148,7 @@ fn session_import_aliases_share_target_before_value_initialization() {
         &mut sources,
     )
     .unwrap();
-    let imports = &graph.prepared[&root.id]
+    let imports = &graph.prepared(&root.id).unwrap()
         .program
         .as_ref()
         .unwrap()
@@ -159,7 +161,7 @@ fn session_import_aliases_share_target_before_value_initialization() {
     let id = graph.import_targets.target(first).unwrap().unwrap();
     assert_eq!(graph.import_targets.target(second).unwrap().unwrap(), id);
     let target = graph.resolved[id.index()].as_ref().unwrap();
-    assert!(graph.prepared.contains_key(&target.id));
+    assert!(graph.prepared(&target.id).is_some());
     // The target and its source stay registered without reading or executing it.
     fs::remove_file(&dependency).unwrap();
     assert_eq!(
@@ -196,7 +198,7 @@ fn session_missing_import_remains_a_fact_when_catalog_changes() {
         &mut sources,
     )
     .unwrap();
-    let location = graph.prepared[&root.id]
+    let location = graph.prepared(&root.id).unwrap()
         .program
         .as_ref()
         .unwrap()

@@ -105,6 +105,16 @@ global resource with the same lifetime. It is not necessarily the lifetime of a
 process or an LSP connection. The concrete Rust type name is an implementation
 choice; the ownership and visibility rules are not.
 
+The session owns syntax/HIR/type arenas; stages retain IDs and borrow these stores.
+Sharing a node across stages does not justify an Arc on each node or module.
+Existing Arc-backed prepared modules and HIR are migration adapters, not the target
+ownership model. An independently lived, immutable cross-session snapshot may
+have a single outer shared owner when its consumers require it. For the current
+loader, removing per-module Arc requires separating dependency preparation from
+compilation: recursive `&mut self` loading must not also own the immutable syntax
+borrow. Split syntax storage from mutable loader/execution state rather than
+cloning trees or introducing unsafe self-references to work around that boundary.
+
 ```text
 SessionWorld
   sources / parsed modules / HIR
