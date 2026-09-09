@@ -52,7 +52,7 @@ fn session_discovery_source_is_reused_after_files_change() {
     let (_, compiled) = loader.compile_root(root.clone(), BTreeMap::new()).unwrap();
     assert!(
         compiled
-            .analysis
+            .analysis(&loader.semantic_inputs)
             .module_interface
             .exports
             .contains_key("value")

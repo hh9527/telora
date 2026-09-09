@@ -400,7 +400,7 @@ impl Engine {
         let (value_owner, value_type) =
             semantic_value_contract(&loader.builtin_modules, &loader.main.heap)?;
         validate_entry_interface(
-            &entry_compiled.analysis.module_interface,
+            &entry_compiled.analysis(&loader.semantic_inputs).module_interface,
             &main_type,
             &state_type,
             &value_type,
@@ -422,7 +422,7 @@ impl Engine {
         };
         debug_assert_eq!(compiled_main_path, main_path);
         let selected = main_compiled
-            .analysis
+            .analysis(&loader.semantic_inputs)
             .module_interface
             .exports
             .get(export)
@@ -468,6 +468,7 @@ impl Engine {
             workspace.clone(),
             Arc::clone(&shared_main),
             entry_compiled,
+            &mut loader.semantic_inputs,
         );
         let main = loaded_from_compiled(
             compiled_main_path,
@@ -476,6 +477,7 @@ impl Engine {
             workspace,
             Arc::clone(&shared_main),
             main_compiled,
+            &mut loader.semantic_inputs,
         );
         let (main_world, _) =
             main.execute_world_observed(self.config.session_quota, Arc::clone(&self.debug_sink));

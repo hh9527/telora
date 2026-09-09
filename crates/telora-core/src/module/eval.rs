@@ -101,7 +101,7 @@ impl Engine {
             };
         let eval_type = entry_type_contract(&loader.builtin_modules, "Eval")?;
         if let Err(error) = validate_eval_export(
-            &main_compiled.analysis.module_interface,
+            &main_compiled.analysis(&loader.semantic_inputs).module_interface,
             export,
             &value_type,
             matches!(kind, EvalKind::With(_)).then_some(&eval_type),
@@ -124,6 +124,7 @@ impl Engine {
             workspace.clone(),
             Arc::clone(&shared_main),
             support_compiled,
+            &mut loader.semantic_inputs,
         );
         let main = loaded_from_compiled(
             compiled_main_path,
@@ -132,6 +133,7 @@ impl Engine {
             workspace,
             Arc::clone(&shared_main),
             main_compiled,
+            &mut loader.semantic_inputs,
         );
         let (main_world, _) =
             main.execute_world_observed(self.config.session_quota, Arc::clone(&self.debug_sink));

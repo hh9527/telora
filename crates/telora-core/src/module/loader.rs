@@ -165,7 +165,7 @@ impl ModuleLoader {
     ) -> Result<LoadedModule, ModuleError> {
         let (path, compiled) = self.compile_root(module, external_bindings)?;
         let CompiledTeloraModule {
-            analysis,
+            analysis_key,
             function,
             externals,
         } = compiled;
@@ -173,6 +173,8 @@ impl ModuleLoader {
             self.sources.clone(),
             self.semantic_inputs.values(),
         );
+        let analysis = self.semantic_inputs.get_mut(&analysis_key).expect("compiled module input")
+            .analysis.take().expect("compiled module analysis");
         let main = std::mem::replace(&mut self.main, MainWorld::building()).seal();
         Ok(LoadedModule {
             path,
@@ -302,15 +304,10 @@ impl ModuleLoader {
                     &mut account,
                 )
                 .and_then(|compiled| {
-                    let CompiledTeloraModule {
-                        analysis,
-                        function,
-                        externals,
-                        ..
-                    } = compiled;
+                    let analysis = compiled.analysis(&self.semantic_inputs);
                     let arena = Vm::new()
                         .with_debug_sink(Arc::clone(&self.debug_sink))
-                        .execute_in_work(&self.main.heap, &externals, &function, &[], &mut account)
+                        .execute_in_work(&self.main.heap, &compiled.externals, &compiled.function, &[], &mut account)
                         .map_err(|error| {
                             ModuleError::new(error.with_sources(&self.sources).to_string())
                         })?;
@@ -322,8 +319,8 @@ impl ModuleLoader {
                     .map_err(|error| ModuleError::new(error.to_string()))?;
                     Ok(ModuleArtifact {
                         root,
-                        root_scheme: if analysis.explicit_exports { None } else { analysis.result_scheme },
-                        interface: analysis.module_interface,
+                        root_scheme: if analysis.explicit_exports { None } else { analysis.result_scheme.clone() },
+                        interface: analysis.module_interface.clone(),
                         provenance: None,
                     })
                 })
@@ -597,12 +594,12 @@ impl ModuleLoader {
         self.semantic_inputs.insert(
             key.clone(),
             SemanticModuleInput {
-                key,
+                key: key.clone(),
                 path: (!synthetic).then(|| path.to_owned()),
                 kind: WorkspaceModuleKind::Telora,
                 source: Some(source_id),
                 result_location: Some(program.value.body.value.result.location),
-                analysis: Some(analysis.clone()),
+                analysis: Some(analysis),
                 partial: None,
                 interface: None,
                 state: crate::semantic::WorkspaceModuleState::Available,
@@ -611,7 +608,7 @@ impl ModuleLoader {
             },
         );
         Ok(CompiledTeloraModule {
-            analysis,
+            analysis_key: key,
             function,
             externals: runtime_roots(&external_roots),
         })

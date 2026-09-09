@@ -1043,3 +1043,53 @@ Evidence: `/tmp/rfc0280-metadata-batch-{check,tests,workspace,release}.log`,
 `/tmp/rfc0280-metadata-batch-memory-workspace`,
 `/tmp/rfc0280-metadata-batch{,-baseline}-heap.txt`, raw
 `/tmp/telora-perf-173/metadata-batch{,-baseline}.heap.zst`.
+
+## Session-owned strict analysis, 2026-09-09
+
+Incremental comparison against `7d3be57`: `/tmp/telora-perf-173/telora-metadata-batch`
+versus `telora-owned-analysis`. Both default release builds. Two opposite version
+orders, one warmup and five measured samples per order, ten pooled samples.
+Builds, tests and profilers did not overlap timing.
+
+The runner now supports eval: a generated source wrapper imports the workload,
+exports Value.Int(42), and evaluates that export. Every sample checks both exit
+status and decoded output. Unlike test/check's WorkspaceBuilder path, eval uses
+the modified strict ModuleLoader. A heaptrack filter for compile_telora confirms
+that this workload reaches the modified path.
+
+| Eval case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 116.85 | 116.39 | -0.39% |
+| property-types-400 | 377.54 | 373.27 | -1.13% |
+| module-diamond-400 | 542.41 | 525.09 | -3.19% |
+
+Separate heaptrack runs:
+
+| Eval case | Allocation calls before → after | Peak heap before → after |
+| --- | ---: | ---: |
+| property-types-400 | 1,812,484 → 1,792,859 (-1.08%) | 29.35 → 29.33 MB |
+| module-diamond-400 | 2,616,927 → 2,545,384 (-2.73%) | 25.80 → 26.13 MB |
+
+This removes allocation work but does not demonstrate a peak-heap improvement.
+The small timing improvements apply to these strict-loading cases, not universally.
+No new cumulative or ontology measurement is included. Profiler time/RSS are not
+uninstrumented process metrics.
+
+An initial test-mode comparison did not exercise the modified loader and is kept
+as control evidence: constant 117.15 → 118.03 ms (+0.76%), property 372.98 → 373.93 ms
+(+0.26%), diamond 534.40 → 533.67 ms (-0.14%). Test/property allocations were effectively
+unchanged (1,784,765 → 1,784,826), peak heap 29.27 MB for both. These results prompted
+the call-path audit and addition of eval rather than supporting a speedup claim.
+
+Full workspace passed 363 core, 41 CLI including language acceptance, and all
+remaining tests; release, diff/source-size checks passed. Existing eval/entry,
+dependency identity/provenance and session-source tests cover the modified handoff.
+The benchmark wrapper also verifies successful output after analysis ownership
+transfers into LoadedModule.
+
+Evidence: `/tmp/rfc0280-owned-analysis-{check,workspace,release}.log`,
+`/tmp/rfc0280-owned-analysis-{test,eval}-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-owned-analysis-eval-memory-workspace`,
+`/tmp/rfc0280-owned-analysis-eval{,-baseline,-diamond,-diamond-baseline}-heap.txt`,
+`/tmp/rfc0280-owned-analysis-eval-path.txt`, raw
+`/tmp/telora-perf-173/owned-analysis-eval{,-baseline,-diamond,-diamond-baseline}.heap.zst`.

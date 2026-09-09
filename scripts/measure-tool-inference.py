@@ -17,8 +17,8 @@ def main():
     parser.add_argument("--sizes", nargs="+", type=int, default=[100, 400])
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=60)
-    parser.add_argument("--command", choices=["check", "test"], default="check",
-                        help="Use check directly, or test with one trivial case importing each workload")
+    parser.add_argument("--command", choices=["check", "test", "eval"], default="check",
+                        help="Check directly, or import each workload from a trivial test/eval wrapper")
     parser.add_argument("--save-workspace", type=Path,
                         help="Copy the generated workspace to a new directory for separate profiling")
     parser.add_argument("--workloads", nargs="+",
@@ -180,6 +180,12 @@ def main():
     dependencies = {name: source for name, source in dependencies.items()
                     if any(name.startswith(root + "-") for root in cases)}
     modules = {**cases, **dependencies}
+    if args.command == "eval":
+        modules.update({f"bench-eval-{name}": (
+            f'import "@src/{name}" as workload;\n'
+            'import "std/value" {Value};\n'
+            'export def answer: Value = Value.Int(42);\n'
+        ) for name in cases})
     with tempfile.TemporaryDirectory(prefix="telora-inference-") as directory:
         workspace = Path(directory)
         (workspace / "src").mkdir()
@@ -212,12 +218,15 @@ def main():
                     start = time.perf_counter()
                     result = subprocess.run(
                         command + (["check", f"@src/{name}"] if args.command == "check"
-                                   else ["test", name]),
+                                   else ["test", name] if args.command == "test"
+                                   else ["eval", f"@src/bench-eval-{name}:answer"]),
                         capture_output=True, timeout=args.timeout,
                     )
                     elapsed = time.perf_counter() - start
                     if result.returncode:
                         raise RuntimeError(f"{binary}: {name}: {result.stderr.decode()}")
+                    if args.command == "eval" and json.loads(result.stdout) != 42:
+                        raise RuntimeError(f"{binary}: {name}: unexpected eval result")
                     if sample:
                         samples.append(elapsed)
                 print(json.dumps({

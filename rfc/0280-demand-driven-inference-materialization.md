@@ -938,3 +938,26 @@ Full workspace passed 363 core, 41 CLI and all remaining tests; release and
 diff/source-size checks passed. Against `27835c3`, shared-arguments timing moved
 -0.59%, allocation calls -1.04%, and peak heap -0.91%. This is a small allocation
 reduction, not evidence of a material speedup; details are in the measurement appendix.
+
+### Session-owned strict module analysis
+
+Strict compilation now moves Analysis into the session semantic input table.
+CompiledTeloraModule retains its module key and borrows that analysis for dependency
+execution and entry/eval contract validation. After snapshot projection, selected
+modules transfer their analysis into LoadedModule. This removes the full Analysis
+clone at compilation, including its HIR, type graph and inference evidence, without
+adding Arc ownership or temporarily removing facts during dependency recursion.
+
+Dependency artifacts still clone their required ModuleInterface/result scheme.
+The table retains its existing string module keys; this is an ownership migration,
+not the final global ModuleId/TypeId consumer representation. Recovery and the
+independent output snapshot projection retain their existing paths. User-code and
+property execution timing is unchanged.
+
+Full workspace passed 363 core, 41 CLI and remaining tests; release and
+diff/source-size checks passed. The runner now has an eval wrapper that exercises
+strict loading, confirmed by heaptrack; test mode uses WorkspaceBuilder and serves
+only as a control here. Against `7d3be57`, eval diamond-400 timing decreased 3.19%
+and allocation calls 2.73%; property-400 decreased 1.13% and 1.08% respectively.
+Peak heap did not improve meaningfully (diamond increased 0.33 MB). Details and
+control results are preserved in the measurement appendix.

@@ -162,9 +162,17 @@ impl InstantiatedModule {
 }
 
 struct CompiledTeloraModule {
-    analysis: Analysis,
+    // Analysis stays in the session input table through snapshot projection.
+    // Only the selected modules transfer ownership into LoadedModule afterward.
+    analysis_key: String,
     function: BytecodeFunction,
     externals: HashMap<String, Val>,
+}
+
+impl CompiledTeloraModule {
+    fn analysis<'a>(&self, inputs: &'a BTreeMap<String, SemanticModuleInput>) -> &'a Analysis {
+        inputs[&self.analysis_key].analysis.as_ref().expect("compiled module analysis")
+    }
 }
 
 fn loaded_from_compiled(
@@ -174,11 +182,13 @@ fn loaded_from_compiled(
     workspace: WorkspaceSnapshot,
     main: Arc<FrozenMainWorld>,
     compiled: CompiledTeloraModule,
+    inputs: &mut BTreeMap<String, SemanticModuleInput>,
 ) -> LoadedModule {
     LoadedModule {
         path,
         dependencies,
-        analysis: compiled.analysis,
+        analysis: inputs.get_mut(&compiled.analysis_key).expect("compiled module input")
+            .analysis.take().expect("compiled module analysis"),
         function: compiled.function,
         sources,
         workspace,
