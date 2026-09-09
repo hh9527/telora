@@ -3,8 +3,9 @@
 - Status: Accepted; implementation pending.
 - Tracking: [#174](https://github.com/hh9527/telora/issues/174).
 - Depends on: RFC 0275, RFC 0277 and RFC 0278.
-- Supersedes: the function-specific diagnostic macros of RFC 0101/0189/0231,
-  the warning Option return of RFC 0275, and the warning workaround of RFC 0278.
+- Supersedes: the function-specific diagnostic macros of RFC 0101/0189/0231.
+- Preserves: RFC 0275's expression results: raise! returns Never; warn! returns
+  Option(T) and always evaluates to None. T is determined by type context.
 
 ## Motivation and Scope
 
@@ -44,7 +45,8 @@ error types need type evidence; unconstrained `for(E)` cannot promise support
 for arbitrary E. Invalid concrete error types are rejected statically.
 
 `raise!` emits failure and returns Never. `warn!` emits a warning, continues,
-and returns `()`. Reporting a warning no longer invents an Option item type.
+and returns None with type Option(T). It is an expression, not a Unit-returning
+statement; T is supplied by its surrounding context, as in RFC 0275.
 The call-site rule for these operations is their own authored invocation,
 including inside helper functions; a wrapper's outer caller must not replace
 the explicit emission site. Existing stack/implementation traces remain
@@ -62,7 +64,7 @@ unwrap!(result) = match result {
 
 ok_or_warn!(result) = match result {
     Ok(value) => Some(value),
-    Err(error) => { warn!(error); None },
+    Err(error) => warn!(error),
 }
 ```
 
@@ -97,15 +99,15 @@ unimplemented. Silent Result-to-Option helpers are not required by this RFC.
 - Code relying on automatic argument evidence must construct
   `Err(blame!(message, subjects...))` explicitly; do not add implicit evidence
   back to the new operations to preserve old fixtures.
-- `warn!` callers use Unit or a statement. Warning-only checks write
-  `warn!(blame!(message, subject)); Ok(())`.
+- `warn!` callers retain Option contexts. Warning-only checks can write
+  `let warning: Option(()) = warn!(blame!(message, subject)); Ok(())`.
 
 ## Implementation Plan
 
 1. Commit this RFC before implementation and record it on #174.
 2. Replace parser expansion with one Result operand and shared raise/warn
    operations. Remove obsolete native unwrap and private warning bypasses.
-3. Implement the closed error input checks, Unit warning result, shared runtime
+3. Implement the closed error input checks, preserve Option warning results, shared runtime
    normalization and invocation-site location policy, including fail sugar.
 4. Migrate stdlib, examples, active guides/design text and test programs.
    Historical RFCs get supersession notices instead of rewritten histories.
@@ -118,7 +120,7 @@ unimplemented. Silent Result-to-Option helpers are not required by this RFC.
 - String and BlameError work in both prefix/postfix Result macros and direct
   raise/warn. Result matching and test.should_ok still work.
 - Success returns the original value in T/Some(T); warning failure returns None;
-  direct warnings have Unit type and work as standalone statements.
+  direct warnings have contextually typed Option(T), while raise returns Never.
 - Direct and generated emission share messages, error category and explicit
   sources. String errors have no subject labels; BlameError's cross-module
   subject locations survive. Result allocation and String origin do not leak
