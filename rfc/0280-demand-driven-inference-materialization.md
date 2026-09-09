@@ -961,3 +961,23 @@ only as a control here. Against `7d3be57`, eval diamond-400 timing decreased 3.1
 and allocation calls 2.73%; property-400 decreased 1.13% and 1.08% respectively.
 Peak heap did not improve meaningfully (diamond increased 0.33 MB). Details and
 control results are preserved in the measurement appendix.
+
+### Borrowed compiler evidence across closures
+
+The LIR compiler now borrows the inferred constructor and declared-owner evidence
+maps. Program compilation borrows Analysis; tool-expression compilation borrows
+the maps owned by that operation. Every nested closure receives the same references
+instead of cloning both complete maps. Their lifetimes are separate from temporary
+capture/type-slot inputs, so register and mutable lexical state remain local to
+each compiler. Generated LIR and bytecode retain no borrowed analysis references.
+
+This removes per-closure copying of solved facts without introducing Arc. Evidence
+is still indexed by source Location, and per-owner lookup/capture discovery plus
+other compiler-owned tables remain; this is not the final session-ID lowering API.
+
+Full workspace passed 363 core, 41 CLI and remaining tests; release and
+diff/source-size checks passed. Against `1b04e09`, property-400 timing decreased
+4.67% under eval and 4.61% under check. Eval/property-400 allocation calls fell
+9.18%, with unchanged peak heap. A filtered heaptrack stack confirms removal of
+the baseline's 160,400 string allocations from nested owner-table cloning.
+Controls and timing variability are recorded in the measurement appendix.

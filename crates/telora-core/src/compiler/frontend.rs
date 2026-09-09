@@ -19,12 +19,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-struct NestedEnvironment<'a> {
+struct NestedEnvironment<'a, 'facts> {
     captures: &'a [String],
     type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
-    declared_value_owners: &'a HashMap<Location, crate::types::ResolvedEvidence>,
-    value_constructors: &'a HashMap<Location, crate::types::ValueConstructor>,
+    declared_value_owners: &'facts HashMap<Location, crate::types::ResolvedEvidence>,
+    value_constructors: &'facts HashMap<Location, crate::types::ValueConstructor>,
 }
 
 #[derive(Debug)]
@@ -412,8 +412,8 @@ pub(crate) fn compile_expression_with_external_bindings(
         promoted_types: HashSet::new(),
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
-        declared_value_owners,
-        value_constructors,
+        declared_value_owners: &declared_value_owners,
+        value_constructors: &value_constructors,
         static_funcs: HashMap::new(),
         source_file: Some(source_file),
     };

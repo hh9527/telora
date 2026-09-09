@@ -80,6 +80,10 @@ Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
 `Unknown` 表示尚未取得类型依据的分析状态。Module 只有源码层面的 `Available` / `Unavailable`，细粒度状态
 属于 definition、expression 和 type fact。
 
+编译器借用推导生成的构造器与名义 owner 证据表；所有子闭包共用同一份只读事实，
+不在每次闭包编译时克隆整表。局部寄存器、捕获、定义及类型槽的可变状态仍独立维护。
+工具表达式编译同样借用本次操作拥有的证据；借用不会进入生成的 LIR 或 bytecode。
+
 严格 AST 经类型分析后先 elaboration，再降低为寄存器 LIR，并组装为 bytecode。静态
 annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中擦除；被普通运行时
 值引用的 TypeMetadata、函数和 closure 则必须保留。

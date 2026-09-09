@@ -1093,3 +1093,43 @@ Evidence: `/tmp/rfc0280-owned-analysis-{check,workspace,release}.log`,
 `/tmp/rfc0280-owned-analysis-eval{,-baseline,-diamond,-diamond-baseline}-heap.txt`,
 `/tmp/rfc0280-owned-analysis-eval-path.txt`, raw
 `/tmp/telora-perf-173/owned-analysis-eval{,-baseline,-diamond,-diamond-baseline}.heap.zst`.
+
+## Borrowed compiler evidence across closures, 2026-09-09
+
+Incremental comparison against `1b04e09`: `/tmp/telora-perf-173/telora-owned-analysis`
+versus `telora-compiler-facts`, both default release. Two opposite version orders,
+one warmup and five measured samples per order; medians of ten pooled samples.
+Builds, tests and profilers did not overlap timing.
+
+| Command / case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| eval / constant | 108.40 | 109.01 | +0.56% |
+| eval / property-types-100 | 168.47 | 162.92 | -3.30% |
+| eval / property-types-400 | 362.58 | 345.66 | -4.67% |
+| check / constant | 107.95 | 112.80 | +4.49% |
+| check / property-types-400 | 358.01 | 341.51 | -4.61% |
+
+The initial check/constant control had candidate samples spanning 105.42–122.31 ms.
+A separate follow-up used opposite orders and ten samples per order (twenty per
+version): 107.28 -> 106.41 ms (-0.80%). It did not reproduce the initial control
+regression. Both runs are retained; no broad startup speedup is claimed. Follow-up
+artifacts: `/tmp/rfc0280-compiler-facts-constant-followup{,-reverse}.jsonl`.
+
+Separate heaptrack runs on eval/property-types-400 measured allocation calls
+1,783,344 -> 1,619,626 (-9.18%); peak heap stayed 29.17 MB. Filtering the nested
+compiler stack confirms the baseline's 160,400 string allocations from cloning
+the complete owner-evidence table are absent in the candidate. Local parameter
+and capture allocations remain. This supports removal of repeated solved-fact
+copying, not elimination of every compiler allocation or a peak-memory reduction.
+
+Full workspace passed 363 core, 41 CLI including language acceptance and all
+remaining tests; release, diff/source-size checks passed. Coverage includes generic
+hidden evidence, constructors, recursive metadata, lexical scope and diagnostics.
+No new cumulative or ontology benchmark is included; profiler runtime/RSS are not
+uninstrumented process metrics.
+
+Evidence: `/tmp/rfc0280-compiler-facts-{check,workspace,release}.log`,
+`/tmp/rfc0280-compiler-facts-{check,eval}-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-compiler-facts-memory-workspace`,
+`/tmp/rfc0280-compiler-facts{,-baseline}-{heap,path}.txt`, raw
+`/tmp/telora-perf-173/compiler-facts{,-baseline}.heap.zst`.

@@ -18,8 +18,8 @@ struct Compiler<'a> {
     promoted_types: HashSet<String>,
     external_bindings: HashSet<String>,
     type_family_values: BTreeMap<String, crate::types::TypeFamilyTemplate>,
-    declared_value_owners: HashMap<Location, crate::types::ResolvedEvidence>,
-    value_constructors: HashMap<Location, crate::types::ValueConstructor>,
+    declared_value_owners: &'a HashMap<Location, crate::types::ResolvedEvidence>,
+    value_constructors: &'a HashMap<Location, crate::types::ValueConstructor>,
     static_funcs: HashMap<String, crate::FuncId>,
     source_file: Option<&'a SourceFile>,
 }
@@ -49,7 +49,7 @@ impl<'a> Compiler<'a> {
         source_name: &'a str,
         source_file: Option<&'a SourceFile>,
         program: &Program,
-        analysis: &Analysis,
+        analysis: &'a Analysis,
         promoted_types: HashSet<String>,
         static_funcs: HashMap<String, crate::FuncId>,
     ) -> Result<BytecodeFunction, FrontendError> {
@@ -88,8 +88,8 @@ impl<'a> Compiler<'a> {
             promoted_types,
             external_bindings: analysis.external_bindings.clone(),
             type_family_values: analysis.type_family_values.clone(),
-            declared_value_owners: analysis.declared_value_owners.clone(),
-            value_constructors: analysis.value_constructors.clone(),
+            declared_value_owners: &analysis.declared_value_owners,
+            value_constructors: &analysis.value_constructors,
             static_funcs,
             source_file,
         };
@@ -137,7 +137,7 @@ impl<'a> Compiler<'a> {
         source_file: Option<&'a SourceFile>,
         function_name: String,
         parameters: &[Identifier],
-        nested_environment: NestedEnvironment<'_>,
+        nested_environment: NestedEnvironment<'_, 'a>,
     ) -> Result<Self, FrontendError> {
         let NestedEnvironment {
             captures,
@@ -203,8 +203,8 @@ impl<'a> Compiler<'a> {
             promoted_types: HashSet::new(),
             external_bindings: HashSet::new(),
             type_family_values: BTreeMap::new(),
-            declared_value_owners: declared_value_owners.clone(),
-            value_constructors: value_constructors.clone(),
+            declared_value_owners,
+            value_constructors,
             static_funcs: HashMap::new(),
             source_file,
         })

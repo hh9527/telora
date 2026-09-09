@@ -37,8 +37,8 @@ impl<'a> Compiler<'a> {
                 captures: &captures,
                 type_slots: &HashSet::new(),
                 definitions: &HashSet::new(),
-                declared_value_owners: &HashMap::new(),
-                value_constructors: &HashMap::new(),
+                declared_value_owners: self.declared_value_owners,
+                value_constructors: self.value_constructors,
             },
         )?;
         let payload = match constructor {
@@ -199,8 +199,8 @@ impl<'a> Compiler<'a> {
                 captures: &captures,
                 type_slots: &captured_type_slots,
                 definitions: &captured_definitions,
-                declared_value_owners: &self.declared_value_owners,
-                value_constructors: &self.value_constructors,
+                declared_value_owners: self.declared_value_owners,
+                value_constructors: self.value_constructors,
             },
         )?;
         if let Some(constructor) = nominal_constructor {
