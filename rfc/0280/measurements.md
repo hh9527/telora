@@ -891,3 +891,64 @@ Evidence: `/tmp/rfc0280-borrowed-facts-{check,workspace,release}.log`,
 `/tmp/rfc0280-borrowed-facts-memory-workspace`,
 `/tmp/rfc0280-borrowed-facts-{baseline-diamond,diamond,baseline-property,property}-heap.txt`,
 raw `/tmp/telora-perf-173/borrowed-facts-{baseline-diamond,diamond,baseline-property,property}.heap.zst`.
+
+## Linear projection and shared named roots, 2026-09-09
+
+Incremental comparison against `d5dbf63`: `/tmp/telora-perf-173/telora-borrowed-facts`
+versus `telora-linear-projection` in the same directory. Both default optimized
+release without inference profiling. Each command used two opposite version
+orders, one warmup plus five samples each, for ten pooled samples per case/version.
+No builds, tests or profilers overlapped timing.
+
+End-to-end CLI `check` medians:
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 115.29 | 115.02 | -0.24% |
+| recursive-families-400 | 296.64 | 296.87 | +0.08% |
+| property-types-400 | 366.97 | 360.25 | -1.83% |
+| module-diamond-400 | 535.22 | 530.39 | -0.90% |
+
+End-to-end CLI `test` medians (one trivial successful test importing the source graph):
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| property-types-400 | 365.45 | 366.17 | +0.20% |
+| module-diamond-400 | 523.12 | 522.00 | -0.21% |
+
+Timing movements are small; no clear general speedup is established. In separate
+heaptrack measurements, check property400 allocations were 1,751,533 -> 1,750,653
+(-0.05%), peak heap 29.24 -> 29.25 MB. Test diamond400 allocations were
+2,534,908 -> 2,535,516 (+0.02%), peak heap 25.98 -> 25.98 MB at displayed precision.
+There is no meaningful peak-heap reduction. Profiler runtime/RSS are not
+uninstrumented measurements. No new ontology or cumulative baseline measurement.
+
+Projection scans source arrays into contiguous output spans and computes each
+child ID using the span base, replacing recursive traversal and per-type remapping
+arrays. A regression exposed an existing name-publication copy of solved nominal
+nodes; name publication now shares solved nominal IDs and retains necessary
+forward placeholders as Ref edges. Temporary name reservations use a Vec of IDs.
+This combines projection changes and named-root reuse, not an isolated measurement
+of either change.
+
+Workspace validation passed 360 core, 41 CLI including language acceptance, and all
+remaining workspace/doc tests. After the final temporary-map-to-vector adjustment,
+all 360 core tests and release were rerun and passed. Diff/source-size checks passed.
+New regressions verify recursive and shared edges in independent output spans,
+consistent named/signature roots, and forward names resolving to shared primitive
+roots. The recursive regression initially failed because name publication cloned
+the source nominal node; fixing that source duplication made it pass unchanged.
+
+Snapshot-local numerical type order now follows the source arena, rather than DFS.
+Every consumer uses the same arithmetic translation, including names, result types
+and expression/definition facts. This is not yet direct consumption of one global
+session arena: output records are still projected, proxy rows may remain, and
+descriptor adapters still exist. Current check execution behavior is preserved.
+Type-only check is recorded separately as a follow-up candidate after the original
+plan, per user direction.
+
+Evidence: `/tmp/rfc0280-linear-projection-{check,test,workspace,final-core,final-release}.log`,
+`/tmp/rfc0280-linear-projection-{check,test}-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-linear-projection{,-test}-memory-workspace`,
+`/tmp/rfc0280-linear-projection-{baseline-property,property,baseline-diamond,diamond}-heap.txt`,
+raw `/tmp/telora-perf-173/linear-projection-{baseline-property,property,baseline-diamond,diamond}.heap.zst`.

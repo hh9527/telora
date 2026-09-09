@@ -1,6 +1,35 @@
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AnalysisTypeId(u32);
 
+#[cfg(test)]
+mod named_graph_tests {
+    use super::*;
+
+    #[test]
+    fn named_publication_keeps_forward_edges_and_shares_resolved_roots() {
+        let mut graph = TypeGraph::default();
+        let roots = graph.install_named_descriptors(&BTreeMap::from([
+            ("A".into(), TypeDescriptor::Array(Box::new(TypeDescriptor::Named("B".into())))),
+            ("B".into(), TypeDescriptor::Int),
+            ("C".into(), TypeDescriptor::Int),
+        ]));
+        assert_eq!(roots["B"], roots["C"]);
+        assert_eq!(graph.named("B"), Some(roots["B"]));
+        let TypeNode::Array(mut child) = graph.node(roots["A"]).clone() else {
+            panic!("forward array");
+        };
+        for _ in 0..graph.nodes.len() {
+            match graph.node(child) {
+                TypeNode::Ref(target) => child = *target,
+                TypeNode::Int => break,
+                other => panic!("unresolved forward edge: {other:?}"),
+            }
+        }
+        assert_eq!(child, roots["B"]);
+        assert!(graph.nodes.iter().all(|node| !matches!(node, TypeNode::Pending)));
+    }
+}
+
 fn display_named_type(name: &str) -> &str {
     name.rsplit(':').next().unwrap_or(name)
 }
@@ -593,17 +622,32 @@ impl TypeGraph {
         &mut self,
         descriptors: &BTreeMap<String, TypeDescriptor>,
     ) -> BTreeMap<String, AnalysisTypeId> {
-        let roots = descriptors
-            .keys()
-            .map(|name| {
-                let id = self.push(TypeNode::Pending);
+        let reserved = descriptors
+            .iter()
+            .map(|(name, descriptor)| {
+                // A statically solved nominal already has its session-local
+                // graph identity. Do not allocate a second row for its name.
+                let existing = match descriptor {
+                    TypeDescriptor::Declared(declared) => self.declared.get(&declared.id).copied(),
+                    _ => None,
+                };
+                let id = existing.unwrap_or_else(|| self.push(TypeNode::Pending));
                 self.names.insert(name.clone(), id);
-                (name.clone(), id)
+                id
             })
-            .collect::<BTreeMap<_, _>>();
-        for (name, descriptor) in descriptors {
+            .collect::<Vec<_>>();
+        let mut roots = BTreeMap::new();
+        for ((name, descriptor), slot) in descriptors.iter().zip(reserved) {
             let body = self.intern_descriptor(descriptor);
-            self.nodes[roots[name].index()] = self.nodes[body.index()].clone();
+            if slot != body {
+                // Earlier Named references may already point at this slot.
+                // Keep it as an edge, not a cloned constructor and child list.
+                self.nodes[slot.index()] = TypeNode::Ref(body);
+            }
+            roots.insert(name.clone(), body);
+        }
+        for (name, id) in &roots {
+            *self.names.get_mut(name).expect("reserved type name") = *id;
         }
         roots
     }

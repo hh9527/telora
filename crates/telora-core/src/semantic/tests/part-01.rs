@@ -1,4 +1,41 @@
     #[test]
+    fn type_projection_preserves_recursive_edges_and_shared_children_across_arenas() {
+        let analysis = crate::types::analyze_source(
+            "projection.telora",
+            "type Node = struct {children: Array(Node)}; \
+             export def identity: Fn(Node) -> Node = fn(value) { value };",
+        ).unwrap();
+        let source = &analysis.types;
+        let owner = analysis.declared_types["Node"];
+        let mut target = WorkspaceTypeGraph::default();
+        let first = merge_type_graph("first", source, &mut target);
+        let second = merge_type_graph("second", source, &mut target);
+        assert_eq!(target.nodes.len(), source.nodes().len() * 2);
+        assert_ne!(first.project(owner), second.project(owner));
+        for projection in [first, second] {
+            let root = projection.project(owner);
+            let WorkspaceTypeNode::Declared { body, .. } = target.node(root).unwrap() else {
+                panic!("nominal owner");
+            };
+            let WorkspaceTypeNode::Struct(fields) = target.node(*body).unwrap() else {
+                panic!("recursive structure");
+            };
+            let WorkspaceTypeNode::Array(child) = target.node(fields["children"]).unwrap() else {
+                panic!("recursive array");
+            };
+            assert_eq!(*child, root, "source graph: {source:?}");
+            let function = projection.project(analysis.binding_types["identity"]);
+            let WorkspaceTypeNode::Function { parameters, result } = target.node(function).unwrap() else {
+                panic!("shared signature");
+            };
+            assert_eq!(parameters, &[root]);
+            assert_eq!(*result, root);
+        }
+        assert_eq!(target.names["first::Node"], first.project(owner));
+        assert_eq!(target.names["second::Node"], second.project(owner));
+    }
+
+    #[test]
     fn type_members_follow_refs_and_reject_cycles_any_and_enums() {
         let mut types = WorkspaceTypeGraph::default();
         let int = WorkspaceTypeId(0);

@@ -990,7 +990,7 @@ impl WorkspaceSnapshot {
                 .map(|analysis| &analysis.types)
                 .or_else(|| input.partial.as_ref().map(|partial| &partial.types))
                 .or_else(|| input.interface.as_ref().map(|interface| &interface.types))
-                .map_or_else(Vec::new, |graph| {
+                .map_or_else(TypeProjection::default, |graph| {
                     merge_type_graph(&input.key, graph, &mut types)
                 });
             type_maps.push(map);
@@ -1012,12 +1012,12 @@ impl WorkspaceSnapshot {
             let result_type = input
                 .analysis
                 .as_ref()
-                .map(|analysis| type_maps[index][analysis.result_type.index()])
+                .map(|analysis| type_maps[index].project(analysis.result_type))
                 .or_else(|| {
                     input
                         .interface
                         .as_ref()
-                        .map(|interface| type_maps[index][interface.result_type.index()])
+                        .map(|interface| type_maps[index].project(interface.result_type))
                 });
             modules.push(WorkspaceModule {
                 id,
@@ -1141,7 +1141,7 @@ impl WorkspaceSnapshot {
                         analysis
                             .definition_types
                             .get(&definition.id)
-                            .map(|local| SemanticFact::known(type_maps[index][local.index()]))
+                            .map(|local| SemanticFact::known(type_maps[index].project(*local)))
                             .unwrap_or_else(|| {
                                 SemanticFact::unknown(UnknownReason::UnavailableDependency)
                             })
@@ -1247,7 +1247,7 @@ impl WorkspaceSnapshot {
                             analysis
                                 .expression_types
                                 .get(&expression.id)
-                                .map(|ty| SemanticFact::known(type_maps[index][ty.index()]))
+                                .map(|ty| SemanticFact::known(type_maps[index].project(*ty)))
                                 .unwrap_or_else(|| {
                                     let unresolved = expression
                                         .reference
@@ -1288,14 +1288,14 @@ fn contains(range: Location, point: Location) -> bool {
 
 fn map_partial_fact(
     fact: &SemanticFact<AnalysisTypeId>,
-    type_map: &[WorkspaceTypeId],
+    type_map: &TypeProjection,
 ) -> SemanticFact<WorkspaceTypeId> {
     map_partial_fact_with_base(fact, type_map, 0, None)
 }
 
 fn map_partial_fact_with_base(
     fact: &SemanticFact<AnalysisTypeId>,
-    type_map: &[WorkspaceTypeId],
+    type_map: &TypeProjection,
     definition_base: usize,
     diagnostic_map: Option<&[DiagnosticId]>,
 ) -> SemanticFact<WorkspaceTypeId> {
@@ -1313,7 +1313,7 @@ fn map_partial_fact_with_base(
         state => state.clone(),
     };
     SemanticFact {
-        value: fact.value.map(|ty| type_map[ty.index()]),
+        value: fact.value.map(|ty| type_map.project(ty)),
         state,
         causes: fact.causes.iter().copied().map(map_identity).collect(),
         diagnostics: fact
@@ -1332,55 +1332,54 @@ fn input_hir(input: &SemanticModuleInput) -> Option<&HirProgram> {
         .or_else(|| input.partial.as_ref().map(|partial| &partial.hir))
 }
 
+// A source arena occupies one contiguous span in the output. Every edge can be
+// translated arithmetically, including forward references and recursive cycles.
+#[derive(Clone, Copy, Default)]
+struct TypeProjection {
+    base: u32,
+    len: usize,
+}
+
+impl TypeProjection {
+    fn project(self, id: AnalysisTypeId) -> WorkspaceTypeId {
+        assert!(id.index() < self.len, "source type ID belongs to its arena");
+        WorkspaceTypeId(self.base + id.index() as u32)
+    }
+}
+
 fn merge_type_graph(
     module: &str,
     source: &TypeGraph,
     target: &mut WorkspaceTypeGraph,
-) -> Vec<WorkspaceTypeId> {
-    let mut mapped = vec![None; source.nodes().len()];
-    for (id, _) in source.nodes() {
-        merge_type_node(id, source, target, &mut mapped);
+) -> TypeProjection {
+    let len = source.nodes().len();
+    let end = target.nodes.len().checked_add(len).expect("type arena size");
+    u32::try_from(end).expect("workspace type IDs fit u32");
+    let map = TypeProjection { base: target.nodes.len() as u32, len };
+    target.nodes.reserve(len);
+    for (_, node) in source.nodes() {
+        target.nodes.push(project_type_node(node, map));
     }
-    let mapped = mapped
-        .into_iter()
-        .map(|id| id.expect("all source type nodes are merged"))
-        .collect::<Vec<_>>();
     for (name, id) in source.names() {
-        target
-            .names
-            .insert(format!("{module}::{name}"), mapped[id.index()]);
+        target.names.insert(format!("{module}::{name}"), map.project(id));
     }
-    mapped
+    map
 }
 
-fn merge_type_node(
-    id: AnalysisTypeId,
-    source: &TypeGraph,
-    target: &mut WorkspaceTypeGraph,
-    mapped: &mut [Option<WorkspaceTypeId>],
-) -> WorkspaceTypeId {
-    if let Some(id) = mapped[id.index()] {
-        return id;
-    }
-    let output = WorkspaceTypeId(target.nodes.len() as u32);
-    target.nodes.push(WorkspaceTypeNode::Pending);
-    mapped[id.index()] = Some(output);
-    let map = |child, target: &mut WorkspaceTypeGraph, mapped: &mut [Option<WorkspaceTypeId>]| {
-        merge_type_node(child, source, target, mapped)
-    };
-    let node = match source.node(id) {
+fn project_type_node(node: &TypeNode, map: TypeProjection) -> WorkspaceTypeNode {
+    match node {
         TypeNode::Pending => WorkspaceTypeNode::Pending,
-        TypeNode::Ref(child) => WorkspaceTypeNode::Ref(map(*child, target, mapped)),
+        TypeNode::Ref(child) => WorkspaceTypeNode::Ref(map.project(*child)),
         TypeNode::Bound(parameter) => WorkspaceTypeNode::Bound(parameter.index()),
         TypeNode::Named(name) => WorkspaceTypeNode::Opaque(format!("type-ref:{name}")),
         TypeNode::Declared { name, body, .. } => WorkspaceTypeNode::Declared {
             name: name.clone(),
-            body: map(*body, target, mapped),
+            body: map.project(*body),
         },
         TypeNode::Never => WorkspaceTypeNode::Never,
         TypeNode::Type => WorkspaceTypeNode::Type,
         TypeNode::Dyn => WorkspaceTypeNode::Dyn,
-        TypeNode::TypeOf(instance) => WorkspaceTypeNode::TypeOf(map(*instance, target, mapped)),
+        TypeNode::TypeOf(instance) => WorkspaceTypeNode::TypeOf(map.project(*instance)),
         TypeNode::Int => WorkspaceTypeNode::Int,
         TypeNode::Float => WorkspaceTypeNode::Float,
         TypeNode::String => WorkspaceTypeNode::String,
@@ -1390,42 +1389,40 @@ fn merge_type_node(
             WorkspaceTypeNode::Opaque(native_type.qualified_name().into())
         }
         TypeNode::Atom(atom) => WorkspaceTypeNode::Atom(atom.name().into()),
-        TypeNode::Array(child) => WorkspaceTypeNode::Array(map(*child, target, mapped)),
-        TypeNode::Newtype(child) => WorkspaceTypeNode::Newtype(map(*child, target, mapped)),
-        TypeNode::Dict(child) => WorkspaceTypeNode::Dict(map(*child, target, mapped)),
+        TypeNode::Array(child) => WorkspaceTypeNode::Array(map.project(*child)),
+        TypeNode::Newtype(child) => WorkspaceTypeNode::Newtype(map.project(*child)),
+        TypeNode::Dict(child) => WorkspaceTypeNode::Dict(map.project(*child)),
         TypeNode::Tagged { tag, payload } => WorkspaceTypeNode::Tagged {
             tag: tag.name().into(),
-            payload: map(*payload, target, mapped),
+            payload: map.project(*payload),
         },
         TypeNode::Tuple(children) => WorkspaceTypeNode::Tuple(
             children
                 .iter()
-                .map(|child| map(*child, target, mapped))
+                .map(|child| map.project(*child))
                 .collect(),
         ),
         TypeNode::Struct(fields) => WorkspaceTypeNode::Struct(
             fields
                 .iter()
-                .map(|(name, child)| (name.clone(), map(*child, target, mapped)))
+                .map(|(name, child)| (name.clone(), map.project(*child)))
                 .collect(),
         ),
         TypeNode::Enum(variants) => WorkspaceTypeNode::Enum(
             variants
                 .iter()
-                .map(|(name, child)| (name.clone(), child.map(|child| map(child, target, mapped))))
+                .map(|(name, child)| (name.clone(), child.map(|child| map.project(child))))
                 .collect(),
         ),
         TypeNode::PendingAlternatives(_) => WorkspaceTypeNode::Pending,
         TypeNode::Function { parameters, result } => WorkspaceTypeNode::Function {
             parameters: parameters
                 .iter()
-                .map(|child| map(*child, target, mapped))
+                .map(|child| map.project(*child))
                 .collect(),
-            result: map(*result, target, mapped),
+            result: map.project(*result),
         },
-    };
-    target.nodes[output.index()] = node;
-    output
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -365,6 +365,16 @@ Commit this revised RFC before implementing the changed phase architecture.
    main and close #175 only after the gates pass. Correctness-only intermediate
    checkpoints, including `293098c`, do not satisfy delivery.
 
+## Follow-up candidate: type-only check
+
+After the current session-graph and downstream-consumer plan is complete, consider
+changing CLI `check` to solve types without evaluating Telora values. This is a
+separate follow-up behavior change. The current implementation sequence and runtime
+diagnostic behavior remain in scope. The follow-up contract must distinguish static
+obligations from checks requiring provider/value execution.
+The current RFC continues to preserve existing `check` behavior while moving type
+inference itself toward execution-free graph solving.
+
 ## Acceptance
 
 ### Architecture and ownership
@@ -834,3 +844,33 @@ test diamond-400 median decreased 3.44%, allocations decreased 3.00%, and peak h
 decreased 21.28% (32.99 -> 25.97 MB). Test property-400 allocations decreased 1.16%
 while peak heap stayed at 29.26 MB. Check controls showed no clear timing gain.
 These command-specific results and their limitations are in the measurement appendix.
+
+### Linear type projection and shared named roots
+
+Semantic type projection now scans each source arena once into a contiguous output
+span. A per-module base/length record replaces per-type remapping arrays; child IDs
+are translated by addition. Forward edges and nominal cycles do not trigger
+recursive traversal or Pending-slot backfilling. Output order follows source arena
+order rather than DFS discovery order. Snapshot IDs remain local to the snapshot;
+names, expression/definition facts and result types all use the same translation.
+
+A regression for recursive edge preservation exposed pre-existing duplicate
+nominal rows: name publication reserved a row and copied an already solved nominal
+node into it. It now reuses the solved nominal ID. Where forward names still need
+reservation, the placeholder becomes a Ref edge instead of a copied constructor;
+the final name table points at the resulting roots. Temporary reservation records
+are a vector of IDs, not another map of cloned names. This preserves pre-existing
+forward references while avoiding duplicate nominal identity rows during handoff.
+
+Regressions cover shared function parameter/result roots, recursive back edges,
+independent output spans and forward names resolving to shared primitive roots.
+This is still projection into a separate public graph, not the final global-ID
+consumer model; unresolved aliases may retain proxy rows and descriptor adapters
+remain. Current CLI check execution behavior is unchanged.
+
+Workspace passed 360 core, 41 CLI including language acceptance and all remaining
+tests. After the final temporary-map-to-vector adjustment, all 360 core tests and
+release passed again; diff/source-size checks passed. Compared with `d5dbf63`,
+check timing moved between -1.83% and +0.08%, and test between -0.21% and +0.20%.
+Measured peak heap was essentially unchanged. These small movements do not prove
+a broad speedup; full scope and artifacts are in the measurement appendix.
