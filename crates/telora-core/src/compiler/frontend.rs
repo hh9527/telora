@@ -24,7 +24,29 @@ struct NestedEnvironment<'a, 'facts> {
     type_slots: &'a HashSet<String>,
     definitions: &'a HashSet<String>,
     declared_value_owners: &'facts HashMap<Location, crate::types::ResolvedEvidence>,
+    owner_index: &'facts OwnerEvidenceIndex<'facts>,
     value_constructors: &'facts HashMap<Location, crate::types::ValueConstructor>,
+}
+
+struct OwnerEvidenceIndex<'a> {
+    entries: Vec<(&'a Location, &'a crate::types::ResolvedEvidence)>,
+}
+
+impl<'a> OwnerEvidenceIndex<'a> {
+    fn new(owners: &'a HashMap<Location, crate::types::ResolvedEvidence>) -> Self {
+        let mut entries = owners.iter().collect::<Vec<_>>();
+        entries.sort_unstable_by_key(|(location, _)| **location);
+        Self { entries }
+    }
+
+    fn within(&self, scope: Location) -> impl Iterator<Item = &'a crate::types::ResolvedEvidence> + '_ {
+        let start = self.entries.partition_point(|(location, _)|
+            (location.source, location.start) < (scope.source, scope.start));
+        self.entries[start..].iter()
+            .take_while(move |(location, _)| location.source == scope.source && location.start <= scope.end)
+            .filter(move |(location, _)| location.end <= scope.end)
+            .map(|(_, owner)| *owner)
+    }
 }
 
 #[derive(Debug)]
@@ -392,6 +414,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         .map(|reference| reference.name.clone()));
     let bindings = required.into_iter().filter(|name| binding_exists(name)).collect::<Vec<_>>();
     validate_hir(source_file, &hir, &bindings.iter().cloned().collect())?;
+    let owner_index = OwnerEvidenceIndex::new(&declared_value_owners);
     let mut compiler = Compiler {
         source_name,
         function_name: function_name.to_owned(),
@@ -413,6 +436,7 @@ pub(crate) fn compile_expression_with_external_bindings(
         external_bindings: HashSet::new(),
         type_family_values: BTreeMap::new(),
         declared_value_owners: &declared_value_owners,
+        owner_index: &owner_index,
         value_constructors: &value_constructors,
         static_funcs: HashMap::new(),
         source_file: Some(source_file),

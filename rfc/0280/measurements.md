@@ -1133,3 +1133,58 @@ Evidence: `/tmp/rfc0280-compiler-facts-{check,workspace,release}.log`,
 `/tmp/rfc0280-compiler-facts-memory-workspace`,
 `/tmp/rfc0280-compiler-facts{,-baseline}-{heap,path}.txt`, raw
 `/tmp/telora-perf-173/compiler-facts{,-baseline}.heap.zst`.
+
+## Range-indexed owner capture facts, 2026-09-09
+
+Incremental comparison against `ecb5008`: `/tmp/telora-perf-173/telora-compiler-facts`
+versus `telora-owner-index`, both default release. Two opposite version orders,
+one warmup and five measured samples per order, ten pooled samples. Timing was
+isolated from builds, tests and profilers.
+
+| Eval case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 110.76 | 108.94 | -1.63% |
+| property-types-100 | 167.36 | 165.39 | -1.18% |
+| property-types-400 | 344.96 | 347.45 | +0.72% |
+
+These small mixed movements do not establish a speedup. Separate heaptrack on
+eval/property-400 measured allocations 1,619,611 -> 1,620,060 (+449, +0.03%);
+peak heap stayed 29.17 MB. The additional borrowed index has an allocation cost;
+replacing a full-table scan does not by itself establish a useful timing gain.
+
+Full workspace passed 364 core, 41 CLI and all remaining tests; release,
+diff/source-size checks passed. The new regression checks nested ranges,
+overlapping entries, boundary offsets, SourceId separation and empty/missing
+ranges. Capture queries now respect source identity, and their search uses one
+sorted borrowed index per compilation rather than scanning all evidence for
+every closure. Local capture allocation and nested-scope traversal remain.
+
+Evidence: `/tmp/rfc0280-owner-index-{check,test,workspace,release}.log`,
+`/tmp/rfc0280-owner-index-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-owner-index-memory-workspace`,
+`/tmp/rfc0280-owner-index{,-baseline}-heap.txt`, raw
+`/tmp/telora-perf-173/owner-index{,-baseline}.heap.zst`.
+
+The real ontology workload was also rechecked on clean asset revision `1a871a0`.
+The original relative `-C ../lab-ws/lab-ontology/ontology` invocation failed before
+analysis with "workspace member ontology must be a directory inside the workspace".
+Using the same directory's absolute path succeeded without changing any assets:
+`-C /home/h00629578/ws/lab-ws/lab-ontology/ontology check @test/query`.
+Both versions passed all timed invocations. Opposite orders, one warmup and five
+samples per order yielded medians 2.99214 -> 3.01979 seconds (+0.92%). This does
+not demonstrate a real-project speedup either. It is an incremental comparison
+with `ecb5008`, not the original project baseline. The initial single candidate
+run reported 289,608 KiB max RSS; it is not a comparative memory result.
+Evidence: `/tmp/rfc0280-owner-index-ontology-comparison.jsonl`,
+`/tmp/rfc0280-owner-index-ontology{,-absolute}.{out,log}`.
+
+A separate current-version ontology heaptrack run measured 9,476,222 allocation
+calls and 232.88 MB peak heap. This is a new profile, not a before/after memory
+comparison. Its allocation stacks still pass through collect_block_annotation_types
+and collect_nested_annotation_types into evaluate_tool_expression_with_debug and
+infer_tool_expression_evidence. Source inspection confirms block/closure annotations
+still execute metadata expressions and decode them into descriptors. Migrating these
+remaining annotation consumers to static graph elaboration is the next execution-
+boundary investigation; stack presence alone does not quantify its full timing cost.
+Evidence: `/tmp/rfc0280-owner-index-ontology-heap.{log,txt}` and
+`/tmp/telora-perf-173/owner-index-ontology.heap.zst`.

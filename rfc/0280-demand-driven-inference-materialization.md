@@ -981,3 +981,28 @@ diff/source-size checks passed. Against `1b04e09`, property-400 timing decreased
 9.18%, with unchanged peak heap. A filtered heaptrack stack confirms removal of
 the baseline's 160,400 string allocations from nested owner-table cloning.
 Controls and timing variability are recorded in the measurement appendix.
+
+### Range-indexed owner capture facts
+
+Each compilation entry builds one sorted vector of borrowed owner-evidence entries,
+ordered by SourceId/start/end. Nested compilers borrow the same index. Hidden-owner
+capture discovery binary-searches the start and scans only entries starting within
+the closure's source range, filtering entries whose end escapes that range. The
+old implementation scanned the whole module map for every closure and compared
+offsets without SourceId. Cross-source equal offsets no longer create captures.
+
+The index neither clones evidence nor survives compilation. Captured-name ordering,
+generic hidden-parameter filtering and local register allocation remain unchanged.
+This reduces range lookup from a full-table scan per closure to O(log N + K), after
+one O(N log N) sort; nested scopes still inspect their contained evidence. A focused
+test covers nested/overlapping scopes, equal boundary offsets, different sources,
+missing ranges and an empty index. This remains a Location-based adapter pending
+the final session definition/expression-ID consumer representation.
+
+Full workspace passed 364 core, 41 CLI and remaining tests; release and
+diff/source-size checks passed. Incremental eval/property timing ranged from
+-1.18% (100 providers) to +0.72% (400), with peak heap unchanged and 449 additional
+allocations for the 400 case. The actual ontology check on asset revision `1a871a0`
+passed using absolute -C and measured 2.99214 -> 3.01979 seconds (+0.92%) against
+`ecb5008`. No measured speedup is claimed for this checkpoint. Full measurements,
+including the relative-path pre-analysis failure, are in the appendix.

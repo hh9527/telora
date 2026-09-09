@@ -83,6 +83,9 @@ Incomputable(QuotaExceeded | RuntimeOnly | UnsupportedOperation |
 编译器借用推导生成的构造器与名义 owner 证据表；所有子闭包共用同一份只读事实，
 不在每次闭包编译时克隆整表。局部寄存器、捕获、定义及类型槽的可变状态仍独立维护。
 工具表达式编译同样借用本次操作拥有的证据；借用不会进入生成的 LIR 或 bytecode。
+每次编译入口一次性建立按 SourceId/位置排序的 owner 证据借用数组，闭包捕获分析
+二分定位后只扫描自身源码范围内的记录，避免逐闭包遍历模块全表。重叠但越界的
+记录和其他源码的同偏移记录不进入该闭包的隐藏捕获。
 
 严格 AST 经类型分析后先 elaboration，再降低为寄存器 LIR，并组装为 bytecode。静态
 annotation 和仅用于元数据计算的 helper 可以在 program bytecode 中擦除；被普通运行时

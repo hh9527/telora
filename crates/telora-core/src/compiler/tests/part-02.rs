@@ -84,3 +84,31 @@
         .unwrap();
         assert_eq!(explicit.to_string(), "\"int=7\"");
     }
+
+    #[test]
+    fn owner_capture_index_respects_source_and_nested_range_boundaries() {
+        let source = crate::source::SourceId::from_raw(1).unwrap();
+        let other_source = crate::source::SourceId::from_raw(2).unwrap();
+        let location = |source, start, end| Location { source, start, end };
+        let owners = [
+            (location(source, 0, 5), "before"),
+            (location(source, 10, 40), "scope"),
+            (location(source, 10, 41), "overlapping"),
+            (location(source, 20, 30), "nested"),
+            (location(source, 40, 40), "endpoint"),
+            (location(source, 41, 45), "after"),
+            (location(other_source, 20, 30), "other-source"),
+        ].into_iter().map(|(location, name)|
+            (location, crate::types::ResolvedEvidence::root(name.into()))).collect();
+        let index = OwnerEvidenceIndex::new(&owners);
+        let names = |scope| {
+            let mut names = BTreeSet::new();
+            for owner in index.within(scope) { owner.collect_bindings(&mut names); }
+            names.into_iter().collect::<Vec<_>>()
+        };
+        assert_eq!(names(location(source, 10, 40)), ["endpoint", "nested", "scope"]);
+        assert_eq!(names(location(source, 20, 30)), ["nested"]);
+        assert_eq!(names(location(other_source, 10, 40)), ["other-source"]);
+        assert!(names(location(source, 50, 60)).is_empty());
+        assert!(OwnerEvidenceIndex::new(&HashMap::new()).within(location(source, 0, 100)).next().is_none());
+    }

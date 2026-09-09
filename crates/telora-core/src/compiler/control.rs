@@ -38,6 +38,7 @@ impl<'a> Compiler<'a> {
                 type_slots: &HashSet::new(),
                 definitions: &HashSet::new(),
                 declared_value_owners: self.declared_value_owners,
+                owner_index: self.owner_index,
                 value_constructors: self.value_constructors,
             },
         )?;
@@ -147,13 +148,9 @@ impl<'a> Compiler<'a> {
             }
         }
         for owner in self
-            .declared_value_owners
-            .iter()
-            .filter(|(owner_location, _)| {
-                body.location.start <= owner_location.start
-                    && owner_location.end <= body.location.end
-            })
-            .flat_map(|(_, owner)| {
+            .owner_index
+            .within(body.location)
+            .flat_map(|owner| {
                 let mut names = BTreeSet::new();
                 owner.collect_bindings(&mut names);
                 names
@@ -200,6 +197,7 @@ impl<'a> Compiler<'a> {
                 type_slots: &captured_type_slots,
                 definitions: &captured_definitions,
                 declared_value_owners: self.declared_value_owners,
+                owner_index: self.owner_index,
                 value_constructors: self.value_constructors,
             },
         )?;
