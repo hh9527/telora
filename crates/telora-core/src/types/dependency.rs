@@ -751,13 +751,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 for (index, definition) in component.iter().enumerate() {
                     let binding = type_bindings[definition];
                     let value = if let Some(roots) = &static_bodies {
-                        materialize_type_body(Some(roots[index]), &types, binding,
+                        validate_declared_graph(source_name, binding, &types, roots[index].body)?;
+                        materialize_type_body(Some(roots[index].body), &types, binding,
                             source_name, &tool_values, account, sources, &mut evaluator)?.0
                     } else {
-                        evaluate_tool_expression(source_name, &binding.value.value, &tool_values,
-                            account, sources, &mut evaluator)?
+                        let value = evaluate_tool_expression(source_name, &binding.value.value, &tool_values,
+                            account, sources, &mut evaluator)?;
+                        validate_declared_metadata(source_name, binding, value, &evaluator)?;
+                        value
                     };
-                    validate_declared_metadata(source_name, binding, value, &evaluator)?;
                     bodies.insert(*definition, value);
                 }
                 for definition in &component {
@@ -766,33 +768,12 @@ pub(crate) fn analyze_program_with_bindings_observed(
                         .seal_type_ref(type_refs[definition], bodies[definition])
                         .map_err(|error| frontend_error(source_name, error.to_string()))?;
                 }
-                for definition in component {
+                for (index, definition) in component.into_iter().enumerate() {
                     let binding = type_bindings[&definition];
                     let value = type_refs[&definition];
-                    let (graph, root) =
-                        evaluator
-                            .decode_type_graph(value, "Type")
-                            .map_err(|message| {
-                                frontend_error(
-                                    source_name,
-                                    format!(
-                                        "type {} produced invalid metadata: {message}",
-                                        binding.value.name.value
-                                    ),
-                                )
-                            })?;
-                    let descriptor = graph.descriptor(root).map_err(|message| {
-                        frontend_error(
-                            source_name,
-                            format!(
-                                "type {} produced invalid metadata: {message}",
-                                binding.value.name.value
-                            ),
-                        )
-                    })?;
-                    graph
-                        .canonicalize(root, type_store)
-                        .map_err(|message| frontend_error(source_name, message))?;
+                    let descriptor = recursive_declaration_descriptor(
+                        static_bodies.as_ref().map(|roots| &roots[index]), &types, value,
+                        binding, source_name, &evaluator, type_store)?;
                     let name = binding.value.name.value.clone();
                     declared_types.insert(name.clone(), descriptor.clone());
                     declared_type_spans.insert(name.clone(), binding.location);

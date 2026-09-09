@@ -588,3 +588,41 @@ Evidence: `/tmp/rfc0280-static-recursion-workspace.log`,
 `/tmp/rfc0280-static-recursion-memory-workspace`,
 `/tmp/rfc0280-{deferred-construction-recursive,static-recursion}-heap.txt`, and
 raw `/tmp/telora-perf-173/{deferred-construction-recursive,static-recursion}.heap.zst`.
+
+## Recursive consumers reuse solved graph, 2026-09-09
+
+Baseline `f590556` (`telora-static-recursion`) versus `telora-recursive-consumers`,
+both in `/tmp/telora-perf-173`, with default optimized release settings and no
+inference profiling. Two opposite version orders, one warmup plus five samples
+each, yield ten pooled samples per workload/version. No builds/tests/profilers
+overlapped timing. Results are end-to-end CLI `check` medians.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 114.61 | 113.85 | -0.66% |
+| types-400 | 166.55 | 166.91 | +0.22% |
+| checked-types-400 | 271.33 | 270.62 | -0.26% |
+| recursive-types-400 | 199.74 | 199.47 | -0.13% |
+| property-types-400 | 361.55 | 364.21 | +0.73% |
+| module-diamond-400 | 527.93 | 529.57 | +0.31% |
+
+There is no demonstrated timing improvement. This checkpoint removes two metadata
+decode paths for supported recursive declarations: initializer-shape validation
+uses the solved body ID, and descriptor/signature publication uses the solved
+nominal owner ID in the original graph. Unsupported paths retain decoding.
+Separate heaptrack runs of recursive-types-400 in the same saved workspace measured
+allocation calls 1,104,861 -> 1,091,125 (-1.24%); peak heap remained 22.23 MB at
+the reported precision. Profiler runtime/RSS are not ordinary measurements.
+
+Full workspace validation passed (353 core, 41 CLI including language acceptance,
+all remaining workspace/doc tests), as did release build and source-size/diff
+checks. Existing recursion, identity, codec and provenance regressions pass.
+This is consumer migration progress, not evidence of general speedup or completion
+of the execution-free session graph.
+
+Evidence: `/tmp/rfc0280-recursive-consumers-{core,workspace,release}.log`,
+`/tmp/rfc0280-recursive-consumers-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-recursive-consumers-memory-workspace`,
+`/tmp/rfc0280-recursive-consumers-heap.txt`,
+`/tmp/rfc0280-recursive-consumers-baseline-heap.txt`, and raw
+`/tmp/telora-perf-173/recursive-consumers{,-baseline}.heap.zst`.

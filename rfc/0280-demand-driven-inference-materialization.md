@@ -704,8 +704,12 @@ reserved nominal rows. Filling a row does not reconstruct descriptors or change
 nominal hashing. Self-recursive and mutually recursive declarations have a
 zero-execution-fuel regression test.
 
-Runtime metadata reservation/sealing and decoding remain compatibility consumers;
-this is not yet the final graph-only downstream path. Unsupported recursive bodies
+Runtime metadata reservation/sealing remain compatibility consumers. Supported
+recursive declarations now retain both owner and body IDs: initializer shape
+validation reads the solved body, and signature publication/canonicalization reads
+the solved owner. Neither step decodes the generated runtime metadata back into
+a separate graph. Descriptor-based signature consumers still remain, so this is
+not yet the final graph-only downstream path. Unsupported recursive bodies
 retain the original evaluation/validation order, and recursive generic declarations
 still use the legacy family builder. The new recursive-types benchmark isolates
 400 self-recursive concrete declarations without constructing user values.

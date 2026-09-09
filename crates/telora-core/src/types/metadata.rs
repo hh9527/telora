@@ -1,3 +1,8 @@
+struct SolvedRecursiveType {
+    owner: AnalysisTypeId,
+    body: AnalysisTypeId,
+}
+
 // Reserve every nominal identity before elaborating any recursive body. All
 // references then target the same rows as those bodies are filled in.
 #[allow(clippy::too_many_arguments)]
@@ -6,7 +11,7 @@ fn elaborate_recursive_bodies(
     slots: &HashMap<crate::Location, u32>, environment: &mut HashMap<String, TypeDescriptor>,
     hir: &HirProgram, external_names: &HashSet<&str>, interfaces: &BTreeMap<String, ModuleInterface>,
     families: &BTreeMap<String, StaticTypeFamily>, graph: &mut TypeGraph,
-) -> Option<Vec<AnalysisTypeId>> {
+) -> Option<Vec<SolvedRecursiveType>> {
     let mut owners = Vec::with_capacity(bindings.len());
     for binding in bindings {
         let descriptor = TypeDescriptor::Declared(DeclaredTypeDescriptor {
@@ -19,10 +24,29 @@ fn elaborate_recursive_bodies(
     let scope = StaticContractScope { hir, environment, external_names, interfaces, parameters: &[], families };
     let roots = bindings.iter().map(|binding| scope.elaborate(&binding.value.value, graph))
         .collect::<Option<Vec<_>>>()?;
-    for (owner, root) in owners.into_iter().zip(&roots) {
-        graph.fill_declared_body(owner, *root);
-    }
-    Some(roots)
+    Some(owners.into_iter().zip(roots).map(|(owner, body)| {
+        graph.fill_declared_body(owner, body);
+        SolvedRecursiveType { owner, body }
+    }).collect())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recursive_declaration_descriptor(
+    solved: Option<&SolvedRecursiveType>, graph: &TypeGraph, value: Val,
+    binding: &Binding, source_name: &str, evaluator: &ToolEvaluator<'_>, store: &mut TypeStore,
+) -> Result<TypeDescriptor, FrontendError> {
+    let invalid = |message| frontend_error(source_name, format!(
+        "type {} produced invalid metadata: {message}", binding.value.name.value));
+    let decoded;
+    let (graph, root) = if let Some(solved) = solved {
+        (graph, solved.owner)
+    } else {
+        decoded = evaluator.decode_type_graph(value, "Type").map_err(invalid)?;
+        (&decoded.0, decoded.1)
+    };
+    let descriptor = graph.descriptor(root).map_err(invalid)?;
+    graph.canonicalize(root, store).map_err(|message| frontend_error(source_name, message))?;
+    Ok(descriptor)
 }
 
 // Metadata is currently still consumed by legacy family/value preparation.
@@ -299,10 +323,6 @@ fn validate_declared_metadata(
     value: Val,
     evaluator: &ToolEvaluator,
 ) -> Result<(), FrontendError> {
-    let kind = binding
-        .value
-        .declared_initializer
-        .expect("declared metadata validation requires a declared initializer");
     let mut graph = TypeGraph::default();
     let root = graph
         .decode_persistent(
@@ -319,6 +339,14 @@ fn validate_declared_metadata(
                 ),
             )
         })?;
+    validate_declared_graph(source_name, binding, &graph, root)
+}
+
+fn validate_declared_graph(
+    source_name: &str, binding: &Binding, graph: &TypeGraph, root: AnalysisTypeId,
+) -> Result<(), FrontendError> {
+    let kind = binding.value.declared_initializer
+        .expect("declared metadata validation requires a declared initializer");
     let valid = graph.root_model_kind(root) == Some(kind);
     if !valid {
         return Err(frontend_error(
