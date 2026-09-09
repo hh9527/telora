@@ -33,6 +33,11 @@ There is no implicit lifting from Unit to Result: an empty or semicolon-ended
 body alone is not a successful checker. Never-returning branches retain the
 existing directional checking rules.
 
+A Result propagation boundary with a Never tail can still return an earlier
+Err through `?`. Its inferred result is `Result(Never, E)`, directionally
+compatible with the expected `Result((), BlameError)` contract. Do not reject
+such a checker merely because its normal success tail cannot return.
+
 ```telora
 import "std/blame" {BlameError};
 
@@ -66,7 +71,9 @@ dependency scheduling and global inference remain unchanged.
 
 `warn!(error)` remains an independently useful operation returning None with
 its existing Option contract. A warning-only checker now writes
-`warn!(error); Ok(())`. Neither warnings nor ordinary Option APIs change here.
+`let warning: Option(()) = warn!(error); Ok(())`. The annotation supplies the
+otherwise unconstrained Option item type; merely discarding warn!'s result
+does not provide that context. Neither warnings nor ordinary Option APIs change here.
 
 ## Alternatives
 
@@ -96,7 +103,8 @@ its existing Option contract. A warning-only checker now writes
 - Inferred and annotated checks accept `Ok(())` / `Err(BlameError)`;
   `Result(Unit, BlameError)` is accepted as the same contract.
 - Multiple Result-based validation helpers compose through `?`, stopping at
-  the first error and preserving its original subjects.
+  the first error and preserving its original subjects. A Never tail after
+  `?` preserves both early rejection and execution failure on the success path.
 - Legacy None/Some, plain Unit (including fallthrough), non-Unit Ok payloads,
   wrong error types and wrong parameter types are rejected statically.
 - Migrated construction, generic/import/recursive, merge/projection, cast,
