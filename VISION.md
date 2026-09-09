@@ -131,21 +131,21 @@ Types are a means to make transformation and feedback programmable without
 splitting the system into separate schema, validation, codec, documentation,
 and editor models.
 
-A type declaration produces canonical immutable Telora data. That metadata can
-be passed to functions, transformed, printed, interpreted, and retained at
-runtime when used as a value:
+A type declaration establishes a static type. Its explicit `.type` projection
+produces canonical immutable metadata that can be passed to functions,
+transformed, interpreted, and retained at runtime:
 
 ```telora
-def Maybe: for(A) Fn(TypeOf(A)) -> TypeOf(Option(A)) = fn(Item) {
-    Option(Item)
-};
-
+type Maybe(A) = enum { None, Some(A) };
 type MaybeInt = Maybe(Int);
+export def metadata: TypeOf(MaybeInt) = MaybeInt.type;
 ```
 
-`Maybe` is an ordinary pure function evaluated by the toolchain-hosted Telora
-VM. The type checker interprets its result; it does not reimplement `Maybe` in
-a hidden type-level evaluator.
+`Maybe` is a declared type family, not an ordinary function returning metadata.
+Ordinary functions can consume and compose metadata, but their results cannot
+be turned back into static types. Type declarations and trusted constructors
+establish the skeleton; property providers and interpreters compute over it
+using the toolchain-hosted Telora VM.
 
 The same metadata may support:
 
@@ -195,13 +195,13 @@ and homogeneous `Dict<T>` values share that runtime form while retaining
 different metadata. Atoms and tagged tuples express symbolic and sum values:
 
 ```text
-'None
-'Some(value)
-'Ok(value)
-'Err(error)
+None
+Some(value)
+Ok(value)
+Err(error)
 ```
 
-Boolean conditions accept only `'True` and `'False`; there is no general
+Boolean conditions accept only `True` and `False`; there is no general
 truthiness coercion. Runtime representation stays small and uniform while
 metadata and ordinary libraries provide richer interpretations.
 

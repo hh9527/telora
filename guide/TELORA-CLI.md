@@ -47,12 +47,14 @@ export def lowering_case = do {
 };
 ```
 
-多个独立检查应写成多个具名 export，使 best-effort `check` 可以继续不依赖失败项的根。
+上述写法用于模块初始化诊断。行为测试应把被测计算放进 Test thunk，并用多个具名
+Test export 隔离用例；不要先在顶层计算断言再把结果包装成 Test。具体写法见
+[测试最佳实践](TESTING.md)。
 
 `test NAME` 选择当前 crate 的 `tests/NAME.telora`，先完成模块检查和初始化，再执行
 入口直接公开导出的 `std/test.Test`。
 `NAME` 不带后缀，可以包含子目录；不接受绝对路径、`..`、通配符或 export selector。
-当前只支持显式选择一个测试。Host 先准备整个 `tests/` 的模块清单，再解析和求值从
+当前只支持显式选择一个测试入口（入口可以导出多个用例）。Host 先准备整个 `tests/` 的模块清单，再解析和求值从
 该入口可达的模块；测试模块可以相互 import，源码不能反向 import 测试。完整规则见
 [`WORKSPACE.md`](WORKSPACE.md#test-root)。
 

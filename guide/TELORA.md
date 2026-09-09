@@ -38,7 +38,7 @@ import "std/value" {Value};
 
 type State = struct {};
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run(State, config, ees.none, fn(ctx) {
+export def run = entry.run(State.type, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
             actor.Event.Request(request) => (state, [actor.reply(request.id, Value.String("hello, telora"))]),
@@ -661,7 +661,7 @@ Value 施加类型契约。`codec.encode` 的首个参数固定为 canonical `Va
 解码试探失败可以作为普通 Result 继续处理。需要产生诊断时使用
 `raise!(error)`，数据位置来自保留的失败 Value；缺失字段使用父对象。
 解码构造带有 `@check` 的类型时，先校验子值，再校验包含它们的候选值。
-校验返回 `Some(error)` 时，解码返回 `Err(error)`。untagged 解码将这种拒绝视为
+校验返回 `Err(error)` 时，解码返回 `Err(error)`。untagged 解码将这种拒绝视为
 分支不匹配，要求恰好一个分支成功；校验函数主动 `fail!` 则中止执行。
 编码已经校验的值不会重复执行构造校验。
 `string.parse(T, text)` 将文本解析为 T，语法解析失败返回 `Err(ParseError)`，
@@ -1203,7 +1203,8 @@ prelude 提供 fallback。这些名字不是保留字，本地 binding 可以正
 import 仍被拒绝。`test` 初始化完成后执行入口直接公开导出的 `std/test.Test`。
 `should_ok`、`should_fail`、`should_fail_with` 保存 thunk，`with_fixtures` 保存
 数据源和返回 Test 的 factory；构造时不执行，不读取 fixture。普通导出函数仍是
-helper。完整规则见 [CLI 指南](TELORA-CLI.md)。
+helper。测试组织与断言见 [测试最佳实践](TESTING.md)，完整命令规则见
+[CLI 指南](TELORA-CLI.md)。
 模块既可以使用显式源码根路径，也可以使用相对路径：
 
 ```telora

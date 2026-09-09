@@ -282,6 +282,9 @@ import "@src/config/defaults.json" {data as defaults};
 
 ## Test Root
 
+本节描述测试模块身份与可见性；如何组织行为断言、预期失败和数据输入，见
+[测试最佳实践](TESTING.md)。
+
 测试文件位于 crate 的 `tests/`，使用 `telora test NAME` 选择一个入口，也可以继续用
 `telora check @test/NAME`：
 

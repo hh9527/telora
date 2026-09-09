@@ -46,6 +46,9 @@ blame 的 failure，具体契约可通过 `telora query exports` 查看。
 - `std/hash`：SHA-256 一次性摘要和增量摘要状态。
 - `std/test`：延迟 Test、正常/预期失败断言与 Host fixture 分组，由 `telora test` 执行。
 
+`should_ok` 只要求正常返回，返回 False 或 Err 也会通过；业务断言必须显式检查结果。
+测试组织、错误语义和 fixtures 示例见 [测试最佳实践](TESTING.md)。
+
 名义 struct 可以用 Display 模板获得统一的格式与插值能力：
 
 ```telora

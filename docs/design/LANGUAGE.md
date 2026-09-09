@@ -789,8 +789,9 @@ import "std/type-property" as type_property;
 let property: Option(DisplayBy) = type_property.get_type_prop(Endpoint.type, DisplayBy.type);
 ```
 
-member 查询分别是 `get_field_prop(Owner, index, P)` 和
-`get_variant_prop(Owner, index, P)`。查询返回 MainWorld 中 property 的廉价引用。
+member 查询分别是 `get_field_prop(Owner.type, index, P.type)` 和
+`get_variant_prop(Owner.type, index, P.type)`，其中 Owner 和 P 是类型声明。
+查询返回 MainWorld 中 property 的廉价引用。
 在 `T: Property(P)` 约束范围内，编译器通过隐藏 evidence 传递同一份已发布 payload；
 约束外的显式查询仍保持上述 `Option(P)` API。
 
@@ -928,7 +929,7 @@ Dyn 中的值需要显式投影为具体类型。
 
 `Dyn` 精确投影比较打包 descriptor 与目标的 canonical type identity，不走结构比较或
 assignability。`project@[T]` 只对解析到 `std/dyn` namespace 的 `project` 生效，并等价于
-`project_with(T, package)`；它不是所有泛型调用的隐式 witness 规则。当前符号泛型 T
+`project_with(T.type, package)`；它不是所有泛型调用的隐式 witness 规则。当前符号泛型 T
 若没有可物化的运行时 `TypeOf(T)` witness，会在前端拒绝。
 
 ## 8. 模块和封闭世界
@@ -1560,7 +1561,7 @@ Module value，并以非零退出。普通 stderr 只用于 CLI/Host 故障，`d
 import "std/ees" as ees;
 
 def config: entry.ContextConfig = {sources: [], envs: [], args: False};
-export def run = entry.run(State, config, ees.none, fn(ctx) {
+export def run = entry.run(State.type, config, ees.none, fn(ctx) {
     let initial: State = ...;
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = ...;
     (initial, reduce)

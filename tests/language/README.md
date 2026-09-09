@@ -1,5 +1,8 @@
 # Language acceptance tests
 
+For language-level testing practices, see [guide/TESTING.md](../../guide/TESTING.md).
+This page describes Telora's own acceptance harness and its command-level fixtures.
+
 Each case has a `testee.telora` under `src/<mode>/<case>/`. Ordinary runtime
 semantics use named `std/test.Test` exports under `src/test/`. Their assertions
 run inside thunks and fail explicitly; a zero exit code and empty stderr are

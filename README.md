@@ -53,17 +53,18 @@ hello/
 import "std/actor" as actor;
 import "std/ees" as ees;
 import "std/entry" as entry;
+import "std/value" { Value };
 
 type State = struct {};
-def config: entry.ContextConfig = {sources: [], envs: [], args: 'False};
-export def run = entry.run(State, config, ees.none, fn(ctx) {
+def config: entry.ContextConfig = {sources: [], envs: [], args: False};
+export def run = entry.run(State.type, config, ees.none, fn(ctx) {
     let reduce: Fn(State, actor.Event) -> actor.Transition(State) = fn(state, event) {
         match event {
-            'Request(request) => (
+            actor.Event.Request(request) => (
                 state,
-                [actor.reply(request.id, 'String("hello, telora"))],
+                [actor.reply(request.id, Value.String("hello, telora"))],
             ),
-            'EesReply(_) => fail!("unexpected EES reply"),
+            actor.Event.EesReply(_) => fail!("unexpected EES reply"),
         }
     };
     ({}, reduce)
@@ -93,14 +94,15 @@ Telora 只有表达式，没有 statement。普通值不可变，基础表示包
 3.5
 "text"
 b"bytes"
-'Ready
-'Some(1)
+True
+Some(1)
 ("port", 8080)
 [1, 2, 3]
-{name: "Ada", active: 'True}
+{name: "Ada", active: True}
 ```
 
-Bool 是由 `'True` 和 `'False` 构成的封闭 Atom 类型，不进行 truthiness 转换。
+Bool 只接受 `True` 和 `False`，不进行 truthiness 转换。用户 enum 的构造使用
+声明限定名，例如 `Status.Ready`；不使用带单引号的旧 tag 语法。
 Array 是有序同质序列；Tuple 是固定长度异质积；record 和 Dict 在运行时共享 Dict
 表示，但具有不同静态语义。
 
@@ -124,9 +126,9 @@ type User = struct {
     name: String,
 };
 
-type Option(A) = enum {
-    'None,
-    'Some(A),
+type Maybe(A) = enum {
+    None,
+    Some(A),
 };
 ```
 
@@ -134,9 +136,10 @@ Struct 和 enum 是封闭的具名类型。即使结构相同，不同声明也�
 import 和 reexport 保留声明身份。参数化声明定义 TypeMetadata constructor；同一
 constructor 使用相同类型实参时得到相同的 canonical 类型。
 
-类型元数据由普通 Telora 计算产生，并由同一个 VM 求值。它可以同时驱动静态检查、
-运行时验证、codec、schema、文档和用户空间 interpreter，不需要另一门隐藏的类型级
-语言。
+`T` 是静态类型，`T.type` 将其投影为精确的 `TypeOf(T)` 元数据，可作为 `Type`
+传递。普通函数可以观察和组合元数据，但不能把函数返回的元数据反向用作类型声明。
+类型骨架由声明和受信任的类型构造器建立；typed property 与用户空间 interpreter
+在此基础上支持验证、codec、schema 和文档生成。工具阶段和程序阶段共用求值器。
 
 ### 模块与静态数据
 
@@ -164,18 +167,17 @@ import "./request.json" { data as request };
 ```telora
 import "std/codec" as codec;
 import "std/json" as json;
-import "std/result" as result;
 import "std/value" { Value };
 
 type Request = struct { subject: String, limit: Int };
 
 def raw_text: String = "{\"subject\":\"orders\",\"limit\":20}";
-def request: Request = json.decode(Request, raw_text) |> result.unwrap;
-def encoded: Value = codec.encode(Value, request);
+def request: Request = json.decode(Request.type, raw_text).unwrap!();
+export def encoded: Value = codec.encode(Value.type, request);
 ```
 
 `std/codec` 在 `Value` 与有类型值之间转换；`std/json` 负责 JSON 文本和 schema。
-Decorator 是产生 attribute 的普通元数据函数，codec 与 schema 读取同一份元数据。
+Decorator provider 计算 typed property，codec 与 schema 消费对应的类型元数据和 property。
 
 字符串插值 `` `value=\{value}` `` 只依据运行时 primitive meta 支持 String、Int、
 Float 和 Atom，不隐式调用用户 Display。稳定的数据交换使用 codec；临时观察使用
@@ -203,12 +205,14 @@ def require_positive: Fn(Int) -> Int = fn(value) {
 常用诊断组合包括：
 
 ```telora
-checker.should_ok!(value)  # Result 的 Err 产生 Warning，返回 Option
-checker.must_ok!(value)    # Result 的 Err 产生失败，返回 Ok payload
-result.try_unwrap!()       # Warning + Option
-result.unwrap!()           # failure + payload
+checker(value).ok_or_warn!()  # Ok -> Some；Err -> warn!，返回 None
+checker(value).unwrap!()      # Ok -> payload；Err -> raise!
 value.dbg!("message")     # 返回原值，向 Host 发送 JSONL 观察
 ```
+
+`raise!` 和 `warn!` 接受 String 或 BlameError：String 只提供 message，BlameError
+还提供显式数据引用；报告时添加实际宏调用处的 rule，不自动附加调用参数或 Result
+容器的来源。`raise!` 返回 Never，`warn!` 返回上下文决定类型的 `Option(T)`，值为 None。
 
 ## Host 与 Entry
 
@@ -272,7 +276,7 @@ JSONL 位置默认使用 1-based line 和 0-based UTF-8 byte column；LSP 按协
 反向 import 测试。入口直接导出 `std/test.should_ok(fn() { ... })`、`should_fail`
 或 `should_fail_with` 构造的 Test，支持 `with_fixtures` 批量生成用例。结果以
 `telora.test/v2` JSONL 输出逐用例结果和汇总；`check` 不执行 Test。详见
-[CLI 指南](guide/TELORA-CLI.md)。
+[测试最佳实践](guide/TESTING.md)和 [CLI 指南](guide/TELORA-CLI.md)。
 
 ## 资源限制
 
@@ -285,6 +289,7 @@ fuel 当作正常终止条件。
 - [guide/TELORA.md](guide/TELORA.md)：语言使用教程与当前限制。
 - [guide/WORKSPACE.md](guide/WORKSPACE.md)：workspace、crate、模块清单与依赖锁定。
 - [guide/LIBSTD.md](guide/LIBSTD.md)：标准库模块定位与接口发现。
+- [guide/TESTING.md](guide/TESTING.md)：契约断言、预期失败、fixtures 与测试分层。
 - [guide/EXEC-MODE.md](guide/EXEC-MODE.md)：eval、eval-with、run 与 serve 执行模式。
 - [guide/EES.md](guide/EES.md)：Native Effect Service、Actor 协议与外部效果。
 - [guide/TELORA-CLI.md](guide/TELORA-CLI.md)：CLI、工作区解析和 JSONL 契约。
