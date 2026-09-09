@@ -1015,6 +1015,8 @@ impl<'a> GenericInference<'a> {
     }
 
     fn normalize(&self, ty: &TypeDescriptor) -> TypeDescriptor {
+        #[cfg(feature = "inference-profile")]
+        let _profile = self.variables.profile.normalization();
         match ty {
             TypeDescriptor::Inference(variable) => self.variables.binding(*variable)
                 .map_or_else(|| TypeDescriptor::Inference(self.variables.root(*variable)), |ty| self.normalize(ty)),
@@ -1048,20 +1050,13 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Tuple(items.iter().map(|item| self.normalize(item)).collect())
             }
             TypeDescriptor::Struct(fields) => {
-                let mut resolved = fields.clone();
-                for (source, target) in fields.values().zip(resolved.values_mut()) {
-                    *target = self.normalize(source);
-                }
-                TypeDescriptor::Struct(resolved)
+                TypeDescriptor::Struct(fields.iter()
+                    .map(|(name, ty)| (name.clone(), self.normalize(ty))).collect())
             }
             TypeDescriptor::Enum(variants) => {
-                let mut resolved = variants.clone();
-                for (source, target) in variants.values().zip(resolved.values_mut()) {
-                    *target = source
-                        .as_ref()
-                        .map(|payload| Box::new(self.normalize(payload)));
-                }
-                TypeDescriptor::Enum(resolved)
+                TypeDescriptor::Enum(variants.iter().map(|(name, payload)| {
+                    (name.clone(), payload.as_ref().map(|ty| Box::new(self.normalize(ty))))
+                }).collect())
             }
             TypeDescriptor::PendingAlternatives(variants) => {
                 let variants = variants
@@ -1083,6 +1078,8 @@ impl<'a> GenericInference<'a> {
 
     fn normalize_body(&self, body: &Arc<TypeDescriptor>) -> Arc<TypeDescriptor> {
         let id = self.variables.descriptor_view_ids.borrow().get(&Arc::as_ptr(body)).copied();
+        #[cfg(feature = "inference-profile")]
+        if id.is_none() { profile_increment(&self.variables.profile.body_unindexed); }
         if let Some(id) = id
             && let Some(normalized) = self.variables.normalized_body(id)
         {

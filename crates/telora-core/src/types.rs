@@ -48,8 +48,11 @@ include!("types/properties.rs");
 include!("types/construction.rs");
 include!("types/prelude.rs");
 include!("types/inference-state.rs");
+#[cfg(feature = "inference-profile")]
+include!("types/inference-profile.rs");
 include!("types/inference-variables.rs");
 include!("types/inference-table.rs");
+include!("types/inference-query.rs");
 include!("types/inference-structures.rs");
 include!("types/inference-publication.rs");
 include!("types/inference-context.rs");

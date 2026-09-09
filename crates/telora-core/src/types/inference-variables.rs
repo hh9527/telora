@@ -144,6 +144,8 @@ mod inference_variable_tests {
 
 #[derive(Default)]
 struct InferenceVariables {
+    #[cfg(feature = "inference-profile")]
+    profile: InferenceProfile,
     nodes: Vec<std::cell::Cell<InferenceNode>>,
     types: Vec<InferenceType>,
     arguments: Vec<InferenceVariableId>,

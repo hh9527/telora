@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+inference-profile = []
+
 [dependencies]
 codespan-reporting = "0.13"
 crop = { version = "0.4.3", features = ["utf16-metric"] }

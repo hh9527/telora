@@ -427,3 +427,38 @@ identical successful inputs, one warmup and at least five samples per case:
   and improve measurement before claiming success.
 - Cache stages require actual hit/miss and invalidation evidence. No target
   percentage improvement is asserted by this draft.
+
+## Implementation Progress
+
+### Arena queries and first compatibility reductions
+
+The branch now has a descriptor-free slot/row head view, graph predicates for
+unresolved variables and metadata-returning function chains, an Unchecked head
+guard, and direct Struct/Enum result construction. Tests cover late binding,
+known-slot replacement, conflict propagation, 16,384-deep graphs without
+descriptor views, and equivalence with the prior normalized predicates.
+Function call inspection has subsequently been changed to retain parameter/result
+slot edges, including the call-entry openness needed by generic constraints.
+
+The query/adapter checkpoint passed the workspace suite: 326 core tests, 41 CLI
+tests and all 400 language groups. The subsequent call-edge change passed all
+326 core tests; its broader validation will be included in the next checkpoint.
+Default and counter-enabled release builds succeeded before that call-edge change.
+The `inference-profile` feature and `TELORA_INFERENCE_PROFILE=1` emit per-solver
+JSON counters; default builds contain neither their fields nor increments.
+
+Before the call-edge change, five-sample release comparisons at sizes 100/400
+showed no demonstrated wall-time gain: changes ranged from about -1% to +2.3%
+across constant, typed/property types, shared-wide and shared-deep cases. Do not
+claim a speedup from those noise-sized differences. For the original property-400
+input, allocations decreased from 3,104,739 to 3,045,669 (about 1.9%), while
+peak heap remained 37.89 MB. Raw measurements are in
+`/tmp/rfc0280-stage1-comparison.jsonl` and `/tmp/rfc0280-stage1-heap.txt`.
+
+Counter-enabled property-400 preparation reported 184,289 normalization roots,
+657,346 normalized nodes, 69,623 descriptor views, 6,539 body cache hits,
+2,148 empty entries, 1,708 revision-stale entries and 11,714 unindexed body
+requests. These are post-query-migration counts, not before/after counter deltas.
+They reinforce continuing with call/evidence graph migration, not declaring
+the RFC complete after local clone reductions. Tools and the broader template,
+nominal identity and consumer migrations remain outstanding.

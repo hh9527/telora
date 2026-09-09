@@ -1,5 +1,15 @@
 impl<'a> GenericInference<'a> {
     fn require_numeric(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
+        match self.variables.view(ty) {
+            InferenceView::Unknown(variable) => {
+                self.numeric_variables.insert(variable);
+                return Ok(());
+            }
+            InferenceView::Row(row) if matches!(self.variables.constructor(row),
+                InferenceConstructor::Int | InferenceConstructor::Float | InferenceConstructor::Never) => return Ok(()),
+            InferenceView::Conflicted(error) => return Err(self.variables.conflicts[error as usize].to_string()),
+            _ => {},
+        }
         match self.normalize(ty) {
             TypeDescriptor::Inference(variable) => {
                 self.numeric_variables.insert(variable);
@@ -39,6 +49,17 @@ impl<'a> GenericInference<'a> {
     }
 
     fn require_ordered(&mut self, ty: &TypeDescriptor) -> Result<(), String> {
+        match self.variables.view(ty) {
+            InferenceView::Unknown(variable) => {
+                self.ordered_variables.insert(variable);
+                return Ok(());
+            }
+            InferenceView::Row(row) if matches!(self.variables.constructor(row),
+                InferenceConstructor::Int | InferenceConstructor::Float
+                    | InferenceConstructor::String | InferenceConstructor::Never) => return Ok(()),
+            InferenceView::Conflicted(error) => return Err(self.variables.conflicts[error as usize].to_string()),
+            _ => {},
+        }
         match self.normalize(ty) {
             TypeDescriptor::Inference(variable) => {
                 self.ordered_variables.insert(variable);

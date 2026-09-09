@@ -17,7 +17,8 @@ def main():
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--workloads", nargs="+",
-                        choices=["constant", "functions", "types", "array", "forward-types", "repeated-family"],
+                        choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
+                                 "typed-types", "property-types", "shared-wide", "shared-deep"],
                         default=["constant", "functions", "types", "array"])
     args = parser.parse_args()
     if args.samples < 1 or args.timeout <= 0 or any(size < 1 for size in args.sizes):
@@ -43,6 +44,33 @@ def main():
         cases[f"repeated-family-{size}"] = "type Box(T) = struct {value: T};\n" + "\n".join(
             f"type T{index} = Box(Int);" for index in range(size)
         ) + "\nexport def answer: Int = 42;\n"
+        property_prelude = (
+            "@property(PropertyTarget.Type)\ntype Label = struct {text: String};\n"
+            'def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) { {text: "ready"} };\n'
+        )
+        for decorated in [False, True]:
+            name = "property-types" if decorated else "typed-types"
+            cases[f"{name}-{size}"] = property_prelude + "\n".join(
+                ("@label\n" if decorated else "")
+                + f"type T{index} = struct {{id: Int, name: String, values: Array(Int)}};\n"
+                + f"def f{index}: Fn(T{index}) -> Int = fn(value) {{ value.id + 1 }};"
+                for index in range(size)
+            ) + "\nexport def ready: Bool = True;\n"
+        shared_shapes = {
+            "shared-wide": "struct {" + ", ".join(
+                f"field{index}: Array(Int)" for index in range(32)
+            ) + "}",
+            "shared-deep": "struct {value: " + "Array(" * 32 + "Int" + ")" * 32 + "}",
+        }
+        for name, shape in shared_shapes.items():
+            cases[f"{name}-{size}"] = (
+                f"type Shared = {shape};\n"
+                "def identity: for(T) Fn(T) -> T = fn(value) { value };\n"
+                + "\n".join(
+                    f"def f{index}: Fn(Shared) -> Shared = fn(value) {{ identity(value) }};"
+                    for index in range(size)
+                ) + "\nexport def ready: Bool = True;\n"
+            )
     cases = {name: source for name, source in cases.items()
              if any(name == workload or name.startswith(workload + "-") for workload in args.workloads)}
     with tempfile.TemporaryDirectory(prefix="telora-inference-") as directory:

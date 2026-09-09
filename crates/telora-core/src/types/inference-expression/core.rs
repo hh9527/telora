@@ -272,7 +272,7 @@ impl<'a> GenericInference<'a> {
                 } else if items.is_empty() && self.delayed_initializer_depth > 0 {
                     self.fresh_variable()
                 } else {
-                    if item_types.iter().any(|ty| contains_type_variable(&self.normalize(ty))) {
+                    if item_types.iter().any(|ty| self.has_unresolved(ty)) {
                         // Empty spreads contribute an element variable, not an alternative
                         // to the concrete element evidence in the surrounding array.
                         let arrays = item_types.iter()
@@ -838,11 +838,20 @@ impl<'a> GenericInference<'a> {
                 } else {
                     None
                 };
-                if expected.is_some_and(|ty| expects_type_value(&self.normalize(ty))) {
+                if expected.is_some_and(|ty| self.expects_type_value(ty)) {
                     self.type_facet_locations.insert(callee.location);
                 }
                 let callee = self.infer(callee, environment, None)?;
-                let resolved_callee = self.normalize(&callee);
+                let resolved_callee = match self.variables.view(&callee) {
+                    InferenceView::Row(row) if matches!(self.variables.constructor(row), InferenceConstructor::Function) => {
+                        let (result, parameters) = self.variables.arguments(row).split_last().expect("function result edge");
+                        TypeDescriptor::Function {
+                            parameters: parameters.iter().copied().map(TypeDescriptor::Inference).collect(),
+                            result: Box::new(TypeDescriptor::Inference(*result)),
+                        }
+                    }
+                    _ => self.normalize(&callee),
+                };
                 let resolved_callee = if let TypeDescriptor::Inference(variable) = resolved_callee {
                     let function = TypeDescriptor::Function {
                         parameters: arguments.iter().map(|_| self.fresh_variable()).collect(),
@@ -862,6 +871,10 @@ impl<'a> GenericInference<'a> {
                                 arguments.len()
                             ));
                         }
+                        // Preserve which parameters were open at call entry, even if
+                        // checking the result/earlier arguments later solves their slots.
+                        let parameter_was_open = parameters.iter()
+                            .map(|parameter| self.has_exposed_unresolved(parameter)).collect::<Vec<_>>();
                         if let Some(expected) = expected {
                             self.check(&result, expected)?;
                         }
@@ -881,9 +894,9 @@ impl<'a> GenericInference<'a> {
                             let parameter = &parameters[index];
                             let inference_expected = if index == 1 && model_fields.is_some() {
                                 model_fields.as_ref()
-                            } else if contains_exposed_type_variable(&self.normalize(parameter))
+                            } else if self.has_exposed_unresolved(parameter)
                                 && matches!(argument.value, ExprKind::Variable(_))
-                                && !expects_type_value(&self.normalize(parameter))
+                                && !self.expects_type_value(parameter)
                             {
                                 None
                             } else {
@@ -896,8 +909,8 @@ impl<'a> GenericInference<'a> {
                             }
                             argument_types[index] = argument_type.clone();
                             unresolved_argument_evidence |=
-                                contains_type_variable(&self.normalize(&argument_type));
-                            if contains_exposed_type_variable(parameter) {
+                                self.has_unresolved(&argument_type);
+                            if parameter_was_open[index] {
                                 // Nominal argument compatibility can refine an
                                 // instance parameter without equating the value's slot.
                                 let head = self.variables.head(&argument_type);
@@ -985,7 +998,7 @@ impl<'a> GenericInference<'a> {
                 }
                 let pending_start = self.pending_type_constraints.len();
                 if self.type_facet_locations.contains(&expression.location)
-                    || expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))
+                    || expected.is_some_and(|ty| self.expects_type_value(ty))
                 {
                     self.type_facet_locations.insert(callee.location);
                 }
@@ -1138,7 +1151,7 @@ impl<'a> GenericInference<'a> {
                 self.infer(condition, environment, Some(&bool_type))?;
                 // Share outer slots; apply an incomplete result context after the join,
                 // so the first branch cannot fix the result for subsequent branches.
-                let branch_expected = expected.filter(|ty| !contains_type_variable(&self.normalize(ty)));
+                let branch_expected = expected.filter(|ty| !self.has_unresolved(ty));
                 let then_type = self.infer_block(then_branch, environment, branch_expected)?;
                 let else_type = self.infer_block(else_branch, environment, branch_expected)?;
                 self.merge_structural_join_evidence(&[then_type.clone(), else_type.clone()])?;
@@ -1258,7 +1271,7 @@ impl<'a> GenericInference<'a> {
                     .flatten().map(|(success, _)| option_descriptor(success.clone()));
                 let expected = expected.or(intrinsic_expected.as_ref());
                 let mut arm_types = Vec::with_capacity(arms.len());
-                let arm_expected = expected.filter(|ty| !contains_type_variable(&self.normalize(ty)));
+                let arm_expected = expected.filter(|ty| !self.has_unresolved(ty));
                 let mut covered_variants = BTreeSet::new();
                 let mut all_values_covered = false;
                 for (arm, pattern) in arms.iter().zip(&patterns) {
@@ -1383,7 +1396,7 @@ impl<'a> GenericInference<'a> {
                             });
                     }
                 }
-                if let Some(expected) = expected.filter(|ty| !contains_type_variable(&self.normalize(ty))) {
+                if let Some(expected) = expected.filter(|ty| !self.has_unresolved(ty)) {
                     self.normalize(expected)
                 } else if let Some(first) = arm_types.first().cloned() {
                     arm_types
@@ -1401,7 +1414,7 @@ impl<'a> GenericInference<'a> {
             && (!matches!(constructor, ValueConstructor::Newtype)
                 || (self.type_syntax_depth == 0
                     && !self.type_facet_locations.contains(&expression.location)
-                    && !expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))))
+                    && !expected.is_some_and(|ty| self.expects_type_value(ty))))
         {
             self.value_constructors.insert(expression.location, constructor);
         }
@@ -1410,14 +1423,14 @@ impl<'a> GenericInference<'a> {
             && !self.type_facet_locations.contains(&expression.location)
             && matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. })
             && self.declared_constructor_reference(expression)
-            && expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))
+            && expected.is_some_and(|ty| self.expects_type_value(ty))
         {
             return Err("a type cannot be used as metadata data implicitly; use '.type'".into());
         }
         let inferred = if matches!(expression.value, ExprKind::Variable(_) | ExprKind::Field { .. } | ExprKind::TypeApply { .. })
             && self.declared_constructor_reference(expression)
             && !self.type_facet_locations.contains(&expression.location)
-            && !expected.is_some_and(|ty| expects_type_value(&self.normalize(ty)))
+            && !expected.is_some_and(|ty| self.expects_type_value(ty))
             && let Some(constructor) = newtype_constructor_type(&self.normalize(&inferred))
         {
             self.value_constructors.insert(expression.location, ValueConstructor::Newtype);
@@ -1447,6 +1460,7 @@ impl<'a> GenericInference<'a> {
     fn unchecked_conversion_type(
         &mut self, actual: &TypeDescriptor, expected: &TypeDescriptor,
     ) -> Result<Option<TypeDescriptor>, String> {
+        if !self.variables.may_be_unchecked(actual) { return Ok(None); }
         match actual {
             TypeDescriptor::Declared(candidate) if candidate.id.constructor() == unchecked_type_constructor() => {},
             TypeDescriptor::Named(_) | TypeDescriptor::Inference(_) => {},

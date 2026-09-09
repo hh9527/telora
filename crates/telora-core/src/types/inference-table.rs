@@ -490,9 +490,17 @@ impl InferenceVariables {
 
     fn normalized_body(&self, id: InferenceTypeId) -> Option<Arc<TypeDescriptor>> {
         let index = self.normalized_body_indices[id.0 as usize].get();
-        if index == u32::MAX { return None; }
+        if index == u32::MAX {
+            #[cfg(feature = "inference-profile")]
+            profile_increment(&self.profile.body_empty);
+            return None;
+        }
         let bodies = self.normalized_bodies.borrow();
         let (revision, body) = &bodies[index as usize];
+        #[cfg(feature = "inference-profile")]
+        profile_increment(if *revision == self.revision {
+            &self.profile.body_hits
+        } else { &self.profile.body_stale });
         (*revision == self.revision).then(|| Arc::clone(body))
     }
 
@@ -513,6 +521,8 @@ impl InferenceVariables {
     // graph passes never depend on these lazily constructed, immutable views.
     fn descriptor_view(&self, id: InferenceTypeId) -> &Arc<TypeDescriptor> {
         self.descriptor_views[id.0 as usize].get_or_init(|| {
+            #[cfg(feature = "inference-profile")]
+            profile_increment(&self.profile.views);
             use InferenceConstructor as C;
             let arguments = self.arguments(id);
             let edge = |index: usize| TypeDescriptor::Inference(arguments[index]);
