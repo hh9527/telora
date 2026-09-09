@@ -1,0 +1,2 @@
+def f: Fn() -> Result(Int, String) = fn() { Ok(1) };
+export def value = should_ok!(f);

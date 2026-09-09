@@ -1,0 +1,39 @@
+import "std/test" as test;
+import "@src/test-support" {expect};
+import "./provider" as provider;
+
+export def raise_string = test.should_ok(fn() { raise!(provider.message) });
+export def unwrap_string = test.should_ok(fn() { provider.string_error().unwrap!() });
+export def raise_blame = test.should_ok(fn() { raise!(provider.error) });
+export def unwrap_blame = test.should_ok(fn() { unwrap!(provider.blame_error()) });
+export def fail_sugar = test.should_ok(fn() { fail!(provider.message, provider.subject, provider.subject) });
+export def fail_composed = test.should_ok(fn() { raise!(blame!(provider.message, provider.subject, provider.subject)) });
+export def nested_raise = test.should_ok(fn() { provider.nested_raise() });
+export def nested_unwrap = test.should_ok(fn() { provider.nested_unwrap() });
+export def warn_string = test.should_ok(fn() { expect(warn!(provider.message).ty!(Option(Int)) == None) });
+export def optional_string = test.should_ok(fn() { expect(provider.string_error().ok_or_warn!() == None) });
+export def warn_blame = test.should_ok(fn() { expect(warn!(provider.error).ty!(Option(String)) == None) });
+export def optional_blame = test.should_ok(fn() { expect(ok_or_warn!(provider.blame_error()) == None) });
+export def nested_warn = test.should_ok(fn() { expect(provider.nested_warn() == None) });
+export def nested_optional = test.should_ok(fn() { expect(provider.nested_optional() == None) });
+
+export def success = test.should_ok(fn() {
+    let value: Result(Int, String) = Ok(3);
+    expect(value.unwrap!() == 3 && unwrap!(provider.success()) == 7
+        && ok_or_warn!(value) == Some(3) && provider.success().ok_or_warn!() == Some(7))
+});
+
+def argument: Fn(String, Int) -> Int = fn(label, value) {
+    let reported: Option(()) = warn!(label);
+    value
+};
+def factory: Fn() -> Fn(Int, Int) -> Result(Int, String) = fn() {
+    let reported: Option(()) = warn!("callee");
+    fn(a, b) { let reported: Option(()) = warn!("body"); Ok(a + b) }
+};
+export def once = test.should_ok(fn() {
+    expect(factory()(argument("first", 2), argument("second", 3)).unwrap!() == 5)
+});
+export def once_optional = test.should_ok(fn() {
+    expect(factory()(argument("first", 2), argument("second", 3)).ok_or_warn!() == Some(5))
+});

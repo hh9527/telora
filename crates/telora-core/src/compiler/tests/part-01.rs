@@ -124,15 +124,9 @@
         );
         assert_eq!(
             &source[error.rule_location().expect("rule location").range()],
-            "stop()"
-        );
-        assert_eq!(
-            &source[error
-                .implementation_rule_location()
-                .expect("implementation rule location")
-                .range()],
             "fail!(\"bad\", data)"
         );
+        assert_eq!(error.implementation_rule_location(), None);
         let diagnostic = error.diagnostic().expect("structured diagnostic");
         assert_eq!(
             &source[diagnostic
@@ -142,7 +136,7 @@
                 .expect("primary label")
                 .location
                 .range()],
-            "stop()"
+            "fail!(\"bad\", data)"
         );
         assert!(error.trace.iter().any(|frame| frame.origin.is_some()));
     }
@@ -162,7 +156,7 @@
     }
 
     #[test]
-    fn fail_keeps_the_outermost_rule_boundary_through_tail_calls() {
+    fn fail_keeps_its_emission_site_through_tail_calls() {
         let source = "let leaf = fn(value) { fail!(\"bad\", value) };\n\
             let middle = fn(value) { leaf(value) };\n\
             let outer = fn(value) { middle(value) };\n\
@@ -172,15 +166,9 @@
         };
         assert_eq!(
             &source[error.rule_location().expect("rule location").range()],
-            "outer(7)"
-        );
-        assert_eq!(
-            &source[error
-                .implementation_rule_location()
-                .expect("implementation rule location")
-                .range()],
             "fail!(\"bad\", value)"
         );
+        assert_eq!(error.implementation_rule_location(), None);
         assert_eq!(
             &source[error.data_location().expect("data location").range()],
             "7"
@@ -213,10 +201,10 @@
     }
 
     #[test]
-    fn check_records_a_warning_and_returns_option() {
+    fn ok_or_warn_records_a_warning_and_returns_option() {
         let function = compile_source(
             "test",
-            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { Result.Err(\"warning\") }; reject.should_ok!(1, \"two\")",
+            "let reject: Fn(Int, String) -> Result(Int, String) = fn(a, b) { Result.Err(\"warning\") }; reject(1, \"two\").ok_or_warn!()",
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
@@ -229,11 +217,11 @@
             account.diagnostics()[0].severity,
             crate::source::Severity::Warning
         );
-        assert_eq!(account.diagnostics()[0].labels.len(), 3);
+        assert_eq!(account.diagnostics()[0].labels.len(), 1);
 
         let discarded = compile_source(
             "test",
-            "let reject: Fn(Int) -> Result(Int, String) = fn(value) { Result.Err(\"discarded\") }; let ignored = reject.should_ok!(1); 0",
+            "let reject: Fn(Int) -> Result(Int, String) = fn(value) { Result.Err(\"discarded\") }; let ignored = reject(1).ok_or_warn!(); 0",
         )
         .unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));
@@ -250,9 +238,9 @@
         let function = compile_source("statements.telora", r#"
             let notice: Fn(String) -> Result(Int, String) = fn(message) { Result.Err(message) };
             do {
-                notice.should_ok!("first");
-                let middle = notice.should_ok!("middle");
-                notice.should_ok!("last");
+                notice("first").ok_or_warn!();
+                let middle = notice("middle").ok_or_warn!();
+                notice("last").ok_or_warn!();
             }
         "#).unwrap();
         let mut account = crate::QuotaAccount::new(crate::Quota::with_fuel(100_000));

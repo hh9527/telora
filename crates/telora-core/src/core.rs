@@ -1,6 +1,6 @@
 use crate::value::{
     CoreArrayFunction, CoreCodecFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction,
-    CoreHashFunction, CoreJsonFunction, CorePathFunction, CoreResultFunction,
+    CoreHashFunction, CoreJsonFunction, CorePathFunction,
     CoreStringFunction, CoreTypeDescFunction, NativeFunction,
 };
 
@@ -464,10 +464,7 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
             native_id: 15,
             name: RESULT_MODULE,
             source: include_str!("../modules/std/result.telora"),
-            functions: vec![(
-                "unwrap",
-                NativeFunction::core_result(CoreResultFunction::Unwrap),
-            )],
+            functions: vec![],
         },
         BuiltinModuleSpec {
             native_id: 16,

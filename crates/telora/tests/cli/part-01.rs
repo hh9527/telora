@@ -293,7 +293,7 @@ fn check_accepts_a_complete_module_with_warnings() {
     let cwd = fixture();
     fs::write(
         cwd.join("src/warning.telora"),
-        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject.should_ok!(); export def output = 1;",
+        "def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject().ok_or_warn!(); export def output = 1;",
     )
     .unwrap();
     let check = telora(&cwd)

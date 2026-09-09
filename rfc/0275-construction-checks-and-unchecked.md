@@ -1,5 +1,9 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
+- Diagnostic input and rule-site policy are refined by
+  [RFC 0279](0279-unified-result-diagnostics.md): raise!/warn! accept String or
+  BlameError and add their authored invocation as rule. Expression results remain
+  Never and Option(T), respectively.
 - Check return protocol superseded by [RFC 0278](0278-result-based-construction-checks.md):
   `Result((), BlameError)` replaces `Option(BlameError)`; other guarantees remain.
 - Status: Completed and integrated into `main`; functional acceptance and performance review are complete.

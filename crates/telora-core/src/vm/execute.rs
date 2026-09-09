@@ -357,7 +357,6 @@ impl Vm {
                         let frame = frames.last().expect("execution frame");
                         let base = frame.base;
                         let end = base + frame.function.register_count();
-                        let rule_boundary = frame.rule_boundary;
                         let mut registers = &mut stack[base..end];
                         let view = WorkView {
                             main: background,
@@ -1790,17 +1789,22 @@ impl Vm {
                                 propagate_data_failures(&[message], &view, function, pc)?;
                                 propagate_data_failures(&values, &view, function, pc)?;
                                 let text = if matches!(action, crate::ast::BlameAction::Raise | crate::ast::BlameAction::Warn) {
-                                    let DecodedValue::Opaque(handle) = message.value() else {
-                                        return Err(runtime_type_error("BlameError", &message, &view, function, pc));
-                                    };
-                                    let Object::Opaque(error_value) = view.object(handle).map_err(|err|
-                                        error(RuntimeErrorKind::InvalidBytecode, err.to_string(), function, pc))? else {
-                                        return Err(runtime_type_error("BlameError", &message, &view, function, pc));
-                                    };
-                                    let text = error_value.downcast_ref::<String>(&crate::core::blame_native_type())
-                                        .ok_or_else(|| runtime_type_error("BlameError", &message, &view, function, pc))?.clone();
-                                    values = error_value.traced.to_vec();
-                                    text
+                                    if let Some(text) = view.string_text(message)
+                                        .map_err(|err| error(RuntimeErrorKind::InvalidBytecode, err.to_string(), function, pc))? {
+                                        text.to_string()
+                                    } else {
+                                        let DecodedValue::Opaque(handle) = message.value() else {
+                                            return Err(runtime_type_error("String or BlameError", &message, &view, function, pc));
+                                        };
+                                        let Object::Opaque(error_value) = view.object(handle).map_err(|err|
+                                            error(RuntimeErrorKind::InvalidBytecode, err.to_string(), function, pc))? else {
+                                            return Err(runtime_type_error("String or BlameError", &message, &view, function, pc));
+                                        };
+                                        let text = error_value.downcast_ref::<String>(&crate::core::blame_native_type())
+                                            .ok_or_else(|| runtime_type_error("String or BlameError", &message, &view, function, pc))?.clone();
+                                        values = error_value.traced.to_vec();
+                                        text
+                                    }
                                 } else { view.string_text(message)
                                     .map_err(|heap_error| error(RuntimeErrorKind::InvalidBytecode,
                                         heap_error.to_string(), function, pc))?
@@ -1817,33 +1821,28 @@ impl Vm {
                                     opaque.traced = values.into_boxed_slice();
                                     let value = Val::new(DecodedValue::Opaque(current.allocate(Object::Opaque(opaque))), instruction_location(function, pc));
                                     write_register(&mut registers, *dst, value, function, pc)?;
-                                } else if *action == crate::ast::BlameAction::Warn {
-                                    let location = rule_boundary.or(instruction_location(function, pc));
-                                    let mut diagnostic = Diagnostic {
-                                        severity: crate::source::Severity::Warning,
-                                        message: text,
-                                        labels: Vec::new(),
-                                        notes: Vec::new(),
-                                    };
-                                    if let Some(location) = location {
-                                        diagnostic = Diagnostic::new(crate::source::Severity::Warning, &diagnostic.message, location);
-                                    }
-                                    for (index, value) in values.iter().enumerate() {
-                                        if let Some(location) = value.loc() {
-                                            diagnostic = diagnostic.with_secondary(format!("subject {} originated here", index + 1), location);
-                                        }
-                                    }
-                                    account.diagnostics.push(diagnostic);
-                                    write_register(&mut registers, *dst, Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), instruction_location(function, pc)), function, pc)?;
                                 } else {
-                                    let mut runtime = error(RuntimeErrorKind::RaisedBlame, text, function, pc);
                                     let location = instruction_location(function, pc);
+                                    let mut runtime = error(RuntimeErrorKind::RaisedBlame, text, function, pc);
                                     runtime.set_contextual_locations(
                                         values.iter().filter_map(|value| value.loc()),
-                                        rule_boundary.or(location),
+                                        location,
                                         location,
                                     );
-                                    return Err(runtime);
+                                    if *action == crate::ast::BlameAction::Warn {
+                                        let mut diagnostic = runtime.diagnostic().unwrap_or_else(|| Diagnostic {
+                                            severity: crate::source::Severity::Warning,
+                                            message: runtime.message.clone(),
+                                            labels: Vec::new(),
+                                            notes: Vec::new(),
+                                        });
+                                        diagnostic.severity = crate::source::Severity::Warning;
+                                        account.diagnostics.push(diagnostic);
+                                        write_register(&mut registers, *dst,
+                                            Val::new(DecodedValue::BuiltinAtom(BuiltinAtom::None), location), function, pc)?;
+                                    } else {
+                                        return Err(runtime);
+                                    }
                                 }
                             }
                             Opcode::Debug {

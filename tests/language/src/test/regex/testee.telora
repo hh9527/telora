@@ -21,17 +21,21 @@ type Endpoint = struct {host: String, port: Int};
 @regex.parse_by(regex.compile(r"^(?P<name>\w+)@(?P<endpoint>.+)$"))
 type Service = struct {name: String, endpoint: Endpoint};
 
+def require_parsed: for(A) Fn(Result(A, string.ParseError)) -> A = fn(result) {
+    match result { Ok(value) => value, Err(error) => raise!(blame!(error.message, error.value)) }
+};
+
 export def verified_case = test.should_ok(fn() {
-    let first = string.parse((Record).type, "answer=42") |> results.unwrap;
-    let second = string.parse((Record).type, "size=7;px") |> results.unwrap;
-    let service = string.parse((Service).type, "api@localhost:8080") |> results.unwrap;
+    let first = string.parse((Record).type, "answer=42") |> require_parsed;
+    let second = string.parse((Record).type, "size=7;px") |> require_parsed;
+    let service = string.parse((Service).type, "api@localhost:8080") |> require_parsed;
     let verified = regex.is_match(record_pattern, "answer=42")
         && record_pattern == regex.compile(
             r"^(?P<name>\w+)=(?P<value>\d+)(?:;(?P<unit>\w+))?$"
         )
-        && (string.parse((String).type, "plain") |> results.unwrap) == "plain"
-        && (string.parse((Int).type, "42") |> results.unwrap) == 42
-        && (string.parse((Float).type, "1.5") |> results.unwrap) == 1.5
+        && (string.parse((String).type, "plain") |> require_parsed) == "plain"
+        && (string.parse((Int).type, "42") |> require_parsed) == 42
+        && (string.parse((Float).type, "1.5") |> require_parsed) == 1.5
         && first == {name: "answer", value: 42, unit: None}
         && second == {name: "size", value: 7, unit: Some("px")}
         && !results.is_ok(string.parse((Record).type, "not a record"))

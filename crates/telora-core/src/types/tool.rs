@@ -253,7 +253,6 @@ impl<'a> ToolEvaluator<'a> {
             NativeFunction::new("\0telora_tuple_type", 1, native_tuple_type),
             NativeFunction::new("\0telora_function_type", 2, native_function_type),
             NativeFunction::checked_cast(native_checked_cast),
-            NativeFunction::core_diagnostic(CoreDiagnosticFunction::Warn),
         ] {
             values.insert(
                 function.name().into(),

@@ -1,6 +1,8 @@
 # RFC 0189: Diagnostic convenience intrinsics
 
 - Status: Implemented
+- Diagnostic emission and Result handling are now governed by
+  [RFC 0279](0279-unified-result-diagnostics.md); this document records history.
 - Depends on: RFC 0188
 
 ## Summary

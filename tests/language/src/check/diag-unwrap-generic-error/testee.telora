@@ -1,0 +1,1 @@
+export def invalid: for(T, E) Fn(Result(T, E)) -> T = fn(value) { value.unwrap!() };

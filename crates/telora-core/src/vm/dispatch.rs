@@ -555,17 +555,6 @@ fn drive_vm_action(
                                 background,
                                 account,
                             )?,
-                            NativeKind::CoreDiagnostic(CoreDiagnosticFunction::Warn) => {
-                                run_core_diagnostic(
-                                    &arguments,
-                                    return_target,
-                                    &call_function,
-                                    call_pc,
-                                    current,
-                                    background,
-                                    account,
-                                )?
-                            }
                             NativeKind::CoreRuntime(operation) => run_core_runtime(
                                 operation,
                                 &arguments,
@@ -618,15 +607,6 @@ fn drive_vm_action(
                                 account,
                             )?,
                             NativeKind::CoreEq(operation) => run_core_eq(
-                                operation,
-                                &arguments,
-                                return_target,
-                                &call_function,
-                                call_pc,
-                                current,
-                                background,
-                            )?,
-                            NativeKind::CoreResult(operation) => run_core_result(
                                 operation,
                                 &arguments,
                                 return_target,

@@ -1,6 +1,6 @@
 # RFC 0279: Unified Result Diagnostics
 
-- Status: Accepted; implementation pending.
+- Status: Implemented and verified.
 - Tracking: [#174](https://github.com/hh9527/telora/issues/174).
 - Depends on: RFC 0275, RFC 0277 and RFC 0278.
 - Supersedes: the function-specific diagnostic macros of RFC 0101/0189/0231.
@@ -95,7 +95,9 @@ unimplemented. Silent Result-to-Option helpers are not required by this RFC.
 - `f.should_ok!(args...)` becomes `f(args...).ok_or_warn!()`.
 - `result.try_unwrap!()` becomes `result.ok_or_warn!()`.
 - `std/result.unwrap(result)` becomes `result.unwrap!()`; pipeline uses become
-  `|> unwrap!(_)`. Remove imports made unused by that migration.
+  postfix unwraps on the preceding call or parenthesized pipeline. Remove
+  imports made unused by that migration. Producer-specific errors such as
+  ParseError and AccessError require explicit conversion by their callers.
 - Code relying on automatic argument evidence must construct
   `Err(blame!(message, subjects...))` explicitly; do not add implicit evidence
   back to the new operations to preserve old fixtures.
@@ -137,3 +139,28 @@ unimplemented. Silent Result-to-Option helpers are not required by this RFC.
 - `cargo test --workspace`, `cargo build --release`, `git diff --check` and
   `scripts/check-source-size.sh` pass. Report pre-existing full-formatting
   differences separately, without unrelated formatting churn.
+
+## Implementation Evidence
+
+- Parser expansion now evaluates one Result operand and delegates failure to
+  raise!/warn!. Both emission paths use the same normalization, explicit subject
+  deduplication and authored rule location. Warning expressions retain Option(T).
+- Removed function-specific macros, the old try_unwrap! spelling, native result
+  unwrap and the private warning bypass. Standard library, examples, fixtures and
+  active documentation use the new surface; producer-specific errors are adapted
+  explicitly rather than accepted by an unrestricted error overload.
+- Generated temporary bindings use distinct internal spans within the macro name
+  token, while emission keeps the full invocation span. This avoids aliasing
+  location-keyed type evidence between a Result and its nominal payload. Nested
+  macros, checked newtypes, enums and JSON Value payloads have regression coverage.
+- `cargo test --workspace`: all suites passed, including 322 core tests, 41 CLI
+  tests and 400 language fixture groups. Diagnostic fixtures verify exact rule
+  sources and lines, explicit cross-module subjects, no implicit String subjects,
+  once-only ordered evaluation, successful payloads and rejected legacy surfaces.
+- `cargo build --release`: passed. Release smoke tests cover nominal/JSON
+  payloads, enum codec and generic diagnostic expression types. The diagnostic
+  fixture produces its expected eight intentional failures and nine successes.
+- `git diff --check` and `scripts/check-source-size.sh`: passed. The size check
+  retains advisory notices for dependency.rs, inference-expression/core.rs and
+  vm/execute.rs. `cargo fmt --all --check` still reports pre-existing repository
+  formatting differences; unrelated files were not reformatted.

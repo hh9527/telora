@@ -1,1 +1,1 @@
-warn! expects exactly one BlameError
+warn! expects exactly one String or BlameError

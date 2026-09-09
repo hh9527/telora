@@ -27,7 +27,7 @@ import "std/value" {Value, ScalarValue};
 - `std/array`：不可变 Array 的读取、组合、映射、过滤、折叠和查找。
 - `std/dict`：不可变 Dict 的读取、键值枚举、构造、合并、映射、过滤和折叠。
 - `std/option`：Option 的变换、默认值和状态判断。
-- `std/result`：Result 的变换、错误映射、默认值、状态判断和解包。
+- `std/result`：Result 的变换、错误映射、默认值和状态判断。显式解包使用 `unwrap!`。
 
 集合函数不修改输入值。可能缺失的读取返回 Option；可能失败的计算返回 Result 或带
 blame 的 failure，具体契约可通过 `telora query exports` 查看。
@@ -58,8 +58,10 @@ type Endpoint = struct {host: String, port: Int};
 ## 数据边界
 
 - `std/blame`：提供不透明 native 类型 `BlameError`。`blame!(message, values...)`
-  保存消息和原值来源；`raise!(error)` 产生失败，`warn!(error)` 记录警告并返回
-  `None`。构造或传递错误值本身不产生诊断。
+  保存消息和原值来源；`raise!(error)` 产生失败并返回 Never，`warn!(error)` 记录警告并返回
+  `Option(T)` 的 `None`。两者也接受 String，但只取消息，不将其来源作为数据引用。
+  `unwrap!` 和 `ok_or_warn!` 分别将 Result 的 Err 交给 raise!/warn!。
+  构造或传递错误值本身不产生诊断。
 - `std/value`：定义递归的 `Value`，以及数据库绑定等边界使用的 `ScalarValue`。
 - `std/codec`：在名义类型与 Value 之间编码、解码，并统一消费 codec property。
 - `std/json`：JSON 解析、类型化解码、编码、schema 与 JSON codec decorator。

@@ -102,13 +102,6 @@ fn core_prelude_types() -> HashMap<String, TypeDescriptor> {
         function(vec![metadata.clone(), metadata.clone()], metadata.clone()),
     );
     prelude.insert(
-        "\0telora_warn".into(),
-        function(
-            vec![TypeDescriptor::String, TypeDescriptor::Bound(TypeParameterId(0))],
-            option_descriptor(TypeDescriptor::Never),
-        ),
-    );
-    prelude.insert(
         "\0telora_pack_dyn".into(),
         function(
             vec![
@@ -214,13 +207,6 @@ fn core_prelude_schemes() -> HashMap<String, TypeScheme> {
             scheme(function(
                 vec![witness(bound(0)), witness(bound(1))],
                 witness(fold_control_descriptor(bound(0), bound(1))),
-            )),
-        ),
-        (
-            "\0telora_warn".into(),
-            scheme(function(
-                vec![TypeDescriptor::String, bound(0)],
-                option_descriptor(TypeDescriptor::Never),
             )),
         ),
     ])

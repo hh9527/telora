@@ -7,7 +7,6 @@ import "std/ees" as ees;
 import "std/entry" as entry;
 import "std/fmt" as fmt;
 import "std/json" as json;
-import "std/result" as result;
 import "std/string" as string;
 import "std/value" {Value};
 
@@ -243,7 +242,7 @@ export def config:
                     match event {
                         rt.SystemEvent.Initialize => (state, []),
                         rt.SystemEvent.StdinLine(Some(line)) => {
-                            let input = json.parse(line) |> result.unwrap;
+                            let input = json.parse(line).unwrap!();
                             let id = string.join([
                                 "request-",
                                 fmt.render(fmt.from_int(state.next_request)),

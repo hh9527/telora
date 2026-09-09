@@ -33,7 +33,7 @@
                import "std/codec" as codec;
                import "./data.json" { data };
                type Input = struct {name: String};
-               let checked = codec.decode((Input).type, data) |> result.unwrap;
+               let checked = codec.decode((Input).type, data).unwrap!();
                let output = fail!("invalid name", checked.name);
                export { output };"###,
         )
@@ -463,7 +463,7 @@ export def output = (compared, selected);"#,
                def yaml: Dict(Value) = match yaml_data {Value.Object(fields) => fields, _ => {}};
                def toml: Dict(Value) = match toml_data {Value.Object(fields) => fields, _ => {}};
                def encoded_identity = codec.encode((Value).type, json_data);
-               def decoded_identity = codec.decode((Value).type, encoded_identity) |> result.unwrap;
+               def decoded_identity = codec.decode((Value).type, encoded_identity).unwrap!();
                export def output = {
                    json_module,
                    yaml_module,

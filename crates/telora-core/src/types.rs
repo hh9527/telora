@@ -19,7 +19,7 @@ use crate::semantic::{
 use crate::source::{Diagnostic, SourceDatabase};
 use crate::type_store::{InternType, TypeId, TypeShape, TypeStore};
 use crate::value::{
-    Atom, CoreBuiltinTypeFunction, CoreDiagnosticFunction, CoreDynFunction, CoreModelFunction,
+    Atom, CoreBuiltinTypeFunction, CoreDynFunction, CoreModelFunction,
     NativeError, NativeFunction,
 };
 use crate::{

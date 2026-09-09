@@ -407,11 +407,6 @@ impl CoreBuiltinTypeFunction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreDiagnosticFunction {
-    Warn,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreRuntimeFunction {
     CallWithDiagnostics,
 }
@@ -423,16 +418,6 @@ impl CoreRuntimeFunction {
 
     pub(crate) const fn arity(self) -> usize {
         6
-    }
-}
-
-impl CoreDiagnosticFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        "\0telora_warn"
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        2
     }
 }
 
@@ -568,21 +553,6 @@ impl CoreCodecFunction {
             Self::Decode => 3,
             Self::Encode => 3,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CoreResultFunction {
-    Unwrap,
-}
-
-impl CoreResultFunction {
-    pub(crate) const fn name(self) -> &'static str {
-        "std/result.unwrap"
-    }
-
-    pub(crate) const fn arity(self) -> usize {
-        1
     }
 }
 
@@ -733,14 +703,12 @@ pub(crate) enum NativeKind {
     CoreDict(CoreDictFunction),
     CoreString(CoreStringFunction),
     CorePath(CorePathFunction),
-    CoreDiagnostic(CoreDiagnosticFunction),
     CoreRuntime(CoreRuntimeFunction),
     CoreHash(CoreHashFunction),
     CoreCodec(CoreCodecFunction),
     CoreTypeDesc(CoreTypeDescFunction),
     CoreDyn(CoreDynFunction),
     CoreEq(CoreEqFunction),
-    CoreResult(CoreResultFunction),
     CoreJson(CoreJsonFunction),
 }
 
@@ -846,16 +814,6 @@ impl NativeFunction {
         }
     }
 
-    pub(crate) const fn core_diagnostic(function: CoreDiagnosticFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreDiagnostic(function),
-            native_type_local: None,
-        }
-    }
-
     pub(crate) const fn core_runtime(function: CoreRuntimeFunction) -> Self {
         Self {
             name: function.name(),
@@ -912,16 +870,6 @@ impl NativeFunction {
             arity: function.arity(),
             callback: unavailable_core_callback,
             kind: NativeKind::CoreEq(function),
-            native_type_local: None,
-        }
-    }
-
-    pub(crate) const fn core_result(function: CoreResultFunction) -> Self {
-        Self {
-            name: function.name(),
-            arity: function.arity(),
-            callback: unavailable_core_callback,
-            kind: NativeKind::CoreResult(function),
             native_type_local: None,
         }
     }

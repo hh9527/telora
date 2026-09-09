@@ -1,0 +1,67 @@
+import "@src/support" as support;
+import "std/array" as array;
+import "std/value" {Value};
+
+export def check: Fn(Value) -> Value = fn(actual) {
+    match support.record_field(actual, "stdout") {
+        Some(Value.Array(records)) => {
+            let diagnostics = fn(name) { array.filter(records, fn(record) {
+                support.string_field_equals(record, "record", "diagnostic")
+                    && support.string_field_equals(record, "test", name)
+            }) };
+            let located = fn(label, source, line) {
+                support.string_field_contains(label, "source", source)
+                    && match support.record_field(label, "location") {
+                        Some(location) => support.record_field(location, "line") == Some(Value.Int(line)),
+                        _ => False,
+                    }
+            };
+            let expected = [
+                ("raise_string", "error", "result-diagnostics/testee", 5, False),
+                ("unwrap_string", "error", "result-diagnostics/testee", 6, False),
+                ("raise_blame", "error", "result-diagnostics/testee", 7, True),
+                ("unwrap_blame", "error", "result-diagnostics/testee", 8, True),
+                ("fail_sugar", "error", "result-diagnostics/testee", 9, True),
+                ("fail_composed", "error", "result-diagnostics/testee", 10, True),
+                ("nested_raise", "error", "result-diagnostics/provider", 9, False),
+                ("nested_unwrap", "error", "result-diagnostics/provider", 10, False),
+                ("warn_string", "warning", "result-diagnostics/testee", 13, False),
+                ("optional_string", "warning", "result-diagnostics/testee", 14, False),
+                ("warn_blame", "warning", "result-diagnostics/testee", 15, True),
+                ("optional_blame", "warning", "result-diagnostics/testee", 16, True),
+                ("nested_warn", "warning", "result-diagnostics/provider", 11, True),
+                ("nested_optional", "warning", "result-diagnostics/provider", 12, True),
+            ];
+            let normalized = array.all(expected, fn(row) {
+                let found = diagnostics(row.0);
+                array.length(found) == 1
+                    && support.string_field_equals(found[0], "message", "rejected")
+                    && support.string_field_equals(found[0], "severity", row.1)
+                    && match support.record_field(found[0], "labels") {
+                        Some(Value.Array(labels)) => {
+                            array.length(labels) == (if row.4 { 2 } else { 1 })
+                                && support.record_field(labels[0], "primary") == Some(Value.True)
+                                && located(labels[0], row.2, row.3)
+                                && (!row.4 || (located(labels[1], "result-diagnostics/provider", 4)
+                                    && support.string_field_equals(labels[1], "message", "subject 1 originated here")))
+                        },
+                        _ => False,
+                    }
+            });
+            let once = fn(name) {
+                let messages = array.map(diagnostics(name), fn(record) { support.record_field(record, "message") });
+                messages == [Some(Value.String("callee")), Some(Value.String("first")),
+                    Some(Value.String("second")), Some(Value.String("body"))]
+            };
+            support.bool_value(support.exit_code(actual) == Some(1) && normalized
+                && array.length(diagnostics("success")) == 0
+                && once("once") && once("once_optional")
+                && array.any(records, fn(record) {
+                    support.string_field_equals(record, "record", "summary")
+                        && support.record_field(record, "failed") == Some(Value.Int(8))
+                        && support.record_field(record, "passed") == Some(Value.Int(9))
+                }))
+        },
+        _ => Value.False,
+    }
+};

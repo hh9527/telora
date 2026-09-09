@@ -39,7 +39,7 @@ export def verified_case = test.should_ok(fn() {
         let encoded_nested = codec.encode((codec.Value).type, nested);
         let encoded_count = codec.encode((codec.Value).type, count);
         let encoded_null = codec.encode((codec.Value).type, NullableScalar.Null);
-        let decoded_null = codec.decode((NullableScalar).type, codec.Value.None) |> results.unwrap;
+        let decoded_null = codec.decode((NullableScalar).type, codec.Value.None).unwrap!();
         let encoded_flag = codec.encode((codec.Value).type, NullableScalar.Flag(True));
         let standard_scalars: Array(ScalarValue) = [
             ScalarValue.None,
@@ -64,15 +64,15 @@ export def verified_case = test.should_ok(fn() {
         let idle = codec.decode(
             (FixtureEvent).type,
             codec.encode((codec.Value).type, "idle"),
-        ) |> results.unwrap;
+        ).unwrap!();
         let joined = codec.decode(
             (FixtureEvent).type,
             codec.encode((codec.Value).type, {userJoined: {name: "Ada"}}),
-        ) |> results.unwrap;
+        ).unwrap!();
         let text = codec.decode(
             (FixtureScalar).type,
             codec.encode((codec.Value).type, "hello"),
-        ) |> results.unwrap;
+        ).unwrap!();
         let checks = [
             expect(!results.is_ok(WrongUnit.Other.cast!(Choice))),
             expect(!results.is_ok(WrongUnit.Number.cast!(Choice))),

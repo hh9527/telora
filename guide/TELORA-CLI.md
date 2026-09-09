@@ -43,7 +43,7 @@ telora -C examples/my-crate lock
 ```telora
 export def lowering_case = do {
     let plan = lower(request);
-    validate_plan.must_ok!(plan)
+    validate_plan(plan).unwrap!()
 };
 ```
 

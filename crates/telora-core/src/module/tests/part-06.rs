@@ -34,7 +34,7 @@
                let decoded: Node = codec.decode(
                    (Node).type,
                    codec.encode((codec.Value).type, root),
-               ) |> result.unwrap;
+               ).unwrap!();
                export def output = {
                    sum,
                    mapped: mapped[0],
@@ -198,8 +198,8 @@
                let direct_encoded = codec.encode((Value).type, direct);
                let produced_encoded = codec.encode((Value).type, produced);
                {
-                   direct: codec.decode(types.Plan.type, direct_encoded) |> result.unwrap,
-                   produced: codec.decode(types.Plan.type, produced_encoded) |> result.unwrap,
+                   direct: codec.decode(types.Plan.type, direct_encoded).unwrap!(),
+                   produced: codec.decode(types.Plan.type, produced_encoded).unwrap!(),
                }"###,
         )
         .unwrap();

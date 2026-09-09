@@ -42,8 +42,8 @@ Telora 是一门在封闭世界中进行不可变数据计算的静态类型语�
 7. 机制优先：领域政策应写成库；只有一般语言模型无法忠实表达的能力，才是
    核心机制候选。
 
-这里的“纯”需要精确定义：普通值计算没有外部效果。`should_ok!`、`try_unwrap!`、
-`must_ok!` 和 `fail!` 可以产生 Host 可见诊断，因此属于 Telora 求值的受控可观察
+这里的“纯”需要精确定义：普通值计算没有外部效果。`warn!`、`ok_or_warn!`、
+`raise!`、`unwrap!` 和 `fail!` 可以产生 Host 可见诊断，因此属于 Telora 求值的受控可观察
 行为。`dbg!` 则是 Host 对求值的旁路观察：Telora 内部世界不能感知 Host 是否安装
 observer、是否输出事件或是否截断表示。
 
@@ -923,7 +923,7 @@ Dyn 中的值需要显式投影为具体类型。
 `Result(T, String)`。匿名 Dict 的完整表示符合目标 struct T 时可以安装 T 的 canonical witness；
 已经带有另一个名义 `TypeId` 的值即使结构相同也失败。cast 不解析 String、不做数值
 转换、不解包公共数据 sum、不应用 rename/default/flatten，也不重建业务数据图；这些
-行为属于 codec/translation。失败只返回 `Err(String)`，只有显式 `unwrap!`/`must_ok!`
+行为属于 codec/translation。失败只返回 `Err(String)`，只有显式 `unwrap!`/`raise!`
 才产生诊断；Fail 输入按统一规则传播。
 
 `Dyn` 精确投影比较打包 descriptor 与目标的 canonical type identity，不走结构比较或
@@ -1142,7 +1142,7 @@ toml.parse(text)  # Result(Value, codec.BlameError)
 Typed model 与 Value 之间只通过 codec 重建数据图：
 
 ```telora
-let model = codec.decode(Model.type, request) |> result.unwrap;
+let model = codec.decode(Model.type, request).unwrap!();
 let value = codec.encode(Value.type, model);
 ```
 
@@ -1188,73 +1188,41 @@ Result(A, E) 调用者必须显式处理的边界结果
 
 ### 9.2 检查、解包和立即终止
 
-表面语言提供七个 contextual intrinsic 名称：
+诊断相关的 contextual intrinsic 为：
 
 ```telora
-dbg!(value [, "message"])
-should_ok!(checker, arguments...)
-must_ok!(checker, arguments...)
-try_unwrap!(result)
-unwrap!(result)
-fail!(message, subjects...)
-panic!(message)
+blame!(message, subjects...)   # BlameError，构造数据，不报告
+raise!(error)                 # Never，报告失败
+warn!(error)                  # Option(T)，报告 warning，永远返回 None
+unwrap!(result)               # T
+ok_or_warn!(result)           # Option(T)
+fail!(message, subjects...)   # Never
+panic!(message)               # Never，实现错误
 ```
 
-对于 `checker: Fn(A1, ..., An) -> Result(R, String)`：
+普通函数调用不附带诊断策略。对于 `Result(T, E)`，`unwrap!` 在 Ok 时返回原
+payload，在 Err 时调用 `raise!(error)`；`ok_or_warn!` 在 Ok 时返回 Some(payload)，
+在 Err 时直接调用 `warn!(error)`。E 必须是 String 或规范的 opaque BlameError。
+两者都只求值一次，并支持前置和后置写法。生成的报告位置属于用户的宏调用处。
 
-```text
-checker.should_ok!(a1, ..., an) : Option(R)
-checker.must_ok!(a1, ..., an)   : R
-```
+`raise!` 与 `warn!` 共享错误归一化：String 只提供消息，不把 String 自身的来源
+加入数据引用；BlameError 提供消息及显式 subjects，保留其来源。两者在实际调用处
+添加 rule 位置。调用参数和 Result 容器不会自动成为 subjects，不接受任意可显示值。
+`warn!` 是返回 Option(T) 的表达式，值永远为 None，T 由上下文确定。`raise!`
+不返回值，类型为 Never。`?` 只传播原 Option/Result 分支，不产生诊断。
 
-checker 和参数各求值一次，顺序从左到右。`should_ok!` 把 `Ok(r)` 变成 `Some(r)`；
-`Err(message)` 产生一条 Warning，并以有序参数作为诊断证据，然后返回 `None`。
-`must_ok!` 在 `Ok(r)` 时返回 `r`，在 `Err(message)` 时产生失败并得到 `Never`。
-checker 可以没有参数，但不能省略 checker。
+诊断由 message、rule 和有序数据来源组成；重复数据位置只保留一次。
+rule 指向实际 authored intrinsic 调用位置，即使该调用在嵌套函数或导入的 helper
+内，也不替换成外层函数调用点。实现调用栈可作为 trace 保留，不覆盖 rule。
 
-对已有的 `result: Result(R, String)`：
+`fail!(message, subjects...)` 严格等价于在该调用点执行
+`raise!(blame!(message, subjects...))`。实现可以融合两步、避免分配临时错误对象。
+`panic!(message)` 仍表示实现错误或不变量破坏，不是可预期的领域拒绝。
 
-```text
-result.try_unwrap!() : Option(R)
-result.unwrap!()     : R
-```
-
-`try_unwrap!` 对 Err 产生 Warning 和 `None`；`unwrap!` 对 Err 产生失败和 `Never`。
-result 只求值一次并作为诊断证据。两者不同于 `?`：`?` 只传播原 Option/Result 分支，
-不产生诊断，也不改变容器家族。
-
-`fail!(message, subjects...)` 产生失败和 `Never`。message 必须是 String，subjects
-作为有序证据保留来源。`panic!(message)` 表示实现错误或无法恢复的不变量破坏，
-而不是可预期的领域拒绝。
-
-`must_ok!`、`unwrap!` 和 `fail!` 产生的结构化诊断由两部分组成：
-
-```text
-rule = { message, location }
-data_sources = [location...]
-```
-
-`rule` 说明为何拒绝以及规则应用在哪里；`data_sources` 按显式 subjects 的参数顺序
-记录错误数据从哪里产生。相同位置只保留一次，值内部的对象图不会被递归展开。直接在
-模块根调用 `fail!` 时，rule location 是 `fail!` 自身；失败发生在函数或 callback
-内部时，rule location rebase 到最外层 authored caller boundary。内部 intrinsic 的
-位置仍作为实现 trace 保留。Host 可以把 rule 渲染为 primary、把 data sources 和实现
-trace 渲染为 secondary，但 primary/secondary 不是语言核心诊断模型的一部分。
-
-所有 contextual intrinsic 都支持统一的后置糖：
-
-```text
-receiver.ident!(arguments...) == ident!(receiver, arguments...)
-```
-
-例如 `check_order.should_ok!(a, b)` 等价于 `should_ok!(check_order, a, b)`，
-`result.try_unwrap!()` 等价于 `try_unwrap!(result)`，`"OutOfRange".fail!(arr, idx)`
-等价于 `fail!("OutOfRange", arr, idx)`。这只是把 receiver 放到第一个参数位置；
-它不执行 method lookup，也不开放用户定义宏。未知 intrinsic 在前置和后置形式下
-都被拒绝。
-
-`fail!` 向运行时传递消息和 subjects，运行时读取 subjects 的来源并记录诊断。
-这些参数各求值一次，诊断的产生不需要构造语言级错误值。
+所有 contextual intrinsic 都支持统一后置糖：
+`receiver.ident!(arguments...)` 等价于 `ident!(receiver, arguments...)`。
+这不是 method lookup，也不开放用户定义宏。`dbg!`、`ty!` 与 `cast!` 保持各自
+既有语义。函数、参数和待处理表达式按普通求值顺序执行一次。
 
 解码使用不可观察的 native `codec.BlameError`，保存消息和失败值的来源。
 `codec.decode` 与 `json.decode` 返回 `Result(A, BlameError)`，失败本身不产生诊断。
@@ -1326,7 +1294,7 @@ CLI 把每个事件作为一行紧凑 JSON 写入 stderr：
 
 Warning 和 failure 诊断属于 evaluation account，而不是普通 Array 返回值。Host
 负责排序、去重、渲染、JSONL 格式和退出协议；Telora 代码不能观察 Host 是否保存或
-展示 Warning。`should_ok!` 与 `try_unwrap!` 产生非阻塞 Warning；`must_ok!`、
+展示 Warning。`warn!` 与 `ok_or_warn!` 产生非阻塞 Warning；`raise!`、
 `unwrap!` 和 `fail!` 使当前结果不可产生。
 
 严格求值和 best-effort 求值使用相同的 rule 与 data sources。Fail 进入 failure arena

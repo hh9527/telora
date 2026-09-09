@@ -7,8 +7,8 @@ use crate::heap::{
 use crate::lir::RegisterId;
 use crate::value::{
     BuiltinAtom, CoreArrayFunction, CoreBuiltinTypeFunction, CoreCodecFunction,
-    CoreDiagnosticFunction, CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction,
-    CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreResultFunction, CoreRuntimeFunction,
+    CoreDictFunction, CoreDynFunction, CoreEqFunction, CoreHashFunction,
+    CoreJsonFunction, CoreModelFunction, CorePathFunction, CoreRuntimeFunction,
     CoreStringFunction, CoreTypeDescFunction, NativeError, NativeKind, NativeLimit,
 };
 use crate::{Diagnostic, Origin, SourceDatabase};
@@ -43,7 +43,6 @@ include!("vm/codec-transform.rs");
 include!("vm/codec-plan.rs");
 include!("vm/codec-enum.rs");
 include!("vm/codec-schema.rs");
-include!("vm/result.rs");
 include!("vm/json.rs");
 include!("vm/json-writer.rs");
 include!("vm/debug.rs");

@@ -1,6 +1,8 @@
 # RFC 0101: Contextual intrinsic syntax
 
 - Status: Implemented
+- Partial supersession by [RFC 0279](0279-unified-result-diagnostics.md):
+  function-specific Result macros are replaced by unwrap! and ok_or_warn!.
 - Depends on: RFC 0097, RFC 0098, RFC 0100
 
 ## Summary

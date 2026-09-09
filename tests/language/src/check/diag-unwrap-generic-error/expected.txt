@@ -1,0 +1,1 @@
+diagnostic error must be String or BlameError

@@ -528,10 +528,16 @@ impl<'a> GenericInference<'a> {
                 TypeDescriptor::Never
             }
             ExprKind::Raise { action, message, subjects } => {
-                let input = if matches!(action, crate::ast::BlameAction::Raise | crate::ast::BlameAction::Warn) {
-                    TypeDescriptor::Opaque(crate::core::blame_native_type())
-                } else { TypeDescriptor::String };
-                self.infer(message, environment, Some(&input))?;
+                if matches!(action, crate::ast::BlameAction::Raise | crate::ast::BlameAction::Warn) {
+                    let input = self.infer(message, environment, None)?;
+                    match self.normalize(&input) {
+                        TypeDescriptor::String | TypeDescriptor::Never => {},
+                        TypeDescriptor::Opaque(native) if native == crate::core::blame_native_type() => {},
+                        input => return Err(format!("diagnostic error must be String or BlameError, found {}", input.display_name())),
+                    }
+                } else {
+                    self.infer(message, environment, Some(&TypeDescriptor::String))?;
+                }
                 for subject in subjects {
                     self.infer(subject, environment, None)?;
                 }
@@ -1246,8 +1252,7 @@ impl<'a> GenericInference<'a> {
                     matches!(&arm.value.pattern.value,
                         crate::ast::PatternKind::Tagged { payload, .. }
                         if matches!(&payload.value, crate::ast::PatternKind::Binding(name)
-                            if name.value.starts_with("$should_ok:")
-                                || name.value.starts_with("$try_unwrap:")))
+                            if name.value.starts_with("$ok_or_warn:")))
                 });
                 let intrinsic_expected = intrinsic_option.then(|| result_parts(&resolved_value_type))
                     .flatten().map(|(success, _)| option_descriptor(success.clone()));

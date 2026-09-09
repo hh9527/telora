@@ -1,8 +1,7 @@
 import "./abc.json" as data;
 import "./User" as User;
-import "std/result" as result;
 import "std/json" as json;
 
-def user = data |> User.decode |> result.unwrap;
+def user = (data |> User.decode).unwrap!();
 def text = user |> User.encode |> json.stringify_pretty(2);
 export { text as output };

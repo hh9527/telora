@@ -27,16 +27,16 @@ export def verified_case = test.should_ok(fn() {
     let encoded_user = codec.encode((codec.Value).type, user);
     let encoded_model = codec.encode((codec.Value).type, model);
     let encoded_node = codec.encode((codec.Value).type, node);
-    let decoded_user = codec.decode((User).type, encoded_user) |> results.unwrap;
-    let decoded_model = codec.decode((Model).type, encoded_model) |> results.unwrap;
-    let decoded_node = codec.decode((Node).type, encoded_node) |> results.unwrap;
+    let decoded_user = codec.decode((User).type, encoded_user).unwrap!();
+    let decoded_model = codec.decode((Model).type, encoded_model).unwrap!();
+    let decoded_node = codec.decode((Node).type, encoded_node).unwrap!();
     let model_schema = json.schema((Model).type);
     let node_schema = json.schema((Node).type);
     let model_schema_text = json.stringify(model_schema);
     let node_schema_text = json.stringify(node_schema);
-    let parsed_json = json.parse("{\"name\":\"Ada\",\"age\":36}") |> results.unwrap;
-    let parsed_toml = toml.parse("name = \"Ada\"\nage = 36\n") |> results.unwrap;
-    let parsed_yaml = yaml.parse("name: Ada\nage: 36\n") |> results.unwrap;
+    let parsed_json = json.parse("{\"name\":\"Ada\",\"age\":36}").unwrap!();
+    let parsed_toml = toml.parse("name = \"Ada\"\nage = 36\n").unwrap!();
+    let parsed_yaml = yaml.parse("name: Ada\nage: 36\n").unwrap!();
     let verified = decoded_user == user
         && decoded_model == model
         && decoded_node == node

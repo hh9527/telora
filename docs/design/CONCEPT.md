@@ -444,8 +444,8 @@ expression。其状态至少区分：
 | --- | --- | --- |
 | `Option(T)` | 预期内的缺失或可选证据 | 普通 Telora 代码 |
 | `Result(T, E)` | 显式 value-level boundary outcome | 普通 Telora caller |
-| `should_ok!`、`try_unwrap!` | Warning，并把可恢复缺失留给普通控制流 | VM 记录、Host 观察 |
-| `must_ok!`、`unwrap!`、`fail!` | 当前结果不能产生；保留结构化原因和 subject 来源 | VM 与 Host |
+| `warn!`、`ok_or_warn!` | Warning，返回 Option(T)；失败分支为 None | VM 记录、Host 观察 |
+| `raise!`、`unwrap!`、`fail!` | 当前结果不能产生；保留结构化原因和显式 subject 来源 | VM 与 Host |
 | `panic!` | 实现不变量破坏，不是普通领域拒绝 | VM 与 Host |
 | `dbg!` | 不影响值与资源核算的 Host-only observation | Host observer |
 | `rt.with_diagnostics` | Entry 对一次调用建立可恢复诊断作用域 | Entry orchestration |

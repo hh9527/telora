@@ -1,0 +1,24 @@
+import "std/test" as test;
+import "std/json" as json;
+import "std/value" {Value};
+import "@src/test-support" {expect};
+
+@check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("invalid token", value)) } })
+type Token = struct(Int);
+type Choice = enum {Item(Token), Empty};
+
+export def nominal_payloads = test.should_ok(fn() {
+    let token = Token(2);
+    let value: Result(Token, String) = Ok(token);
+    let choice: Result(Choice, String) = Ok(Choice.Item(token));
+    let nested: Result(Result(Token, String), String) = Ok(value);
+    expect(value.unwrap!() == token && value.ok_or_warn!() == Some(token)
+        && unwrap!(choice) == Choice.Item(token) && ok_or_warn!(choice) == Some(Choice.Item(token))
+        && unwrap!(unwrap!(nested)) == token && nested.unwrap!().ok_or_warn!() == Some(token))
+});
+
+export def semantic_value = test.should_ok(fn() {
+    let expected = Value.Object({x: Value.Int(1)});
+    expect(json.parse("{\"x\":1}").unwrap!() == expected
+        && json.parse("{\"x\":1}").ok_or_warn!() == Some(expected))
+});

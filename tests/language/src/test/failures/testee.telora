@@ -1,9 +1,9 @@
 import "std/test" as test;
 
 def warn: Fn() -> Result(Int, String) = fn() { Err("notice") };
-export def a = test.should_fail(fn() { let warning = warn.should_ok!(); fail!("caught") });
+export def a = test.should_fail(fn() { let warning = warn().ok_or_warn!(); fail!("caught") });
 export def b = test.should_fail_with(fn() { fail!("ACTUAL") }, "actual");
-export def c = test.should_fail(fn() { let warning = warn.should_ok!(); 1 });
+export def c = test.should_fail(fn() { let warning = warn().ok_or_warn!(); 1 });
 export def d = test.should_ok(fn() { fail!("uncaught") });
 export def e = test.with_fixtures(["value.json"], fn(value) { fail!("factory failure", value) });
 export def f = test.with_fixtures([], fn(value) { test.should_ok(fn() { value }) });

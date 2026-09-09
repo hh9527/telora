@@ -11,6 +11,10 @@ type A = struct {value: Int};
 type B = struct {value: Int};
 type Unary = Func([Int], Int);
 
+def require_access: for(A) Fn(Result(A, dyn.AccessError)) -> A = fn(result) {
+    match result { Ok(value) => value, Err(error) => raise!(blame!(error.message, error.value)) }
+};
+
 export def verified_case = test.should_ok(fn() {
 
     {
@@ -27,21 +31,21 @@ export def verified_case = test.should_ok(fn() {
         let tuple_dyn = dyn.pack((Tuple([Int, String])).type, (1, "one"));
         let root: Node = {value: 1, children: [{value: 2, children: []}]};
         let root_dyn = dyn.pack((Node).type, root);
-        let children_dyn = dyn.field(root_dyn, "children") |> results.unwrap;
-        let child_dyns = dyn.array_items(children_dyn) |> results.unwrap;
+        let children_dyn = dyn.field(root_dyn, "children") |> require_access;
+        let child_dyns = dyn.array_items(children_dyn) |> require_access;
         let expected_user_fields: Array(Tuple([String, dyn.ValueKind])) = [
             ("age", dyn.ValueKind.Int),
             ("name", dyn.ValueKind.String),
         ];
-        let tuple_items = dyn.tuple_items(tuple_dyn) |> results.unwrap;
+        let tuple_items = dyn.tuple_items(tuple_dyn) |> require_access;
         let child_values = array.map(child_dyns, fn(child) {
-            dyn.field(child, "value") |> results.unwrap |> dyn.check_int
+            dyn.field(child, "value") |> require_access |> dyn.check_int
         });
         let message: Event = Event.Message("ready");
         let message_dyn = dyn.pack((Event).type, message);
         let message_index = dyn.get_variant_index(message_dyn);
         let message_payload = dyn.get_variant_payload(message_dyn, message_index);
-        let message_tag = dyn.tag(message_dyn) |> results.unwrap;
+        let message_tag = dyn.tag(message_dyn) |> require_access;
         let user_ok = dyn.desc(user_dyn) == (User).type
             && dyn.kind(user_dyn) == dyn.ValueKind.Dict
             && dyn.check_int(dyn.get_field_value(user_dyn, 0)) == Some(42)
@@ -63,10 +67,10 @@ export def verified_case = test.should_ok(fn() {
             && dyn.project_with((B).type, nominal_dyn) == None
             && int_dyn == int_dyn
             && int_dyn != dyn.pack((Int).type, 41);
-        let structural_ok = array.map(dyn.fields(user_dyn) |> results.unwrap, fn(pair) {
+        let structural_ok = array.map(dyn.fields(user_dyn) |> require_access, fn(pair) {
             match pair { (name, value) => (name, dyn.kind(value)) }
         }) == expected_user_fields
-            && array.map(dyn.array_items(numbers_dyn) |> results.unwrap, dyn.check_int)
+            && array.map(dyn.array_items(numbers_dyn) |> require_access, dyn.check_int)
                 == [Some(1), Some(2)]
             && array.length(tuple_items) == 2
             && match array.get(tuple_items, 0) {

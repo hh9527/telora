@@ -15,7 +15,7 @@ export def unwrap = test.should_fail_with(fn() {
 }, "required");
 export def must_ok = test.should_fail_with(fn() {
     let reject: Fn(Int, String) -> Result(Int, String) = fn(left, right) { Err("rejected") };
-    reject.must_ok!(1, "two")
+    reject(1, "two").unwrap!()
 }, "rejected");
 export def reflection_field_index = test.should_fail_with(fn() {
     let user: User = {value: 1};

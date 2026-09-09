@@ -1,0 +1,3 @@
+import "std/result" as result;
+def value: Result(Int, String) = Ok(1);
+export def invalid = result.unwrap(value);

@@ -1,0 +1,2 @@
+def value: Result(Int, Int) = Err(42);
+export def invalid = value.unwrap!();

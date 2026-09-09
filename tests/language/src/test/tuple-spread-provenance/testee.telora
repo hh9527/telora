@@ -6,11 +6,11 @@ export def container = test.should_ok(fn() { fail!("container", copied) });
 
 def notice: Fn(String) -> Result(Int, String) = fn(message) { Err(message) };
 def item: Fn(String) -> Tuple([Int]) = fn(message) {
-    let warning = notice.should_ok!(message);
+    let warning = notice(message).ok_or_warn!();
     (1,)
 };
 def empty: Fn(String) -> Tuple([]) = fn(message) {
-    let warning = notice.should_ok!(message);
+    let warning = notice(message).ok_or_warn!();
     ()
 };
 export def order = test.should_ok(fn() {

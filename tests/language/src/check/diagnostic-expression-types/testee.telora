@@ -1,0 +1,8 @@
+import "std/blame" {BlameError};
+
+export def warning: for(T) Fn(String) -> Option(T) = fn(error) { warn!(error) };
+export def warning_blame: for(T) Fn(BlameError) -> Option(T) = fn(error) { warn!(error) };
+export def failure: for(T) Fn(String) -> T = fn(error) { raise!(error) };
+export def failure_blame: Fn(BlameError) -> Never = fn(error) { raise!(error) };
+export def unwrap_string: for(T) Fn(Result(T, String)) -> T = fn(result) { result.unwrap!() };
+export def optional_blame: for(T) Fn(Result(T, BlameError)) -> Option(T) = fn(result) { result.ok_or_warn!() };

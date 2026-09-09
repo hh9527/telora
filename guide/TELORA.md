@@ -635,7 +635,6 @@ String。参数化查询用它表达 bindings，codec 会直接产生对应的 J
 ```telora
 import "std/codec" as codec;
 import "std/json" as json;
-import "std/result" as result;
 import "std/value" { Value };
 
 type Query = struct {
@@ -643,9 +642,8 @@ type Query = struct {
     limit: Int,
 };
 
-let raw = json.parse("{\"subject\":\"orders\",\"limit\":20}")
-    |> result.unwrap;
-let query: Query = codec.decode(Query.type, raw) |> result.unwrap;
+let raw = json.parse("{\"subject\":\"orders\",\"limit\":20}").unwrap!();
+let query: Query = codec.decode(Query.type, raw).unwrap!();
 let encoded: Value = codec.encode(Value.type, query);
 let compact: String = json.stringify(encoded);
 let pretty: String = encoded |> json.stringify_pretty(2);
@@ -1070,7 +1068,8 @@ fragment 仍按每次展开的长度核算，但拒绝路径不会实际展开�
 类型原值的来源，不产生诊断。BlameError 是不透明 native 类型，可以保存和跨模块
 传递，其消息和来源不能作为字段读取。`raise!(error)` 发出失败并返回 Never；
 `warn!(error)` 发出 warning、继续执行并返回 `None`，所属 `Option(T)` 的 T 由上下文
-确定。两者都在发出诊断时补上当前 rule 位置，保留创建错误时选择的原值来源。
+确定。两者接受 String 或 BlameError，在实际宏调用处补上 rule 位置；String 只提供
+消息，不将其来源作为数据引用，BlameError 保留创建错误时选择的原值来源。
 `fail!(message, subjects...)` 等价于构造 BlameError 后立即 raise。
 
 ```telora
@@ -1091,9 +1090,9 @@ def check_capability: Fn(Subject) -> Result(Capability, String) = fn(subject) {
     }
 };
 
-let optional = check_capability.should_ok!(authored_subject);
-let required = check_capability.must_ok!(authored_subject);
-let optional_existing = existing_result.try_unwrap!();
+let optional = check_capability(authored_subject).ok_or_warn!();
+let required = check_capability(authored_subject).unwrap!();
+let optional_existing = existing_result.ok_or_warn!();
 let required_existing = existing_result.unwrap!();
 fail!("missing capability", authored_subject)
 ```
@@ -1102,33 +1101,28 @@ Contextual intrinsic 支持 `receiver.ident!(arguments...)` 后置糖，严格�
 放到前置调用的第一个参数。它不是 method lookup，也不允许调用未由语言定义的
 intrinsic。
 
-对于 `checker: Fn(A1, ..., An) -> Result(R, String)`：
+普通调用返回 Result，由调用者选择显式匹配、传播或解包：
 
 ```text
-checker.should_ok!(a1, ..., an) : Option(R)
-checker.must_ok!(a1, ..., an)   : R
+result.unwrap!()     : R
+result.ok_or_warn!() : Option(R)
 ```
 
-checker 可以接收零到多个参数，但不能省略 checker。checker 与各参数都只求值一次，
-顺序从左到右；发生 Warning 或 failure 时，参数按同一顺序成为诊断证据。
-
-- `should_ok!` 把 checker 的 `Ok(R)` 变成 `Some(R)`；Err 产生 Warning 和 `None`。
-- `must_ok!` 返回 checker 的 Ok payload；Err 产生失败和 `Never`。
-- `try_unwrap!` 和 `unwrap!` 对已有 `Result(R, String)` 应用相同两种策略。
-- `?` 只传播原容器的失败分支，不产生诊断或转换容器。
-- `fail!(message, subjects...)` 产生失败；规则归因到 authored caller，subjects 按参数
-  顺序提供数据来源。直接调用时 caller 就是 `fail!` 自身。
+- `unwrap!` 在 Ok 时返回原 payload，在 Err 时调用 `raise!(error)`。
+- `ok_or_warn!` 在 Ok 时返回 Some(payload)，在 Err 时调用 `warn!(error)`，得到 None。
+- 两者支持 Result(R, String) 和 Result(R, BlameError)。String 只提供消息，不附加
+  数据引用；BlameError 保留显式 subjects。需要其他领域错误时先显式转换。
+- 每个表达式只求值一次，rule 位于用户的宏调用处，包括嵌套或导入的函数体内。
+  函数参数和 Result 容器不自动成为数据引用。
+- `?` 只传播失败分支，不产生诊断或转换容器。
+- `fail!(message, subjects...)` 等价于在原调用点执行
+  `raise!(blame!(message, subjects...))`。
 - `panic!(message)` 只用于实现错误或不变量破坏。
 
-`for` 契约引入的类型参数在对应实现体的局部标注、嵌套类型应用和内层闭包注解中
-可见。仅为产生诊断且输出类型难以从上下文推断时，模块级同类型辅助 checker 仍然
-有助于保持精确类型：
+仅需报告警告时可以直接使用返回 Option 的表达式：
 
 ```telora
-def reject_same: for(A) Fn(A, String) -> Result(A, String) =
-    fn(evidence, message) { Err(message) };
-
-let ignored = reject_same.should_ok!(subject, "missing capability");
+let ignored: Option(Subject) = warn!(blame!("missing capability", subject));
 ```
 
 ### 面向契约的失败模式

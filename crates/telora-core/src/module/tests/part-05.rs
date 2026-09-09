@@ -334,10 +334,10 @@
                let node = codec.decode(Types.Node.type, codec.encode((codec.Value).type, {
                    value: 1,
                    children: [{value: 2, children: []}],
-               })) |> result.unwrap;
+               })).unwrap!();
                let pair = codec.decode(Types.Left.type, codec.encode((codec.Value).type, {
                    right: {left: None.ty!(Option(Types.Left))},
-               })) |> result.unwrap;
+               })).unwrap!();
                {
                    node: node,
                    encoded: codec.encode((codec.Value).type, node),

@@ -151,20 +151,20 @@
                 .slice(direct_data_location)
                 .as_deref()
         );
-        let rule_location = error.rule_location().expect("codec call rule location");
+        let rule_location = error.rule_location().expect("display failure rule location");
         assert_eq!(
             module
                 .sources
                 .get(rule_location.source)
                 .slice(rule_location)
                 .as_deref(),
-            Some("codec.encode(codec.Value.type, endpoint)")
+            Some("fail!(\"prepared display rejected endpoint\", dyn.get_field_value(value, 0))")
         );
         let implementation = error
-            .implementation_rule_location()
+            .rule_location()
             .expect("prepared display implementation location");
         let direct_implementation = direct_error
-            .implementation_rule_location()
+            .rule_location()
             .expect("direct prepared display implementation location");
         assert_eq!(
             module
@@ -271,11 +271,11 @@ def check: Fn(Bool) -> Bool = fn(condition) {
 };
 def warn: Fn(String) -> Result(Int, String) = fn(message) { Err(message) };
 def message: Fn() -> String = fn() {
-    let warning = warn.should_ok!("message evaluated");
+    let warning = warn("message evaluated").ok_or_warn!();
     "rejected"
 };
 def subject: Fn() -> Int = fn() {
-    let warning = warn.should_ok!("subject evaluated");
+    let warning = warn("subject evaluated").ok_or_warn!();
     42
 };
 export def once = match rt.with_diagnostics@[Int, Int](fn(value) {
@@ -288,7 +288,7 @@ export def once = match rt.with_diagnostics@[Int, Int](fn(value) {
     Ok(_) => fail!("expected failure"),
 };
 export def success = match rt.with_diagnostics(fn(value: Int) {
-    let warning = warn.should_ok!("successful warning");
+    let warning = warn("successful warning").ok_or_warn!();
     value + 1
 })(7) {
     Ok(observed) => {
@@ -300,14 +300,14 @@ export def success = match rt.with_diagnostics(fn(value: Int) {
     Err(_) => fail!("expected successful capture"),
 };
 export def observed = rt.with_diagnostics@[Int, Int](fn(value: Int) {
-    let warning = warn.should_ok!("before");
+    let warning = warn("before").ok_or_warn!();
     let inner = rt.with_diagnostics@[Int, Int](fn(item: Int) { fail!("inside", item) })(value);
     let message = match inner {
         Err(reports) => reports[0].message,
         Ok(_) => "unexpected",
     };
     let checked = check(message == "inside");
-    let warning = warn.should_ok!(message);
+    let warning = warn(message).ok_or_warn!();
     fail!("after", value)
 })(7);
 export def checked = match observed {

@@ -78,11 +78,11 @@ export def format_fragments = test.should_ok(fn() {
 export def codec_and_schema = test.should_ok(fn() {
     expect({
         let boolean = codec.decode((Bool).type, codec.encode((codec.Value).type, True.ty!(Bool)))
-            |> result.unwrap;
+            .unwrap!();
         let none = codec.decode((Option(Int)).type, codec.encode((codec.Value).type, None.ty!(Option(Int))))
-            |> result.unwrap;
+            .unwrap!();
         let some = codec.decode((Option(Int)).type, codec.encode((codec.Value).type, 3))
-            |> result.unwrap;
+            .unwrap!();
         let encoded = codec.encode((codec.Value).type, 4);
         let bool_schema = json.stringify(json.schema((Bool).type));
         let option_schema = json.stringify(json.schema((Option(Int)).type));

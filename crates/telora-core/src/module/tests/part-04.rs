@@ -155,7 +155,7 @@
                         import "std/codec" as codec;
                         import "std/result" as result;
                         import "./data.json" { data };
-                        let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
+                        let data = codec.decode((Array(Int)).type, data).unwrap!();
                         let values = arrays.push(data, APPENDED);
                         arrays.map(values, fn(value) {
                             if value == TARGET {
@@ -379,7 +379,7 @@
                import "std/codec" as codec;
                import "std/result" as result;
                import "./data.json" { data };
-               let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
+               let data = codec.decode((Array(Int)).type, data).unwrap!();
                match arrays.get(data, 0) {
                    Some(value) => fail!("selected", value),
                    None => 0,
@@ -400,7 +400,7 @@
                import "std/codec" as codec;
                import "std/result" as result;
                import "./data.json" { data };
-               let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
+               let data = codec.decode((Array(Int)).type, data).unwrap!();
                let indexed = arrays.enumerate(data);
                arrays.map(indexed, fn(entry) {
                    let (index, value) = entry;
@@ -424,7 +424,7 @@
                import "std/codec" as codec;
                import "std/result" as result;
                import "./data.json" { data };
-               let data = codec.decode((Array(Int)).type, data) |> result.unwrap;
+               let data = codec.decode((Array(Int)).type, data).unwrap!();
                let indexed = arrays.enumerate(data);
                let first = arrays.get(indexed, 0);
                match first {
@@ -464,7 +464,7 @@
                    result.map_err(codec.decode((User).type, as_value({name: "Mira"})), fn(error) { "decode rejected" }),
                    fn(user) { user.cast!(User) },
                );
-               let name = result.unwrap(result.map(
+               let name = unwrap!(result.map(
                    codec.decode((User).type, as_value({name: "Kai"})),
                    fn(user) { user.name },
                ));

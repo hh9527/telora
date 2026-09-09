@@ -1,0 +1,1 @@
+export def invalid: Option(Int) = warn!({message: "invalid", data: 1, rule: 2});

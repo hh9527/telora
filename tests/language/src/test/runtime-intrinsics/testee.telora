@@ -18,9 +18,9 @@ export def verified_case = test.should_ok(fn() {
                 && 1.cast!(Int) == Ok(1)
                 && "1".cast!(Int) == Err("value must be Int, got String")
                 && a.cast!(B) == Err("value has a different declared type identity")
-                && ok.try_unwrap!() == Some(7)
+                && ok.ok_or_warn!() == Some(7)
                 && ok.unwrap!() == 7
-                && recoverable.try_unwrap!() == None
+                && recoverable.ok_or_warn!() == None
         )
     }
 });

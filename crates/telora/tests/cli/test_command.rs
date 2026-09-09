@@ -258,7 +258,7 @@ fn test_command_rejects_invalid_roots_and_source_to_test_imports() {
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(jsonl(&output.stdout).last().unwrap()["status"], "error");
     }
-    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject.should_ok!(); export def value = test.should_ok(fn() { 1 });").unwrap();
+    fs::write(cwd.join("tests/t1.telora"), "import \"std/test\" as test; def reject: Fn() -> Result(Int, String) = fn() { Err(\"notice\") }; def checked = reject().ok_or_warn!(); export def value = test.should_ok(fn() { 1 });").unwrap();
     let output = test_command(&cwd, "t1");
     assert!(output.status.success());
     assert!(
