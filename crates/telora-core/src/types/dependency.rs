@@ -462,8 +462,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         for definition in component.iter().copied().filter(|definition| !dependency_plan.is_cyclic(*definition)) {
             debug_assert!(dependency_plan.node(definition).dependencies.iter()
                 .all(|dependency| evaluated_types.contains(dependency)));
-            prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                &static_environment, account, sources, &mut evaluator)?;
             let binding = type_bindings[&definition];
             if binding.value.type_parameters.is_empty() {
                 let static_body = StaticContractScope {
@@ -474,6 +472,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     materialize_static_declaration(root, &mut types, binding, module_id,
                         &declared_initializer_slots, source_name, type_store, &mut evaluator, &tool_values)?
                 } else {
+                    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                        &static_environment, account, sources, &mut evaluator)?;
                     let value = evaluate_tool_expression(
                         source_name,
                         &binding.value.value,
@@ -549,6 +549,10 @@ pub(crate) fn analyze_program_with_bindings_observed(
             };
             let static_body = static_scope.elaborate(&binding.value.value, &mut types);
             let static_constraints = static_scope.constraints(&binding.value.type_parameter_bounds, &trait_ids, &mut types);
+            if static_body.is_none() || static_constraints.is_none() {
+                prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                    &static_environment, account, sources, &mut evaluator)?;
+            }
             let mut bindings = ScopedToolBindings::new(&tool_values);
             if static_body.is_none() || static_constraints.is_none() {
                 bindings.insert_type_parameters(&parameters, &mut evaluator)?;
@@ -673,6 +677,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let recursive_nominal_family =
                 component.len() == 1 && contains_family && contains_nominal;
             if recursive_nominal_family {
+                prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                    &static_environment, account, sources, &mut evaluator)?;
                 let definition = component[0];
                 let binding = type_bindings[&definition];
                 let built = build_recursive_type_family(
@@ -711,6 +717,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             .is_some()
                     });
             if concrete_nominal {
+                prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                    &static_environment, account, sources, &mut evaluator)?;
                 let mut type_refs = BTreeMap::new();
                 for definition in &component {
                     let binding = type_bindings[definition];
@@ -854,7 +862,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .annotation
             .as_ref()
             .expect("declaration has a lowered contract");
-        let mut contract_values = ScopedToolBindings::new(&tool_values);
         let scheme_parameters = static_contract_parameters(binding, sources)?;
         let static_scope = StaticContractScope {
             hir: &hir,
@@ -866,6 +873,11 @@ pub(crate) fn analyze_program_with_bindings_observed(
         };
         let static_contract = static_scope.elaborate(contract, &mut types);
         let static_constraints = static_scope.constraints(&binding.value.type_parameter_bounds, &trait_ids, &mut types);
+        if static_contract.is_none() || static_constraints.is_none() {
+            prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                &static_environment, account, sources, &mut evaluator)?;
+        }
+        let mut contract_values = ScopedToolBindings::new(&tool_values);
         if static_contract.is_none() || static_constraints.is_none()
         {
             contract_values.insert_type_parameters(&scheme_parameters, &mut evaluator)?;

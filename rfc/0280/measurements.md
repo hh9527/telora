@@ -497,3 +497,48 @@ Evidence: `/tmp/rfc0280-static-constraints-final-workspace.log`,
 `/tmp/rfc0280-static-constraints-memory-workspace`,
 `/tmp/rfc0280-{static-bodies-constraints,static-constraints}-heap.txt`, and raw
 `/tmp/telora-perf-173/{static-bodies-constraints,static-constraints}.heap.zst`.
+
+## Deferred construction dependency preparation, 2026-09-09
+
+Baseline `c45c55d` is `/tmp/telora-perf-173/telora-static-constraints`; candidate
+is `/tmp/telora-perf-173/telora-deferred-construction`. Optimized release binaries
+retain debug symbols without inference profiling. Two opposite version orders,
+each with one warmup and five samples, yield ten pooled samples per case/version.
+No builds, tests or profilers overlapped timings. These are end-to-end CLI `check`
+times, not isolated inference measurements.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 114.34 | 114.51 | +0.15% |
+| types-400 | 170.00 | 167.36 | -1.55% |
+| checked-types-400 | 479.42 | 268.62 | -43.97% |
+| repeated-family-400 | 139.95 | 139.31 | -0.45% |
+| typed-types-400 | 263.08 | 264.44 | +0.52% |
+| property-types-400 | 360.96 | 358.57 | -0.66% |
+| module-diamond-400 | 530.21 | 528.03 | -0.41% |
+
+The new checked-types workload declares 400 nominal Int wrappers, each with an
+inline `@check` that returns Ok(()) for positive values and Err(blame!(...))
+otherwise. No wrapper values are constructed. This measures checker preparation
+and registration rather than executing checks on user values. Static declaration
+elaboration no longer repeatedly prepares all construction dependencies while
+later types are still pending. Existing registration and execution checks remain.
+Control movements do not establish a general pipeline improvement; these results
+must not be extrapolated to ontology or added to earlier checkpoint percentages.
+
+Separate checked-types-400 heaptrack runs measured allocation calls decreasing
+3,560,823 -> 1,288,887 (-63.80%) and peak heap decreasing 24.04 -> 23.55 MB
+(-2.04%). The much larger allocation reduction indicates transient work removal;
+profiler RSS and runtime are not uninstrumented measurements.
+
+Full workspace validation passed 352 core and 41 CLI tests (including language
+acceptance) and all remaining workspace/doc tests. Release and diff/source-size
+checks passed. A new zero-fuel regression verifies static duplicate declarations
+are reported before running checker value dependencies. Existing construction,
+recursive-check and codec acceptance tests continue to pass.
+
+Evidence: `/tmp/rfc0280-deferred-construction-{workspace,release}.log`,
+`/tmp/rfc0280-deferred-construction-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-deferred-construction-memory-workspace`,
+`/tmp/rfc0280-{static-constraints,deferred-construction}-checked-heap.txt`, and
+raw `/tmp/telora-perf-173/{static-constraints,deferred-construction}-checked.heap.zst`.

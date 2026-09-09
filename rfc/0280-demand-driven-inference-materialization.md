@@ -675,3 +675,22 @@ variant. Controls moved between -1.67% and +0.33%, without evidence of a general
 pipeline improvement. Qualified constraint allocation calls decreased 9.72%; peak
 heap was approximately 12.06 MB in both versions. The measurement appendix records
 workload scope and artifacts.
+
+### Deferred construction dependency preparation
+
+Static type bodies and declaration contracts no longer prepare the whole module's
+construction/check value dependencies before elaboration. Preparation occurs at
+the existing value-phase boundary, or immediately before a legacy type path that
+still executes code. Recursive legacy definitions and unresolved body/constraint
+paths retain preparation before evaluation. Checker registration and construction
+validation are not removed. A zero-fuel regression proves duplicate static
+declarations are diagnosed before executing a checker's value dependency.
+
+This removes repeated scans and transient work when many checked type definitions
+are pending. It does not yet separate all value inference from execution, statically
+resolve recursive definitions, or replace checker registration with global graph
+obligations. Full workspace validation passed (352 core, 41 CLI including language
+acceptance, other workspace/doc tests), release build and source-size/diff checks
+passed. Against `c45c55d`, checked-types-400 check time fell 43.97%, allocation
+calls fell 63.80%, and peak heap fell 2.04%. Controls ranged from -1.55% to +0.52%;
+this does not establish a general speedup. Details are in the measurement appendix.

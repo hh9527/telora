@@ -217,6 +217,14 @@ mod static_contract_tests {
     use super::*;
 
     #[test]
+    fn static_contract_errors_precede_construction_value_preparation() {
+        let source = "def prepare: Fn() -> Never = fn() { panic!(\"check dependency executed too early\") }; let validator = prepare(); @check(validator) type Number = struct(Int); decl run: Fn(Int) -> Int; decl run: Fn(Int) -> Int;";
+        let error = analyze_source_with_fuel("static-before-values", source, 0).unwrap_err();
+        assert!(error.message.contains("duplicate declaration"), "{error}");
+        assert!(!error.message.contains("fuel"), "{error}");
+    }
+
+    #[test]
     fn declared_bodies_elaborate_without_evaluating_model_constructors() {
         let bound = TypeDescriptor::Bound(TypeParameterId(0));
         for (source_text, expected) in [

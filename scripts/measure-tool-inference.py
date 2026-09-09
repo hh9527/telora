@@ -21,7 +21,7 @@ def main():
                         help="Copy the generated workspace to a new directory for separate profiling")
     parser.add_argument("--workloads", nargs="+",
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
-                                 "typed-types", "property-types", "shared-wide", "shared-deep",
+                                 "typed-types", "property-types", "checked-types", "shared-wide", "shared-deep",
                                  "family-contracts", "qualified-family-contracts",
                                  "property-constraints", "qualified-property-constraints",
                                  "module-fanout", "module-diamond"],
@@ -41,6 +41,12 @@ def main():
         ) + "\nexport def answer: Int = f0(1);\n"
         cases[f"types-{size}"] = "\n".join(
             f"type T{index} = struct {{value: Int}};" for index in range(size)
+        ) + "\nexport def answer: Int = 42;\n"
+        cases[f"checked-types-{size}"] = "\n".join(
+            '@check(fn(value) { if value > 0 { Ok(()) } '
+            'else { Err(blame!("expected positive", value)) } })\n'
+            + f"type T{index} = struct(Int);"
+            for index in range(size)
         ) + "\nexport def answer: Int = 42;\n"
         cases[f"array-{size}"] = (
             "export def values: Array(Int) = ["
