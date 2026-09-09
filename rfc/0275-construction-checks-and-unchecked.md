@@ -1,5 +1,7 @@
 # RFC 0275: Construction Checks and Unchecked Values
 
+- Check return protocol superseded by [RFC 0278](0278-result-based-construction-checks.md):
+  `Result((), BlameError)` replaces `Option(BlameError)`; other guarantees remain.
 - Status: Completed and integrated into `main`; functional acceptance and performance review are complete.
 - Completion: functional implementation `e60feed`; performance evidence `56108e6`.
   Follow-up optimizations are tracked in [#170](https://github.com/hh9527/telora/issues/170).
