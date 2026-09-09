@@ -1066,8 +1066,18 @@ impl<'a> GenericInference<'a> {
                 result_annotation,
                 body,
             } => {
-                let expected = match expected.map(|ty| match ty {
-                    TypeDescriptor::Function { .. } => ty.clone(),
+                let expected = match expected.map(|ty| match self.variables.view(ty) {
+                    InferenceView::Row(row) if matches!(self.variables.constructor(row), InferenceConstructor::Function) => {
+                        // Preserve shared result/parameter slots even when an earlier
+                        // argument has already supplied a structural solution. A
+                        // callback can still refine that solution with nominal evidence.
+                        let (result, parameters) = self.variables.arguments(row).split_last().expect("function result edge");
+                        TypeDescriptor::Function {
+                            parameters: parameters.iter().copied().map(TypeDescriptor::Inference).collect(),
+                            result: Box::new(TypeDescriptor::Inference(*result)),
+                        }
+                    }
+                    InferenceView::Descriptor(TypeDescriptor::Function { .. }) => ty.clone(),
                     _ => self.normalize(ty),
                 }) {
                     Some(TypeDescriptor::Function {

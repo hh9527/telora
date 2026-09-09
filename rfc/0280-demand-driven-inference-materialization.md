@@ -439,6 +439,13 @@ known-slot replacement, conflict propagation, 16,384-deep graphs without
 descriptor views, and equivalence with the prior normalized predicates.
 Function call inspection has subsequently been changed to retain parameter/result
 slot edges, including the call-entry openness needed by generic constraints.
+Closure expectations now retain those edges as well. Full language validation
+exposed a missed boundary: normalizing a callback signature after an earlier
+argument solved T structurally detached its result from the shared T slot.
+Keeping the callback's parameter/result edges restores subsequent nominal
+refinement. The existing nominal-equality behavior suite verifies this with
+`choose_with_factory([{value: 42}], fn() { item })`; all 22 cases pass after
+the fix. A structural solution is not proof that a slot can be detached.
 
 The query/adapter checkpoint passed the workspace suite: 326 core tests, 41 CLI
 tests and all 400 language groups. The subsequent call-edge change passed all
@@ -462,3 +469,82 @@ requests. These are post-query-migration counts, not before/after counter deltas
 They reinforce continuing with call/evidence graph migration, not declaring
 the RFC complete after local clone reductions. Tools and the broader template,
 nominal identity and consumer migrations remain outstanding.
+
+### Owned tool evidence (in progress)
+
+Tool expression records and runtime evidence now publish into one owned TypeGraph
+with AnalysisTypeId roots and a shared publication session. Function arity and
+nominal-owner selection inspect graph heads without rebuilding signatures or
+unrelated records. Inferred records still override supplied expression facts.
+The solver can be destroyed before evidence consumption; tests explicitly cover
+this lifetime and parameter/result/root sharing.
+
+This is an intermediate migration, not completion of phase 3. Roots rejected by
+final-type publication retain an explicit compatibility descriptor, preserving
+open-function arities and existing error behavior. Selected owner substitution
+and runtime metadata construction still materialize descriptors. The direct
+graph-to-metadata bridge, open-record snapshot representation, and measurements
+of subsequent migrations remain outstanding. The measurements below show that
+this checkpoint does not meet the performance acceptance gate.
+
+### Tool graph checkpoint measurements — 2026-09-09
+
+The checkpoint includes the call/closure edge changes and owned tool evidence.
+It passed `cargo test --workspace` (328 core tests, 41 CLI tests, all 400 language
+groups, and the remaining workspace/doc tests), default release build,
+`git diff --check`, and source-size checks. The three existing source-size
+advisories remain. It is not ready to merge on performance grounds.
+
+Preserved uninstrumented binaries use the same optimized release profile with
+debug information: baseline `13d5859`, query-only `telora-stage1`, and current
+`telora-tool-graph`, all under `/tmp/telora-perf-173/`. The initial sweep used one
+warmup and five samples at N=100/200/400, including a constant control and shared
+wide/deep cases. Builds and tests were finished before timings; profilers ran
+separately. Most current medians regressed by 2–5% against baseline. A second
+sweep reversed binary order and used ten samples at N=400:
+
+| Workload | Baseline median | Current median | Change |
+| --- | ---: | ---: | ---: |
+| Constant control | 138.16 ms | 140.19 ms | +1.47% |
+| Plain typed types, 400 | 610.37 ms | 619.88 ms | +1.56% |
+| Property types, 400 | 695.76 ms | 714.67 ms | +2.72% |
+| Shared wide, 400 | 410.76 ms | 427.03 ms | +3.96% |
+| Shared deep, 400 | 372.92 ms | 382.15 ms | +2.48% |
+
+The repository codec-schema check also succeeded in all runs. Its ten-sample
+median increased from 172.69 to 178.41 ms (+3.31%). Mean/stdev were
+172.53/1.44 and 181.39/10.97 ms; the current run had an outlier, so the mean
+ratio is not a precise estimate of its regression.
+
+Heaptrack used the original plain/property-400 inputs, identical to the earlier
+baseline profiles. RSS is the median of five separate uninstrumented checks,
+not heaptrack RSS. Heap MB below are decimal; RSS is KiB.
+
+| Metric | Plain baseline → current | Property baseline → current |
+| --- | ---: | ---: |
+| Allocation calls | 2,777,025 → 2,785,722 (+0.31%) | 3,104,739 → 3,128,479 (+0.76%) |
+| Peak heap | 35.81 → 36.13 MB | 37.89 → 38.20 MB |
+| Peak RSS median | 49,236 → 49,460 KiB | 51,188 → 51,644 KiB |
+
+Property allocation stacks through normalize decreased from 863,876 to 647,551
+(-25.04%), but stacks through tool inference increased from 1,236,348 to
+1,263,668. Current publication stacks account for 109,332 calls; stacks matching
+TypeGraph descriptor conversion account for 54,796. These categories overlap
+and are not all incremental costs. Compared with the query-only checkpoint's
+3,045,669 allocations, current property allocations increased by 2.72%.
+There is no demonstrated total allocation or peak-memory benefit.
+
+A software CPU profile of five current property checks collected 1,441 samples.
+Inclusive normalize/tool-inference shares were approximately 9.09%/30.19%,
+versus the earlier baseline's 10.79%/28.21%; tool evidence publication accounted
+for about 3.05%. Sampling uncertainty and overlapping call paths prevent adding
+these shares or treating them as an exact explanation of wall-time changes.
+The evidence supports fewer normalization allocations, but the intermediate
+graph publication plus retained tree adapters has not delivered an overall win.
+
+Raw local artifacts: `/tmp/rfc0280-tool-graph-comparison.jsonl` (three versions,
+all scales), `/tmp/rfc0280-tool-graph-reverse.jsonl` (reversed ten-sample sweep),
+`/tmp/rfc0280-tool-graph-codec.json`, `/tmp/rfc0280-tool-graph-rss.txt`,
+`/tmp/rfc0280-tool-graph-{plain,property}-heap.txt`, and
+`/tmp/rfc0280-tool-graph-perf-flat.txt`. Current heaptrack/perf files and the
+preserved binaries remain local profiling artifacts, not repository assets.

@@ -34,10 +34,11 @@ fn imported_dyn_namespaces(bindings: &[Binding]) -> HashSet<String> {
 
 #[derive(Default)]
 struct ToolExpressionEvidence {
-    descriptors: HashMap<crate::Location, TypeDescriptor>,
+    types: TypeGraph,
+    expression_types: HashMap<crate::Location, ToolTypeRoot>,
     value_constructors: HashMap<crate::Location, ValueConstructor>,
     calls: HashMap<crate::Location, Vec<ResolvedEvidence>>,
-    runtime_types: BTreeMap<String, TypeDescriptor>,
+    runtime_types: BTreeMap<String, ToolTypeRoot>,
     parameters: HashMap<crate::Location, Vec<String>>,
     lexical_types: HashMap<TypeParameterId, String>,
     inferred_scopes: HashMap<crate::Location, Vec<LexicalTypeEvidence>>,
@@ -45,6 +46,112 @@ struct ToolExpressionEvidence {
     not_families: HashMap<crate::Location, NotFamily>,
     members: HashMap<crate::Location, ResolvedEvidence>,
     interpolations: HashMap<crate::Location, ResolvedEvidence>,
+}
+
+// IDs always refer to the graph owned by the enclosing evidence. Intermediate
+// tool records can be open even after a successful inference pass; keep those
+// explicit until all consumers support an open graph snapshot.
+enum ToolTypeRoot {
+    Graph(AnalysisTypeId),
+    Compatibility(TypeDescriptor),
+}
+
+impl ToolTypeRoot {
+    fn import(graph: &mut TypeGraph, descriptor: &TypeDescriptor) -> Self {
+        match graph.intern_resolved_descriptor(descriptor) {
+            Some(id) => Self::Graph(id),
+            None => Self::Compatibility(descriptor.clone()),
+        }
+    }
+
+    fn descriptor<'a>(&'a self, graph: &TypeGraph) -> Result<std::borrow::Cow<'a, TypeDescriptor>, String> {
+        match self {
+            Self::Graph(id) => graph.descriptor(*id).map(std::borrow::Cow::Owned),
+            Self::Compatibility(descriptor) => Ok(std::borrow::Cow::Borrowed(descriptor)),
+        }
+    }
+
+    fn arity(&self, graph: &TypeGraph) -> Option<usize> {
+        match self {
+            Self::Graph(id) => match graph.node(*id) {
+                TypeNode::Function { parameters, .. } => Some(parameters.len()),
+                _ => None,
+            },
+            Self::Compatibility(TypeDescriptor::Function { parameters, .. }) => Some(parameters.len()),
+            _ => None,
+        }
+    }
+
+    fn owner(&self, graph: &TypeGraph, constructor: bool) -> Option<Self> {
+        match self {
+            Self::Graph(id) => {
+                let id = match graph.node(*id) {
+                    TypeNode::Function { result, .. } if constructor => *result,
+                    _ => *id,
+                };
+                matches!(graph.node(id), TypeNode::Declared { .. }).then_some(Self::Graph(id))
+            }
+            Self::Compatibility(descriptor) => {
+                let descriptor = match descriptor {
+                    TypeDescriptor::Function { result, .. } if constructor => result.as_ref(),
+                    _ => descriptor,
+                };
+                matches!(descriptor, TypeDescriptor::Declared(_))
+                    .then(|| Self::Compatibility(descriptor.clone()))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_type_root_tests {
+    use super::*;
+
+    #[test]
+    fn evidence_owns_shared_types_after_solver_is_dropped() {
+        let mut graph = TypeGraph::default();
+        let (function, owner) = {
+            let mut variables = InferenceVariables::default();
+            let int = variables.structure_edge(TypeDescriptor::Int);
+            let body = variables.structure_node(InferenceConstructor::Array, &[int]);
+            let owner = variables.structure_node(InferenceConstructor::Declared {
+                head: crate::value::DeclaredTypeId::concrete(crate::ModuleId::ANONYMOUS, 987),
+                name: "Items".into(),
+            }, &[body]);
+            let function = variables.structure_node(InferenceConstructor::Function, &[owner, owner]);
+            let mut publication = InferencePublication::new(&variables);
+            let function = publication.publish(&mut graph, function, |_| panic!("no materialization needed")).ok().unwrap();
+            let owner = publication.publish(&mut graph, owner, |_| panic!("shared root must be reused")).ok().unwrap();
+            (ToolTypeRoot::Graph(function), owner)
+        };
+        assert_eq!(function.arity(&graph), Some(1));
+        assert!(function.owner(&graph, false).is_none());
+        assert!(matches!(function.owner(&graph, true), Some(ToolTypeRoot::Graph(id)) if id == owner));
+        let TypeNode::Function { parameters, result } = graph.node(match function {
+            ToolTypeRoot::Graph(id) => id,
+            _ => unreachable!(),
+        }) else { panic!("function node") };
+        assert_eq!(parameters, &[owner]);
+        assert_eq!(*result, owner);
+        assert_eq!(graph.nodes().len(), 4);
+    }
+
+    #[test]
+    fn open_function_evidence_keeps_arity_without_claiming_a_final_type() {
+        let mut variables = InferenceVariables::default();
+        let slot = variables.fresh();
+        let descriptor = TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Inference(slot)],
+            result: Box::new(TypeDescriptor::Inference(slot)),
+        };
+        let mut graph = TypeGraph::default();
+        let root = ToolTypeRoot::import(&mut graph, &descriptor);
+        assert!(matches!(root, ToolTypeRoot::Compatibility(_)));
+        assert_eq!(root.arity(&graph), Some(1));
+        assert!(root.owner(&graph, true).is_none());
+        assert_eq!(root.descriptor(&graph).unwrap().as_ref(), &descriptor);
+        assert_eq!(graph.nodes().len(), 0);
+    }
 }
 
 impl ToolInferenceContext {

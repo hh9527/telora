@@ -308,15 +308,7 @@ fn infer_tool_expression_evidence(
 ) -> Result<ToolExpressionEvidence, String> {
     let context = evaluator.inference_context.as_ref().ok_or("tool inference context is unavailable")?;
     if !matches!(expected, Some(TypeDescriptor::Function { .. })) && !context.supports_constructors {
-        return Ok(ToolExpressionEvidence {
-            descriptors: HashMap::new(),
-            value_constructors: HashMap::new(),
-            calls: HashMap::new(), runtime_types: BTreeMap::new(),
-            parameters: HashMap::new(), lexical_types: HashMap::new(),
-            inferred_scopes: HashMap::new(),
-            families: HashMap::new(), not_families: HashMap::new(),
-            members: HashMap::new(), interpolations: HashMap::new(),
-        });
+        return Ok(ToolExpressionEvidence::default());
     }
     let mut annotations = HashMap::new();
     evaluator.inference_depth += 1;
@@ -393,11 +385,21 @@ fn infer_tool_expression_evidence(
     parameters.extend(inference.inferred_runtime_scopes.iter().map(|(location, evidence)| {
         (*location, evidence.iter().map(|evidence| evidence.name.clone()).collect())
     }));
-    let descriptors = inference.records.iter()
-        .map(|(location, slot)| (*location, inference.normalize(&TypeDescriptor::Inference(*slot)))).collect();
-    let runtime_types = inference.runtime_type_evidence.iter()
-        .map(|(name, descriptor)| (name.clone(), inference.normalize(descriptor))).collect();
-    Ok(ToolExpressionEvidence { descriptors, value_constructors: inference.value_constructors,
+    let runtime_slots = inference.runtime_type_evidence.iter().map(|(name, descriptor)| {
+        (name.clone(), inference.variables.structure_edge(descriptor.clone()))
+    }).collect::<Vec<_>>();
+    let mut types = TypeGraph::default();
+    let mut publication = InferencePublication::new(&inference.variables);
+    let mut publish = |slot| match publication.publish(&mut types, slot,
+        |slot| inference.normalize(&TypeDescriptor::Inference(slot))) {
+        Ok(id) => ToolTypeRoot::Graph(id),
+        Err(_) => ToolTypeRoot::Compatibility(inference.normalize(&TypeDescriptor::Inference(slot))),
+    };
+    let expression_types = inference.records.iter()
+        .map(|(location, slot)| (*location, publish(*slot))).collect();
+    let runtime_types = runtime_slots.into_iter()
+        .map(|(name, slot)| (name, publish(slot))).collect();
+    Ok(ToolExpressionEvidence { types, expression_types, value_constructors: inference.value_constructors,
         calls: inference.resolved_call_evidence, runtime_types,
         parameters, lexical_types, inferred_scopes: inference.inferred_runtime_scopes, families: inference.propagation_families,
         not_families: inference.not_families, members: inference.resolved_trait_members,
@@ -473,13 +475,14 @@ fn evaluate_tool_expression_with_debug(
         Err(_) => None,
     };
     let mut prepared = evidence.unwrap_or_default();
-    let mut descriptors: HashMap<_, _> = expression_descriptors.into_iter().flat_map(|descriptors| descriptors.iter())
+    for (location, descriptor) in expression_descriptors.into_iter().flat_map(|descriptors| descriptors.iter())
             .filter(|(location, _)| location.source == expression.location.source
                 && expression.location.start <= location.start
                 && location.end <= expression.location.end)
-            .map(|(location, descriptor)| (*location, descriptor.clone())).collect();
-    descriptors.extend(std::mem::take(&mut prepared.descriptors));
-    prepared.descriptors = descriptors;
+    {
+        prepared.expression_types.entry(*location)
+            .or_insert_with(|| ToolTypeRoot::import(&mut prepared.types, descriptor));
+    }
     evaluate_prepared_tool_expression(
         source_name, expression, bindings, prepared, account, sources, evaluator, observed,
     )
@@ -496,18 +499,16 @@ fn evaluate_prepared_tool_expression(
     evaluator: &mut ToolEvaluator,
     observed: bool,
 ) -> Result<Val, FrontendError> {
-    let ToolExpressionEvidence { descriptors, value_constructors, calls, runtime_types,
+    let ToolExpressionEvidence { types, expression_types, value_constructors, calls, runtime_types,
         parameters, lexical_types, inferred_scopes, families, not_families, members, interpolations } = evidence;
-    let arities = descriptors.iter().filter_map(|(location, descriptor)| {
-        if let TypeDescriptor::Function { parameters, .. } = descriptor {
-            Some((*location, parameters.len()))
-        } else { None }
-    }).collect();
+    let arities = expression_types.iter().filter_map(|(location, root)|
+        root.arity(&types).map(|arity| (*location, arity))).collect();
     let mut lowered = expression.clone();
     crate::elaboration::elaborate_tool_expression(&mut lowered, &calls, &arities, &parameters,
         &families, &not_families, &members, &interpolations);
     let mut bindings = ScopedToolBindings::new(bindings);
-    for (name, descriptor) in runtime_types {
+    for (name, root) in runtime_types {
+        let descriptor = root.descriptor(&types).map_err(|message| frontend_error(source_name, message))?;
         let value = evaluator.descriptor(&descriptor)?;
         let mut parameters = Vec::new();
         collect_bound_parameters(&descriptor, &mut parameters);
@@ -518,15 +519,14 @@ fn evaluate_prepared_tool_expression(
         bindings.insert(name, value);
     }
     let mut declared_value_owners = HashMap::new();
-    for (location, descriptor) in &descriptors {
-        let descriptor = if value_constructors.contains_key(location)
-            && let TypeDescriptor::Function { result, .. } = descriptor
-        { result.as_ref() } else { descriptor };
+    for (location, root) in &expression_types {
+        let Some(owner_root) = root.owner(&types, value_constructors.contains_key(location)) else { continue; };
         if location.source == expression.location.source
             && expression.location.start <= location.start
             && location.end <= expression.location.end
-            && matches!(descriptor, TypeDescriptor::Declared(_))
         {
+            let descriptor = owner_root.descriptor(&types).map_err(|message| frontend_error(source_name, message))?;
+            let descriptor = descriptor.as_ref();
             let key = if type_identity_is_symbolic(descriptor) {
                 format!("\0owner-family:{}:{}", location.start, location.end)
             } else { crate::compiler::declared_owner_link_key(*location) };
