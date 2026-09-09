@@ -533,3 +533,78 @@ speedup claim. Property-400 peak heap decreased 35.16 -> 33.83 MB (-3.78%)
 and uninstrumented RSS median 48,036 -> 46,376 KiB (-3.46%). These check
 workloads exercise HIR sharing, not the strict loader's skeleton shortcut.
 The direct type-contract elaboration path remains outstanding.
+
+### Direct declaration contracts checkpoint
+
+StaticContractScope elaborates known type references, symbolic parameters,
+functions, tuples/Unit and builtin Array/Dict/TypeOf directly into the TypeGraph
+that later becomes Analysis.types. Its inputs contain no evaluator, heap or
+runtime values. Builtin-name interpretation respects lexical/import/parameter
+shadowing; unimplemented forms retain an explicit legacy contract path. A static
+contract with unbounded generic parameters no longer creates parameter metadata.
+The existing TypeScheme consumer still receives one descriptor at its adapter
+boundary; moving that consumer to graph roots remains required.
+
+Earlier graph roots can expose structural sharing through nominal recursion.
+Descriptor traversal now tracks nominal boundaries instead of rejecting every
+revisited structural ancestor. A pure structural cycle still fails. When a full
+nominal descriptor arrives after a recursive Never-body stub, its body refines
+the same row, preserving references already present in contracts. Tests cover
+generic parameter sharing, shadowed families, nominal recursion, invalid
+structural cycles and later nominal refinement. The initial serve regressions
+were reproduced and fixed at this boundary, not hidden behind a VM fallback.
+
+Type definition bodies, family application, bounds, imported interfaces and
+property/value preparation still include legacy execution. This checkpoint is
+not execution-free session-wide inference. Final workspace tests passed (338
+core, 41 CLI including language acceptance), as did release build and diff/source
+size checks. Against `b5464c4`, two-order ten-sample end-to-end check medians
+improved 39.42% for shared-wide-400, 35.92% for shared-deep-400, 17.61% for
+typed-400 and 12.83% for property-400; diamond-400 improved only 1.48%.
+Property/wide allocation calls decreased 9.50%/36.44%, with peak heap reductions
+of 4.05%/4.52%. These are incremental synthetic-workload results, not a claim
+about ontology or completion of the RFC. See the measurement appendix.
+
+### Qualified declaration contracts
+
+The direct path also reads concrete type exports through nested module
+interfaces (`pkg.inner.Item`). It requires a namespace, a declared type export
+and an unquantified type witness; ordinary metadata-valued exports and type
+families do not qualify. Lexical and generic parameter shadowing still takes
+precedence over an imported namespace. No runtime value or evaluator is an input
+to this lookup. Interface construction itself still depends on the existing
+module pipeline, so this does not yet move resolution before imported value
+initialization. The preceding timing table measures the earlier direct-contract
+checkpoint, not this extension.
+
+Workspace validation for this extension passed 339 core tests and 41 CLI tests,
+including language acceptance. The static API test covers an authored namespace
+import, nested interfaces, parameter shadowing and rejection of a metadata-valued
+export lacking a type declaration. Test log:
+`/tmp/rfc0280-qualified-contract-workspace.log`.
+
+### Symbolic family application in declaration contracts
+
+Eligible local and imported family schemes now register template roots in the
+same analysis graph. Contract applications substitute argument IDs through those
+roots without invoking a runtime closure or copying metadata. Nominal application
+identity is reserved before following recursive body edges; phantom arguments
+remain part of identity. Equal applications reuse interned roots, and an existing
+nominal stub can acquire its complete body without changing ID. Substitution uses
+a sparse per-application node map rather than cloning the type environment.
+
+This is an application consumer migration. Template production still runs the
+legacy type-definition pipeline, and nominal identity arguments still cross a
+descriptor adapter. Constrained templates and unresolved named references retain
+the checked legacy path. The full session graph must ultimately own the templates
+before module value initialization; the module-local registration here is not the
+final ownership model. The measurement runner includes local and qualified
+family-contract cases to distinguish this change from type-body evaluation.
+
+Full workspace validation passed (343 core, 41 CLI including language acceptance)
+and release build passed. Against the qualified-contract checkpoint, two-order
+ten-sample check medians decreased 34.20% for local family-contracts-400 and 36.31%
+for qualified-family-contracts-400. Other controls moved between -2.79% and +0.87%,
+without evidence of a general module-graph speedup. Qualified family allocation
+calls decreased 26.44% and peak heap decreased 18.40%; see the measurement
+appendix for scope and artifacts.

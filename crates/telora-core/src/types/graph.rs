@@ -352,8 +352,19 @@ impl TypeGraph {
 
     fn intern_descriptor(&mut self, descriptor: &TypeDescriptor) -> AnalysisTypeId {
         if let TypeDescriptor::Declared(declared) = descriptor {
-            if let Some(id) = self.declared.get(&declared.id) {
-                return *id;
+            if let Some(id) = self.declared.get(&declared.id).copied() {
+                // Recursive descriptors use a nominal Never-body reference as
+                // a stub. A later complete declaration refines the same row.
+                if let TypeNode::Declared { body, .. } = self.node(id)
+                    && matches!(self.node(*body), TypeNode::Never)
+                    && !matches!(declared.body.as_ref(), TypeDescriptor::Never)
+                {
+                    let body = self.intern_descriptor(&declared.body);
+                    self.nodes[id.index()] = TypeNode::Declared {
+                        id: declared.id.clone(), name: declared.name.clone(), body,
+                    };
+                }
+                return id;
             }
             let id = self.push(TypeNode::Pending);
             self.declared.insert(declared.id.clone(), id);
@@ -444,35 +455,48 @@ impl TypeGraph {
     }
 
     fn descriptor(&self, root: AnalysisTypeId) -> Result<TypeDescriptor, String> {
+        #[derive(Default)]
+        struct DescriptorPath {
+            active: HashMap<AnalysisTypeId, usize>,
+            depth: usize,
+            nominal_boundary: usize,
+        }
         fn build(
             graph: &TypeGraph,
             id: AnalysisTypeId,
-            visiting: &mut HashSet<AnalysisTypeId>,
+            visiting: &mut DescriptorPath,
         ) -> Result<TypeDescriptor, String> {
-            if !visiting.insert(id) {
-                return match graph.node(id) {
+            let previous = visiting.active.get(&id).copied();
+            if let Some(depth) = previous {
+                match graph.node(id) {
                     TypeNode::Declared { id, name, .. } => {
-                        Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
+                        return Ok(TypeDescriptor::Declared(DeclaredTypeDescriptor {
                             id: id.clone(),
                             name: name.clone(),
                             body: Arc::new(TypeDescriptor::Never),
-                        }))
+                        }));
                     }
-                    _ => Err("recursive structural type has no nominal identity".into()),
+                    _ if depth >= visiting.nominal_boundary => {
+                        return Err("recursive structural type has no nominal identity".into());
+                    }
+                    _ => {}
                 };
             }
+            visiting.active.insert(id, visiting.depth);
+            visiting.depth += 1;
             let descriptor = match graph.node(id) {
                 TypeNode::Pending => return Err("type graph contains an open node".into()),
                 TypeNode::Ref(target) => build(graph, *target, visiting)?,
                 TypeNode::Bound(parameter) => TypeDescriptor::Bound(*parameter),
                 TypeNode::Named(name) => TypeDescriptor::Named(name.clone()),
                 TypeNode::Declared { id, name, body } => {
-                    // 共享结构从新的具名边界回到当前路径时，保留名义引用。
-                    let body = if visiting.contains(body) {
-                        TypeDescriptor::Never
-                    } else {
-                        build(graph, *body, visiting)?
-                    };
+                    // A shared structural ancestor may reappear after crossing
+                    // a nominal boundary. Expand within that boundary until the
+                    // nominal identity recurs; do not reject the structural edge.
+                    let previous_boundary = visiting.nominal_boundary;
+                    visiting.nominal_boundary = visiting.depth;
+                    let body = build(graph, *body, visiting)?;
+                    visiting.nominal_boundary = previous_boundary;
                     TypeDescriptor::Declared(DeclaredTypeDescriptor {
                         id: id.clone(),
                         name: name.clone(),
@@ -545,11 +569,16 @@ impl TypeGraph {
                     result: Box::new(build(graph, *result, visiting)?),
                 },
             };
-            visiting.remove(&id);
+            visiting.depth -= 1;
+            if let Some(depth) = previous {
+                visiting.active.insert(id, depth);
+            } else {
+                visiting.active.remove(&id);
+            }
             Ok(descriptor)
         }
 
-        build(self, root, &mut HashSet::new())
+        build(self, root, &mut DescriptorPath::default())
     }
 
     fn install_named_descriptors(

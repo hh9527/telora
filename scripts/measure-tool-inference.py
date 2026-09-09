@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--workloads", nargs="+",
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
                                  "typed-types", "property-types", "shared-wide", "shared-deep",
+                                 "family-contracts", "qualified-family-contracts",
                                  "module-fanout", "module-diamond"],
                         default=["constant", "functions", "types", "array"])
     args = parser.parse_args()
@@ -51,6 +52,19 @@ def main():
         cases[f"repeated-family-{size}"] = "type Box(T) = struct {value: T};\n" + "\n".join(
             f"type T{index} = Box(Int);" for index in range(size)
         ) + "\nexport def answer: Int = 42;\n"
+        for qualified in [False, True]:
+            name = f"{'qualified-' if qualified else ''}family-contracts-{size}"
+            declaration = "type Box(T) = struct {value: T, items: Array(T)};\n"
+            if qualified:
+                dependencies[f"{name}-types"] = "export " + declaration
+                prelude = f'import "./{name}-types" as model;\n'
+                family = "model.Box"
+            else:
+                prelude, family = declaration, "Box"
+            cases[name] = prelude + "\n".join(
+                f"def f{index}: Fn({family}(Int)) -> {family}(Int) = fn(value) {{ value }};"
+                for index in range(size)
+            ) + "\nexport def ready: Bool = True;\n"
         property_prelude = (
             "@property(PropertyTarget.Type)\ntype Label = struct {text: String};\n"
             'def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) { {text: "ready"} };\n'

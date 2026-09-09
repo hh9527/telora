@@ -19,6 +19,18 @@ impl<'a> ScopedToolBindings<'a> {
     fn insert(&mut self, name: String, value: Val) {
         self.local.push((name, value));
     }
+
+    fn insert_type_parameters(
+        &mut self,
+        parameters: &[TypeParameter],
+        evaluator: &mut ToolEvaluator<'_>,
+    ) -> Result<(), FrontendError> {
+        for parameter in parameters {
+            let value = evaluator.descriptor(&TypeDescriptor::Bound(parameter.id))?;
+            self.insert(parameter.name.clone(), value);
+        }
+        Ok(())
+    }
 }
 
 impl ToolBindings for ScopedToolBindings<'_> {

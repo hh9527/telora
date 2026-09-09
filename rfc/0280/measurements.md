@@ -315,3 +315,91 @@ as did release build and diff/source-size checks. Evidence:
 This checkpoint shares HIR within each analysis, not yet across the full
 session or strict-failure recovery. Static type-contract elaboration remains
 the next major execution boundary to replace.
+
+## Direct declaration contracts checkpoint, 2026-09-09
+
+Compared preserved optimized uninstrumented `telora-shared-artifacts` (`b5464c4`)
+and `telora-static-contract` binaries in `/tmp/telora-perf-173`. One warmup and
+five measurements per version/workload in each of two opposite version orders;
+table medians pool ten samples. No builds/tests/profilers ran alongside timings.
+These are end-to-end CLI `check` costs, including initialization, not isolated
+inference phase durations.
+
+| Case | b5464c4 median ms | Static contracts median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 147.30 | 135.79 | -7.81% |
+| typed-400 | 489.25 | 403.07 | -17.61% |
+| property-400 | 579.26 | 504.96 | -12.83% |
+| shared-wide-400 | 429.03 | 259.92 | -39.42% |
+| shared-deep-400 | 380.26 | 243.68 | -35.92% |
+| diamond-400 | 562.09 | 553.76 | -1.48% |
+
+Separate memory measurements:
+
+| Workload | Allocation calls before -> after | Peak heap MB before -> after | Five-run RSS median KiB before -> after |
+| --- | --- | --- | --- |
+| property-400 | 2,541,510 -> 2,300,182 (-9.50%) | 33.83 -> 32.46 (-4.05%) | 46,376 -> 45,856 (-1.12%) |
+| shared-wide-400 | 2,254,205 -> 1,432,801 (-36.44%) | 19.71 -> 18.82 (-4.52%) | 34,824 -> 34,308 (-1.48%) |
+
+The property baseline heap measurement is the preserved shared-artifacts result
+above; shared-wide heaps and both RSS comparisons were collected in this batch.
+Heaptrack RSS/runtime includes profiler overhead and is not used for the table.
+These results target declaration contracts; they neither cover all type syntax
+nor establish zero execution for the whole type phase. Do not add percentages
+from different checkpoints or extrapolate them directly to ontology.
+
+Initial CLI serve failures exposed shared structural recursion through a nominal
+boundary. That conversion was fixed, with adjacent coverage rejecting anonymous
+structural cycles. A later complete nominal body now refines an earlier stub
+without replacing its ID. Final validation passed 338 core and 41 CLI tests
+(including language acceptance), release build and diff/source-size checks.
+
+Artifacts: `/tmp/rfc0280-static-contract-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-static-contract-memory-workspace`,
+`/tmp/rfc0280-static-contract-{property,wide}-heap.txt`,
+`/tmp/rfc0280-shared-artifacts-wide-heap.txt`, raw
+`/tmp/telora-perf-173/static-contract-{property,wide}.heap.zst` and
+`/tmp/telora-perf-173/shared-artifacts-wide.heap.zst`.
+Final validation logs: `/tmp/rfc0280-static-contract-refined-{workspace,release}.log`.
+
+## Symbolic family contract applications, 2026-09-09
+
+Baseline is the qualified concrete-contract extension preserved as
+`/tmp/telora-perf-173/telora-qualified-contract`; candidate is the symbolic family
+application checkpoint. Both are optimized release builds with debug symbols and
+without inference profiling. Each workload/version has ten samples pooled from
+two opposite version orders, each with one warmup and five measurements. Builds,
+tests and profilers were terminal before timing began. Results are end-to-end
+CLI `check` times, not isolated type-inference durations.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 135.67 | 131.88 | -2.79% |
+| family-contracts-400 | 287.04 | 188.88 | -34.20% |
+| qualified-family-contracts-400 | 300.08 | 191.12 | -36.31% |
+| typed-types-400 | 406.83 | 397.44 | -2.31% |
+| property-types-400 | 499.11 | 495.60 | -0.70% |
+| shared-wide-400 | 254.03 | 251.42 | -1.03% |
+| module-diamond-400 | 546.97 | 551.71 | +0.87% |
+
+The new family workloads declare one `Box(T)` with `value: T` and `items:
+Array(T)` fields, then 400 identity functions with `Fn(Box(Int)) -> Box(Int)`
+contracts. The qualified case imports the family from a dependency namespace.
+They target contract applications; repeated family use inside type declaration
+bodies still uses the previous evaluator pipeline. Small movements in control
+workloads do not establish a general improvement, especially the slightly slower
+module-diamond case.
+
+Separate heaptrack runs of qualified-family-contracts-400 measured allocation
+calls decreasing 1,471,737 -> 1,082,587 (-26.44%) and peak heap decreasing
+15.65 -> 12.77 MB (-18.40%). Profiler runtime and RSS are not timing or resident
+memory baselines. No ontology performance claim follows from these synthetic
+results.
+
+Validation passed the full workspace suite (343 core, 41 CLI including language
+acceptance, other workspace/doc tests), release build and diff/source-size
+checks. Evidence: `/tmp/rfc0280-static-family-{workspace,release}.log`,
+`/tmp/rfc0280-static-family-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-static-family-memory-workspace`,
+`/tmp/rfc0280-{qualified-contract-family,static-family}-heap.txt`, and raw
+`/tmp/telora-perf-173/{qualified-contract-family,static-family}.heap.zst`.

@@ -406,6 +406,20 @@ fn infer_tool_expression_evidence(
         interpolations: inference.resolved_interpolation_evidence })
 }
 
+fn evaluate_legacy_contract(
+    source_name: &str,
+    name: &str,
+    contract: &Expr,
+    values: &dyn ToolBindings,
+    account: &mut QuotaAccount,
+    sources: &SourceDatabase,
+    evaluator: &mut ToolEvaluator<'_>,
+) -> Result<TypeDescriptor, FrontendError> {
+    let metadata = evaluate_tool_expression(source_name, contract, values, account, sources, evaluator)?;
+    evaluator.decode_type(metadata, "Type").map_err(|message| frontend_error(source_name,
+        format!("declaration {name} has invalid contract metadata: {message}")))
+}
+
 fn evaluate_tool_expression(
     source_name: &str,
     expression: &Expr,

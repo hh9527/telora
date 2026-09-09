@@ -841,6 +841,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut definition_contracts = HashMap::new();
     let mut declaration_locations = HashMap::new();
     let mut definition_counts = HashMap::<String, usize>::new();
+    let mut types = TypeGraph::default();
+    let contract_external_names = external_roots.keys().map(String::as_str).collect();
+    let contract_families = static_type_families(&mut types, &type_family_values, &binding_schemes, &qualified_external_interfaces);
     for binding in &program.value.body.value.bindings {
         let name = &binding.value.name.value;
         if binding.value.kind == BindingKind::Def {
@@ -866,26 +869,19 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .as_ref()
             .expect("declaration has a lowered contract");
         let mut contract_values = ScopedToolBindings::new(&tool_values);
-        let mut parameter_names = HashSet::new();
-        let mut scheme_parameters = Vec::new();
-        for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
-            if !parameter_names.insert(parameter.value.clone()) {
-                return Err(FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(
-                        format!("duplicate type parameter {:?}", parameter.value),
-                        parameter.location,
-                    ),
-                ));
-            }
-            let id = TypeParameterId(index as u32);
-            scheme_parameters.push(TypeParameter {
-                id,
-                name: parameter.value.clone(),
-                location: parameter.location,
-            });
-            let value = evaluator.descriptor(&TypeDescriptor::Bound(id))?;
-            contract_values.insert(parameter.value.clone(), value);
+        let scheme_parameters = static_contract_parameters(binding, sources)?;
+        let static_contract = StaticContractScope {
+            hir: &hir,
+            environment: &static_environment,
+            external_names: &contract_external_names,
+            interfaces: &qualified_external_interfaces,
+            parameters: &scheme_parameters,
+            families: &contract_families,
+        }.elaborate(contract, &mut types);
+        if static_contract.is_none()
+            || binding.value.type_parameter_bounds.iter().any(|bounds| !bounds.is_empty())
+        {
+            contract_values.insert_type_parameters(&scheme_parameters, &mut evaluator)?;
         }
         let mut scheme_constraints = evaluate_type_constraints(
             source_name,
@@ -908,20 +904,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 location: parameter.location,
             }));
         }
-        let metadata = evaluate_tool_expression(
-            source_name,
-            contract,
-            &contract_values,
-            account,
-            sources,
-            &mut evaluator,
-        )?;
-        let descriptor = evaluator.decode_type(metadata, "Type").map_err(|message| {
-            frontend_error(
-                source_name,
-                format!("declaration {name} has invalid contract metadata: {message}"),
-            )
-        })?;
+        let descriptor = if let Some(root) = static_contract {
+            // Compatibility egress into the existing TypeScheme. The static
+            // path constructs type edges directly, without creating metadata.
+            types.descriptor(root).map_err(|message| frontend_error(source_name, message))?
+        } else {
+            evaluate_legacy_contract(source_name, name, contract,
+                &contract_values, account, sources, &mut evaluator)?
+        };
         if binding.value.kind != BindingKind::Native
             || !scheme_parameters.is_empty()
             || contains_metatype(&descriptor)
@@ -1856,7 +1846,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         }
     }
     inference.variables.canonicalize_slots();
-    let mut types = TypeGraph::default();
     let installed_named_types = types.install_named_descriptors(&named_types);
     // Preserve binding-first nominal reservations before publishing expressions.
     for descriptor in binding_types.values() {
