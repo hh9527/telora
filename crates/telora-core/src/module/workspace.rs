@@ -118,22 +118,28 @@ impl WorkspaceBuilder<'_> {
                 self.cycle_members.insert(module_id.clone());
                 return None;
             }
-            let source = match self.overlays.get(&path).cloned() {
-                Some(source) => source,
-                None => match fs::read_to_string(&path) {
-                    Ok(source) => crate::document::DocumentText::new(source),
-                    Err(error) => {
-                        self.inputs.insert(
-                            key.clone(),
-                            unavailable_input(key, path.clone(), WorkspaceModuleKind::Telora),
-                        );
-                        let _ = error;
-                        return None;
-                    }
-                },
+            let parsed = if let Some(parsed) = self.main.modules.prepared.get(&module_id) {
+                Arc::clone(parsed)
+            } else {
+                let source = match self.overlays.get(&path).cloned() {
+                    Some(source) => source,
+                    None => match fs::read_to_string(&path) {
+                        Ok(source) => crate::document::DocumentText::new(source),
+                        Err(error) => {
+                            self.inputs.insert(
+                                key.clone(),
+                                unavailable_input(key, path.clone(), WorkspaceModuleKind::Telora),
+                            );
+                            let _ = error;
+                            return None;
+                        }
+                    },
+                };
+                let parsed = PreparedModule::parse(&mut self.sources, &module_id, source);
+                self.main.modules.prepared.insert(module_id.clone(), Arc::clone(&parsed));
+                parsed
             };
-            let source_id = self.sources.add_document(key.clone(), source);
-            let parsed = parse_registered(&self.sources, source_id);
+            let source_id = parsed.source_id;
             let program = parsed.program.clone();
             let imports = parsed
                 .recovered
@@ -487,32 +493,6 @@ impl WorkspaceBuilder<'_> {
                 return None;
             }
 
-            let external_schemes = external_interfaces
-                .iter()
-                .filter_map(|(name, interface)| {
-                    interface
-                        .binding_scheme()
-                        .map(|scheme| (name.clone(), scheme.clone()))
-                })
-                .collect::<BTreeMap<_, _>>();
-            let partial = analyze_partial_types_recovered_with_query(
-                &self.sources,
-                source_id,
-                &parsed.recovered,
-                parsed.diagnostics,
-                self.engine.config.module_quota,
-                &external_roots
-                    .iter()
-                    .map(|(name, root)| (name.clone(), *root))
-                    .collect(),
-                &mut self.main.heap,
-                PartialAnalysisControl {
-                    unavailable_imports: &unavailable_imports,
-                    external_schemes: &external_schemes,
-                    external_interfaces: &external_interfaces,
-                    query: self.query,
-                },
-            );
             let runtime_module_id = self
                 .main
                 .modules
@@ -535,7 +515,32 @@ impl WorkspaceBuilder<'_> {
             };
             diagnostics.extend(evaluated.diagnostics);
             let analysis = evaluated.analysis;
-            let partial = analysis.is_none().then_some(partial);
+            // A strict result already owns the facts consumed by the workspace,
+            // even if later compilation or execution failed. Recovery must not
+            // independently infer and evaluate those definitions on success.
+            let partial = analysis.is_none().then(|| {
+                let external_schemes = external_interfaces
+                    .iter()
+                    .filter_map(|(name, interface)| {
+                        interface.binding_scheme().map(|scheme| (name.clone(), scheme.clone()))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                analyze_partial_types_recovered_with_query(
+                    &self.sources,
+                    source_id,
+                    &parsed.recovered,
+                    parsed.diagnostics.clone(),
+                    self.engine.config.module_quota,
+                    &external_roots.iter().map(|(name, root)| (name.clone(), *root)).collect(),
+                    &mut self.main.heap,
+                    PartialAnalysisControl {
+                        unavailable_imports: &unavailable_imports,
+                        external_schemes: &external_schemes,
+                        external_interfaces: &external_interfaces,
+                        query: self.query,
+                    },
+                )
+            });
             // Availability describes whether the source Module exists. Failed,
             // unknown and incomputable facts remain properties of its graph.
             let state = WorkspaceModuleState::Available;

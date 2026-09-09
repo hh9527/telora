@@ -46,6 +46,32 @@ struct ModuleBlueprint {
 struct ModuleGraph {
     modules: Vec<ModuleSkeleton>,
     by_cname: HashMap<ModuleCName, ModuleId>,
+    prepared: HashMap<ModuleCName, Arc<PreparedModule>>,
+}
+
+// Shared session input, including failed parses. A definition does not need to
+// be valid before its source and syntax can be used by another consumer.
+#[derive(Debug)]
+struct PreparedModule {
+    source_id: crate::source::SourceId,
+    program: Option<Program>,
+    recovered: crate::parser::RecoveredProgram,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl PreparedModule {
+    fn parse(
+        sources: &mut SourceDatabase,
+        cname: &ModuleCName,
+        source: crate::document::DocumentText,
+    ) -> Arc<Self> {
+        let source_id = sources.add_document(cname.to_string(), source);
+        let parsed = parse_registered(sources, source_id);
+        // CST is not consumed by module loading. Keep the lowered and recovery
+        // facts, rather than pinning an additional concrete syntax tree.
+        Arc::new(Self { source_id, program: parsed.program,
+            recovered: parsed.recovered, diagnostics: parsed.diagnostics })
+    }
 }
 
 impl ModuleGraph {
@@ -84,6 +110,7 @@ impl ModuleGraph {
         opaque: impl IntoIterator<Item = ModuleCName>,
         overlays: Option<&BTreeMap<PathBuf, crate::document::DocumentText>>,
         recover: bool,
+        scan_sources: &mut SourceDatabase,
     ) -> Result<Self, ModuleError> {
         let mut resolved = roots
             .into_iter()
@@ -93,7 +120,7 @@ impl ModuleGraph {
         pending.extend(synthetic.keys().cloned());
         pending.extend(opaque);
         let mut blueprints = HashMap::new();
-        let mut scan_sources = SourceDatabase::default();
+        let mut prepared = HashMap::new();
 
         while let Some(cname) = pending.pop() {
             if blueprints.contains_key(&cname) {
@@ -120,8 +147,8 @@ impl ModuleGraph {
                 blueprints.insert(cname, ModuleBlueprint::default());
                 continue;
             };
-            let source_id = scan_sources.add(cname.to_string(), source);
-            let parsed = parse_registered(&scan_sources, source_id);
+            let parsed = PreparedModule::parse(scan_sources, &cname,
+                crate::document::DocumentText::new(source));
             let mut blueprint = match parsed.program.as_ref() {
                 Some(program) => {
                     reject_nested_imports(program, &cname.to_string())?;
@@ -223,6 +250,7 @@ impl ModuleGraph {
                 pending.push(fmt);
             }
             let _ = context_path;
+            prepared.insert(cname.clone(), parsed);
             blueprints.insert(cname, blueprint);
         }
 
@@ -259,7 +287,7 @@ impl ModuleGraph {
                 }
             })
             .collect();
-        Ok(Self { modules, by_cname })
+        Ok(Self { modules, by_cname, prepared })
     }
 }
 

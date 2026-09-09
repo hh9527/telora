@@ -166,3 +166,88 @@ all scales), `/tmp/rfc0280-tool-graph-reverse.jsonl` (reversed ten-sample sweep)
 `/tmp/rfc0280-tool-graph-{plain,property}-heap.txt`, and
 `/tmp/rfc0280-tool-graph-perf-flat.txt`. Current heaptrack/perf files and the
 preserved binaries remain local profiling artifacts, not repository assets.
+## Session source reuse checkpoint, 2026-09-09
+
+The uninstrumented optimized binary `/tmp/telora-perf-173/telora-session-sources`
+adds shared discovery/loader parse records to `293098c`. It does **not** include
+the subsequent lazy recovery change. Each ordering used one warmup and five
+samples per case; the table combines both orderings (ten samples per version).
+No builds, tests or profilers ran alongside these timings.
+
+| Case | 293098c median ms | Source reuse median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 157.71 | 158.69 | +0.63% |
+| typed-100 | 268.62 | 267.35 | -0.47% |
+| property-100 | 291.11 | 297.52 | +2.20% |
+| shared-wide-100 | 226.50 | 231.07 | +2.02% |
+| fanout-100 | 274.53 | 275.46 | +0.34% |
+| diamond-100 | 287.90 | 280.31 | -2.64% |
+| typed-400 | 653.47 | 622.62 | -4.72% |
+| property-400 | 752.47 | 720.61 | -4.23% |
+| shared-wide-400 | 453.86 | 448.05 | -1.28% |
+| fanout-400 | 658.83 | 655.63 | -0.48% |
+| diamond-400 | 693.52 | 682.28 | -1.62% |
+
+Fanout has N small imported modules. Diamond has N arms sharing one nominal
+definition/value module through re-exports. The benchmark checks each root, not
+each dependency separately. Small controls do not establish a general speedup;
+the regressions need reassessment after the next reduction in duplicate work.
+
+For property-400, allocation calls decreased from 3,128,479 to 3,071,136
+(-1.83%), peak heap from 38.20 to 37.20 MB (-2.62%). Uninstrumented peak RSS
+medians over five runs were 51,676 and 50,376 KiB (-2.51%). Heaptrack ran
+separately from timing/RSS measurements. This is one workload, not proof of
+bounded retained memory for all module graphs or repeated sessions.
+
+Evidence: `/tmp/rfc0280-session-sources-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-session-sources-property-heap.txt`, and raw
+`/tmp/telora-perf-173/session-sources-property.heap.zst`. Source reuse passed
+the full workspace suite (330 core, 41 CLI tests) and release build. The two
+new tests check captured source identity after disk changes and failed overlay
+retention. HIR/type/interface reuse and execution-free inference are not delivered
+by this checkpoint.
+
+## Demand-driven recovery checkpoint, 2026-09-09
+
+`/tmp/telora-perf-173/telora-lazy-recovery` additionally skips partial analysis
+when strict Analysis exists. Two orderings, each with one warmup and five samples,
+compare it with the source-reuse binary. Results below are pooled medians; no
+build/test/profiler ran concurrently. These are incremental gains, not gains
+against the original pre-arena baseline.
+
+| Case | Source reuse median ms | Lazy recovery median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 156.29 | 156.26 | -0.02% |
+| typed-100 | 263.50 | 235.59 | -10.59% |
+| property-100 | 287.53 | 258.23 | -10.19% |
+| shared-wide-100 | 223.86 | 220.49 | -1.51% |
+| fanout-100 | 271.55 | 253.27 | -6.73% |
+| diamond-100 | 280.59 | 259.55 | -7.50% |
+| typed-400 | 627.56 | 496.62 | -20.86% |
+| property-400 | 717.03 | 596.08 | -16.87% |
+| shared-wide-400 | 440.03 | 449.24 | +2.09% |
+| fanout-400 | 649.58 | 574.03 | -11.63% |
+| diamond-400 | 680.95 | 588.47 | -13.58% |
+
+Property-400 allocation calls decreased from 3,071,136 to 2,558,532 (-16.69%);
+peak heap from 37.20 to 35.16 MB (-5.48%). A separate five-run RSS comparison
+gave medians of 50,320 and 47,780 KiB (-5.05%). The property fixture is identical
+to the prior heap runs. Broader memory/phase attribution remains outstanding.
+
+All workspace tests (330 core, 41 CLI including language acceptance), release
+build and diff/source-size checks passed. Existing recovery tests exercise type
+errors, syntax errors, independent facts, module cycles, runtime failures and
+rule/data provenance. This change still retries analysis after strict failure;
+it is not the final shared-solver recovery path or the zero-execution static API.
+
+Artifacts: `/tmp/rfc0280-lazy-recovery-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-lazy-recovery-property-heap.txt`,
+`/tmp/telora-perf-173/lazy-recovery-property.heap.zst`,
+`/tmp/rfc0280-lazy-recovery-workspace.log` and
+`/tmp/rfc0280-lazy-recovery-release.log`. A separate fifteen-sample follow-up
+(`/tmp/rfc0280-lazy-recovery-controls.jsonl`, lazy version first) measured
+shared-wide medians 440.98 -> 418.40 ms and constant 142.05 -> 141.17 ms.
+The earlier shared-wide regression did not repeat. Its old-version mean/stdev
+were 437.43/14.89 ms versus 418.08/3.78 ms; constant timings also shifted
+between batches. Do not treat this follow-up as a precise 5% shared-wide gain
+or compare absolute timings from different batches as equivalent conditions.

@@ -65,6 +65,7 @@ fn load_module_with_resolver(
     let opaque_modules = builtin_list()
         .into_iter()
         .map(|(name, _)| ModuleCName::builtin(name));
+    let mut sources = SourceDatabase::default();
     let graph = ModuleGraph::discover(
         &resolver,
         vec![root_module.clone()],
@@ -72,9 +73,9 @@ fn load_module_with_resolver(
         opaque_modules,
         None,
         false,
+        &mut sources,
     )?;
     let mut main = MainWorld::with_modules(graph);
-    let mut sources = SourceDatabase::default();
     let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink)?;
     let mut loader = ModuleLoader {
         resolver,

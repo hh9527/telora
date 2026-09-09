@@ -96,6 +96,7 @@ impl Engine {
         let root = resolver
             .selected_root()
             .map_err(|e| ModuleError::new(e.to_string()))?;
+        let mut sources = SourceDatabase::default();
         let graph = ModuleGraph::discover(
             &resolver,
             vec![root.clone()],
@@ -105,9 +106,9 @@ impl Engine {
                 .map(|(name, _)| ModuleCName::builtin(name)),
             None,
             true,
+            &mut sources,
         )?;
         let mut main = MainWorld::with_modules(graph);
-        let mut sources = SourceDatabase::default();
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,

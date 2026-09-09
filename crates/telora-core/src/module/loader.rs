@@ -33,6 +33,7 @@ fn prepare_selected_entry(
     let opaque_modules = builtin_list()
         .into_iter()
         .map(|(name, _)| ModuleCName::builtin(name));
+    let mut sources = SourceDatabase::default();
     let graph = ModuleGraph::discover(
         &resolver,
         vec![main_module.clone()],
@@ -40,9 +41,9 @@ fn prepare_selected_entry(
         opaque_modules,
         None,
         false,
+        &mut sources,
     )?;
     let mut main = MainWorld::with_modules(graph);
-    let mut sources = SourceDatabase::default();
     let builtin_modules = install_native_modules(&mut main, &mut sources, &debug_sink)?;
     let mut loader = ModuleLoader {
         resolver,
@@ -346,18 +347,25 @@ impl ModuleLoader {
         let path = module_source.context_path();
         let synthetic = matches!(module_source, TeloraModuleSource::Synthetic { .. });
         let source_name = module_id.to_string();
-        let source = match module_source {
-            TeloraModuleSource::File(path) => read(path, &source_name)?,
-            TeloraModuleSource::Synthetic { name, source, .. } => {
-                debug_assert_eq!(name, source_name);
-                source.to_owned()
-            }
+        let prepared = if let Some(prepared) = self.main.modules.prepared.get(module_id) {
+            Arc::clone(prepared)
+        } else {
+            let source = match module_source {
+                TeloraModuleSource::File(path) => read(path, &source_name)?,
+                TeloraModuleSource::Synthetic { name, source, .. } => {
+                    debug_assert_eq!(name, source_name);
+                    source.to_owned()
+                }
+            };
+            let prepared = PreparedModule::parse(&mut self.sources, module_id,
+                crate::document::DocumentText::new(source));
+            self.main.modules.prepared.insert(module_id.clone(), Arc::clone(&prepared));
+            prepared
         };
-        let source_id = self.sources.add(source_name.clone(), source);
-        let parsed = parse_registered(&self.sources, source_id);
-        let program = parsed.program.ok_or_else(|| {
+        let source_id = prepared.source_id;
+        let program = prepared.program.as_ref().ok_or_else(|| {
             ModuleError::new(
-                parsed
+                prepared
                     .diagnostics
                     .iter()
                     .map(|diagnostic| self.sources.render(diagnostic))
@@ -779,7 +787,7 @@ impl ModuleLoader {
                 path: (!synthetic).then(|| path.to_owned()),
                 kind: WorkspaceModuleKind::Telora,
                 source: Some(source_id),
-                program: Some(program),
+                program: Some(program.clone()),
                 analysis: Some(analysis.clone()),
                 partial: None,
                 interface: None,

@@ -758,6 +758,7 @@ impl Engine {
         let opaque_modules = builtin_list()
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
+        let mut sources = SourceDatabase::default();
         let graph = ModuleGraph::discover(
             &resolver,
             vec![root_module.clone()],
@@ -765,9 +766,9 @@ impl Engine {
             opaque_modules,
             None,
             true,
+            &mut sources,
         )?;
         let mut main = MainWorld::with_modules(graph);
-        let mut sources = SourceDatabase::default();
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
@@ -882,6 +883,7 @@ impl Engine {
         let opaque_modules = builtin_list()
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
+        let mut sources = SourceDatabase::default();
         let graph = ModuleGraph::discover(
             &resolver,
             vec![root_module.clone()],
@@ -889,9 +891,9 @@ impl Engine {
             opaque_modules,
             None,
             true,
+            &mut sources,
         )?;
         let mut main = MainWorld::with_modules(graph);
-        let mut sources = SourceDatabase::default();
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,
@@ -974,6 +976,7 @@ impl Engine {
         let opaque_modules = builtin_list()
             .into_iter()
             .map(|(name, _)| ModuleCName::builtin(name));
+        let mut sources = SourceDatabase::default();
         let graph = ModuleGraph::discover(
             &resolver,
             vec![root_module.clone()],
@@ -981,9 +984,9 @@ impl Engine {
             opaque_modules,
             Some(overlays),
             true,
+            &mut sources,
         )?;
         let mut main = MainWorld::with_modules(graph);
-        let mut sources = SourceDatabase::default();
         let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
         let mut builder = WorkspaceBuilder {
             engine: self,

@@ -23,6 +23,10 @@ Unknown, proxy, pending and conflicted facts are legitimate internal states.
 An error does not require undoing a module's registrations or copying its
 environment to protect other modules.
 
+The session output boundary does not make the internal world a session-wide
+transaction either. Retain failed and incomplete analysis records for diagnostics;
+withhold the final successful user result, rather than rolling those records back.
+
 Static type elaboration and inference must execute no Telora code, including
 builtin Telora source. Execute user values, property configuration/providers
 and other runtime obligations only in later value phases. Keep their dependencies
@@ -125,6 +129,12 @@ Use typed indices for modules, declarations, expressions, inference slots and
 type terms. Imports, aliases and re-exports point to the same declaration records;
 namespace qualification changes lookup/display information, not the underlying
 type tree. A module may initially have only a name and empty/pending table ranges.
+
+An export first identifies a declaration, not an initialized runtime value.
+Keep its definition/type reference separate from its value-initialization state.
+Resolving an import can therefore return that declaration ID while its type is
+still open and its value has never executed. Later initialization fills the value
+record without rebuilding the import/export tables or changing declaration IDs.
 
 IDs remain stable while a session is filled and resolved. Finalization must not
 renumber all definitions or rebuild module tables. A binder-aware generic
@@ -255,6 +265,11 @@ before use. Diagnostics and typed recovery facts can still be emitted as such.
 Do not claim successful `check` from pure inference alone: the existing command
 also performs initialization and validation. Existing test/error reporting and
 Host effect protocols remain distinct from internal definition registration.
+
+This gate does not promise to undo externally visible Host effects that have
+already occurred during value execution. Preserve the existing effect protocol;
+any stronger buffering or transactional guarantee needs a separate design. It
+must not be implemented by isolating or copying internal module/type records.
 
 ## Reachability and Tree Shaking
 
@@ -425,3 +440,38 @@ was not integrated. [Historical measurements](0280/measurements.md) preserve
 the baselines, counter observations, raw artifact paths and regression evidence.
 Current design documentation will be updated as implementation lands; this RFC
 does not describe those new boundaries as already implemented.
+
+### Session source preparation checkpoint
+
+Module discovery now registers sources in the same SourceDatabase subsequently
+used by loading and recovery. The session module graph retains shared
+PreparedModule records (source ID, lowered program, recovery syntax and
+diagnostics); strict and recovery loaders reuse them without reading/parsing a
+discovered module again. Invalid overlay parses remain registered. Unneeded CST
+storage is discarded. New tests verify snapshot reuse after disk edits and
+retention of failed overlay syntax; both passed.
+
+This is only the source/parse portion of milestone 2. HIR construction, global
+declaration/type slots and execution-free inference remain outstanding. Existing
+public semantic inputs still own AST copies; retained memory and end-to-end
+performance must be measured before claiming a net benefit. Full workspace tests
+and the release build passed. The [measurements](0280/measurements.md) show
+approximately 4–5% lower medians for 400-type workloads against `293098c`,
+smaller module-graph improvements and mixed small controls. Property-400 peak
+heap decreased by 2.62%; broader retained-memory acceptance remains outstanding.
+
+### Demand-driven recovery checkpoint
+
+Workspace loading now attempts strict analysis first and uses its facts even
+when subsequent compilation or value execution fails. Partial analysis is invoked
+only when no strict Analysis exists, avoiding the former eager partial pass whose
+result was discarded on success. This removes duplicate success-path work toward
+milestone 4; it does not yet share partially solved strict facts with recovery or
+remove Telora execution from either analysis API. Full workspace tests and release
+build passed. Against source reuse alone, ten-sample medians improved by 20.86%
+for typed-400, 16.87% for property-400 and 11.63–13.58% for 400-module graph
+cases. Property-400 allocation calls decreased 16.69% and peak heap 5.48%.
+Shared-wide-400 initially showed a 2.09% regression, which did not repeat in a
+separate fifteen-sample follow-up; timing drift limits claims for this control.
+This checkpoint does not establish the RFC's full acceptance. See the measurement
+appendix for scope, artifacts and remaining gates.

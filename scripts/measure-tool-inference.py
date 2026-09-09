@@ -18,13 +18,15 @@ def main():
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--workloads", nargs="+",
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
-                                 "typed-types", "property-types", "shared-wide", "shared-deep"],
+                                 "typed-types", "property-types", "shared-wide", "shared-deep",
+                                 "module-fanout", "module-diamond"],
                         default=["constant", "functions", "types", "array"])
     args = parser.parse_args()
     if args.samples < 1 or args.timeout <= 0 or any(size < 1 for size in args.sizes):
         parser.error("sizes, samples and timeout must be positive")
     binaries = [binary.resolve(strict=True) for binary in args.binaries]
     cases = {"constant": "export def answer: Int = 42;\n"}
+    dependencies = {}
     for size in args.sizes:
         cases[f"functions-{size}"] = "\n".join(
             f"def f{index}: Fn(Int) -> Int = fn(x) {{ x + 1 }};"
@@ -71,8 +73,29 @@ def main():
                     for index in range(size)
                 ) + "\nexport def ready: Bool = True;\n"
             )
+        for workload in ["module-fanout", "module-diamond"]:
+            root = f"{workload}-{size}"
+            if workload == "module-diamond":
+                dependencies[f"{root}-shared"] = (
+                    "export type Item = struct {value: Int};\n"
+                    "export def value: Item = {value: 42};\n"
+                )
+            for index in range(size):
+                dependencies[f"{root}-arm{index}"] = (
+                    f'import "./{root}-shared" {{Item, value}};\nexport {{Item, value}};\n'
+                    if workload == "module-diamond"
+                    else f"export def value: Int = {index};\n"
+                )
+            cases[root] = "\n".join(
+                f'import "./{root}-arm{index}" as m{index};' for index in range(size)
+            ) + "\nexport def answer: Int = " + (
+                "m0.value.value" if workload == "module-diamond" else "m0.value"
+            ) + ";\n"
     cases = {name: source for name, source in cases.items()
              if any(name == workload or name.startswith(workload + "-") for workload in args.workloads)}
+    dependencies = {name: source for name, source in dependencies.items()
+                    if any(name.startswith(root + "-") for root in cases)}
+    modules = {**cases, **dependencies}
     with tempfile.TemporaryDirectory(prefix="telora-inference-") as directory:
         workspace = Path(directory)
         (workspace / "src").mkdir()
@@ -82,11 +105,11 @@ def main():
         (workspace / "telora-crate.json").write_text(
             json.dumps({
                 "name": "inference-bench",
-                "modules": [f"@src/{name}" for name in cases],
+                "modules": [f"@src/{name}" for name in modules],
                 "dependencies": [],
             }), encoding="ascii"
         )
-        for name, source in cases.items():
+        for name, source in modules.items():
             (workspace / "src" / f"{name}.telora").write_text(source, encoding="ascii")
         for binary in binaries:
             command = [str(binary), "-C", directory]

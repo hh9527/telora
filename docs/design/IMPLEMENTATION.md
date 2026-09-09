@@ -139,6 +139,18 @@ CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
 未引用测试的语法或运行时失败不进入本次结果。测试清单不扩展 source manifest、lock
 或普通 module catalog，也不会在求值时接纳新增文件。
 
+图发现与后续加载使用同一个 session 的 SourceDatabase。已发现的 Telora 源码保留
+共享的 PreparedModule（SourceId、AST、恢复语法和诊断），严格加载和恢复分析复用
+该记录，不再次读取文件或解析；不额外保留模块加载不使用的 CST。语法错误也是
+可登记的内部状态。图发现后的磁盘变更由下一 session 读取，本 session 持续使用
+已捕获的源码快照。当前 HIR 和类型推导仍有独立构建路径，尚未完成 RFC 0280 的
+全局类型世界与无 Telora 执行的类型阶段。
+
+恢复加载先尝试正式分析；已有正式 Analysis 时，编译或运行失败也继续使用其中的
+类型事实，不另外执行 partial 分析。只有未能取得正式分析结果（包括语法错误、
+类型错误、缺失导出或循环依赖）时才执行恢复分析。失败路径仍可能重复部分工作，
+尚不等同于统一的全局求解器。
+
 `ModuleResolver` 消费已经准备好的 crate source 清单。`builtin_list()` 先登记 builtin
 vendor 的 crate，resolver 随后登记当前 crate 和 manifest dependencies；
 同名登记使用 first-win，已选 source 不再改变。import 先按 selector 首段选择 crate，
