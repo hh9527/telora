@@ -23,6 +23,7 @@ def main():
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
                                  "typed-types", "property-types", "shared-wide", "shared-deep",
                                  "family-contracts", "qualified-family-contracts",
+                                 "property-constraints", "qualified-property-constraints",
                                  "module-fanout", "module-diamond"],
                         default=["constant", "functions", "types", "array"])
     args = parser.parse_args()
@@ -52,6 +53,19 @@ def main():
         cases[f"repeated-family-{size}"] = "type Box(T) = struct {value: T};\n" + "\n".join(
             f"type T{index} = Box(Int);" for index in range(size)
         ) + "\nexport def answer: Int = 42;\n"
+        for qualified in [False, True]:
+            name = f"{'qualified-' if qualified else ''}property-constraints-{size}"
+            declaration = "type Label = struct {text: String};\n"
+            if qualified:
+                dependencies[f"{name}-types"] = "export " + declaration
+                prelude = f'import "./{name}-types" as model;\n'
+                property_type = "model.Label"
+            else:
+                prelude, property_type = declaration, "Label"
+            cases[name] = prelude + "\n".join(
+                f"def f{index}: for(T: Property({property_type})) Fn(T) -> T = fn(value) {{ value }};"
+                for index in range(size)
+            ) + "\nexport def ready: Bool = True;\n"
         for qualified in [False, True]:
             name = f"{'qualified-' if qualified else ''}family-contracts-{size}"
             declaration = "type Box(T) = struct {value: T, items: Array(T)};\n"

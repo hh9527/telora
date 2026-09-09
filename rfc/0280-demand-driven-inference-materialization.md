@@ -649,3 +649,29 @@ typed-types-400 and 26.33% for property-types-400. Constant startup decreased
 12.70%, while module-diamond-400 decreased only 2.77%. Property allocation calls
 decreased 22.80% and peak heap decreased 2.70%. See the measurement appendix for
 the intermediate heap regression, final artifacts and scope limitations.
+
+### Static constraint facts
+
+Declaration and family signatures now attempt to resolve their trait identities
+and `Property(T)` type arguments directly in the existing analysis graph. The
+static constraint API has no evaluator, quota account, runtime values or property
+providers. When both the body/contract and its constraints resolve statically,
+quantified parameters do not need temporary runtime metadata. Duplicate constraint
+diagnostics and canonical constraint ordering are retained.
+
+Unsupported bounds retain the existing checked migration path. Recording a bound
+does not prove that an application satisfies it: instantiation and property/trait
+evidence checks remain required. In particular, constrained family applications
+still use their existing checked path; the current family graph consumer does not
+silently erase their obligations. Focused tests require trait plus property bounds
+and constrained family signatures to succeed with zero execution fuel, and retain
+the duplicate-property diagnostic. Local and qualified property-constraint
+workloads were added to the measurement runner.
+
+Full workspace validation passed (351 core, 41 CLI including language acceptance)
+and release build passed. Against `7bd53b8`, two-order ten-sample check medians
+decreased 21.62% for local property-constraints-400 and 23.89% for its qualified
+variant. Controls moved between -1.67% and +0.33%, without evidence of a general
+pipeline improvement. Qualified constraint allocation calls decreased 9.72%; peak
+heap was approximately 12.06 MB in both versions. The measurement appendix records
+workload scope and artifacts.

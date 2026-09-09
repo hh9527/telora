@@ -453,3 +453,47 @@ Final evidence: `/tmp/rfc0280-static-bodies-reused-{workspace,release}.log`,
 Intermediate evidence: `/tmp/rfc0280-static-bodies-{comparison,reverse}.jsonl`,
 `/tmp/rfc0280-static-bodies-property-heap.txt` and
 `/tmp/telora-perf-173/telora-static-bodies-before-reuse`.
+
+## Static trait and property constraint facts, 2026-09-09
+
+Compared `7bd53b8` (`telora-static-bodies-reused`) with `telora-static-constraints`
+in `/tmp/telora-perf-173`. Both optimized release binaries retain debug symbols
+without inference profiling. One warmup and five samples per version/workload
+in each of two opposite version orders yield ten pooled samples. No builds,
+tests or profilers overlapped timings. Results are end-to-end CLI `check` costs.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 114.09 | 113.44 | -0.57% |
+| property-constraints-400 | 187.42 | 146.89 | -21.62% |
+| qualified-property-constraints-400 | 192.78 | 146.73 | -23.89% |
+| typed-types-400 | 268.99 | 264.49 | -1.67% |
+| property-types-400 | 364.37 | 365.56 | +0.33% |
+| module-diamond-400 | 535.03 | 535.64 | +0.11% |
+
+The new workloads declare a Label type and 400 generic identity functions with
+`for(T: Property(Label)) Fn(T) -> T` contracts. The qualified version imports the
+Label declaration from a namespace. They establish signatures without calling
+the functions or running providers. Control workloads show no general speedup
+from this step. Do not add these percentages to earlier checkpoint percentages
+or apply them to ontology.
+
+Separate qualified-property-constraints-400 heaptrack runs measured 807,115 ->
+728,656 allocation calls (-9.72%). Peak heap rounded to 12.06 MB in both runs;
+there is no observed peak-memory benefit at that reporting precision. Profiler
+RSS/runtime are not uninstrumented performance measurements.
+
+Final workspace validation passed 351 core and 41 CLI tests, including language
+acceptance, and all other workspace/doc tests. Release build and diff/source-size
+checks passed. An initially invalid new family test fixture was corrected to a
+valid constrained type alias; production code did not change for that correction.
+Tests cover zero execution fuel for mixed trait/property bounds and a constrained
+family signature, plus preservation of duplicate-property diagnostics. Existing
+acceptance covers missing property evidence and provider publication errors.
+
+Evidence: `/tmp/rfc0280-static-constraints-final-workspace.log`,
+`/tmp/rfc0280-static-constraints-release.log`,
+`/tmp/rfc0280-static-constraints-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-static-constraints-memory-workspace`,
+`/tmp/rfc0280-{static-bodies-constraints,static-constraints}-heap.txt`, and raw
+`/tmp/telora-perf-173/{static-bodies-constraints,static-constraints}.heap.zst`.

@@ -543,15 +543,19 @@ pub(crate) fn analyze_program_with_bindings_observed(
             }
 
             let parameters = static_contract_parameters(binding, sources)?;
-            let static_body = StaticContractScope {
+            let static_scope = StaticContractScope {
                 hir: &hir, environment: &static_environment, external_names: &contract_external_names,
                 interfaces: &qualified_external_interfaces, parameters: &parameters, families: &contract_families,
-            }.elaborate(&binding.value.value, &mut types);
+            };
+            let static_body = static_scope.elaborate(&binding.value.value, &mut types);
+            let static_constraints = static_scope.constraints(&binding.value.type_parameter_bounds, &trait_ids, &mut types);
             let mut bindings = ScopedToolBindings::new(&tool_values);
-            if static_body.is_none() || binding.value.type_parameter_bounds.iter().any(|bounds| !bounds.is_empty()) {
+            if static_body.is_none() || static_constraints.is_none() {
                 bindings.insert_type_parameters(&parameters, &mut evaluator)?;
             }
-            let constraints = evaluate_type_constraints(
+            let constraints = if let Some(constraints) = static_constraints {
+                finish_type_constraints(constraints, sources)?
+            } else { evaluate_type_constraints(
                 source_name,
                 &parameters,
                 &binding.value.type_parameter_bounds,
@@ -561,7 +565,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 account,
                 sources,
                 &mut evaluator,
-            )?;
+            )? };
             let (value, descriptor) = materialize_type_body(static_body, &types, binding,
                 source_name, &bindings, account, sources, &mut evaluator)?;
             let constructor =
@@ -852,20 +856,23 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .expect("declaration has a lowered contract");
         let mut contract_values = ScopedToolBindings::new(&tool_values);
         let scheme_parameters = static_contract_parameters(binding, sources)?;
-        let static_contract = StaticContractScope {
+        let static_scope = StaticContractScope {
             hir: &hir,
             environment: &static_environment,
             external_names: &contract_external_names,
             interfaces: &qualified_external_interfaces,
             parameters: &scheme_parameters,
             families: &contract_families,
-        }.elaborate(contract, &mut types);
-        if static_contract.is_none()
-            || binding.value.type_parameter_bounds.iter().any(|bounds| !bounds.is_empty())
+        };
+        let static_contract = static_scope.elaborate(contract, &mut types);
+        let static_constraints = static_scope.constraints(&binding.value.type_parameter_bounds, &trait_ids, &mut types);
+        if static_contract.is_none() || static_constraints.is_none()
         {
             contract_values.insert_type_parameters(&scheme_parameters, &mut evaluator)?;
         }
-        let mut scheme_constraints = evaluate_type_constraints(
+        let mut scheme_constraints = if let Some(constraints) = static_constraints {
+            finish_type_constraints(constraints, sources)?
+        } else { evaluate_type_constraints(
             source_name,
             &scheme_parameters,
             &binding.value.type_parameter_bounds,
@@ -875,7 +882,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             account,
             sources,
             &mut evaluator,
-        )?;
+        )? };
         if matches!(binding.value.kind, BindingKind::Def | BindingKind::Decl)
             && !program.value.body.value.bindings.iter().any(|candidate| {
                 candidate.value.name.value == *name && matches!(candidate.value.value.value, ExprKind::Interpreter { .. })
