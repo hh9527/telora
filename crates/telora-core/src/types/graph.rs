@@ -350,6 +350,14 @@ impl TypeGraph {
         reserved
     }
 
+    fn fill_declared_body(&mut self, owner: AnalysisTypeId, resolved_body: AnalysisTypeId) {
+        let TypeNode::Declared { body, .. } = &mut self.nodes[owner.index()] else {
+            unreachable!("only a reserved nominal identity can receive a body");
+        };
+        // Nominal hashing depends only on declaration identity, which is unchanged.
+        *body = resolved_body;
+    }
+
     fn intern_descriptor(&mut self, descriptor: &TypeDescriptor) -> AnalysisTypeId {
         if let TypeDescriptor::Declared(declared) = descriptor {
             if let Some(id) = self.declared.get(&declared.id).copied() {

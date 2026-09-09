@@ -217,6 +217,16 @@ mod static_contract_tests {
     use super::*;
 
     #[test]
+    fn recursive_nominal_bodies_require_no_execution_fuel() {
+        for source in [
+            "type Node = struct {children: Array(Node)};",
+            "type Left = struct {children: Array(Right)}; type Right = struct {children: Array(Left)};",
+        ] {
+            analyze_source_with_fuel("static-recursion", source, 0).unwrap();
+        }
+    }
+
+    #[test]
     fn static_contract_errors_precede_construction_value_preparation() {
         let source = "def prepare: Fn() -> Never = fn() { panic!(\"check dependency executed too early\") }; let validator = prepare(); @check(validator) type Number = struct(Int); decl run: Fn(Int) -> Int; decl run: Fn(Int) -> Int;";
         let error = analyze_source_with_fuel("static-before-values", source, 0).unwrap_err();

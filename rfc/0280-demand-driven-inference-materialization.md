@@ -694,3 +694,24 @@ acceptance, other workspace/doc tests), release build and source-size/diff check
 passed. Against `c45c55d`, checked-types-400 check time fell 43.97%, allocation
 calls fell 63.80%, and peak heap fell 2.04%. Controls ranged from -1.55% to +0.52%;
 this does not establish a general speedup. Details are in the measurement appendix.
+
+### Static recursive concrete definitions
+
+Concrete nominal recursive components now reserve every declaration identity in
+the analysis graph before elaborating any body. Each supported body resolves
+against those identities; the completed body IDs are then written into the
+reserved nominal rows. Filling a row does not reconstruct descriptors or change
+nominal hashing. Self-recursive and mutually recursive declarations have a
+zero-execution-fuel regression test.
+
+Runtime metadata reservation/sealing and decoding remain compatibility consumers;
+this is not yet the final graph-only downstream path. Unsupported recursive bodies
+retain the original evaluation/validation order, and recursive generic declarations
+still use the legacy family builder. The new recursive-types benchmark isolates
+400 self-recursive concrete declarations without constructing user values.
+
+Workspace validation passed (353 core, 41 CLI and other workspace/doc tests);
+the final legacy-order adjustment also passed all 353 core tests and release build.
+Against `d99f2d5`, recursive-types-400 check time decreased 34.44%, allocation
+calls decreased 27.79%, and peak heap decreased 3.43%. Control movements were
+small (-0.13% to -1.53%); full evidence and limitations are in the appendix.

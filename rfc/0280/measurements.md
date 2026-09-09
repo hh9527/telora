@@ -501,8 +501,12 @@ Evidence: `/tmp/rfc0280-static-constraints-final-workspace.log`,
 ## Deferred construction dependency preparation, 2026-09-09
 
 Baseline `c45c55d` is `/tmp/telora-perf-173/telora-static-constraints`; candidate
-is `/tmp/telora-perf-173/telora-deferred-construction`. Optimized release binaries
-retain debug symbols without inference profiling. Two opposite version orders,
+is `/tmp/telora-perf-173/telora-deferred-construction`. Both are optimized release
+builds without inference profiling. A later ELF audit found baseline DWARF debug
+sections but only the symbol table in the candidate (default release settings).
+These results therefore are not a comparison with identical debug-info settings;
+the artifact distinction was omitted in the original checkpoint report.
+Two opposite version orders,
 each with one warmup and five samples, yield ten pooled samples per case/version.
 No builds, tests or profilers overlapped timings. These are end-to-end CLI `check`
 times, not isolated inference measurements.
@@ -542,3 +546,45 @@ Evidence: `/tmp/rfc0280-deferred-construction-{workspace,release}.log`,
 `/tmp/rfc0280-deferred-construction-memory-workspace`,
 `/tmp/rfc0280-{static-constraints,deferred-construction}-checked-heap.txt`, and
 raw `/tmp/telora-perf-173/{static-constraints,deferred-construction}-checked.heap.zst`.
+
+## Static recursive concrete definitions, 2026-09-09
+
+Baseline `d99f2d5` is `/tmp/telora-perf-173/telora-deferred-construction`; candidate
+is `/tmp/telora-perf-173/telora-static-recursion`. Both use default optimized release
+settings, retain symbol tables but no DWARF debug-info sections, and have no
+inference profiling enabled. Two opposite version orders each use one warmup and
+five samples per workload/version; medians pool ten samples. No builds, tests or
+profilers overlapped timing. Measurements are end-to-end CLI `check` costs.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 112.96 | 112.33 | -0.55% |
+| types-400 | 167.38 | 165.98 | -0.84% |
+| checked-types-400 | 272.71 | 268.54 | -1.53% |
+| recursive-types-400 | 306.65 | 201.03 | -34.44% |
+| property-types-400 | 362.33 | 358.39 | -1.09% |
+| module-diamond-400 | 526.94 | 526.23 | -0.13% |
+
+The new workload defines 400 distinct `type T = struct {children: Array(T)}`
+self-recursive types and exports an integer. It does not construct recursive
+values, benchmark recursive generic families, or measure a large mutually
+recursive component. Control movements do not establish a general improvement;
+do not extrapolate this synthetic result to ontology.
+
+Separate recursive-types-400 heaptrack runs measured 1,530,212 -> 1,104,914
+allocation calls (-27.79%) and 23.02 -> 22.23 MB peak heap (-3.43%). Instrumented
+runtime/RSS are not ordinary process measurements.
+
+Workspace validation passed (353 core, 41 CLI including language acceptance, and
+other workspace/doc tests). The final small adjustment retained the exact legacy
+evaluation/validation order for unsupported bodies; all 353 core tests were rerun
+on that final code, and its release build passed. Source-size/diff checks passed.
+Coverage includes zero-fuel self/mutual recursion and existing recursive metadata,
+cross-module values, codec/schema and construction quota behavior.
+
+Evidence: `/tmp/rfc0280-static-recursion-workspace.log`,
+`/tmp/rfc0280-static-recursion-final-{core,release}.log`,
+`/tmp/rfc0280-static-recursion-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-static-recursion-memory-workspace`,
+`/tmp/rfc0280-{deferred-construction-recursive,static-recursion}-heap.txt`, and
+raw `/tmp/telora-perf-173/{deferred-construction-recursive,static-recursion}.heap.zst`.

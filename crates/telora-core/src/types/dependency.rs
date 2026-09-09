@@ -717,8 +717,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
                             .is_some()
                     });
             if concrete_nominal {
-                prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                    &static_environment, account, sources, &mut evaluator)?;
+                let recursive_bindings = component.iter().map(|definition| type_bindings[definition]).collect::<Vec<_>>();
+                let static_bodies = elaborate_recursive_bodies(&recursive_bindings, module_id,
+                    &declared_initializer_slots, &mut static_environment, &hir, &contract_external_names,
+                    &qualified_external_interfaces, &contract_families, &mut types);
+                if static_bodies.is_none() {
+                    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                        &static_environment, account, sources, &mut evaluator)?;
+                }
                 let mut type_refs = BTreeMap::new();
                 for definition in &component {
                     let binding = type_bindings[definition];
@@ -742,16 +748,15 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     type_refs.insert(*definition, type_ref);
                 }
                 let mut bodies = BTreeMap::new();
-                for definition in &component {
+                for (index, definition) in component.iter().enumerate() {
                     let binding = type_bindings[definition];
-                    let value = evaluate_tool_expression(
-                        source_name,
-                        &binding.value.value,
-                        &tool_values,
-                        account,
-                        sources,
-                        &mut evaluator,
-                    )?;
+                    let value = if let Some(roots) = &static_bodies {
+                        materialize_type_body(Some(roots[index]), &types, binding,
+                            source_name, &tool_values, account, sources, &mut evaluator)?.0
+                    } else {
+                        evaluate_tool_expression(source_name, &binding.value.value, &tool_values,
+                            account, sources, &mut evaluator)?
+                    };
                     validate_declared_metadata(source_name, binding, value, &evaluator)?;
                     bodies.insert(*definition, value);
                 }

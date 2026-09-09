@@ -1,3 +1,30 @@
+// Reserve every nominal identity before elaborating any recursive body. All
+// references then target the same rows as those bodies are filled in.
+#[allow(clippy::too_many_arguments)]
+fn elaborate_recursive_bodies(
+    bindings: &[&Binding], module_id: crate::ModuleId,
+    slots: &HashMap<crate::Location, u32>, environment: &mut HashMap<String, TypeDescriptor>,
+    hir: &HirProgram, external_names: &HashSet<&str>, interfaces: &BTreeMap<String, ModuleInterface>,
+    families: &BTreeMap<String, StaticTypeFamily>, graph: &mut TypeGraph,
+) -> Option<Vec<AnalysisTypeId>> {
+    let mut owners = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let descriptor = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(module_id, slots[&binding.value.name.location]),
+            name: binding.value.name.value.clone(), body: Arc::new(TypeDescriptor::Never),
+        });
+        owners.push(graph.intern_descriptor(&descriptor));
+        environment.insert(binding.value.name.value.clone(), TypeDescriptor::TypeOf(Box::new(descriptor)));
+    }
+    let scope = StaticContractScope { hir, environment, external_names, interfaces, parameters: &[], families };
+    let roots = bindings.iter().map(|binding| scope.elaborate(&binding.value.value, graph))
+        .collect::<Option<Vec<_>>>()?;
+    for (owner, root) in owners.into_iter().zip(&roots) {
+        graph.fill_declared_body(owner, *root);
+    }
+    Some(roots)
+}
+
 // Metadata is currently still consumed by legacy family/value preparation.
 #[allow(clippy::too_many_arguments)]
 fn materialize_static_declaration(
