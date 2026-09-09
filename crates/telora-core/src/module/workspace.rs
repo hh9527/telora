@@ -224,7 +224,9 @@ impl WorkspaceBuilder<'_> {
                 ));
             }
             for (name, imported_name, open, location, target) in imports {
-                let target_module = match self.resolver.resolve_import(&module_id, &target) {
+                let target_module = match self.main.modules.resolve_import(
+                    &self.resolver, &module_id, location, &target,
+                ) {
                     Ok(target) => target,
                     Err(error) => {
                         unavailable_imports.insert(name.clone());

@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import statistics
+import shutil
 import subprocess
 import tempfile
 import time
@@ -16,6 +17,8 @@ def main():
     parser.add_argument("--sizes", nargs="+", type=int, default=[100, 400])
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--save-workspace", type=Path,
+                        help="Copy the generated workspace to a new directory for separate profiling")
     parser.add_argument("--workloads", nargs="+",
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
                                  "typed-types", "property-types", "shared-wide", "shared-deep",
@@ -25,6 +28,8 @@ def main():
     if args.samples < 1 or args.timeout <= 0 or any(size < 1 for size in args.sizes):
         parser.error("sizes, samples and timeout must be positive")
     binaries = [binary.resolve(strict=True) for binary in args.binaries]
+    if args.save_workspace is not None and args.save_workspace.exists():
+        parser.error("save-workspace must name a new directory")
     cases = {"constant": "export def answer: Int = 42;\n"}
     dependencies = {}
     for size in args.sizes:
@@ -131,6 +136,8 @@ def main():
                     "binary": str(binary), "case": name,
                     "median_seconds": statistics.median(samples), "samples_seconds": samples,
                 }), flush=True)
+        if args.save_workspace is not None:
+            shutil.copytree(workspace, args.save_workspace)
 
 
 if __name__ == "__main__":

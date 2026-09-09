@@ -251,3 +251,36 @@ The earlier shared-wide regression did not repeat. Its old-version mean/stdev
 were 437.43/14.89 ms versus 418.08/3.78 ms; constant timings also shifted
 between batches. Do not treat this follow-up as a precise 5% shared-wide gain
 or compare absolute timings from different batches as equivalent conditions.
+
+## Import reference graph checkpoint, 2026-09-09
+
+Compared preserved uninstrumented optimized binaries `telora-lazy-recovery`
+(`b0aa34d`) and `telora-import-graph` in `/tmp/telora-perf-173`. Each ordering
+used one warmup plus five measured samples; table medians pool both orderings.
+Builds, tests and profilers were not concurrent with timings.
+
+| Case | b0aa34d median ms | Import graph median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 157.54 | 156.11 | -0.91% |
+| fanout-100 | 251.07 | 247.05 | -1.60% |
+| diamond-100 | 256.02 | 255.30 | -0.28% |
+| fanout-400 | 564.04 | 556.79 | -1.29% |
+| diamond-400 | 579.04 | 573.14 | -1.02% |
+
+The changes are small, and do not establish a substantial speedup. Separately,
+diamond-400 allocation calls decreased 2,722,078 -> 2,703,271 (-0.69%), peak
+heap increased 27.72 -> 27.83 MB (+0.40%). Five uninstrumented RSS runs gave
+medians 42,188 -> 42,572 KiB (+0.91%). New graph records and retained module
+targets coexist with the old skeleton/interface structures; this intermediate
+ownership cost is not hidden by the reduction in temporary allocations.
+
+The runner now supports `--save-workspace` to a new directory for separate
+profiling of the exact generated source. Evidence:
+`/tmp/rfc0280-import-graph-{comparison,reverse}.jsonl`, saved workspace
+`/tmp/rfc0280-import-graph-workspace`,
+`/tmp/rfc0280-{lazy-recovery,import-graph}-diamond-heap.txt` and raw
+`/tmp/telora-perf-173/{lazy-recovery,import-graph}-diamond.heap.zst`.
+Validation logs: `/tmp/rfc0280-import-graph-{workspace,release}.log`.
+All workspace tests passed (333 core, 41 CLI including language acceptance).
+This covers only the import-reference foundation, not full information-graph
+solving, static export/constructor resolution or zero-execution type inference.

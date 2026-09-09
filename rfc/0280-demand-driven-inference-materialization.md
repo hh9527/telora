@@ -16,6 +16,19 @@ session-owned world from the beginning. Consumers refer to these records by
 typed integer IDs while they are being resolved. A module is a naming and
 dependency boundary, not a transaction, type-publication or ownership boundary.
 
+The primary abstraction is one information graph progressively solved and
+refined, not a collection of stage caches. Allocate identity before solving
+content; resolve adds reference edges, inference adds constraints and solutions,
+and downstream consumers follow the same identities. A pending dependency queues
+work on that graph rather than requesting another module analysis. Complete all
+statically decidable facts before user-code execution (including entry); dynamic
+values remain explicit typed execution obligations. Source/name lookup indexes
+are ingress aids, not alternative owners of inferred facts.
+
+The current implementation focus is workspace/package mode. Standalone mode is
+temporarily out of scope; do not add standalone-specific adaptations or acceptance
+fixtures as part of this work.
+
 The restriction against partial publication applies to final user-program
 results and execution capabilities leaving the session. It does not prohibit
 registering, sharing or querying incomplete type/module definitions internally.
@@ -475,3 +488,27 @@ Shared-wide-400 initially showed a 2.09% regression, which did not repeat in a
 separate fifteen-sample follow-up; timing drift limits claims for this control.
 This checkpoint does not establish the RFC's full acceptance. See the measurement
 appendix for scope, artifacts and remaining gates.
+
+### Import reference graph checkpoint
+
+Discovery registers explicit import nodes before resolving their target names.
+ImportId stays fixed while the flat node array is filled from Pending to a
+ModuleId or a diagnostic ID. Module targets live in an ID-indexed table; strict
+and recovery loaders consume these facts rather than resolving discovered paths
+again. The source-location map is only an ingress index. Multiple aliases share
+their target module; a conflict does not remove independent nodes.
+
+Workspace/package tests cover aliases referencing an uninitialized dependency,
+retention of a failed resolution despite a later catalog change, and independent
+node completion in the presence of a conflict. This is a name-reference graph,
+not yet the shared declaration/export/type graph. Module IDs still follow the
+existing fixed-discovery numbering, and legacy non-discovery entry paths retain
+their existing resolver fallback. No standalone-specific enhancement is included.
+
+Full workspace tests (333 core, 41 CLI including language acceptance), release
+build and diff/source-size checks passed. Two-order ten-sample measurements show
+small 0.28–1.60% module-workload median reductions versus `b0aa34d`, not a major
+speedup claim. Diamond-400 allocations decreased 0.69%, while peak heap increased
+0.11 MB and RSS median increased 0.91%. Retaining the new graph alongside legacy
+structures has a cost; the later declaration/type migration must eliminate that
+duplication. Detailed evidence is in the measurement appendix.

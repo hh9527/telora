@@ -46,6 +46,7 @@ use std::sync::{Arc, Mutex};
 
 include!("module/data.rs");
 include!("module/artifact.rs");
+include!("module/imports.rs");
 include!("module/graph.rs");
 include!("module/loaded.rs");
 include!("module/host.rs");

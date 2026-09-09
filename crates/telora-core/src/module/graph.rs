@@ -47,6 +47,8 @@ struct ModuleGraph {
     modules: Vec<ModuleSkeleton>,
     by_cname: HashMap<ModuleCName, ModuleId>,
     prepared: HashMap<ModuleCName, Arc<PreparedModule>>,
+    resolved: Vec<Option<ResolvedModule>>,
+    import_targets: ImportGraph,
 }
 
 // Shared session input, including failed parses. A definition does not need to
@@ -75,6 +77,23 @@ impl PreparedModule {
 }
 
 impl ModuleGraph {
+    fn resolve_import(
+        &self,
+        resolver: &ModuleResolver,
+        importer: &ModuleCName,
+        location: crate::Location,
+        target: &str,
+    ) -> Result<ResolvedModule, ModuleError> {
+        match self.import_targets.target(location) {
+            Some(Ok(id)) => Ok(self.resolved[id.index()].as_ref()
+                .expect("discovered import has a registered module").clone()),
+            Some(Err(message)) => Err(ModuleError::new(message)),
+            // Direct/synthetic entry paths may not have a discovery record.
+            None => resolver.resolve_import(importer, target)
+                .map_err(|error| ModuleError::new(error.to_string())),
+        }
+    }
+
     fn id(&self, cname: &ModuleCName) -> Option<ModuleId> {
         self.by_cname.get(cname).copied()
     }
@@ -121,6 +140,8 @@ impl ModuleGraph {
         pending.extend(opaque);
         let mut blueprints = HashMap::new();
         let mut prepared = HashMap::new();
+        let mut import_targets = ImportGraph::default();
+        let mut import_solutions = Vec::new();
 
         while let Some(cname) = pending.pop() {
             if blueprints.contains_key(&cname) {
@@ -214,9 +235,16 @@ impl ModuleGraph {
                 let ExprKind::String(target) = &binding.value.value.value else {
                     return Err(ModuleError::new("import path must be a string"));
                 };
+                let import = import_targets.register(binding.value.value.location);
+                if import.0 as usize == import_solutions.len() {
+                    import_solutions.push(None);
+                }
                 let imported = match resolver.resolve_import(&cname, target) {
                     Ok(imported) => imported,
-                    Err(_) if recover => continue,
+                    Err(error) if recover => {
+                        import_solutions[import.0 as usize] = Some(Err(error.to_string()));
+                        continue;
+                    }
                     Err(error) => {
                         return Err(ModuleError::new(scan_sources.render(&Diagnostic::error(
                             error.to_string(),
@@ -225,6 +253,7 @@ impl ModuleGraph {
                     }
                 };
                 let imported_cname = imported.id.clone();
+                import_solutions[import.0 as usize] = Some(Ok(imported_cname.clone()));
                 blueprint.imports.push((
                     (binding.value.kind == BindingKind::Import)
                         .then(|| binding.value.name.value.clone()),
@@ -265,6 +294,11 @@ impl ModuleGraph {
             .enumerate()
             .map(|(index, cname)| (cname.clone(), ModuleId::from_index(index)))
             .collect::<HashMap<_, _>>();
+        let registered = cnames.iter().map(|cname| resolved.remove(cname)).collect();
+        for (id, target) in import_solutions.into_iter().enumerate() {
+            import_targets.solve(ImportId(id as u32),
+                target.expect("registered import was resolved").map(|cname| by_cname[&cname]));
+        }
         let modules = cnames
             .into_iter()
             .map(|cname| {
@@ -287,7 +321,7 @@ impl ModuleGraph {
                 }
             })
             .collect();
-        Ok(Self { modules, by_cname, prepared })
+        Ok(Self { modules, by_cname, prepared, resolved: registered, import_targets })
     }
 }
 

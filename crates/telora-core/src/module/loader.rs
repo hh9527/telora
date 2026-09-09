@@ -472,9 +472,8 @@ impl ModuleLoader {
             let ExprKind::String(relative) = &binding.value.value.value else {
                 return Err(ModuleError::new("import path must be a string"));
             };
-            let imported = self
-                .resolver
-                .resolve_import(module_id, relative)
+            let imported = self.main.modules
+                .resolve_import(&self.resolver, module_id, binding.value.value.location, relative)
                 .map_err(|error| {
                     ModuleError::new(self.sources.render(&Diagnostic::error(
                         error.to_string(),
