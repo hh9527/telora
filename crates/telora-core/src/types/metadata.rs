@@ -616,8 +616,10 @@ fn evaluate_prepared_tool_expression(
     crate::elaboration::elaborate_tool_expression(&mut lowered, &calls, &arities, &parameters,
         &families, &not_families, &members, &interpolations);
     let mut bindings = ScopedToolBindings::new(bindings);
-    for (name, root) in runtime_types {
-        let value = root.runtime_value(&types, evaluator)?;
+    let values = evaluator.work.type_graph_values(
+        Some(evaluator.main), &types, runtime_types.values().map(ToolTypeRoot::metadata_root),
+    ).map_err(|error| frontend_error("<tool-stage>", error.to_string()))?;
+    for ((name, root), value) in runtime_types.into_iter().zip(values) {
         let arity = if name.starts_with("\0type_argument:") { root.bound_arity(&types) } else { 0 };
         let value = if arity != 0 {
             evaluator.create_type_family(value, arity, None)?.0

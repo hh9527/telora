@@ -265,6 +265,20 @@ Type solving records obligations, not computed user values. For example:
 | @check | Check Result((), BlameError) contract and record checker identity | Initialize the checker and run it at the existing construction/codec boundaries |
 | Trait implementation | Check member contracts and select static evidence | Initialize needed implementation values |
 
+For type-level properties, the static relation is
+`(TypeId, PropertyTypeId) -> Bool`: declarations and provider return types establish
+presence without executing the provider. While the relevant declaration graph is
+incomplete, presence remains unresolved rather than defaulting to false; conflicting
+facts remain errors. `HasProperty` consumes the resolved presence fact, independently
+of whether the property's value has been computed.
+
+The value phase fills `(TypeId, PropertyTypeId) -> value: PropertyType` for present
+properties. It executes the declaration chain's ordered reduce and exposes one
+final value per key. Consumers query that final record, not a list of competing
+declarations. Failed or pending value/applicability work blocks successful final
+output, without requiring provider execution to establish static presence. This
+is the target phase separation; existing eager paths still require migration.
+
 The dynamic property-target example is supported by the existing
 `tests/language/src/test/property-target/testee.telora` test. Do not restrict it
 to literals to make static inference appear execution-free. Its deferred
@@ -903,3 +917,24 @@ the tool-type-arguments-400 benchmark median decreased 1.96%, allocations decrea
 0.75%, and peak heap decreased 7.16% (49.55 -> 46.00 MB). A heaptrack backtrace
 confirms the new builder is exercised. Timing changes are small and do not prove
 a general speedup; scope and artifacts are recorded in the measurement appendix.
+
+### Batched tool metadata roots
+
+Runtime type bindings for one tool expression now share one graph-to-value
+construction table across all roots. Repeated roots and shared children reuse
+metadata values by graph node ID. The table is initialized on the first graph
+root and discarded at the operation boundary; descriptor-only batches retain
+their compatibility path without graph scratch. This advances downstream ID
+consumption without introducing a persistent stage cache.
+
+Metadata is built in binding order, then family wrappers and local bindings are
+created. This preserves user-code evaluation behavior. Regression coverage checks
+mixed descriptor/graph ordering, identical repeated-root values, empty batches,
+and successful construction after a failed batch discards its scratch. The
+tool-shared-arguments workload extends the single-call provider case to eight
+generic calls per provider, exposing repeated roots within one tool expression.
+
+Full workspace passed 363 core, 41 CLI and all remaining tests; release and
+diff/source-size checks passed. Against `27835c3`, shared-arguments timing moved
+-0.59%, allocation calls -1.04%, and peak heap -0.91%. This is a small allocation
+reduction, not evidence of a material speedup; details are in the measurement appendix.

@@ -57,6 +57,14 @@ enum ToolTypeRoot {
 }
 
 impl ToolTypeRoot {
+    fn metadata_root(&self) -> crate::heap::TypeMetadataRoot<'_> {
+        match self {
+            Self::Graph(id) => crate::heap::TypeMetadataRoot::Graph(*id),
+            Self::Compatibility(descriptor) => crate::heap::TypeMetadataRoot::Descriptor(descriptor),
+        }
+    }
+
+    #[cfg(test)]
     fn runtime_value(&self, graph: &TypeGraph, evaluator: &mut ToolEvaluator<'_>) -> Result<Val, FrontendError> {
         match self {
             Self::Graph(id) => evaluator.work.type_graph_value(Some(evaluator.main), graph, *id)
@@ -148,6 +156,39 @@ impl ToolTypeRoot {
 #[cfg(test)]
 mod tool_type_root_tests {
     use super::*;
+
+    #[test]
+    fn graph_metadata_batch_shares_roots_preserves_order_and_discards_failed_scratch() {
+        use crate::heap::TypeMetadataRoot as Root;
+        let mut graph = TypeGraph::default();
+        let int = graph.intern_node(TypeNode::Int);
+        let shared = graph.intern_node(TypeNode::Array(int));
+        let pair = graph.intern_node(TypeNode::Tuple(vec![shared, shared]));
+        let invalid = graph.push(TypeNode::Pending);
+        graph.finish_reserved_node(invalid, TypeNode::Array(invalid));
+        let mut main = Heap::main();
+        let mut evaluator = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut main);
+        let values = evaluator.work.type_graph_values(Some(evaluator.main), &graph, [
+            Root::Graph(shared), Root::Descriptor(&TypeDescriptor::String),
+            Root::Graph(pair), Root::Graph(shared),
+        ]).unwrap();
+        assert_eq!(values[0].value(), values[3].value());
+        for (value, expected) in values.iter().zip([
+            TypeDescriptor::Array(Box::new(TypeDescriptor::Int)), TypeDescriptor::String,
+            TypeDescriptor::Tuple(vec![TypeDescriptor::Array(Box::new(TypeDescriptor::Int)); 2]),
+            TypeDescriptor::Array(Box::new(TypeDescriptor::Int)),
+        ]) {
+            let (decoded, id) = evaluator.decode_type_graph(*value, "Type").unwrap();
+            assert_eq!(decoded.descriptor(id).unwrap(), expected);
+        }
+        assert!(evaluator.work.type_graph_values(Some(evaluator.main), &graph,
+            [Root::Graph(shared), Root::Graph(invalid)]).is_err());
+        let next = evaluator.work.type_graph_values(Some(evaluator.main), &graph,
+            [Root::Graph(pair)]).unwrap();
+        let (decoded, id) = evaluator.decode_type_graph(next[0], "Type").unwrap();
+        assert_eq!(decoded.descriptor(id).unwrap(), graph.descriptor(pair).unwrap());
+        assert!(evaluator.work.type_graph_values(Some(evaluator.main), &graph, []).unwrap().is_empty());
+    }
 
     #[test]
     fn graph_metadata_matches_descriptor_metadata_and_preserves_phantom_bounds() {

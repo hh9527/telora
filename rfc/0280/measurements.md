@@ -1006,3 +1006,40 @@ Evidence: `/tmp/rfc0280-graph-metadata-{check,tests,workspace,release}.log`,
 `/tmp/rfc0280-graph-metadata{,-baseline}-heap.txt`,
 `/tmp/rfc0280-graph-metadata-builder-heap.txt`, raw
 `/tmp/telora-perf-173/graph-metadata{,-baseline}.heap.zst`.
+
+## Batched graph metadata roots, 2026-09-09
+
+Incremental comparison against `27835c3`: `/tmp/telora-perf-173/telora-graph-metadata`
+versus `telora-metadata-batch`. Both default release builds; two opposite version
+orders, one warmup and five samples per order (ten pooled samples). No builds,
+tests or profilers overlapped timing. End-to-end CLI check medians:
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 108.10 | 108.45 | +0.33% |
+| property-types-400 | 358.76 | 358.31 | -0.12% |
+| tool-type-arguments-400 | 595.74 | 598.19 | +0.41% |
+| tool-shared-arguments-400 | 1235.90 | 1228.66 | -0.59% |
+
+The new shared-arguments case executes eight generic identity calls on the same
+twelve-Int tuple shape in each of 400 distinct property providers. It tests shared
+roots within tool expressions; the existing single-call case is unchanged.
+These timing movements do not demonstrate a material speedup.
+
+Separate heaptrack runs on the shared-arguments case measured allocation calls
+4,206,159 -> 4,162,278 (-1.04%) and peak heap 147.74 -> 146.39 MB (-0.91%).
+Batching therefore removes some repeated allocation, but is not a large memory
+improvement either. Profiler time and RSS are not normal runtime measurements.
+No new ontology or cumulative baseline measurement is included.
+
+Full workspace passed 363 core, 41 CLI and all remaining tests; release,
+diff and source-size checks passed. Regression coverage verifies repeated-root
+identity, mixed root ordering, empty input and discarded scratch after failure.
+The operation-local table is shared across roots, not retained as a stage cache.
+Property evaluation and current check execution behavior are unchanged.
+
+Evidence: `/tmp/rfc0280-metadata-batch-{check,tests,workspace,release}.log`,
+`/tmp/rfc0280-metadata-batch-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-metadata-batch-memory-workspace`,
+`/tmp/rfc0280-metadata-batch{,-baseline}-heap.txt`, raw
+`/tmp/telora-perf-173/metadata-batch{,-baseline}.heap.zst`.
