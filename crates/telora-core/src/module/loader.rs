@@ -169,9 +169,9 @@ impl ModuleLoader {
             function,
             externals,
         } = compiled;
-        let workspace = WorkspaceSnapshot::build(
+        let workspace = WorkspaceSnapshot::build_borrowed(
             self.sources.clone(),
-            self.semantic_inputs.values().cloned().collect(),
+            self.semantic_inputs.values(),
         );
         let main = std::mem::replace(&mut self.main, MainWorld::building()).seal();
         Ok(LoadedModule {

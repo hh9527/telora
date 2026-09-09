@@ -154,8 +154,8 @@ CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
 
 模块骨架记录其 SourceId；严格加载同一源码节点时直接携带 ModuleId，不再克隆骨架
 并重新扫描声明、exports/imports 来比较两份副本。未经过 discovery 的旧入口仍保留
-原有一致性检查。正式/恢复分析各自的 HIR 与工具推导上下文共享同一 Arc，结束时
-转交给现有公开 Analysis；该转交不复制 HIR。跨阶段的 HIR 预先解析与跨模块声明边
+原有一致性检查。正式/恢复分析各自拥有 HIR，工具推导上下文借用同一 HIR，结束时
+直接转交给现有公开 Analysis；该转交不复制 HIR，也不使用引用计数。跨阶段的 HIR 预先解析与跨模块声明边
 尚未统一，因此这里不宣称已完成全局 HIR 求解。
 
 已发现模块的 PreparedModule 现在归属于 ModuleId 索引的节点；未发现入口保留独立
@@ -164,7 +164,11 @@ CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
 ModuleSkeleton 不实现 Clone。严格 loader 将依赖准备与编译分开，递归期间只保留
 import 操作数和 binding 游标，结束后重新借用 session 语法。恢复路径同样在递归前
 结束借用，在分析时重新借用；语法记录始终留在图中。依赖准备仍可能执行旧模块值，
-HIR 的 Arc、AST/HIR 内部节点扁平化和下游统一 ID 消费仍待迁移。
+AST/HIR 内部节点扁平化和下游统一 ID 消费仍待迁移。
+
+语义快照构建只借用输入分析事实，排序时保留输入引用；严格加载、run/eval 和 test
+交接不再先克隆整份 SemanticModuleInput（包含 HIR/类型图）。最终快照仍拥有投影后的
+记录，类型/定义 ID 重映射和根模块编译结果与语义输入之间的 Analysis 副本尚未移除。
 
 声明契约的静态展开入口只读取 AST、HIR 名称解析、模块接口、类型环境和符号参数，不接收 VM
 或 heap。已知类型引用、函数、元组、Unit、Array/Dict/TypeOf 直接进入同一个最终

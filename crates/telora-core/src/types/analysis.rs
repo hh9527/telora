@@ -206,7 +206,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     let source_name = sources.get(source_id).name.to_string();
     let module_id = crate::ModuleId::ANONYMOUS;
     let prelude = BootstrapPrelude::new();
-    let hir = Arc::new(HirProgram::resolve_recovered_with_member_constructors(
+    let hir = HirProgram::resolve_recovered_with_member_constructors(
         recovered,
         prelude
             .schemes
@@ -219,7 +219,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
             interface.value_binding.as_deref() == Some(name.as_str())
                 && interface.member_constructors.contains_key(*name))
             .map(|(name, _)| name.clone()).collect(),
-    ));
+    );
     let bindings = type_definition_bindings(&hir, &recovered.bindings);
     let declared_initializer_slots = recovered
         .bindings
@@ -309,7 +309,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
     }
     let named_types = interfaces.values().flat_map(|interface| interface.concrete_types.clone()).collect();
     evaluator.inference_context = Some(ToolInferenceContext::new(
-        hir.clone(), interfaces, environment, schemes, named_types,
+        &hir, interfaces, environment, schemes, named_types,
         !external_roots.contains_key("Tuple"), imported_dyn_namespaces(&recovered.bindings),
     ));
     let mut tool_values = evaluator
@@ -784,7 +784,6 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
         .map(|(_, diagnostic)| diagnostic)
         .collect();
     evaluator.inference_context = None;
-    let hir = Arc::try_unwrap(hir).expect("partial analysis is the remaining HIR owner");
     PartialAnalysis {
         hir,
         dependencies,

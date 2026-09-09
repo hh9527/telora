@@ -3,14 +3,14 @@ struct ToolEvaluator<'a> {
     silent_vm: Vm,
     main: &'a mut Heap,
     work: Heap,
-    inference_context: Option<ToolInferenceContext>,
+    inference_context: Option<ToolInferenceContext<'a>>,
     inference_depth: usize,
     registered_construction_checks: BTreeSet<PropertyKey>,
     construction_checks_complete: bool,
 }
 
-struct ToolInferenceContext {
-    hir: Arc<HirProgram>,
+struct ToolInferenceContext<'a> {
+    hir: &'a HirProgram,
     interfaces: BTreeMap<String, ModuleInterface>,
     environment: HashMap<String, TypeDescriptor>,
     schemes: HashMap<String, TypeScheme>,
@@ -154,7 +154,7 @@ mod tool_type_root_tests {
     }
 }
 
-impl ToolInferenceContext {
+impl<'a> ToolInferenceContext<'a> {
     fn scope_environment_inputs(
         &mut self,
         expression: &Expr,
@@ -183,7 +183,7 @@ impl ToolInferenceContext {
     }
 
     fn new(
-        hir: impl Into<Arc<HirProgram>>,
+        hir: &'a HirProgram,
         interfaces: BTreeMap<String, ModuleInterface>,
         environment: HashMap<String, TypeDescriptor>,
         schemes: HashMap<String, TypeScheme>,
@@ -200,7 +200,7 @@ impl ToolInferenceContext {
         let display_trait = interfaces.values().find_map(|interface| interface.display_trait)
             .map(|id| (id, "std/fmt.Display".to_owned()));
         let mut context = Self {
-            hir: hir.into(), interfaces, environment, schemes, named_types, builtin_tuple_available,
+            hir, interfaces, environment, schemes, named_types, builtin_tuple_available,
             dyn_namespaces, declared_bodies: HashMap::new(), trait_implementations,
             type_properties, trait_ids, display_trait, supports_constructors: false,
         };

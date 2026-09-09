@@ -453,9 +453,9 @@ impl Engine {
             )));
         }
 
-        let workspace = WorkspaceSnapshot::build(
+        let workspace = WorkspaceSnapshot::build_borrowed(
             loader.sources.clone(),
-            loader.semantic_inputs.values().cloned().collect(),
+            loader.semantic_inputs.values(),
         );
         let dependencies = loader.dependencies.iter().cloned().collect::<Vec<_>>();
         let sources = loader.sources.clone();

@@ -932,7 +932,17 @@ impl WorkspaceSnapshot {
             .collect()
     }
 
-    pub(crate) fn build(sources: SourceDatabase, mut inputs: Vec<SemanticModuleInput>) -> Self {
+    pub(crate) fn build(sources: SourceDatabase, inputs: Vec<SemanticModuleInput>) -> Self {
+        Self::build_borrowed(sources, inputs.iter())
+    }
+
+    // Snapshot projection reads analysis facts; it does not need another owner
+    // of the input HIR/type graphs. Keep only sorted references during the build.
+    pub(crate) fn build_borrowed<'a>(
+        sources: SourceDatabase,
+        inputs: impl IntoIterator<Item = &'a SemanticModuleInput>,
+    ) -> Self {
+        let mut inputs = inputs.into_iter().collect::<Vec<_>>();
         let mut core_names = inputs
             .iter()
             .flat_map(|input| input.imports.iter())
@@ -944,11 +954,12 @@ impl WorkspaceSnapshot {
                 | ModuleCName::Dependency { .. } => None,
             })
             .collect::<HashSet<_>>();
+        let mut missing_core_inputs = Vec::new();
         for name in core_names.drain() {
             if inputs.iter().any(|input| input.key == name) {
                 continue;
             }
-            inputs.push(SemanticModuleInput {
+            missing_core_inputs.push(SemanticModuleInput {
                 key: name.clone(),
                 path: None,
                 kind: WorkspaceModuleKind::Core,
@@ -962,6 +973,7 @@ impl WorkspaceSnapshot {
                 diagnostics: Vec::new(),
             });
         }
+        inputs.extend(missing_core_inputs.iter());
         inputs.sort_by(|left, right| left.key.cmp(&right.key));
 
         let ids = inputs

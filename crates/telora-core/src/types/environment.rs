@@ -67,8 +67,9 @@ mod environment_tests {
 
     #[test]
     fn tool_input_overrides_are_sparse_nested_and_restore_missing_bindings() {
+        let hir = HirProgram::default();
         let mut context = ToolInferenceContext::new(
-            HirProgram::default(), BTreeMap::new(), HashMap::new(), HashMap::new(),
+            &hir, BTreeMap::new(), HashMap::new(), HashMap::new(),
             BTreeMap::new(), true, HashSet::new(),
         );
         for index in 0..1024 {

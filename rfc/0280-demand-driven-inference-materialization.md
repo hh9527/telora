@@ -107,8 +107,8 @@ choice; the ownership and visibility rules are not.
 
 The session owns syntax/HIR/type arenas; stages retain IDs and borrow these stores.
 Sharing a node across stages does not justify an Arc on each node or module.
-The remaining Arc-backed HIR is a migration adapter, not the target ownership
-model. An independently lived, immutable cross-session snapshot may have a single
+Tool inference now borrows the analysis-owned HIR without reference counting.
+An independently lived, immutable cross-session snapshot may have a single
 outer shared owner when its consumers require it. Prepared modules are now owned
 directly by module rows, and the module graph cannot be cloned. Loader dependency
 preparation is separate from compilation: recursive loading carries only import
@@ -116,6 +116,9 @@ operands and a binding cursor, then compilation borrows session syntax again.
 Recovery likewise releases syntax borrows before loading dependencies and borrows
 again for analysis. No syntax node is removed during recursion. This ownership
 change does not yet remove legacy dependency execution or flatten AST/HIR nodes.
+Semantic snapshot projection borrows input facts rather than first cloning their
+HIR and type graphs. The resulting snapshot still owns projected records with
+remapped IDs; this remains a boundary to migrate toward global ID consumption.
 
 ```text
 SessionWorld
@@ -803,3 +806,31 @@ The existing source-change regression verifies the original ModuleId/SourceId an
 successful compilation from discovered syntax after both backing files change.
 This step removes per-module Arc, but HIR shared ownership, legacy dependency
 execution and downstream descriptor materialization remain separate migration work.
+
+### Borrowed HIR and semantic projection inputs
+
+Strict and recovery inference now own their HIR directly. ToolInferenceContext
+borrows that HIR for the duration of inference; final Analysis/PartialAnalysis
+receives the same object by move. No Arc construction, clone or try_unwrap remains
+in this handoff. HIR is still resolved per analysis, not yet stored in a unified
+session HIR arena.
+
+WorkspaceSnapshot projection now accepts borrowed input records and sorts a vector
+of references. Strict loading, run/eval and test no longer clone complete semantic
+inputs, HIR and type graphs merely to project them. Existing consuming callers use
+the same borrowed implementation while retaining ownership until projection ends.
+Synthetic builtin records are owned locally until projection completes. The final
+snapshot owns its output records and remains usable independently of those inputs.
+
+Snapshot type/definition graph remapping and the Analysis copy between compiled
+module and semantic input remain. This is not yet direct consumption of session
+IDs. The benchmark runner has a test mode that imports each existing workload and
+executes one trivial successful test, specifically to exercise the former
+clone-before-projection path; ordinary check uses the consuming path as a control.
+
+Full workspace passed 358 core, 41 CLI including language acceptance, and remaining
+workspace/doc tests; release and diff/source-size checks passed. Against `64d4e68`,
+test diamond-400 median decreased 3.44%, allocations decreased 3.00%, and peak heap
+decreased 21.28% (32.99 -> 25.97 MB). Test property-400 allocations decreased 1.16%
+while peak heap stayed at 29.26 MB. Check controls showed no clear timing gain.
+These command-specific results and their limitations are in the measurement appendix.

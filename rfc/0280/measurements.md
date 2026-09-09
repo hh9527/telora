@@ -828,3 +828,66 @@ Evidence: `/tmp/rfc0280-owned-syntax-{check,workspace,release}.log`,
 `/tmp/rfc0280-owned-syntax-memory-workspace`,
 `/tmp/rfc0280-owned-syntax{,-baseline}-heap.txt`, and raw
 `/tmp/telora-perf-173/owned-syntax{,-baseline}.heap.zst`.
+
+## Borrowed HIR and semantic projection inputs, 2026-09-09
+
+Incremental comparison against `64d4e68`: `/tmp/telora-perf-173/telora-owned-syntax`
+versus `telora-borrowed-facts` in the same directory. Both use default optimized
+release without inference profiling. Each command was measured in two opposite
+version orders, one warmup plus five samples each, yielding ten pooled samples
+per case/version. No builds, tests or profilers overlapped timing.
+
+HIR ownership is direct, with ToolInferenceContext borrowing it until final
+Analysis/PartialAnalysis receives it by move. Semantic projection sorts borrowed
+input references rather than cloning complete HIR/type facts at loader/run/eval/test
+handoffs. Ordinary check already consumed inputs, and is the control.
+
+End-to-end CLI `test` medians (one trivial successful test importing each workload):
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 115.22 | 115.19 | -0.03% |
+| property-types-400 | 372.81 | 369.19 | -0.97% |
+| module-diamond-400 | 544.70 | 525.94 | -3.44% |
+
+End-to-end CLI `check` control medians:
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 113.95 | 114.46 | +0.44% |
+| property-types-400 | 361.77 | 362.35 | +0.16% |
+| module-diamond-400 | 527.84 | 523.80 | -0.77% |
+
+The test diamond workload shows a modest timing improvement; property timing is
+small and the constant is unchanged. Check controls show no clear speedup. These
+are complete commands, not isolated inference or snapshot timings. The test
+wrapper loads the same generated source graph and executes one trivial success;
+it does not measure 400 individual test executions. No ontology measurement or
+new cumulative-baseline comparison is included.
+
+Separate heaptrack measurements on the test wrappers:
+
+| Case | Allocations before -> after | Change | Peak heap MB before -> after | Change |
+| --- | ---: | ---: | ---: | ---: |
+| property-types-400 | 1,806,737 -> 1,785,691 | -1.16% | 29.26 -> 29.26 | unchanged at displayed precision |
+| module-diamond-400 | 2,614,028 -> 2,535,551 | -3.00% | 32.99 -> 25.97 | -21.28% |
+
+Removing a full input copy lowers diamond peak heap by 7.02 MB; the property
+workload's overall peak is unchanged. Profiler runtime and RSS are not
+uninstrumented measurements.
+
+Final full workspace passed 358 core, 41 CLI including language acceptance, and all
+remaining workspace/doc tests; release and diff/source-size checks passed.
+Existing tests cover recovery facts, imported/reexported binders, recursive type
+identity, runtime blame sources, test graph composition and run/eval behavior.
+
+The final snapshot still remaps and owns projected type/definition records.
+The compiled-module to semantic-input Analysis copy and per-analysis HIR
+resolution remain; this is not yet a unified session HIR arena or global ID-only
+downstream pipeline, and legacy type-phase execution remains.
+
+Evidence: `/tmp/rfc0280-borrowed-facts-{check,workspace,release}.log`,
+`/tmp/rfc0280-borrowed-facts-{test,check}-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-borrowed-facts-memory-workspace`,
+`/tmp/rfc0280-borrowed-facts-{baseline-diamond,diamond,baseline-property,property}-heap.txt`,
+raw `/tmp/telora-perf-173/borrowed-facts-{baseline-diamond,diamond,baseline-property,property}.heap.zst`.

@@ -167,7 +167,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
         })
         .map(|binding| binding.value.name.value.as_str())
         .collect::<HashSet<_>>();
-    let hir = Arc::new(HirProgram::resolve_with_member_constructors(
+    let hir = HirProgram::resolve_with_member_constructors(
         program,
         prelude
             .types
@@ -180,7 +180,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
             interface.value_binding.as_deref() == Some(name.as_str())
                 && interface.member_constructors.contains_key(*name))
             .map(|(name, _)| name.clone()).collect(),
-    ));
+    );
     let prelude_value_names = prelude
         .types
         .keys()
@@ -372,7 +372,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
 
     let type_bindings = type_definition_bindings(&hir, &program.value.body.value.bindings);
     evaluator.inference_context = Some(ToolInferenceContext::new(
-        hir.clone(), qualified_external_interfaces.clone(), static_environment.clone(),
+        &hir, qualified_external_interfaces.clone(), static_environment.clone(),
         binding_schemes.clone(), imported_named_types.clone().into_iter().chain(declared_types.clone()).collect(),
         !external_roots.contains_key("Tuple"),
         imported_dyn_namespaces(&program.value.body.value.bindings),
@@ -2455,7 +2455,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
         .cloned()
         .collect();
     evaluator.inference_context = None;
-    let hir = Arc::try_unwrap(hir).expect("analysis is the remaining HIR owner");
     Ok(Analysis {
         types,
         declared_types,

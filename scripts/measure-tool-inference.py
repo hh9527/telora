@@ -17,6 +17,8 @@ def main():
     parser.add_argument("--sizes", nargs="+", type=int, default=[100, 400])
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--command", choices=["check", "test"], default="check",
+                        help="Use check directly, or test with one trivial case importing each workload")
     parser.add_argument("--save-workspace", type=Path,
                         help="Copy the generated workspace to a new directory for separate profiling")
     parser.add_argument("--workloads", nargs="+",
@@ -174,6 +176,14 @@ def main():
         )
         for name, source in modules.items():
             (workspace / "src" / f"{name}.telora").write_text(source, encoding="ascii")
+        if args.command == "test":
+            (workspace / "tests").mkdir()
+            for name in cases:
+                (workspace / "tests" / f"{name}.telora").write_text(
+                    f'import "@src/{name}" as workload;\n'
+                    'import "std/test" as test;\n'
+                    'export def smoke = test.should_ok(fn() { True });\n', encoding="ascii"
+                )
         for binary in binaries:
             command = [str(binary), "-C", directory]
             subprocess.run(command + ["lock"], check=True, capture_output=True, timeout=args.timeout)
@@ -182,7 +192,8 @@ def main():
                 for sample in range(args.samples + 1):
                     start = time.perf_counter()
                     result = subprocess.run(
-                        command + ["check", f"@src/{name}"],
+                        command + (["check", f"@src/{name}"] if args.command == "check"
+                                   else ["test", name]),
                         capture_output=True, timeout=args.timeout,
                     )
                     elapsed = time.perf_counter() - start
@@ -191,7 +202,7 @@ def main():
                     if sample:
                         samples.append(elapsed)
                 print(json.dumps({
-                    "binary": str(binary), "case": name,
+                    "binary": str(binary), "case": name, "command": args.command,
                     "median_seconds": statistics.median(samples), "samples_seconds": samples,
                 }), flush=True)
         if args.save_workspace is not None:

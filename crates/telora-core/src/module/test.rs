@@ -127,9 +127,9 @@ impl Engine {
             cycle_reported: false,
         };
         block_on_recovery(builder.load_telora(root.clone()));
-        let snapshot = WorkspaceSnapshot::build(
+        let snapshot = WorkspaceSnapshot::build_borrowed(
             builder.sources.clone(),
-            builder.inputs.values().cloned().collect(),
+            builder.inputs.values(),
         );
         let diagnostics = snapshot.diagnostics().to_vec();
         let mut outcome = TestOutcome {
