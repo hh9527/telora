@@ -952,3 +952,57 @@ Evidence: `/tmp/rfc0280-linear-projection-{check,test,workspace,final-core,final
 `/tmp/rfc0280-linear-projection{,-test}-memory-workspace`,
 `/tmp/rfc0280-linear-projection-{baseline-property,property,baseline-diamond,diamond}-heap.txt`,
 raw `/tmp/telora-perf-173/linear-projection-{baseline-property,property,baseline-diamond,diamond}.heap.zst`.
+
+## Direct graph metadata for tool type arguments, 2026-09-09
+
+Incremental comparison against `5320e42`: `/tmp/telora-perf-173/telora-linear-projection`
+versus `telora-graph-metadata` in the same directory. Both default optimized release
+without inference profiling. Two opposite version orders, one warmup plus five
+samples each, yield ten pooled samples per case/version. No builds, tests or
+profilers overlapped timing. These are end-to-end CLI check medians.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 108.11 | 107.54 | -0.53% |
+| recursive-families-400 | 294.15 | 289.86 | -1.46% |
+| property-types-400 | 362.66 | 362.46 | -0.06% |
+| tool-type-arguments-400 | 616.28 | 604.20 | -1.96% |
+
+The new workload declares 400 distinct type-property providers. Each provider
+calls a generic identity function on a twelve-element Int tuple before producing
+its Label. This exercises tool runtime type-argument metadata, including repeated
+references to a shared element type. It does not isolate metadata construction
+from the rest of analysis/property execution. Control timing movements are small;
+the targeted 1.96% timing reduction does not establish a general speedup.
+
+Separate heaptrack runs on tool-type-arguments-400 measured allocations
+2,287,680 -> 2,270,523 (-0.75%) and peak heap 49.55 -> 46.00 MB (-7.16%, 3.55 MB).
+A backtrace filter for type_graph_value confirms the benchmark enters the new
+builder through evaluate_prepared_tool_expression. Profiler runtime/RSS are not
+uninstrumented process measurements. No ontology or new cumulative baseline
+measurement is included.
+
+The no-origin runtime type binding path consumes graph nodes directly, reusing
+generated values by node ID rather than first expanding a descriptor tree.
+Nominal owners are reserved before body traversal; sealed nominal metadata is
+reused as before. Crossing a nominal boundary permits structural revisits; pure
+structural cycles are rejected. Bound arity scans graph nodes and phantom identity
+arguments. Compatibility roots still use descriptors.
+
+Full workspace passed 362 core, 41 CLI including language acceptance, and all
+remaining workspace/doc tests; release and diff/source-size checks passed.
+New regressions compare descriptor/direct metadata with symbolic phantom arguments,
+exercise structural roots crossing nominal cycles and reject a structural self-cycle.
+Existing provenance, recursive metadata and property/check fixtures remain passing.
+
+This is one migrated consumer. Origin-bearing construction, owner-evidence generic
+substitution and nominal identity argument adapters remain. Construction scratch
+is per root; it is not a persistent stage cache or a completed global metadata
+arena. CLI check still performs its existing evaluation.
+
+Evidence: `/tmp/rfc0280-graph-metadata-{check,tests,workspace,release}.log`,
+`/tmp/rfc0280-graph-metadata-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-graph-metadata-memory-workspace`,
+`/tmp/rfc0280-graph-metadata{,-baseline}-heap.txt`,
+`/tmp/rfc0280-graph-metadata-builder-heap.txt`, raw
+`/tmp/telora-perf-173/graph-metadata{,-baseline}.heap.zst`.

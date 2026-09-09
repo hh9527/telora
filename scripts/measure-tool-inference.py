@@ -23,7 +23,7 @@ def main():
                         help="Copy the generated workspace to a new directory for separate profiling")
     parser.add_argument("--workloads", nargs="+",
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
-                                 "typed-types", "property-types", "checked-types", "recursive-types", "shared-wide", "shared-deep",
+                                 "typed-types", "property-types", "tool-type-arguments", "checked-types", "recursive-types", "shared-wide", "shared-deep",
                                  "family-contracts", "qualified-family-contracts",
                                  "recursive-families",
                                  "family-obligations", "qualified-family-obligations",
@@ -123,6 +123,15 @@ def main():
                 + f"def f{index}: Fn(T{index}) -> Int = fn(value) {{ value.id + 1 }};"
                 for index in range(size)
             ) + "\nexport def ready: Bool = True;\n"
+        cases[f"tool-type-arguments-{size}"] = (
+            "@property(PropertyTarget.Type)\ntype Label = struct {text: String};\n"
+            "def identity: for(T) Fn(T) -> T = fn(value) { value };\n"
+        ) + "\n".join(
+            f"def label{index}: Fn(Type, Option(Label)) -> Label = fn(target, previous) {{ "
+            + "let data = identity((1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)); {text: \"ready\"} };\n"
+            + f"@label{index}\ntype T{index} = struct {{value: Int}};"
+            for index in range(size)
+        ) + "\nexport def ready: Bool = True;\n"
         shared_shapes = {
             "shared-wide": "struct {" + ", ".join(
                 f"field{index}: Array(Int)" for index in range(32)

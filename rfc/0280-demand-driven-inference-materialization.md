@@ -874,3 +874,32 @@ release passed again; diff/source-size checks passed. Compared with `d5dbf63`,
 check timing moved between -1.83% and +0.08%, and test between -0.21% and +0.20%.
 Measured peak heap was essentially unchanged. These small movements do not prove
 a broad speedup; full scope and artifacts are in the measurement appendix.
+
+### Tool runtime type arguments consume graph roots
+
+The tool-expression runtime-type binding path now builds no-origin metadata
+directly from TypeGraph roots, without first reconstructing a TypeDescriptor tree.
+The builder records produced values by source node ID, reserves nominal owners
+before following their bodies, and preserves reuse of sealed nominal metadata.
+Structural revisits across a nominal boundary are valid; a structural cycle with
+no nominal boundary remains rejected. Per-root construction scratch belongs to the
+materialization operation, not a new persistent stage cache.
+
+Type-argument family arity is read from graph nodes and nominal identity arguments,
+including phantom bound parameters. Open compatibility roots still use their
+descriptor path. Origin-bearing construction and owner-evidence substitution keep
+their existing adapters; nominal argument identities also retain a descriptor
+boundary. This does not change property/check execution or CLI check semantics.
+
+Regressions compare direct graph metadata with descriptor-built metadata, include
+symbolic phantom arguments, and cover a structural root entering a nominal cycle
+as well as rejection of a purely structural self-cycle. A tool-type-arguments
+benchmark uses generic calls with a repeated-element tuple inside distinct
+property providers to exercise runtime type-argument construction.
+
+Full workspace passed 362 core, 41 CLI including language acceptance and all
+remaining tests; release and diff/source-size checks passed. Against `5320e42`,
+the tool-type-arguments-400 benchmark median decreased 1.96%, allocations decreased
+0.75%, and peak heap decreased 7.16% (49.55 -> 46.00 MB). A heaptrack backtrace
+confirms the new builder is exercised. Timing changes are small and do not prove
+a general speedup; scope and artifacts are recorded in the measurement appendix.

@@ -57,6 +57,48 @@ enum ToolTypeRoot {
 }
 
 impl ToolTypeRoot {
+    fn runtime_value(&self, graph: &TypeGraph, evaluator: &mut ToolEvaluator<'_>) -> Result<Val, FrontendError> {
+        match self {
+            Self::Graph(id) => evaluator.work.type_graph_value(Some(evaluator.main), graph, *id)
+                .map_err(|error| frontend_error("<tool-stage>", error.to_string())),
+            Self::Compatibility(descriptor) => evaluator.descriptor(descriptor),
+        }
+    }
+
+    fn bound_arity(&self, graph: &TypeGraph) -> usize {
+        let mut parameters = Vec::new();
+        match self {
+            Self::Compatibility(descriptor) => collect_bound_parameters(descriptor, &mut parameters),
+            Self::Graph(root) => {
+                let mut visited = vec![false; graph.nodes().len()];
+                let mut pending = vec![*root];
+                while let Some(id) = pending.pop() {
+                    if std::mem::replace(&mut visited[id.index()], true) { continue; }
+                    match graph.node(id) {
+                        TypeNode::Bound(parameter) => parameters.push(*parameter),
+                        TypeNode::Ref(child) | TypeNode::Array(child) | TypeNode::Newtype(child)
+                        | TypeNode::Dict(child) | TypeNode::TypeOf(child)
+                        | TypeNode::Tagged { payload: child, .. } => pending.push(*child),
+                        TypeNode::Declared { id, body, .. } => {
+                            // Phantom arguments still contribute to family arity.
+                            for argument in id.arguments() { collect_bound_parameters(argument, &mut parameters); }
+                            pending.push(*body);
+                        }
+                        TypeNode::Tuple(items) | TypeNode::PendingAlternatives(items) => pending.extend(items),
+                        TypeNode::Struct(fields) => pending.extend(fields.values()),
+                        TypeNode::Enum(variants) => pending.extend(variants.values().flatten()),
+                        TypeNode::Function { parameters, result } => {
+                            pending.extend(parameters);
+                            pending.push(*result);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        parameters.iter().map(|parameter| parameter.index() as usize + 1).max().unwrap_or(0)
+    }
+
     fn import(graph: &mut TypeGraph, descriptor: &TypeDescriptor) -> Self {
         match graph.intern_resolved_descriptor(descriptor) {
             Some(id) => Self::Graph(id),
@@ -106,6 +148,56 @@ impl ToolTypeRoot {
 #[cfg(test)]
 mod tool_type_root_tests {
     use super::*;
+
+    #[test]
+    fn graph_metadata_matches_descriptor_metadata_and_preserves_phantom_bounds() {
+        let phantom = TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::applied(crate::ModuleId::ANONYMOUS, 918,
+                &[TypeDescriptor::Bound(TypeParameterId(3))]),
+            name: "Phantom".into(), body: Arc::new(TypeDescriptor::Newtype(Box::new(TypeDescriptor::Int))),
+        });
+        let descriptor = TypeDescriptor::Function {
+            parameters: vec![TypeDescriptor::Tuple(vec![TypeDescriptor::Int, TypeDescriptor::Int]),
+                TypeDescriptor::Dict(Box::new(TypeDescriptor::String)), phantom],
+            result: Box::new(TypeDescriptor::Enum(BTreeMap::from([
+                ("Empty".into(), None),
+                ("Values".into(), Some(Box::new(TypeDescriptor::Array(Box::new(TypeDescriptor::Bytes))))),
+            ]))),
+        };
+        let mut graph = TypeGraph::default();
+        let root = ToolTypeRoot::Graph(graph.intern_descriptor(&descriptor));
+        assert_eq!(root.bound_arity(&graph), 4);
+        let mut main = Heap::main();
+        let mut evaluator = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut main);
+        let value = root.runtime_value(&graph, &mut evaluator).unwrap();
+        let (decoded, id) = evaluator.decode_type_graph(value, "Type").unwrap();
+        let actual = decoded.descriptor(id).unwrap();
+        let mut legacy_main = Heap::main();
+        let mut legacy = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut legacy_main);
+        let value = legacy.descriptor(&descriptor).unwrap();
+        let (decoded, id) = legacy.decode_type_graph(value, "Type").unwrap();
+        assert_eq!(actual, decoded.descriptor(id).unwrap());
+    }
+
+    #[test]
+    fn graph_metadata_accepts_a_structural_root_crossing_a_nominal_cycle() {
+        let analysis = analyze_source("metadata-cycle.telora",
+            "type Node = struct {children: Array(Node)}; export def id: Fn(Node) -> Node = fn(x) {x};").unwrap();
+        let graph = &analysis.types;
+        let owner = analysis.declared_types["Node"];
+        let TypeNode::Declared { body, .. } = graph.node(owner) else { panic!("owner"); };
+        let TypeNode::Struct(fields) = graph.node(*body) else { panic!("body"); };
+        let root = ToolTypeRoot::Graph(fields["children"]);
+        let mut main = Heap::main();
+        let mut evaluator = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut main);
+        let value = root.runtime_value(graph, &mut evaluator).unwrap();
+        let (decoded, id) = evaluator.decode_type_graph(value, "Type").unwrap();
+        assert_eq!(decoded.descriptor(id).unwrap(), graph.descriptor(fields["children"]).unwrap());
+        let mut invalid = TypeGraph::default();
+        let slot = invalid.push(TypeNode::Pending);
+        invalid.finish_reserved_node(slot, TypeNode::Array(slot));
+        assert!(ToolTypeRoot::Graph(slot).runtime_value(&invalid, &mut evaluator).is_err());
+    }
 
     #[test]
     fn evidence_owns_shared_types_after_solver_is_dropped() {

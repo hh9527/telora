@@ -617,12 +617,9 @@ fn evaluate_prepared_tool_expression(
         &families, &not_families, &members, &interpolations);
     let mut bindings = ScopedToolBindings::new(bindings);
     for (name, root) in runtime_types {
-        let descriptor = root.descriptor(&types).map_err(|message| frontend_error(source_name, message))?;
-        let value = evaluator.descriptor(&descriptor)?;
-        let mut parameters = Vec::new();
-        collect_bound_parameters(&descriptor, &mut parameters);
-        let value = if name.starts_with("\0type_argument:") && !parameters.is_empty() {
-            let arity = parameters.iter().map(|parameter| parameter.0 as usize + 1).max().unwrap();
+        let value = root.runtime_value(&types, evaluator)?;
+        let arity = if name.starts_with("\0type_argument:") { root.bound_arity(&types) } else { 0 };
+        let value = if arity != 0 {
             evaluator.create_type_family(value, arity, None)?.0
         } else { value };
         bindings.insert(name, value);
