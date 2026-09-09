@@ -1,9 +1,12 @@
 // Templates are roots in the analysis graph. Runtime family closures are not
 // inputs to application; their construction remains a separate migration step.
+// This table elaborates shapes only. The original TypeSchemes retain constraints,
+// which final inference checks for both type bodies and declaration contracts.
 struct StaticTypeFamily {
     root: AnalysisTypeId,
     arity: usize,
     recursive_pending: bool,
+    has_constraints: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -24,6 +27,7 @@ fn elaborate_recursive_family(
     }));
     let previous = families.insert(name.clone(), StaticTypeFamily {
         root: owner, arity: parameters.len(), recursive_pending: true,
+        has_constraints: false,
     });
     let body = StaticContractScope { hir, environment, external_names, interfaces, parameters, families }
         .elaborate(&binding.value.value, graph);
@@ -70,7 +74,7 @@ mod static_family_tests {
         let environment = BootstrapPrelude::new().types;
         let hir = HirProgram::resolve(&program, environment.keys().cloned());
         let parameter = TypeDescriptor::Bound(TypeParameterId(0));
-        let mut scheme = TypeScheme {
+        let scheme = TypeScheme {
             parameters: vec![TypeParameter {
                 id: TypeParameterId(0),
                 name: "T".into(),
@@ -109,15 +113,6 @@ mod static_family_tests {
                 ],
                 result: Box::new(TypeDescriptor::Tuple(Vec::new())),
             }
-        );
-        scheme.constraints.push(TypeConstraint {
-            parameter: TypeParameterId(0),
-            capability: TypeCapability::RuntimeType,
-            location: binding.location,
-        });
-        assert!(
-            StaticTypeFamily::from_scheme(&scheme, &mut graph).is_none(),
-            "constraints must not be silently discarded"
         );
     }
 
@@ -212,9 +207,6 @@ mod static_family_tests {
 
 impl StaticTypeFamily {
     fn from_scheme(scheme: &TypeScheme, graph: &mut TypeGraph) -> Option<Self> {
-        if !scheme.constraints.is_empty() {
-            return None;
-        }
         let TypeDescriptor::Function { parameters, result } = &scheme.body else {
             return None;
         };
@@ -244,6 +236,7 @@ impl StaticTypeFamily {
             root: graph.intern_descriptor(body),
             arity: parameters.len(),
             recursive_pending: false,
+            has_constraints: !scheme.constraints.is_empty(),
         })
     }
 }

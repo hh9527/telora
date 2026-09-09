@@ -1,4 +1,34 @@
 impl StaticContractScope<'_> {
+    fn check_contract_obligations(
+        &self, expression: &Expr, inference: &mut GenericInference<'_>, environment: &dyn TypeEnvironment,
+    ) -> Result<(), (crate::Location, String)> {
+        match &expression.value {
+            ExprKind::TypeSyntax(inner) => self.check_contract_obligations(inner, inference, environment)?,
+            ExprKind::Call { callee, arguments } => {
+                if self.family_name(callee).and_then(|name| self.families.get(&name))
+                    .is_some_and(|family| family.has_constraints)
+                {
+                    inference.type_syntax_depth += 1;
+                    let result = inference.infer(expression, environment, Some(&TypeDescriptor::Type));
+                    inference.type_syntax_depth -= 1;
+                    result.map_err(|message| (expression.location, message))?;
+                } else {
+                    for argument in arguments {
+                        self.check_contract_obligations(argument, inference, environment)?;
+                    }
+                }
+            }
+            ExprKind::Array(items) => for item in items {
+                self.check_contract_obligations(item, inference, environment)?;
+            },
+            ExprKind::Dict(fields) => for field in fields {
+                self.check_contract_obligations(&field.value.value, inference, environment)?;
+            },
+            _ => {}
+        }
+        Ok(())
+    }
+
     // Constraint facts depend on trait identity and property type shape, not on
     // a property provider's value. No evaluator or runtime metadata enters here.
     fn constraints(
@@ -62,6 +92,34 @@ fn finish_type_constraints(
 #[cfg(test)]
 mod static_constraint_tests {
     use super::*;
+
+    #[test]
+    fn constrained_family_applications_require_property_evidence() {
+        for usage in [
+            "type Missing = Box(Int);",
+            "def use: Fn(Box(Int)) -> Int = fn(value) { 0 };",
+        ] {
+            let source = format!("type Label = struct {{text: String}}; type Box(T: Property(Label)) = Array(T); {usage}");
+            let error = analyze_source("family-property-obligation", &source).unwrap_err();
+            assert!(error.message.contains("Property") && error.message.contains("evidence"), "{error}");
+        }
+    }
+
+    #[test]
+    fn constrained_family_shapes_resolve_with_lexical_evidence_without_execution() {
+        analyze_source_with_fuel("family-lexical-obligation",
+            "type Label = struct {text: String}; type Box(T: Property(Label)) = Array(T); type Wrap(T: Property(Label)) = Box(T); def identity: for(T: Property(Label)) Fn(Box(T)) -> Wrap(T) = fn(value) { value };", 0).unwrap();
+    }
+
+    #[test]
+    fn constrained_family_signature_preserves_trait_obligations() {
+        let prelude = "trait Display { display: Fn(Self) -> String }; type Box(T: Display) = Array(T);";
+        analyze_source_with_fuel("family-trait-lexical", &format!(
+            "{prelude} def identity: for(T: Display) Fn(Box(T)) -> Box(T) = fn(value) {{ value }};"), 0).unwrap();
+        let error = analyze_source("family-trait-missing", &format!(
+            "{prelude} def use: Fn(Box(Int)) -> Int = fn(value) {{ 0 }};")).unwrap_err();
+        assert!(error.message.contains("does not implement Display"), "{error}");
+    }
 
     #[test]
     fn property_and_trait_constraints_require_no_execution_fuel() {

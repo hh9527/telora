@@ -743,3 +743,30 @@ passed. Compared with the immediately preceding `d28f6f8` checkpoint, not the
 original RFC baseline, recursive-families-400 check time decreased 23.91%,
 allocation calls decreased 11.68%, and peak heap decreased 2.07%. Controls moved
 between -0.71% and +0.61%; this does not establish a general speedup.
+
+### Constrained family shapes and deferred obligations
+
+The static family registry now admits structurally supported templates with
+constraints. It elaborates their shapes; the original TypeSchemes retain the
+constraints for final inference. Type declaration bodies already pass through
+that inference boundary. Declaration contracts now additionally collect their
+constrained family applications and check them with the declaration's lexical
+evidence, without re-inferring ordinary signature structure as runtime data.
+
+Investigation exposed an existing gap: a missing Property evidence application
+in a type body was rejected, while the same application inside a function contract
+could be accepted after legacy tool inference errors were discarded. That contract
+case now fails. Re-inferring entire contracts as ordinary value expressions was
+rejected during validation because it violated the type/metadata boundary; the
+application-only obligation traversal preserves that distinction. Regressions
+cover missing property/trait evidence and zero-fuel generic applications carrying
+lexical evidence. Unsupported templates, recursive bounded templates and recovery
+remain migration work. Obligation targets still use the existing inference and
+descriptor adapters; this is not a claim of a completed session-wide ID pipeline.
+
+Full workspace validation passed (358 core, 41 CLI including language acceptance,
+and other workspace/doc tests), release and diff/source-size checks passed.
+Against `2c426a7`, local/qualified family-obligations-400 check times decreased
+28.49%/28.62%; controls moved between -0.60% and +0.73%. Qualified allocations
+decreased 18.34%, but peak heap increased 2.68% (16.81 -> 17.26 MB). The appendix
+records this tradeoff, cumulative measurements, scope and artifacts.

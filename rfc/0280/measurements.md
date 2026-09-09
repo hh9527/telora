@@ -2,10 +2,10 @@
 
 This appendix preserves the evidence behind the session-wide redesign in
 [the RFC](../0280-demand-driven-inference-materialization.md). It records the
-initial baseline and the implementation through `293098c`, before the session
-architecture was implemented. References below to phases and outstanding work
-belong to the earlier consumer-migration plan; the main RFC defines the current
-plan and acceptance gates. No speedup of the new design has been measured.
+initial baseline and subsequent implementation checkpoints. Early references to
+phases belong to the earlier consumer-migration plan; the main RFC defines the
+current plan and acceptance gates. Later sections record measured incremental
+and cumulative improvements; the session architecture remains incomplete.
 
 ## Initial baseline
 
@@ -672,3 +672,81 @@ Evidence: `/tmp/rfc0280-recursive-family-final-{workspace,release}.log`,
 `/tmp/rfc0280-recursive-family-memory-workspace`,
 `/tmp/rfc0280-recursive-family{,-baseline}-heap.txt`, and raw
 `/tmp/telora-perf-173/recursive-family{,-baseline}.heap.zst`.
+
+## Cumulative baseline comparison through 2c426a7, 2026-09-09
+
+Directly reran the original `13d5859` binary against `2c426a7`, rather than
+combining checkpoint percentages. Binaries are
+`/tmp/telora-perf-173/telora-baseline-13d5859` and `telora-recursive-family` in
+the same directory. Both are optimized release builds without profiling features;
+the baseline includes DWARF debug information and the candidate uses default
+release settings. This debug-info difference remains a comparison limitation.
+Two opposite version orders, one warmup and five samples each, yield ten pooled
+samples per workload/version. No builds, tests or profilers overlapped timings.
+
+| Case | Initial median ms | Current median ms | Time reduction |
+| --- | ---: | ---: | ---: |
+| constant | 148.15 | 113.68 | 23.26% |
+| typed-types-400 | 615.69 | 267.37 | 56.57% |
+| property-types-400 | 705.14 | 360.66 | 48.85% |
+| recursive-families-400 | 679.97 | 299.55 | 55.95% |
+| shared-wide-400 | 416.21 | 235.23 | 43.48% |
+| module-diamond-400 | 666.47 | 531.11 | 20.31% |
+
+These are end-to-end CLI `check` times on identical generated sources, not an
+ontology benchmark. Type-heavy cases run approximately 1.77–2.30 times as fast.
+Separate property-types-400 heaptrack runs measured allocation calls
+3,116,634 -> 1,767,406 (-43.29%) and peak heap 38.04 -> 31.73 MB (-16.59%).
+Profiler runtime/RSS are not uninstrumented process measurements.
+
+Evidence: `/tmp/rfc0280-cumulative-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-cumulative-memory-workspace`,
+`/tmp/rfc0280-cumulative-{baseline,current}-property-heap.txt`, and raw
+`/tmp/telora-perf-173/cumulative-{baseline,current}-property.heap.zst`.
+
+## Constrained family shapes with final obligations, 2026-09-09
+
+Incremental comparison against `2c426a7`, not the original RFC baseline:
+`/tmp/telora-perf-173/telora-recursive-family` versus `telora-family-obligations`
+in the same directory. Both use default optimized release settings without
+inference profiling. Two opposite version orders, one warmup plus five samples
+each, yield ten pooled samples per workload/version. No builds, tests or profilers
+overlapped timing. Results are end-to-end CLI `check` medians.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 114.38 | 114.53 | +0.14% |
+| family-obligations-400 | 238.64 | 170.64 | -28.49% |
+| qualified-family-obligations-400 | 249.94 | 178.41 | -28.62% |
+| typed-types-400 | 267.18 | 267.98 | +0.30% |
+| property-types-400 | 360.92 | 363.57 | +0.73% |
+| module-diamond-400 | 533.36 | 530.14 | -0.60% |
+
+New workloads define Label and `Box(T: Property(Label)) = Array(T)`, then 400
+identity signatures quantified by the same property bound and taking/returning
+Box(T). The qualified version imports Label/Box from a dependency namespace.
+No provider or application value is executed. Templates provide structure while
+original schemes retain obligations, checked with lexical evidence in final
+inference. The implementation also rejects previously accepted invalid constrained
+applications in signatures; this correctness change is included in the comparison.
+Control movements do not establish a general pipeline gain. Do not extrapolate
+these results to ontology or add incremental percentages.
+
+Separate qualified-family-obligations-400 heaptrack runs measured allocation calls
+1,132,180 -> 924,536 (-18.34%). Peak heap increased 16.81 -> 17.26 MB (+2.68%):
+this checkpoint does not improve peak memory for that workload. Profiler runtime
+and RSS are not uninstrumented measurements.
+
+Full workspace validation passed 358 core, 41 CLI including language acceptance,
+and all remaining workspace/doc tests; release build and diff/source-size checks
+passed. Regressions cover missing Property/trait evidence, zero-fuel applications
+with lexical evidence, and the existing type/metadata boundary. An isolated CLI
+workspace also confirms a qualified `model.Box(Int)` signature reports missing
+Property(Label) evidence at the application location and exits with failure.
+
+Evidence: `/tmp/rfc0280-family-obligations-{core,workspace,release}.log`,
+`/tmp/rfc0280-family-obligations-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-family-obligations-memory-workspace`,
+`/tmp/rfc0280-family-obligations{,-baseline}-heap.txt`, raw
+`/tmp/telora-perf-173/family-obligations{,-baseline}.heap.zst`, and
+`/tmp/rfc0280-qualified-obligation.vFmBa0` (isolated negative CLI input).

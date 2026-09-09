@@ -1659,6 +1659,20 @@ pub(crate) fn analyze_program_with_bindings_observed(
             .map(|scheme| {
                 inference.push_lexical_evidence(&binding.value.name.value, &scheme)
             });
+        if let Some(annotation) = &binding.value.annotation {
+            let mut contract_environment = ScopedTypeEnvironment::new(environment);
+            for (index, parameter) in binding.value.type_parameters.iter().enumerate() {
+                contract_environment.insert(parameter.value.clone(), TypeDescriptor::TypeOf(
+                    Box::new(TypeDescriptor::Bound(TypeParameterId(index as u32)))));
+            }
+            StaticContractScope { hir: &hir, environment: &static_environment,
+                external_names: &contract_external_names, interfaces: &qualified_external_interfaces,
+                parameters: binding_schemes.get(&binding.value.name.value).map_or(&[], |scheme| &scheme.parameters),
+                families: &contract_families,
+            }.check_contract_obligations(annotation, &mut inference, &contract_environment)
+                .map_err(|(location, message)| FrontendError::from_diagnostic(sources,
+                    inference.take_failure_diagnostic(location, message, None)))?;
+        }
         if binding.value.kind == BindingKind::Impl {
             inference.lexical_type_evidence.extend(binding.value.type_parameters.iter().enumerate().map(|(index, parameter)| LexicalTypeEvidence {
                 capability: TypeCapability::RuntimeType,

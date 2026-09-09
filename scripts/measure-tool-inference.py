@@ -24,6 +24,7 @@ def main():
                                  "typed-types", "property-types", "checked-types", "recursive-types", "shared-wide", "shared-deep",
                                  "family-contracts", "qualified-family-contracts",
                                  "recursive-families",
+                                 "family-obligations", "qualified-family-obligations",
                                  "property-constraints", "qualified-property-constraints",
                                  "module-fanout", "module-diamond"],
                         default=["constant", "functions", "types", "array"])
@@ -80,6 +81,19 @@ def main():
                 prelude, property_type = declaration, "Label"
             cases[name] = prelude + "\n".join(
                 f"def f{index}: for(T: Property({property_type})) Fn(T) -> T = fn(value) {{ value }};"
+                for index in range(size)
+            ) + "\nexport def ready: Bool = True;\n"
+        for qualified in [False, True]:
+            name = f"{'qualified-' if qualified else ''}family-obligations-{size}"
+            declarations = "export type Label = struct {text: String};\nexport type Box(T: Property(Label)) = Array(T);\n"
+            if qualified:
+                dependencies[f"{name}-types"] = declarations
+                prelude = f'import "./{name}-types" as model;\n'
+                label, family = "model.Label", "model.Box"
+            else:
+                prelude, label, family = declarations, "Label", "Box"
+            cases[name] = prelude + "\n".join(
+                f"def f{index}: for(T: Property({label})) Fn({family}(T)) -> {family}(T) = fn(value) {{ value }};"
                 for index in range(size)
             ) + "\nexport def ready: Bool = True;\n"
         for qualified in [False, True]:
