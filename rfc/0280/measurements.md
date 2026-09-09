@@ -403,3 +403,53 @@ checks. Evidence: `/tmp/rfc0280-static-family-{workspace,release}.log`,
 `/tmp/rfc0280-static-family-memory-workspace`,
 `/tmp/rfc0280-{qualified-contract-family,static-family}-heap.txt`, and raw
 `/tmp/telora-perf-173/{qualified-contract-family,static-family}.heap.zst`.
+
+## Static declaration bodies with source-use origins, 2026-09-09
+
+Baseline: `4eb1b22`, preserved as `/tmp/telora-perf-173/telora-static-family`.
+Candidate: `/tmp/telora-perf-173/telora-static-bodies-reused`, including source
+origin projection and reuse of referenced metadata. Both optimized release
+binaries retain debug symbols and have no inference profiling feature enabled.
+One warmup plus five samples in each of two opposite version orders yields ten
+samples per workload/version. No builds, tests or profilers ran during timings.
+These are end-to-end CLI `check` costs, including builtin initialization.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 130.43 | 113.86 | -12.70% |
+| types-400 | 262.94 | 167.86 | -36.16% |
+| repeated-family-400 | 215.97 | 141.99 | -34.26% |
+| family-contracts-400 | 187.04 | 171.21 | -8.47% |
+| typed-types-400 | 399.38 | 269.91 | -32.42% |
+| property-types-400 | 491.33 | 361.97 | -26.33% |
+| shared-wide-400 | 254.89 | 236.63 | -7.16% |
+| module-diamond-400 | 549.18 | 533.95 | -2.77% |
+
+Separate property-types-400 heaptrack runs measured 2,294,702 -> 1,771,413
+allocation calls (-22.80%) and 32.61 -> 31.73 MB peak heap (-2.70%). No claim
+about process RSS follows from profiler RSS. The first source-aware implementation
+rebuilt referenced metadata and reached 34.16 MB peak heap even though allocation
+calls fell. Reusing the existing objects at source reference edges, while retaining
+each occurrence's location, reduced this intermediate peak to 31.73 MB. Intermediate
+timings and heaps are retained separately and are not used in the table above.
+
+Validation passed 349 core tests, 41 CLI tests including language acceptance,
+all remaining workspace/doc tests, release build and diff/source-size checks.
+Coverage includes the original codec rule-location regression, distinct locations
+for shared field types, alias and family origins, nested substituted argument
+origins, metadata reuse without mutating source locations, generic shadowing,
+zero execution fuel for supported static declarations, and actual tool/property
+execution quota enforcement.
+
+These are incremental synthetic-workload results. Recursive definition components,
+bounded/unresolved forms, property/construction preparation and failure recovery
+still include execution; the full session graph is not yet execution-free.
+
+Final evidence: `/tmp/rfc0280-static-bodies-reused-{workspace,release}.log`,
+`/tmp/rfc0280-static-bodies-reused-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-static-bodies-memory-workspace`,
+`/tmp/rfc0280-{static-family,static-bodies-reused}-property-heap.txt`, and raw
+`/tmp/telora-perf-173/{static-family,static-bodies-reused}-property.heap.zst`.
+Intermediate evidence: `/tmp/rfc0280-static-bodies-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-static-bodies-property-heap.txt` and
+`/tmp/telora-perf-173/telora-static-bodies-before-reuse`.

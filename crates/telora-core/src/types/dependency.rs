@@ -452,6 +452,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut evaluated_concrete_type_names = HashSet::new();
     let mut type_family_values = BTreeMap::new();
     let mut type_family_templates = BTreeMap::new();
+    let mut types = TypeGraph::default();
+    let contract_external_names = external_roots.keys().map(String::as_str).collect();
+    let mut contract_families = static_type_families(&mut types, &type_family_values, &binding_schemes, &qualified_external_interfaces);
     let mut schedule = dependency_plan.order(&scheduled_types).into_iter();
     while !pending_types.is_empty() {
         let component = schedule.next().expect("pending type has a scheduled component");
@@ -463,49 +466,59 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 &static_environment, account, sources, &mut evaluator)?;
             let binding = type_bindings[&definition];
             if binding.value.type_parameters.is_empty() {
-                let value = evaluate_tool_expression(
-                    source_name,
-                    &binding.value.value,
-                    &tool_values,
-                    account,
-                    sources,
-                    &mut evaluator,
-                )?;
-                let value = declare_metadata_value(
-                    source_name,
-                    module_id,
-                    binding,
-                    &declared_initializer_slots,
-                    value,
-                    &mut evaluator,
-                )?;
-                let (graph, root) =
-                    evaluator
-                        .decode_type_graph(value, "Type")
-                        .map_err(|message| {
-                            FrontendError::from_diagnostic(
-                                sources,
-                                Diagnostic::error(
-                                    format!(
-                                        "type {} produced invalid metadata: {message}",
-                                        binding.value.name.value
-                                    ),
-                                    binding.value.value.location,
-                                ),
-                            )
-                        })?;
-                let descriptor = graph.descriptor(root).map_err(|message| {
-                    frontend_error(
+                let static_body = StaticContractScope {
+                    hir: &hir, environment: &static_environment, external_names: &contract_external_names,
+                    interfaces: &qualified_external_interfaces, parameters: &[], families: &contract_families,
+                }.elaborate(&binding.value.value, &mut types);
+                let (value, descriptor) = if let Some(root) = static_body {
+                    materialize_static_declaration(root, &mut types, binding, module_id,
+                        &declared_initializer_slots, source_name, type_store, &mut evaluator, &tool_values)?
+                } else {
+                    let value = evaluate_tool_expression(
                         source_name,
-                        format!(
-                            "type {} produced invalid metadata: {message}",
-                            binding.value.name.value
-                        ),
-                    )
-                })?;
-                graph
-                    .canonicalize(root, type_store)
-                    .map_err(|message| frontend_error(source_name, message))?;
+                        &binding.value.value,
+                        &tool_values,
+                        account,
+                        sources,
+                        &mut evaluator,
+                    )?;
+                    let value = declare_metadata_value(
+                        source_name,
+                        module_id,
+                        binding,
+                        &declared_initializer_slots,
+                        value,
+                        &mut evaluator,
+                    )?;
+                    let (graph, root) =
+                        evaluator
+                            .decode_type_graph(value, "Type")
+                            .map_err(|message| {
+                                FrontendError::from_diagnostic(
+                                    sources,
+                                    Diagnostic::error(
+                                        format!(
+                                            "type {} produced invalid metadata: {message}",
+                                            binding.value.name.value
+                                        ),
+                                        binding.value.value.location,
+                                    ),
+                                )
+                            })?;
+                    let descriptor = graph.descriptor(root).map_err(|message| {
+                        frontend_error(
+                            source_name,
+                            format!(
+                                "type {} produced invalid metadata: {message}",
+                                binding.value.name.value
+                            ),
+                        )
+                    })?;
+                    graph
+                        .canonicalize(root, type_store)
+                        .map_err(|message| frontend_error(source_name, message))?;
+                    (value, descriptor)
+                };
                 let name = binding.value.name.value.clone();
                 declared_types.insert(name.clone(), descriptor.clone());
                 declared_type_spans.insert(name.clone(), binding.location);
@@ -529,30 +542,14 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 continue;
             }
 
-            let mut names = HashSet::new();
-            let mut parameters = Vec::new();
+            let parameters = static_contract_parameters(binding, sources)?;
+            let static_body = StaticContractScope {
+                hir: &hir, environment: &static_environment, external_names: &contract_external_names,
+                interfaces: &qualified_external_interfaces, parameters: &parameters, families: &contract_families,
+            }.elaborate(&binding.value.value, &mut types);
             let mut bindings = ScopedToolBindings::new(&tool_values);
-            for (parameter_index, parameter) in binding.value.type_parameters.iter().enumerate() {
-                if !names.insert(parameter.value.as_str()) {
-                    return Err(FrontendError::from_diagnostic(
-                        sources,
-                        Diagnostic::error(
-                            format!("duplicate type parameter {:?}", parameter.value),
-                            parameter.location,
-                        ),
-                    ));
-                }
-                let parameter_id =
-                    TypeParameterId(u32::try_from(parameter_index).map_err(|_| {
-                        frontend_error(source_name, "type family has too many parameters")
-                    })?);
-                parameters.push(TypeParameter {
-                    id: parameter_id,
-                    name: parameter.value.clone(),
-                    location: parameter.location,
-                });
-                let value = evaluator.descriptor(&TypeDescriptor::Bound(parameter_id))?;
-                bindings.insert(parameter.value.clone(), value);
+            if static_body.is_none() || binding.value.type_parameter_bounds.iter().any(|bounds| !bounds.is_empty()) {
+                bindings.insert_type_parameters(&parameters, &mut evaluator)?;
             }
             let constraints = evaluate_type_constraints(
                 source_name,
@@ -565,26 +562,8 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 sources,
                 &mut evaluator,
             )?;
-            let value = evaluate_tool_expression(
-                source_name,
-                &binding.value.value,
-                &bindings,
-                account,
-                sources,
-                &mut evaluator,
-            )?;
-            let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
-                FrontendError::from_diagnostic(
-                    sources,
-                    Diagnostic::error(
-                        format!(
-                            "type family {} produced invalid metadata: {message}",
-                            binding.value.name.value
-                        ),
-                        binding.value.value.location,
-                    ),
-                )
-            })?;
+            let (value, descriptor) = materialize_type_body(static_body, &types, binding,
+                source_name, &bindings, account, sources, &mut evaluator)?;
             let constructor =
                 binding
                     .value
@@ -659,6 +638,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
             tool_values.insert(binding.value.name.value.clone(), family_value);
             static_environment.insert(binding.value.name.value.clone(), projected.clone());
             binding_types.insert(binding.value.name.value.clone(), projected);
+            if let Some(family) = StaticTypeFamily::from_scheme(&scheme, &mut types) {
+                contract_families.insert(binding.value.name.value.clone(), family);
+            }
             binding_schemes.insert(binding.value.name.value.clone(), scheme);
             evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
             type_family_templates.insert(binding.value.name.value.clone(), family.clone());
@@ -703,6 +685,9 @@ pub(crate) fn analyze_program_with_bindings_observed(
                 tool_values.insert(binding.value.name.value.clone(), built.family_value);
                 static_environment.insert(binding.value.name.value.clone(), projected.clone());
                 binding_types.insert(binding.value.name.value.clone(), projected);
+                if let Some(family) = StaticTypeFamily::from_scheme(&built.scheme, &mut types) {
+                    contract_families.insert(binding.value.name.value.clone(), family);
+                }
                 binding_schemes.insert(binding.value.name.value.clone(), built.scheme);
                 evaluator.publish_inference_binding(&binding.value.name.value, &static_environment, &binding_schemes, &declared_types);
                 type_family_templates
@@ -841,9 +826,6 @@ pub(crate) fn analyze_program_with_bindings_observed(
     let mut definition_contracts = HashMap::new();
     let mut declaration_locations = HashMap::new();
     let mut definition_counts = HashMap::<String, usize>::new();
-    let mut types = TypeGraph::default();
-    let contract_external_names = external_roots.keys().map(String::as_str).collect();
-    let contract_families = static_type_families(&mut types, &type_family_values, &binding_schemes, &qualified_external_interfaces);
     for binding in &program.value.body.value.bindings {
         let name = &binding.value.name.value;
         if binding.value.kind == BindingKind::Def {

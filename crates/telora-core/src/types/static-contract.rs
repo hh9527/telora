@@ -141,6 +141,42 @@ impl StaticContractScope<'_> {
                     return Some(graph.apply_static_family(family.root, &arguments));
                 }
                 match (self.builtin(callee)?, arguments.as_slice()) {
+                    ("\0telora_struct", [_, members]) => {
+                        let ExprKind::Dict(members) = &members.value else {
+                            return None;
+                        };
+                        TypeNode::Struct(
+                            members
+                                .iter()
+                                .map(|member| {
+                                    Some((
+                                        member.value.name.as_ref()?.value.clone(),
+                                        self.elaborate(&member.value.value, graph)?,
+                                    ))
+                                })
+                                .collect::<Option<_>>()?,
+                        )
+                    }
+                    ("\0telora_enum", [_, members]) => {
+                        let ExprKind::Dict(members) = &members.value else {
+                            return None;
+                        };
+                        TypeNode::Enum(members.iter().map(|member| {
+                            let payload = if matches!(&member.value.value.value, ExprKind::Atom(name) if name == "None") {
+                                None
+                            } else { Some(self.elaborate(&member.value.value, graph)?) };
+                            Some((member.value.name.as_ref()?.value.clone(), payload))
+                        }).collect::<Option<_>>()?)
+                    }
+                    ("\0telora_newtype", [_, members]) => {
+                        let ExprKind::Dict(members) = &members.value else {
+                            return None;
+                        };
+                        let [payload] = members.as_slice() else {
+                            return None;
+                        };
+                        TypeNode::Newtype(self.elaborate(&payload.value.value, graph)?)
+                    }
                     ("Array", [item]) => TypeNode::Array(self.elaborate(item, graph)?),
                     ("Dict", [item]) => TypeNode::Dict(self.elaborate(item, graph)?),
                     ("TypeOf", [item]) => TypeNode::TypeOf(self.elaborate(item, graph)?),
@@ -179,6 +215,47 @@ impl StaticContractScope<'_> {
 #[cfg(test)]
 mod static_contract_tests {
     use super::*;
+
+    #[test]
+    fn declared_bodies_elaborate_without_evaluating_model_constructors() {
+        let bound = TypeDescriptor::Bound(TypeParameterId(0));
+        for (source_text, expected) in [
+            (
+                "type Shape(T) = struct {item: T};",
+                TypeDescriptor::Struct(BTreeMap::from([("item".into(), bound.clone())])),
+            ),
+            (
+                "type Shape(T) = enum {Empty, Item(T)};",
+                TypeDescriptor::Enum(BTreeMap::from([
+                    ("Empty".into(), None),
+                    ("Item".into(), Some(Box::new(bound.clone()))),
+                ])),
+            ),
+            (
+                "type Shape(T) = struct(T);",
+                TypeDescriptor::Newtype(Box::new(bound)),
+            ),
+        ] {
+            let mut sources = SourceDatabase::default();
+            let source = sources.add("body", source_text);
+            let program = parse_registered(&sources, source).program.unwrap();
+            let binding = &program.value.body.value.bindings[0];
+            let parameters = static_contract_parameters(binding, &sources).unwrap();
+            let environment = BootstrapPrelude::new().types;
+            let hir = HirProgram::resolve(&program, environment.keys().cloned());
+            let scope = StaticContractScope {
+                hir: &hir,
+                environment: &environment,
+                external_names: &HashSet::new(),
+                interfaces: &BTreeMap::new(),
+                parameters: &parameters,
+                families: &BTreeMap::new(),
+            };
+            let mut graph = TypeGraph::default();
+            let root = scope.elaborate(&binding.value.value, &mut graph).unwrap();
+            assert_eq!(graph.descriptor(root).unwrap(), expected, "{source_text}");
+        }
+    }
 
     #[test]
     fn qualified_contract_uses_only_declared_namespace_types() {

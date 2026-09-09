@@ -608,3 +608,44 @@ for qualified-family-contracts-400. Other controls moved between -2.79% and +0.8
 without evidence of a general module-graph speedup. Qualified family allocation
 calls decreased 26.44% and peak heap decreased 18.40%; see the measurement
 appendix for scope and artifacts.
+
+### Static declaration bodies and source provenance
+
+The analysis graph and imported family roots are now established before the
+declaration dependency schedule. Supported noncyclic declaration bodies, including
+lowered struct/enum/newtype constructors, elaborate directly into that graph.
+New family templates become available to later type definitions immediately.
+Static unbounded family bodies no longer create parameter metadata merely to
+execute a constructor. Concrete declarations retain their nominal identity and
+canonical TypeStore registration.
+
+Legacy metadata consumers still require an explicit materialization adapter.
+That adapter now projects source-use origins from AST references and existing
+family metadata onto generated values; locations are not attached to canonical
+type identity. This preserves separate origins for structurally identical fields,
+aliases, template members and substituted argument interiors. Metadata building
+without origin projection does not construct origin paths.
+
+Known source type references reuse their metadata objects at this adapter, with
+the occurrence location carried by the referencing value. They do not overwrite
+the shared object's origin. Symbolic parameters explicitly bypass this reuse so
+a same-named outer type cannot replace a binder. The intermediate implementation
+rebuilt these objects and increased property-400 peak heap despite reducing
+allocation calls; the reported final measurements include the reference reuse change.
+
+The first validation run exposed a lost codec rule location and three tests that
+assumed static type syntax consumes VM fuel. The location regression is covered
+at the codec boundary and by focused origin tests. Execution fuel tests now run
+actual tool expressions on one shared account, while module quota coverage uses
+a property provider. A separate test requires supported static type definitions
+to succeed with zero execution fuel. This does not establish zero execution for
+the entire pipeline: recursive definition components, unresolved/bounded forms,
+construction/property preparation and failure recovery still have legacy paths.
+
+The final workspace suite passed (349 core, 41 CLI including language acceptance)
+and release build passed. Compared with `4eb1b22`, two-order ten-sample check
+medians decreased 36.16% for types-400, 34.26% for repeated-family-400, 32.42% for
+typed-types-400 and 26.33% for property-types-400. Constant startup decreased
+12.70%, while module-diamond-400 decreased only 2.77%. Property allocation calls
+decreased 22.80% and peak heap decreased 2.70%. See the measurement appendix for
+the intermediate heap regression, final artifacts and scope limitations.

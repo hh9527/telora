@@ -42,6 +42,7 @@ include!("types/dependency.rs");
 include!("types/type-boundary.rs");
 include!("types/static-contract.rs");
 include!("types/static-family.rs");
+include!("types/static-origin.rs");
 include!("types/dependency-plan.rs");
 include!("types/metadata.rs");
 include!("types/tool.rs");

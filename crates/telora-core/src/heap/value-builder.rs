@@ -1,3 +1,5 @@
+pub(crate) type TypeMetadataOrigin = (Loc, Option<Val>);
+
 impl Heap {
     fn record_value(
         &mut self,
@@ -40,6 +42,15 @@ impl Heap {
         background: Option<&Heap>,
         descriptor: &crate::types::TypeDescriptor,
     ) -> Result<Val, HeapError> {
+        self.type_descriptor_value_with_origins(background, descriptor, None)
+    }
+
+    pub(crate) fn type_descriptor_value_with_origins(
+        &mut self,
+        background: Option<&Heap>,
+        descriptor: &crate::types::TypeDescriptor,
+        origins: Option<&dyn Fn(&Heap, &[String]) -> Option<TypeMetadataOrigin>>,
+    ) -> Result<Val, HeapError> {
         fn record(
             heap: &mut Heap,
             entries: impl IntoIterator<Item = (String, Val)>,
@@ -68,6 +79,35 @@ impl Heap {
             background: Option<&Heap>,
             descriptor: &crate::types::TypeDescriptor,
             declared: &mut HashMap<crate::value::DeclaredTypeId, Val>,
+            origins: Option<&dyn Fn(&Heap, &[String]) -> Option<TypeMetadataOrigin>>,
+            path: &mut Vec<String>,
+        ) -> Result<Val, HeapError> {
+            let origin = origins.and_then(|origins| origins(heap, path));
+            if !matches!(descriptor, crate::types::TypeDescriptor::Bound(_))
+                && let Some((location, Some(reference))) = origin
+            {
+                return Ok(reference.with_loc(Some(location)));
+            }
+            let value = build_inner(heap, background, descriptor, declared, origins, path)?;
+            Ok(value.with_loc(origin.map(|(location, _)| location).or(value.loc())))
+        }
+
+        fn child(
+            heap: &mut Heap, background: Option<&Heap>, descriptor: &crate::types::TypeDescriptor,
+            declared: &mut HashMap<crate::value::DeclaredTypeId, Val>,
+            origins: Option<&dyn Fn(&Heap, &[String]) -> Option<TypeMetadataOrigin>>, path: &mut Vec<String>, edge: impl FnOnce() -> String,
+        ) -> Result<Val, HeapError> {
+            if origins.is_none() { return build(heap, background, descriptor, declared, origins, path); }
+            path.push(edge());
+            let value = build(heap, background, descriptor, declared, origins, path);
+            path.pop();
+            value
+        }
+
+        fn build_inner(
+            heap: &mut Heap, background: Option<&Heap>, descriptor: &crate::types::TypeDescriptor,
+            declared: &mut HashMap<crate::value::DeclaredTypeId, Val>,
+            origins: Option<&dyn Fn(&Heap, &[String]) -> Option<TypeMetadataOrigin>>, path: &mut Vec<String>,
         ) -> Result<Val, HeapError> {
             use crate::types::TypeDescriptor as T;
 
@@ -111,14 +151,14 @@ impl Heap {
                     {
                         return Ok(existing);
                     }
-                    let placeholder = build(heap, background, &T::Named(value.name.clone()), declared)?;
+                    let placeholder = build(heap, background, &T::Named(value.name.clone()), declared, origins, path)?;
                     let owner = heap.reserve_type_metadata(
                         value.id.clone(),
                         value.name.as_str(),
                         placeholder,
                     )?;
                     declared.insert(value.id.clone(), owner);
-                    let body = build(heap, background, &value.body, declared)?;
+                    let body = child(heap, background, &value.body, declared, origins, path, || "body".into())?;
                     heap.seal_type_ref(owner, body)
                 }
                 T::Never => kind(heap, "Never"),
@@ -130,7 +170,7 @@ impl Heap {
                 T::Bytes => kind(heap, "Bytes"),
                 T::AtomValue => kind(heap, "Atom"),
                 T::TypeOf(instance) => {
-                    let instance = build(heap, background, instance, declared)?;
+                    let instance = child(heap, background, instance, declared, origins, path, || "instance".into())?;
                     let kind = atom(heap, "TypeOf");
                     record(heap, [("kind".into(), kind), ("instance".into(), instance)])
                 }
@@ -141,7 +181,7 @@ impl Heap {
                     record(heap, [("kind".into(), kind), ("tag".into(), tag)])
                 }
                 T::Array(item) | T::Dict(item) => {
-                    let item = build(heap, background, item, declared)?;
+                    let item = child(heap, background, item, declared, origins, path, || "item".into())?;
                     let name = if matches!(descriptor, T::Array(_)) {
                         "Array"
                     } else {
@@ -151,7 +191,7 @@ impl Heap {
                     record(heap, [("kind".into(), kind), ("item".into(), item)])
                 }
                 T::Tagged { tag, payload } => {
-                    let payload = build(heap, background, payload, declared)?;
+                    let payload = child(heap, background, payload, declared, origins, path, || "payload".into())?;
                     let kind = atom(heap, "Tagged");
                     let tag = atom(heap, tag.name());
                     record(
@@ -164,7 +204,7 @@ impl Heap {
                     )
                 }
                 T::Newtype(payload) => {
-                    let payload = build(heap, background, payload, declared)?;
+                    let payload = child(heap, background, payload, declared, origins, path, || "payload".into())?;
                     let kind = atom(heap, "Newtype");
                     record(heap, [("kind".into(), kind), ("payload".into(), payload)])
                 }
@@ -172,7 +212,8 @@ impl Heap {
                 T::Tuple(items) => {
                     let items = items
                         .iter()
-                        .map(|item| build(heap, background, item, declared))
+                        .enumerate()
+                        .map(|(index, item)| child(heap, background, item, declared, origins, path, || format!("items/{index}")))
                         .collect::<Result<Vec<_>, _>>()?;
                     let items = Val::unknown(DecodedValue::Array(
                         heap.allocate(Object::Array(items.into_boxed_slice())),
@@ -185,7 +226,7 @@ impl Heap {
                     let fields = fields
                         .iter()
                         .map(|(name, value)| {
-                            build(heap, background, value, declared)
+                            child(heap, background, value, declared, origins, path, || format!("fields/{name}"))
                                 .map(|value| (name.clone(), value))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
@@ -198,8 +239,16 @@ impl Heap {
                         .iter()
                         .map(|(name, payload)| {
                             let value = match payload {
-                                Some(payload) => build(heap, background, payload, declared)?,
-                                None => Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None)),
+                                Some(payload) => child(heap, background, payload, declared, origins, path, || format!("variants/{name}"))?,
+                                None => {
+                                    let value = Val::unknown(DecodedValue::BuiltinAtom(BuiltinAtom::None));
+                                    if let Some(origins) = origins {
+                                        path.push(format!("variants/{name}"));
+                                        let location = origins(heap, path).map(|(location, _)| location);
+                                        path.pop();
+                                        value.with_loc(location)
+                                    } else { value }
+                                }
                             };
                             Ok((name.clone(), value))
                         })
@@ -211,12 +260,13 @@ impl Heap {
                 T::Function { parameters, result } => {
                     let parameters = parameters
                         .iter()
-                        .map(|item| build(heap, background, item, declared))
+                        .enumerate()
+                        .map(|(index, item)| child(heap, background, item, declared, origins, path, || format!("parameters/{index}")))
                         .collect::<Result<Vec<_>, _>>()?;
                     let parameters = Val::unknown(DecodedValue::Array(
                         heap.allocate(Object::Array(parameters.into_boxed_slice())),
                     ));
-                    let result = build(heap, background, result, declared)?;
+                    let result = child(heap, background, result, declared, origins, path, || "result".into())?;
                     let kind = atom(heap, "Func");
                     record(
                         heap,
@@ -230,7 +280,7 @@ impl Heap {
             }
         }
 
-        build(self, background, descriptor, &mut HashMap::new())
+        build(self, background, descriptor, &mut HashMap::new(), origins, &mut Vec::new())
     }
 
     pub(crate) fn int(&self, value: i64) -> Val {

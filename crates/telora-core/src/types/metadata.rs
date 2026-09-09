@@ -1,3 +1,43 @@
+// Metadata is currently still consumed by legacy family/value preparation.
+#[allow(clippy::too_many_arguments)]
+fn materialize_static_declaration(
+    root: AnalysisTypeId, graph: &mut TypeGraph, binding: &Binding, module_id: crate::ModuleId,
+    slots: &HashMap<crate::Location, u32>, source_name: &str, type_store: &mut TypeStore,
+    evaluator: &mut ToolEvaluator<'_>, values: &dyn ToolBindings,
+) -> Result<(Val, TypeDescriptor), FrontendError> {
+    let root = if binding.value.declared_initializer.is_some() {
+        let body = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
+        graph.intern_descriptor(&TypeDescriptor::Declared(DeclaredTypeDescriptor {
+            id: crate::value::DeclaredTypeId::concrete(module_id, slots[&binding.value.name.location]),
+            name: binding.value.name.value.clone(), body: Arc::new(body),
+        }))
+    } else { root };
+    graph.canonicalize(root, type_store).map_err(|message| frontend_error(source_name, message))?;
+    let descriptor = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
+    Ok((evaluator.descriptor_with_origins(&descriptor, &binding.value.value, values)?, descriptor))
+}
+
+// Metadata is currently still consumed by legacy family/value preparation.
+// A solved body enters that boundary directly; it is never executed or decoded.
+#[allow(clippy::too_many_arguments)]
+fn materialize_type_body(
+    root: Option<AnalysisTypeId>, graph: &TypeGraph, binding: &Binding,
+    source_name: &str, values: &dyn ToolBindings, account: &mut QuotaAccount,
+    sources: &SourceDatabase, evaluator: &mut ToolEvaluator<'_>,
+) -> Result<(Val, TypeDescriptor), FrontendError> {
+    if let Some(root) = root {
+        let descriptor = graph.descriptor(root).map_err(|message| frontend_error(source_name, message))?;
+        return Ok((evaluator.descriptor_with_origins(&descriptor, &binding.value.value, values)?, descriptor));
+    }
+    let value = evaluate_tool_expression(source_name, &binding.value.value, values, account, sources, evaluator)?;
+    let descriptor = evaluator.decode_type(value, "Type").map_err(|message| {
+        FrontendError::from_diagnostic(sources, Diagnostic::error(
+            format!("type family {} produced invalid metadata: {message}", binding.value.name.value),
+            binding.value.value.location))
+    })?;
+    Ok((value, descriptor))
+}
+
 fn imported_static_descriptor(
     value: ValueRef<'_>,
     interface: Option<&ModuleInterface>,

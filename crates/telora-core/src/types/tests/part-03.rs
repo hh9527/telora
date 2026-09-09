@@ -379,19 +379,39 @@
 
     #[test]
     fn tool_stage_respects_evaluation_fuel() {
-        let error = analyze_source_with_fuel("test", "type Number = Array(Int); 0", 0).unwrap_err();
+        run_tool_expressions_with_fuel(100_000, 1).unwrap();
+        let error = run_tool_expressions_with_fuel(0, 1).unwrap_err();
         assert!(error.message.contains("fuel"));
     }
 
     #[test]
     fn tool_expressions_share_one_module_account() {
-        let error = analyze_source_with_quota(
-            "test",
-            "type First = Array(Int); type Second = Array(Int); 0",
-            Quota::new(1, 1_000, u64::MAX),
-        )
-        .unwrap_err();
+        let spent = 100_000 - run_tool_expressions_with_fuel(100_000, 1).unwrap();
+        assert!(spent > 0);
+        run_tool_expressions_with_fuel(spent, 1).unwrap();
+        let error = run_tool_expressions_with_fuel(spent, 2).unwrap_err();
         assert!(error.message.contains("fuel"));
+    }
+
+    fn run_tool_expressions_with_fuel(fuel: usize, count: usize) -> Result<usize, FrontendError> {
+        let mut sources = SourceDatabase::default();
+        let source = sources.add("tool-fuel", "let value = (fn(x) { x + 1 })(41); 0");
+        let program = parse_registered(&sources, source).program.unwrap();
+        let expression = &program.value.body.value.bindings[0].value.value;
+        let mut main = Heap::main();
+        let mut evaluator = ToolEvaluator::new(Arc::new(DiscardDebugSink), &mut main);
+        let mut account = QuotaAccount::new(Quota::with_fuel(fuel));
+        for _ in 0..count {
+            evaluate_tool_expression("tool-fuel", expression, &BTreeMap::new(), &mut account, &sources, &mut evaluator)?;
+        }
+        Ok(account.remaining_fuel())
+    }
+
+    #[test]
+    fn static_type_definitions_do_not_consume_execution_fuel() {
+        let analysis = analyze_source_with_fuel("test",
+            "type Box(T) = struct {value: T}; type First = Box(Int); type Second = Array(First); 0", 0).unwrap();
+        assert!(analysis.declared_types.contains_key("Second"));
     }
 
 

@@ -87,9 +87,10 @@
         let directory = fixture_dir();
         fs::write(
             directory.join("typed.telora"),
-            "type First = Array(Int); type Second = Array(Int); export def output = 0;",
+            "@property(PropertyTarget.Type) type Label = struct {text: String}; def label: Fn(Type, Option(Label)) -> Label = fn(target, previous) { {text: \"ready\"} }; @label type Number = struct(Int); export def output = 0;",
         )
         .unwrap();
+        load_module(directory.join("typed.telora"), BTreeMap::new(), 100_000).unwrap();
         let module_limited = Engine::new(EngineConfig {
             module_quota: Quota::new(1, 1_000, u64::MAX),
             session_quota: Quota::new(100, 1_000, u64::MAX),
