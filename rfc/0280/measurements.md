@@ -626,3 +626,49 @@ Evidence: `/tmp/rfc0280-recursive-consumers-{core,workspace,release}.log`,
 `/tmp/rfc0280-recursive-consumers-heap.txt`,
 `/tmp/rfc0280-recursive-consumers-baseline-heap.txt`, and raw
 `/tmp/telora-perf-173/recursive-consumers{,-baseline}.heap.zst`.
+
+## Static self-recursive families, 2026-09-09
+
+This is an incremental comparison against the immediately preceding checkpoint
+`d28f6f8`, not the original RFC baseline. Baseline binary is
+`/tmp/telora-perf-173/telora-recursive-consumers`; candidate is
+`/tmp/telora-perf-173/telora-recursive-family`. Both use default optimized release
+settings without inference profiling. Two opposite version orders each use one
+warmup and five samples, yielding ten pooled samples per workload/version.
+No builds, tests or profilers overlapped timing. Results are end-to-end CLI `check`.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 113.06 | 112.83 | -0.21% |
+| family-contracts-400 | 169.16 | 167.96 | -0.71% |
+| recursive-types-400 | 200.36 | 201.58 | +0.61% |
+| recursive-families-400 | 389.14 | 296.08 | -23.91% |
+| property-types-400 | 359.16 | 358.07 | -0.30% |
+| module-diamond-400 | 530.17 | 526.86 | -0.63% |
+
+The new workload declares 400 distinct self-recursive `Tree(T)` families with a
+value field and an Array(Tree(T)) children field, and one Int application per
+family. It constructs no recursive values and has no trait/property bounds.
+Control movements do not establish a general improvement; these incremental
+percentages cannot be added to earlier checkpoints or extrapolated to ontology.
+
+Separate recursive-families-400 heaptrack runs measured allocation calls decreasing
+1,787,362 -> 1,578,545 (-11.68%) and peak heap decreasing 43.56 -> 42.66 MB
+(-2.07%). Profiler runtime/RSS are not uninstrumented measurements.
+
+Final full workspace validation passed 355 core, 41 CLI including language
+acceptance, and all remaining workspace/doc tests. Release build and source-size/
+diff checks passed. Zero-fuel regression coverage includes recursive template
+definitions, Int/String applications and phantom identity; changed/reordered
+self arguments remain rejected. An initial language acceptance failure in
+checked-recursive-types exposed duplicate symbolic metadata roots, fixed by
+reusing the reserved self root. Its original five cases and the final full suite
+pass without changing acceptance expectations.
+
+Evidence: `/tmp/rfc0280-recursive-family-final-{workspace,release}.log`,
+`/tmp/rfc0280-recursive-family-regressions.log`,
+`/tmp/rfc0280-recursive-family-checked-regression.jsonl`,
+`/tmp/rfc0280-recursive-family-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-recursive-family-memory-workspace`,
+`/tmp/rfc0280-recursive-family{,-baseline}-heap.txt`, and raw
+`/tmp/telora-perf-173/recursive-family{,-baseline}.heap.zst`.

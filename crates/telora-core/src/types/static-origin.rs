@@ -271,9 +271,22 @@ fn static_type_reference(
     values: &dyn ToolBindings,
     view: &HeapView<'_>,
 ) -> Option<Val> {
-    use crate::heap::DecodedValue;
+    use crate::heap::{DecodedValue, Object, RuntimePrototype};
     match &expression.value {
+        ExprKind::TypeSyntax(inner) => static_type_reference(inner, values, view),
         ExprKind::Variable(name) => values.get(&name.value).copied(),
+        ExprKind::Call { callee, .. } => {
+            let DecodedValue::Func(handle) = static_type_reference(callee, values, view)?.value() else {
+                return None;
+            };
+            let Object::Closure { prototype: RuntimePrototype::Native(function), upvalues, .. }
+                = view.object(handle).ok()? else { return None; };
+            // Static elaboration has already checked that this self application
+            // preserves the symbolic parameters. Reuse its reserved root, rather
+            // than building a second metadata object for the same nominal ID.
+            (function.name() == "recursive-type-family.apply")
+                .then(|| upvalues.first().copied()).flatten()
+        }
         ExprKind::Field { receiver, field } => {
             match static_type_reference(receiver, values, view)?.value() {
                 DecodedValue::Module(handle) => view.module_get_text(handle, &field.value).ok()?,

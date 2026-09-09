@@ -3,11 +3,63 @@
 struct StaticTypeFamily {
     root: AnalysisTypeId,
     arity: usize,
+    recursive_pending: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn elaborate_recursive_family(
+    binding: &Binding, module_id: crate::ModuleId, declaration: u32,
+    parameters: &[TypeParameter], hir: &HirProgram, environment: &HashMap<String, TypeDescriptor>,
+    external_names: &HashSet<&str>, interfaces: &BTreeMap<String, ModuleInterface>,
+    families: &mut BTreeMap<String, StaticTypeFamily>, graph: &mut TypeGraph,
+) -> Option<SolvedRecursiveType> {
+    if binding.value.type_parameter_bounds.iter().any(|bounds| !bounds.is_empty()) {
+        return None;
+    }
+    let name = &binding.value.name.value;
+    let arguments = parameters.iter().map(|parameter| TypeDescriptor::Bound(parameter.id)).collect::<Vec<_>>();
+    let owner = graph.intern_descriptor(&TypeDescriptor::Declared(DeclaredTypeDescriptor {
+        id: crate::value::DeclaredTypeId::applied(module_id, declaration, &arguments),
+        name: name.clone(), body: Arc::new(TypeDescriptor::Never),
+    }));
+    let previous = families.insert(name.clone(), StaticTypeFamily {
+        root: owner, arity: parameters.len(), recursive_pending: true,
+    });
+    let body = StaticContractScope { hir, environment, external_names, interfaces, parameters, families }
+        .elaborate(&binding.value.value, graph);
+    families.remove(name);
+    if let Some(previous) = previous { families.insert(name.clone(), previous); }
+    let body = body?;
+    graph.fill_declared_body(owner, body);
+    Some(SolvedRecursiveType { owner, body })
 }
 
 #[cfg(test)]
 mod static_family_tests {
     use super::*;
+
+    #[test]
+    fn recursive_family_definition_requires_no_execution_fuel() {
+        for source in [
+            "type Tree(T) = struct {value: T, children: Array(Tree(T))}; type IntTree = Tree(Int); type StringTree = Tree(String);",
+            "type Chain(T) = struct {children: Array(Chain(T))}; type IntTree = Chain(Int); type StringTree = Chain(String);",
+        ] {
+            let analysis = analyze_source_with_fuel("static-recursive-family", source, 0).unwrap();
+            assert_ne!(analysis.binding_types["IntTree"], analysis.binding_types["StringTree"],
+                "recursive applications retain argument identity, including phantom arguments");
+        }
+    }
+
+    #[test]
+    fn recursive_family_still_rejects_changed_self_arguments() {
+        for source in [
+            "type Tree(T) = struct {children: Array(Tree(Array(T)))};",
+            "type Pair(A, B) = struct {children: Array(Pair(B, A))};",
+        ] {
+            let error = analyze_source("recursive-family-arguments", source).unwrap_err();
+            assert!(error.message.contains("unchanged and in declaration order"), "{error}");
+        }
+    }
 
     #[test]
     fn contracts_apply_family_templates_without_runtime_inputs() {
@@ -191,6 +243,7 @@ impl StaticTypeFamily {
         Some(Self {
             root: graph.intern_descriptor(body),
             arity: parameters.len(),
+            recursive_pending: false,
         })
     }
 }

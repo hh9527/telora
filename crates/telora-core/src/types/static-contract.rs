@@ -138,6 +138,11 @@ impl StaticContractScope<'_> {
                         .iter()
                         .map(|argument| self.elaborate(argument, graph))
                         .collect::<Option<Vec<_>>>()?;
+                    if family.recursive_pending {
+                        return arguments.iter().enumerate().all(|(index, argument)|
+                            matches!(graph.node(*argument), TypeNode::Bound(parameter) if parameter.0 as usize == index))
+                            .then_some(family.root);
+                    }
                     return Some(graph.apply_static_family(family.root, &arguments));
                 }
                 match (self.builtin(callee)?, arguments.as_slice()) {

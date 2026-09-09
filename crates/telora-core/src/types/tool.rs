@@ -588,6 +588,7 @@ fn build_recursive_type_family(
     account: &mut QuotaAccount,
     sources: &SourceDatabase,
     evaluator: &mut ToolEvaluator<'_>,
+    solved: Option<(&TypeGraph, &SolvedRecursiveType)>,
 ) -> Result<RecursiveTypeFamilyBuild, FrontendError> {
     let mut evaluation_bindings = ScopedToolBindings::new(base_bindings);
     let mut parameters = Vec::new();
@@ -626,30 +627,37 @@ fn build_recursive_type_family(
     let (symbolic_root, self_family) =
         evaluator.reserve_recursive_type_family(&constructor, &parameters)?;
     evaluation_bindings.insert(binding.value.name.value.clone(), self_family);
-    let body = evaluate_tool_expression(
-        source_name,
-        &binding.value.value,
-        &evaluation_bindings,
-        account,
-        sources,
-        evaluator,
-    )?;
-    validate_declared_metadata(source_name, binding, body, evaluator)?;
+    let body = if let Some((graph, solved)) = solved {
+        validate_declared_graph(source_name, binding, graph, solved.body)?;
+        materialize_type_body(Some(solved.body), graph, binding, source_name,
+            &evaluation_bindings, account, sources, evaluator)?.0
+    } else {
+        let body = evaluate_tool_expression(source_name, &binding.value.value,
+            &evaluation_bindings, account, sources, evaluator)?;
+        validate_declared_metadata(source_name, binding, body, evaluator)?;
+        body
+    };
     evaluator
         .work
         .seal_type_ref(symbolic_root, body)
         .map_err(|error| frontend_error(source_name, error.to_string()))?;
-    let (graph, root) = evaluator
-        .decode_type_graph(symbolic_root, "Type")
-        .map_err(|message| {
-            frontend_error(
-                source_name,
-                format!(
-                    "type family {} produced invalid metadata: {message}",
-                    binding.value.name.value
-                ),
-            )
-        })?;
+    let decoded;
+    let (graph, root) = if let Some((graph, solved)) = solved {
+        (graph, solved.owner)
+    } else {
+        decoded = evaluator
+            .decode_type_graph(symbolic_root, "Type")
+            .map_err(|message| {
+                frontend_error(
+                    source_name,
+                    format!(
+                        "type family {} produced invalid metadata: {message}",
+                        binding.value.name.value
+                    ),
+                )
+            })?;
+        (&decoded.0, decoded.1)
+    };
     let descriptor = graph.descriptor(root).map_err(|message| {
         frontend_error(
             source_name,

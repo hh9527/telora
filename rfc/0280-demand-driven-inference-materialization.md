@@ -719,3 +719,27 @@ the final legacy-order adjustment also passed all 353 core tests and release bui
 Against `d99f2d5`, recursive-types-400 check time decreased 34.44%, allocation
 calls decreased 27.79%, and peak heap decreased 3.43%. Control movements were
 small (-0.13% to -1.53%); full evidence and limitations are in the appendix.
+
+### Static self-recursive family templates
+
+Unconstrained self-recursive nominal families now reserve an owner with symbolic
+argument identity in the analysis graph, elaborate the body, and fill that row.
+While the template is pending, self application is accepted only with unchanged
+bound parameters in declaration order, preserving the existing language rule.
+The temporary self binding is removed after elaboration; no type environment is
+cloned for this step. Body validation and template signature read the solved graph.
+
+Runtime family closure creation remains a compatibility boundary. At that boundary,
+self-reference metadata reuses the reserved symbolic root; creating another object
+with the same nominal identity caused a duplicate-sealing regression in the existing
+checked-recursive-types dyn projection test, and was corrected. Zero-fuel coverage
+includes concrete applications of recursive templates, distinct Int/String and
+phantom identities; changed or reordered recursive arguments remain rejected.
+Constrained recursive families and recovery analysis still use the legacy builder.
+
+Final full workspace validation passed (355 core, 41 CLI including language
+acceptance, and other workspace/doc tests), release and source-size/diff checks
+passed. Compared with the immediately preceding `d28f6f8` checkpoint, not the
+original RFC baseline, recursive-families-400 check time decreased 23.91%,
+allocation calls decreased 11.68%, and peak heap decreased 2.07%. Controls moved
+between -0.71% and +0.61%; this does not establish a general speedup.

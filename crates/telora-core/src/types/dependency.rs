@@ -677,10 +677,17 @@ pub(crate) fn analyze_program_with_bindings_observed(
             let recursive_nominal_family =
                 component.len() == 1 && contains_family && contains_nominal;
             if recursive_nominal_family {
-                prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
-                    &static_environment, account, sources, &mut evaluator)?;
                 let definition = component[0];
                 let binding = type_bindings[&definition];
+                let parameters = static_contract_parameters(binding, sources)?;
+                let solved = elaborate_recursive_family(binding, module_id,
+                    declared_initializer_slots[&binding.value.name.location], &parameters, &hir,
+                    &static_environment, &contract_external_names, &qualified_external_interfaces,
+                    &mut contract_families, &mut types);
+                if solved.is_none() {
+                    prepare_construction_dependencies(source_name, program, &hir, &mut tool_values,
+                        &static_environment, account, sources, &mut evaluator)?;
+                }
                 let built = build_recursive_type_family(
                     source_name,
                     module_id,
@@ -690,6 +697,7 @@ pub(crate) fn analyze_program_with_bindings_observed(
                     account,
                     sources,
                     &mut evaluator,
+                    solved.as_ref().map(|solved| (&types, solved)),
                 )?;
                 let projected = built.scheme.body.clone();
                 tool_values.insert(binding.value.name.value.clone(), built.family_value);

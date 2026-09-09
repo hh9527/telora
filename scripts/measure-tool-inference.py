@@ -23,6 +23,7 @@ def main():
                         choices=["constant", "functions", "types", "array", "forward-types", "repeated-family",
                                  "typed-types", "property-types", "checked-types", "recursive-types", "shared-wide", "shared-deep",
                                  "family-contracts", "qualified-family-contracts",
+                                 "recursive-families",
                                  "property-constraints", "qualified-property-constraints",
                                  "module-fanout", "module-diamond"],
                         default=["constant", "functions", "types", "array"])
@@ -50,6 +51,11 @@ def main():
         ) + "\nexport def answer: Int = 42;\n"
         cases[f"recursive-types-{size}"] = "\n".join(
             f"type T{index} = struct {{children: Array(T{index})}};"
+            for index in range(size)
+        ) + "\nexport def answer: Int = 42;\n"
+        cases[f"recursive-families-{size}"] = "\n".join(
+            f"type Tree{index}(T) = struct {{value: T, children: Array(Tree{index}(T))}};"
+            + f"\ntype IntTree{index} = Tree{index}(Int);"
             for index in range(size)
         ) + "\nexport def answer: Int = 42;\n"
         cases[f"array-{size}"] = (

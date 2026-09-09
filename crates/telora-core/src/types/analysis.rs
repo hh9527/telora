@@ -609,6 +609,7 @@ pub(crate) fn analyze_partial_types_recovered_with_query(
                     &mut account,
                     sources,
                     &mut evaluator,
+                    None,
                 );
                 match outcome {
                     Ok(built) => {
