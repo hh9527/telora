@@ -788,3 +788,43 @@ Evidence: `/tmp/rfc0280-module-facts-{workspace,release}.log`,
 `/tmp/rfc0280-module-facts-memory-workspace`,
 `/tmp/rfc0280-module-facts{,-baseline}-heap.txt`, raw
 `/tmp/telora-perf-173/module-facts{,-baseline}.heap.zst`.
+
+## Session-owned syntax without per-module Arc, 2026-09-09
+
+Incremental comparison against `1f7a52f`: `/tmp/telora-perf-173/telora-module-facts`
+versus `telora-owned-syntax` in the same directory. Both use default optimized
+release without inference profiling. Two opposite version orders, one warmup and
+five samples each, yield ten pooled samples per case/version. No builds, tests or
+profilers overlapped timing. These are end-to-end CLI `check` medians.
+
+| Case | Before median ms | After median ms | Change |
+| --- | ---: | ---: | ---: |
+| constant | 115.59 | 114.92 | -0.58% |
+| typed-types-400 | 266.22 | 266.95 | +0.27% |
+| property-types-400 | 362.49 | 362.03 | -0.13% |
+| shared-wide-400 | 232.12 | 234.81 | +1.16% |
+| module-diamond-400 | 525.72 | 526.38 | +0.13% |
+
+This checkpoint demonstrates no clear speedup. PreparedModule is owned directly
+by the module row; ModuleGraph and ModuleSkeleton no longer implement Clone.
+Dependency preparation retains import operands and a cursor across recursive
+loading; compilation and recovery borrow session syntax afterward. It removes the
+per-module ownership adapter, not AST/HIR's remaining internal trees, HIR Arc,
+legacy dependency execution or descriptor consumers.
+
+Separate property-types-400 heaptrack runs measured allocations
+1,751,589 -> 1,751,563 (26 fewer), and peak heap 29.23 -> 29.24 MB at the profiler's
+display precision. This is not a meaningful memory reduction; inline module rows
+also reserve space for absent prepared input. Profiler runtime and RSS are not
+uninstrumented measurements. Do not extrapolate this checkpoint to ontology.
+
+Full workspace passed 358 core, 41 CLI including language acceptance, and all
+remaining workspace/doc tests. Release and diff/source-size checks passed.
+Source-reuse coverage verifies original ModuleId/SourceId and successful loading
+after root and dependency source files change.
+
+Evidence: `/tmp/rfc0280-owned-syntax-{check,workspace,release}.log`,
+`/tmp/rfc0280-owned-syntax-{comparison,reverse}.jsonl`,
+`/tmp/rfc0280-owned-syntax-memory-workspace`,
+`/tmp/rfc0280-owned-syntax{,-baseline}-heap.txt`, and raw
+`/tmp/telora-perf-173/owned-syntax{,-baseline}.heap.zst`.

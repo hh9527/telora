@@ -56,6 +56,7 @@ include!("module/test.rs");
 include!("module/workspace.rs");
 include!("module/entry.rs");
 include!("module/loader.rs");
+include!("module/prepare.rs");
 
 #[cfg(test)]
 #[path = "module/tests/mod.rs"]

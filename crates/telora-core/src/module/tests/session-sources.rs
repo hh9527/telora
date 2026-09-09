@@ -25,7 +25,7 @@ fn session_discovery_source_is_reused_after_files_change() {
     )
     .unwrap();
     let id = graph.id(&root.id).unwrap();
-    let prepared = Arc::clone(graph.module(id).prepared.as_ref().unwrap());
+    let prepared = graph.module(id).prepared.as_ref().unwrap();
     assert!(graph.undiscovered_prepared.is_empty());
     let source_id = prepared.source_id;
     let mut main = MainWorld::with_modules(graph);
@@ -57,10 +57,9 @@ fn session_discovery_source_is_reused_after_files_change() {
             .exports
             .contains_key("value")
     );
-    assert!(Arc::ptr_eq(
-        &prepared,
-        loader.main.modules.prepared(&root.id).unwrap()
-    ));
+    assert_eq!(loader.main.modules.id(&root.id), Some(id));
+    assert_eq!(loader.main.modules.module(id).prepared.as_ref().unwrap().source_id, source_id);
+    assert!(loader.main.modules.undiscovered_prepared.is_empty());
     assert_eq!(
         loader.semantic_inputs[&root.id.to_string()].source,
         Some(source_id)

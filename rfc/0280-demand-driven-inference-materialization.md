@@ -107,13 +107,15 @@ choice; the ownership and visibility rules are not.
 
 The session owns syntax/HIR/type arenas; stages retain IDs and borrow these stores.
 Sharing a node across stages does not justify an Arc on each node or module.
-Existing Arc-backed prepared modules and HIR are migration adapters, not the target
-ownership model. An independently lived, immutable cross-session snapshot may
-have a single outer shared owner when its consumers require it. For the current
-loader, removing per-module Arc requires separating dependency preparation from
-compilation: recursive `&mut self` loading must not also own the immutable syntax
-borrow. Split syntax storage from mutable loader/execution state rather than
-cloning trees or introducing unsafe self-references to work around that boundary.
+The remaining Arc-backed HIR is a migration adapter, not the target ownership
+model. An independently lived, immutable cross-session snapshot may have a single
+outer shared owner when its consumers require it. Prepared modules are now owned
+directly by module rows, and the module graph cannot be cloned. Loader dependency
+preparation is separate from compilation: recursive loading carries only import
+operands and a binding cursor, then compilation borrows session syntax again.
+Recovery likewise releases syntax borrows before loading dependencies and borrows
+again for analysis. No syntax node is removed during recursion. This ownership
+change does not yet remove legacy dependency execution or flatten AST/HIR nodes.
 
 ```text
 SessionWorld
@@ -780,3 +782,24 @@ Against `2c426a7`, local/qualified family-obligations-400 check times decreased
 28.49%/28.62%; controls moved between -0.60% and +0.73%. Qualified allocations
 decreased 18.34%, but peak heap increased 2.68% (16.81 -> 17.26 MB). The appendix
 records this tradeoff, cumulative measurements, scope and artifacts.
+
+### Session-owned module syntax without reference counting
+
+PreparedModule is now stored directly in the ModuleId-indexed row, including
+failed parse and recovery facts. ModuleGraph and ModuleSkeleton no longer
+implement Clone. Undiscovered direct inputs retain their existing compatibility
+storage with the same exclusive ownership.
+
+Strict loading prepares dependencies separately, retaining only an import's
+operands and the next binding index across recursive loading. It then borrows the
+original Program for analysis and compilation. Recovery releases its syntax borrow
+before dependency traversal and reacquires it for strict/partial analysis. Source
+records remain present throughout recursion; no temporary removal, AST clone,
+unsafe reference or replacement reference counter is used to cross this boundary.
+
+Full workspace tests passed (358 core, 41 CLI including language acceptance, and
+all remaining workspace/doc tests), as did release and diff/source-size checks.
+The existing source-change regression verifies the original ModuleId/SourceId and
+successful compilation from discovered syntax after both backing files change.
+This step removes per-module Arc, but HIR shared ownership, legacy dependency
+execution and downstream descriptor materialization remain separate migration work.

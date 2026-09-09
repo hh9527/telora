@@ -160,8 +160,11 @@ CLI 的 `test`、`check` 与显式 query 将已准备的 resolver 直接交给
 
 已发现模块的 PreparedModule 现在归属于 ModuleId 索引的节点；未发现入口保留独立
 兼容存储。恢复分析借用该节点中的 AST，语义快照输入只携带所需的结果位置，不再
-持有整份 AST 副本。当前 Arc 仍用于跨越递归加载器的借用边界；目标是 session 统一
-持有语法/HIR arena，各阶段仅持 ID 并借用，须继续拆分依赖准备与编译的可变状态。
+持有整份 AST 副本。PreparedModule 由节点直接拥有，不再使用 Arc；ModuleGraph 和
+ModuleSkeleton 不实现 Clone。严格 loader 将依赖准备与编译分开，递归期间只保留
+import 操作数和 binding 游标，结束后重新借用 session 语法。恢复路径同样在递归前
+结束借用，在分析时重新借用；语法记录始终留在图中。依赖准备仍可能执行旧模块值，
+HIR 的 Arc、AST/HIR 内部节点扁平化和下游统一 ID 消费仍待迁移。
 
 声明契约的静态展开入口只读取 AST、HIR 名称解析、模块接口、类型环境和符号参数，不接收 VM
 或 heap。已知类型引用、函数、元组、Unit、Array/Dict/TypeOf 直接进入同一个最终

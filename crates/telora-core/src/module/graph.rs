@@ -26,11 +26,11 @@ struct ExportPlan {
     local: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct ModuleSkeleton {
     id: ModuleId,
     source: Option<crate::SourceId>,
-    prepared: Option<Arc<PreparedModule>>,
+    prepared: Option<PreparedModule>,
     cname: ModuleCName,
     imports: Vec<ImportEdge>,
     exports: Vec<ExportPlan>,
@@ -44,16 +44,16 @@ struct ModuleBlueprint {
     slots: Vec<StaticSlot>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct ModuleGraph {
     modules: Vec<ModuleSkeleton>,
     by_cname: HashMap<ModuleCName, ModuleId>,
-    undiscovered_prepared: HashMap<ModuleCName, Arc<PreparedModule>>,
+    undiscovered_prepared: HashMap<ModuleCName, PreparedModule>,
     resolved: Vec<Option<ResolvedModule>>,
     import_targets: ImportGraph,
 }
 
-// Shared session input, including failed parses. A definition does not need to
+// Session-owned input, including failed parses. A definition does not need to
 // be valid before its source and syntax can be used by another consumer.
 #[derive(Debug)]
 struct PreparedModule {
@@ -68,23 +68,23 @@ impl PreparedModule {
         sources: &mut SourceDatabase,
         cname: &ModuleCName,
         source: crate::document::DocumentText,
-    ) -> Arc<Self> {
+    ) -> Self {
         let source_id = sources.add_document(cname.to_string(), source);
         let parsed = parse_registered(sources, source_id);
         // CST is not consumed by module loading. Keep the lowered and recovery
         // facts, rather than pinning an additional concrete syntax tree.
-        Arc::new(Self { source_id, program: parsed.program,
-            recovered: parsed.recovered, diagnostics: parsed.diagnostics })
+        Self { source_id, program: parsed.program,
+            recovered: parsed.recovered, diagnostics: parsed.diagnostics }
     }
 }
 
 impl ModuleGraph {
-    fn prepared(&self, cname: &ModuleCName) -> Option<&Arc<PreparedModule>> {
+    fn prepared(&self, cname: &ModuleCName) -> Option<&PreparedModule> {
         self.id(cname).and_then(|id| self.module(id).prepared.as_ref())
             .or_else(|| self.undiscovered_prepared.get(cname))
     }
 
-    fn publish_prepared(&mut self, cname: &ModuleCName, prepared: Arc<PreparedModule>) {
+    fn publish_prepared(&mut self, cname: &ModuleCName, prepared: PreparedModule) {
         if let Some(id) = self.id(cname) {
             self.modules[id.index()].prepared = Some(prepared);
         } else {

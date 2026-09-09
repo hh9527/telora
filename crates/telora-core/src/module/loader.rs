@@ -347,9 +347,7 @@ impl ModuleLoader {
         let path = module_source.context_path();
         let synthetic = matches!(module_source, TeloraModuleSource::Synthetic { .. });
         let source_name = module_id.to_string();
-        let prepared = if let Some(prepared) = self.main.modules.prepared(module_id) {
-            Arc::clone(prepared)
-        } else {
+        if self.main.modules.prepared(module_id).is_none() {
             let source = match module_source {
                 TeloraModuleSource::File(path) => read(path, &source_name)?,
                 TeloraModuleSource::Synthetic { name, source, .. } => {
@@ -359,9 +357,9 @@ impl ModuleLoader {
             };
             let prepared = PreparedModule::parse(&mut self.sources, module_id,
                 crate::document::DocumentText::new(source));
-            self.main.modules.publish_prepared(module_id, Arc::clone(&prepared));
-            prepared
-        };
+            self.main.modules.publish_prepared(module_id, prepared);
+        }
+        let prepared = self.main.modules.prepared(module_id).expect("prepared syntax");
         let source_id = prepared.source_id;
         let discovered_source = self.main.modules.id(module_id).is_some_and(|id|
             self.main.modules.module(id).source == Some(source_id));
@@ -447,203 +445,15 @@ impl ModuleLoader {
             ));
         }
         reject_nested_imports(&program, &source_name)?;
-        let mut external_provenance = BTreeMap::new();
-        let mut external_roots = HashMap::new();
-        for (name, value) in &external_bindings {
-            let root = value
-                .publish(&mut self.main.heap)
-                .map_err(|error| ModuleError::new(error.to_string()))?;
-            external_roots.insert(name.clone(), root);
-        }
-        let mut semantic_imports = Vec::new();
-        let mut graph_imports = Vec::new();
-        let mut external_interfaces = BTreeMap::new();
-        let mut open_candidates: BTreeMap<String, Vec<OpenImportCandidate>> = BTreeMap::new();
-        let mut direct_import_names = external_bindings.keys().cloned().collect::<HashSet<_>>();
-
-        for binding in &program.value.body.value.bindings {
-            if !matches!(
-                binding.value.kind,
-                BindingKind::Import | BindingKind::OpenImport
-            ) {
-                continue;
-            }
-            if binding.value.kind == BindingKind::Import
-                && !direct_import_names.insert(binding.value.name.value.clone())
-            {
-                return Err(ModuleError::new(format!(
-                    "duplicate module binding {:?} in {source_name}",
-                    binding.value.name.value
-                )));
-            }
-            let ExprKind::String(relative) = &binding.value.value.value else {
-                return Err(ModuleError::new("import path must be a string"));
-            };
-            let imported = self.main.modules
-                .resolve_import(&self.resolver, module_id, binding.value.value.location, relative)
-                .map_err(|error| {
-                    ModuleError::new(self.sources.render(&Diagnostic::error(
-                        error.to_string(),
-                        binding.value.value.location,
-                    )))
-                })?;
-            if validate_imports {
-                let imported_module_id = self.main.modules.id(&imported.id).ok_or_else(|| {
-                    ModuleError::new(format!(
-                        "imported module {} was not present during module graph discovery",
-                        imported.id
-                    ))
-                })?;
-                graph_imports.push(ImportEdge {
-                    local: (binding.value.kind == BindingKind::Import)
-                        .then(|| binding.value.name.value.clone()),
-                    target: imported_module_id,
-                });
-            }
-            if imported.vendor == ModuleVendor::Builtin {
-                let module = self.load_native_module(relative).map_err(|error| {
-                    ModuleError::new(self.sources.render(&Diagnostic::error(
-                        error.to_string(),
-                        binding.value.value.location,
-                    )))
-                })?;
-                self.install_trait_impl_roots(&module, &mut external_roots)?;
-                self.install_type_property_roots(&module, &mut external_roots)?;
-                semantic_imports.push(SemanticImport {
-                    name: if binding.value.kind == BindingKind::OpenImport {
-                        "*".into()
-                    } else {
-                        binding.value.name.value.clone()
-                    },
-                    location: binding.value.name.location,
-                    target: imported.id.clone(),
-                    namespace: binding.value.kind != BindingKind::OpenImport
-                        && binding.value.imported_name.is_none(),
-                });
-                if binding.value.kind == BindingKind::OpenImport {
-                    for (name, candidate) in open_import_exports(
-                        &imported.id,
-                        module.root,
-                        &module.interface,
-                        &self.main.heap,
-                        module.provenance.as_ref(),
-                    )? {
-                        open_candidates.entry(name).or_default().push(candidate);
-                    }
-                    continue;
-                }
-                let (selected_root, interface) = select_import_root(
-                    module.root,
-                    module.interface,
-                    binding.value.imported_name.as_deref(),
-                    &binding.value.name.value,
-                    &self.main.heap,
-                )?;
-                external_roots.insert(binding.value.name.value.clone(), selected_root);
-                external_interfaces.insert(binding.value.name.value.clone(), interface);
-                continue;
-            }
-            let imported_id = imported.id.clone();
-            let artifact = self.load_resolved_value(imported)?;
-            self.install_trait_impl_roots(&artifact, &mut external_roots)?;
-            self.install_type_property_roots(&artifact, &mut external_roots)?;
-            semantic_imports.push(SemanticImport {
-                name: if binding.value.kind == BindingKind::OpenImport {
-                    "*".into()
-                } else {
-                    binding.value.name.value.clone()
-                },
-                location: binding.value.name.location,
-                target: imported_id.clone(),
-                namespace: binding.value.kind != BindingKind::OpenImport
-                    && binding.value.imported_name.is_none(),
-            });
-            if binding.value.kind == BindingKind::OpenImport {
-                for (name, candidate) in open_import_exports(
-                    &imported_id,
-                    artifact.root,
-                    &artifact.interface,
-                    &self.main.heap,
-                    artifact.provenance.as_ref(),
-                )? {
-                    open_candidates.entry(name).or_default().push(candidate);
-                }
-                continue;
-            }
-            let (selected_root, mut selected_interface) = select_import_root(
-                artifact.root,
-                artifact.interface,
-                binding.value.imported_name.as_deref(),
-                &binding.value.name.value,
-                &self.main.heap,
-            )?;
-            if binding.value.imported_name.is_none()
-                && let Some(scheme) = artifact.root_scheme
-            {
-                selected_interface.value_binding = Some(binding.value.name.value.clone());
-                selected_interface.exports.insert(binding.value.name.value.clone(), scheme);
-            }
-            external_roots.insert(binding.value.name.value.clone(), selected_root);
-            external_interfaces.insert(binding.value.name.value.clone(), selected_interface);
-            if let Some(provenance) = artifact.provenance
-                && !provenance.values.is_empty()
-            {
-                external_provenance.insert(binding.value.name.value.clone(), provenance);
-            }
-        }
-        if module_id.to_string() != PRELUDE_MODULE
-            && let Some(module) = self.builtin_modules.get(PRELUDE_MODULE)
-        {
-            self.install_trait_impl_roots(module, &mut external_roots)?;
-            self.install_type_property_roots(module, &mut external_roots)?;
-            let provider = ModuleCName::Builtin(PRELUDE_MODULE.into());
-            if validate_imports {
-                let target = self.main.modules.id(&provider).ok_or_else(|| {
-                    ModuleError::new("prelude was not present during module graph discovery")
-                })?;
-                graph_imports.push(ImportEdge {
-                    local: None,
-                    target,
-                });
-            }
-            for (name, candidate) in open_import_exports(
-                &provider,
-                module.root,
-                &module.interface,
-                &self.main.heap,
-                module.provenance.as_ref(),
-            )? {
-                open_candidates.entry(name).or_insert_with(|| vec![candidate]);
-            }
-        }
-        let imports_fmt = program.value.body.value.bindings.iter().any(|binding| {
-            matches!(binding.value.kind, BindingKind::Import | BindingKind::OpenImport)
-                && matches!(&binding.value.value.value, ExprKind::String(path) if path == FMT_MODULE)
-        });
-        if !matches!(module_id, ModuleCName::Builtin(_))
-            && !imports_fmt
-            && let Some(module) = self.builtin_modules.get(FMT_MODULE)
-        {
-            self.install_trait_impl_roots(module, &mut external_roots)?;
-            let provider = ModuleCName::Builtin(FMT_MODULE.into());
-            if validate_imports {
-                let target = self.main.modules.id(&provider).ok_or_else(|| {
-                    ModuleError::new("std/fmt was not present during module graph discovery")
-                })?;
-                graph_imports.push(ImportEdge {
-                    local: Some(FMT_CAPABILITY_BINDING.into()),
-                    target,
-                });
-            }
-            external_interfaces.insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
-        }
-        if let Some(id) = skeleton.filter(|_| validate_imports)
-            && self.main.modules.module(id).imports != graph_imports
-        {
-            return Err(ModuleError::new(format!(
-                "module {module_id} import graph changed after static discovery"
-            )));
-        }
+        let PreparedDependencies {
+            mut external_provenance, mut external_roots, semantic_imports,
+            mut external_interfaces, open_candidates,
+        } = self.prepare_telora_dependencies(
+            module_id, &external_bindings, skeleton, validate_imports,
+        )?;
+        let program = self.main.modules.prepared(module_id)
+            .expect("session syntax remains available after dependencies")
+            .program.as_ref().expect("validated program");
         let explicit_names = program
             .value
             .body

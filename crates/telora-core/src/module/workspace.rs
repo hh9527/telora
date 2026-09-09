@@ -118,9 +118,7 @@ impl WorkspaceBuilder<'_> {
                 self.cycle_members.insert(module_id.clone());
                 return None;
             }
-            let parsed = if let Some(parsed) = self.main.modules.prepared(&module_id) {
-                Arc::clone(parsed)
-            } else {
+            if self.main.modules.prepared(&module_id).is_none() {
                 let source = match self.overlays.get(&path).cloned() {
                     Some(source) => source,
                     None => match fs::read_to_string(&path) {
@@ -136,10 +134,11 @@ impl WorkspaceBuilder<'_> {
                     },
                 };
                 let parsed = PreparedModule::parse(&mut self.sources, &module_id, source);
-                self.main.modules.publish_prepared(&module_id, Arc::clone(&parsed));
-                parsed
-            };
+                self.main.modules.publish_prepared(&module_id, parsed);
+            }
+            let parsed = self.main.modules.prepared(&module_id).expect("prepared syntax");
             let source_id = parsed.source_id;
+            let recovered_location = parsed.recovered.location;
             let program = parsed.program.as_ref();
             let imports = parsed
                 .recovered
@@ -388,7 +387,7 @@ impl WorkspaceBuilder<'_> {
                     &module.interface,
                     &mut external_roots,
                     &mut diagnostics,
-                    parsed.recovered.location,
+                    recovered_location,
                 );
                 if let Ok(exports) = workspace_open_import_exports(
                     &provider,
@@ -417,17 +416,18 @@ impl WorkspaceBuilder<'_> {
                         }
                         Ok(None) => diagnostics.push(Diagnostic::error(
                             "std/fmt is missing a trait implementation root",
-                            parsed.recovered.location,
+                            recovered_location,
                         )),
                         Err(error) => diagnostics.push(Diagnostic::error(
                             error.to_string(),
-                            parsed.recovered.location,
+                            recovered_location,
                         )),
                     }
                 }
                 external_interfaces
                     .insert(FMT_CAPABILITY_BINDING.into(), module.interface.clone());
             }
+            let parsed = self.main.modules.prepared(&module_id).expect("session syntax");
             let explicit_names = parsed
                 .recovered
                 .bindings
@@ -503,18 +503,16 @@ impl WorkspaceBuilder<'_> {
             let evaluated = if self.cycle_members.contains(&module_id) || missing_exports {
                 ModuleEvaluation::default()
             } else {
-                program
-                    .as_ref()
-                    .map_or_else(ModuleEvaluation::default, |program| {
-                        self.analyze_and_evaluate(
-                            runtime_module_id,
-                            source_id,
-                            program,
-                            &external_roots,
-                            &external_interfaces,
-                        )
-                    })
+                self.analyze_and_evaluate(
+                    runtime_module_id,
+                    source_id,
+                    &module_id,
+                    &external_roots,
+                    &external_interfaces,
+                )
             };
+            let parsed = self.main.modules.prepared(&module_id).expect("session syntax");
+            let program = parsed.program.as_ref();
             diagnostics.extend(evaluated.diagnostics);
             let analysis = evaluated.analysis;
             // A strict result already owns the facts consumed by the workspace,
@@ -670,10 +668,14 @@ impl WorkspaceBuilder<'_> {
         &mut self,
         module_id: ModuleId,
         source_id: crate::SourceId,
-        program: &Program,
+        cname: &ModuleCName,
         external_roots: &HashMap<String, PersistentValue>,
         external_interfaces: &BTreeMap<String, ModuleInterface>,
     ) -> ModuleEvaluation {
+        let Some(program) = self.main.modules.prepared(cname)
+            .expect("session syntax").program.as_ref() else {
+                return ModuleEvaluation::default();
+            };
         let mut account = QuotaAccount::new(self.engine.config.module_quota).with_sources(&self.sources);
         if let Some(query) = self.query {
             account = account.with_query(query.clone());
