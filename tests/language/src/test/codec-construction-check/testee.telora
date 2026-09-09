@@ -4,28 +4,28 @@ import "std/codec" as codec;
 import "std/blame" {BlameError};
 import "@src/test-support" {expect};
 
-@check(fn(value) { if value > 0 { None } else { Some(blame!("positive required", value)) } })
+@check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("positive required", value)) } })
 type Positive = struct(Int);
-@check(fn(value) { if value < 0 { None } else { Some(blame!("negative required", value)) } })
+@check(fn(value) { if value < 0 { Ok(()) } else { Err(blame!("negative required", value)) } })
 type Negative = struct(Int);
 @json.untagged
 type Signed = enum {Positive(Positive), Negative(Negative)};
 @json.untagged
 type VariantChecked = enum {
-    @check(fn(value) { if value > 0 { None } else { Some(blame!("variant positive", value)) } })
+    @check(fn(value) { if value > 0 { Ok(()) } else { Err(blame!("variant positive", value)) } })
     Positive(Int),
-    @check(fn(value) { if value < 0 { None } else { Some(blame!("variant negative", value)) } })
+    @check(fn(value) { if value < 0 { Ok(()) } else { Err(blame!("variant negative", value)) } })
     Negative(Int),
 };
 @check(fn(value) {
-    if value.item.0 > 0 { None } else { panic!("unchecked child reached parent") }
+    if value.item.0 > 0 { Ok(()) } else { panic!("unchecked child reached parent") }
 })
 type Container = struct {item: Positive};
 
 @json.untagged
 type Ambiguous = enum {First(Positive), Second(Positive)};
 type SignedContainer = struct {items: Array(Signed)};
-@check(fn(value: Int) -> Option(BlameError) { fail!("checker execution failed", value) })
+@check(fn(value: Int) -> Result((), BlameError) { fail!("checker execution failed", value) })
 type Aborting = struct(Int);
 @json.untagged
 type AbortTrial = enum {First(Aborting), Second(Int)};

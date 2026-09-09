@@ -316,19 +316,26 @@ let candidate: Unchecked(Point) = {x: 1, y: 2};
 let point: Point = candidate;
 ```
 
-声明类型的构造可通过 `@check(func)` 校验候选值。校验函数返回 `Option(BlameError)`：
-None 接受原值，Some(error) 在构造处产生诊断。具名字段 struct 的参数为
+声明类型的构造可通过 `@check(func)` 校验候选值。校验函数返回 `Result((), BlameError)`：
+`Ok(())` 接受原值，`Err(error)` 在普通构造处产生诊断。具名字段 struct 的参数为
 `Unchecked(T)`，newtype 和带载荷 variant 的参数为载荷类型。无载荷 variant
 直接成立，不接受 `@check`。
 
 ```telora
 @check(fn(value) {
-    if value.min <= value.max { None }
-    else { Some(blame!("invalid range", value.min, value.max)) }
+    if value.min <= value.max { Ok(()) }
+    else { Err(blame!("invalid range", value.min, value.max)) }
 })
 type Range = struct {min: Int, max: Int};
 let range: Range = {min: 1, max: 3};
 ```
+
+校验函数可以用 `?` 组合返回 Result 的验证函数；成功结果必须是 `Ok(())`，
+不能返回替换后的候选值。空块或分号结尾的块只返回 `()`，不会隐式提升为 Result。
+仅发出警告并接受候选值时，写作
+`let warning: Option(()) = warn!(blame!("message", value)); Ok(())`。
+这里的注解为 `warn!` 返回的泛型 Option 提供类型上下文。
+`Unit` 是 `()` 的类型别名，因此返回契约也可以写作 `Result(Unit, BlameError)`。
 
 校验保留字段的来源位置。读取、复制和传递已完成构造的值不重复校验；
 merge-update 的每个结果分别校验，投影构造的目标值也执行其校验。

@@ -11,7 +11,7 @@ import "@src/test-support" {expect};
 @fmt.display_by("{host}:{port}")
 @regex.parse_by(regex.compile(r"^(?P<host>[^:]+):(?P<port>\d+)$"))
 @check(fn(value) {
-    if value.port > 0 { None } else { Some(blame!("positive port required", value.port)) }
+    if value.port > 0 { Ok(()) } else { Err(blame!("positive port required", value.port)) }
 })
 type Endpoint = struct {host: String, port: Int};
 

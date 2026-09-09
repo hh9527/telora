@@ -1,5 +1,5 @@
 import "std/blame" {BlameError};
-def verify: Fn(String) -> Option(BlameError) = fn(value) { None };
+def verify: Fn(String) -> Result((), BlameError) = fn(value) { Ok(()) };
 @check(verify)
 type Positive = struct(Int);
 export {Positive};

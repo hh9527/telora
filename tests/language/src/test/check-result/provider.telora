@@ -1,0 +1,41 @@
+import "std/blame" {BlameError};
+
+export def invalid_min = -7;
+
+def nonnegative: Fn(Int) -> Result((), BlameError) = fn(value) {
+    if value >= 0 { Ok(()) } else { Err(blame!("nonnegative required", value)) }
+};
+def bounded: Fn(Int) -> Result(Unit, BlameError) = fn(value) {
+    if value <= 10 { Ok(()) } else { Err(blame!("maximum exceeded", value)) }
+};
+
+@check(fn(value) {
+    nonnegative(value.min)?;
+    bounded(value.max)?;
+    if value.min <= value.max { Ok(()) }
+    else { Err(blame!("invalid range", value.min, value.max)) }
+})
+type Range = struct {min: Int, max: Int};
+
+@check(nonnegative)
+type Nonnegative = struct(Int);
+
+@check(fn(value: Int) -> Result(Unit, BlameError) { bounded(value) })
+type Bounded = struct(Int);
+
+def first: Fn(Int) -> Result((), BlameError) = fn(value) {
+    Err(blame!("first rejection", value))
+};
+@check(fn(value) {
+    first(value)?;
+    panic!("unreachable check continuation")
+})
+type Stopped = struct(Int);
+
+@check(fn(value) {
+    nonnegative(value)?;
+    panic!("checker aborted after successful helper")
+})
+type Aborting = struct(Int);
+
+export {Range, Nonnegative, Bounded, Stopped, Aborting};

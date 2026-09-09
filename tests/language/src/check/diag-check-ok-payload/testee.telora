@@ -1,0 +1,3 @@
+@check(fn(value) { Ok(value) })
+type Invalid = struct(Int);
+export {Invalid};

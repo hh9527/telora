@@ -2,7 +2,7 @@ import "std/test" as test;
 import "@src/test-support" {expect};
 
 @check(fn(value) {
-    if value.x > 0 { None } else { Some(blame!("positive x required", value.x)) }
+    if value.x > 0 { Ok(()) } else { Err(blame!("positive x required", value.x)) }
 })
 type Point = struct {x: Int};
 type Container = struct {point: Point};

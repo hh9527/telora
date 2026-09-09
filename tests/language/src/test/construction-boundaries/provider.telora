@@ -1,18 +1,18 @@
 def minimum: Int = 1;
 
 @check(fn(value) {
-    if value.count >= minimum { None } else { Some(blame!("count below minimum", value.count)) }
+    if value.count >= minimum { Ok(()) } else { Err(blame!("count below minimum", value.count)) }
 })
 type Box(T) = struct {value: T, count: Int};
 
 @check(fn(value) {
-    if value.count < 5 { None } else { Some(blame!("count too large", value.count)) }
+    if value.count < 5 { Ok(()) } else { Err(blame!("count too large", value.count)) }
 })
 type Counted(T) = struct(Box(T));
 
 type Choice(T) = enum {
     @check(fn(value) {
-        if value.count < 5 { None } else { Some(blame!("variant count too large", value.count)) }
+        if value.count < 5 { Ok(()) } else { Err(blame!("variant count too large", value.count)) }
     })
     Item(Box(T)),
     Empty,
@@ -21,8 +21,8 @@ type Choice(T) = enum {
 @check(fn(value) {
     if value > 0 {
         let child = Countdown(value - 1);
-        if child.0 >= 0 { None } else { Some(blame!("invalid child", child)) }
-    } else if value == 0 { None } else { Some(blame!("negative countdown", value)) }
+        if child.0 >= 0 { Ok(()) } else { Err(blame!("invalid child", child)) }
+    } else if value == 0 { Ok(()) } else { Err(blame!("negative countdown", value)) }
 })
 type Countdown = struct(Int);
 

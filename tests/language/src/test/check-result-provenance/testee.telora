@@ -1,0 +1,7 @@
+import "std/test" as test;
+import "../check-result/provider" {Range, invalid_min};
+
+export def propagated = test.should_ok(fn() {
+    let value: Range = {min: invalid_min, max: 11};
+    value
+});

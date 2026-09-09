@@ -12,8 +12,8 @@ def choose: for(A) Fn(A) -> A = fn(value) {
     if candidate.x == 2 { value } else { value }
 };
 def chosen = choose(Int.type);
-def validate: Fn(Unchecked(Point)) -> Option(BlameError) = fn(value) {
-    if value.x >= minimum { None } else { Some(blame!("below minimum", value.x)) }
+def validate: Fn(Unchecked(Point)) -> Result((), BlameError) = fn(value) {
+    if value.x >= minimum { Ok(()) } else { Err(blame!("below minimum", value.x)) }
 };
 def minimum: Int = 1;
 export {chosen, early};

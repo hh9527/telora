@@ -1,0 +1,6 @@
+import "./provider" {Count, stamp};
+
+@stamp(Count(1))
+type Item = struct {value: Int};
+
+export {Item};

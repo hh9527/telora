@@ -1,0 +1,14 @@
+@check(fn(value) {
+    if value > 0 { Ok(()) }
+    else { Err(blame!("tool-stage count rejected", value)) }
+})
+type Count = struct(Int);
+
+@property(PropertyTarget.Type)
+type Stamp = struct {value: Int};
+
+def stamp: Fn(Count) -> Fn(Type, Option(Stamp)) -> Stamp = fn(count) {
+    fn(target, previous) { {value: count.0} }
+};
+
+export {Count, stamp};

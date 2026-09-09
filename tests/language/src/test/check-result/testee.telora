@@ -1,0 +1,40 @@
+import "std/test" as test;
+import "std/json" as json;
+import "@src/test-support" {expect};
+import "./provider" {Range, Nonnegative, Bounded, Stopped, Aborting, invalid_min};
+
+export def successful_candidate = test.should_ok(fn() {
+    let value: Range = {min: 2, max: 9};
+    expect(value.min == 2 && value.max == 9
+        && Nonnegative(3).0 == 3 && Bounded(10).0 == 10)
+});
+export def first_helper = test.should_fail_with(fn() {
+    let value: Range = {min: invalid_min, max: 11};
+    value
+}, "nonnegative required");
+export def second_helper = test.should_fail_with(fn() {
+    let value: Range = {min: 1, max: 11};
+    value
+}, "maximum exceeded");
+export def final_rule = test.should_fail_with(fn() {
+    let value: Range = {min: 4, max: 3};
+    value
+}, "invalid range");
+export def short_circuit = test.should_fail_with(fn() { Stopped(1) }, "first rejection");
+export def never_tail = test.should_fail_with(fn() {
+    Aborting(1)
+}, "checker aborted after successful helper");
+export def codec_success = test.should_ok(fn() {
+    expect(match json.decode(Range.type, "{\"min\":2,\"max\":9}") {
+        Ok(value) => value.min == 2 && value.max == 9,
+        Err(_) => False,
+    })
+});
+export def codec_rejection = test.should_ok(fn() {
+    expect(match json.decode(Range.type, "{\"min\":-7,\"max\":11}") {
+        Ok(_) => False, Err(_) => True,
+    })
+});
+export def codec_short_circuit = test.should_ok(fn() {
+    expect(match json.decode(Stopped.type, "1") { Ok(_) => False, Err(_) => True })
+});

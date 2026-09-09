@@ -1,0 +1,6 @@
+import "../check-result-tool-stage/provider" {Count, stamp};
+
+@stamp(Count(0))
+type Item = struct {value: Int};
+
+export {Item};

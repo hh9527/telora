@@ -2,7 +2,7 @@ import "std/json" as json;
 
 @check(fn(value) {
     let child = Loop(value + 1);
-    if child.0 > 0 { None } else { None }
+    if child.0 > 0 { Ok(()) } else { Ok(()) }
 })
 type Loop = struct(Int);
 

@@ -437,6 +437,10 @@ impl<'a> GenericInference<'a> {
                     self.check(error, &boundary_error)?;
                 }
                 match resolved {
+                    // A nonreturning tail does not erase earlier Err returns from `?`.
+                    TypeDescriptor::Never => {
+                        Ok(result_descriptor(TypeDescriptor::Never, boundary_error))
+                    }
                     TypeDescriptor::Inference(_) | TypeDescriptor::PendingAlternatives(_) => {
                         let success = self.fresh_variable();
                         let target = result_descriptor(success, boundary_error);

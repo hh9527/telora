@@ -1,4 +1,4 @@
-@check(fn(value) { None })
-@check(fn(value) { None })
+@check(fn(value) { Ok(()) })
+@check(fn(value) { Ok(()) })
 type Positive = struct(Int);
 export {Positive};

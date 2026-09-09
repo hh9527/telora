@@ -1,6 +1,6 @@
 import "std/value" {Value};
 @check(fn(value) {
-    if value.value >= 0 { None } else { Some(blame!("negative value", value.value)) }
+    if value.value >= 0 { Ok(()) } else { Err(blame!("negative value", value.value)) }
 })
 type Box = struct {value: Int};
 def run: Fn(Int, Int) -> Int = fn(n, total) {

@@ -1,4 +1,4 @@
 export type Choice = enum {
-    @check(fn(value) { None })
+    @check(fn(value) { Ok(()) })
     Empty,
 };

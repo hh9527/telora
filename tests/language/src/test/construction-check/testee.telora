@@ -2,25 +2,25 @@ import "std/test" as test;
 import "@src/test-support" {expect};
 
 @check(fn(value) {
-    if value.min <= value.max { None } else { Some(blame!("invalid range", value.min, value.max)) }
+    if value.min <= value.max { Ok(()) } else { Err(blame!("invalid range", value.min, value.max)) }
 })
 type Range = struct {min: Int, max: Int};
 
 @check(fn(value) {
-    if value > 0 { None } else { Some(blame!("positive required", value)) }
+    if value > 0 { Ok(()) } else { Err(blame!("positive required", value)) }
 })
 type Positive = struct(Int);
 
 type Choice = enum {
     @check(fn(value) {
-        if value > 0 { None } else { Some(blame!("positive variant", value)) }
+        if value > 0 { Ok(()) } else { Err(blame!("positive variant", value)) }
     })
     Positive(Int),
     Empty,
 };
 
 @check(fn(value) {
-    if value.count >= 0 { None } else { Some(blame!("negative count", value.count)) }
+    if value.count >= 0 { Ok(()) } else { Err(blame!("negative count", value.count)) }
 })
 type Box(T) = struct {value: T, count: Int};
 type Input = struct {min: Int, max: Int, other: String};

@@ -195,9 +195,10 @@ fn evaluate_construction_checks(
                 }
                 let contract = TypeDescriptor::Function {
                     parameters: vec![input],
-                    result: Box::new(option_descriptor(TypeDescriptor::Opaque(
-                        crate::core::blame_native_type(),
-                    ))),
+                    result: Box::new(result_descriptor(
+                        TypeDescriptor::Tuple(Vec::new()),
+                        TypeDescriptor::Opaque(crate::core::blame_native_type()),
+                    )),
                 };
                 let expression = &decorator.value.arguments[0];
                 let evidence = match infer_tool_expression_evidence(

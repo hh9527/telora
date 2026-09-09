@@ -21,7 +21,11 @@ impl NativeContinuation for ConstructionContinuation {
         let pc = self.call_pc;
         propagate_data_failures(&[value], &view, function, pc)?;
         let result = ValueRef { value, view };
-        if result.as_atom().is_some_and(|tag| tag == "None") {
+        if let Some((tag, payload)) = result.tagged_parts()
+            && tag.as_atom().is_some_and(|tag| tag == "Ok")
+            && matches!(payload.runtime().value(), DecodedValue::Tuple(_))
+            && payload.sequence_len() == Some(0)
+        {
             if self.return_result {
                 return finish_codec_payload(BuiltinAtom::Ok, CodecNode::Existing(self.candidate),
                     self.candidate, self.return_target, function, pc, current, background, account);
@@ -29,7 +33,7 @@ impl NativeContinuation for ConstructionContinuation {
             return Ok(VmAction::Return { value: self.candidate, return_target: self.return_target });
         }
         if let Some((tag, blame)) = result.tagged_parts()
-            && tag.as_atom().is_some_and(|tag| tag == "Some")
+            && tag.as_atom().is_some_and(|tag| tag == "Err")
             && let DecodedValue::Opaque(handle) = blame.runtime().value()
             && let Ok(Object::Opaque(blame_value)) = view.object(handle)
             && let Some(message) = blame_value.downcast_ref::<String>(&crate::core::blame_native_type())
@@ -45,7 +49,7 @@ impl NativeContinuation for ConstructionContinuation {
             );
             return Err(failure);
         }
-        Err(runtime_type_error("Option(BlameError)", &value, &view, function, pc))
+        Err(runtime_type_error("Result((), BlameError)", &value, &view, function, pc))
     }
 
     fn resume_failed(

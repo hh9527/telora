@@ -688,7 +688,8 @@ Array，`result` 是单个 TypeMetadata。`std/type-desc` 和 `std/dyn` 对函�
 
 `@check(func)` 为 struct、newtype 或带载荷 enum variant 定义构造校验。
 具名字段 struct 的校验参数为 `Unchecked(T)`，newtype 与 variant 的校验参数
-为载荷类型；返回 `Option(BlameError)`，None 接受原候选值，Some 拒绝构造。
+为载荷类型；返回 `Result((), BlameError)`，`Ok(())` 接受原候选值，`Err(error)` 拒绝构造。
+校验器可用 `?` 组合 Result 校验；不返回替换值，也不隐式将 `()` 提升为 `Ok(())`。
 无载荷 variant 直接成立，不接受校验装饰器。没有校验的候选值直接完成构造。
 
 普通构造的拒绝产生失败诊断，codec 解码的拒绝返回 `Err(BlameError)`。

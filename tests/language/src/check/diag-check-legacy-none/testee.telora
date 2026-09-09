@@ -1,0 +1,3 @@
+@check(fn(value) { None })
+type Legacy = struct(Int);
+export {Legacy};

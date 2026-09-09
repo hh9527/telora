@@ -1,6 +1,6 @@
 # RFC 0278: Result-Based Construction Checks
 
-- Status: Accepted; implementation pending.
+- Status: Implemented and verified.
 - Tracking: [#172](https://github.com/hh9527/telora/issues/172).
 - Supersedes: the check return protocol of [RFC 0275](0275-construction-checks-and-unchecked.md).
 - Depends on: [RFC 0277](0277-tuple-types-unit-and-type-metadata.md).
@@ -118,3 +118,58 @@ does not provide that context. Neither warnings nor ordinary Option APIs change 
   `scripts/check-source-size.sh` pass. Report any pre-existing formatting issues
   separately without unrelated formatting churn.
 - Implementation is committed and pushed before the tracking issue is closed.
+
+## Implementation and Acceptance Evidence
+
+The RFC was committed before implementation as `873a7b0`; propagation and warning
+context clarifications were committed as `f2ecd1b` before the inference fix.
+The static check contract now uses the existing Result descriptor with an empty
+Tuple success type. The shared construction continuation accepts only Ok with
+an empty Tuple payload, or Err with the canonical opaque BlameError payload.
+It still returns the original candidate to ordinary callers and wraps that
+candidate, not Unit, for codec callers. Error objects are retained unchanged.
+
+The Result propagation boundary now preserves earlier error returns when its
+tail is Never, using `Result(Never, E)`. No parser, Option protocol, property
+scheduler, environment-copying or type-identity changes were needed. Warning
+checks provide an explicit `Option(())` binding before returning `Ok(())`.
+
+| Requirement | Executable evidence |
+| --- | --- |
+| Inferred and annotated checks, Unit alias, composed helpers, short-circuiting, Never tail | `test/check-result` (9 cases) |
+| Cross-module propagated error subject location | `test/check-result-provenance` |
+| Legacy None/Some, Unit, empty/semicolon bodies, wrong Ok/Err payloads, warning tail rejected | Eight new `check/diag-check-*` fixtures |
+| Wrong input, duplicate check, invalid field and unit-variant targets | Existing `check/diag-check-*` fixtures migrated to Result |
+| Direct/generic/imported/recursive construction, merge and projection | `test/construction-check`, `test/construction-boundaries`, `test/checked-recursive-types` |
+| Codec nested/untagged rejection vs execution failure, checked casts, parsing and provenance | `test/codec-construction-check`, `test/cast-construction-check`, `test/parse-construction-check`, `test/parse-check-provenance` |
+| Actual tool-stage construction from decorator arguments | `check/check-result-tool-stage`, `check/diag-check-result-tool-stage` |
+| Forward check dependencies | `check/check-tool-dependencies` |
+| No repeated checks for completed values | `test/construction-check-once`: 1 warning for copies, 3 for a two-update chain |
+| Malformed runtime results, original candidate and error object retention | Three `vm::tests::construction_result_*` tests |
+| Result propagation with Never tails and incompatible error rejection | `types::tests::result_propagation_keeps_error_returns_before_never_tails` |
+| Recursive fuel/stack/allocation/call-depth limits | `module::tests::recursive_construction_and_codec_trials_preserve_resource_limits` |
+
+The two older `diag-check-early-construction` / `diag-check-tool-construction`
+fixtures now reject computed metadata as types under RFC 0277. They were migrated
+but are not counted as tool-stage execution evidence; the new decorator-argument
+fixtures above explicitly cover actual execution.
+
+Verification on 2026-09-09:
+
+- `cargo test --workspace`: passed, including 322 core tests, 41 CLI tests,
+  all 389 language fixture groups, and remaining workspace/doc tests.
+  Log: `/tmp/rfc0278-workspace-complete.log`.
+- `cargo build --release`: passed. Log: `/tmp/rfc0278-release.log`.
+  Release smoke tests passed for `check-result/testee` (9 cases) and
+  `codec-construction-check/testee` (11 cases), using the isolated fixture copy
+  `/tmp/telora-rfc0278-wvfoIT`.
+- `git diff --check`, staged diff checking and `scripts/check-source-size.sh`:
+  passed. The size script still reports three existing review-only large files.
+- New Rust test files and the static construction contract pass targeted
+  rustfmt checks. Repository-wide `cargo fmt --all --check` still reports
+  existing formatting differences, including untouched `source_arg.rs`,
+  `ast.rs` and `bytecode.rs`; unrelated formatting was left unchanged.
+- Active guide/design text and the runtime performance fixture are migrated.
+  Remaining legacy None/Some check examples in active fixtures are intentional
+  negative tests. Historical RFC 0275 retains its original text with an explicit
+  supersession notice. No tree-sitter submodule change is required.
