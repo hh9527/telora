@@ -15,6 +15,21 @@ pub struct CompiledEntry {
     pub native_links: Vec<NativeLink>,
     pub types: crate::type_image::TypeImage,
     pub eval_call: Option<EvalCall>,
+    pub data_links: Vec<DataLink>,
+}
+
+#[derive(Debug)]
+pub struct DataLink {
+    pub constant: usize,
+    pub module: ModuleId,
+    pub name: String,
+    pub ty: TypeId,
+    pub location: crate::source::Location,
+}
+impl DataLink {
+    pub(crate) fn key(&self) -> String {
+        format!("\0mir-data:{}", self.module.index())
+    }
 }
 
 pub struct EvalCall {
@@ -143,6 +158,7 @@ pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, 
         native_links: emitter.native_links,
         types,
         eval_call: None,
+        data_links: emitter.data_links,
     })
 }
 
@@ -151,15 +167,15 @@ fn runtime_children(mir: &Mir, node: HirId) -> impl Iterator<Item = HirId> + '_ 
         .children
         .iter()
         .filter(move |edge| {
-            // A native declaration's Value edge stores its signature, not an
-            // initializer. Its executable value is supplied by ABI linking.
+            // External declarations store signatures on their Value edges.
+            // Their executable values are supplied by linking.
             !matches!(
                 mir.member_selections[node.index()],
                 Some(MemberSelection::EnumVariant { .. } | MemberSelection::Boolean(_))
             ) && !matches!(
                 mir.hir[node.index()].kind,
                 HirKind::Binding {
-                    kind: BindingKind::Native,
+                    kind: BindingKind::Native | BindingKind::Decl,
                     ..
                 }
             ) && !matches!(
@@ -233,6 +249,7 @@ struct Emitter<'a> {
     locals: Vec<(SymbolId, R)>,
     next_label: u32,
     native_links: Vec<NativeLink>,
+    data_links: Vec<DataLink>,
 }
 
 impl<'a> Emitter<'a> {
@@ -251,6 +268,7 @@ impl<'a> Emitter<'a> {
             locals: vec![],
             next_label: 0,
             native_links: vec![],
+            data_links: vec![],
         }
     }
     fn error(&self, node: HirId, message: impl Into<String>) -> Diagnostic {
@@ -325,6 +343,27 @@ impl<'a> Emitter<'a> {
             }
         }
         let result = match &self.mir.hir[node.index()].kind {
+            HirKind::Binding {
+                kind: BindingKind::Decl,
+                ..
+            } if matches!(
+                self.mir.modules[self.mir.hir[node.index()].module.index()].state,
+                ModuleState::Data { .. }
+            ) =>
+            {
+                let module = self.mir.hir[node.index()].module;
+                let symbol = self.mir.hir_symbols[node.index()].expect("data declaration");
+                self.data_links.push(DataLink {
+                    constant: self.function.constants.len(),
+                    module,
+                    name: self.mir.modules[module.index()].name.clone(),
+                    ty: self.ty(node)?,
+                    location: self.mir.hir[node.index()].location,
+                });
+                let value = self.constant(node, Constant::Placeholder);
+                self.locals.push((symbol, value));
+                value
+            }
             HirKind::Field
                 if matches!(
                     self.mir.member_selections[node.index()],
@@ -911,7 +950,12 @@ mod tests {
         let linked = crate::execution_link::link_entry(artifact).unwrap();
         drop(mir);
         let result = crate::Vm::new()
-            .execute_linked(linked, crate::Quota::with_fuel(10000))
+            .execute_linked(
+                linked,
+                crate::Quota::with_fuel(10000),
+                crate::DataLimits::default(),
+                &mut crate::SourceDatabase::default(),
+            )
             .unwrap();
         assert_eq!(result.value().as_int(), Some(42));
         assert_eq!(result.result_type(), result_type);
@@ -957,7 +1001,12 @@ mod tests {
             assert_eq!(mir.dump(), before);
             let linked = crate::execution_link::link_entry(artifact).unwrap();
             let result = crate::Vm::new()
-                .execute_linked(linked, crate::Quota::with_fuel(10000))
+                .execute_linked(
+                    linked,
+                    crate::Quota::with_fuel(10000),
+                    crate::DataLimits::default(),
+                &mut crate::SourceDatabase::default(),
+                )
                 .unwrap();
             assert_eq!(result.value().as_int(), Some(42));
         }
@@ -982,7 +1031,12 @@ mod tests {
         let result_type = artifact.result_type;
         let linked = crate::execution_link::link_entry(artifact).unwrap();
         let result = crate::Vm::new()
-            .execute_linked(linked, crate::Quota::with_fuel(10000))
+            .execute_linked(
+                linked,
+                crate::Quota::with_fuel(10000),
+                crate::DataLimits::default(),
+                &mut crate::SourceDatabase::default(),
+            )
             .unwrap();
         assert_eq!(result.to_json(result_type).unwrap(), "42");
     }
@@ -1002,7 +1056,12 @@ mod tests {
         let linked = crate::execution_link::link_entry(artifact).unwrap();
         drop(mir);
         let result = crate::Vm::new()
-            .execute_linked(linked, crate::Quota::with_fuel(10000))
+            .execute_linked(
+                linked,
+                crate::Quota::with_fuel(10000),
+                crate::DataLimits::default(),
+                &mut crate::SourceDatabase::default(),
+            )
             .unwrap();
         let missing = result.value().sequence_get(0).unwrap();
         let number = result.value().sequence_get(1).unwrap();

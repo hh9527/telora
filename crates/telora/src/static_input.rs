@@ -35,6 +35,36 @@ fn private(name: &str) -> bool {
 }
 
 impl Inventory {
+    /// Called by the execution linker after static solving and code generation.
+    pub fn read_data(
+        &self,
+        link: &telora_core::codegen::DataLink,
+        max_bytes: usize,
+    ) -> Result<telora_core::EvalSource, String> {
+        let entry = self
+            .entries
+            .get(&link.name)
+            .ok_or("unknown data module identity")?;
+        let Source::File(path) = &entry.source else {
+            return Err("data module has no file source".into());
+        };
+        let format = match entry.format {
+            ModuleFormat::Json => telora_core::SystemDataFormat::Json,
+            ModuleFormat::Yaml => telora_core::SystemDataFormat::Yaml,
+            ModuleFormat::Toml => telora_core::SystemDataFormat::Toml,
+            ModuleFormat::Telora => {
+                return Err("source module cannot fill a data relocation".into());
+            }
+        };
+        let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = crate::source_arg::read_limited(file, max_bytes, &path.display().to_string())?;
+        let text = String::from_utf8(bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(telora_core::EvalSource {
+            source_name: path.display().to_string(),
+            format,
+            text,
+        })
+    }
     pub fn new(context: &Path, builtin_only: bool) -> Result<Self, String> {
         let workspace = if builtin_only {
             None

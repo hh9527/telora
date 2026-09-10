@@ -14,10 +14,11 @@ impl Vm {
             .ok_or("missing statically compiled entry.Eval adapter")?;
         let mut main = Heap::main();
         main.solved_types = Some(entry.types);
-        let main = Arc::new(main);
         let mut account = QuotaAccount::new(quota).with_sources(sources);
+        let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
+        let main = Arc::new(main);
         let mut world = self
-            .execute_in_work(&main, &HashMap::new(), &entry.bytecode, &[], &mut account)
+            .execute_in_work(&main, &externals, &entry.bytecode, &[], &mut account)
             .map_err(|error| error.with_sources(sources).to_string())?;
         let root = ValueRef::work(world.root, &world.heap, &main);
         let config = root
@@ -51,41 +52,15 @@ impl Vm {
             .collect::<Result<Vec<_>, _>>()?;
         let mut input_values = vec![];
         for (name, source) in context.sources {
-            if source.text.len() > limits.file_size {
-                return Err("eval source exceeds file_size limit".into());
-            }
-            let id = sources.add(source.source_name, &source.text);
-            let plan = match source.format {
-                crate::SystemDataFormat::Json => crate::json::validate_json_registered(sources, id),
-                crate::SystemDataFormat::Yaml => crate::yaml::validate_yaml_registered(sources, id),
-                crate::SystemDataFormat::Toml => crate::toml::validate_toml_registered(sources, id),
-            }
-            .map_err(|diagnostics| {
-                diagnostics
-                    .iter()
-                    .map(|d| sources.render(d))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
-            let stats = plan
-                .enforce_limits(limits, source.text.len())
-                .map_err(|e| e.to_string())?;
-            // Account for the tagged Value nodes, containers and their edges.
-            let bytes = logical_value_bytes(stats.nodes.saturating_mul(4))
-                .map_err(|e| e.message)?
-                .saturating_add(stats.payloads_bytes as u64);
-            account
-                .charge_allocation(bytes)
-                .map_err(|_| "eval source allocation quota exceeded")?;
-            let value = crate::json::materialize_data_plan(
-                &plan,
+            let value = solved_data_value(
                 &mut world.heap,
-                Some(crate::json::SemanticDataTarget {
-                    background: Some(&main),
-                    type_id: crate::TypeId::solved(call.result_type),
-                }),
-            )
-            .value;
+                Some(&main),
+                call.result_type,
+                source,
+                limits,
+                sources,
+                &mut account,
+            )?;
             input_values.push((name, value));
         }
         account.register_sources(sources);
@@ -136,6 +111,67 @@ impl Vm {
             result_type: call.result_type,
         })
     }
+}
+
+fn solved_module_data(
+    main: &mut Heap,
+    data: Vec<(crate::codegen::DataLink, crate::EvalSource)>,
+    limits: crate::DataLimits,
+    sources: &mut SourceDatabase,
+    account: &mut QuotaAccount,
+) -> Result<HashMap<String, Val>, String> {
+    let mut externals = HashMap::new();
+    for (link, source) in data {
+        let value = solved_data_value(main, None, link.ty, source, limits, sources, account)?;
+        externals.insert(link.key(), value);
+    }
+    Ok(externals)
+}
+
+fn solved_data_value(
+    heap: &mut Heap,
+    background: Option<&Heap>,
+    ty: crate::mir::TypeId,
+    source: crate::EvalSource,
+    limits: crate::DataLimits,
+    sources: &mut SourceDatabase,
+    account: &mut QuotaAccount,
+) -> Result<Val, String> {
+    if source.text.len() > limits.file_size {
+        return Err("data source exceeds file_size limit".into());
+    }
+    let id = sources.add(source.source_name, &source.text);
+    let plan = match source.format {
+        crate::SystemDataFormat::Json => crate::json::validate_json_registered(sources, id),
+        crate::SystemDataFormat::Yaml => crate::yaml::validate_yaml_registered(sources, id),
+        crate::SystemDataFormat::Toml => crate::toml::validate_toml_registered(sources, id),
+    }
+    .map_err(|diagnostics| {
+        diagnostics
+            .iter()
+            .map(|d| sources.render(d))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let stats = plan
+        .enforce_limits(limits, source.text.len())
+        .map_err(|e| e.to_string())?;
+    let bytes = logical_value_bytes(stats.nodes.saturating_mul(4))
+        .map_err(|e| e.message)?
+        .saturating_add(stats.payloads_bytes as u64);
+    account
+        .charge_allocation(bytes)
+        .map_err(|_| "data source allocation quota exceeded")?;
+    account.register_sources(sources);
+    Ok(crate::json::materialize_data_plan(
+        &plan,
+        heap,
+        Some(crate::json::SemanticDataTarget {
+            background,
+            type_id: crate::TypeId::solved(ty),
+        }),
+    )
+    .value)
 }
 
 fn solved_eval_names(config: ValueRef<'_>, field: &str) -> Result<Vec<String>, String> {

@@ -1,4 +1,82 @@
 #[test]
+fn static_mir_eval_imports_data_after_static_solving() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        import "std/value" { Value };
+        import "./input.json" { data as j };
+        import "./input.json" { data as again };
+        import "./input.yaml" { data as y };
+        import "./input.toml" { data as t };
+        export def answer = Value.Object({ "j": j, "again": again, "y": y, "t": t });
+    "#,
+    )
+    .unwrap();
+    fs::write(cwd.join("src/input.json"), r#"{"x":[1,true,null]}"#).unwrap();
+    fs::write(cwd.join("src/input.yaml"), "x: 2\n").unwrap();
+    fs::write(cwd.join("src/input.toml"), "x = 3\n").unwrap();
+    let output = telora(&cwd)
+        .args(["eval", "@src/main:answer"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!({
+            "j": {"x":[1,true,null]}, "again": {"x":[1,true,null]}, "y":{"x":2}, "t":{"x":3}
+        })
+    );
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        import "std/entry" { main };
+        import "./input.json" { data };
+        export def evaluate = do {
+            let initialized = data;
+            main({ sources: [], envs: [], args: False }, fn(ctx) { initialized })
+        };
+    "#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["eval-with", "@src/main:evaluate"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!({"x":[1,true,null]})
+    );
+    fs::write(cwd.join("src/input.json"), "invalid json").unwrap();
+    let output = telora(&cwd)
+        .args(["check", "--only-types", "@src/main"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = telora(&cwd)
+        .args(["eval-with", "@src/main:evaluate"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("input.json"));
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_eval_with_injects_declared_inputs_and_rejects_config_mismatches() {
     let cwd = fixture();
     fs::write(cwd.join("src/main.telora"), r#"

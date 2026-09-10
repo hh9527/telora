@@ -134,16 +134,24 @@ fn prepare_solved(
         telora_core::codegen::compile(sealed, symbol)
     }
     .map_err(&render)?;
-    let linked = telora_core::execution_link::link_entry(artifact).map_err(&render)?;
+    let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| {
+        inventory.read_data(link, crate::engine_config().data_limits.file_size)
+    })
+    .map_err(&render)?;
     Ok((linked, value_type, mir.sources))
 }
 
 pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> {
-    let (linked, value_type, _) = prepare_solved(context, &arguments.selector, false)?;
+    let (linked, value_type, mut sources) = prepare_solved(context, &arguments.selector, false)?;
     let mut vm =
         telora_core::Vm::new().with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink));
     let result = vm
-        .execute_linked(linked, crate::engine_config().session_quota)
+        .execute_linked(
+            linked,
+            crate::engine_config().session_quota,
+            crate::engine_config().data_limits,
+            &mut sources,
+        )
         .map_err(|error| error.to_string())?;
     let output = result.to_json(value_type)?;
     println!("{output}");

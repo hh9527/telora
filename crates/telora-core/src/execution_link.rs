@@ -14,15 +14,40 @@ pub struct LinkedEntry {
     pub(crate) types: crate::type_image::TypeImage,
     pub(crate) result_type: crate::mir::TypeId,
     pub(crate) eval_call: Option<crate::codegen::EvalCall>,
+    pub(crate) data: Vec<(crate::codegen::DataLink, crate::EvalSource)>,
 }
 
 pub fn link_entry(artifact: CompiledEntry) -> Result<LinkedEntry, Vec<Diagnostic>> {
-    let bytecode = link_builtins(&artifact)?;
+    link_entry_with_data(artifact, |_| {
+        Err("data module source provider is missing".into())
+    })
+}
+
+pub fn link_entry_with_data(
+    artifact: CompiledEntry,
+    mut read: impl FnMut(&crate::codegen::DataLink) -> Result<crate::EvalSource, String>,
+) -> Result<LinkedEntry, Vec<Diagnostic>> {
+    let mut bytecode = link_builtins(&artifact)?;
+    let mut data = vec![];
+    let mut diagnostics = vec![];
+    for link in artifact.data_links {
+        match read(&link) {
+            Ok(source) => {
+                bytecode.bind_external_value(link.constant, link.key());
+                data.push((link, source));
+            }
+            Err(message) => diagnostics.push(Diagnostic::error(message, link.location)),
+        }
+    }
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
     Ok(LinkedEntry {
         bytecode,
         types: artifact.types,
         result_type: artifact.result_type,
         eval_call: artifact.eval_call,
+        data,
     })
 }
 

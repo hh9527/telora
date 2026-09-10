@@ -91,7 +91,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let linked = telora_core::execution_link::link_entry(artifact)
             .map_err(|diagnostics| format!("link: {diagnostics:?}"))?;
         let mut vm = telora_core::Vm::new();
-        let result = vm.execute_linked(linked, telora_core::Quota::with_fuel(1_000_000))?;
+        let result = vm.execute_linked(
+            linked,
+            telora_core::Quota::with_fuel(1_000_000),
+            telora_core::DataLimits::default(),
+            &mut mir.sources,
+        )?;
         println!("{}", result.value());
     } else {
         print!("{}", mir.dump());

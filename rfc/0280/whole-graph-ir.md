@@ -5,6 +5,23 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Module data injection before initialization (2026-09-10)
+
+Codegen emits data relocations using the resolved module identity and solved
+Value TypeId. The execution linker reads the selected data sources after static
+solving and codegen. VM initialization installs the type image and materializes
+JSON/YAML/TOML into Main before running any top-level bytecode. Both eval and
+eval-with use this ordering, so even construction of an entry wrapper may depend
+on imported data. Host-provided eval-with sources remain separate inputs, checked
+against the initialized entry config before invoking its callback.
+
+Data imports and host sources share validation, limits, source tracking and
+allocation accounting. No runtime type solving or old Engine path is involved.
+Focused CLI tests cover the three formats, repeated import aliases, initialization
+depending on imported data, and malformed data accepted by only-types but rejected
+by execution without partial output. Ordinary check, properties and run/serve
+remain pending; this is assembly progress, not a performance measurement.
+
 ### eval-with host input and callback assembly (2026-09-10)
 
 Both eval commands now share the new static preparation path. eval-with checks

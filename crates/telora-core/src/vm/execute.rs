@@ -1,16 +1,21 @@
 impl Vm {
     /// Import the immutable type arena into Main before executing any bytecode.
-    /// This entry does not parse, resolve, infer, or materialize descriptors.
+    /// Data imports are materialized with their statically solved type IDs.
     pub fn execute_linked(
         &mut self,
         entry: crate::execution_link::LinkedEntry,
         quota: Quota,
-    ) -> Result<crate::execution_link::SolvedExecution, RuntimeError> {
+        limits: crate::DataLimits,
+        sources: &mut SourceDatabase,
+    ) -> Result<crate::execution_link::SolvedExecution, String> {
         let mut main = Heap::main();
         main.solved_types = Some(entry.types);
+        let mut account = QuotaAccount::new(quota).with_sources(sources);
+        let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
         let main = Arc::new(main);
-        let mut account = QuotaAccount::new(quota);
-        let work = self.execute_in_work(&main, &HashMap::new(), &entry.bytecode, &[], &mut account)?;
+        let work = self
+            .execute_in_work(&main, &externals, &entry.bytecode, &[], &mut account)
+            .map_err(|error| error.with_sources(sources).to_string())?;
         Ok(crate::execution_link::SolvedExecution {
             world: ExecutionWorld::new(main, work),
             result_type: entry.result_type,
