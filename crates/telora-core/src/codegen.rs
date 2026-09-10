@@ -1074,6 +1074,21 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn solved_parsers_and_diagnostics_use_closed_types() {
+        for source in [
+            "import \"std/json\" as json; import \"std/value\" {Value}; export def answer = match json.parse(\"42\") { Ok(Value.Int(n)) => n, _ => 0 };",
+            "import \"std/yaml\" as yaml; import \"std/value\" {Value}; export def answer = match yaml.parse(\"42\") { Ok(Value.Int(n)) => n, _ => 0 };",
+            "import \"std/toml\" as toml; import \"std/dict\" as dict; import \"std/value\" {Value}; export def answer = match toml.parse(\"n = 42\") { Ok(Value.Object(fields)) => match dict.get(fields, \"n\") { Some(Value.Int(n)) => n, _ => 0 }, _ => 0 };",
+            "import \"std/json\" as json; export def answer = match json.parse(\"{\") { Err(_) => 42, Ok(_) => 0 };",
+            "import \"std/json\" as json; import \"std/_rt\" as rt; import \"std/array\" as array; export def answer = match rt.with_diagnostics(fn(text: String) { json.parse(text).unwrap!() })(\"{\") { Err(errors) => if array.length(errors) == 1 { 42 } else { 0 }, Ok(_) => 0 };",
+            "import \"std/_rt\" as rt; export def answer = match rt.with_diagnostics(fn(n: Int) { fail!(\"boom\") })(1) { Err(errors) => if errors[0].message == \"boom\" { 42 } else { 0 }, _ => 0 };",
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}")), entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            assert_eq!(execute(artifact).unwrap_or_else(|d| panic!("{source}\n{d}")).value().as_int(), Some(42), "{source}");
+        }
+    }
+    #[test]
     fn sealed_run_policy_configures_and_initializes_in_one_graph() {
         let mir = graph(
             r#"

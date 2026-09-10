@@ -589,12 +589,16 @@ fn materialize_codec_node(node: CodecNode, current: &mut Heap, background: &Heap
             loc,
         } => {
             let payload = materialize_codec_node(*payload, current, background);
-            let type_id = HeapView {
-                current,
-                background: Some(background),
-            }
-            .declared_type_id(owner)
-            .expect("codec declared owner was decoded as a concrete declared Type");
+            let type_id = if background.solved_types.is_some() {
+                let DecodedValue::SolvedType(id) = owner.value() else {
+                    unreachable!("solved diagnostic metadata was validated before allocation")
+                };
+                crate::TypeId::solved(id)
+            } else {
+                HeapView { current, background: Some(background) }
+                    .declared_type_id(owner)
+                    .expect("codec declared owner was decoded as a concrete declared Type")
+            };
             payload.with_type_id(type_id).with_loc(loc)
         }
         CodecNode::Atom(atom, loc) => Val::new(DecodedValue::BuiltinAtom(atom), loc),

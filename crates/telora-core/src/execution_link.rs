@@ -92,7 +92,35 @@ pub fn link_with(
     for link in &artifact.native_links {
         match native(link) {
             Some(function) if function.arity() == link.arity => {
-                replacements.insert(link.constant, Constant::Native(function));
+                let constant = if let Some(local) = function.native_type_local() {
+                    let native = link.module.and_then(|module| {
+                        artifact
+                            .types
+                            .native_definitions
+                            .iter()
+                            .find(|(id, _)| id.module == module && id.slot == local)
+                    });
+                    let Some((id, name)) = native else {
+                        diagnostics.push(Diagnostic::error(
+                            "native function references an unadmitted type slot",
+                            link.location,
+                        ));
+                        continue;
+                    };
+                    Constant::NativeWithType(
+                        function,
+                        crate::NativeType::bind(
+                            crate::value::NativeTypeId {
+                                module: crate::value::NativeModuleId(id.module),
+                                local: id.slot,
+                            },
+                            name.clone(),
+                        ),
+                    )
+                } else {
+                    Constant::Native(function)
+                };
+                replacements.insert(link.constant, constant);
             }
             Some(_) => diagnostics.push(Diagnostic::error(
                 "native ABI arity does not match the solved signature",

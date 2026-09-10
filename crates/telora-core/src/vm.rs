@@ -47,6 +47,7 @@ include!("vm/codec-schema.rs");
 include!("vm/json.rs");
 include!("vm/json-writer.rs");
 include!("vm/solved-json.rs");
+include!("vm/solved-parse.rs");
 include!("vm/solved-eval.rs");
 include!("vm/demand.rs");
 include!("vm/solved-check.rs");

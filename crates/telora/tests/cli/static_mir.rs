@@ -756,3 +756,34 @@ fn static_mir_serve_initializes_and_handles_eof_in_the_new_session() {
     assert!(output.stdout.is_empty());
     fs::remove_dir_all(cwd).unwrap();
 }
+#[test]
+fn static_mir_serve_collects_a_failed_request_and_continues() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/entry" as entry;
+        import "std/ees" as ees;
+        import "std/actor" as actor;
+        import "std/value" {Value};
+        export def main = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none, fn(ctx) {
+            (42, fn(state, event) {
+                match event {
+                    actor.Event.Request(request) => if request.id == "request-0" {
+                        fail!("rejected")
+                    } else { (state, [actor.reply(request.id, Value.Int(state))]) },
+                    _ => fail!("unexpected EES reply"),
+                }
+            })
+        });
+    "#).unwrap();
+    let mut child = telora(&cwd).args(["serve", "@src/main:main", "--bind", "stdio://"])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(b"null\nnull\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let replies = jsonl(&output.stdout);
+    assert_eq!(replies.len(), 2);
+    assert_eq!(replies[0]["error"], true);
+    assert_eq!(replies[0]["diagnostics"][0]["message"], "rejected");
+    assert_eq!(replies[1]["ok"], 42);
+    fs::remove_dir_all(cwd).unwrap();
+}

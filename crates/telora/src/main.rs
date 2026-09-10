@@ -10,9 +10,8 @@ use std::sync::Arc;
 use telora_core::lir::RegisterId;
 use telora_core::{
     CallContext, DataLimits, DebugEvent, DebugSink, EesCall, EesReply, Engine, EngineConfig,
-    Location, NativeError, NativeFunction, PositionEncoding, Quota, RunHost,
+    NativeError, NativeFunction, Quota, RunHost,
     RunHostFuture, RunTermination, SystemCaps, SystemDataSource, SystemEvent, SystemStdin,
-    WorkspaceSnapshot,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{mpsc, watch};
@@ -909,52 +908,6 @@ fn kind_name(kind: ShowKind) -> &'static str {
         ShowKind::Def => "def",
         ShowKind::Import => "import",
     }
-}
-fn location_json(workspace: &WorkspaceSnapshot, location: Location) -> serde_json::Value {
-    let source = workspace.sources().get(location.source);
-    let start = source
-        .text()
-        .position(location.start, PositionEncoding::Utf8)
-        .expect("semantic locations are valid UTF-8 source boundaries");
-    let end = source
-        .text()
-        .position(location.end, PositionEncoding::Utf8)
-        .expect("semantic locations are valid UTF-8 source boundaries");
-    json!({"line":start.line + 1,"column":start.character,"end_line":end.line + 1,"end_column":end.character})
-}
-fn diagnostic_record(
-    schema: &str,
-    module: &str,
-    workspace: &WorkspaceSnapshot,
-    diagnostic: &telora_core::source::Diagnostic,
-) -> serde_json::Value {
-    let severity = match diagnostic.severity {
-        telora_core::source::Severity::Error => "error",
-        telora_core::source::Severity::Warning => "warning",
-        telora_core::source::Severity::Info => "info",
-    };
-    let labels = diagnostic
-        .labels
-        .iter()
-        .map(|label| {
-            let source = workspace.sources().get(label.location.source);
-            json!({
-                "source": source.name.as_ref(),
-                "location": location_json(workspace, label.location),
-                "message": label.message,
-                "primary": label.primary,
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "schema": schema,
-        "module": module,
-        "record": "diagnostic",
-        "severity": severity,
-        "message": diagnostic.message,
-        "labels": labels,
-        "notes": diagnostic.notes,
-    })
 }
 fn emit(record: serde_json::Value) -> Result<(), String> {
     println!(

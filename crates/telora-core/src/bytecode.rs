@@ -23,6 +23,7 @@ pub enum Constant {
     Bytes(Arc<[u8]>),
     Atom(Atom),
     Native(NativeFunction),
+    NativeWithType(NativeFunction, crate::NativeType),
 }
 
 #[derive(Clone, Debug)]

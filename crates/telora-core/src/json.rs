@@ -159,6 +159,16 @@ pub(crate) struct ValidatedDataPlan {
 }
 
 impl ValidatedDataPlan {
+    /// Runtime string parsing attributes values to the input expression, not
+    /// to temporary parser SourceIds which are outside the session database.
+    pub(crate) fn set_location(&mut self, location: Location) {
+        for node in &mut self.nodes {
+            node.location = location;
+            if let DataPlanNodeKind::Object(fields) = &mut node.kind {
+                for field in fields.values_mut() { field.key_location = location; }
+            }
+        }
+    }
     pub(crate) fn scalar(&mut self, value: DataScalar, location: Location) -> DataNodeId {
         self.push(DataPlanNodeKind::Scalar(value), location)
     }

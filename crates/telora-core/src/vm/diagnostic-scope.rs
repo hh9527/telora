@@ -189,6 +189,11 @@ fn diagnostic_snapshot(
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<Val, RuntimeError> {
+    if let Some(image) = &background.solved_types {
+        for owner in [types.diagnostic, types.severity, types.label, types.range] {
+            solved_metadata_id(owner, image, function, pc)?;
+        }
+    }
     let declared = |owner, payload| CodecNode::Declared {
         owner,
         payload: Box::new(payload),

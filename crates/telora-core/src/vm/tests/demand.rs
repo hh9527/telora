@@ -301,3 +301,33 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
         assert!(failure.error.to_string().contains("proven presence"));
     }
 }
+#[test]
+fn solved_parse_blame_retains_the_original_input_handle_and_location() {
+    let mir = crate::codegen::tests::graph("import \"std/json\" as json; def input = \"{\"; export def answer = (input, json.parse(input));", "");
+    let original_location = mir.hir.iter().find(|node| matches!(&node.kind, crate::mir::HirKind::String(text) if text == "{")).unwrap().location;
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let result = Vm::new().execute_linked(crate::execution_link::link_entry(artifact).unwrap(), Quota::with_fuel(10000), crate::DataLimits::default(), &mut SourceDatabase::default()).unwrap();
+    let view = HeapView { current: &result.world.work.heap, background: Some(&result.world.main) };
+    let root = result.world.value();
+    let input = root.sequence_get(0).unwrap().runtime();
+    let blame = root.sequence_get(1).unwrap().tagged_parts().unwrap().1.runtime();
+    let DecodedValue::Opaque(handle) = blame.value() else { panic!("BlameError") };
+    let Object::Opaque(blame) = view.object(handle).unwrap() else { panic!("BlameError object") };
+    let original = blame.traced[0];
+    assert!(original.type_id().and_then(crate::TypeId::solved_id).is_some());
+    let DecodedValue::Tagged(handle) = original.value() else { panic!("Value.String") };
+    let (_, payload) = view.tagged(handle).unwrap();
+    assert_eq!(payload.value(), input.value());
+    // Reading `input` for the returned tuple can carry its own reference-site
+    // location; Blame retains the parser argument's original literal provenance.
+    assert_eq!(payload.loc(), Some(original_location));
+    assert_eq!(original.loc(), payload.loc());
+}
+#[test]
+fn solved_parse_obeys_the_session_data_limits() {
+    let mir = crate::codegen::tests::graph("import \"std/json\" as json; export def answer = json.parse(\"123\");", "");
+    let artifact = crate::codegen::compile(mir.seal().unwrap(), crate::codegen::tests::entry(&mir)).unwrap();
+    let limits = crate::DataLimits { file_size: 2, ..crate::DataLimits::default() };
+    let result = Vm::new().execute_linked(crate::execution_link::link_entry(artifact).unwrap(), Quota::with_fuel(10000), limits, &mut SourceDatabase::default());
+    assert!(result.err().unwrap().contains("file_size limit"));
+}

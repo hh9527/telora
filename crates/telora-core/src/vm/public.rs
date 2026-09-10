@@ -45,6 +45,7 @@ impl Quota {
 #[derive(Debug)]
 pub struct QuotaAccount {
     quota: Quota,
+    data_limits: crate::DataLimits,
     remaining_fuel: usize,
     requested_allocation_bytes: u64,
     query: Option<crate::query::QueryContext>,
@@ -57,6 +58,7 @@ impl QuotaAccount {
         Self {
             remaining_fuel: quota.fuel,
             quota,
+            data_limits: crate::DataLimits::default(),
             requested_allocation_bytes: 0,
             query: None,
             diagnostics: Vec::new(),
@@ -66,6 +68,11 @@ impl QuotaAccount {
 
     pub fn with_query(mut self, query: crate::query::QueryContext) -> Self {
         self.query = Some(query);
+        self
+    }
+
+    pub fn with_data_limits(mut self, limits: crate::DataLimits) -> Self {
+        self.data_limits = limits;
         self
     }
 

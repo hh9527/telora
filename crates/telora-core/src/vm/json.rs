@@ -17,8 +17,7 @@ fn run_core_json(
             | CoreJsonFunction::ParseToml
     ) {
         if background.solved_types.is_some() {
-            return Err(error(RuntimeErrorKind::InvalidBytecode,
-                "text parsing into solved Value/BlameError is not implemented yet", function, pc));
+            return run_solved_parse(operation, arguments, return_target, function, pc, current, background, account);
         }
         let input_index = 1;
         let view = HeapView {

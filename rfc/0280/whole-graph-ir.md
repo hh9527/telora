@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved parsers and real serve request diagnostics (2026-09-10)
+
+JSON/YAML/TOML parsing now consumes the solved Value metadata argument and
+materializes validated input directly in the current VM heap. Session data
+limits apply; parse failures retain the original input handle and provenance
+in BlameError. No user value crosses a host/world-copy boundary.
+
+Native closures requiring opaque ABI type captures are linked from the admitted
+numeric native module/type slot. Diagnostic snapshots consume solved metadata
+IDs and stamp newly allocated diagnostic values without reconstructing types.
+The real serve request regression now passes, including a failed first request
+whose diagnostics are collected before a successful second request.
+
+Validation: 17 static-MIR CLI tests, 28 codegen tests, the existing serve request
+test and two parser handle/data-limit tests pass. The parser/diagnostic codegen
+test also covers collecting a parse failure through unwrap exactly once.
+Logs: /tmp/mir-parser-{static-cli,codegen,vm,blame-diagnostic}.log and
+/tmp/mir-solved-{native-serve,serve-diagnostics}.log. No full-suite or performance
+claim is made. Codec encode/decode/schema and generic runtime type/evidence
+consumers remain incomplete; remaining consumer migration and complete removal
+of the old pipeline are still required. Earlier parser/serve failures below
+describe the preceding checkpoint, not the current implementation.
+
 ### Real run/serve CLI uses the sealed session and host event loop (2026-09-10)
 
 run_command no longer calls Engine preparation, recovery or run_pending. The

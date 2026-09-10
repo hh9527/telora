@@ -532,6 +532,10 @@ impl Heap {
                     )),
                     Constant::Atom(value) => Val::unknown(self.atom(background, value.name())),
                     Constant::Native(function) => self.native_closure(*function, []),
+                    Constant::NativeWithType(function, ty) => {
+                        let identity = self.native_type_value(ty.clone());
+                        self.native_closure(*function, vec![identity])
+                    }
                     Constant::SolvedType(id) => {
                         let types = self.solved_types.as_ref().or_else(|| background.and_then(|h| h.solved_types.as_ref()));
                         if types.is_none_or(|types| id.index() >= types.types.len()) {

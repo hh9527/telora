@@ -11,7 +11,7 @@ impl Vm {
         let mut main = Heap::main();
         main.solved_types = Some(entry.types);
         main.solved_graph = Some(entry.graph);
-        let mut account = QuotaAccount::new(quota).with_sources(sources);
+        let mut account = QuotaAccount::new(quota).with_data_limits(limits).with_sources(sources);
         let externals = solved_module_data(&mut main, entry.data, limits, sources, &mut account)?;
         let main = Arc::new(main);
         let work = self
