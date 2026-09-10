@@ -241,6 +241,24 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize_checks();
     solver.prove_bounds();
     solver.materialize_instances();
+    for index in 0..solver.mir.hir.len() {
+        let node = HirId(index as u32);
+        if let TypeState::Known(ty) = solver.mir.ty_slots[index]
+            && let Some(message) = solver.mir.value_shape_error(node, ty) {
+            solver.mir.diagnostics.push(Diagnostic::error(message, solver.mir.hir[index].location));
+        }
+    }
+    for instance in &solver.mir.generic_instances {
+        for (node, ty) in &instance.types {
+            if let Some(message) = solver.mir.value_shape_error(*node, *ty) {
+                let location = solver.mir.hir[node.index()].location;
+                if !solver.mir.diagnostics.iter().any(|diagnostic| diagnostic.message == message
+                    && diagnostic.labels.iter().any(|label| label.primary && label.location == location)) {
+                    solver.mir.diagnostics.push(Diagnostic::error(message, location));
+                }
+            }
+        }
+    }
     solver.validate_patterns();
     solver.mir.build_property_admissions();
     solver.mir.build_type_schemes();

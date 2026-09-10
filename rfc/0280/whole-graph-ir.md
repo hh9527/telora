@@ -5,6 +5,25 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Runtime value-shape requirements move out of codegen (2026-09-11)
+
+Native declarations with non-function signatures are now diagnosed by the
+static pass. Record construction also requires a solved Dict/named-field
+struct skeleton; Unchecked is inspected through its underlying skeleton.
+Both source nodes and materialized generic instance nodes are checked. These
+rules append diagnostics after solving and do not discard Known type evidence.
+Seal independently enforces the same requirements, including when a consumer
+clears diagnostics or tampers with a solved record type.
+
+Codegen's native-signature rejection and record-type-definition scan have been
+removed. It now emits the corresponding linkage/construction from sealed input.
+This is a publication-contract correction, not a runtime optimization project.
+Validation: 68 type-resolve tests, 88 codegen tests and CLI build pass; tests
+cover non-function native diagnostics, continued independent inference and
+seal rejection after diagnostics are cleared or a record slot is tampered.
+Logs: /tmp/mir-value-shapes-{types,codegen,build}.log.
+Generic function identity and legacy pipeline removal remain open.
+
 ### Source-module admission is checked before symbol/type solving (2026-09-11)
 
 The CLI/LSP shared static inventory now validates source-module declarations

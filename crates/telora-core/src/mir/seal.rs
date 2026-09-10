@@ -12,6 +12,30 @@ pub struct SealedMir<'a> {
 }
 
 impl Mir {
+    /// These source forms have a fixed runtime representation. Check their
+    /// solved skeleton before publishing MIR, including specialized bodies.
+    pub(crate) fn value_shape_error(&self, node: HirId, ty: TypeId) -> Option<&'static str> {
+        let shape = &self.types[ty.index()];
+        match self.hir[node.index()].kind {
+            HirKind::Binding { kind: crate::ast::BindingKind::Native, .. }
+                if shape.constructor != TypeConstructor::Function =>
+                Some("native declaration requires a function signature"),
+            HirKind::Dict => {
+                let shape = if shape.constructor == TypeConstructor::Unchecked {
+                    &self.types[shape.arguments[0].index()]
+                } else { shape };
+                let supported = match shape.constructor {
+                    TypeConstructor::Dict | TypeConstructor::Record(_) => true,
+                    TypeConstructor::Nominal(symbol) => self.type_definitions.iter()
+                        .any(|definition| definition.symbol == symbol && definition.operation == TypeOperation::Struct),
+                    _ => false,
+                };
+                (!supported).then_some("record construction requires a Dict or named-field struct type")
+            }
+            _ => None,
+        }
+    }
+
     fn valid_pattern_selection(&self, node: HirId, ty: TypeId) -> bool {
         let hir = &self.hir[node.index()];
         if matches!(hir.kind, HirKind::PatternName(_)) {
@@ -136,6 +160,10 @@ impl Mir {
             || !self.valid_type_schemes()
             || !self.valid_properties()
             || !self.valid_property_admissions()
+            || self.hir.iter().enumerate().any(|(node, _)| matches!(self.ty_slots.get(node), Some(TypeState::Known(ty))
+                if self.value_shape_error(HirId(node as u32), *ty).is_some()))
+            || self.generic_instances.iter().any(|instance| instance.types.iter()
+                .any(|(node, ty)| self.value_shape_error(*node, *ty).is_some()))
             || self.hir.iter().any(|node| matches!(node.kind, HirKind::LetElse)
                 && node.children.iter().find(|edge| edge.role == Role::Else).is_none_or(|edge|
                     !matches!(self.ty_slots.get(edge.node.index()), Some(TypeState::Known(ty))

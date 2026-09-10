@@ -955,11 +955,6 @@ impl<'a> Emitter<'a> {
                 }
                 let declaration = &self.mir.symbols[symbol.index()];
                 let ty = &self.mir.types[self.ty(node)?.index()];
-                if ty.constructor != TypeConstructor::Function {
-                    return Err(
-                        self.error(node, "native value linking requires a function signature")
-                    );
-                }
                 let link = NativeLink {
                     constant: self.function.constants.len(),
                     symbol,
@@ -1001,18 +996,6 @@ impl<'a> Emitter<'a> {
             }
             HirKind::Dict => {
                 let ty = self.ty(node)?;
-                let supported = match self.mir.types[ty.index()].constructor {
-                    TypeConstructor::Dict | TypeConstructor::Record(_) | TypeConstructor::Unchecked => true,
-                    TypeConstructor::Nominal(symbol) => self
-                        .mir
-                        .type_definitions
-                        .iter()
-                        .any(|d| d.symbol == symbol && d.operation == TypeOperation::Struct),
-                    _ => false,
-                };
-                if !supported {
-                    return Err(self.error(node, "unsupported solved record construction type"));
-                }
                 let mut fields = vec![];
                 let mut dicts = vec![];
                 for field in self.children(node, Role::Field) {

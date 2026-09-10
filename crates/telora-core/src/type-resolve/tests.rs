@@ -2,6 +2,27 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn native_value_shapes_are_diagnosed_before_codegen_and_enforced_by_seal() {
+    let mut mir = graph(&[("@src/main", "native value: Int; export { value }; export def independent = 42;")]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|d| d.message == "native declaration requires a function signature"), "{}", mir.dump());
+    assert!(matches!(symbol_type(&mir, "independent"), TypeState::Known(_)));
+    mir.diagnostics.clear();
+    assert!(mir.seal().is_err());
+}
+
+#[test]
+fn seal_rejects_record_nodes_with_non_record_skeletons() {
+    let mut mir = graph(&[("@src/main", "export def value = { item: 42 }; export def scalar = 42;")]);
+    resolve(&mut mir);
+    mir.seal().unwrap();
+    let TypeState::Known(scalar) = symbol_type(&mir, "scalar") else { panic!("scalar type") };
+    let record = mir.hir.iter().position(|node| matches!(node.kind, HirKind::Dict)).unwrap();
+    mir.ty_slots[record] = TypeState::Known(scalar);
+    assert!(mir.seal().is_err());
+}
+
+#[test]
 fn patterns_report_missing_coverage_unreachable_arms_and_refutable_lets() {
     for (body, message) in [
         ("match value { Some(x) => x }", "missing None"),
