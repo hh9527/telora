@@ -2,6 +2,37 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn propagation_keeps_never_tail_error_evidence_and_infers_operand_from_return_context() {
+    let mut mir = graph(&[("@src/main", "export def stopped = fn(value: Result(Int, String)) { value?; fail!(\"tail\") }; export def contextual = fn(value) -> Option(Int) { Some(value? + 1) };")]);
+    resolve(&mut mir);
+    mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump()));
+    let TypeState::Known(stopped) = symbol_type(&mir, "stopped") else { panic!("closed function") };
+    let result = *mir.types[stopped.index()].arguments.last().unwrap();
+    assert_eq!(mir.types[result.index()].constructor, TypeConstructor::Result);
+    assert_eq!(mir.types[mir.types[result.index()].arguments[0].index()].constructor, TypeConstructor::Never);
+    let TypeState::Known(contextual) = symbol_type(&mir, "contextual") else { panic!("closed function") };
+    let input = mir.types[contextual.index()].arguments[0];
+    assert_eq!(mir.types[input.index()].constructor, TypeConstructor::Option);
+    assert_eq!(mir.types[mir.types[input.index()].arguments[0].index()].constructor, TypeConstructor::Int);
+}
+
+#[test]
+fn propagation_rejects_wrong_families_and_incompatible_error_evidence() {
+    for source in [
+        "export def bad = fn(value: Int) { value? };",
+        "export def bad = fn(value: Option(Int)) -> Int { value? };",
+        "export def bad = fn(a: Option(Int), b: Result(Int, String)) { let x = a?; let y = b?; Some(x + y) };",
+        "export def bad = fn(value: Result(Int, String)) -> Result((), Int) { value?; fail!(\"tail\") };",
+        "type Fake = enum {Some(Int), None}; export def bad = fn(value: Fake) -> Option(Int) { Some(value?) };",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.seal().is_err(), "{source}");
+        assert!(!mir.type_conflicts.is_empty(), "{source}\n{}", mir.dump());
+    }
+}
+
+#[test]
 fn sequence_spreads_reject_wrong_containers_and_conflicting_element_evidence() {
     for source in [
         "export def bad = [...(1, 2)];",

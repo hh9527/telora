@@ -23,6 +23,8 @@ mod members;
 mod record_operations;
 #[path = "type-resolve/sequence-spreads.rs"]
 mod sequence_spreads;
+#[path = "type-resolve/propagation.rs"]
+mod propagation;
 #[path = "type-resolve/properties.rs"]
 mod properties;
 #[cfg(test)]
@@ -30,6 +32,8 @@ mod properties;
 mod tests;
 
 enum Task {
+    Propagate { node: HirId },
+    PropagationBottom { body: HirId, success: TypeSlotId },
     TupleSpread { node: HirId },
     RecordSpread { node: HirId },
     StructUpdate { node: HirId, left: TypeSlotId, right: TypeSlotId },
@@ -395,6 +399,7 @@ impl Solver<'_> {
                 let value = self.child(node, Role::Value).unwrap();
                 self.same(node, value.ty());
             }
+            HirKind::Propagate => self.tasks.push(Task::Propagate { node }),
             HirKind::Return => {
                 let value = self.child(node, Role::Value).unwrap();
                 if let Some(result) = self.return_slots[node.index()] {

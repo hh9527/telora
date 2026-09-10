@@ -23,6 +23,16 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::Propagate { node } => self.propagate(node),
+            Task::PropagationBottom { body, success } => {
+                if self.pending_blocks[body.index()] || self.term(body.ty()).is_none() {
+                    return Ok(Some(Task::PropagationBottom { body, success }));
+                }
+                if self.term(body.ty()).is_some_and(|term| term.constructor == TypeConstructor::Never) {
+                    self.bottom_candidates.push(success);
+                }
+                None
+            }
             Task::TupleSpread { node } => self.tuple_spread(node),
             Task::RecordSpread { node } => self.record_spread(node),
             Task::StructUpdate { node, left, right } => self.struct_update(node, left, right),

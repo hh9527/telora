@@ -5,6 +5,38 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Propagation closes return evidence before mechanical branching (2026-09-11)
+
+The type pass now records lexical propagation boundaries as stable HIR edges,
+visible in MIR dumps and required by sealing. Ordinary blocks remain transparent;
+nested functions own their boundary. Propagation constrains the native Option/
+Result constructor identity, operand success slot, boundary result family and
+directional Result error evidence. A similarly named user enum is not a builtin
+family. Return context can also establish an unknown operand's family.
+
+Never tails retain earlier error returns: the otherwise unconstrained success
+slot completes to Never, producing Result(Never, E). Mixed families and
+incompatible errors remain static conflicts. The boundary equality reports its
+conflict at the contributing question-mark expression.
+
+Codegen emits existing tag comparison, branch, payload access and Return
+instructions. The failure branch returns the original operand register; success
+reads the existing payload. No new VM instruction, host transfer, runtime type
+inference or optimization pass is introduced.
+
+Validation: 61 codegen and 42 type-resolve tests passed before the final
+diagnostic-location/dump refinement and extra inference assertion; the final
+propagation-filtered run passes all 9 tests, including 3 new-pipeline tests.
+Actual test/check-result passes all 9 cases, including helper composition,
+short-circuiting, codec checks and Never tails. The enum-constructor-context
+propagation_context case also passes. The full language suite remains failing:
+compiler-semantics is blocked by implicit generalization, while propagation
+diagnostic contracts and check-result provenance remain open. Logs:
+/tmp/mir-propagation-codegen.log, /tmp/mir-propagation-types.log,
+/tmp/mir-propagation-final-tests.log and /tmp/mir-propagation-language.log.
+No performance measurement was made. Whole-pipeline acceptance and removal of
+the old compiler paths are still unfinished.
+
 ### Sequence spreads consume statically closed element slots (2026-09-11)
 
 Array spreads constrain every contribution to the common element slot, including

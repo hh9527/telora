@@ -22,6 +22,9 @@ impl Mir {
             || self.implementation_instances.len() != self.hir.len()
             || self.type_layouts.len() != self.types.len()
             || self.value_adjustments.len() != self.hir.len()
+            || self.propagation_boundaries.len() != self.hir.len()
+            || self.hir.iter().enumerate().any(|(node, hir)| matches!(hir.kind, HirKind::Propagate)
+                && self.propagation_boundaries[node].is_none_or(|boundary| boundary.index() >= self.hir.len()))
             || self.generic_instances.iter().any(|instance| instance.types.iter().any(|(node, source)| {
                 if self.value_adjustments.get(node.index()).is_none_or(Option::is_none) { return false; }
                 let Some(target) = instance.adjustment(*node) else { return true; };

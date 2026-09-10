@@ -1347,6 +1347,28 @@ impl<'a> Emitter<'a> {
             }
             HirKind::TypeAscription => self.expression(self.child(node, Role::Value))?,
             HirKind::TypeApply => self.expression(self.child(node, Role::Callee))?,
+            HirKind::Propagate => {
+                let operand = self.child(node, Role::Operand);
+                let tag = match self.mir.types[self.ty(operand)?.index()].constructor {
+                    TypeConstructor::Option => "Some",
+                    TypeConstructor::Result => "Ok",
+                    _ => return Err(self.error(node, "propagation operand has no solved family")),
+                };
+                let value = self.expression(operand)?;
+                let tag = self.constant(node, Constant::Atom(crate::Atom::named(tag)));
+                let condition = self.register();
+                self.emit(node, O::TaggedTagEquals { dst: condition, value, tag });
+                let failure = self.label();
+                let done = self.label();
+                self.emit(node, O::JumpIfFalse { condition, target: failure });
+                let dst = self.register();
+                self.emit(node, O::GetTaggedPayload { dst, value });
+                self.emit(node, O::Jump { target: done });
+                self.mark(failure);
+                self.emit(node, O::Return { src: value });
+                self.mark(done);
+                dst
+            }
             HirKind::Return => {
                 let value = self.expression(self.child(node, Role::Value))?;
                 self.emit(node, O::Return { src: value });
@@ -1369,6 +1391,24 @@ impl<'a> Emitter<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn propagation_uses_solved_families_and_nearest_function_boundary() {
+        for source in [
+            "def step: Fn(Option(Int)) -> Option(String) = fn(value) { value?; Some(\"ok\") }; export def answer = if step(None) == None && step(Some(1)) == Some(\"ok\") { 42 } else { 0 };",
+            "def step: Fn(Result(Int, String)) -> Result(Bool, String) = fn(value) { value?; Ok(True) }; export def answer = if step(Err(\"bad\")) == Err(\"bad\") && step(Ok(1)) == Ok(True) { 42 } else { 0 };",
+            "def step = fn(value: Option(Int)) { let item = { value? }; Some(item + 1) }; export def answer = if step(None) == None && step(Some(41)) == Some(42) { 42 } else { 0 };",
+            "def outer: Fn(Option(Int)) -> Option(Option(Int)) = fn(value) { let inner: Fn(Option(Int)) -> Option(Int) = fn(item) { Some(item?) }; Some(inner(value)) }; export def answer = if outer(None) == Some(None) { 42 } else { 0 };",
+            "def step: for(T) Fn(Result(T, String)) -> Result(T, String) = fn(value) { Ok(value?) }; export def answer = if step@[Int](Err(\"bad\")) == Err(\"bad\") { step(Ok(42)).unwrap!() } else { 0 };",
+            "def step: Fn(Result(Int, String)) -> Result((), String) = fn(value) { value?; fail!(\"unreachable\") }; export def answer = if step(Err(\"bad\")) == Err(\"bad\") { 42 } else { 0 };",
+            "def step = fn(value: Result(Int, String)) { value?; fail!(\"unreachable\") }; def checked: Fn(Result(Int, String)) -> Result((), String) = step; export def answer = if checked(Err(\"bad\")) == Err(\"bad\") { 42 } else { 0 };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42), "{source}");
+        }
+    }
+
     #[test]
     fn solved_parsers_and_diagnostics_use_closed_types() {
         for source in [

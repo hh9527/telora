@@ -104,27 +104,32 @@ impl Solver<'_> {
             }
         }
         // Parent relationships are syntax facts; returns never search environments.
+        self.mir.propagation_boundaries = vec![None; self.mir.hir.len()];
         let mut pending = self
             .mir
             .modules
             .iter()
             .filter_map(|m| match m.state {
-                ModuleState::Source { body, .. } | ModuleState::Data { body } => Some((body, None)),
+                ModuleState::Source { body, .. } | ModuleState::Data { body } => Some((body, None, body)),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        while let Some((node, inherited)) = pending.pop() {
+        while let Some((node, inherited, boundary)) = pending.pop() {
+            let boundary = if matches!(self.mir.hir[node.index()].kind, HirKind::Closure) { node } else { boundary };
             let target = if matches!(self.mir.hir[node.index()].kind, HirKind::Closure) {
                 self.child(node, Role::ReturnType).map(HirId::ty)
             } else {
                 inherited
             };
             self.return_slots[node.index()] = target;
+            if matches!(self.mir.hir[node.index()].kind, HirKind::Propagate) {
+                self.mir.propagation_boundaries[node.index()] = Some(boundary);
+            }
             pending.extend(
                 self.mir.hir[node.index()]
                     .children
                     .iter()
-                    .map(|edge| (edge.node, target)),
+                    .map(|edge| (edge.node, target, boundary)),
             );
         }
     }
