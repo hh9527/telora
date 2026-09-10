@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Detach active runtime host contracts from the old Engine module (2026-09-11)
+
+DataLimits, RunHost and its effect/input/result structures, EvalContext and
+EvalSource now live in runtime_host, independently of module loading and type
+inference. Root-level exports point directly to that module. The old Engine
+imports the shared contracts privately instead of defining or re-exporting
+them; EngineConfig and its private empty-host implementation remain with the
+old implementation. This removes a dependency that would otherwise prevent
+deleting module while retaining the active VM/CLI host boundary.
+
+Definitions, defaults and method signatures are unchanged. This introduces no
+new host copying, dynamic inference or compatibility execution path. Validation:
+VM tests 48/48 and telora library tests 28/28 pass; final workspace compilation
+is checked after removing unused legacy imports. Logs:
+/tmp/mir-host-contracts-{vm,cli,check-final}.log.
+Old Engine/compiler/types and their descriptor-based runtime paths still need
+removal; this is dependency separation, not completion or a performance claim.
+
 ### Remove Engine's obsolete asynchronous editor recovery entry points (2026-09-11)
 
 After removal of the old Workspace wrapper, Engine::recover_workspace_async,

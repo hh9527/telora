@@ -3,19 +3,6 @@ import "std/value" {Value};
 export type Output = Value;
 "#;
 
-#[derive(Clone, Debug, Default)]
-pub struct EvalContext {
-    pub sources: BTreeMap<String, EvalSource>,
-    pub env: BTreeMap<String, String>,
-    pub args: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct EvalSource {
-    pub source_name: String,
-    pub format: SystemDataFormat,
-    pub text: String,
-}
 
 struct PreparedEvalContext {
     sources: Vec<(String, ValidatedDataPlan)>,

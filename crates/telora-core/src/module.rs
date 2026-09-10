@@ -33,6 +33,11 @@ use crate::types::{
     analyze_program_with_bindings_observed,
 };
 use crate::vm::WorkWorld;
+use crate::runtime_host::{
+    DataLimits, EesCall, EntryDataSources, EvalContext, RunHost,
+    RunHostFuture, RunOutcome, RunTermination, SystemCaps, SystemDataFormat, SystemDataSource,
+    SystemEesModel, SystemEvent, SystemStdin, SystemTextSource,
+};
 use crate::yaml::validate_yaml_registered;
 use crate::{
     BuiltinAtom, BytecodeFunction, DebugSink, DiscardDebugSink, Instruction, Quota, QuotaAccount,

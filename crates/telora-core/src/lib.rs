@@ -42,6 +42,7 @@ mod pattern;
 mod property;
 pub mod query;
 mod regex;
+pub mod runtime_host;
 pub mod semantic;
 mod sha256;
 pub mod source;
@@ -72,10 +73,8 @@ pub use json::{
 };
 pub use lexer::{FrontendError, SourceLocation};
 pub use module::{
-    DataLimits, EesCall, EesReply, Engine, EngineBuilder, EngineConfig, EntryDataSources,
-    EvalContext, EvalSource, InstantiatedModule, LoadedModule, ModuleError, PendingModule, RunHost,
-    RunHostFuture, RunOutcome, RunTermination, SystemCaps, SystemDataFormat, SystemDataSource,
-    SystemEesModel, SystemEvent, SystemStdin, SystemTextSource, evaluate_expression_module,
+    Engine, EngineBuilder, EngineConfig,
+    InstantiatedModule, LoadedModule, ModuleError, PendingModule, evaluate_expression_module,
     evaluate_expression_module_with_quota, evaluate_expression_module_with_quota_and_debug_sink,
 };
 pub use module_id::{
@@ -89,6 +88,11 @@ pub use package::{
     WorkspaceConfig, WorkspaceLock, WorkspaceSpec,
 };
 pub use query::{CancellationToken, QueryContext, QueryError, Revision, RevisionClock};
+pub use runtime_host::{
+    DataLimits, EesCall, EesReply, EntryDataSources, EvalContext, EvalSource, RunHost,
+    RunHostFuture, RunOutcome, RunTermination, SystemCaps, SystemDataFormat, SystemDataSource,
+    SystemEesModel, SystemEvent, SystemStdin, SystemTextSource,
+};
 pub use semantic::{
     CompletionCandidate, CompletionKind, CompletionResult, Conflict, Definition, DefinitionId,
     DefinitionKind, DiagnosticId, FactIdentity, FactState, IncomputableReason, Reference,
