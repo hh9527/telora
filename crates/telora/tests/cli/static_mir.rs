@@ -704,3 +704,55 @@ fn static_mir_query_links_imports_and_source_positions() {
     );
     fs::remove_dir_all(cwd).unwrap();
 }
+#[test]
+fn static_mir_run_drives_a_host_ees_reply_with_explicit_value_input() {
+    let cwd = fixture();
+    let data = cwd.join("data");
+    fs::create_dir_all(&data).unwrap();
+    let connection = rusqlite::Connection::open(data.join("catalog.sqlite")).unwrap();
+    connection.execute_batch("CREATE TABLE items (score INTEGER); INSERT INTO items VALUES (42);").unwrap();
+    drop(connection);
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/entry" as entry;
+        import "std/ees" as ees;
+        import "std/actor" as actor;
+        import "std/value" {Value};
+        type State = enum {Ready, Waiting(String)};
+        def config: ees.Config = {vars: {}, models: [ees.sqlite_model("catalog", "user-data:catalog.sqlite")]};
+        export def main = entry.run(State.type, {sources: [], envs: [], args: False}, config, fn(ctx) {
+            (State.Ready, fn(state, event) {
+                match (state, event) {
+                    (State.Ready, actor.Event.Request(request)) => (
+                        State.Waiting(request.id),
+                        [actor.ees_call("query", request.id, ees.request("catalog", "Query", Value.Object({
+                            sql: Value.String("SELECT score FROM items"), bindings: Value.Array([]),
+                        })))],
+                    ),
+                    (State.Waiting(id), actor.Event.EesReply(reply)) => match reply.result {
+                        Ok(value) => (State.Ready, [actor.reply(id, value)]),
+                        Err(message) => fail!(message),
+                    },
+                    _ => fail!("unexpected event"),
+                }
+            })
+        });
+    "#).unwrap();
+    let output = telora(&cwd).args(["run", "@src/main:main"]).env("XDG_DATA_HOME", &data).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout).unwrap(), serde_json::json!({"columns": ["score"], "rows": [[42]]}));
+    fs::remove_dir_all(cwd).unwrap();
+}
+#[test]
+fn static_mir_serve_initializes_and_handles_eof_in_the_new_session() {
+    let cwd = fixture();
+    fs::write(cwd.join("src/main.telora"), r#"
+        import "std/entry" as entry;
+        import "std/ees" as ees;
+        export def main = entry.serve(Int.type, {sources: [], envs: [], args: False}, ees.none,
+            fn(ctx) { (0, fn(state, event) { (state, []) }) });
+    "#).unwrap();
+    let output = telora(&cwd).args(["serve", "@src/main:main", "--bind", "stdio://"]).stdin(Stdio::null()).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stdout.is_empty());
+    fs::remove_dir_all(cwd).unwrap();
+}

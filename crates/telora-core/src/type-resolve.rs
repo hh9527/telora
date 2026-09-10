@@ -20,6 +20,13 @@ mod properties;
 mod tests;
 
 enum Task {
+    RefineInstance {
+        source: TypeSlotId,
+        target: TypeSlotId,
+        arguments: Vec<(SymbolId, TypeSlotId)>,
+        location: Option<Location>,
+        constructor: TypeConstructor,
+    },
     BoundContext {
         node: HirId,
         subject: TypeSlotId,

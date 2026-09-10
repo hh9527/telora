@@ -10,6 +10,10 @@ fn run_core_codec(
     background: &Heap,
     account: &mut QuotaAccount,
 ) -> Result<VmAction, RuntimeError> {
+    if background.solved_types.is_some() {
+        return Err(error(RuntimeErrorKind::InvalidBytecode,
+            "codec execution with solved type/property witnesses is not implemented yet", function, pc));
+    }
     let properties = decode_codec_properties(arguments[0], current, background)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
     let direction = match operation {

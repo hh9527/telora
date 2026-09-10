@@ -5,6 +5,47 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Real run/serve CLI uses the sealed session and host event loop (2026-09-10)
+
+run_command no longer calls Engine preparation, recovery or run_pending. The
+inventory admits the selected application plus a compiler-owned adapter and the
+existing run/serve policy into one graph before the three passes. An explicit
+generic entry.Run(State)/entry.Serve(State) adapter proves the nominal interface.
+Only its exact selected application import receives the compiler-owned graph
+edge; ordinary imports retain workspace dependency/private-module restrictions.
+Best-effort diagnostics come from the same MIR without a second resolver.
+
+Static callback signatures also supply host protocol TypeIds. execute_run owns
+one session through config, host.configure, direct data materialization, the
+existing register-based resources_provider, initializer and the event loop.
+State, globals, properties and callbacks stay inside the VM. The resources
+provider passes prepared/default data by original handles. EES inputs/configs
+cross the external I/O boundary as host JSON; they do not transport actor state
+or reintroduce host property materialization. Output serialization borrows the
+VM string. Host.finish runs on success and failure.
+
+Connecting generic entry families exposed an order-dependent solver bug:
+instantiation could copy an inferred Record before its annotation refined it
+to a nominal type, losing phantom type arguments. Provisional Record/ArrayLiteral
+instances now retain refinement edges and update only when the source constructor
+changes. A three-module phantom-generic regression proves the fix without any
+entry/builtin name special case.
+
+Validation: 16 static-MIR CLI tests pass, including a real SQLite EES request,
+reply and exit with explicit Value input, and serve startup/EOF. The run_ regression
+selection has six passes and three failures, all in helpers requiring codec.
+The existing serve request test fails explicitly at the pending text parser.
+These gaps are not routed through legacy metadata decoding: codec, parsing and
+schema generation reject solved-session execution until their witnesses and
+BlameError handling are implemented. Therefore command routing is migrated,
+but full run/serve language coverage is not yet achieved.
+
+The two generated-adapter tests, 23 type-pass tests, 27 codegen tests and three
+VM session/resource-handle tests pass. Logs: /tmp/mir-host-adapter-fixed.log,
+/tmp/mir-host-types.log and /tmp/mir-real-{run,serve}-*.log. No performance result
+is claimed. Next work is solved parsing/diagnostic collection and codec/evidence
+consumers, followed by remaining commands and final legacy-pipeline removal.
+
 ### Compiled policy callbacks retain one VM session (2026-09-10)
 
 compile_run now reads the closed policy adapter signature and records the

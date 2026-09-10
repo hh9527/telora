@@ -1,5 +1,60 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug)]
+pub enum RunMode {
+    Run,
+    Serve,
+}
+
+impl RunMode {
+    pub fn policy_source(self) -> &'static str {
+        match self {
+            Self::Run => include_str!("../../modules/std/_entry/run.telora"),
+            Self::Serve => include_str!("../../modules/std/_entry/serve.telora"),
+        }
+    }
+
+    pub fn policy_module(self) -> &'static str {
+        match self {
+            Self::Run => "std/_entry/run",
+            Self::Serve => "std/_entry/serve",
+        }
+    }
+
+    /// This source is added before module/symbol/type solving. It introduces no
+    /// runtime type checks and has no permission to resolve additional imports.
+    pub fn adapter_source(self, module: &str, export: &str) -> Result<String, String> {
+        let mut chars = export.chars();
+        if !chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
+            || !chars.all(|c| c == '_' || c.is_alphanumeric())
+        {
+            return Err("entry export must be an identifier".into());
+        }
+        let module = serde_json::to_string(module).map_err(|e| e.to_string())?;
+        let policy = self.policy_module();
+        let family = match self {
+            Self::Run => "Run",
+            Self::Serve => "Serve",
+        };
+        Ok(format!(
+            r#"
+            import {module} {{ {export} as selected }};
+            import "{policy}" as policy;
+            import "std/entry" as entry;
+            import "std/_rt" as rt;
+            def adapt: for(State) Fn(entry.{family}(State)) -> policy.MainType = fn(app) {{
+                {{ config: app.config, ees: app.ees, start: app.start }}
+            }};
+            def main = adapt(selected);
+            export def configure = fn(env: rt.Env) {{
+                let configured = policy.config(env, main);
+                (configured.0, fn(resources: rt.SystemResources) {{ configured.1(resources, main) }})
+            }};
+        "#
+        ))
+    }
+}
+
 /// Host-facing types selected from the closed policy adapter signature.
 /// No callback needs to discover its argument/result type in the VM.
 #[derive(Clone, Copy, Debug)]
@@ -14,8 +69,41 @@ pub struct RunContract {
 
 pub struct RunCalls {
     pub contract: RunContract,
+    pub(crate) protocol: Option<RunHostTypes>,
     pub(crate) unary: BytecodeFunction,
     pub(crate) binary: BytecodeFunction,
+    pub(crate) resources: BytecodeFunction,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RunHostTypes {
+    pub value: TypeId,
+    pub mode: TypeId,
+    pub format: TypeId,
+}
+
+fn host_types(image: &crate::type_image::TypeImage, contract: RunContract) -> Option<RunHostTypes> {
+    let field = |id: TypeId, name: &str| {
+        let TypeConstructor::Nominal(symbol) = image.types.get(id.index())?.constructor else {
+            return None;
+        };
+        image
+            .definition(symbol)?
+            .members
+            .iter()
+            .find(|m| m.name == name)?
+            .payload
+    };
+    let data = field(contract.resources, "data")?;
+    let item = *image.types.get(data.index())?.arguments.first()?;
+    let value = *image.types.get(item.index())?.arguments.first()?;
+    let sources = field(contract.env, "sources")?;
+    let source = *image.types.get(sources.index())?.arguments.first()?;
+    Some(RunHostTypes {
+        value,
+        mode: field(contract.env, "mode")?,
+        format: field(source, "fmt")?,
+    })
 }
 
 /// The compiler-owned source adapter has shape
@@ -40,8 +128,10 @@ pub fn compile_run(
     })?;
     artifact.run_calls = Some(RunCalls {
         contract,
+        protocol: host_types(&artifact.types, contract),
         unary: call_adapter(1),
         binary: call_adapter(2),
+        resources: call_adapter(3),
     });
     Ok(artifact)
 }

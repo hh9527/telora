@@ -10,6 +10,13 @@ impl Solver<'_> {
     }
     pub(super) fn solve_constraint(&mut self, task: Task) -> Result<Option<Task>, Task> {
         let result = match task {
+            Task::RefineInstance { source, target, arguments, location, constructor } => {
+                if self.term(source).is_some_and(|term| term.constructor == constructor) {
+                    Some(Task::RefineInstance { source, target, arguments, location, constructor })
+                } else {
+                    self.substitute_term(source, target, arguments, location)
+                }
+            }
             Task::BoundContext {
                 node,
                 subject,

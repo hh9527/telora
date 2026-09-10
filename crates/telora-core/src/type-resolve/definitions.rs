@@ -284,8 +284,13 @@ impl Solver<'_> {
             };
             result.push(next);
         }
-        let instance = self.structure(term.constructor, result);
+        let provisional = matches!(term.constructor, TypeConstructor::Record(_) | TypeConstructor::ArrayLiteral);
+        let constructor = term.constructor;
+        let instance = self.structure(constructor.clone(), result);
         self.equal(target, instance, location);
-        None
+        // An inferred record/array literal can later receive its declared
+        // nominal/collection identity. Keep that evidence edge alive: copying
+        // only its initial fields loses phantom generic arguments on refinement.
+        provisional.then_some(Task::RefineInstance { source, target, arguments, location, constructor })
     }
 }

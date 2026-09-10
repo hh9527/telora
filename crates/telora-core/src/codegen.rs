@@ -17,7 +17,8 @@ mod patterns;
 mod properties;
 #[path = "codegen/run.rs"]
 mod run;
-pub use run::{RunCalls, RunContract, compile_run};
+pub use run::{RunCalls, RunContract, RunMode, compile_run};
+pub(crate) use run::RunHostTypes;
 use properties::native_abi;
 
 pub struct CompiledEntry {

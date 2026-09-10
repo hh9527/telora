@@ -1,6 +1,25 @@
 use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
+#[test]
+fn phantom_generic_results_keep_their_argument_evidence_across_calls() {
+    let mut mir = graph(&[("@src/main", r#"
+        import "./lib" as lib;
+        import "./app" {main as selected};
+        def consume: for(T) Fn(lib.Phantom(T)) -> Int = fn(x) { x.n };
+        export def answer = consume(selected);
+    "#), ("@src/lib", r#"
+        export type Phantom(T) = struct { n: Int };
+        export def make: for(T) Fn(TypeOf(T), Int) -> Phantom(T) = fn(target, n) { {n} };
+    "#), ("@src/app", r#"
+        import "./lib" as lib;
+        export def main = lib.make(Int.type, 42);
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.type_unknowns.is_empty(), "{:?}", mir.diagnostics);
+    assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+}
+
 fn graph(sources: &[(&str, &str)]) -> Mir {
     let mut sources = sources.to_vec();
     if !sources.iter().any(|(name, _)| *name == "std/prelude") {

@@ -25,7 +25,7 @@ fn location(mir: &Mir, loc: Location) -> Value {
     json!({"line": start.line+1, "column": start.character, "end_line": end.line+1, "end_column": end.character})
 }
 
-fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) -> Value {
+pub(crate) fn diagnostic(mir: &Mir, schema: &str, root: &str, d: &Diagnostic) -> Value {
     json!({"schema": schema, "module": root, "record": "diagnostic",
         "severity": match d.severity { Severity::Error => "error", Severity::Warning => "warning", Severity::Info => "info" },
         "message": d.message, "notes": d.notes,

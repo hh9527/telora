@@ -51,6 +51,7 @@ include!("vm/solved-eval.rs");
 include!("vm/demand.rs");
 include!("vm/solved-check.rs");
 include!("vm/solved-run.rs");
+include!("vm/solved-run-host.rs");
 include!("vm/debug.rs");
 include!("vm/helpers.rs");
 

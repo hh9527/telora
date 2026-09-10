@@ -16,6 +16,10 @@ fn run_core_json(
             | CoreJsonFunction::ParseYaml
             | CoreJsonFunction::ParseToml
     ) {
+        if background.solved_types.is_some() {
+            return Err(error(RuntimeErrorKind::InvalidBytecode,
+                "text parsing into solved Value/BlameError is not implemented yet", function, pc));
+        }
         let input_index = 1;
         let view = HeapView {
             current,
@@ -149,6 +153,10 @@ fn run_core_json(
         unreachable!("all text parser operations returned above");
     }
     if operation == CoreJsonFunction::Schema {
+        if background.solved_types.is_some() {
+            return Err(error(RuntimeErrorKind::InvalidBytecode,
+                "schema generation with solved type/property witnesses is not implemented yet", function, pc));
+        }
         let properties = decode_codec_properties(arguments[0], current, background)
             .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;
         let schema = decode_runtime_type(arguments[1], current, background)

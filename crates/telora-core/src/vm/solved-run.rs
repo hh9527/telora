@@ -13,6 +13,55 @@ mod solved_run_tests {
     use super::*;
 
     #[test]
+    fn host_resource_provider_passes_original_data_handles_to_the_initializer() {
+        fn provider(context: &mut crate::CallContext<'_, '_>) -> Result<(), crate::NativeError> {
+            let prepared = context.argument(2)?;
+            context.copy_field(context.result(), prepared, "value")
+        }
+        let mir = crate::codegen::tests::graph(
+            "export def answer = fn(env: Int) { (0, fn(resources: Array(Int)) { (resources, fn(state: Array(Int), event: Int) { (state, [event]) }) }) };",
+            "",
+        );
+        let artifact =
+            crate::codegen::compile_run(mir.seal().unwrap(), crate::codegen::tests::entry(&mir))
+                .unwrap();
+        let value_type = artifact.run_calls.as_ref().unwrap().contract.resources;
+        let mut vm = Vm::new();
+        let mut session = SolvedRunSession::start(
+            &mut vm,
+            crate::execution_link::link_entry(artifact).unwrap(),
+            Quota::with_fuel(10000),
+            crate::DataLimits::default(),
+            &mut SourceDatabase::default(),
+        )
+        .unwrap();
+        let zero = Val::unknown(DecodedValue::Int(0));
+        session.configure(&mut vm, zero).unwrap();
+        let heap = &mut session.world.as_mut().unwrap().heap;
+        let input = Val::unknown(DecodedValue::Array(
+            heap.allocate(Object::Array(vec![zero].into())),
+        ));
+        let prepared = heap.record_value(vec![("value".into(), input)]).unwrap();
+        session
+            .initialize_with_provider(
+                &mut vm,
+                crate::NativeFunction::new("host.resources", 3, provider),
+                prepared,
+                value_type,
+            )
+            .unwrap();
+        let SolvedRunPhase::Reduce { state, .. } = session.phase else {
+            panic!("initialized")
+        };
+        assert_eq!(state.value(), input.value());
+        session.reduce(&mut vm, zero).unwrap();
+        let SolvedRunPhase::Reduce { state, .. } = session.phase else {
+            panic!("reduced")
+        };
+        assert_eq!(state.value(), input.value());
+    }
+
+    #[test]
     fn failed_callback_ends_the_session_without_retry_or_quota_reset() {
         let mir = crate::codegen::tests::graph(
             "export def answer = fn(env: Int) { (0, fn(resources: Int) { (0, fn(state: Int, event: Int) { if event == 0 { (state, [0]) } else { fail!(\"event failed\") } }) }) };",
@@ -201,6 +250,7 @@ impl SolvedRunSession {
         let adapter = match arguments.len() {
             1 => &self.calls.unary,
             2 => &self.calls.binary,
+            3 => &self.calls.resources,
             _ => unreachable!("compiled run callback arity"),
         };
         // This moves the owning Rust container; it does not relocate its heap.
@@ -265,6 +315,42 @@ impl SolvedRunSession {
         let (state, reducer) = self.pair(result)?;
         self.phase = SolvedRunPhase::Reduce { state, reducer };
         Ok(())
+    }
+
+    fn initialize_with_provider(
+        &mut self,
+        vm: &mut Vm,
+        provider: crate::NativeFunction,
+        prepared_data: Val,
+        value_type: crate::mir::TypeId,
+    ) -> Result<(), String> {
+        let SolvedRunPhase::Initialize { caps, .. } = self.phase else {
+            return Err("run session is not awaiting resources".into());
+        };
+        if provider.arity() != 3 {
+            return Err(
+                "host resources provider must accept caps, Value metadata and prepared data".into(),
+            );
+        }
+        self.account
+            .charge_allocation(logical_value_bytes(1).map_err(|e| e.message)?)
+            .map_err(|_| "resource provider allocation quota exceeded")?;
+        let callable = self
+            .world
+            .as_mut()
+            .ok_or("failed run session")?
+            .heap
+            .native_closure(provider, []);
+        let resources = self.invoke(
+            vm,
+            callable,
+            &[
+                caps,
+                Val::unknown(DecodedValue::SolvedType(value_type)),
+                prepared_data,
+            ],
+        )?;
+        self.initialize(vm, resources)
     }
 
     fn reduce(&mut self, vm: &mut Vm, event: Val) -> Result<Val, String> {

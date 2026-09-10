@@ -15,6 +15,50 @@ use telora_core::{
 enum Source {
     File(PathBuf),
     Embedded(&'static str),
+    Generated(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inventory(family: &str) -> Inventory {
+        let mut inventory = Inventory::new(Path::new("."), true).unwrap();
+        inventory.entries.insert("app/main".into(), Entry {
+            name: "app/main".into(), origin: "crate", visibility: "public",
+            format: ModuleFormat::Telora, test: false,
+            source: Source::Generated(format!(r#"
+                import "std/entry" as entry;
+                import "std/ees" as ees;
+                export def main = entry.{family}(Int.type, {{sources: [], envs: [], args: False}}, ees.none,
+                    fn(ctx) {{ (42, fn(state, event) {{ (state, []) }}) }});
+            "#)),
+        });
+        inventory
+    }
+
+    #[test]
+    fn generated_entry_policy_and_application_share_one_closed_graph() {
+        for (mode, family) in [(telora_core::codegen::RunMode::Run, "run"), (telora_core::codegen::RunMode::Serve, "serve")] {
+            let mir = inventory(family).solve_run("app/main", "main", mode).unwrap();
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{family}: {d:?}\n{}", mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n")));
+            let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { panic!("adapter root") };
+            let entry = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure").unwrap();
+            let compiled = telora_core::codegen::compile_run(sealed, entry).unwrap_or_else(|d| panic!("{family}: {d:?}"));
+            assert!(compiled.run_calls.is_some());
+            assert_eq!(mir.modules.iter().filter(|m| m.name == "app/main").count(), 1);
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        }
+    }
+
+    #[test]
+    fn generated_entry_rejects_wrong_nominal_family_and_unsafe_export_text() {
+        let mut inventory = inventory("serve");
+        let mir = inventory.solve_run("app/main", "main", telora_core::codegen::RunMode::Run).unwrap();
+        assert!(mir.seal().is_err(), "Serve cannot satisfy Run's nominal contract");
+        assert!(inventory.solve_run("app/main", "main }; fail!(\"injected\");", telora_core::codegen::RunMode::Run).is_err());
+        assert!(inventory.request("app/main", "std/_entry/adapter").is_none());
+    }
 }
 pub struct Entry {
     pub name: String,
@@ -286,6 +330,25 @@ impl Inventory {
     }
 
     pub fn solve(&self, root: &str) -> Mir {
+        self.solve_with_entry(root, None)
+    }
+
+    /// Compiler-owned entry sources share the application's graph and passes.
+    pub fn solve_run(&mut self, application: &str, export: &str, mode: telora_core::codegen::RunMode) -> Result<Mir, String> {
+        let adapter = mode.adapter_source(application, export)?;
+        for (name, source) in [
+            (mode.policy_module(), Source::Embedded(mode.policy_source())),
+            ("std/_entry/adapter", Source::Generated(adapter)),
+        ] {
+            self.entries.insert(name.into(), Entry {
+                name: name.into(), origin: "builtin", visibility: "private",
+                format: ModuleFormat::Telora, source, test: false,
+            });
+        }
+        Ok(self.solve_with_entry("std/_entry/adapter", Some(application)))
+    }
+
+    fn solve_with_entry(&self, root: &str, application: Option<&str>) -> Mir {
         let specs = self
             .entries
             .values()
@@ -313,11 +376,21 @@ impl Inventory {
             &[root.to_owned()],
             |_, name| match &self.entries[name].source {
                 Source::Embedded(text) => Ok((*text).into()),
+                Source::Generated(text) => Ok(text.clone()),
                 Source::File(path) => {
                     fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))
                 }
             },
-            |owner, request| self.request(owner, request),
+            |owner, request| {
+                // The user selected this application before the compiler-owned
+                // adapter was inserted. Only its exact import gets this edge;
+                // ordinary application/dependency imports retain normal policy.
+                if owner == "std/_entry/adapter" && application == Some(request) {
+                    self.entries.contains_key(request).then(|| request.to_owned())
+                } else {
+                    self.request(owner, request)
+                }
+            },
         );
         telora_core::symbol_resolve::resolve(&mut mir);
         telora_core::type_resolve::resolve(&mut mir);

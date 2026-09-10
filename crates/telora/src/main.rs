@@ -827,7 +827,6 @@ async fn run_command(
     arguments: ApplicationArgs,
 ) -> Result<i32, String> {
     let entry_sources = collect_entry_sources(arguments.sources.clone())?;
-    let prepared = package_host::prepare(&context)?;
     if entry == "serve"
         && entry_sources
             .locators
@@ -837,50 +836,52 @@ async fn run_command(
         return Err("serve --bind stdio:// reserves standard input for JSONL requests".into());
     }
     let module_id = &arguments.selector.module_id;
-    if arguments.best_effort {
-        let recovery_engine = Engine::new(engine_config());
-        let workspace = recovery_engine
-            .recover_workspace_id_in_workspace(Arc::clone(&prepared), &context, module_id)
-            .map_err(|error| error.to_string())?;
-        let selected = module_id;
-        for diagnostic in workspace.diagnostics() {
-            emit_stderr(diagnostic_record(
-                "telora.run/v1",
-                selected,
-                &workspace,
-                diagnostic,
-            ))?;
-        }
-        let failed = workspace
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.severity == telora_core::source::Severity::Error);
-        if failed {
-            emit_stderr(json!({
-                "schema": "telora.run/v1",
-                "module": selected,
-                "record": "summary",
-                "status": "error",
-            }))?;
-            return Ok(1);
+    let mode = match entry {
+        "run" => telora_core::codegen::RunMode::Run,
+        "serve" => telora_core::codegen::RunMode::Serve,
+        _ => return Err(format!("unknown entry mode {entry:?}")),
+    };
+    let mut inventory = static_input::Inventory::new(&context, module_id.starts_with("std/"))?;
+    let application = inventory.select(module_id)?;
+    let mut mir = inventory.solve_run(&application, &arguments.selector.export, mode)?;
+    for diagnostic in &mut mir.diagnostics {
+        if diagnostic.message.starts_with("incompatible types") && diagnostic.labels.iter().any(|label| mir.sources.get(label.location.source).name.as_ref() == "std/_entry/adapter") {
+            diagnostic.message = format!("entry export {:?}: expected {}(State); {}", arguments.selector.export, if entry == "run" { "Run" } else { "Serve" }, diagnostic.message);
         }
     }
-    let engine = engine();
-    let pending = engine
-        .prepare_module_id_in_workspace(prepared, context, module_id)
-        .map_err(|error| error.to_string())?;
+    let static_failed = mir.diagnostics.iter().any(|d| d.severity == telora_core::source::Severity::Error);
+    if arguments.best_effort {
+        for diagnostic in &mir.diagnostics {
+            emit_stderr(static_cli::diagnostic(&mir, "telora.run/v1", module_id, diagnostic))?;
+        }
+        if static_failed {
+            emit_stderr(json!({"schema": "telora.run/v1", "module": module_id, "record": "summary", "status": "error"}))?;
+            return Ok(1);
+        }
+    } else if static_failed {
+        return Err(mir.diagnostics.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"));
+    }
+    let telora_core::mir::ModuleTarget::Bound(root) = mir.roots[0] else { return Err("entry adapter module is unresolved".into()) };
+    let symbol = *mir.exports[root.index()].iter().find(|s| mir.symbols[s.index()].name == "configure")
+        .ok_or("entry adapter has no configuration export")?;
+    let artifact = mir.seal().and_then(|sealed| telora_core::codegen::compile_run(sealed, symbol))
+        .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
+    let config = engine_config();
+    let linked = telora_core::execution_link::link_entry_with_data(artifact, |link| inventory.read_data(link, config.data_limits.file_size))
+        .map_err(|errors| errors.iter().map(|d| mir.sources.render(d)).collect::<Vec<_>>().join("\n"))?;
     let mut host = ProcessRunHost::new(entry_sources.locators, arguments.ees_vars);
-    let outcome = engine
-        .run_pending_with_sources_and_host(
-            pending,
-            entry,
-            &arguments.selector.export,
+    let outcome = telora_core::Vm::new().with_debug_sink(Arc::new(StderrDebugSink))
+        .execute_run(
+            linked,
+            mode,
             &arguments.args,
             &entry_sources.entry,
             &mut host,
+            config.session_quota,
+            config.data_limits,
+            &mut mir.sources,
         )
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     io::stdout()
         .write_all(outcome.output.as_bytes())
         .and_then(|()| io::stdout().flush())
