@@ -2,6 +2,67 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn generic_instances_close_body_types_and_transitive_references() {
+    let mut mir = graph(&[("@src/main", r#"
+        def metadata: for(T) Fn(T) -> TypeOf(Array(T)) = fn(value) { Array(T).type };
+        def forward: for(U) Fn(U) -> TypeOf(Array(U)) = fn(value) { metadata(value) };
+        export def number = forward(1);
+        export def text = forward("ok");
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().expect("all instance slots close before codegen");
+    for expected in [TypeConstructor::Int, TypeConstructor::String] {
+        let outer = mir.generic_instances.iter().find(|instance| {
+            mir.symbols[instance.symbol.index()].name == "forward"
+                && mir.types[instance.arguments[0].1.index()].constructor == expected
+        }).expect("concrete forward instance");
+        let inner = outer.references.iter().find_map(|(_, id)| {
+            let inner = &mir.generic_instances[id.index()];
+            (mir.symbols[inner.symbol.index()].name == "metadata").then_some(inner)
+        }).expect("reference to instantiated metadata body");
+        assert_eq!(mir.types[inner.arguments[0].1.index()].constructor, expected);
+        let represented = inner.types.iter().find_map(|(node, ty)| {
+            matches!(mir.hir[node.index()].kind, HirKind::TypeMetadata)
+                .then(|| mir.types[ty.index()].arguments[0])
+        }).expect("metadata expression has an instance-specific TypeId");
+        let array = &mir.types[represented.index()];
+        assert_eq!(array.constructor, TypeConstructor::Array);
+        assert_eq!(mir.types[array.arguments[0].index()].constructor, expected);
+    }
+}
+
+#[test]
+fn an_unfilled_implicit_generic_argument_prevents_sealing() {
+    let mut mir = graph(&[("@src/main", r#"
+        def phantom: for(T) Fn() -> Int = fn() { 42 };
+        export def answer = phantom();
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.iter().any(|d| d.message == "unknown generic argument"));
+    assert!(!mir.type_unknowns.is_empty());
+    assert!(mir.seal().is_err());
+}
+
+#[test]
+fn recursive_generic_references_close_to_the_same_instance() {
+    let mut mir = graph(&[("@src/main", r#"
+        def repeat: for(T) Fn(T, Int) -> T = fn(value, n) {
+            if n > 0 { repeat(value, n - 1) } else { value }
+        };
+        export def answer = repeat(42, 3);
+    "#)]);
+    resolve(&mut mir);
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    mir.seal().unwrap();
+    let (index, instance) = mir.generic_instances.iter().enumerate().find(|(_, instance)| {
+        mir.symbols[instance.symbol.index()].name == "repeat"
+            && mir.types[instance.arguments[0].1.index()].constructor == TypeConstructor::Int
+    }).unwrap();
+    assert!(instance.references.iter().any(|(_, id)| id.index() == index));
+}
+
+#[test]
 fn retains_per_reference_generic_arguments_for_codegen() {
     let source = [("@src/main", r#"
         def identity: for(T) Fn(T) -> T = fn(value) { value };

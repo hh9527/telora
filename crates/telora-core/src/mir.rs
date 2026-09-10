@@ -30,6 +30,31 @@ id!(
 );
 id!(ScopeId);
 id!(TypeTermId, TypeConflictId);
+id!(GenericInstanceId);
+
+/// A statically instantiated declaration. The source HIR is shared; this
+/// instance supplies its normalized types and reference edges without cloning
+/// syntax or requiring downstream consumers to apply substitutions.
+#[derive(Debug)]
+pub struct GenericInstance {
+    pub symbol: SymbolId,
+    pub arguments: Vec<(SymbolId, TypeId)>,
+    pub signature: TypeId,
+    pub types: Vec<(HirId, TypeId)>,
+    pub references: Vec<(HirId, GenericInstanceId)>,
+}
+
+impl GenericInstance {
+    pub fn ty(&self, node: HirId) -> Option<TypeId> {
+        self.types.binary_search_by_key(&node, |(node, _)| *node)
+            .ok().map(|index| self.types[index].1)
+    }
+
+    pub fn reference(&self, node: HirId) -> Option<GenericInstanceId> {
+        self.references.binary_search_by_key(&node, |(node, _)| *node)
+            .ok().map(|index| self.references[index].1)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModuleTarget {
@@ -493,6 +518,8 @@ pub struct Mir {
     /// their solved outcome rather than matching signatures again. A generic
     /// body may refer to a rigid outer parameter here.
     pub type_instances: Vec<Vec<(SymbolId, TypeSlotId)>>,
+    pub generic_instances: Vec<GenericInstance>,
+    pub reference_instances: Vec<Option<GenericInstanceId>>,
     pub type_terms: Vec<TypeTerm>,
     pub types: Vec<ResolvedType>,
     pub member_selections: Vec<Option<MemberSelection>>,
@@ -618,6 +645,14 @@ impl Mir {
         for (id, arguments) in self.type_instances.iter().enumerate() {
             if !arguments.is_empty() {
                 writeln!(out, "type-instance {id} {arguments:?}").unwrap();
+            }
+        }
+        for (id, instance) in self.generic_instances.iter().enumerate() {
+            writeln!(out, "generic-instance {id} {instance:?}").unwrap();
+        }
+        for (id, instance) in self.reference_instances.iter().enumerate() {
+            if let Some(instance) = instance {
+                writeln!(out, "reference-instance {id} {instance:?}").unwrap();
             }
         }
         for (id, ty) in self.types.iter().enumerate() {

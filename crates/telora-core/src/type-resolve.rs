@@ -11,6 +11,8 @@ mod constraints;
 mod definitions;
 #[path = "type-resolve/evidence.rs"]
 mod evidence;
+#[path = "type-resolve/instances.rs"]
+mod instances;
 #[path = "type-resolve/members.rs"]
 mod members;
 #[path = "type-resolve/properties.rs"]
@@ -168,6 +170,7 @@ pub fn resolve(mir: &mut Mir) {
     solver.finalize();
     solver.finalize_properties();
     solver.prove_bounds();
+    solver.materialize_instances();
     solver.mir.types_solved = true;
 }
 

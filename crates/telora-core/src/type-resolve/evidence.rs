@@ -239,7 +239,7 @@ impl Solver<'_> {
 
     /// Exact substitution of already resolved IDs during static evidence
     /// elaboration. No fresh inference variable or value evaluation is involved.
-    fn substitute_resolved(
+    pub(super) fn substitute_resolved(
         &mut self,
         ty: TypeId,
         substitutions: &BTreeMap<SymbolId, TypeId>,

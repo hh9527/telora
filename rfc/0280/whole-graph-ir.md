@@ -5,6 +5,32 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Static generic instance graph and per-body TypeIds (2026-09-10)
+
+The type pass now retains GenericInstance nodes keyed by resolved declaration
+identity and solved type arguments. Each node shares the original HIR and owns
+a sorted table of syntax-node TypeIds plus edges to referenced generic instances.
+A worklist substitutes already-solved IDs throughout each declaration and follows
+transitive generic references before sealing. Ordinary recursive references close
+back to the existing instance. Codegen does not perform this substitution.
+
+Implicit generic arguments are publication requirements even when absent from
+the result signature. An Unknown argument is diagnosed during the static pass;
+seal rejects missing argument outcomes or missing reference-instance edges.
+Instance tables and reference edges appear in the stage dump with stable IDs.
+
+This is the static producer side of the next assembly step. Codegen has not yet
+switched to consuming these instance bodies; codec, instance-specific trait and
+property consumers, and complete old-pipeline removal remain outstanding. The
+current static expansion has a 4096-instance resource limit and reports an error
+rather than publishing a truncated graph. No performance claim is made.
+
+Validation: all 27 type-pass tests and all 27 current codegen tests pass. Added
+coverage checks transitive Int/String instantiations of Array(T).type, recursive
+instance identity, and rejection of unfilled phantom arguments. Existing repeated
+build/full-dump and inventory-order determinism tests also pass. Logs:
+/tmp/mir-instance-closure.log and /tmp/mir-instance-codegen-regression.log.
+
 ### Generic reference substitutions survive the type pass (2026-09-10)
 
 The per-reference parameter-to-argument-slot table previously lived only in
