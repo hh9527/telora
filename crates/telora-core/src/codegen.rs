@@ -1018,13 +1018,39 @@ impl<'a> Emitter<'a> {
             } => {
                 let value = self.expression(self.child(node, Role::Value))?;
                 if let Some(symbol) = self.mir.hir_symbols[node.index()] {
+                    if matches!(self.mir.hir[node.index()].kind, HirKind::Binding { kind: BindingKind::Def, .. })
+                        && let Some(target) = self.lookup(symbol)
+                    {
+                        self.emit(node, O::SealFunc { target, source: value });
+                        return Ok(target);
+                    }
                     self.locals.push((symbol, value));
                 }
                 value
             }
+            HirKind::Binding { kind: BindingKind::Decl, .. } => {
+                let symbol = self.mir.hir_symbols[node.index()].expect("declaration SymbolId");
+                self.lookup(symbol).ok_or_else(|| self.error(node, "local declaration has no function slot"))?
+            }
             HirKind::Block => {
                 let scope = self.locals.len();
-                for binding in self.children(node, Role::Binding) {
+                let bindings = self.children(node, Role::Binding);
+                // Stable symbols and closed types identify the block-wide
+                // function slots. Closures capture these handles before their
+                // bodies are installed, supporting self and mutual recursion.
+                for &binding in &bindings {
+                    if matches!(self.mir.hir[binding.index()].kind, HirKind::Binding { kind: BindingKind::Def | BindingKind::Decl, .. })
+                        && self.mir.types[self.ty(binding)?.index()].constructor == TypeConstructor::Function
+                    {
+                        let symbol = self.mir.hir_symbols[binding.index()].expect("function SymbolId");
+                        if self.lookup(symbol).is_none() {
+                            let dst = self.register();
+                            self.emit(binding, O::AllocFunc { dst, static_id: None });
+                            self.locals.push((symbol, dst));
+                        }
+                    }
+                }
+                for binding in bindings {
                     self.expression(binding)?;
                 }
                 let value = self.expression(self.child(node, Role::Result))?;
@@ -1475,6 +1501,22 @@ pub(crate) mod tests {
             assert_eq!(result.value().as_int(), Some(42), "{source}");
         }
     }
+    #[test]
+    fn local_recursive_functions_capture_block_slots_and_invocation_values() {
+        for source in [
+            "export def answer = do { def down: Fn(Int) -> Int = fn(n) { if n == 0 { 42 } else { down(n - 1) } }; down(4) };",
+            "export def answer = do { def even: Fn(Int) -> Bool = fn(n) { if n == 0 { True } else { odd(n - 1) } }; def odd: Fn(Int) -> Bool = fn(n) { if n == 0 { False } else { even(n - 1) } }; if even(4) && odd(3) { 42 } else { 0 } };",
+            "def make: Fn(Int) -> Fn(Int) -> Int = fn(base) { def walk: Fn(Int) -> Int = fn(n) { if n == 0 { base } else { walk(n - 1) } }; walk }; def first = make(20); def second = make(22); export def answer = first(3) + second(4);",
+            "export def answer = do { decl next: Fn(Int) -> Int; def next = fn(n) { if n == 0 { 42 } else { next(n - 1) } }; next(3) };",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}\n{}", mir.dump()));
+            let artifact = compile(sealed, entry(&mir)).unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            let result = execute(artifact).unwrap_or_else(|d| panic!("{source}\n{d}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
     #[test]
     fn unary_operators_consume_the_solved_operand_family() {
         for source in [

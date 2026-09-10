@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Local recursive closures consume resolved block identities (2026-09-11)
+
+Local function references previously failed codegen because closures were emitted
+before their own or mutually recursive bindings had registers. Blocks now reserve
+function handles for resolved Def/Decl symbols whose closed type is Function.
+Closures capture those handles; definitions install their generated functions
+using the existing AllocFunc/SealFunc operations. Decl/Def pairs share the same
+SymbolId and slot. Each block invocation allocates its own handles, so escaped
+recursive closures retain the correct invocation's captured values. No name
+lookup, type reconstruction or VM representation change is added.
+
+Validation: all 53 codegen tests pass, including new cases for self recursion,
+mutual recursion, declaration/definition pairing and independently escaped
+closures with distinct captured values. The previously failing
+explicit-boundary-types language fixture now passes all five tests through the
+new CLI/VM pipeline. Logs: /tmp/mir-local-recursion-codegen.log and
+/tmp/mir-local-recursion-fixture.jsonl. This does not close the other acceptance
+gaps: in particular, block typing still loses Never from discarded statements
+when it equates a block with its Unit tail. Broader generic, property/schema,
+diagnostic/query and legacy-removal work remains.
+
 ### Newtype projection and unary lowering close acceptance gaps (2026-09-11)
 
 The success-check aggregate exposed a missing static rule for the existing
