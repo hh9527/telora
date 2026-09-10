@@ -83,7 +83,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             .iter()
             .find(|id| mir.symbols[id.index()].name == export)
             .ok_or("entry export is missing")?;
-        let artifact = telora_core::codegen::compile(&mir, symbol)
+        let sealed = mir
+            .seal()
+            .map_err(|diagnostics| format!("seal: {diagnostics:?}"))?;
+        let artifact = telora_core::codegen::compile(sealed, symbol)
             .map_err(|diagnostics| format!("codegen: {diagnostics:?}"))?;
         let mut vm = telora_core::Vm::new();
         let bytecode = telora_core::execution_link::link_builtins(&artifact)

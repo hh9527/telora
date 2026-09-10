@@ -5,6 +5,36 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Explicit seal and deterministic type image (2026-09-10)
+
+`Mir::seal` is now the publication boundary for codegen. It requires completed
+passes, normalized required type slots, no Unknown/Conflicted errors, and proven
+bounds. Rejection leaves the original graph intact for diagnostics and query.
+`SealedMir` privately holds a read-only borrow: the graph cannot be mutated while
+that capability is live. Codegen accepts this capability instead of a raw MIR.
+Sealing does not allocate replacement IDs or repeat any solve operation.
+
+The seal extracts a flat `TypeImage` preserving the exact MIR TypeId indices.
+Nominal member payloads contain normalized TypeIds, not inference slots. Generic
+definitions retain parameter identities, nominal applications retain argument
+IDs, and recursive edges refer back to nominal identities. Codegen transfers
+this image into the artifact without copying it a second time. The current
+borrowed seal performs one table copy so the artifact can outlive the source MIR;
+it is not yet a consuming/move-only MIR ownership boundary.
+
+Full-build determinism is a contract: identical inventory, source, roots and
+options produce identical IDs and graph content regardless of inventory
+enumeration order. This does not promise cross-edit ID stability. The module pass
+already sorts canonical names and processes its worklist in ID order. A new
+test reverses/rotates inventories and compares the whole MIR dump, sealed type
+image, emitted bytecode and native relocations across independent builds.
+
+Eight focused codegen/seal tests pass, including that determinism test, retention
+of recursive/generic skeletons after dropping MIR, and preservation of an invalid
+graph on seal rejection. VM type-image import, nominal construction and CLI
+execution assembly are still outstanding; this milestone makes no performance
+claim.
+
 ### Native execution ABI linking (2026-09-10)
 
 Codegen now emits native function relocations from resolved declaration IDs and

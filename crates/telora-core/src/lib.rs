@@ -9,6 +9,7 @@
 pub mod ast;
 pub mod bytecode;
 pub mod codegen;
+pub mod type_image;
 pub mod execution_link;
 pub mod compiler;
 mod core;

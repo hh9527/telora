@@ -8,6 +8,9 @@ use std::fmt::Write;
 
 #[path = "mir/lower.rs"]
 pub(crate) mod lower;
+#[path = "mir/seal.rs"]
+mod seal;
+pub use seal::SealedMir;
 
 macro_rules! id {
     ($($name:ident),*) => {$(

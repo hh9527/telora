@@ -13,6 +13,7 @@ pub struct CompiledEntry {
     pub result_type: TypeId,
     pub bytecode: BytecodeFunction,
     pub native_links: Vec<NativeLink>,
+    pub types: crate::type_image::TypeImage,
 }
 
 #[derive(Debug)]
@@ -25,24 +26,8 @@ pub struct NativeLink {
     pub location: crate::source::Location,
 }
 
-pub fn compile(mir: &Mir, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnostic>> {
-    if !mir.symbols_closed
-        || !mir.types_solved
-        || !mir.type_unknowns.is_empty()
-        || !mir.type_conflicts.is_empty()
-        || mir.bound_requirements.iter().any(|b| !b.state.is_proven())
-        || mir
-            .diagnostics
-            .iter()
-            .any(|d| d.severity == Severity::Error)
-    {
-        return Err(vec![Diagnostic {
-            severity: Severity::Error,
-            message: "codegen requires a closed, valid MIR".into(),
-            labels: vec![],
-            notes: vec![],
-        }]);
-    }
+pub fn compile(sealed: SealedMir<'_>, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnostic>> {
+    let (mir, types) = sealed.into_parts();
     let Some(symbol) = mir.symbols.get(entry.index()) else {
         return Err(vec![Diagnostic {
             severity: Severity::Error,
@@ -91,6 +76,7 @@ pub fn compile(mir: &Mir, entry: SymbolId) -> Result<CompiledEntry, Vec<Diagnost
         result_type,
         bytecode,
         native_links: emitter.native_links,
+        types,
     })
 }
 
@@ -508,6 +494,9 @@ impl<'a> Emitter<'a> {
 mod tests {
     use super::*;
     fn graph(main: &str, math: &str) -> Mir {
+        graph_order(main, math, 0)
+    }
+    fn graph_order(main: &str, math: &str, order: usize) -> Mir {
         let mut inventory = crate::static_sources::BUILTINS
             .iter()
             .map(|(name, _)| crate::module_resolve::ModuleSpec {
@@ -528,6 +517,11 @@ mod tests {
                 native: None,
                 implicit_imports: vec!["std/prelude".into()],
             });
+        }
+        if order > 0 {
+            inventory.reverse();
+            let length = inventory.len();
+            inventory.rotate_left(order % length);
         }
         let mut mir =
             crate::module_resolve::resolve(inventory, &["@src/main".into()], |_, name| {
@@ -558,13 +552,56 @@ mod tests {
             .unwrap()
     }
     #[test]
+    fn sealed_full_build_is_independent_of_inventory_enumeration_order() {
+        let main = "import \"./math\" { identity }; \
+                    import \"std/array\" { map, fold }; \
+                    type Tree = enum { Leaf(Int), Branch((Tree, Tree)) }; \
+                    export def answer = fold(map([1, 2, 3], fn(x) { identity(x * 7) }), 0, fn(a, b) { a + b });";
+        let math = "export def identity: for(T) Fn(T) -> T = fn(x) { x };";
+        let baseline = graph_order(main, math, 0);
+        let sealed = baseline.seal().unwrap();
+        let expected_image = format!("{:?}", sealed.types());
+        let artifact = compile(sealed, entry(&baseline)).unwrap();
+        for order in [1, 7, 19] {
+            let rebuilt = graph_order(main, math, order);
+            let sealed = rebuilt.seal().unwrap();
+            assert_eq!(sealed.mir().dump(), baseline.dump());
+            assert_eq!(format!("{:?}", sealed.types()), expected_image);
+            let rebuilt = compile(sealed, entry(&rebuilt)).unwrap();
+            assert_eq!(
+                format!("{:?}", rebuilt.bytecode),
+                format!("{:?}", artifact.bytecode)
+            );
+            assert_eq!(
+                format!("{:?}", rebuilt.native_links),
+                format!("{:?}", artifact.native_links)
+            );
+        }
+    }
+
+    #[test]
+    fn seal_rejection_preserves_the_diagnostic_graph() {
+        let mut mir = graph("export def answer = missing;", "");
+        let before = mir.dump();
+        assert!(mir.seal().is_err());
+        assert_eq!(mir.dump(), before);
+        // Flags alone are not evidence that required slots were normalized.
+        mir.diagnostics.clear();
+        mir.type_unknowns.clear();
+        mir.type_conflicts.clear();
+        assert!(mir.seal().is_err());
+    }
+    #[test]
     fn executes_solved_mir_with_closures_captures_and_branches() {
         let mir = graph(
             "export def answer = (fn(x) { let twice = fn(y) { x + y }; if x > 0 { twice(x) } else { 0 } })(21);",
             "",
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-        let artifact = compile(&mir, entry(&mir)).unwrap();
+        let artifact = mir
+            .seal()
+            .and_then(|sealed| compile(sealed, entry(&mir)))
+            .unwrap();
         let mut vm = crate::Vm::new();
         let result = vm.execute(&artifact.bytecode, 10000).unwrap();
         assert_eq!(result.value().as_int(), Some(42));
@@ -582,7 +619,10 @@ mod tests {
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
         let before = mir.dump();
-        let artifact = compile(&mir, entry(&mir)).unwrap();
+        let artifact = mir
+            .seal()
+            .and_then(|sealed| compile(sealed, entry(&mir)))
+            .unwrap();
         assert_eq!(mir.dump(), before);
         assert_eq!(
             crate::Vm::new()
@@ -601,10 +641,17 @@ mod tests {
             "export def answer = { value: 1 };",
         ] {
             let mir = graph(source, "");
-            assert!(compile(&mir, entry(&mir)).is_err());
+            assert!(
+                mir.seal()
+                    .and_then(|sealed| compile(sealed, entry(&mir)))
+                    .is_err()
+            );
         }
         let mir = graph("export def answer = 1 / 0;", "");
-        let artifact = compile(&mir, entry(&mir)).unwrap();
+        let artifact = mir
+            .seal()
+            .and_then(|sealed| compile(sealed, entry(&mir)))
+            .unwrap();
         assert!(crate::Vm::new().execute(&artifact.bytecode, 10000).is_err());
     }
 
@@ -618,7 +665,10 @@ mod tests {
             "",
         );
         assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
-        let artifact = compile(&mir, entry(&mir)).unwrap();
+        let artifact = mir
+            .seal()
+            .and_then(|sealed| compile(sealed, entry(&mir)))
+            .unwrap();
         assert_eq!(artifact.native_links.len(), 2);
         assert!(artifact.native_links.iter().all(|l| l.module == Some(5)));
         let bytecode = crate::execution_link::link_builtins(&artifact).unwrap();
@@ -639,12 +689,71 @@ mod tests {
             "native map: Fn(Int) -> Int; export def answer = map(1);",
             "",
         );
-        let artifact = compile(&mir, entry(&mir)).unwrap();
+        let artifact = mir
+            .seal()
+            .and_then(|sealed| compile(sealed, entry(&mir)))
+            .unwrap();
         assert!(crate::execution_link::link_builtins(&artifact).is_err());
         let errors = crate::execution_link::link_with(&artifact, |_| {
             Some(crate::NativeFunction::new("wrong", 2, |_| unreachable!()))
         })
         .unwrap_err();
         assert!(errors.iter().any(|d| d.message.contains("arity")));
+    }
+
+    #[test]
+    fn type_image_retains_recursive_and_generic_skeletons_without_mir() {
+        let mir = graph(
+            "type Pair(T) = struct { first: T, second: T }; \
+             type Tree = enum { Leaf(Int), Branch((Tree, Tree)) }; \
+             export def answer = 42;",
+            "",
+        );
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let before = mir.dump();
+        let artifact = mir
+            .seal()
+            .and_then(|sealed| compile(sealed, entry(&mir)))
+            .unwrap();
+        assert_eq!(mir.dump(), before);
+        assert_eq!(artifact.types.types.len(), mir.types.len());
+        drop(mir);
+        let image = &artifact.types;
+        let pair = image
+            .definitions
+            .iter()
+            .find(|d| d.name.ends_with("::Pair"))
+            .unwrap();
+        let parameter = pair.parameters[0];
+        for member in &pair.members {
+            assert_eq!(
+                image.types[member.payload.unwrap().index()].constructor,
+                TypeConstructor::Parameter(parameter)
+            );
+        }
+        let tree = image
+            .definitions
+            .iter()
+            .find(|d| d.name.ends_with("::Tree"))
+            .unwrap();
+        assert!(std::ptr::eq(image.definition(tree.symbol).unwrap(), tree));
+        let branch = tree.members.iter().find(|m| m.name == "Branch").unwrap();
+        let tuple = &image.types[branch.payload.unwrap().index()];
+        assert_eq!(tuple.constructor, TypeConstructor::Tuple);
+        assert_eq!(tuple.arguments.len(), 2);
+        for &child in &tuple.arguments {
+            assert_eq!(
+                image.types[child.index()].constructor,
+                TypeConstructor::Nominal(tree.symbol)
+            );
+        }
+        assert_eq!(
+            crate::Vm::new()
+                .execute(&artifact.bytecode, 10000)
+                .unwrap()
+                .value()
+                .as_int(),
+            Some(42)
+        );
     }
 }
