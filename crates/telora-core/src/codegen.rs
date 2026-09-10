@@ -363,6 +363,35 @@ impl<'a> Emitter<'a> {
             HirKind::Float(value) => self.constant(node, Constant::Float(*value)),
             HirKind::String(value) => self.constant(node, Constant::String(value.clone().into())),
             HirKind::Bytes(value) => self.constant(node, Constant::Bytes(value.clone().into())),
+            HirKind::Dict => {
+                if self.mir.types[self.ty(node)?.index()].constructor != TypeConstructor::Dict {
+                    return Err(
+                        self.error(node, "record/struct layout lowering is not implemented yet")
+                    );
+                }
+                let mut fields = vec![];
+                for field in self.children(node, Role::Field) {
+                    let Some(name) = self.mir.hir[field.index()]
+                        .children
+                        .iter()
+                        .find(|e| e.role == Role::Name)
+                        .map(|e| e.node)
+                    else {
+                        return Err(
+                            self.error(field, "dictionary spread lowering is not implemented yet")
+                        );
+                    };
+                    let HirKind::Name(name) = &self.mir.hir[name.index()].kind else {
+                        unreachable!()
+                    };
+                    let name = name.clone();
+                    let value = self.expression(self.child(field, Role::Value))?;
+                    fields.push((name, value));
+                }
+                let dst = self.register();
+                self.emit(node, O::MakeDict { dst, fields });
+                dst
+            }
             HirKind::Binding {
                 kind: BindingKind::Let | BindingKind::Def,
                 ..

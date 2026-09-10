@@ -1,4 +1,69 @@
 #[test]
+fn static_mir_eval_serializes_value_and_rejects_other_contracts_before_execution() {
+    let cwd = fixture();
+    fs::write(
+        cwd.join("src/main.telora"),
+        r#"
+        import "std/value" { Value };
+        import "std/array" { map };
+        export def answer = Value.Object({
+            "values": Value.Array(map([1, 2], fn(x) { Value.Int(x * 21) })),
+            "empty": Value.None,
+            "empty_array": Value.Array([]),
+            "empty_object": Value.Object({}),
+            "false": Value.False,
+            "float": Value.Float(1.5),
+            "ok": Value.True,
+            "text": Value.String("a\"b"),
+        });
+    "#,
+    )
+    .unwrap();
+    let output = telora(&cwd)
+        .args(["eval", "@src/main:answer"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+        serde_json::json!({
+            "values": [21, 42], "empty": null, "ok": true, "text": "a\"b",
+            "empty_array": [], "empty_object": {}, "false": false, "float": 1.5,
+        })
+    );
+    for source in [
+        "export def answer = 1 / 0;",
+        "import \"std/value\" { Value as Original }; type Value = enum { Int(Int) }; export def answer = Value.Int(42);",
+    ] {
+        fs::write(cwd.join("src/main.telora"), source).unwrap();
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("std/value.Value"));
+    }
+    for source in [
+        "import \"std/value\" { Value }; export def answer = Value.Int(1 / 0);",
+        "import \"std/value\" { Value }; export def answer = Value.LocalDate(\"2026-09-10\");",
+    ] {
+        fs::write(cwd.join("src/main.telora"), source).unwrap();
+        let output = telora(&cwd)
+            .args(["eval", "@src/main:answer"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty(), "no partial JSON may be published");
+    }
+    fs::remove_dir_all(cwd).unwrap();
+}
+
+#[test]
 fn static_mir_generic_native_signatures_determine_check_outcome() {
     let cwd = fixture();
     for (annotation, expected_code) in [("Bool", 0), ("String", 1)] {

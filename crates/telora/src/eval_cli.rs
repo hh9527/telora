@@ -49,10 +49,74 @@ fn parse_eval_selector(value: &str) -> Result<EvalSelector, String> {
 }
 
 pub(crate) fn run(context: PathBuf, arguments: EvalArgs) -> Result<i32, String> {
-    let (engine, pending) = prepare(&context, &arguments.selector)?;
-    let output = engine
-        .eval_pending_export(pending, &arguments.selector.export)
+    use telora_core::mir::{ModuleTarget, ResolveState, TypeConstructor, TypeState};
+    let mut inventory = crate::static_input::Inventory::new(
+        &context,
+        arguments.selector.module_id.starts_with("std/"),
+    )?;
+    let root = inventory.select(&arguments.selector.module_id)?;
+    let mir = inventory.solve(&root);
+    let render = |diagnostics: Vec<telora_core::Diagnostic>| {
+        diagnostics
+            .iter()
+            .map(|d| mir.sources.render(d))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let sealed = mir.seal().map_err(|diagnostics| {
+        mir.diagnostics
+            .iter()
+            .chain(&diagnostics)
+            .map(|d| mir.sources.render(d))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let ModuleTarget::Bound(module) = mir.roots[0] else {
+        return Err("unresolved eval module".into());
+    };
+    let symbol = *mir.exports[module.index()]
+        .iter()
+        .find(|id| mir.symbols[id.index()].name == arguments.selector.export)
+        .ok_or_else(|| format!("module has no export {:?}", arguments.selector.export))?;
+    let ResolveState::Bound(target) = mir.symbols[symbol.index()].resolution else {
+        return Err("unresolved eval export".into());
+    };
+    if !mir.symbol_generics[target.index()].is_empty() {
+        return Err("eval export must not be polymorphic".into());
+    }
+    // Explicit CLI output contract, selected from authoritative exports.
+    // This is not a type-name recognition rule in the solver.
+    let value_type = mir
+        .modules
+        .iter()
+        .position(|module| module.name == "std/value")
+        .and_then(|module| {
+            mir.exports[module]
+                .iter()
+                .find(|id| mir.symbols[id.index()].name == "Value")
+        })
+        .and_then(
+            |id| match mir.ty_slots[mir.symbol_types[id.index()].index()] {
+                TypeState::Known(meta)
+                    if mir.types[meta.index()].constructor == TypeConstructor::Meta =>
+                {
+                    mir.types[meta.index()].arguments.first().copied()
+                }
+                _ => None,
+            },
+        )
+        .ok_or("eval export must have type std/value.Value")?;
+    if mir.ty_slots[mir.symbol_types[target.index()].index()] != TypeState::Known(value_type) {
+        return Err("eval export must have type std/value.Value".into());
+    }
+    let artifact = telora_core::codegen::compile(sealed, symbol).map_err(&render)?;
+    let linked = telora_core::execution_link::link_entry(artifact).map_err(&render)?;
+    let mut vm =
+        telora_core::Vm::new().with_debug_sink(std::sync::Arc::new(crate::StderrDebugSink));
+    let result = vm
+        .execute_linked(linked, crate::engine_config().session_quota)
         .map_err(|error| error.to_string())?;
+    let output = result.to_json(value_type)?;
     println!("{output}");
     Ok(0)
 }

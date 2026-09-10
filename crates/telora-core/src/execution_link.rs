@@ -31,6 +31,12 @@ pub struct SolvedExecution {
 }
 
 impl SolvedExecution {
+    pub fn to_json(&self, value_type: crate::mir::TypeId) -> Result<String, String> {
+        if self.result_type != value_type {
+            return Err("eval result must be std/value.Value".into());
+        }
+        self.world.solved_json(value_type)
+    }
     pub fn value(&self) -> crate::ValueRef<'_> {
         self.world.value()
     }

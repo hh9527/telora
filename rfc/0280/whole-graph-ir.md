@@ -5,6 +5,35 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Ordinary eval uses the sealed execution path (2026-09-10)
+
+The `eval MODULE:NAME` CLI now uses inventory discovery, the three MIR passes,
+seal, codegen, ABI linking and the new VM execution entry. It validates its
+explicit `std/value.Value` output contract through authoritative module exports
+and canonical TypeId equality before executing code. A user-defined type with
+the same spelling does not satisfy that contract. This command no longer calls
+the old Engine; it has no fallback to old compilation or inference.
+
+Dictionary literals lower to MakeDict only when the solved type is Dict.
+Record/Struct literals remain explicitly unsupported until their separate
+fixed-layout representation is implemented. The new Value JSON consumer uses
+the statically selected identity and an iterative traversal of runtime values;
+it does not materialize type witnesses or rebuild a second heap data graph.
+It detects cycles and retains existing rejection of Bytes and temporal values
+for JSON. Output is printed only after execution and serialization both succeed.
+
+A CLI test exercises a nested Value object, native map with a Value-producing
+callback, empty arrays/objects, boolean/numeric/string values and escaping. It
+also checks rejection of the wrong output type before execution, rejection of
+an identically named nominal type, and no partial output for runtime/JSON errors.
+The existing plain Value-export eval acceptance test is retained.
+
+This is a vertical CLI migration with remaining language coverage gaps, not
+completed assembly. eval-with, ordinary check and entry dispatch still use the
+old path. Record layout, property execution, builtin enum lowering, dynamic
+generic witnesses and other unsupported operations remain explicit integration
+work. No new performance claim is made.
+
 ### Solved nominal enum construction (2026-09-10)
 
 The type pass now retains nominal enum member selections as variant indices in
