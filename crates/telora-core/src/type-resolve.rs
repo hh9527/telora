@@ -83,6 +83,10 @@ enum Task {
         receiver: TypeSlotId,
         name: String,
     },
+    Not {
+        node: HirId,
+        operand: TypeSlotId,
+    },
     Numeric {
         node: HirId,
         operand: TypeSlotId,
@@ -318,7 +322,11 @@ impl Solver<'_> {
                 let operator = *operator;
                 let operand = self.child(node, Role::Operand).unwrap();
                 match operator {
-                    UnaryOperator::Not | UnaryOperator::LogicalNot => {
+                    UnaryOperator::Not => {
+                        self.same(node, operand.ty());
+                        self.tasks.push(Task::Not { node, operand: operand.ty() });
+                    }
+                    UnaryOperator::LogicalNot => {
                         self.assign(operand, TypeConstructor::Bool, vec![]);
                         self.assign(node, TypeConstructor::Bool, vec![]);
                     }
@@ -727,7 +735,7 @@ impl Solver<'_> {
         let (node, dependencies) = match &task {
             Task::Tuple { node, items } => (*node, items.clone()),
             Task::Member { node, receiver, .. } => (*node, vec![*receiver]),
-            Task::Numeric { node, operand } => (*node, vec![*operand]),
+            Task::Numeric { node, operand } | Task::Not { node, operand } => (*node, vec![*operand]),
             _ => unreachable!(),
         };
         for dependency in dependencies {
@@ -773,6 +781,14 @@ impl Solver<'_> {
                 receiver,
                 name,
             } => return self.member(node, receiver, name),
+            Task::Not { node, operand } => {
+                let Some(term) = self.term(operand) else {
+                    return Some(Task::Not { node, operand });
+                };
+                if !matches!(term.constructor, TypeConstructor::Bool | TypeConstructor::Int | TypeConstructor::Never) {
+                    self.conflict(node.ty(), operand, Some(self.mir.hir[node.index()].location), "Bool or Int operand required for !".into());
+                }
+            }
             Task::Numeric { node, operand } => {
                 let Some(term) = self.term(operand) else {
                     return Some(Task::Numeric { node, operand });

@@ -2,6 +2,20 @@ use super::*;
 use crate::module_resolve::{self, ModuleSpec};
 
 #[test]
+fn positional_projection_requires_a_tuple_or_the_single_newtype_payload() {
+    for source in [
+        "type Count = struct(Int); export def invalid = Count(42).1;",
+        "type Record = struct {value: Int}; def value: Record = {value: 42}; export def invalid = value.0;",
+        "type Choice = enum {Item(Int)}; export def invalid = Choice.Item(42).0;",
+    ] {
+        let mut mir = graph(&[("@src/main", source)]);
+        resolve(&mut mir);
+        assert!(mir.diagnostics.iter().any(|d| d.message == "invalid projection or index"), "{source}\n{}", mir.dump());
+        assert!(mir.seal().is_err());
+    }
+}
+
+#[test]
 fn alias_cycles_are_conflicted_before_generic_expansion_without_blocking_other_types() {
     let mut mir = graph(&[("@src/main", r#"
         type Family(A) = (Concrete, A);

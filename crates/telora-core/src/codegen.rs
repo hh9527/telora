@@ -1063,6 +1063,26 @@ impl<'a> Emitter<'a> {
                 );
                 dst
             }
+            HirKind::Unary(operator) => {
+                use crate::ast::UnaryOperator;
+                let operator = *operator;
+                let operand = self.child(node, Role::Operand);
+                let src = self.expression(operand)?;
+                let dst = self.register();
+                let instruction = match operator {
+                    UnaryOperator::Negate => O::Negate { dst, src },
+                    UnaryOperator::LogicalNot => O::LogicalNot { dst, src },
+                    UnaryOperator::BitNot => O::BitNot { dst, src },
+                    UnaryOperator::Not => match self.mir.types[self.ty(operand)?.index()].constructor {
+                        TypeConstructor::Bool => O::LogicalNot { dst, src },
+                        TypeConstructor::Int => O::BitNot { dst, src },
+                        TypeConstructor::Never => return Ok(src),
+                        _ => return Err(self.error(node, "! requires a solved Bool or Int operand")),
+                    },
+                };
+                self.emit(node, instruction);
+                dst
+            }
             HirKind::Binary(operator) => {
                 if matches!(operator, B::And | B::Or) {
                     let is_and = *operator == B::And;
@@ -1456,8 +1476,31 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn unary_operators_consume_the_solved_operand_family() {
+        for source in [
+            "export def answer = if !False { 42 } else { 0 };",
+            "export def answer = !(-43);",
+            "export def answer = -(-42);",
+            "export def answer = if -1.5 < 0.0 { 42 } else { 0 };",
+            "def invert: Fn(Int) -> Int = fn(value) { !value }; export def answer = invert(-43);",
+        ] {
+            let mir = graph(source, "");
+            let sealed = mir.seal().unwrap_or_else(|d| panic!("{source}\n{d:?}"));
+            let artifact = compile(sealed, entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap();
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+        let mir = graph("export def answer = !1.5;", "");
+        assert!(mir.seal().is_err());
+        assert!(mir.diagnostics.iter().any(|d| d.message == "Bool or Int operand required for !"));
+    }
+
+    #[test]
     fn newtypes_and_selected_trait_implementations_execute_from_solved_ids() {
         for source in [
+            "type Count = struct(Int); def count = Count(42); export def answer = count.0;",
+            "type Box(T) = struct(T); type IntBox = Box(Int); def read: for(T) Fn(Box(T)) -> T = fn(value) { value.0 }; export def answer = read(IntBox(42));",
+            "type Inner = struct(Int); type Outer = struct(Inner); export def answer = Outer(Inner(42)).0.0;",
             "type Inner = struct(Array(Int)); type Outer = struct(Inner); def input = [20, 22]; export def answer = match Outer(Inner(input)) { Outer(Inner(items)) => items[0] + items[1] };",
             "type Box(T) = struct(T); type IntBox = Box(Int); export def answer = match IntBox(42) { IntBox(value) => value };",
             "type A = struct(Int); type B = struct(A); export def answer = if B(A(42)) == B(A(42)) { 42 } else { 0 };",

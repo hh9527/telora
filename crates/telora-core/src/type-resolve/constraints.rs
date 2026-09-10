@@ -238,6 +238,20 @@ impl Solver<'_> {
                     }));
                 };
                 match (index, &term.constructor) {
+                    (Some(0), TypeConstructor::Nominal(symbol)) => {
+                        if let Some((TypeOperation::Newtype, members)) =
+                            self.nominal_members(*symbol, &term.arguments)
+                            && let Some((_, Some(payload))) = members.first()
+                        {
+                            self.same(node, *payload);
+                        } else {
+                            self.conflict(
+                                node.ty(), node.ty(),
+                                Some(self.mir.hir[node.index()].location),
+                                "invalid projection or index".into(),
+                            );
+                        }
+                    }
                     (Some(i), TypeConstructor::Tuple | TypeConstructor::TupleLiteral) if i < term.arguments.len() => {
                         self.same(node, term.arguments[i])
                     }

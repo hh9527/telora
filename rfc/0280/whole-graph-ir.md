@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Newtype projection and unary lowering close acceptance gaps (2026-09-11)
+
+The success-check aggregate exposed a missing static rule for the existing
+newtype `.0` payload access. Projection now reads the declared newtype member
+and instantiates its payload in the solver. Other positional indexes, record
+projection and enum projection remain rejected. Existing tuple bytecode and VM
+representation already support newtypes, so no runtime or codegen change was
+needed for this rule. The full success-check aggregate now passes.
+
+The language suite next reached a missing unary-expression codegen branch.
+Unary lowering now emits existing negate/logical-not/bit-not instructions.
+The solver retains the language's Bool-or-Int constraint for `!`; codegen selects
+the instruction using the closed operand TypeId, including instantiated function
+bodies. It does not use a dynamic operator-family fallback.
+
+Validation: all 37 type-resolve and 52 codegen tests pass. Added execution cases
+cover concrete/generic/nested newtype payloads, Boolean/integer `!`, negative
+integers/floats and function-context inference; static rejection covers invalid
+projections and floating-point `!`. Full CLI acceptance after the projection
+fix completed with 60 passes and 6 failures. After unary lowering, the language
+suite executes its final result aggregator but still fails many cases; it is
+not accepted yet. Logs: /tmp/mir-projection-types.log,
+/tmp/mir-unary-codegen.log, /tmp/mir-cli-after-projection.log and
+/tmp/mir-unary-language.log. Remaining observed gaps include local recursive
+bindings, property/schema ABI support, generic inference and diagnostic/query
+contracts. No performance result is claimed.
+
 ### LSP protocol consumes MIR; cyclic aliases terminate (2026-09-11)
 
 The LSP protocol now uses mir_workspace and MirQuery for diagnostics, hover,
