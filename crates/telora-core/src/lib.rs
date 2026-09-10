@@ -15,7 +15,7 @@ mod test_protocol;
 pub use test_protocol::{TestContext, TestHost, TestLimits, TestSource};
 pub mod execution_link;
 pub mod execution_graph;
-pub mod compiler;
+mod compiler;
 mod core;
 pub mod document;
 mod elaboration;
@@ -56,7 +56,6 @@ pub use bytecode::{
     BytecodeFunction, DebugOriginRange, FuncByteCode, Instruction, LinkingTable, Opcode,
     ProtoLinkId, Register, TextLinkId, ValueLinkId,
 };
-pub use compiler::{ExecutionError, compile_source, run_source};
 pub use document::{
     DocumentSnapshot, DocumentText, DocumentVersion, PositionEncoding, TextEdit, TextPosition,
 };

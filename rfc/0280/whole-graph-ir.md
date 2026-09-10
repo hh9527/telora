@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove the old source compilation/execution API (2026-09-11)
+
+Deleted compile_source, run_source, CompiledSource, ExecutionError, the old
+whole-program compiler entry, metadata erasure planning and whole-program
+elaboration entry. compiler is now private; its expression compiler remains
+only for the old type tool stage until that producer is removed. No adapter
+routes the removed API through a compatibility implementation.
+
+Old source-compiler tests and the descriptor-specific source compilation test
+were deleted with that entry. The VM dictionary allocation-accounting test now
+constructs bytecode directly and retains its assertions about repeated shape
+cache hits. This test no longer needs a source compiler to check VM accounting.
+The new MIR codegen tests retain runtime regression coverage.
+
+Validation: workspace compilation, codegen 88/88, VM 48/48 and telora library
+28/28 pass. Logs: /tmp/mir-remove-source-compiler-{check,codegen,vm,editor}.log.
+About 850 source/test lines were removed. There are 38 remaining unused-code
+warnings, including newly exposed old analysis/host execution helpers; no
+suppressions were added. The private old tool-expression compiler, full type
+analyzer and descriptor runtime still require removal. Final acceptance and
+performance evaluation remain outstanding.
+
 ### Remove the legacy static-function reference representation (2026-09-11)
 
 Deleted the compiler's static function map/module compilation wrapper and

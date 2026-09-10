@@ -4,32 +4,8 @@ use crate::types::{NotFamily, PropagationFamily, ResolvedEvidence};
 use std::collections::HashMap;
 
 mod constructors;
-pub(crate) use constructors::{lower_block_constructor_patterns, lower_constructor_patterns};
+pub(crate) use constructors::lower_constructor_patterns;
 
-pub(crate) fn elaborate_program(
-    program: &mut Program,
-    families: &HashMap<Location, PropagationFamily>,
-    not_families: &HashMap<Location, NotFamily>,
-    trait_member_evidence: &HashMap<Location, ResolvedEvidence>,
-    generic_call_evidence: &HashMap<Location, Vec<ResolvedEvidence>>,
-    generic_function_arities: &HashMap<Location, usize>,
-    interpolation_evidence: &HashMap<Location, ResolvedEvidence>,
-    generic_evidence_parameters: &HashMap<Location, Vec<String>>,
-    generic_dictionary_factories: &HashMap<Location, Vec<String>>,
-) {
-    let mut elaborator = Elaborator {
-        families,
-        not_families,
-        trait_member_evidence,
-        generic_call_evidence,
-        generic_function_arities,
-        interpolation_evidence,
-        generic_evidence_parameters,
-        generic_dictionary_factories,
-        next: 0,
-    };
-    elaborator.block(&mut program.value.body);
-}
 
 struct Elaborator<'a> {
     families: &'a HashMap<Location, PropagationFamily>,

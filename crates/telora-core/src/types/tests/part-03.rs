@@ -183,27 +183,6 @@
 
 
     #[test]
-    fn program_bytecode_externalizes_type_metadata_and_retains_explicit_witnesses() {
-        let erased = crate::compile_source(
-            "test",
-            "type User = struct {name: String}; let user: User = {name: \"Ada\"}; user.name",
-        )
-        .unwrap();
-        assert!(!erased.constants().is_empty());
-
-        let retained =
-            crate::compile_source("test", "type User = struct {name: String}; User.type").unwrap();
-        assert!(
-            retained
-                .constants()
-                .iter()
-                .all(|constant| matches!(constant, crate::bytecode::Constant::Placeholder))
-        );
-        let witness =
-            crate::run_source("test", "type User = struct {name: String}; User.type", 100_000).unwrap();
-        assert_eq!(witness.value().kind(), crate::ValueKind::Type);
-    }
-    #[test]
     fn function_type_errors_precede_construction_check_factory_execution() {
         let source = r#"
             @check(do { fail!("tool-stage-sentinel"); fn(value) { fail!("unused callback") } })

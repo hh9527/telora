@@ -755,9 +755,14 @@
 
     #[test]
     fn dict_allocation_charge_does_not_depend_on_shape_cache_hits() {
-        let function = crate::compile_source("test", "{answer: 42}")
-            .unwrap()
-            .into_function();
+        let function = BytecodeFunction::new(
+            "dict allocation", 2, vec![Constant::Int(42)],
+            vec![
+                Instruction::LoadConst { dst: Register(0), constant: 0 },
+                Instruction::MakeDict { dst: Register(1), fields: vec![("answer".into(), Register(0))] },
+                Instruction::Return { src: Register(1) },
+            ],
+        );
         let mut vm = Vm::new();
         let mut account = QuotaAccount::new(Quota::new(0, 100, u64::MAX));
         vm.execute_with_account(&function, &[], &mut account)
