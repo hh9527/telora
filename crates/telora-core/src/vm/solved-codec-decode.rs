@@ -31,6 +31,7 @@ enum SolvedDecodeTask {
         loc: Option<crate::Loc>,
     },
     Dict {
+        owner: crate::mir::TypeId,
         shape: crate::heap::ShapeId,
         count: usize,
         loc: Option<crate::Loc>,
@@ -529,7 +530,7 @@ fn continue_solved_decode(
                 });
                 continue;
             }
-            SolvedDecodeTask::Dict { shape, count, loc } => {
+            SolvedDecodeTask::Dict { owner, shape, count, loc } => {
                 let values = output.split_off(output.len() - count).into_boxed_slice();
                 charge_allocation(
                     account,
@@ -541,7 +542,7 @@ fn continue_solved_decode(
                 output.push(Val::new(
                     DecodedValue::Dict(current.allocate(Object::Dict { shape, values })),
                     loc,
-                ));
+                ).with_type_id(crate::TypeId::solved(owner)));
                 continue;
             }
             SolvedDecodeTask::Newtype { owner, loc } => {
@@ -1071,6 +1072,7 @@ fn continue_solved_decode(
                                 unreachable!()
                             };
                             pending.push(SolvedDecodeTask::Dict {
+                                owner: ty,
                                 shape: *dict_shape,
                                 count: values.len(),
                                 loc,

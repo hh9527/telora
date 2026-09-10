@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Decoded dictionaries retain their solved identity (2026-09-11)
+
+The dictionary decode completion task dropped its known target TypeId. A
+record containing Dict(String) therefore decoded to the right contents but
+failed equality with the authored record. The task now carries that solved
+ID and attaches it to the newly decoded dictionary handle, matching ordinary
+dictionary construction. No runtime type reconstruction or data copying was
+added.
+
+Array, Tuple and native Option values retain their existing runtime
+representation: ordinary construction does not stamp identity tags on those
+values. Their static types remain in MIR/TypeImage. Regression coverage checks
+the dictionary tag and these structural containers together, including present
+and absent Option values, and asserts full round-trip record equality.
+
+Validation: 84 codegen tests, 48 VM tests and CLI build pass. Actual codec-schema
+now passes its complete verified_case (1/1), including recursive structures,
+schema output, parser equivalence and JSON formatting. Logs:
+/tmp/mir-dict-{codegen,vm,build,language}.log. No perf run or fixture changes.
+Remaining test-mode failures from the preceding aggregate are initialization,
+interpreter, module-interfaces and stdlib-collections. Other diagnostic/query
+gates and legacy removal remain incomplete.
+
 ### Empty Option instances close from constructor evidence (2026-09-11)
 
 An unconstrained use such as option.is_some(None) left the Option argument and

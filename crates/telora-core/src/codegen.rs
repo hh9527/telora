@@ -1410,6 +1410,28 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn decoded_container_fields_preserve_their_solved_types() {
+        let mir = graph(r#"import "std/codec" as codec;
+            type Model = struct {labels: Dict(String), values: Array(Int), pair: (Int, String), selected: Option(Int), missing: Option(Int)};
+            export def answer = do {
+                let original: Model = {labels: {role: "admin"}, values: [1, 2], pair: (3, "four"), selected: Some(5), missing: None};
+                let decoded = codec.decode(Model.type, codec.encode(codec.Value.type, original)).unwrap!();
+                (if decoded == original { 42 } else { 0 }, decoded, original)
+            };"#, "");
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        let value = result.value();
+        let decoded = value.sequence_get(1).unwrap();
+        let original = value.sequence_get(2).unwrap();
+        for field in ["labels", "values", "pair", "selected", "missing"] {
+            let expected = original.dict_get(field).unwrap().solved_type_id();
+            assert_eq!(expected.is_some(), field == "labels", "{field}");
+            assert_eq!(decoded.dict_get(field).unwrap().solved_type_id(), expected, "{field}");
+        }
+        assert_eq!(value.sequence_get(0).unwrap().as_int(), Some(42));
+    }
+
+    #[test]
     fn empty_option_variants_close_without_context() {
         for body in [
             "export def answer = if option.is_some(None) { 0 } else { 42 };",
