@@ -378,6 +378,17 @@ impl<'a> MirQuery<'a> {
                 format!("module {}", self.mir.modules[module.index()].name)
             }
             TypeConstructor::Parameter(symbol) => self.mir.symbols[symbol.index()].name.clone(),
+            TypeConstructor::Native(native) => {
+                let declaration = self.mir.symbols.iter().find(|symbol| symbol.native_type == Some(*native));
+                if let Some(symbol) = declaration
+                    && let Some(module) = symbol.module {
+                    format!("opaque({}#{})", self.mir.modules[module.index()].name, symbol.name)
+                } else {
+                    // Even incomplete diagnostic graphs retain the admitted
+                    // numeric identity; do not expose Rust's debug encoding.
+                    format!("opaque(native:{}#{})", native.module, native.slot)
+                }
+            }
             TypeConstructor::Nominal(symbol) => {
                 let name = &self.mir.symbols[symbol.index()].name;
                 if args.is_empty() {
@@ -417,6 +428,23 @@ mod tests {
             start,
             end: start,
         }
+    }
+
+    #[test]
+    fn opaque_names_and_generic_arguments_come_from_the_solved_graph() {
+        let mir = crate::codegen::tests::graph(
+            "import \"std/test\" as test; type Box(T) = struct {value: T}; export def deferred = test.should_ok(fn() { 42 }); export def pair: Box((Int, String)) = {value: (1, \"x\")};",
+            "",
+        );
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        let query = MirQuery::new(&mir);
+        let signature = |name| {
+            let symbol = query.symbols().find(|(_, symbol)| symbol.name == name && matches!(symbol.kind, SymbolKind::Declaration(_))).unwrap().0;
+            query.symbol_signature(symbol).unwrap()
+        };
+        assert_eq!(signature("deferred"), "opaque(std/test#Test)");
+        assert_eq!(signature("pair"), "Box((Int, String))");
+        assert_eq!(signature("Box"), "for(T) TypeOf(Box(T))");
     }
 
     #[test]

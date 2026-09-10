@@ -5,6 +5,29 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### MIR query acceptance preserves complete type facts (2026-09-11)
+
+Native opaque type display now uses the resolved native declaration and module
+identity, e.g. opaque(std/test#Test), instead of Rust's NativeTypeId debug text.
+Query acceptance now requires the MIR's preserved generic arguments and native
+Bool spelling. The invalid-source query checks authoritative Known Int facts
+for successfully parsed later definitions and still requires diagnostics;
+it no longer asks for a separate recovery authority. RFC 0256 records these
+MIR query contracts. No alternate type graph or descriptor reconstruction was
+introduced, and no type arguments were erased to mimic legacy formatting.
+
+Validation: 5 MIR query tests and CLI build pass. A fresh complete language
+run passes all 9 query/query-at cases; overall failing cases decrease from
+235 to 230. Remaining failures are 228 diagnostic cases and the two generic
+function identity cases (module-interfaces, stdlib-collections). This is not
+full language acceptance. Logs: /tmp/mir-query-acceptance-{tests,build,language}.log.
+
+Diagnostic audit distinguishes missing rules from message differences. Direct
+only-types checks incorrectly accept diag-match-missing-variant and
+diag-let-else-never; these are verified static-validation gaps, not formatting
+issues. Logs: /tmp/mir-pattern-gap.log and /tmp/mir-let-else-gap.log.
+Old pipeline removal and full CLI/LSP acceptance remain incomplete.
+
 ### Property applicability is a sealed obligation and a lazy VM check (2026-09-11)
 
 Each concrete ordinary property now carries a PropertyAdmission with the stable

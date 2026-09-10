@@ -2,11 +2,13 @@ import "@src/support" as support;
 import "std/array" as array;
 import "std/value" {Value};
 
-def has_recovery_definition: Fn(Value, String) -> Bool = fn(actual, name) {
+def has_solved_definition: Fn(Value, String) -> Bool = fn(actual, name) {
     match support.record_field(actual, "stdout") {
         Some(Value.Array(items)) => match array.find(items, fn(item) {
             support.string_field_equals(item, "record", "definition")
-                && support.string_field_equals(item, "authority", "recovery")
+                && support.string_field_equals(item, "authority", "authoritative")
+                && support.string_field_equals(item, "state", "Known")
+                && support.string_field_equals(item, "type", "Int")
                 && support.string_field_equals(item, "name", name)
         }) {
             Some(_) => True,
@@ -18,8 +20,9 @@ def has_recovery_definition: Fn(Value, String) -> Bool = fn(actual, name) {
 
 export def check: Fn(Value) -> Value = fn(actual) {
     if support.exit_code(actual) == Some(0)
-        && has_recovery_definition(actual, "later")
-        && has_recovery_definition(actual, "final")
+        && has_solved_definition(actual, "later")
+        && has_solved_definition(actual, "final")
+        && support.stream_contains_string_field(actual, "stdout", "record", "diagnostic")
         && support.stream_length(actual, "stderr") == Some(0) {
         Value.True
     } else {
