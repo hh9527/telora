@@ -926,6 +926,29 @@ fn continue_solved_decode(
                                     });
                                     continue;
                                 }
+                                if matches!(tag.as_deref(), Some("LocalDate" | "LocalTime" | "LocalDateTime" | "OffsetDateTime")) {
+                                    // Temporal data already supplies the external
+                                    // variant name. Its text still goes through
+                                    // the declared payload decoder and checks.
+                                    let selected = definition.members.iter().position(|member| {
+                                        external_name(&member.name) == tag.as_deref().unwrap()
+                                    });
+                                    if let Some(index) = selected
+                                        && let Some(payload_type) = layout.members[index]
+                                        && let Some(payload) = payload.map(|value| value.value)
+                                    {
+                                        let input = solved_codec_tag("String", payload, source, loc,
+                                            current, background, account, function, pc)?;
+                                        pending.push(SolvedDecodeTask::Variant {
+                                            owner: ty, variant: index as u32,
+                                            name: definition.members[index].name.clone(), loc,
+                                        });
+                                        pending.push(SolvedDecodeTask::Visit { value: input, ty: payload_type, path });
+                                    } else {
+                                        rejection = mismatch("a declared enum variant");
+                                    }
+                                    continue;
+                                }
                                 let selected = if tag.as_deref() == Some("String") {
                                     payload
                                         .and_then(|p| p.as_str())

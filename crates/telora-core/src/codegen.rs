@@ -1410,6 +1410,43 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn temporal_decoding_obeys_payload_types_and_construction_checks() {
+        let mir = graph(r#"import "std/codec" as codec; import "std/_rt" as rt;
+            type WrongPayload = enum {LocalDate(Int)};
+            type Missing = enum {Other(String)};
+            @check(fn(value) { Err(blame!("rejected date", value)) }) type DateText = struct(String);
+            type Checked = enum {LocalDate(DateText)};
+            export def answer = do {
+                let raw = codec.Value.LocalDate("2026-08-04");
+                let wrong = match codec.decode(WrongPayload.type, raw) { Err(_) => True, _ => False };
+                let missing = match codec.decode(Missing.type, raw) { Err(_) => True, _ => False };
+                let checked = match rt.with_diagnostics(fn(n: Int) { codec.decode(Checked.type, raw).unwrap!() })(0) {
+                    Err(errors) => errors[0].message == "rejected date", _ => False
+                };
+                if wrong && missing && checked { 42 } else { 0 }
+            };"#, "");
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+    }
+
+    #[test]
+    fn solved_temporal_data_decodes_into_declared_enum_payloads() {
+        let mir = graph(r#"import "std/toml" as toml; import "std/codec" as codec;
+            type Date = enum {LocalDate(String), LocalTime(String), LocalDateTime(String), OffsetDateTime(String)};
+            type Config = struct {date: Date, time: Date, local: Date, offset: Date};
+            export def answer = do {
+                let raw = toml.parse("date = 2026-08-04\ntime = 07:32:00\nlocal = 2026-08-04T07:32:00\noffset = 2026-08-04T07:32:00Z").unwrap!();
+                let config = codec.decode(Config.type, raw).unwrap!();
+                if config.date == Date.LocalDate("2026-08-04")
+                    && config.time == Date.LocalTime("07:32:00")
+                    && config.local == Date.LocalDateTime("2026-08-04T07:32:00")
+                    && config.offset == Date.OffsetDateTime("2026-08-04T07:32:00Z") { 42 } else { 0 }
+            };"#, "");
+        let artifact = compile(mir.seal().unwrap_or_else(|d| panic!("{d:?}\n{}", mir.dump())), entry(&mir)).unwrap();
+        assert_eq!(execute(artifact).unwrap().value().as_int(), Some(42));
+    }
+
+    #[test]
     fn imported_generic_parameters_complete_unchecked_arguments() {
         for body in [
             r#"export def answer = do { let candidate: Unchecked(Box(Int)) = {value: 42, count: 2}; read(candidate) };"#,

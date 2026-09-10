@@ -5,6 +5,33 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved decoding accepts temporal data variants (2026-09-11)
+
+TOML parsing already produced correctly typed Value.LocalDate/LocalTime/
+LocalDateTime/OffsetDateTime values. The solved decoder only admitted enum
+input encoded as String or a single-field Object, rejecting those temporal
+values before consulting their matching declared payload type.
+
+Temporal data now selects the declared enum member by its external name and
+decodes the text through that member's solved payload TypeId. It uses the
+ordinary variant construction/check tasks, including nested payload checks.
+The text handle and provenance are retained; only a quota-accounted Value.String
+wrapper is introduced inside the VM. No type reconstruction or host-world
+copy is involved.
+
+Validation: 82 codegen tests, 48 VM tests and CLI build pass. Regression tests
+cover all four temporal variants, mismatching payload types, missing members
+and a checked newtype payload rejection. Actual data-modules now passes 3/3
+(JSON, YAML and TOML). Logs: /tmp/mir-temporal-{codegen,vm,build,language}.log.
+No performance run or fixture change.
+
+Further investigation confirms two separate remaining gaps: collections
+compares unspecialized identity functions without concrete argument evidence;
+interpreter expressions have neither a MIR evidence rule nor closed hidden
+pack references. The latter still carries parser-generated elaboration into
+MIR and needs a statically derived adapter plan. Neither gap is fixed by this
+milestone. Other acceptance failures and legacy removal remain outstanding.
+
 ### Generic argument completion preserves directional evidence (2026-09-11)
 
 Imported generic signatures exposed an ordering bug: Fit equated an instance
