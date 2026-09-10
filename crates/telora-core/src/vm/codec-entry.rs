@@ -15,8 +15,7 @@ fn run_core_codec(
         if matches!(operation, CoreCodecFunction::Encode) {
             return run_solved_codec_encode(arguments, signature, return_target, function, pc, current, background, account);
         }
-        return Err(error(RuntimeErrorKind::InvalidBytecode,
-            "solved codec decode is not implemented yet", function, pc));
+        return run_solved_codec_decode(arguments, signature, return_target, function, pc, current, background, account);
     }
     let properties = decode_codec_properties(arguments[0], current, background)
         .map_err(|message| error(RuntimeErrorKind::TypeMismatch, message, function, pc))?;

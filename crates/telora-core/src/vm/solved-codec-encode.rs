@@ -1,5 +1,10 @@
 #[derive(Debug)]
 enum SolvedEncodeTask {
+    Dict {
+        shape: crate::heap::ShapeId,
+        count: usize,
+        loc: Option<crate::Loc>,
+    },
     Visit {
         value: Val,
         ty: crate::mir::TypeId,
@@ -186,6 +191,35 @@ fn continue_solved_encode(
         let pc = state.pc;
         consume_fuel(account, &function, pc)?;
         let (value, ty) = match task {
+            SolvedEncodeTask::Dict { shape, count, loc } => {
+                let values = state
+                    .output
+                    .split_off(state.output.len() - count)
+                    .into_boxed_slice();
+                charge_allocation(
+                    account,
+                    logical_value_bytes(count)
+                        .map_err(|e| allocation_error(e.message, &function, pc))?,
+                    &function,
+                    pc,
+                )?;
+                let payload = Val::new(
+                    DecodedValue::Dict(current.allocate(Object::Dict { shape, values })),
+                    loc,
+                );
+                state.output.push(solved_codec_tag(
+                    "Object",
+                    payload,
+                    state.target,
+                    loc,
+                    current,
+                    background,
+                    account,
+                    &function,
+                    pc,
+                )?);
+                continue;
+            }
             SolvedEncodeTask::Array { count, loc } => {
                 let values = state.output.split_off(state.output.len() - count);
                 charge_allocation(
@@ -370,6 +404,41 @@ fn continue_solved_encode(
         };
         let reference = ValueRef { value, view };
         match &shape.constructor {
+            T::Dict => {
+                let DecodedValue::Dict(handle) = value.value() else {
+                    return Err(error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        "dictionary does not match its solved type",
+                        &function,
+                        pc,
+                    ));
+                };
+                let Object::Dict {
+                    shape: dict_shape,
+                    values,
+                } = view.object(handle).map_err(|e| {
+                    error(
+                        RuntimeErrorKind::InvalidBytecode,
+                        e.to_string(),
+                        &function,
+                        pc,
+                    )
+                })?
+                else {
+                    unreachable!()
+                };
+                state.pending.push(SolvedEncodeTask::Dict {
+                    shape: *dict_shape,
+                    count: values.len(),
+                    loc,
+                });
+                for &value in values.iter().rev() {
+                    state.pending.push(SolvedEncodeTask::Visit {
+                        value,
+                        ty: shape.arguments[0],
+                    });
+                }
+            }
             T::Int | T::Float | T::String | T::Bytes => {
                 let tag = match shape.constructor {
                     T::Int => "Int",

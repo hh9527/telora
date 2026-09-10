@@ -2007,6 +2007,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn solved_codec_decode_uses_generic_recursive_layouts_and_reports_mismatches() {
+        for source in [
+            r#"import "std/json" as json;
+                @json.rename_all(json.RenameCase.CamelCase)
+                type Choice = enum { SomeValue(Int), NoValue };
+                export def answer = match json.decode(Choice.type, "{\"someValue\":42}").unwrap!() { Choice.SomeValue(value) => value, _ => 0 };"#,
+            r#"import "std/json" as json;
+                @json.rename_all(json.RenameCase.CamelCase)
+                type Model = struct { some_value: Int, optional_note: Option(String) };
+                export def answer = json.decode(Model.type, "{\"someValue\":42}").unwrap!().some_value;"#,
+            r#"import "std/json" as json;
+                type Box(T) = struct { value: T, note: Option(String) };
+                type Tree = enum { Leaf(Box(Int)), Branch(Array(Tree)), Empty };
+                def decoded = json.decode(Tree.type, "{\"Branch\":[{\"Leaf\":{\"value\":42}},\"Empty\"]}").unwrap!();
+                export def answer = match decoded { Tree.Branch(items) => match items[0] { Tree.Leaf(boxed) => if boxed.note == None { boxed.value } else { 0 }, _ => 0 }, _ => 0 };"#,
+            r#"import "std/json" as json; import "std/_rt" as rt; import "std/array" as array;
+                type Box = struct { value: Int };
+                export def answer = match rt.with_diagnostics(fn(text: String) { json.decode(Box.type, text).unwrap!() })("{\"value\":\"bad\"}") {
+                    Err(errors) => if array.length(errors) == 1 { 42 } else { 0 }, _ => 0
+                };"#,
+            r#"import "std/json" as json; type Box = struct { value: Int };
+                export def answer = match json.decode(Box.type, "{\"value\":42,\"extra\":0}") { Err(_) => 42, _ => 0 };"#,
+        ] {
+            let mir = graph(source, "");
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            drop(mir);
+            let result = execute(artifact).unwrap_or_else(|e| panic!("{source}\n{e}"));
+            assert_eq!(result.value().as_int(), Some(42), "{source}");
+        }
+    }
+
+    #[test]
     fn native_link_requires_an_admitted_binding_with_the_declared_arity() {
         let mir = graph(
             "native map: Fn(Int) -> Int; export def answer = map(1);",

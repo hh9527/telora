@@ -5,6 +5,28 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Solved decode and dictionary handle reuse (2026-09-10)
+
+codec.decode now consumes the native instance signature and TypeImage member
+layouts directly. Supported shapes include primitives, Option, Array/Tuple,
+Record/Dict, nominal structs/newtypes and externally tagged recursive enums.
+The flat decode stack retains VM handles across lazy property demands; rename_all
+works for struct fields and enum variants, with duplicate external names rejected.
+Missing optional fields become None; malformed input returns a BlameError with
+the original offending Value handle and a field/index path.
+
+Dict encoding and decoding preserve the input ShapeId and scalar payload handles.
+The successful decode path does not invoke the old descriptor/check machinery.
+Six codec regressions pass, including generic recursive layouts after dropping
+MIR, renamed members, extra-field/type mismatches, shared dictionary shapes and
+String payloads, and failed encode/decode properties cached with one diagnostic
+on the first demand and none on repetition. Log: /tmp/mir-decode-properties.log.
+
+Still pending: untagged decode alternatives, parse/display bridges, schema,
+construction checks and generic property/evidence specialization. Unsupported
+rules explicitly fail; this checkpoint is not full migration or a performance
+claim. Codegen remains mechanical: all type specialization belongs to MIR.
+
 ### Solved encode unblocks real SQLite run/serve flows (2026-09-10)
 
 codec.encode now reads its source TypeId from the compiled native signature and
