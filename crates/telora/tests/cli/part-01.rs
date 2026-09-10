@@ -612,7 +612,9 @@ fn query_namespace_imports_reference_exact_module_interfaces() {
         .unwrap();
     assert_eq!(namespace["authority"], "authoritative");
     assert_eq!(namespace["target"], "fixture/types");
-    assert!(namespace.get("type").is_none());
+    assert_eq!(namespace["type"], "module fixture/types");
+    assert_eq!(namespace["state"], "Known");
+    assert!(namespace["type_id"].is_number());
 
     let selective = records
         .iter()
@@ -667,7 +669,7 @@ export {Entity, Request};"#,
             .unwrap();
         assert_eq!(
             entity["type"],
-            "for(EntityId) Fn(TypeOf(EntityId)) -> TypeOf(Entity)"
+            "for(EntityId) TypeOf(Entity(EntityId))"
         );
         let request = records
             .iter()
@@ -675,7 +677,7 @@ export {Entity, Request};"#,
             .unwrap();
         assert_eq!(
             request["type"],
-            "for(Id, Subject, Input) Fn(TypeOf(Id), TypeOf(Subject), TypeOf(Input)) -> TypeOf(Request)"
+            "for(Id, Subject, Input) TypeOf(Request(Id, Subject, Input))"
         );
         assert_eq!(entity["authority"], "authoritative");
         assert_eq!(request["authority"], "authoritative");

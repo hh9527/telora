@@ -52,7 +52,12 @@ pub fn resolve_with_requests(
         if !matches!(root, ModuleTarget::Bound(_)) {
             mir.diagnostics.push(crate::source::Diagnostic {
                 severity: crate::source::Severity::Error,
-                message: format!("module root is not resolved: {root:?}"),
+                message: match root {
+                    ModuleTarget::Unresolved(name) if name.starts_with("std/") => format!("unknown built-in module {name:?}"),
+                    ModuleTarget::Unresolved(name) => format!("module {name:?} not found"),
+                    ModuleTarget::Conflicted(_) => format!("module root has multiple inventory entries: {root:?}"),
+                    ModuleTarget::Bound(_) => unreachable!(),
+                },
                 labels: vec![],
                 notes: vec![],
             });

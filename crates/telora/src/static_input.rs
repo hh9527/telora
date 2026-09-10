@@ -250,6 +250,9 @@ impl Inventory {
             selector.to_owned()
         };
         if private(&name) {
+            if name.starts_with("std/") {
+                return Err(format!("unknown built-in module {name:?}"));
+            }
             return Err(format!(
                 "private module {name:?} cannot be a query/check root"
             ));

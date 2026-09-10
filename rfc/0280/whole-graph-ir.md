@@ -5,6 +5,41 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Query preserves declaration binders and module outcomes (2026-09-11)
+
+CLI definition/export rendering now uses the shared symbol_signature query.
+The query follows the resolved declaration identity before reading its generic
+binders, so selective imports, renamed reexports and wildcard imports retain
+the source scheme. Type families display their solved parameterized skeleton,
+e.g. `for(EntityId) TypeOf(Entity(EntityId))`, instead of reconstructing an old
+function-shaped type constructor description. Namespace query records expose
+their already-solved namespace TypeId and Known state. Tests were updated to
+assert these MIR-based representations, rather than absence of namespace types.
+
+Missing module roots now produce readable logical-name diagnostics. Query root
+selection failures use the same JSONL diagnostic channel as resolve failures;
+private standard-library roots remain inaccessible and report unknown builtin
+module without exposing implementation paths.
+
+Validation: 12 query-filtered CLI cases, 4 core query tests, 2 module-resolve tests
+and 28 telora library/LSP tests pass. Full CLI acceptance now completes with 64
+passes and 2 failures: parser-recovery diagnostic fallout and the aggregate
+language suite. The language suite still contains many failing semantic cases;
+the test count must not be read as only two remaining implementation defects.
+Logs: /tmp/mir-query-cli.log, /tmp/mir-query-core-final.log,
+/tmp/mir-query-modules.log, /tmp/mir-query-lsp-final.log and
+/tmp/mir-query-full-cli.log.
+
+Investigation confirms an independent, unresolved inference gap: unannotated
+function declarations currently share their slots with all references, so
+otherwise polymorphic Int/String uses conflict. Completing implicit schemes
+requires solving declaration dependency components before admitting independent
+reference instances, retaining constraints from captured outer slots and avoiding
+generalization of unresolved numeric/member requirements. This must happen in
+the static solver and preserve its Unknown/Conflicted results; cloning types at
+calls or adding downstream inference would not satisfy the architecture. The
+query changes above do not implement implicit generalization.
+
 ### Interpolation and generic trait dispatch close in MIR (2026-09-11)
 
 Syntax lowering now expands interpolated expressions into ordinary

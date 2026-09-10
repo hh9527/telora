@@ -180,6 +180,10 @@ impl<'a> MirQuery<'a> {
     }
 
     pub fn symbol_signature(self, symbol: SymbolId) -> Option<String> {
+        let symbol = match self.mir.symbols[symbol.index()].resolution {
+            ResolveState::Bound(target) => target,
+            _ => symbol,
+        };
         let TypeState::Known(ty) = self.symbol_type(symbol) else {
             return None;
         };

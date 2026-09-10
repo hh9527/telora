@@ -153,7 +153,8 @@ fn resolve_fields(state: &ResolveState) -> (&'static str, Option<usize>) {
 fn definition(mir: &Mir, root: &str, id: SymbolId, kind: ShowKind) -> Value {
     let index = id.index();
     let symbol = &mir.symbols[index];
-    let (type_id, ty, state) = type_fields(mir, MirQuery::new(mir).symbol_type(id));
+    let (type_id, _, state) = type_fields(mir, MirQuery::new(mir).symbol_type(id));
+    let ty = MirQuery::new(mir).symbol_signature(id);
     let (resolution, target_id) = resolve_fields(&symbol.resolution);
     let loc = MirQuery::new(mir).definition_locations(id).next().map(|loc| location(mir, loc));
     let target = match symbol.kind {
@@ -207,7 +208,14 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
         QueryCommand::Modules(_) => unreachable!(),
     };
     let mut inventory = Inventory::new(&context, selector.starts_with("std/"))?;
-    let root = inventory.select(selector)?;
+    let root = match inventory.select(selector) {
+        Ok(root) => root,
+        Err(message) => {
+            emit(json!({"schema": QUERY_SCHEMA, "module": selector, "record": "diagnostic",
+                "severity": "error", "message": message, "labels": [], "notes": []}))?;
+            return Ok(1);
+        }
+    };
     let mir = inventory.solve(&root);
     for d in &mir.diagnostics {
         emit(diagnostic(&mir, QUERY_SCHEMA, &root, d))?;
@@ -234,8 +242,9 @@ pub fn query(context: PathBuf, args: QueryArgs) -> Result<i32, String> {
                 {
                     continue;
                 }
-                let (type_id, ty, state) =
+                let (type_id, _, state) =
                     type_fields(&mir, MirQuery::new(&mir).symbol_type(id));
+                let ty = MirQuery::new(&mir).symbol_signature(id);
                 let (resolution, target_id) = resolve_fields(&symbol.resolution);
                 emit(
                     json!({"schema": QUERY_SCHEMA, "module": root, "record": "export", "authority": "authoritative",
