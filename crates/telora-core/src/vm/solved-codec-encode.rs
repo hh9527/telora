@@ -225,7 +225,7 @@ fn run_solved_codec_encode(
 
 fn solved_codec_tag(
     tag: &str,
-    payload: Val,
+    mut payload: Val,
     target: crate::mir::TypeId,
     loc: Option<crate::Loc>,
     current: &mut Heap,
@@ -234,6 +234,21 @@ fn solved_codec_tag(
     function: &BytecodeFunction,
     pc: usize,
 ) -> Result<Val, RuntimeError> {
+    if tag == "Object" {
+        // The native encoder constructs this dictionary, so it must carry the
+        // same closed Dict(Value) witness as a source-level Value.Object call.
+        // Read the target's applied layout; never synthesize a runtime type.
+        let types = background.solved_types.as_ref().expect("solved codec image");
+        let payload_type = (|| {
+            let crate::mir::TypeConstructor::Nominal(symbol) = types.types[target.index()].constructor else { return None; };
+            let index = types.definition(symbol)?.members.iter().position(|member| member.name == tag)?;
+            let payload_type = types.layout(target)?.members[index]?;
+            let shape = &types.types[payload_type.index()];
+            (shape.constructor == crate::mir::TypeConstructor::Dict && shape.arguments == [target]).then_some(payload_type)
+        })().ok_or_else(|| error(RuntimeErrorKind::InvalidBytecode,
+            "codec target has no closed Dict(Value) object payload", function, pc))?;
+        payload = payload.with_type_id(crate::TypeId::solved(payload_type));
+    }
     charge_allocation(
         account,
         logical_value_bytes(2).map_err(|e| allocation_error(e.message, function, pc))?,
@@ -874,6 +889,22 @@ fn continue_solved_encode(
                         ));
                     }
                 }
+            }
+            T::Function => {
+                return Err(error(
+                    RuntimeErrorKind::TypeMismatch,
+                    "Function has no JSON codec",
+                    &function,
+                    pc,
+                ));
+            }
+            T::Type | T::TypeOf => {
+                return Err(error(
+                    RuntimeErrorKind::TypeMismatch,
+                    "cannot encode Type",
+                    &function,
+                    pc,
+                ));
             }
             _ => {
                 return Err(error(

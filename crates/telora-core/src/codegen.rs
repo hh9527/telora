@@ -1423,6 +1423,41 @@ impl<'a> Emitter<'a> {
 pub(crate) mod tests {
     use super::*;
     #[test]
+    fn encoded_enum_values_equal_explicit_semantic_value_constructors() {
+        let mir = graph("import \"std/codec\" as codec; import \"std/value\" { Value }; type Event = enum { Progress(Int), Finished }; def encoded = codec.encode(Value.type, Event.Progress(47)); def expected = Value.Object({Progress: Value.Int(47)}); export def answer = (encoded == expected, encoded, expected);", "");
+        let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+        let result = execute(artifact).unwrap();
+        let encoded = result.value().sequence_get(1).unwrap();
+        let expected = result.value().sequence_get(2).unwrap();
+        assert_eq!(encoded.solved_type_id(), expected.solved_type_id());
+        let (encoded_tag, encoded_fields) = encoded.tagged_parts().unwrap();
+        let (expected_tag, expected_fields) = expected.tagged_parts().unwrap();
+        assert_eq!(encoded_tag.as_atom(), expected_tag.as_atom());
+        assert_eq!(encoded_fields.solved_type_id(), expected_fields.solved_type_id());
+        let encoded_number = encoded_fields.dict_get("Progress").unwrap();
+        let expected_number = expected_fields.dict_get("Progress").unwrap();
+        assert_eq!(encoded_number.solved_type_id(), expected_number.solved_type_id());
+        assert_eq!(encoded_number.tagged_parts().unwrap().1.runtime(), expected_number.tagged_parts().unwrap().1.runtime());
+        assert_eq!(result.value().sequence_get(0).unwrap().as_atom().unwrap().as_str(), "True");
+    }
+
+    #[test]
+    fn encoded_object_payload_witnesses_cover_nested_and_dictionary_outputs() {
+        for (source, expected) in [
+            ("{a: 47}", "Value.Object({a: Value.Int(47)})"),
+            ("{let value: Dict(Int) = {a: 47}; value}", "Value.Object({a: Value.Int(47)})"),
+            ("[{a: 47}]", "Value.Array([Value.Object({a: Value.Int(47)})])"),
+            ("{a: {b: 47}}", "Value.Object({a: Value.Object({b: Value.Int(47)})})"),
+            ("Event.Finished", "Value.String(\"Finished\")"),
+        ] {
+            let mir = graph(&format!("import \"std/codec\" as codec; import \"std/value\" {{ Value }}; type Event = enum {{ Finished }}; export def answer = codec.encode(Value.type, {source}) == {expected};"), "");
+            let artifact = compile(mir.seal().unwrap(), entry(&mir)).unwrap();
+            let result = execute(artifact).unwrap();
+            assert_eq!(result.value().as_atom().unwrap().as_str(), "True", "{source}");
+        }
+    }
+
+    #[test]
     fn metadata_comparisons_execute_without_equating_type_witnesses() {
         for source in [
             "export def answer = if Int.type != String.type && Int.type == Int.type { 42 } else { 0 };",

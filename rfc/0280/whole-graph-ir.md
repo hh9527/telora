@@ -5,6 +5,35 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Native codec output retains its solved dictionary witness (2026-09-11)
+
+The remaining enum-constructor encoding comparisons exposed a missing type
+stamp on native-generated Value.Object payloads. The outer Value owner and
+encoded children were correct, but the dictionary lacked the Dict(Value)
+witness carried by the equivalent source expression. The encoder now reads
+that payload TypeId from the target's already applied layout, checks its
+contract, and stamps the existing dictionary handle. It does not infer or
+allocate a type, copy a container, or relax runtime equality's identity checks.
+
+Encoding Function and Type/TypeOf values now reports the established language
+errors (Function has no JSON codec / cannot encode Type) as TypeMismatch. They
+were incorrectly reported as unimplemented InvalidBytecode operations, which
+could abort testing before subsequent expected-failure cases ran. Unsupported
+source values are distinct from a malformed closed bytecode/type image.
+
+Validation: final 72 codegen tests passed, with tests comparing exact payload
+witnesses and encoded records, dictionaries, nested objects, arrays and enum
+variants against source constructors. The 45 vm::tests tests passed after the
+witness fix; final CLI build passed. The actual language aggregate after the
+witness fix passes enum-constructors (11/11) and enum-binding-origins. After the
+error classification refinement, the targeted actual encode fixture passes
+5/5 with no abort. The complete aggregate still has other failures and was not
+repeated for the final two error arms. Nominal-equality's existing-value cases,
+other semantic gaps and old-path removal remain unfinished. Logs:
+/tmp/mir-codec-witness-final-codegen.log, /tmp/mir-codec-witness-vm.log,
+/tmp/mir-codec-witness-final-build.log, /tmp/mir-codec-witness-language.log and
+/tmp/mir-codec-witness-final-encode.log. No performance measurement was made.
+
 ### Metadata value equality is distinct from type equality (2026-09-11)
 
 Binary equality formerly unified its operand slots immediately. As a result,
