@@ -41,7 +41,6 @@ fn runtime_program_with_evidence(program: &Program, analysis: &crate::Analysis) 
 struct WorkspaceBuilder<'a> {
     engine: &'a Engine,
     overlays: &'a BTreeMap<PathBuf, crate::document::DocumentText>,
-    query: Option<&'a crate::query::QueryContext>,
     sources: SourceDatabase,
     main: MainWorld,
     builtin_modules: HashMap<String, ModuleArtifact>,
@@ -92,11 +91,6 @@ impl WorkspaceBuilder<'_> {
         module: ResolvedModule,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<PersistentValue>> + 'a>> {
         Box::pin(async move {
-            if let Some(context) = self.query
-                && context.checkpoint().await.is_err()
-            {
-                return None;
-            }
             let path = module.path()?.to_owned();
             let vendor = module.vendor;
             let module_id = module.id;
@@ -439,12 +433,6 @@ impl WorkspaceBuilder<'_> {
             }
             self.visiting.pop();
 
-            if let Some(context) = self.query
-                && context.checkpoint().await.is_err()
-            {
-                return None;
-            }
-
             let runtime_module_id = self
                 .main
                 .modules
@@ -511,11 +499,6 @@ impl WorkspaceBuilder<'_> {
     }
 
     async fn load_static_data(&mut self, module: ResolvedModule) -> Option<PersistentValue> {
-        if let Some(context) = self.query
-            && context.checkpoint().await.is_err()
-        {
-            return None;
-        }
         let path = module.path()?.to_owned();
         let module_id = module.id;
         if let Some(root) = self.roots.get(&module_id) {
@@ -611,9 +594,6 @@ impl WorkspaceBuilder<'_> {
                 return ModuleEvaluation::default();
             };
         let mut account = QuotaAccount::new(self.engine.config.module_quota).with_sources(&self.sources);
-        if let Some(query) = self.query {
-            account = account.with_query(query.clone());
-        }
         let source = self.sources.get(source_id);
         let mut hir = Some(self.main.resolved.modules[module_id.index()].take()
             .expect("source module has session-resolved HIR").hir);

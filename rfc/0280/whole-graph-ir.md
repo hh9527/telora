@@ -5,6 +5,24 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Remove Engine's obsolete asynchronous editor recovery entry points (2026-09-11)
+
+After removal of the old Workspace wrapper, Engine::recover_workspace_async,
+recover_workspace_async_in_workspace and their private resolver adapter had no
+remaining repository callers. They have now been deleted, including the
+WorkspaceBuilder query field/checkpoints and query injection used exclusively
+by these entry points. This removes the old editor path that installed native
+modules and evaluated code while constructing a recovered semantic snapshot.
+The MIR workspace remains the editor implementation; there is no adapter back
+to Engine recovery. Synchronous legacy Engine recovery still exists pending
+removal of the larger old module/compiler/type implementation.
+
+Validation: cargo check --workspace passes without warnings and telora library
+tests pass 28/28, including static editor solving, cancellation, stale revisions,
+overlays and LSP requests. No remaining asynchronous Engine recovery references
+were found in repository Rust code. Logs:
+/tmp/mir-legacy-async-{check,editor}.log. No performance claim is made.
+
 ### Remove the obsolete workspace and evaluation-plan shells (2026-09-11)
 
 Deleted the old core Workspace/WorkspaceError API and its Engine-backed

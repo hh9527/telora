@@ -779,7 +779,6 @@ impl Engine {
         let mut builder = WorkspaceBuilder {
             engine: self,
             overlays: &BTreeMap::new(),
-            query: None,
             sources,
             main,
             builtin_modules,
@@ -911,7 +910,6 @@ impl Engine {
         let mut builder = WorkspaceBuilder {
             engine: self,
             overlays: &BTreeMap::new(),
-            query: None,
             sources,
             main,
             builtin_modules,
@@ -930,103 +928,4 @@ impl Engine {
         ))
     }
 
-    pub async fn recover_workspace_async(
-        &self,
-        path: impl AsRef<Path>,
-        overlays: &BTreeMap<PathBuf, crate::document::DocumentText>,
-        context: &crate::query::QueryContext,
-    ) -> Result<WorkspaceSnapshot, ModuleError> {
-        context
-            .checkpoint()
-            .await
-            .map_err(|error| ModuleError::new(error.to_string()))?;
-        let root_path = path.as_ref();
-        let resolver = overlays
-            .get(root_path)
-            .map_or_else(
-                || ModuleResolver::for_root(root_path),
-                |source| ModuleResolver::for_root_with_source(root_path, source),
-            )
-            .map_err(|error| ModuleError::new(error.to_string()))?
-            .with_builtins(builtin_list());
-        self.recover_with_resolver_async(resolver, overlays, context)
-            .await
-    }
-
-    pub async fn recover_workspace_async_in_workspace(
-        &self,
-        workspace: Arc<crate::package::ResolvedWorkspace>,
-        path: impl AsRef<Path>,
-        overlays: &BTreeMap<PathBuf, crate::document::DocumentText>,
-        context: &crate::query::QueryContext,
-    ) -> Result<WorkspaceSnapshot, ModuleError> {
-        context
-            .checkpoint()
-            .await
-            .map_err(|error| ModuleError::new(error.to_string()))?;
-        let root_path = path.as_ref();
-        let resolver = ModuleResolver::for_root_in_workspace(
-            workspace,
-            root_path,
-            overlays.get(root_path),
-        )
-        .map_err(|error| ModuleError::new(error.to_string()))?
-        .with_builtins(builtin_list());
-        self.recover_with_resolver_async(resolver, overlays, context)
-            .await
-    }
-
-    async fn recover_with_resolver_async(
-        &self,
-        resolver: ModuleResolver,
-        overlays: &BTreeMap<PathBuf, crate::document::DocumentText>,
-        context: &crate::query::QueryContext,
-    ) -> Result<WorkspaceSnapshot, ModuleError> {
-        let root_module = resolver
-            .selected_root()
-            .map_err(|error| ModuleError::new(error.to_string()))?;
-        let opaque_modules = builtin_list()
-            .into_iter()
-            .map(|(name, _)| ModuleCName::builtin(name));
-        let mut sources = SourceDatabase::default();
-        let graph = ModuleGraph::discover(
-            &resolver,
-            vec![root_module.clone()],
-            &BTreeMap::new(),
-            opaque_modules,
-            Some(overlays),
-            true,
-            &mut sources,
-        )?;
-        let mut resolved = StaticNames::new(&graph).resolve_all();
-        if let Some(inputs) = resolved.diagnostic_inputs(&graph) {
-            return Ok(WorkspaceSnapshot::build(sources, inputs));
-        }
-        let mut main = MainWorld::from_resolved(graph, resolved);
-        let builtin_modules = install_native_modules(&mut main, &mut sources, &self.debug_sink)?;
-        let mut builder = WorkspaceBuilder {
-            engine: self,
-            overlays,
-            query: Some(context),
-            sources,
-            main,
-            builtin_modules,
-            inputs: BTreeMap::new(),
-            provenances: HashMap::new(),
-            roots: HashMap::new(),
-            interfaces: HashMap::new(),
-            visiting: Vec::new(),
-            cycle_members: HashSet::new(),
-            cycle_reported: false,
-        };
-        builder.load_telora(root_module).await;
-        context
-            .checkpoint()
-            .await
-            .map_err(|error| ModuleError::new(error.to_string()))?;
-        Ok(WorkspaceSnapshot::build(
-            builder.sources,
-            builder.inputs.into_values().collect(),
-        ))
-    }
 }
