@@ -445,6 +445,7 @@ impl Inventory {
                 }
             },
         );
+        module_resolve::validate_source_modules(&mut mir, |name| self.entries[name].origin == "builtin");
         telora_core::symbol_resolve::resolve(&mut mir);
         telora_core::type_resolve::resolve(&mut mir);
         mir

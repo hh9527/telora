@@ -5,6 +5,27 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Source-module admission is checked before symbol/type solving (2026-09-11)
+
+The CLI/LSP shared static inventory now validates source-module declarations
+against their retained CST/HIR: explicit exports are required, module-level let
+and authored result expressions are rejected, and native declarations require
+trusted built-in inventory provenance (a std-prefixed name is insufficient).
+This is a workspace admission operation in the new module pass, independent of
+the old loader. Low-level embedding clients can still compile expression
+snippets and supply host natives. Data interfaces are compiler-owned and are
+not checked as authored source modules.
+
+Admission appends diagnostics without aborting or replacing the graph; symbol
+and type solving still run. Validation: all 3 module-resolve tests pass,
+including five invalid declaration forms, trusted/untrusted native admission,
+and continued solving. CLI build passes. The four existing module diagnostic
+fixtures now fail check --only-types with the intended static diagnostics,
+zero unknown types and zero execution time. compiler-semantics passes 38/38.
+Logs: /tmp/mir-module-admission-{tests,build,runtime}.log.
+No performance benchmark or full acceptance rerun was performed. Generic
+function identity, remaining diagnostic gaps and legacy removal remain open.
+
 ### Pattern selection and coverage close in the static pass (2026-09-11)
 
 Constructor patterns and referenced bare variant patterns now retain their

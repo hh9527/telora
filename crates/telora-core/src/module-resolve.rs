@@ -179,6 +179,46 @@ pub fn resolve_with_requests(
     mir
 }
 
+/// Apply source-module declaration rules at the workspace admission boundary.
+/// Embedded compiler clients may still resolve expressions and host natives.
+/// Diagnostics do not prevent subsequent symbol/type passes from filling MIR.
+pub fn validate_source_modules(mir: &mut Mir, trusted: impl Fn(&str) -> bool) {
+    use crate::source::Diagnostic;
+    use crate::syntax::telora::ast::Program;
+
+    for module in &mir.modules {
+        let ModuleState::Source { cst, body, .. } = &module.state else { continue };
+        let location = mir.hir[body.index()].location;
+        let authored_result = Program::root(cst).body().is_some_and(|body| body.result().is_some());
+        let mut has_exports = false;
+        for edge in &mir.hir[body.index()].children {
+            if edge.role != Role::Binding { continue; }
+            let node = &mir.hir[edge.node.index()];
+            let HirKind::Binding { kind, .. } = &node.kind else { continue };
+            let hidden = node.children.iter().any(|edge| edge.role == Role::Name
+                && matches!(&mir.hir[edge.node.index()].kind, HirKind::Name(name) if name.starts_with('\0')));
+            let message = match kind {
+                BindingKind::Export => { has_exports = true; None }
+                BindingKind::Let if !hidden => Some("module-level let is not supported; use def instead"),
+                BindingKind::Native | BindingKind::NativeType if !trusted(&module.name) => Some("native declarations are only allowed in built-in std modules"),
+                _ => None,
+            };
+            if let Some(message) = message {
+                mir.diagnostics.push(Diagnostic::error(message, node.location));
+            }
+        }
+        // The parser already diagnoses the explicit-export + expression case.
+        if authored_result && !has_exports {
+            mir.diagnostics.push(Diagnostic::error(
+                "top-level expressions are not supported; bind the computation with def and export the intended result", location,
+            ));
+        }
+        if !has_exports {
+            mir.diagnostics.push(Diagnostic::error("source module requires at least one explicit export", location));
+        }
+    }
+}
+
 fn bound(target: &ModuleTarget) -> Option<ModuleId> {
     if let ModuleTarget::Bound(id) = target {
         Some(*id)
@@ -219,6 +259,31 @@ fn canonical_request(owner: &str, request: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_admission_retains_graph_and_checks_declarations() {
+        for (source, expected) in [
+            ("def value = 42; value", "top-level expressions are not supported"),
+            ("let value = 42; export { value };", "module-level let is not supported"),
+            ("native value: Fn() -> Int; export { value };", "only allowed in built-in std modules"),
+            ("native type Value @1; export { Value };", "only allowed in built-in std modules"),
+            ("def value = 42;", "requires at least one explicit export"),
+        ] {
+            let mut mir = resolve(vec![ModuleSpec { native: None, name: "@src/main".into(), kind: ModuleKind::Source, implicit_imports: vec![] }], &["@src/main".into()], |_, _| Ok(source.into()));
+            assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+            let nodes = mir.hir.len();
+            validate_source_modules(&mut mir, |_| false);
+            assert!(mir.diagnostics.iter().any(|d| d.message.contains(expected)), "{:?}", mir.diagnostics);
+            crate::symbol_resolve::resolve(&mut mir);
+            crate::type_resolve::resolve(&mut mir);
+            assert_eq!(mir.hir.len(), nodes);
+        }
+        let mut mir = resolve(vec![ModuleSpec { native: None, name: "std/custom".into(), kind: ModuleKind::Source, implicit_imports: vec![] }], &["std/custom".into()], |_, _| Ok("native value: Fn() -> Int; export { value };".into()));
+        validate_source_modules(&mut mir, |_| true);
+        assert!(mir.diagnostics.is_empty(), "{:?}", mir.diagnostics);
+        validate_source_modules(&mut mir, |_| false);
+        assert!(mir.diagnostics.iter().any(|d| d.message.contains("only allowed in built-in std modules")));
+    }
 
     #[test]
     fn attaches_shared_syntax_once_and_never_reads_data_or_unreachable_sources() {
