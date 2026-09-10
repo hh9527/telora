@@ -5,6 +5,34 @@ The controlling target is RFC 0280's session-wide typed IR.
 
 ## Implementation route (supersedes incremental consumer migration)
 
+### Direct test cases execute in one solved VM session (2026-09-10)
+
+Vm.test_linked consumes the compiled test bootstrap and static TestPlan, loads
+data before initialization, then demands each selected export and calls its
+deferred thunk. The same Work heap moves through successful and failed calls;
+there is no per-case world relocation or cloning of user graphs. Test results
+and diagnostics are the only session output.
+
+Intermediate test calls do not attempt session publication. Failed lazy tasks
+retain their cached failure while unrelated later cases can execute. All existing
+non-test callers still enforce their previous publication boundary. The runner
+distinguishes export initialization errors, expected recoverable thunk failures,
+message mismatch and terminal quota failure; terminal failures abort even under
+should_fail. Native test description data now lives in independent test_protocol,
+shared by native constructors and runners rather than owned by the old loader.
+
+Validation: all 40 VM tests and 50 codegen regressions pass; cargo check -p telora
+passes. New cases cover repeated cached dependency failure, expected failures,
+success afterward, unexpected success, initializer failure followed by another
+case, and quota exhaustion that must abort. Logs: /tmp/mir-test-session-vm.log,
+/tmp/mir-test-session-codegen.log, /tmp/mir-test-session-cli.log and
+/tmp/mir-test-session.log. No performance/full-suite claim.
+
+Fixture expansion remains explicitly unsupported in this new runner, with an
+aborted report rather than an old-path fallback. telora test has not switched;
+fixture context, expansion limits and CLI report integration must land first.
+The broader migration, LSP integration and old-pipeline removal remain open.
+
 ### Static test discovery and a deferred test-session bootstrap (2026-09-10)
 
 Command audit confirms check/query/eval/run/serve enter the new pipeline, while

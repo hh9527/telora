@@ -1,23 +1,4 @@
-#[derive(Clone, Debug)]
-pub(crate) struct TestDescription {
-    pub(crate) kind: TestKind,
-    pub(crate) expected: Option<String>,
-    pub(crate) sources: Vec<String>,
-    pub(crate) origin: Option<crate::Loc>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TestKind {
-    ShouldOk,
-    ShouldFail,
-    ShouldFailWith,
-    Fixtures,
-}
-
-pub(crate) const TEST_NATIVE_TYPE: crate::value::NativeTypeId = crate::value::NativeTypeId {
-    module: crate::value::NativeModuleId(33),
-    local: 0,
-};
+pub(crate) use crate::test_protocol::{TestDescription, TestKind, TEST_NATIVE_TYPE};
 
 /// Finite bounds on deferred expansion and Host-retained fixture data.
 #[derive(Clone, Copy, Debug)]

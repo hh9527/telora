@@ -135,6 +135,7 @@ impl Vm {
             account,
             true,
             inherited_failure_count,
+            true,
         )
     }
 
@@ -194,6 +195,7 @@ impl Vm {
             account,
             false,
             0,
+            true,
         )
         .map(|execution| execution.world)
         .map_err(|failure| failure.error)
@@ -213,6 +215,7 @@ impl Vm {
         account: &mut QuotaAccount,
         best_effort: bool,
         inherited_failure_count: usize,
+        publish: bool,
     ) -> Result<VmExecution, VmExecutionFailure> {
         // Linking recursively walks the immutable prototype graph. Keep that host
         // recursion off callers' often-small test or embedding threads; VM calls
@@ -2219,7 +2222,7 @@ impl Vm {
                 }
             }
         })();
-        if result.is_ok() && current.solved_evaluation.as_ref().is_some_and(|e| !e.can_publish()) {
+        if publish && result.is_ok() && current.solved_evaluation.as_ref().is_some_and(|e| !e.can_publish()) {
             result = Err(if current.solved_failures.is_empty() {
                 error(RuntimeErrorKind::InvalidBytecode, "demand session contains unfinished tasks", function, 0)
             } else { propagated_failure_error(0, instruction_location(function, 0), function, 0) });
@@ -2273,6 +2276,7 @@ impl Vm {
                 account,
                 false,
                 0,
+                true,
             )
             .map_err(|failure| (failure.heap, failure.error))?;
         let world = execution.world;

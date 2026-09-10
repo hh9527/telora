@@ -334,14 +334,14 @@ impl<'a> ValueRef<'a> {
         self.view.background?.solved_types.as_ref()?.types.get(id.index())?;
         Some(id)
     }
-    pub(crate) fn test_description(self) -> Option<(&'a crate::module::TestDescription, Val)> {
+    pub(crate) fn test_description(self) -> Option<(&'a crate::test_protocol::TestDescription, Val)> {
         let DecodedValue::Opaque(handle) = self.value.value() else {
             return None;
         };
         let Object::Opaque(value) = self.view.object(handle).ok()? else {
             return None;
         };
-        if value.native_type().id() != crate::module::TEST_NATIVE_TYPE {
+        if value.native_type().id() != crate::test_protocol::TEST_NATIVE_TYPE {
             return None;
         }
         Some((

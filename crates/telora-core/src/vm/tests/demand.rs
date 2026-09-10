@@ -170,6 +170,7 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
             &mut account,
             false,
             0,
+            true,
         );
         let (mut work, cached, failure_id) = match first {
             Ok(mut result) => {
@@ -241,6 +242,7 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
                 &mut account,
                 false,
                 0,
+                true,
             ) {
                 Ok(result) => {
                     assert!(!fails);
@@ -290,6 +292,7 @@ fn solved_property_reads_reuse_vm_objects_and_failed_diagnostics() {
             &mut account,
             false,
             0,
+            true,
         ) {
             Ok(_) => panic!("invalid required read succeeded"),
             Err(failure) => failure,
@@ -379,6 +382,47 @@ fn solved_dyn_member_access_preserves_payload_handles() {
         let DecodedValue::SolvedType(ty) = descriptor.value() else { panic!("solved witness") };
         assert_eq!(result.world.main.solved_types.as_ref().unwrap().types[ty.index()].constructor, crate::mir::TypeConstructor::Array);
     }
+}
+
+#[test]
+fn solved_test_session_runs_cases_after_cached_and_expected_failures() {
+    let mut mir = crate::codegen::tests::graph(r#"
+        import "std/test" as test;
+        def broken: Int = fail!("cached dependency failure");
+        export def a_expected = test.should_fail_with(fn() { broken }, "cached dependency");
+        export def b_cached = test.should_fail_with(fn() { broken }, "cached dependency");
+        export def c_success = test.should_ok(fn() {42});
+        export def d_wrong = test.should_fail(fn() {42});
+        export def e_initializer: test.Test = fail!("bad initializer");
+        export def f_after = test.should_ok(fn() {42});
+    "#, "");
+    assert!(mir.diagnostics.is_empty(), "{}", mir.dump());
+    let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
+    let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
+    let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
+    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(10000), crate::DataLimits::default(), &mut mir.sources).unwrap();
+    assert!(!report.aborted, "{report:?}");
+    assert_eq!(report.cases.iter().map(|case| case.passed).collect::<Vec<_>>(), [true, true, true, false, false, true], "{report:?}");
+    assert!(report.cases[0].diagnostics.is_empty(), "{report:?}");
+    assert!(report.cases[1].diagnostics.is_empty(), "{report:?}");
+    assert_eq!(report.cases[4].phase, "initialization");
+}
+
+#[test]
+fn solved_test_session_does_not_accept_terminal_failures_as_expected() {
+    let mut mir = crate::codegen::tests::graph(r#"
+        import "std/test" as test;
+        def loop: Fn() -> Int = fn() { loop() };
+        export def a_exhaust = test.should_fail(fn() {loop()});
+        export def b_after = test.should_ok(fn() {42});
+    "#, "");
+    let crate::mir::ModuleTarget::Bound(module) = mir.roots[0] else { panic!("root"); };
+    let compiled = crate::codegen::compile_tests(mir.seal().unwrap(), module).unwrap();
+    let linked = crate::execution_link::link_entry(compiled.bootstrap).unwrap();
+    let report = Vm::new().test_linked(linked, compiled.plan, Quota::with_fuel(1000), crate::DataLimits::default(), &mut mir.sources).unwrap();
+    assert!(report.aborted, "{report:?}");
+    assert_eq!(report.cases.len(), 1);
+    assert!(!report.cases[0].passed);
 }
 
 #[test]

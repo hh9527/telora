@@ -70,25 +70,25 @@ pub(crate) fn module_specs() -> Vec<BuiltinModuleSpec> {
                 (
                     "should_ok",
                     NativeFunction::new_with_native_type("std/test.should_ok", 1, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::ShouldOk)
+                        cx.make_test(crate::test_protocol::TestKind::ShouldOk)
                     }),
                 ),
                 (
                     "should_fail",
                     NativeFunction::new_with_native_type("std/test.should_fail", 1, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::ShouldFail)
+                        cx.make_test(crate::test_protocol::TestKind::ShouldFail)
                     }),
                 ),
                 (
                     "should_fail_with",
                     NativeFunction::new_with_native_type("std/test.should_fail_with", 2, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::ShouldFailWith)
+                        cx.make_test(crate::test_protocol::TestKind::ShouldFailWith)
                     }),
                 ),
                 (
                     "with_fixtures",
                     NativeFunction::new_with_native_type("std/test.with_fixtures", 2, 0, |cx| {
-                        cx.make_test(crate::module::TestKind::Fixtures)
+                        cx.make_test(crate::test_protocol::TestKind::Fixtures)
                     }),
                 ),
             ],

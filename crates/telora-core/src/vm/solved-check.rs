@@ -40,6 +40,7 @@ impl Vm {
             &mut account,
             false,
             0,
+            true,
         );
         let mut diagnostics = account.take_diagnostics();
         if let Err(failure) = result {

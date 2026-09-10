@@ -24,6 +24,21 @@ pub struct TestPlan {
     pub exports: Vec<TestExport>,
 }
 
+#[derive(Debug)]
+pub struct TestResult {
+    pub name: String,
+    pub phase: &'static str,
+    pub passed: bool,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Default)]
+pub struct TestReport {
+    pub cases: Vec<TestResult>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub aborted: bool,
+}
+
 impl TestPlan {
     pub fn from_mir(sealed: &SealedMir<'_>, module: ModuleId) -> Result<Self, Vec<Diagnostic>> {
         let mir = sealed.mir();

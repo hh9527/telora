@@ -15,8 +15,8 @@ pub struct CallContext<'vm, 'stack> {
 pub(crate) struct OpaqueAllocationReservation(());
 
 impl<'vm, 'stack> CallContext<'vm, 'stack> {
-    pub(crate) fn make_test(&mut self, kind: crate::module::TestKind) -> Result<(), NativeError> {
-        use crate::module::TestKind;
+    pub(crate) fn make_test(&mut self, kind: crate::test_protocol::TestKind) -> Result<(), NativeError> {
+        use crate::test_protocol::TestKind;
         let native_type = self
             .value(self.upvalue(0)?)?
             .as_native_type()
@@ -89,7 +89,7 @@ impl<'vm, 'stack> CallContext<'vm, 'stack> {
         }
         let callable =
             self.owned(self.argument(if kind == TestKind::Fixtures { 1 } else { 0 })?)?;
-        let description = crate::module::TestDescription {
+        let description = crate::test_protocol::TestDescription {
             kind,
             expected,
             sources,
